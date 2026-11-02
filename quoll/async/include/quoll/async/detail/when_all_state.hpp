@@ -41,12 +41,14 @@
 #include <coroutine>
 #include <cstddef>
 #include <exception>
+#include <stop_token>
 #include <utility>
 
 namespace quoll::async::detail {
 
 // Join point of when_all. Children may complete on other threads: the counter is atomic and the first error is
-// published by the release / acquire of the last arrival.
+// published by the release / acquire of the last arrival. The children share a stop source of their own: stopped by
+// the first failure, or by the parent's stop token.
 class when_all_state {
 public:
   // One arrival per child, plus one for the parent once it has started them all.
@@ -63,8 +65,13 @@ public:
   void fail(std::exception_ptr error) noexcept {
     if (!failed_.exchange(true, std::memory_order_relaxed)) {
       error_ = std::move(error);
+      stop_source_.request_stop();
     }
   }
+
+  void request_stop() noexcept { stop_source_.request_stop(); }
+
+  [[nodiscard]] std::stop_token stop_token() const noexcept { return stop_source_.get_token(); }
 
   // The coroutine to transfer to: the parent for the last arrival, nothing otherwise.
   [[nodiscard]] std::coroutine_handle<> arrive() noexcept {
@@ -85,6 +92,18 @@ private:
   std::atomic<bool> failed_{false};
   std::exception_ptr error_;
   std::coroutine_handle<> parent_;
+  std::stop_source stop_source_;
+};
+
+// Forwards a stop request of the when_all parent to its children.
+class when_all_stop_forwarder {
+public:
+  explicit when_all_stop_forwarder(when_all_state &state) noexcept : state_(&state) {}
+
+  void operator()() const noexcept { state_->request_stop(); }
+
+private:
+  when_all_state *state_;
 };
 
 } // namespace quoll::async::detail

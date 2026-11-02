@@ -39,17 +39,25 @@
 
 #include <quoll/async/executor_ref.hpp>
 
+#include <stop_token>
+
 namespace quoll::async {
 
 /**
  * @brief Environment shared by a chain of coroutines awaiting each other.
  *
  * Owned by the root of the chain (see co_spawn) and handed by reference to every ContextAwaitable the chain awaits,
- * so that an operation completing later knows where its awaiter resumes.
+ * so that an operation completing later knows where its awaiter resumes, and whether it should stop.
  */
 struct await_context {
   /** @brief Executor the chain resumes on. */
   executor_ref executor;
+
+  /**
+   * @brief Asks the chain to stop. Cancellation is cooperative: operations that can stop early observe it, the
+   * others ignore it. An empty token (the default) never stops.
+   */
+  std::stop_token stop_token;
 };
 
 } // namespace quoll::async
