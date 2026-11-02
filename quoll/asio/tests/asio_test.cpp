@@ -37,6 +37,7 @@
 #include <quoll/asio.hpp>
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
@@ -54,16 +55,15 @@
 #include <asio/io_context.hpp>
 #include <asio/ip/address_v4.hpp>
 #include <asio/ip/tcp.hpp>
-#include <asio/steady_timer.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
@@ -158,6 +158,25 @@ task<std::error_code> connect_error(quoll::asio::connector connector, std::uint1
   }
 
   co_return std::error_code{};
+}
+
+task<io::io_result> read_once(io::any_stream &stream, std::span<std::byte> buffer) {
+  co_return co_await stream.read_some(buffer);
+}
+
+task<> request_stop(std::stop_source &source) {
+  source.request_stop();
+  co_return;
+}
+
+// Connects, then reads from a peer that never writes and requests stop: when_all starts the read first, so the stop
+// request reaches a pending read.
+task<io::io_result> read_until_stopped(quoll::asio::connector connector, std::uint16_t port, std::stop_source &source) {
+  auto stream = co_await connector.connect("127.0.0.1", port);
+  std::array<std::byte, 16> buffer{};
+  auto const [read, stopped] = co_await quoll::async::when_all(read_once(stream, buffer), request_stop(source));
+
+  co_return read;
 }
 
 task<io::io_result> connect_and_read(quoll::asio::connector connector, std::uint16_t port) {
@@ -256,16 +275,14 @@ TEST_CASE("asio: a stop request cancels a pending read", "[asio]") {
   std::optional<io::io_result> read;
   std::exception_ptr failure;
   std::stop_source source;
-  ::asio::steady_timer timer{context, std::chrono::milliseconds{50}};
 
   // The peer stays connected and never writes: only the stop request ends the read.
   acceptor.async_accept([&](std::error_code error, tcp::socket socket) {
     check(error);
     silent_peer.emplace(std::move(socket));
   });
-  spawn(context, connect_and_read(quoll::asio::connector{context.get_executor()}, port_of(acceptor)), read, failure,
-        source.get_token());
-  timer.async_wait([&](std::error_code) { source.request_stop(); });
+  spawn(context, read_until_stopped(quoll::asio::connector{context.get_executor()}, port_of(acceptor), source), read,
+        failure, source.get_token());
   run(context, failure);
 
   REQUIRE(read);
