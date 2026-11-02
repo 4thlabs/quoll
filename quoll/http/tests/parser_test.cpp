@@ -207,6 +207,32 @@ TEST_CASE("An interim 100 Continue is a message of its own", "[http][parser]") {
   REQUIRE(parser.release().status == http::status::ok);
 }
 
+TEST_CASE("The HEAD method holds across an interim response", "[http][parser]") {
+  constexpr std::string_view interim = "HTTP/1.1 100 Continue\r\n\r\n";
+  constexpr std::string_view final_response = "HTTP/1.1 200 OK\r\n"
+                                              "Content-Length: 12\r\n"
+                                              "\r\n";
+  std::string const wire = std::string{interim} + std::string{final_response};
+  http::response_parser parser;
+
+  parser.set_request_method(http::verb::head);
+
+  auto const first = parser.feed(bytes(wire));
+
+  REQUIRE(parser.release().status == http::status::continue_);
+
+  auto const second = parser.feed(bytes(std::string_view{wire}.substr(first.consumed)));
+
+  REQUIRE_FALSE(second.error);
+  REQUIRE(second.consumed == final_response.size());
+  REQUIRE(parser.done());
+
+  auto const response = parser.release();
+
+  REQUIRE(response.status == http::status::ok);
+  REQUIRE(response.body.empty());
+}
+
 TEST_CASE("A 204 response has no body", "[http][parser]") {
   constexpr std::string_view wire = "HTTP/1.1 204 No Content\r\n\r\n";
   http::response_parser parser;
