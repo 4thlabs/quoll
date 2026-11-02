@@ -14,9 +14,9 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 
 ## Status
 
-Exploration: first module `quoll::async` (task, executor_ref, await_context with stop token, co_spawn, when_all,
-run_loop). The HTTP layer is decided (own stack on llhttp); the prototype described in `docs/PLAN.md` continues with
-`quoll::http`. Do not settle its open questions or write the module design into this file before the prototype
+Exploration. Modules so far: `quoll::async` (task, executor_ref, await_context with stop token, co_spawn,
+when_all, run_loop) and `quoll::http` (messages, llhttp parser, serializer; llhttp is compiled and exported as
+`quoll::llhttp`). The prototype described in `docs/PLAN.md` continues with byte streams and a client GET. Do not settle its open questions or write the module design into this file before the prototype
 validates them.
 
 ## Build & test
