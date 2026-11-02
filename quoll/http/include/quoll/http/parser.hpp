@@ -59,8 +59,10 @@ namespace quoll::http {
 
 /** @brief Size limits of a parser, against peers sending unbounded messages. */
 struct parse_limits {
-  /** @brief Start line, fields and trailers together. */
+  /** @brief Start line, fields and trailers together, separators included. */
   std::size_t max_header_size = 64 * 1024;
+  /** @brief Fields and trailers together: bounds the memory of many tiny fields. */
+  std::size_t max_field_count = 100;
   std::size_t max_body_size = 8 * 1024 * 1024;
 };
 
@@ -104,8 +106,9 @@ public:
   parser(parser &&other) noexcept
       : state_(other.state_), limits_(other.limits_), message_(std::move(other.message_)),
         field_name_(std::move(other.field_name_)), field_value_(std::move(other.field_value_)),
-        header_size_(other.header_size_), error_(other.error_), request_method_(other.request_method_),
-        done_(other.done_), keep_alive_(other.keep_alive_), upgrade_(other.upgrade_), in_trailers_(other.in_trailers_) {
+        header_size_(other.header_size_), field_count_(other.field_count_), error_(other.error_),
+        reason_(other.reason_), request_method_(other.request_method_), done_(other.done_),
+        keep_alive_(other.keep_alive_), upgrade_(other.upgrade_), in_trailers_(other.in_trailers_) {
     state_.data = this;
   }
 
@@ -118,7 +121,9 @@ public:
       field_name_ = std::move(other.field_name_);
       field_value_ = std::move(other.field_value_);
       header_size_ = other.header_size_;
+      field_count_ = other.field_count_;
       error_ = other.error_;
+      reason_ = other.reason_;
       request_method_ = other.request_method_;
       done_ = other.done_;
       keep_alive_ = other.keep_alive_;
@@ -177,7 +182,10 @@ public:
     return error_;
   }
 
-  /** @brief Responses only: the method of the request answered, so that a response to HEAD has no body. */
+  /**
+   * @brief Responses only: the method of the request answered, so that a response to HEAD has no body and a 2xx
+   * response to CONNECT switches protocol.
+   */
   void set_request_method(verb method) noexcept
     requires(!is_request)
   {
@@ -195,7 +203,8 @@ public:
 
   /** @brief Why the input was rejected, for diagnostics. */
   [[nodiscard]] std::string_view error_reason() const noexcept {
-    auto const *const reason = llhttp_get_error_reason(&state_);
+    // llhttp replaces the reason given by some callbacks with a generic one: ours wins.
+    auto const *const reason = reason_ != nullptr ? reason_ : llhttp_get_error_reason(&state_);
 
     return reason != nullptr ? std::string_view{reason} : std::string_view{};
   }
@@ -203,7 +212,8 @@ public:
   /**
    * @brief Takes the parsed message and gets ready for the next one. Precondition: done().
    *
-   * Responses: after a final (non-1xx) response, the request method set by set_request_method() is forgotten.
+   * keep_alive() and upgrade() are reset; for responses, the request method set by set_request_method() is
+   * forgotten after a final (non-1xx) response.
    */
   [[nodiscard]] Message release() {
     assert(done_ && "parser::release() without a complete message");
@@ -211,12 +221,14 @@ public:
     auto message = std::exchange(message_, Message{});
 
     done_ = false;
+    keep_alive_ = false;
+    upgrade_ = false;
 
     // The request method holds until its final response: an interim 1xx answers the same request.
-    if constexpr (is_request) {
-      request_method_ = verb::get;
-    } else if (!is_informational(message.status)) {
-      request_method_ = verb::get;
+    if constexpr (!is_request) {
+      if (!is_informational(message.status)) {
+        request_method_ = verb::get;
+      }
     }
 
     return message;
@@ -238,6 +250,7 @@ private:
   // Records why parsing stops; returns the code that stops llhttp.
   [[nodiscard]] int fail(llhttp_t *state, error reason, char const *text) noexcept {
     error_ = reason;
+    reason_ = text;
     llhttp_set_error_reason(state, text);
     return HPE_USER;
   }
@@ -258,8 +271,7 @@ private:
   static int on_message_begin(llhttp_t *state) noexcept {
     auto &self_ = self(state);
 
-    self_.message_ = Message{};
-
+    // release() has already reset the message, but for the target.
     if constexpr (is_request) {
       // llhttp appends the target in pieces: start from empty, not from the default "/".
       self_.message_.target.clear();
@@ -268,6 +280,7 @@ private:
     self_.field_name_.clear();
     self_.field_value_.clear();
     self_.header_size_ = 0;
+    self_.field_count_ = 0;
     self_.in_trailers_ = false;
     return 0;
   }
@@ -316,18 +329,26 @@ private:
     return 0;
   }
 
-  // Called once per field, even when the value is empty.
+  // Called once per field, even when the value is empty. Counts the separators the data callbacks do not see
+  // (": " and CRLF), and the field itself.
   static int on_header_value_complete(llhttp_t *state) noexcept {
     auto &self_ = self(state);
+
+    if (auto const code = self_.count_header(state, 4); code != 0) {
+      return code;
+    }
+
+    if (++self_.field_count_ > self_.limits_.max_field_count) {
+      return self_.fail(state, error::header_too_large, "too many fields");
+    }
+
     auto &target = self_.in_trailers_ ? self_.message_.trailers : self_.message_.fields;
 
-    target.add(self_.field_name_, self_.field_value_);
-    self_.field_name_.clear();
-    self_.field_value_.clear();
+    target.add(field{std::exchange(self_.field_name_, {}), std::exchange(self_.field_value_, {})});
     return 0;
   }
 
-  // 1 tells llhttp the message has no body.
+  // 1 tells llhttp the message has no body, 2 that it has none and the connection switches protocol.
   static int on_headers_complete(llhttp_t *state) noexcept {
     auto &self_ = self(state);
 
@@ -351,7 +372,15 @@ private:
       self_.message_.method = *method;
       return 0;
     } else {
-      self_.message_.status = static_cast<status>(llhttp_get_status_code(state));
+      auto const code = llhttp_get_status_code(state);
+
+      self_.message_.status = static_cast<status>(code);
+
+      // A 2xx answer to CONNECT turns the connection into a tunnel.
+      if (self_.request_method_ == verb::connect && code >= 200 && code < 300) {
+        return 2;
+      }
+
       return self_.request_method_ == verb::head ? 1 : 0;
     }
   }
@@ -408,7 +437,9 @@ private:
   std::string field_name_;
   std::string field_value_;
   std::size_t header_size_ = 0;
+  std::size_t field_count_ = 0;
   std::error_code error_;
+  char const *reason_ = nullptr;
   verb request_method_ = verb::get;
   bool done_ = false;
   bool keep_alive_ = false;

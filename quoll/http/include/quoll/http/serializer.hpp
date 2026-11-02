@@ -37,7 +37,7 @@
 #ifndef QUOLL_HTTP_SERIALIZER_HPP
 #define QUOLL_HTTP_SERIALIZER_HPP
 
-#include <quoll/http/detail/serialize_fields.hpp>
+#include <quoll/http/detail/serialize_framing.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
@@ -55,13 +55,17 @@ namespace quoll::http {
  * @brief Appends `message` to `out`, as sent on the wire.
  *
  * Adds `Content-Length` when the message has a body (or, for POST / PUT / PATCH, an empty one) and the fields
- * declare no framing. With `Transfer-Encoding: chunked`, the body is written as one chunk followed by the trailers;
- * trailers without it are an error. A 1xx, 204 or 304 response cannot have a body, and `Content-Length` cannot come
- * with `Transfer-Encoding`.
+ * declare no framing. With `Transfer-Encoding` ending in `chunked`, the body is written as one chunk followed by the
+ * trailers. A `Content-Length` given in the fields must match the body; only a response with an empty body may
+ * announce one it does not send (response to HEAD, 304).
  *
- * @throws std::invalid_argument for what cannot be sent: a target with spaces or line breaks, a field name that is
- * not a token, a value or a reason phrase with a line break, a status code outside 100-999, conflicting framing, a
- * body or trailers where none is allowed.
+ * Every framing a peer could read differently from what is sent is rejected, as it would desync the connection:
+ *
+ * @throws std::invalid_argument for a target with spaces or line breaks, a field name that is not a token, a value
+ * or a reason phrase with a line break, a status code outside 100-999, a body, trailers or `Transfer-Encoding` on a
+ * 1xx / 204 / 304 response, `Content-Length` on a 1xx / 204 response, a `Content-Length` that is invalid, repeated
+ * with another value or does not match the body, `Content-Length` with `Transfer-Encoding`, a last transfer coding
+ * other than chunked, chunked coding in HTTP/1.0, trailers without chunked coding.
  */
 inline void serialize(request const &message, std::string &out) {
   if (message.target.empty() || message.target.find(' ') != std::string::npos ||
@@ -79,8 +83,11 @@ inline void serialize(request const &message, std::string &out) {
   auto const method_has_body =
       message.method == verb::post || message.method == verb::put || message.method == verb::patch;
 
-  detail::serialize_framing(message.fields, message.body, message.trailers, true,
-                            !message.body.empty() || method_has_body, out);
+  detail::framing_rules rules;
+
+  rules.add_length = !message.body.empty() || method_has_body;
+  rules.chunked_allowed = message.version != version::http_1_0;
+  detail::serialize_framing(message.fields, message.body, message.trailers, rules, out);
 }
 
 /** @copydoc serialize(request const &, std::string &) */
@@ -106,7 +113,14 @@ inline void serialize(response const &message, std::string &out) {
   auto const has_body = !is_informational(message.status) && message.status != status::no_content &&
                         message.status != status::not_modified;
 
-  detail::serialize_framing(message.fields, message.body, message.trailers, has_body, has_body, out);
+  detail::framing_rules rules;
+
+  rules.body_allowed = has_body;
+  rules.length_allowed = !is_informational(message.status) && message.status != status::no_content;
+  rules.add_length = has_body;
+  rules.chunked_allowed = message.version != version::http_1_0;
+  rules.length_without_body = true;
+  detail::serialize_framing(message.fields, message.body, message.trailers, rules, out);
 }
 
 /** @brief `message` as sent on the wire. @copydetails serialize(request const &, std::string &) */

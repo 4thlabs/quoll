@@ -40,12 +40,8 @@
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/fields.hpp>
 
-#include <array>
-#include <charconv>
-#include <cstddef>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 
 namespace quoll::http::detail {
 
@@ -60,78 +56,6 @@ inline void serialize_fields(fields const &entries, std::string &out) {
     out += entry.value;
     out += "\r\n";
   }
-}
-
-// RFC 9112: chunked is the last transfer coding when present.
-[[nodiscard]] inline bool is_chunked(fields const &entries) noexcept {
-  auto const coding = entries.find("Transfer-Encoding");
-
-  if (!coding) {
-    return false;
-  }
-
-  auto const value = trim(*coding);
-  constexpr std::string_view chunked = "chunked";
-
-  return value.size() >= chunked.size() && iequals(value.substr(value.size() - chunked.size()), chunked);
-}
-
-inline void append_hex(std::size_t value, std::string &out) {
-  std::array<char, 2 * sizeof(std::size_t)> digits{};
-  auto const [end, error] = std::to_chars(digits.data(), digits.data() + digits.size(), value, 16);
-
-  static_cast<void>(error);
-  out.append(digits.data(), end);
-}
-
-// Fields, then the body framed by Content-Length or by chunked transfer coding with the trailers. `body_allowed`
-// is false for the responses that never have a body (1xx, 204, 304); `add_length` adds Content-Length when the fields
-// declare no framing.
-inline void serialize_framing(fields const &entries, std::string const &body, fields const &trailers, bool body_allowed,
-                              bool add_length, std::string &out) {
-  auto const chunked = is_chunked(entries);
-  auto const has_length = entries.contains("Content-Length");
-
-  // A body the peer does not expect would be read as the start of the next message.
-  if (!body_allowed && (!body.empty() || chunked || !trailers.empty())) {
-    throw std::invalid_argument{"quoll::http: this response cannot have a body"};
-  }
-
-  // Two framings that disagree are a request smuggling vector (RFC 9112, 6.3).
-  if (has_length && entries.contains("Transfer-Encoding")) {
-    throw std::invalid_argument{"quoll::http: Content-Length together with Transfer-Encoding"};
-  }
-
-  if (!chunked && !trailers.empty()) {
-    throw std::invalid_argument{"quoll::http: trailers need Transfer-Encoding: chunked"};
-  }
-
-  serialize_fields(entries, out);
-
-  if (chunked) {
-    out += "\r\n";
-
-    if (!body.empty()) {
-      append_hex(body.size(), out);
-      out += "\r\n";
-      out += body;
-      out += "\r\n";
-    }
-
-    out += "0\r\n";
-    serialize_fields(trailers, out);
-    out += "\r\n";
-    return;
-  }
-
-  if (add_length && !has_length && !entries.contains("Transfer-Encoding")) {
-    out += "Content-Length: ";
-    out += std::to_string(body.size());
-    out += "\r\n";
-  }
-
-  out += "\r\n";
-  out += body;
 }
 
 } // namespace quoll::http::detail
