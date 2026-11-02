@@ -44,7 +44,7 @@
 #include <quoll/http/verb.hpp>
 #include <quoll/http/version.hpp>
 
-#include <llhttp.h>
+#include <quoll/third_party/llhttp.h>
 
 #include <cassert>
 #include <concepts>

@@ -84,13 +84,31 @@ inline void append_hex(std::size_t value, std::string &out) {
   out.append(digits.data(), end);
 }
 
-// Fields, then the body framed by Content-Length (added when `has_body` and the fields declare no framing) or by
-// chunked transfer coding, with the trailers.
-inline void serialize_framing(fields const &entries, std::string const &body, fields const &trailers, bool has_body,
-                              std::string &out) {
+// Fields, then the body framed by Content-Length or by chunked transfer coding with the trailers. `body_allowed`
+// is false for the responses that never have a body (1xx, 204, 304); `add_length` adds Content-Length when the fields
+// declare no framing.
+inline void serialize_framing(fields const &entries, std::string const &body, fields const &trailers, bool body_allowed,
+                              bool add_length, std::string &out) {
+  auto const chunked = is_chunked(entries);
+  auto const has_length = entries.contains("Content-Length");
+
+  // A body the peer does not expect would be read as the start of the next message.
+  if (!body_allowed && (!body.empty() || chunked || !trailers.empty())) {
+    throw std::invalid_argument{"quoll::http: this response cannot have a body"};
+  }
+
+  // Two framings that disagree are a request smuggling vector (RFC 9112, 6.3).
+  if (has_length && entries.contains("Transfer-Encoding")) {
+    throw std::invalid_argument{"quoll::http: Content-Length together with Transfer-Encoding"};
+  }
+
+  if (!chunked && !trailers.empty()) {
+    throw std::invalid_argument{"quoll::http: trailers need Transfer-Encoding: chunked"};
+  }
+
   serialize_fields(entries, out);
 
-  if (is_chunked(entries)) {
+  if (chunked) {
     out += "\r\n";
 
     if (!body.empty()) {
@@ -106,11 +124,7 @@ inline void serialize_framing(fields const &entries, std::string const &body, fi
     return;
   }
 
-  if (!trailers.empty()) {
-    throw std::invalid_argument{"quoll::http: trailers need Transfer-Encoding: chunked"};
-  }
-
-  if (has_body && !entries.contains("Content-Length") && !entries.contains("Transfer-Encoding")) {
+  if (add_length && !has_length && !entries.contains("Transfer-Encoding")) {
     out += "Content-Length: ";
     out += std::to_string(body.size());
     out += "\r\n";
