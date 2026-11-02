@@ -68,5 +68,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 ## Repository
 
-Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). No CI yet. Formatting: `clang-format -i <file>`
-with the repo `.clang-format`; format only the files you touch.
+Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). CI (`.github/workflows/ci.yml`): GCC 13,
+Clang 18 and Emscripten build + tests, and a clang-format check, on every PR and push to `main`. Claude reviews every
+PR (`claude-review.yml`, rules from this file and `docs/`). Formatting: `clang-format -i <file>` with the repo
+`.clang-format`; format only the files you touch.
