@@ -39,6 +39,7 @@
 
 #include <quoll/async/executor.hpp>
 
+#include <cassert>
 #include <coroutine>
 #include <cstddef>
 #include <deque>
@@ -50,6 +51,9 @@ namespace quoll::async {
  *
  * Needs no thread and never blocks, so it runs everywhere, WASM included; tests drive their coroutines with it.
  * Executors point to the loop, which therefore can be neither copied nor moved.
+ *
+ * Run the loop until it is empty before destroying it. A queued handle does not own its frame (a task posted by
+ * yield() belongs to the task awaiting it), so the loop cannot destroy what is left: it would be leaked.
  *
  * Thread safety: none. post() and run() are called from one thread.
  */
@@ -77,7 +81,7 @@ public:
   run_loop(run_loop &&) = delete;
   run_loop &operator=(run_loop const &) = delete;
   run_loop &operator=(run_loop &&) = delete;
-  ~run_loop() = default;
+  ~run_loop() { assert(queue_.empty() && "run_loop destroyed with queued coroutines: run() it first"); }
 
   [[nodiscard]] executor get_executor() noexcept { return executor{*this}; }
 
