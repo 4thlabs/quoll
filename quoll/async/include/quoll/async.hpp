@@ -47,6 +47,7 @@
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 
 #endif // QUOLL_ASYNC_HPP

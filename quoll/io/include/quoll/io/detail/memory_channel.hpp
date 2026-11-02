@@ -38,12 +38,12 @@
 #define QUOLL_IO_DETAIL_MEMORY_CHANNEL_HPP
 
 #include <quoll/async/executor_ref.hpp>
+#include <quoll/async/work_item.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/io_result.hpp>
 
 #include <algorithm>
 #include <cassert>
-#include <coroutine>
 #include <cstddef>
 #include <optional>
 #include <span>
@@ -119,26 +119,26 @@ public:
   // The reading end is gone: writing fails from now on.
   void detach_reader() noexcept {
     reader_alive_ = false;
-    reader_ = {};
+    reader_ = nullptr;
     reading_ = false;
   }
 
-  void wait(std::coroutine_handle<> reader, async::executor_ref executor) noexcept {
+  void wait(async::work_item &reader, async::executor_ref executor) noexcept {
     assert(!reading_ && "memory_stream: a read is already pending");
-    reader_ = reader;
+    reader_ = &reader;
     executor_.emplace(executor);
     reading_ = true;
   }
 
   // The read that waited has resumed.
   void end_wait() noexcept {
-    reader_ = {};
+    reader_ = nullptr;
     reading_ = false;
   }
 
   // Resumes the suspended read without bytes. False when there is none, or when it was already woken.
   [[nodiscard]] bool cancel() {
-    if (!reader_) {
+    if (reader_ == nullptr) {
       return false;
     }
 
@@ -147,11 +147,11 @@ public:
   }
 
 private:
-  // The handle is forgotten only once posted: if post throws, the reader can still be woken later.
+  // The reader is forgotten only once posted: if post throws, it can still be woken later.
   void wake() {
-    if (reader_) {
-      executor_->post(reader_);
-      reader_ = {};
+    if (reader_ != nullptr) {
+      executor_->post(*reader_);
+      reader_ = nullptr;
     }
   }
 
@@ -160,7 +160,7 @@ private:
   bool closed_ = false;
   bool reader_alive_ = true;
   bool reading_ = false;
-  std::coroutine_handle<> reader_;
+  async::work_item *reader_ = nullptr;
   std::optional<async::executor_ref> executor_;
 };
 

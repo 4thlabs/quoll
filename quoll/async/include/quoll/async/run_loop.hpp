@@ -38,16 +38,17 @@
 #define QUOLL_ASYNC_RUN_LOOP_HPP
 
 #include <quoll/async/executor.hpp>
+#include <quoll/async/work_item.hpp>
 
 #include <cassert>
-#include <coroutine>
 #include <cstddef>
-#include <deque>
 
 namespace quoll::async {
 
 /**
  * @brief Single-threaded execution context: a FIFO of coroutines resumed by run().
+ *
+ * The FIFO links the posted work items: posting never allocates and never throws.
  *
  * Needs no thread and never blocks, so it runs everywhere, WASM included; tests drive their coroutines with it.
  * Executors point to the loop, which therefore can be neither copied nor moved.
@@ -62,7 +63,7 @@ public:
   /** @brief Executor posting to a run_loop. Equal when they post to the same loop. */
   class executor {
   public:
-    void post(std::coroutine_handle<> handle) const { loop_->queue_.push_back(handle); }
+    void post(work_item &item) const noexcept { loop_->push(item); }
 
     [[nodiscard]] bool operator==(executor const &) const noexcept = default;
 
@@ -82,7 +83,7 @@ public:
   run_loop &operator=(run_loop const &) = delete;
   run_loop &operator=(run_loop &&) = delete;
 
-  ~run_loop() { assert(queue_.empty() && "run_loop destroyed with queued coroutines: run() it first"); }
+  ~run_loop() { assert(head_ == nullptr && "run_loop destroyed with queued coroutines: run() it first"); }
 
   [[nodiscard]] executor get_executor() noexcept { return executor{*this}; }
 
@@ -93,10 +94,18 @@ public:
   std::size_t run() {
     std::size_t resumed = 0;
 
-    while (!queue_.empty()) {
-      auto const handle = queue_.front();
+    while (head_ != nullptr) {
+      auto *const item = head_;
 
-      queue_.pop_front();
+      head_ = item->next;
+
+      if (head_ == nullptr) {
+        tail_ = nullptr;
+      }
+
+      // Read before resuming: the item may live in the frame the coroutine destroys.
+      auto const handle = item->handle;
+
       handle.resume();
       ++resumed;
     }
@@ -105,7 +114,20 @@ public:
   }
 
 private:
-  std::deque<std::coroutine_handle<>> queue_;
+  void push(work_item &item) noexcept {
+    item.next = nullptr;
+
+    if (tail_ == nullptr) {
+      head_ = &item;
+    } else {
+      tail_->next = &item;
+    }
+
+    tail_ = &item;
+  }
+
+  work_item *head_ = nullptr;
+  work_item *tail_ = nullptr;
 };
 
 static_assert(Executor<run_loop::executor>);

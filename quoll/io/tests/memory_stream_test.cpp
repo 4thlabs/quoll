@@ -38,6 +38,7 @@
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/io.hpp>
 #include <quoll/test/run.hpp>
@@ -45,7 +46,6 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
-#include <coroutine>
 #include <cstddef>
 #include <exception>
 #include <new>
@@ -121,12 +121,12 @@ struct flaky_executor {
   quoll::async::run_loop::executor inner;
   bool const *failing;
 
-  void post(std::coroutine_handle<> handle) const {
+  void post(quoll::async::work_item &item) const {
     if (*failing) {
       throw std::bad_alloc{};
     }
 
-    inner.post(handle);
+    inner.post(item);
   }
 
   [[nodiscard]] bool operator==(flaky_executor const &) const noexcept = default;

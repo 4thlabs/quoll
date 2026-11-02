@@ -39,20 +39,19 @@
 
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/executor.hpp>
-
-#include <coroutine>
+#include <quoll/async/work_item.hpp>
 
 namespace quoll::async::detail {
 
 struct executor_vtable {
-  void (*post)(void const *executor, std::coroutine_handle<> handle);
+  void (*post)(void const *executor, work_item &item);
   bool (*equal)(void const *lhs, void const *rhs) noexcept;
   type_id type;
 };
 
 template <Executor E>
 inline constexpr executor_vtable executor_vtable_for{
-    [](void const *executor, std::coroutine_handle<> handle) { static_cast<E const *>(executor)->post(handle); },
+    [](void const *executor, work_item &item) { static_cast<E const *>(executor)->post(item); },
     [](void const *lhs, void const *rhs) noexcept {
       return *static_cast<E const *>(lhs) == *static_cast<E const *>(rhs);
     },

@@ -37,21 +37,28 @@
 #ifndef QUOLL_ASYNC_EXECUTOR_HPP
 #define QUOLL_ASYNC_EXECUTOR_HPP
 
+#include <quoll/async/work_item.hpp>
+
 #include <concepts>
-#include <coroutine>
 
 namespace quoll::async {
 
 /**
  * @brief Where and when a suspended coroutine resumes.
  *
- * `post(handle)` queues `handle` to be resumed later by the executor's context; it never resumes it inline, so an
- * operation may post its awaiter from inside `await_suspend`. Executors are cheap handles to their context: copyable,
- * and equal when they post to the same context.
+ * `post(item)` queues `item.handle` to be resumed later by the executor's context; it never resumes it inline, so an
+ * operation may post its awaiter from inside `await_suspend`. The executor links the work_item into its queue rather
+ * than allocating. Executors are cheap handles to their context: copyable, and equal when they post to the same
+ * context.
+ *
+ * `post` may throw (e.g. an adapter whose host loop allocates); it has then not queued the item, which the caller
+ * still owns. Where the exception cannot propagate, std::terminate is called: when a stop callback or a destructor
+ * wakes a waiting coroutine (see io::memory_stream). An executor whose `post` cannot fail, like run_loop's, never
+ * gets there.
  */
 template <class E>
 concept Executor = std::copy_constructible<E> && std::equality_comparable<E> &&
-                   requires(E const &executor, std::coroutine_handle<> handle) { executor.post(handle); };
+                   requires(E const &executor, work_item &item) { executor.post(item); };
 
 } // namespace quoll::async
 

@@ -37,6 +37,8 @@
 #ifndef QUOLL_ASYNC_DETAIL_DETACHED_HPP
 #define QUOLL_ASYNC_DETAIL_DETACHED_HPP
 
+#include <quoll/async/work_item.hpp>
+
 #include <coroutine>
 #include <exception>
 #include <utility>
@@ -60,6 +62,11 @@ public:
 
     // The body hands every task exception to the completion handler: what is left is the handler throwing.
     [[noreturn]] void unhandled_exception() const noexcept { std::terminate(); }
+
+  private:
+    friend class detached;
+
+    work_item start_;
   };
 
   detached(detached const &) = delete;
@@ -78,7 +85,13 @@ public:
 
   ~detached() { destroy(); }
 
-  [[nodiscard]] std::coroutine_handle<> handle() const noexcept { return handle_; }
+  // What to post to start the coroutine. It lives in the frame, so it stays valid until the coroutine runs.
+  [[nodiscard]] work_item &start_item() const noexcept {
+    auto &item = handle_.promise().start_;
+
+    item.handle = handle_;
+    return item;
+  }
 
   // Gives up ownership: from now on the frame destroys itself when the coroutine ends.
   void release() noexcept { handle_ = {}; }

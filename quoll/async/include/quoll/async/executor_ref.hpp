@@ -40,9 +40,9 @@
 #include <quoll/async/detail/executor_vtable.hpp>
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/executor.hpp>
+#include <quoll/async/work_item.hpp>
 
 #include <concepts>
-#include <coroutine>
 #include <type_traits>
 
 namespace quoll::async {
@@ -66,8 +66,8 @@ public:
     requires(!std::same_as<E, executor_ref> && Executor<E>)
   explicit executor_ref(E const &&executor) = delete;
 
-  /** @brief Posts `handle` to the referenced executor. */
-  void post(std::coroutine_handle<> handle) const { vtable_->post(executor_, handle); }
+  /** @brief Posts `item` to the referenced executor. */
+  void post(work_item &item) const { vtable_->post(executor_, item); }
 
   /** @brief The referenced executor if its type is exactly `E`, otherwise `nullptr`. */
   template <class E>
