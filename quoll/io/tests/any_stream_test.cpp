@@ -59,6 +59,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 
 // Counts the allocations of each thread, to check that operations on an any_stream make none. The replacement is
@@ -183,6 +184,10 @@ using throwing_move_stream = fixed_stream<0, false>;
 static_assert(io::ByteStream<small_stream>);
 static_assert(io::ByteStream<big_stream>);
 static_assert(io::ByteStream<throwing_move_stream>);
+
+// The memory_stream tests below cover the third form of await_suspend: theirs returns void.
+static_assert(std::is_void_v<decltype(std::declval<io::memory_stream::read_awaitable &>().await_suspend(
+                  std::coroutine_handle<>{}, std::declval<quoll::async::await_context const &>()))>);
 
 // What a read brought, as text, with its error.
 struct received {
