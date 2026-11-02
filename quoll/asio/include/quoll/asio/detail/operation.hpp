@@ -43,6 +43,7 @@
 #include <asio/bind_cancellation_slot.hpp>
 #include <asio/cancellation_signal.hpp>
 #include <asio/cancellation_type.hpp>
+#include <asio/error.hpp>
 
 #include <cassert>
 #include <coroutine>
@@ -63,6 +64,10 @@ namespace quoll::asio::detail {
 // token can stop. The signal is kept by the caller across operations, so that asio reuses the memory it gives the
 // cancellation handler. The stop request comes from the thread running the I/O object's executor, which runs the
 // operation's handler: an asio cancellation signal is not thread-safe.
+//
+// The handler points to the operation, in the frame of the suspended coroutine: that frame is destroyed only after it
+// resumes, so the handler always finds it. A suspended chain of tasks is never destroyed from outside; destroying the
+// I/O object's executor destroys the handler without running it.
 //
 // Movable until it suspends, so that it can be co_await-ed as a temporary.
 template <class Initiation, class... Values>
@@ -89,6 +94,13 @@ public:
   void await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
     item_.handle = handle;
     context_ = &context;
+
+    // Already stopped: the operation is not started, as some (resolve) would not observe the cancellation.
+    if (context.stop_token.stop_requested()) {
+      result_.emplace(std::error_code{::asio::error::operation_aborted}, Values{}...);
+      context.executor.post(item_);
+      return;
+    }
 
     if (!context.stop_token.stop_possible()) {
       initiation_(completion{this});

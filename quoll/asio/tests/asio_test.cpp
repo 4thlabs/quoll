@@ -288,3 +288,19 @@ TEST_CASE("asio: a stop request cancels a pending read", "[asio]") {
   REQUIRE(read);
   REQUIRE(read->error == std::errc::operation_canceled);
 }
+
+TEST_CASE("asio: a stop request abandons a connection attempt", "[asio]") {
+  ::asio::io_context context;
+  auto acceptor = listen(context);
+  std::optional<std::error_code> error;
+  std::exception_ptr failure;
+  std::stop_source source;
+
+  source.request_stop();
+  spawn(context, connect_error(quoll::asio::connector{context.get_executor()}, port_of(acceptor)), error, failure,
+        source.get_token());
+  run(context, failure);
+
+  REQUIRE(error);
+  REQUIRE(*error == std::errc::operation_canceled);
+}
