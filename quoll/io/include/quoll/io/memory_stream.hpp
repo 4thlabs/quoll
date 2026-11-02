@@ -39,6 +39,7 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/work_item.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/detail/memory_channel.hpp>
 #include <quoll/io/io_result.hpp>
@@ -86,7 +87,8 @@ public:
     [[nodiscard]] bool await_ready() const noexcept { return buffer_.empty() || channel_->readable(); }
 
     void await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
-      channel_->wait(handle, context.executor);
+      item_.handle = handle;
+      channel_->wait(item_, context.executor);
 
       // Invoked at once if stop was already requested.
       if (context.stop_token.stop_possible()) {
@@ -123,6 +125,7 @@ public:
 
     detail::memory_channel *channel_;
     std::span<std::byte> buffer_;
+    async::work_item item_;
     bool canceled_ = false;
     std::optional<std::stop_callback<canceller>> stop_callback_;
   };
@@ -193,9 +196,9 @@ private:
     return (*channels_)[1 - side_];
   }
 
-  // Closing wakes the peer's pending read through its executor. If that post throws (e.g. a full queue failing to
-  // allocate), the destructor and the move assignment, both noexcept, terminate: dropping the wake-up instead would
-  // leave the peer suspended forever.
+  // Closing wakes the peer's pending read through its executor. If that post throws (an executor whose host loop
+  // allocates; run_loop's never does), the destructor and the move assignment, both noexcept, terminate: dropping
+  // the wake-up instead would leave the peer suspended forever.
   void release() {
     if (channels_) {
       assert(!inbound().has_reader() && "memory_stream destroyed or moved while one of its reads is pending");

@@ -39,6 +39,7 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/work_item.hpp>
 
 #include <coroutine>
 
@@ -49,11 +50,15 @@ class yield_awaitable {
 public:
   [[nodiscard]] bool await_ready() const noexcept { return false; }
 
-  void await_suspend(std::coroutine_handle<> handle, await_context const &context) const {
-    context.executor.post(handle);
+  void await_suspend(std::coroutine_handle<> handle, await_context const &context) {
+    item_.handle = handle;
+    context.executor.post(item_);
   }
 
   void await_resume() const noexcept {}
+
+private:
+  work_item item_;
 };
 
 static_assert(ContextAwaitable<yield_awaitable>);

@@ -103,7 +103,7 @@ flowchart TB
 
 | Concept | Meaning | Implemented by |
 |---|---|---|
-| `executor` | where / when a coroutine resumes | thread pool, asio, browser event loop, shell main thread |
+| `executor` | where / when a coroutine resumes; `post(work_item &)` links an intrusive node, no allocation | thread pool, asio, browser event loop, shell main thread |
 | `byte_stream` | `read_some` / `write_some` on raw bytes (`any_stream`, no allocation per operation) | asio sockets, memory |
 | `connector` | `(host, port, tls) -> task<any_stream>` | asio (+ssl), memory |
 | `http_transport` | `request -> task<response>`, for platforms that do HTTP themselves | `quoll::client` over a connector, browser `fetch` |

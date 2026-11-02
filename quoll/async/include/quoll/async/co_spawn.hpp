@@ -106,7 +106,8 @@ template <Executor E, class T, CompletionHandler<T> Handler>
 void co_spawn(E const &executor, task<T> work, Handler handler, std::stop_token stop_token = {}) {
   auto root = detail::spawn_root(executor, std::move(work), std::move(handler), std::move(stop_token));
 
-  executor.post(root.handle());
+  // If post throws, nothing has started: `root` destroys the frame, and the exception reaches the caller.
+  executor.post(root.start_item());
   root.release();
 }
 

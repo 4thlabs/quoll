@@ -51,7 +51,7 @@ class recording_executor {
 public:
   explicit recording_executor(std::vector<std::coroutine_handle<>> &posted) noexcept : posted_(&posted) {}
 
-  void post(std::coroutine_handle<> handle) const { posted_->push_back(handle); }
+  void post(quoll::async::work_item &item) const { posted_->push_back(item.handle); }
 
   [[nodiscard]] bool operator==(recording_executor const &) const noexcept = default;
 
@@ -67,8 +67,9 @@ TEST_CASE("executor_ref posts to the referenced executor", "[async][executor_ref
   run_loop loop;
   auto const executor = loop.get_executor();
   executor_ref const ref{executor};
+  quoll::async::work_item item{std::noop_coroutine()};
 
-  ref.post(std::noop_coroutine());
+  ref.post(item);
 
   REQUIRE(loop.run() == 1);
 }
@@ -77,10 +78,12 @@ TEST_CASE("executor_ref wraps any Executor without intrusion", "[async][executor
   std::vector<std::coroutine_handle<>> posted;
   recording_executor const executor{posted};
   executor_ref const ref{executor};
+  quoll::async::work_item item{std::noop_coroutine()};
 
-  ref.post(std::noop_coroutine());
+  ref.post(item);
 
   REQUIRE(posted.size() == 1);
+  REQUIRE(posted.front() == item.handle);
 }
 
 TEST_CASE("executor_ref recovers the concrete executor", "[async][executor_ref]") {

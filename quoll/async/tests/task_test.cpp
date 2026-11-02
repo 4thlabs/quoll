@@ -37,6 +37,7 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/test/overloaded.hpp>
 
@@ -44,6 +45,7 @@
 
 #include <exception>
 #include <memory>
+#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -95,6 +97,15 @@ task<> hold([[maybe_unused]] std::shared_ptr<int> resource, bool &started) {
   started = true;
   co_return;
 }
+
+// An executor whose host loop cannot take more work.
+struct full_executor {
+  void post(quoll::async::work_item &) const { throw std::bad_alloc{}; }
+
+  [[nodiscard]] bool operator==(full_executor const &) const noexcept = default;
+};
+
+task<int> owns(std::shared_ptr<int> resource) { co_return *resource; }
 
 } // namespace
 
@@ -175,4 +186,17 @@ TEST_CASE("yield lets the other queued tasks run first", "[async][task][yield]")
 
   REQUIRE(completed == 2);
   REQUIRE(log == std::vector<std::string>{"a1", "b1", "a2", "b2"});
+}
+
+TEST_CASE("co_spawn hands a failing post to the caller and destroys the task", "[async][co_spawn]") {
+  auto const resource = std::make_shared<int>(42);
+  bool handled = false;
+
+  REQUIRE_THROWS_AS(co_spawn(full_executor{}, owns(resource),
+                             overloaded{[&](int) { handled = true; }, [&](std::exception_ptr) { handled = true; }}),
+                    std::bad_alloc);
+
+  // The task never ran, its handler was not invoked, and its frame (holding a copy of the resource) is gone.
+  REQUIRE_FALSE(handled);
+  REQUIRE(resource.use_count() == 1);
 }
