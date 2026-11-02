@@ -154,8 +154,11 @@ private:
     return (*channels_)[1 - side_];
   }
 
+  // Closing wakes the peer's pending read through its executor. If that post throws (e.g. a full queue failing to
+  // allocate), the destructor terminates: dropping the wake-up instead would leave the peer suspended forever.
   void release() {
     if (channels_) {
+      assert(!inbound().has_reader() && "memory_stream destroyed or moved while one of its reads is pending");
       outbound().close();
       inbound().detach_reader();
       channels_.reset();

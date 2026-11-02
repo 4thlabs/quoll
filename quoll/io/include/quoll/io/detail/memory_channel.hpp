@@ -57,6 +57,8 @@ namespace quoll::io::detail {
 // the reader suspended until some arrive.
 class memory_channel {
 public:
+  [[nodiscard]] bool has_reader() const noexcept { return static_cast<bool>(reader_); }
+
   // Something to read now: bytes, or the end of the stream.
   [[nodiscard]] bool readable() const noexcept { return offset_ < bytes_.size() || closed_; }
 

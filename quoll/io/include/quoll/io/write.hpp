@@ -41,6 +41,7 @@
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/io_result.hpp>
 
+#include <cassert>
 #include <cstddef>
 #include <span>
 
@@ -62,6 +63,9 @@ template <ByteStream Stream>
     if (result.error) {
       co_return io_result{result.error, written};
     }
+
+    // ByteStream contract: without an error, a write of non-empty data makes progress.
+    assert(result.transferred > 0 && "ByteStream::write_some() wrote nothing and reported no error");
   }
 
   co_return io_result{{}, written};
