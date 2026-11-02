@@ -48,6 +48,7 @@
 #include <exception>
 #include <functional>
 #include <optional>
+#include <stop_token>
 #include <type_traits>
 #include <utility>
 
@@ -57,8 +58,8 @@ namespace detail {
 
 // The frame owns the executor and the await_context of the whole chain.
 template <Executor E, class T, CompletionHandler<T> Handler>
-detached spawn_root(E executor, task<T> work, Handler handler) {
-  await_context const context{executor_ref{executor}};
+detached spawn_root(E executor, task<T> work, Handler handler, std::stop_token stop_token) {
+  await_context const context{executor_ref{executor}, std::move(stop_token)};
   std::exception_ptr error;
 
   if constexpr (std::is_void_v<T>) {
@@ -95,10 +96,12 @@ detached spawn_root(E executor, task<T> work, Handler handler) {
  * The task starts from the executor (never inline), and `handler` is invoked on the task's last executor with its
  * value, or with the exception it threw. The executor is copied and lives as long as the task. If `handler` throws,
  * std::terminate is called.
+ *
+ * `stop_token` becomes the stop token of the task's await_context (see current_stop_token()).
  */
 template <Executor E, class T, CompletionHandler<T> Handler>
-void co_spawn(E const &executor, task<T> work, Handler handler) {
-  auto root = detail::spawn_root(executor, std::move(work), std::move(handler));
+void co_spawn(E const &executor, task<T> work, Handler handler, std::stop_token stop_token = {}) {
+  auto root = detail::spawn_root(executor, std::move(work), std::move(handler), std::move(stop_token));
   executor.post(root.handle());
   root.release();
 }

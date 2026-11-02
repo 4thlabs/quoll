@@ -41,6 +41,7 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/completion_handler.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/executor_ref.hpp>
 #include <quoll/async/run_loop.hpp>

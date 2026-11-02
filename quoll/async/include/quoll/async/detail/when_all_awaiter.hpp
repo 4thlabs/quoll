@@ -48,6 +48,7 @@
 #include <coroutine>
 #include <cstddef>
 #include <optional>
+#include <stop_token>
 #include <tuple>
 #include <utility>
 
@@ -70,8 +71,12 @@ public:
           run_when_all_child(std::move(std::get<I>(children_)), std::get<I>(slots_), state_)...};
     }(std::index_sequence_for<Ts...>{});
 
+    // Children run on the parent's executor with the stop token of the when_all, linked to the parent's.
+    child_context_.emplace(await_context{context.executor, state_.stop_token()});
+    parent_stop_.emplace(context.stop_token, when_all_stop_forwarder{state_});
+
     for (auto &runner : runners) {
-      runner.start(context, state_);
+      runner.start(*child_context_, state_);
     }
     return state_.arrive();
   }
@@ -87,6 +92,8 @@ private:
   std::tuple<task<Ts>...> children_;
   std::tuple<std::optional<non_void_t<Ts>>...> slots_;
   when_all_state state_{sizeof...(Ts)};
+  std::optional<await_context> child_context_;
+  std::optional<std::stop_callback<when_all_stop_forwarder>> parent_stop_;
 };
 
 static_assert(ContextAwaitable<when_all_awaiter<int, void>>);
