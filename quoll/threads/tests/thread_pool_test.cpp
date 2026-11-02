@@ -25,15 +25,14 @@
 //
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 // AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/task.hpp>
@@ -105,6 +104,15 @@ task<bool> meet(std::atomic<std::size_t> &arrived, std::size_t expected) {
   co_return true;
 }
 
+task<int> hold(std::atomic<bool> &released) {
+  while (!released.load()) {
+    std::this_thread::yield();
+  }
+
+  std::this_thread::sleep_for(std::chrono::milliseconds{100});
+  co_return 0;
+}
+
 task<std::tuple<int, int>> both(int first, int second) {
   co_return co_await quoll::async::when_all(count_yields(first), count_yields(second));
 }
@@ -134,8 +142,9 @@ TEST_CASE("thread_pool hands the exception of a task to its handler", "[threads]
 
 TEST_CASE("thread_pool resumes coroutines on all its workers at once", "[threads][thread_pool]") {
   constexpr std::size_t threads = 4;
-  thread_pool pool{threads};
+  // Declared before the pool: if a REQUIRE throws, the pool still drains the tasks reading it.
   std::atomic<std::size_t> arrived{0};
+  thread_pool pool{threads};
   std::vector<std::future<bool>> outcomes;
 
   for (std::size_t index = 0; index < threads; ++index) {
@@ -147,7 +156,7 @@ TEST_CASE("thread_pool resumes coroutines on all its workers at once", "[threads
   }
 }
 
-TEST_CASE("thread_pool runs many tasks posting from every worker", "[threads][thread_pool]") {
+TEST_CASE("thread_pool runs many yielding tasks to completion", "[threads][thread_pool]") {
   thread_pool pool{4};
   std::vector<std::future<int>> outcomes;
 
@@ -169,18 +178,25 @@ TEST_CASE("thread_pool joins when_all children resumed on different workers", "[
 }
 
 TEST_CASE("thread_pool destruction runs what is still queued", "[threads][thread_pool]") {
+  std::atomic<bool> released{false};
   std::atomic<int> completed{0};
 
   {
-    thread_pool pool{2};
+    thread_pool pool{1};
+    auto const count = overloaded{[&](int) { completed.fetch_add(1); }, [](std::exception_ptr) {}};
+
+    // Holds the only worker until the destructor is about to stop the pool, and a while after: the other tasks are
+    // still queued when it does.
+    co_spawn(pool.get_executor(), hold(released), count);
 
     for (int index = 0; index < 100; ++index) {
-      co_spawn(pool.get_executor(), count_yields(3),
-               overloaded{[&](int) { completed.fetch_add(1); }, [](std::exception_ptr) {}});
+      co_spawn(pool.get_executor(), count_yields(3), count);
     }
+
+    released.store(true);
   }
 
-  REQUIRE(completed.load() == 100);
+  REQUIRE(completed.load() == 101);
 }
 
 TEST_CASE("thread_pool needs at least one thread", "[threads][thread_pool]") {

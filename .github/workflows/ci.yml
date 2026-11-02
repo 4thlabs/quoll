@@ -76,7 +76,11 @@ jobs:
         run: sudo sysctl vm.mmap_rnd_bits=28
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug "-DCMAKE_CXX_FLAGS=${{ matrix.sanitizer.flags }} -fno-omit-frame-pointer"
+        # The C flags too: llhttp is C.
+        run: >-
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug
+          "-DCMAKE_C_FLAGS=${{ matrix.sanitizer.flags }} -fno-omit-frame-pointer"
+          "-DCMAKE_CXX_FLAGS=${{ matrix.sanitizer.flags }} -fno-omit-frame-pointer"
         env:
           CXX: g++-13
 
