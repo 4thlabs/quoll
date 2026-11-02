@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.23)
 
-project(quoll VERSION 0.1.0 LANGUAGES CXX)
+project(quoll VERSION 0.1.0 LANGUAGES C CXX)
 
 if(PROJECT_IS_TOP_LEVEL)
   set(CMAKE_CXX_EXTENSIONS OFF)
@@ -21,6 +21,7 @@ include(cmake/CPM.cmake)
 
 # Modules, in dependency order.
 add_subdirectory(quoll/async)
+add_subdirectory(quoll/http)
 
 if(QUOLL_BUILD_TESTS)
   enable_testing()
