@@ -51,6 +51,41 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  sanitizers:
+    name: gcc-13 ${{ matrix.sanitizer.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer:
+          - { name: tsan, flags: -fsanitize=thread }
+          - { name: asan-ubsan, flags: -fsanitize=address,undefined -fno-sanitize-recover=all }
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Cache CPM sources
+        uses: actions/cache@v4
+        with:
+          path: .cpm-cache
+          key: cpm-${{ hashFiles('**/CMakeLists.txt', 'cmake/**') }}
+
+      # The runner's address space randomization is too wide for the sanitizer runtimes of GCC 13.
+      - name: Reduce address space randomization
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug "-DCMAKE_CXX_FLAGS=${{ matrix.sanitizer.flags }} -fno-omit-frame-pointer"
+        env:
+          CXX: g++-13
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   wasm:
     name: emscripten
     runs-on: ubuntu-24.04

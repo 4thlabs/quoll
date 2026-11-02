@@ -70,7 +70,7 @@ flowchart TB
   end
 
   subgraph adapters["Adapters"]
-    pool["thread_pool"]
+    pool["quoll::threads<br/>thread_pool"]
     asio["asio (+ssl)"]
     emscripten["emscripten<br/>browser loop, fetch, postMessage"]
     shell["webview shell<br/>desktop / iOS / Android"]
@@ -410,10 +410,11 @@ which the hybrid web model gets for free.
 - **No sockets in the browser.** Outgoing HTTP uses the `http_transport` concept implemented with `fetch`; there is
   no server in the browser (WASI later).
 - **Threads are optional.** The core (`async`, `http`, `rest`, `bridge`) must not require `std::thread`,
-  `std::jthread` or blocking waits; threads only live in the thread pool adapter. Never `sync_wait` on the browser
-  main thread.
+  `std::jthread` or blocking waits; threads only live in the thread pool adapter (`quoll::threads`). Never
+  `sync_wait` on the browser main thread.
 - **Exceptions**: build with `-fwasm-exceptions`; keep hot paths on error codes / `results`.
-- Every module builds and runs its tests under Emscripten in CI (headless Node runner).
+- Every module builds under Emscripten in CI and runs its tests there (headless Node runner), except the thread pool
+  tests: the CI build has no pthreads.
 
 ## HTTP layer
 

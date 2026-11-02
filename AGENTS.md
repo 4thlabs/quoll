@@ -14,12 +14,13 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 
 ## Status
 
-Exploration. Modules so far: `quoll::async` (task, executor_ref, await_context with stop token, co_spawn,
-when_all, run_loop), `quoll::io` (`ByteStream` concept, in-memory stream pair, `io::write`) and `quoll::http`
-(messages, llhttp parser, serializer, `http::read` / `http::write` over a byte stream; llhttp is compiled and
-exported as `quoll::llhttp`). A client GET runs end to end over a memory stream (prototype criterion 1). The
-prototype described in `docs/PLAN.md` continues with the type-erased stream and an asio connector. Do not settle its
-open questions or write the module design into this file before the prototype validates them.
+Exploration. Modules so far: `quoll::async` (task, executor_ref, await_context with stop token, co_spawn, when_all,
+run_loop), `quoll::threads` (thread pool executor; its tests do not run under WASM), `quoll::io` (`ByteStream` concept,
+in-memory stream pair, `io::write`) and `quoll::http` (messages, llhttp parser, serializer, `http::read` / `http::write`
+over a byte stream; llhttp is compiled and exported as `quoll::llhttp`). A client GET runs end to end over a memory
+stream (prototype criterion 1). The prototype described in `docs/PLAN.md` continues with the type-erased stream and an
+asio connector. Do not settle its open questions or write the module design into this file before the prototype
+validates them.
 
 ## Build & test
 
@@ -61,8 +62,8 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 - Header-only, C++20 minimum (GCC ≥ 12, Clang ≥ 17). CMake, dependencies via CPM.
 - WASM is a first-class target: core modules never require threads or blocking waits.
-- No Qt. Adapters planned: thread pool, asio, Emscripten (browser loop, `fetch`, `postMessage`), webview shell, memory
-  (tests).
+- No Qt. Adapters: thread pool (`quoll::threads`); planned: asio, Emscripten (browser loop, `fetch`,
+  `postMessage`), webview shell, memory (tests).
 
 ## Related projects
 
@@ -73,7 +74,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 ## Repository
 
-Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). CI (`.github/workflows/ci.yml`): GCC 13,
-Clang 18 and Emscripten build + tests, and a clang-format check, on every PR and push to `main`. Claude reviews every
-PR (`claude-review.yml`, rules from this file and `docs/`). Formatting: `clang-format -i <file>` with the repo
-`.clang-format`; format only the files you touch.
+Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). CI (`.github/workflows/ci.yml`): GCC 13, Clang 18
+and Emscripten build + tests, GCC 13 with TSan and with ASan / UBSan, and a clang-format check, on every PR and push to
+`main`. Claude reviews every PR (`claude-review.yml`, rules from this file and `docs/`). Formatting: `clang-format -i
+<file>` with the repo `.clang-format`; format only the files you touch.
