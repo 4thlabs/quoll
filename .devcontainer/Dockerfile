@@ -5,7 +5,7 @@ ARG USER_UID=1000
 ARG USER_GID=1000
 # Emscripten SDK version ("latest" or a pinned release such as "4.0.10").
 ARG EMSDK_VERSION=latest
-# Node.js major version, for the TS / tRPC side and the headless WASM test runner.
+# Node.js major version, for the TS side (openapi-typescript, openapi-fetch) and the headless WASM test runner.
 ARG NODE_MAJOR=24
 
 ENV DEBIAN_FRONTEND=noninteractive

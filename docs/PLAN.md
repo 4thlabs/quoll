@@ -263,6 +263,9 @@ document is served by the application (e.g. `/api/openapi.json`) and written at 
 **Other modes.** The `fetch` given to the client serializes the `Request` (method, URL, headers, body) over the
 `message_channel`; `quoll::bridge` hands it to the same router as `quoll::server` and sends the response back. The
 UI code does not change between modes, and there is no protocol of our own: the bridge carries HTTP messages.
+Streamed bodies (Server-Sent Events, large downloads) cross the bridge as a head message followed by body chunk
+messages, which the TS side exposes as the `ReadableStream` of the `Response`: the bridge `fetch` must support it
+before SSE does, in every mode. The first prototype only needs complete bodies.
 
 **Consequences for the DSL.** Every route declares its method, path template, path / query / header parameters,
 body, and response type per status code; named C++ types become `components/schemas`. The C++ → JSON Schema mapping
@@ -270,8 +273,10 @@ must be defined: `std::optional` → not required, `std::variant` → `oneOf` wi
 64-bit integers (beyond 2^53, JSON numbers lose precision in JS: string format or documented limit).
 
 **What tRPC gave and this does not.** Automatic request batching (add a batch endpoint if a real need shows up) and
-subscriptions (Server-Sent Events, described separately). Operation names come from paths instead of nested router
-keys.
+subscriptions (Server-Sent Events, described separately, streamed through the bridge as above). Operation names come
+from paths instead of nested router keys. End-to-end typing is kept: `tsc` checks parameters, bodies and responses
+against the generated types, and the C++ side decodes and validates every input through the DSL codecs, as the
+`.input(...)` validators did with tRPC.
 
 **Risks.** Generator corner cases (`oneOf` / discriminators, recursive types) and the extra generation step in the
 TS build (`openapi-typescript` is a dev dependency). Pin versions, and type-check a sample UI against the generated
