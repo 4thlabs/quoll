@@ -15,9 +15,11 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 ## Status
 
 Exploration. Modules so far: `quoll::async` (task, executor_ref, await_context with stop token, co_spawn,
-when_all, run_loop) and `quoll::http` (messages, llhttp parser, serializer; llhttp is compiled and exported as
-`quoll::llhttp`). The prototype described in `docs/PLAN.md` continues with byte streams and a client GET. Do not settle its open questions or write the module design into this file before the prototype
-validates them.
+when_all, run_loop), `quoll::io` (`ByteStream` concept, in-memory stream pair, `io::write`) and `quoll::http`
+(messages, llhttp parser, serializer, `http::read` / `http::write` over a byte stream; llhttp is compiled and
+exported as `quoll::llhttp`). A client GET runs end to end over a memory stream (prototype criterion 1). The
+prototype described in `docs/PLAN.md` continues with the type-erased stream and an asio connector. Do not settle its
+open questions or write the module design into this file before the prototype validates them.
 
 ## Build & test
 

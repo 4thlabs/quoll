@@ -1,0 +1,182 @@
+//   ___              _ _
+//  / _ \ _   _  ___ | | |
+// | | | | | | |/ _ \| | |
+// | |_| | |_| | (_) | | |
+//  \__\_\\__,_|\___/|_|_|
+//
+// BSD 3-Clause License
+//
+// Copyright (c) 2026, Thomas Gourgues (thomas.gourgues@gmail.com)
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#ifndef QUOLL_IO_MEMORY_STREAM_HPP
+#define QUOLL_IO_MEMORY_STREAM_HPP
+
+#include <quoll/async/await_context.hpp>
+#include <quoll/async/context_awaitable.hpp>
+#include <quoll/io/byte_stream.hpp>
+#include <quoll/io/detail/memory_channel.hpp>
+#include <quoll/io/io_result.hpp>
+
+#include <array>
+#include <cassert>
+#include <coroutine>
+#include <cstddef>
+#include <memory>
+#include <span>
+#include <utility>
+
+namespace quoll::io {
+
+/**
+ * @brief One end of an in-memory byte pipe, made by make_memory_stream_pair(): what one end writes, the other
+ * reads. For tests, and for connecting two components of the same process.
+ *
+ * Writes never wait (the pipe is unbounded) and a read waits until the peer writes or closes; the reader resumes
+ * on its own executor. Stop requests are ignored. Destroying an end closes it, and the peer's writes then fail with
+ * `std::errc::broken_pipe`. An end must not be destroyed or moved while one of its reads is pending.
+ *
+ * Move-only. Thread safety: none; both ends are used from one thread.
+ */
+class memory_stream {
+  using channels = std::array<detail::memory_channel, 2>;
+
+public:
+  /** @brief Awaitable returned by read_some(). */
+  class [[nodiscard]] read_awaitable {
+  public:
+    [[nodiscard]] bool await_ready() const noexcept { return buffer_.empty() || channel_->readable(); }
+
+    void await_suspend(std::coroutine_handle<> handle, async::await_context const &context) noexcept {
+      channel_->wait(handle, context.executor);
+    }
+
+    [[nodiscard]] io_result await_resume() noexcept { return channel_->read(buffer_); }
+
+  private:
+    friend class memory_stream;
+
+    read_awaitable(detail::memory_channel &channel, std::span<std::byte> buffer) noexcept
+        : channel_(&channel), buffer_(buffer) {}
+
+    detail::memory_channel *channel_;
+    std::span<std::byte> buffer_;
+  };
+
+  /** @brief Awaitable returned by write_some(). Completes without suspending. */
+  class [[nodiscard]] write_awaitable {
+  public:
+    [[nodiscard]] bool await_ready() const noexcept { return true; }
+
+    [[nodiscard]] bool await_suspend(std::coroutine_handle<>, async::await_context const &) const noexcept {
+      return false;
+    }
+
+    [[nodiscard]] io_result await_resume() { return channel_->write(data_); }
+
+  private:
+    friend class memory_stream;
+
+    write_awaitable(detail::memory_channel &channel, std::span<std::byte const> data) noexcept
+        : channel_(&channel), data_(data) {}
+
+    detail::memory_channel *channel_;
+    std::span<std::byte const> data_;
+  };
+
+  memory_stream(memory_stream const &) = delete;
+  memory_stream &operator=(memory_stream const &) = delete;
+
+  memory_stream(memory_stream &&other) noexcept : channels_(std::move(other.channels_)), side_(other.side_) {}
+
+  memory_stream &operator=(memory_stream &&other) noexcept {
+    if (this != &other) {
+      release();
+      channels_ = std::move(other.channels_);
+      side_ = other.side_;
+    }
+
+    return *this;
+  }
+
+  ~memory_stream() { release(); }
+
+  /** @brief Reads the bytes the peer wrote, waiting for some if there are none yet. */
+  [[nodiscard]] read_awaitable read_some(std::span<std::byte> buffer) noexcept { return {inbound(), buffer}; }
+
+  /** @brief Hands all of `data` to the peer. */
+  [[nodiscard]] write_awaitable write_some(std::span<std::byte const> data) noexcept { return {outbound(), data}; }
+
+  /**
+   * @brief Closes the sending side: the peer reads what was already written, then `io::error::end_of_stream`.
+   * Writing fails from now on; reading still works.
+   */
+  void close() { outbound().close(); }
+
+private:
+  friend std::pair<memory_stream, memory_stream> make_memory_stream_pair();
+
+  memory_stream(std::shared_ptr<channels> pipe, std::size_t side) noexcept : channels_(std::move(pipe)), side_(side) {}
+
+  // Each end reads from the channel of its side and writes into the other one.
+  [[nodiscard]] detail::memory_channel &inbound() const noexcept {
+    assert(channels_ && "memory_stream used after being moved from");
+    return (*channels_)[side_];
+  }
+
+  [[nodiscard]] detail::memory_channel &outbound() const noexcept {
+    assert(channels_ && "memory_stream used after being moved from");
+    return (*channels_)[1 - side_];
+  }
+
+  void release() {
+    if (channels_) {
+      outbound().close();
+      inbound().detach_reader();
+      channels_.reset();
+    }
+  }
+
+  std::shared_ptr<channels> channels_;
+  std::size_t side_;
+};
+
+static_assert(async::ContextAwaitable<memory_stream::read_awaitable>);
+static_assert(async::ContextAwaitable<memory_stream::write_awaitable>);
+static_assert(ByteStream<memory_stream>);
+
+/** @brief Two connected memory_stream ends. */
+[[nodiscard]] inline std::pair<memory_stream, memory_stream> make_memory_stream_pair() {
+  auto pipe = std::make_shared<memory_stream::channels>();
+
+  return {memory_stream{pipe, 0}, memory_stream{pipe, 1}};
+}
+
+} // namespace quoll::io
+
+#endif // QUOLL_IO_MEMORY_STREAM_HPP

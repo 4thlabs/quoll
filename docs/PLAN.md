@@ -17,7 +17,7 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
 ## Decided
 
 - Name: **Quoll**, a new public library (namespace `quoll::`, same name for the C++ package and the npm package of
-  the TS side). It holds `async`, `http`, `client`, `server`, `rest` (DSL) and `bridge`. Puffin keeps its
+  the TS side). It holds `async`, `io`, `http`, `client`, `server`, `rest` (DSL) and `bridge`. Puffin keeps its
   existing utility modules (events, ioc, maths, imdb...). Repository: GitHub `4thlabs/quoll`.
 - Header-only, C++20 minimum, rules in [`CODING_RULES.md`](CODING_RULES.md). Third-party C/C++ dependencies may be
   compiled targets fetched by CPM; Quoll's own code stays header-only.
@@ -57,6 +57,7 @@ flowchart TB
     server["quoll::server<br/>HTTP/1.1 connections, middlewares, static files"]
     client["quoll::client<br/>pool, keep-alive, redirects, retry, auth, timeouts"]
     http["quoll::http<br/>messages, parser, serializer, router"]
+    io["quoll::io<br/>byte streams, memory stream"]
     async["quoll::async<br/>task, executor_ref, await_context, when_all, co_spawn"]
   end
 
@@ -83,10 +84,11 @@ flowchart TB
   bridge --> http
   server --> http
   client --> http
-  http --> async
+  http --> io
+  io --> async
   bridge --> async
 
-  server -.-> stream
+  io -.-> stream
   client -.-> connector
   client -.-> transport
   bridge -.-> channel

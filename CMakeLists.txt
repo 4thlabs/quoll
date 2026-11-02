@@ -25,6 +25,7 @@ include(cmake/CPM.cmake)
 
 # Modules, in dependency order.
 add_subdirectory(quoll/async)
+add_subdirectory(quoll/io)
 add_subdirectory(quoll/http)
 
 if(QUOLL_BUILD_TESTS)
