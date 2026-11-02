@@ -17,7 +17,7 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
 ## Decided
 
 - Name: **Quoll**, a new public library (namespace `quoll::`, same name for the C++ package and the npm package of
-  the TS side). It holds `async`, `http`, `client`, `server`, `rest` (DSL), `trpc` and `bridge`. Puffin keeps its
+  the TS side). It holds `async`, `http`, `client`, `server`, `rest` (DSL) and `bridge`. Puffin keeps its
   existing utility modules (events, ioc, maths, imdb...). Repository: GitHub `4thlabs/quoll`.
 - Header-only, C++20 minimum, rules in [`CODING_RULES.md`](CODING_RULES.md). Third-party C/C++ dependencies may be
   compiled targets fetched by CPM; Quoll's own code stays header-only.
@@ -28,9 +28,12 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
 - HTTP layer: **own stack on llhttp** (option B of [HTTP layer](#http-layer)), decided on 2026-11-02. llhttp is
   fetched by CPM and compiled; `quoll::async` follows Capy's design without depending on it.
 - WASM is a first-class target: the core never requires threads or blocking waits.
-- The TS side of the API is **[tRPC](https://trpc.io/)** (v11): the server speaks the tRPC HTTP protocol and the
-  DSL generates the `AppRouter` type, so a stock `@trpc/client` (and the React Query / TanStack integrations) is
-  fully typed against the C++ API. See [tRPC compatibility](#trpc-compatibility).
+- The API contract is **[OpenAPI](https://spec.openapis.org/oas/v3.1.0) 3.1**, generated from the DSL. The TS side
+  is a stock [`openapi-fetch`](https://openapi-ts.dev/openapi-fetch/) client typed by
+  [`openapi-typescript`](https://openapi-ts.dev/) (TanStack Query through `openapi-react-query`). Decided on
+  2026-11-02, replacing tRPC: no TS-only wire protocol to follow across major versions, no type-only stub router,
+  the server stays plain REST usable from any language, and the bridge carries ordinary HTTP requests. See
+  [TypeScript client](#typescript-client-openapi).
 - Main UI direction: **hybrid web UI** (see [UI](#ui-hybrid-web-model)). Qt is no longer a target: no Qt adapter in
   the plan.
 
@@ -41,14 +44,13 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
 ```mermaid
 flowchart TB
   subgraph app["Application"]
-    ui["Web UI (TS)<br/>+ tRPC client"]
+    ui["Web UI (TS)<br/>+ openapi-fetch client"]
     handlers["C++ API handlers<br/>(business logic)"]
   end
 
   subgraph quoll["Quoll (header-only, sans-IO)"]
-    rest["quoll::rest<br/>typed API DSL, codecs, code generation"]
-    trpc["quoll::trpc<br/>tRPC wire protocol"]
-    bridge["quoll::bridge<br/>API calls as messages"]
+    rest["quoll::rest<br/>typed API DSL, codecs, OpenAPI generation"]
+    bridge["quoll::bridge<br/>HTTP requests as messages"]
     server["quoll::server<br/>HTTP/1.1 server, router, middlewares, static files"]
     client["quoll::client<br/>pool, keep-alive, redirects, retry, auth, timeouts"]
     http["quoll::http<br/>messages, parser, serializer"]
@@ -73,12 +75,9 @@ flowchart TB
 
   ui --> bridge
   handlers --> rest
-  rest --> bridge
   rest --> server
-  rest --> trpc
-  trpc --> server
-  trpc --> bridge
   rest --> client
+  bridge --> server
   server --> http
   client --> http
   http --> async
@@ -103,7 +102,7 @@ flowchart TB
 | `byte_stream` | `read_some` / `write_some` on raw bytes (`any_stream`, no allocation per operation) | asio sockets, memory |
 | `connector` | `(host, port, tls) -> task<any_stream>` | asio (+ssl), memory |
 | `http_transport` | `request -> task<response>`, for platforms that do HTTP themselves | `quoll::client` over a connector, browser `fetch` |
-| `message_channel` | send / receive API messages between UI and core | `postMessage` (Worker), webview IPC, HTTP, memory |
+| `message_channel` | send / receive HTTP requests and responses between UI and core | `postMessage` (Worker), webview IPC, HTTP, memory |
 
 Design references taken from Boost.Capy: `await_context` propagated through `await_suspend(h, env)`,
 `executor_ref`, zero-allocation `any_stream`.
@@ -118,16 +117,15 @@ flowchart LR
   dsl["API definition<br/>(quoll::rest DSL, C++)"]
   dsl --> routes["Server routes<br/>quoll::server"]
   dsl --> cppclient["C++ client<br/>quoll::client / http_transport"]
-  dsl --> dispatch["Message dispatcher<br/>quoll::bridge"]
-  dsl --> trpcep["tRPC endpoint<br/>quoll::trpc on quoll::server"]
-  dsl --> ts["AppRouter type (TS)<br/>for @trpc/client (generated)"]
-  dsl --> spec["OpenAPI document<br/>(optional)"]
+  dsl --> spec["OpenAPI 3.1 document<br/>(generated)"]
+  spec --> ts["TS types (openapi-typescript)<br/>for openapi-fetch"]
+  routes --> dispatch["Message dispatcher<br/>quoll::bridge, same router"]
 ```
 
 ## UI: hybrid web model
 
-The UI is a web app (HTML / CSS / TS). Text, IME, selection and accessibility come from the DOM. The tRPC client
-exposes the same typed API in every mode; only its **link** (transport) changes.
+The UI is a web app (HTML / CSS / TS). Text, IME, selection and accessibility come from the DOM. The typed
+`openapi-fetch` client exposes the same API in every mode; only the **`fetch` function** it is given changes.
 
 ### Deployment modes
 
@@ -139,7 +137,7 @@ native C++ programs can call the same API.
 ```mermaid
 flowchart LR
   subgraph browser["Browser (any device)"]
-    ui1["Web UI"] --> ts1["tRPC client"]
+    ui1["Web UI"] --> ts1["typed client<br/>(openapi-fetch)"]
   end
   subgraph host["Server (native)"]
     srv["quoll::server"] --> static["static files<br/>(web app)"]
@@ -160,7 +158,7 @@ offline-capable. The core can only be a client: outgoing calls go through `fetch
 ```mermaid
 flowchart LR
   subgraph browser["Browser / installed PWA"]
-    ui2["Web UI"] --> ts2["tRPC client"]
+    ui2["Web UI"] --> ts2["typed client<br/>(openapi-fetch)"]
     ts2 -- "postMessage" --> worker
     subgraph worker["Web Worker"]
       d2["quoll::bridge dispatcher"] --> h2["API handlers<br/>(C++ → WASM)"]
@@ -179,7 +177,7 @@ thin native window hosting a webview (desktop: a C++ webview library; mobile: a 
 flowchart LR
   subgraph app3["Native app"]
     subgraph wv["Webview"]
-      ui3["Web UI"] --> ts3["tRPC client"]
+      ui3["Web UI"] --> ts3["typed client<br/>(openapi-fetch)"]
     end
     subgraph core3["Native core"]
       d3["quoll::bridge dispatcher"] --> h3["API handlers"]
@@ -198,7 +196,7 @@ The PWA runs local logic in WASM (offline, instant) and syncs with a native Quol
 ```mermaid
 flowchart LR
   subgraph b4["Browser / PWA"]
-    ui4["Web UI"] --> ts4["tRPC client"]
+    ui4["Web UI"] --> ts4["typed client<br/>(openapi-fetch)"]
     ts4 -- "postMessage" --> w4["Worker: local handlers (WASM)"]
   end
   subgraph s4["Server (native)"]
@@ -210,87 +208,74 @@ flowchart LR
 
 ### Same call, three transports
 
-The tRPC client and the C++ handler are identical; only the tRPC link and the `message_channel` differ.
+The client code and the C++ handler are identical; only the `fetch` given to the client and the
+`message_channel` differ. In every mode the request reaches the same router.
 
 ```mermaid
 sequenceDiagram
   participant UI as Web UI
-  participant TS as tRPC client (typed by AppRouter)
-  participant CH as message_channel
-  participant D as quoll::bridge / server
+  participant TS as openapi-fetch (generated types)
+  participant CH as fetch / message_channel
+  participant R as Router (quoll::server, or quoll::bridge in process)
   participant H as C++ handler
 
-  UI->>TS: trpc.accounts.get.query({ id: 42 })
-  TS->>CH: tRPC request (path, input)
-  Note over CH: Server mode: httpBatchLink (HTTP)<br/>PWA: postMessage link to Worker<br/>Native app: webview IPC link
-  CH->>D: message
-  D->>H: decoded, typed arguments
-  H-->>D: task<Account>
-  D-->>CH: tRPC envelope (result.data / error)
-  CH-->>TS: message
-  TS-->>UI: Promise<Account>
+  UI->>TS: client.GET("/accounts/{id}", { params: { path: { id: 42 } } })
+  TS->>CH: HTTP request (method, path, headers, body)
+  Note over CH: Server mode: browser fetch (HTTP)<br/>PWA: fetch over postMessage to the Worker<br/>Native app: fetch over webview IPC
+  CH->>R: request
+  R->>H: decoded, typed arguments
+  H-->>R: task<Account>
+  R-->>CH: HTTP response (status, JSON body)
+  CH-->>TS: Response
+  TS-->>UI: { data: Account } or { error }
 ```
 
-### tRPC compatibility
+### TypeScript client: OpenAPI
 
-tRPC is TypeScript-only: normally the client imports `typeof appRouter` from a TS server. Quoll replaces the TS
-server with two generated pieces and keeps the client stock.
+The DSL generates an OpenAPI 3.1 document; `openapi-typescript` turns it into a `.d.ts` at build time, and a stock
+`openapi-fetch` client is typed by it. Nothing generated ships at runtime except the tiny client.
 
 ```mermaid
 flowchart LR
   dsl["API definition<br/>(quoll::rest DSL)"]
-  dsl --> gen["Generated router.ts<br/>(type-only stub router)"]
-  dsl --> ep["quoll::trpc endpoint<br/>(C++ handlers)"]
-  gen -- "import type { AppRouter }" --> cl["@trpc/client<br/>+ TanStack Query"]
-  cl -- "tRPC HTTP protocol<br/>/trpc/accounts.get?input=..." --> ep
+  dsl --> spec["openapi.json"]
+  dsl --> routes["quoll::server routes<br/>(C++ handlers)"]
+  spec -- "openapi-typescript" --> types["api.d.ts<br/>(paths, components)"]
+  types -- "import type { paths }" --> cl["openapi-fetch<br/>+ openapi-react-query"]
+  cl -- "plain REST<br/>GET /api/accounts/42" --> routes
 ```
-
-**Generated TypeScript.** A real `.ts` file built with `initTRPC`, whose procedures carry the types but no logic.
-The client only does `import type`, so nothing of it ships at runtime. This uses tRPC's own types instead of a
-hand-written `.d.ts`, which would depend on tRPC internals (`unstable-core-do-not-import`) that change between
-releases.
 
 ```ts
-// generated from the DSL: do not edit
-import { initTRPC } from '@trpc/server';
-const t = initTRPC.create();
-const stub = <T>() => (): T => { throw new Error('type-only'); };
+// api.d.ts is generated by openapi-typescript from the document the DSL produced: do not edit
+import createClient from 'openapi-fetch';
+import type { paths } from './api';
 
-export interface Account { id: number; name: string; }
+// transportFetch: the browser fetch, or a fetch over postMessage / webview IPC (see below)
+const client = createClient<paths>({ baseUrl: '/api', fetch: transportFetch });
 
-const appRouter = t.router({
-  accounts: t.router({
-    get: t.procedure.input((v: unknown) => v as { id: number }).query(stub<Account>()),
-    rename: t.procedure.input((v: unknown) => v as { id: number; name: string }).mutation(stub<Account>()),
-  }),
-});
-export type AppRouter = typeof appRouter;
+const { data, error } = await client.GET('/accounts/{id}', { params: { path: { id: 42 } } });
 ```
 
-Optionally the generator also emits Zod schemas, to validate inputs on the client and to use them as `.input(...)`.
+**Server side.** Plain REST on `quoll::server`: the DSL routes are the paths of the document, bodies are JSON, and
+errors are `application/problem+json` (RFC 9457) responses declared in the document, so `error` is typed too. The
+document is served by the application (e.g. `/api/openapi.json`) and written at build time for the TS build.
 
-**Server side (`quoll::trpc`).** Implements the tRPC v11 HTTP protocol on top of `quoll::server`:
+**Other modes.** The `fetch` given to the client serializes the `Request` (method, URL, headers, body) over the
+`message_channel`; `quoll::bridge` hands it to the same router as `quoll::server` and sends the response back. The
+UI code does not change between modes, and there is no protocol of our own: the bridge carries HTTP messages.
 
-- each DSL operation is a procedure: `query` (GET, input as JSON in `?input=`), `mutation` (POST, JSON body), and
-  later `subscription` (Server-Sent Events, for `httpSubscriptionLink`);
-- nested routers map to dotted paths (`accounts.get` → `/trpc/accounts.get`);
-- batching: `?batch=1`, comma-separated paths, inputs keyed by index, array response, `207` on mixed statuses;
-- envelopes: `{ "result": { "data": ... } }` and `{ "error": { "message", "code", "data": { "code", "httpStatus",
-  "path" } } }`, with tRPC error keys (`BAD_REQUEST`, `NOT_FOUND`, ...) mapped to HTTP status and JSON-RPC codes;
-- plain JSON first; a `superjson` transformer (dates, maps, bigints) only if needed;
-- `allowMethodOverride` support (queries sent as POST).
+**Consequences for the DSL.** Every route declares its method, path template, path / query / header parameters,
+body, and response type per status code; named C++ types become `components/schemas`. The C++ → JSON Schema mapping
+must be defined: `std::optional` → not required, `std::variant` → `oneOf` with a discriminator, enums, maps, and
+64-bit integers (beyond 2^53, JSON numbers lose precision in JS: string format or documented limit).
 
-**Other modes.** The same protocol envelopes travel over `message_channel`: a small custom tRPC link
-(`postMessage` to the Worker in PWA mode, webview IPC in the native app) sends `{ path, type, input }` and the
-`quoll::bridge` dispatcher answers with the same envelopes. The UI code does not change between modes.
+**What tRPC gave and this does not.** Automatic request batching (add a batch endpoint if a real need shows up) and
+subscriptions (Server-Sent Events, described separately). Operation names come from paths instead of nested router
+keys.
 
-**Consequences for the DSL.** tRPC is RPC, not REST: every operation needs a name, a kind (query / mutation /
-subscription), an input type and an output type. The DSL can still generate REST routes and OpenAPI from the same
-definitions for non-TS consumers.
-
-**Risks.** The tRPC wire protocol is documented but evolves with major versions (v10 → v11 changed it): pin a
-version and run the official client against the C++ server in CI. Type inference on very large routers can be slow
-in the TS editor.
+**Risks.** Generator corner cases (`oneOf` / discriminators, recursive types) and the extra generation step in the
+TS build (`openapi-typescript` is a dev dependency). Pin versions, and type-check a sample UI against the generated
+types in CI.
 
 ### Mode capabilities
 
@@ -348,10 +333,10 @@ Goal: validate the design with code. Success criteria:
 2. Parser edge cases: `HEAD` responses, `1xx` / `100-continue`, close-delimited bodies, chunked with trailers.
 3. An asio `connector` producing a type-erased stream.
 4. The HTTP core compiles with Emscripten; a `fetch`-based `http_transport` runs the same call in Node.
-5. One API defined with the DSL, the generated `AppRouter`, called with a stock `@trpc/client` from the same web
-   page in three modes:
-   native server (`httpBatchLink`), PWA (Quoll in a Worker, `postMessage` link), native webview shell (IPC link).
-   Errors, batching and type checking (`tsc` fails on a wrong input type) must work.
+5. One API defined with the DSL, its generated OpenAPI document and TS types, called with `openapi-fetch` from the
+   same web page in three modes: native server (browser `fetch`), PWA (Quoll in a Worker, `fetch` over
+   `postMessage`), native webview shell (`fetch` over IPC). Typed errors and type checking (`tsc` fails on a wrong
+   parameter or body) must work, and the document validates against the OpenAPI 3.1 schema.
 
 ## Environment
 
