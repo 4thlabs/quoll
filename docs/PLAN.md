@@ -36,6 +36,9 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
   [TypeScript client](#typescript-client-openapi).
 - Main UI direction: **hybrid web UI** (see [UI](#ui-hybrid-web-model)). Qt is no longer a target: no Qt adapter in
   the plan.
+- Web build (2026-11-02, see [Web integration and build chain](#web-integration-and-build-chain)): **React + Vite**
+  for the reference sample and the scaffolding template, while Quoll's npm side stays framework-agnostic; **SPA /
+  static builds only** (no SSR Node server); `openapi.json` is **generated, never committed**.
 
 ## Architecture
 
@@ -295,6 +298,77 @@ helper, so it works in every mode once the bridge streams bodies. Open: the exac
 TS build (`openapi-typescript` is a dev dependency). Pin versions, and type-check a sample UI against the generated
 types in CI.
 
+### Web integration and build chain
+
+Two toolchains build an application: CMake for the C++ core, npm / Vite for the UI. Their contract is a set of
+files, so any web framework fits as long as it builds a static SPA.
+
+```mermaid
+flowchart LR
+  subgraph cpp["C++ (CMake)"]
+    def["api.hpp<br/>API definition (DSL)"]
+    gen["quoll_add_openapi<br/>generator (host, or node under Emscripten)"]
+    core["core.js + core.wasm<br/>(Emscripten, PWA)"]
+    app["native binary<br/>quoll::server or webview shell"]
+  end
+  subgraph web["UI (npm / Vite)"]
+    plugin["quoll/vite plugin"]
+    types["api.d.ts<br/>(openapi-typescript)"]
+    ui["React UI<br/>openapi-fetch + quoll/fetch"]
+    dist["dist/"]
+  end
+  def --> gen --> spec["openapi.json"]
+  spec --> plugin --> types --> ui
+  def --> core
+  def --> app
+  core --> plugin
+  ui --> dist
+  dist -- "copied or embedded<br/>(quoll_add_web_ui)" --> app
+```
+
+**The contract: files.**
+
+1. `openapi.json`, produced by a CMake target from the application's API definition. Generated at every build,
+   never committed: building the UI needs the C++ side.
+2. `api.d.ts`, produced from it by `openapi-typescript` (gitignored).
+3. For the PWA: the Emscripten output `core.js` + `core.wasm` (ES module, worker environment), loaded in a Worker.
+4. The UI `dist/`: served by `quoll::server` from a directory, or embedded in the binary (single-binary server,
+   native shell).
+
+**Who drives.** Development is Vite-driven: `npm run dev` gives HMR, regenerates the types and proxies the API to the
+native server. Release is CMake-driven: `cmake --build` runs the generator, then `npm run build`, then copies or
+embeds `dist/` into the binary. Same artifacts, two entry points.
+
+**C++ side.** App-facing CMake helpers in a new `cmake/QuollApp.cmake`, shipped with the package config (separate
+from `QuollHelpers.cmake`, which only builds Quoll itself):
+
+- `quoll_add_openapi(TARGET <name> API_HEADER <header> API <symbol> OUTPUT <file>)` generates a tiny `main` that
+  prints `quoll::rest::openapi(<symbol>)`, builds it and runs it. The API **definition** therefore lives in a header
+  of its own, apart from the handler implementations. In an Emscripten build the generator runs under node through
+  `CMAKE_CROSSCOMPILING_EMULATOR`: no host toolchain needed.
+- `quoll_add_web_ui(TARGET <app> UI_DIR <dir> [EMBED])` runs `npm ci` and `npm run build` after the generator, then
+  copies `dist/` next to the binary or, with `EMBED`, generates an application source holding the files, served by
+  `quoll::server` or the shell. That source belongs to the application: Quoll stays header-only.
+
+**npm package `quoll`.** Framework-agnostic (no React dependency), with subpath exports:
+
+- `quoll/fetch`: the transport `fetch` functions given to `openapi-fetch`, over `postMessage` (Worker) and webview
+  IPC; server mode uses the browser `fetch`. Streamed bodies come with SSE.
+- `quoll/worker`: bootstrap that loads `core.js` in the Worker and wires `postMessage` to `quoll::bridge`.
+- `quoll/vite`: Vite plugin. Runs the generator target and `openapi-typescript` at start and when `openapi.json`
+  changes, proxies `/api` to the native server in development, serves and emits `core.js` + `core.wasm` in PWA mode,
+  and adds the COOP / COEP headers only when the core uses threads.
+- The deployment mode is chosen at build time (Vite mode / environment): one UI codebase.
+
+**Frameworks.** React, the reference: `openapi-react-query` on top of the client. Vue, Svelte, Solid, Angular: their
+TanStack Query adapter fed by the same `openapi-fetch` client, no Quoll package per framework. Meta-frameworks only
+in static / SPA mode (Next.js `output: 'export'`, SvelteKit `adapter-static`, Nuxt `ssr: false`): an SSR Node server
+cannot run in the PWA or the native shell. Offline caching of the `.wasm` is the application's choice
+(`vite-plugin-pwa` in the sample).
+
+**Native shell.** The webview loads the embedded UI through a custom URL scheme served by the router, and the IPC
+`fetch` goes to `quoll::bridge`.
+
 ### Mode capabilities
 
 | | Server + web app | PWA (WASM) | Native app (shell) |
@@ -343,6 +417,12 @@ and accessibility on mobile and web, which the hybrid web model gets for free.
 
 Decision: **B** (2026-11-02).
 
+## Open questions
+
+- Webview library for the desktop shell, and the mobile hosts (Swift / Kotlin).
+- Shape of the typed SSE helper on the TS side.
+- Embedding format of `dist/` (generated byte arrays, compression, `#embed` when compilers have it).
+
 ## Prototype (next step)
 
 Goal: validate the design with code. Success criteria:
@@ -352,12 +432,16 @@ Goal: validate the design with code. Success criteria:
 3. An asio `connector` producing a type-erased stream.
 4. The HTTP core compiles with Emscripten; a `fetch`-based `http_transport` runs the same call in Node.
 5. One API defined with the DSL, its generated OpenAPI document and TS types, called with `openapi-fetch` from the
-   same web page in three modes: native server (browser `fetch`), PWA (Quoll in a Worker, `fetch` over
-   `postMessage`), native webview shell (`fetch` over IPC). Typed errors and type checking (`tsc` fails on a wrong
-   parameter or body) must work, and the document validates against the OpenAPI 3.1 schema.
+   same React + Vite sample (`samples/`) in three modes: native server (browser `fetch`), PWA (Quoll in a Worker,
+   `fetch` over `postMessage`), native webview shell (`fetch` over IPC). Typed errors and type checking (`tsc` fails
+   on a wrong parameter or body) must work, and the document validates against the OpenAPI 3.1 schema.
+6. The build chain of the sample works both ways in CI: `npm run dev` with `quoll/vite` (development path) and
+   `cmake --build` with `quoll_add_openapi` / `quoll_add_web_ui` (release path).
 
 ## Environment
 
+- Scaffolding: once the prototype holds, a `web-quoll` template in cpp-init (`../cpp-init`: React + Vite + CMake
+  presets), following its `templates/cli-puffin`.
 - Dev container (`.devcontainer/`): Ubuntu 24.04, GCC 13, Clang 18, CMake / Ninja / ccache, OpenSSL, Emscripten SDK
   (`EMSDK_VERSION`, default `latest`), Node.js (`NODE_MAJOR`, default 24).
 - Agent machine: no local toolchain. Docker goes through the docker-in-docker daemon `DOCKER_HOST=tcp://orca-dind:2375`
