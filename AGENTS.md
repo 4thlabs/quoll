@@ -14,9 +14,43 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 
 ## Status
 
-Exploration: no code yet. The next step is the prototype described in `docs/PLAN.md`; it decides the HTTP layer
-(own stack + llhttp, the current leaning, vs Boost.Capy + Boost.Http). Do not settle open decisions or write the
-architecture into this file before the prototype validates them.
+Exploration: the build skeleton exists, no module yet. The HTTP layer is decided (own stack on llhttp); the next
+step is the prototype described in `docs/PLAN.md`. Do not settle its open questions or write the module design into
+this file before the prototype validates them.
+
+## Build & test
+
+Requires CMake ≥ 3.23. Tests and install rules are ON by default when Quoll is the top-level project
+(`QUOLL_BUILD_TESTS`, `QUOLL_INSTALL`).
+
+```bash
+cmake -B build
+cmake --build build -j
+ctest --test-dir build                # one ctest named "quoll" (none until a module declares tests)
+./build/tests/quoll_tests "[tag]"     # Catch2 filters
+emcmake cmake -B build-wasm && cmake --build build-wasm -j && ctest --test-dir build-wasm   # runs under node
+```
+
+## Layout
+
+Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
+
+- Each module is a directory `quoll/<module>/` with `include/quoll/<module>/...` headers, an optional umbrella
+  `include/quoll/<module>.hpp`, `tests/`, and a `CMakeLists.txt`:
+
+  ```cmake
+  quoll_declare_module(NAME http DEPS quoll::async)
+  quoll_declare_tests(SOURCES tests/parser_test.cpp DEPS quoll::http)
+  ```
+
+  This creates the `INTERFACE` target `quoll_<module>`, alias `quoll::<module>`, exported as `quoll::<module>`
+  by `find_package(quoll)`. Modules are added in dependency order in the root `CMakeLists.txt`.
+- All test sources compile into one executable, `build/tests/quoll_tests` (Catch2 v3 via CPM, built by
+  `quoll_main_tests()` in `tests/CMakeLists.txt`).
+- With tests ON, every header is also compiled alone in its own translation unit (`quoll_<module>_header_check`),
+  so a header that is not self-contained breaks the build.
+- Dependencies come from CPM (`cmake/CPM.cmake`, always included: modules need it, not only tests). Under
+  Emscripten the root sets `-fwasm-exceptions` before any dependency is added.
 
 ## Hard constraints
 
