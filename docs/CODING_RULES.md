@@ -10,9 +10,9 @@ C++ Core Guidelines.
 - No ODR violations: non-template free functions and out-of-class member definitions are `inline`, namespace-scope
   constants are `inline constexpr`, no `static` or unnamed-namespace entities and no mutable global state in headers.
 - Never `using namespace` at namespace scope in a header.
-- Implementation details live in `quoll::<module>::detail` (files under `include/quoll/<module>/detail/`). A user
-  never has to name anything in `detail`.
-- Public API: one header per component plus an umbrella `include/quoll/<module>.hpp`.
+- Implementation details live in `quoll::<module>::detail` (files under
+  `quoll/<module>/include/quoll/<module>/detail/`). A user never has to name anything in `detail`.
+- Public API: one header per component plus an umbrella `quoll/<module>/include/quoll/<module>.hpp`.
 - No `.cpp`, no explicit instantiation / `extern template`. Third-party C/C++ dependencies (e.g. llhttp) may be
   compiled targets fetched by CPM; Quoll's own code stays header-only.
 - Macros only for include guards and `QUOLL_`-prefixed configuration switches.
@@ -27,7 +27,8 @@ C++ Core Guidelines.
 - Private data members end with `_` (`handle_`); public members of aggregates don't.
 - Standard-like member aliases (`value_type`, `size_type`, `iterator`, `executor_type`...). Text types are generic
   over the character type: `basic_xxx<CharT, Traits = std::char_traits<CharT>, ...>` + `using xxx = basic_xxx<char>;`.
-- Every file starts with the Quoll ASCII logo + BSD 3-Clause banner (current year):
+- Every C++ file (headers, tests) starts with the Quoll ASCII logo + BSD 3-Clause banner (current year); CMake
+  files don't:
 
 ```cpp
 //   ___              _ _

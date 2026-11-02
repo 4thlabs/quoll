@@ -25,6 +25,8 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
   removed from Puffin's `master` for quality reasons. Ideas only: never port code from them, rewrite to the rules.
 - Type erasure: non-intrusive function-pointer tables, `xxx_ref` + `any_xxx` (see the rules).
 - The HTTP client is in scope. Burl (CppAlliance) is not an option: it is tied to Corosio for sockets / TLS.
+- HTTP layer: **own stack on llhttp** (option B of [HTTP layer](#http-layer)), decided on 2026-11-02. llhttp is
+  fetched by CPM and compiled; `quoll::async` follows Capy's design without depending on it.
 - WASM is a first-class target: the core never requires threads or blocking waits.
 - The TS side of the API is **[tRPC](https://trpc.io/)** (v11): the server speaks the tRPC HTTP protocol and the
   DSL generates the `AppRouter` type, so a stock `@trpc/client` (and the React Query / TanStack integrations) is
@@ -326,7 +328,7 @@ and accessibility on mobile and web, which the hybrid web model gets for free.
 - **Exceptions**: build with `-fwasm-exceptions`; keep hot paths on error codes / `results`.
 - Every module builds and runs its tests under Emscripten in CI (headless Node runner).
 
-## Open decision: HTTP layer
+## HTTP layer
 
 | | A. Capy + Boost.Http | B. Own stack + llhttp |
 |---|---|---|
@@ -336,14 +338,13 @@ and accessibility on mobile and web, which the hybrid web model gets for free.
 | Dependencies | Boost (system, url, json...) | none besides llhttp |
 | WASM | Unverified: Capy's `thread_pool` / `strand` use `std::thread`; no Emscripten support mentioned in either repo | llhttp is plain C, known to build to WASM |
 
-Current leaning: **B**, to be confirmed by the prototype.
+Decision: **B** (2026-11-02).
 
 ## Prototype (next step)
 
-Goal: decide with code, not opinions. Success criteria:
+Goal: validate the design with code. Success criteria:
 
-1. The same client GET, end to end, written once with `boost::http::response_parser` + `serializer` and once with
-   llhttp + own serializer, over a `byte_stream`. Compare API, glue code size, dependencies pulled.
+1. A client GET, end to end, with llhttp + own serializer over a `byte_stream`.
 2. Parser edge cases: `HEAD` responses, `1xx` / `100-continue`, close-delimited bodies, chunked with trailers.
 3. An asio `connector` producing a type-erased stream.
 4. The HTTP core compiles with Emscripten; a `fetch`-based `http_transport` runs the same call in Node.
@@ -355,7 +356,8 @@ Goal: decide with code, not opinions. Success criteria:
 ## Environment
 
 - Dev container (`.devcontainer/`): Ubuntu 24.04, GCC 13, Clang 18, CMake / Ninja / ccache, OpenSSL, Emscripten SDK
-  (`EMSDK_VERSION`, default `latest`), Node.js (`NODE_MAJOR`, default 24). Not built yet (see below).
-- Agent machine: `devcontainer` and `docker` CLIs in `~/.local/bin`. Blocked until user `orca` can access
-  `/var/run/docker.sock` (group 281, `--group-add 281` on the Unraid container). Bind mounts are resolved by the
-  host daemon: `/home/orca` is `appdata/orca/home` on the Unraid share, so the workspace mount needs the host path.
+  (`EMSDK_VERSION`, default `latest`), Node.js (`NODE_MAJOR`, default 24).
+- Agent machine: no local toolchain. Docker goes through the docker-in-docker daemon `DOCKER_HOST=tcp://orca-dind:2375`
+  (the local socket is not accessible). The image builds there (`docker build -t quoll-dev .devcontainer`), but the
+  daemon does not see `/home/orca`: bind mounts are empty, so the sources are streamed in with `tar` and
+  `devcontainer up` does not work as is.

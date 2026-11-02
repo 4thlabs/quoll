@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/quoll-targets.cmake")
+
+foreach(quoll_module IN ITEMS @QUOLL_PACKAGE_MODULES@)
+  set(quoll_${quoll_module}_FOUND TRUE)
+endforeach()
+
+check_required_components(quoll)
