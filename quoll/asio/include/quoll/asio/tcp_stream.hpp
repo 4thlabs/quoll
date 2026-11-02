@@ -95,9 +95,11 @@ struct write_some_initiation {
 /**
  * @brief ByteStream over a connected asio TCP socket.
  *
- * Operations complete on the socket's executor, then resume their coroutine on its own executor. A stop request on
- * the awaiter's context cancels the pending operation, which then reports `std::errc::operation_canceled`; it must
- * come from the thread running the socket's executor. The peer closing its side is `io::error::end_of_stream`.
+ * Operations complete on the socket's executor, then resume their coroutine on its own executor, which may be
+ * another one (a thread pool). A stop request on the awaiter's context cancels the pending operation, which then
+ * reports `std::errc::operation_canceled`; asio's cancellation is not thread-safe, so when the awaiter's stop token
+ * can stop, the coroutine and the stop requests run on the thread running the socket's executor. The peer closing
+ * its side is `io::error::end_of_stream`.
  *
  * Move-only. The socket lives on the heap with asio's cancellation signals, which cannot move: moving the stream is
  * cheap, and allowed while an operation is pending. Destroying it is not. Thread safety: none, like the socket.

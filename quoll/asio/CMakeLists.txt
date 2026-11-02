@@ -29,4 +29,5 @@ quoll_declare_tests(
   DEPS
     quoll::asio
     quoll::http
+    quoll::threads
 )

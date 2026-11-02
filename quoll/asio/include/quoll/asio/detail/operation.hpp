@@ -62,8 +62,10 @@ namespace quoll::asio::detail {
 //
 // A stop request on the await_context emits a terminal cancellation on `signal`, bound to the operation only when the
 // token can stop. The signal is kept by the caller across operations, so that asio reuses the memory it gives the
-// cancellation handler. The stop request comes from the thread running the I/O object's executor, which runs the
-// operation's handler: an asio cancellation signal is not thread-safe.
+// cancellation handler. An asio cancellation signal is not thread-safe: when the token can stop, the coroutine and
+// the stop requests run on the thread running the I/O object's executor. Without stop requests, the coroutine may
+// run on any executor: nothing touches the operation after it has started, as the handler may resume it at once on
+// another thread.
 //
 // The handler points to the operation, in the frame of the suspended coroutine: that frame is destroyed only after it
 // resumes, so the handler always finds it. A suspended chain of tasks is never destroyed from outside; destroying the
@@ -107,10 +109,10 @@ public:
       return;
     }
 
-    initiation_(::asio::bind_cancellation_slot(signal_->slot(), completion{this}));
-    // After the start: asio never runs a handler inside the initiating function, and the callback, invoked at once
-    // if stop was already requested, needs the operation to be started to cancel it.
+    // Before the start: the coroutine may resume, and destroy the callback, as soon as the operation has started.
+    // Stop was not requested yet, so the callback does not run now.
     stop_callback_.emplace(context.stop_token, canceller{signal_});
+    initiation_(::asio::bind_cancellation_slot(signal_->slot(), completion{this}));
   }
 
   [[nodiscard]] result_type await_resume() {
