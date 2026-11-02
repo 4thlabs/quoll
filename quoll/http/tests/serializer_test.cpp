@@ -173,6 +173,35 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
     REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
   }
 
+  SECTION("a body on a response that cannot have one") {
+    http::response response;
+
+    response.status = http::status::no_content;
+    response.body = "unexpected";
+
+    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+  }
+
+  SECTION("chunked coding on a 304") {
+    http::response response;
+
+    response.status = http::status::not_modified;
+    response.fields.add("Transfer-Encoding", "chunked");
+
+    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+  }
+
+  SECTION("Content-Length together with Transfer-Encoding") {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.body = "abc";
+    request.fields.add("Content-Length", "3");
+    request.fields.add("Transfer-Encoding", "chunked");
+
+    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+  }
+
   SECTION("trailers without chunked coding") {
     http::response response;
 

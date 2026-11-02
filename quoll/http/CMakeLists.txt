@@ -15,8 +15,13 @@ add_library(quoll_llhttp STATIC
 )
 add_library(quoll::llhttp ALIAS quoll_llhttp)
 set_target_properties(quoll_llhttp PROPERTIES EXPORT_NAME llhttp POSITION_INDEPENDENT_CODE ON)
+target_include_directories(quoll_llhttp PRIVATE ${llhttp_SOURCE_DIR}/include)
+
+# Users see the header as <quoll/third_party/llhttp.h>, so that it never clashes with a system llhttp.
+set(quoll_llhttp_include ${CMAKE_CURRENT_BINARY_DIR}/third_party/include)
+configure_file(${llhttp_SOURCE_DIR}/include/llhttp.h ${quoll_llhttp_include}/quoll/third_party/llhttp.h COPYONLY)
 target_sources(quoll_llhttp
-  PUBLIC FILE_SET HEADERS BASE_DIRS ${llhttp_SOURCE_DIR}/include FILES ${llhttp_SOURCE_DIR}/include/llhttp.h
+  PUBLIC FILE_SET HEADERS BASE_DIRS ${quoll_llhttp_include} FILES ${quoll_llhttp_include}/quoll/third_party/llhttp.h
 )
 
 if(QUOLL_INSTALL)

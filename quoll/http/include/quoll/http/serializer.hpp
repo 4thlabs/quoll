@@ -56,10 +56,12 @@ namespace quoll::http {
  *
  * Adds `Content-Length` when the message has a body (or, for POST / PUT / PATCH, an empty one) and the fields
  * declare no framing. With `Transfer-Encoding: chunked`, the body is written as one chunk followed by the trailers;
- * trailers without it are an error.
+ * trailers without it are an error. A 1xx, 204 or 304 response cannot have a body, and `Content-Length` cannot come
+ * with `Transfer-Encoding`.
  *
  * @throws std::invalid_argument for what cannot be sent: a target with spaces or line breaks, a field name that is
- * not a token, a value or a reason phrase with a line break, a status code outside 100-999.
+ * not a token, a value or a reason phrase with a line break, a status code outside 100-999, conflicting framing, a
+ * body or trailers where none is allowed.
  */
 inline void serialize(request const &message, std::string &out) {
   if (message.target.empty() || message.target.find(' ') != std::string::npos ||
@@ -77,8 +79,8 @@ inline void serialize(request const &message, std::string &out) {
   auto const method_has_body =
       message.method == verb::post || message.method == verb::put || message.method == verb::patch;
 
-  detail::serialize_framing(message.fields, message.body, message.trailers, !message.body.empty() || method_has_body,
-                            out);
+  detail::serialize_framing(message.fields, message.body, message.trailers, true,
+                            !message.body.empty() || method_has_body, out);
 }
 
 /** @copydoc serialize(request const &, std::string &) */
@@ -104,7 +106,7 @@ inline void serialize(response const &message, std::string &out) {
   auto const has_body = !is_informational(message.status) && message.status != status::no_content &&
                         message.status != status::not_modified;
 
-  detail::serialize_framing(message.fields, message.body, message.trailers, has_body, out);
+  detail::serialize_framing(message.fields, message.body, message.trailers, has_body, has_body, out);
 }
 
 /** @brief `message` as sent on the wire. @copydetails serialize(request const &, std::string &) */
