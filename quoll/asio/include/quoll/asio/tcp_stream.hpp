@@ -37,6 +37,7 @@
 #ifndef QUOLL_ASIO_TCP_STREAM_HPP
 #define QUOLL_ASIO_TCP_STREAM_HPP
 
+#include <quoll/asio/detail/cancellation.hpp>
 #include <quoll/asio/detail/io_error.hpp>
 #include <quoll/asio/detail/operation.hpp>
 #include <quoll/async/await_context.hpp>
@@ -45,7 +46,6 @@
 #include <quoll/io/io_result.hpp>
 
 #include <asio/buffer.hpp>
-#include <asio/cancellation_signal.hpp>
 #include <asio/ip/tcp.hpp>
 
 #include <cassert>
@@ -60,14 +60,15 @@ namespace quoll::asio {
 
 namespace detail {
 
-// What a tcp_stream keeps at a stable address: the socket, and a cancellation signal per direction, which asio
-// cannot move.
+// What a tcp_stream keeps at a stable address: the socket, and the cancellation of each direction.
 struct tcp_state {
-  explicit tcp_state(::asio::ip::tcp::socket &&connected) : socket(std::move(connected)) {}
+  explicit tcp_state(::asio::ip::tcp::socket &&connected)
+      : socket(std::move(connected)), read(std::make_shared<cancellation>(socket.get_executor())),
+        write(std::make_shared<cancellation>(socket.get_executor())) {}
 
   ::asio::ip::tcp::socket socket;
-  ::asio::cancellation_signal read_signal;
-  ::asio::cancellation_signal write_signal;
+  std::shared_ptr<cancellation> read;
+  std::shared_ptr<cancellation> write;
 };
 
 struct read_some_initiation {
@@ -96,13 +97,14 @@ struct write_some_initiation {
  * @brief ByteStream over a connected asio TCP socket.
  *
  * Operations complete on the socket's executor, then resume their coroutine on its own executor, which may be
- * another one (a thread pool). A stop request on the awaiter's context cancels the pending operation, which then
- * reports `std::errc::operation_canceled`; asio's cancellation is not thread-safe, so when the awaiter's stop token
- * can stop, the coroutine and the stop requests run on the thread running the socket's executor. The peer closing
- * its side is `io::error::end_of_stream`.
+ * another one (a thread pool). A stop request on the awaiter's context, from any thread, cancels the pending
+ * operation, which then reports `std::errc::operation_canceled`. The peer closing its side is
+ * `io::error::end_of_stream`. Like any asio I/O object, the socket needs an executor that runs one handler at a time:
+ * an io_context run by one thread, or a strand.
  *
- * Move-only. The socket lives on the heap with asio's cancellation signals, which cannot move: moving the stream is
- * cheap, and allowed while an operation is pending. Destroying it is not. Thread safety: none, like the socket.
+ * Move-only. The socket lives on the heap: moving the stream is cheap, and allowed while an operation is pending.
+ * Destroying it is not, nor destroying its io_context: the waiting coroutine would never resume, and a later stop
+ * request would post to a dead executor. Thread safety: none, like the socket.
  */
 class tcp_stream {
 public:
@@ -169,14 +171,14 @@ public:
   [[nodiscard]] read_awaitable read_some(std::span<std::byte> buffer) {
     auto &state = checked_state();
 
-    return read_awaitable{{detail::read_some_initiation{&state.socket, buffer}, state.read_signal}};
+    return read_awaitable{{detail::read_some_initiation{&state.socket, buffer}, state.read}};
   }
 
   /** @brief Sends some of `data`. */
   [[nodiscard]] write_awaitable write_some(std::span<std::byte const> data) {
     auto &state = checked_state();
 
-    return write_awaitable{{detail::write_some_initiation{&state.socket, data}, state.write_signal}};
+    return write_awaitable{{detail::write_some_initiation{&state.socket, data}, state.write}};
   }
 
   /** @brief The socket, for its options, shutdown() and close(). */

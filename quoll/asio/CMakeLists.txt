@@ -5,9 +5,12 @@ endif()
 
 find_package(Threads REQUIRED)
 
-# The application provides standalone asio (header-only); Quoll's own build fetches it. Only the build interface links
-# it: an installed quoll::asio leaves the choice of the asio copy to the application.
-if(NOT TARGET asio::asio)
+# The application provides standalone asio (header-only), as an asio::asio target defined before Quoll is added;
+# without one, Quoll fetches its own copy, under a name of its own. Only the build interface links it: an installed
+# quoll::asio leaves the choice of the asio copy to the application.
+if(TARGET asio::asio)
+  set(quoll_asio_dependency asio::asio)
+else()
   CPMAddPackage(
     NAME asio
     VERSION 1.38.2
@@ -18,10 +21,10 @@ if(NOT TARGET asio::asio)
 
   add_library(quoll_asio_headers INTERFACE)
   target_include_directories(quoll_asio_headers SYSTEM INTERFACE ${asio_SOURCE_DIR}/include)
-  add_library(asio::asio ALIAS quoll_asio_headers)
+  set(quoll_asio_dependency quoll_asio_headers)
 endif()
 
-quoll_declare_module(NAME asio DEPS quoll::io Threads::Threads $<BUILD_INTERFACE:asio::asio>)
+quoll_declare_module(NAME asio DEPS quoll::io Threads::Threads $<BUILD_INTERFACE:${quoll_asio_dependency}>)
 
 quoll_declare_tests(
   SOURCES

@@ -52,6 +52,7 @@
 #include <quoll/io/error.hpp>
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/io/write.hpp>
+#include <quoll/test/check.hpp>
 #include <quoll/test/run.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -75,17 +76,12 @@ namespace http = quoll::http;
 namespace io = quoll::io;
 
 using quoll::async::task;
+using quoll::test::check;
 
 using quoll::test::overloaded;
 using quoll::test::run;
 
 std::span<std::byte const> bytes(std::string_view text) { return std::as_bytes(std::span{text}); }
-
-void check(std::error_code error) {
-  if (error) {
-    throw std::system_error{error};
-  }
-}
 
 template <io::ByteStream Stream>
 task<http::response> get(Stream &stream, std::string target) {
