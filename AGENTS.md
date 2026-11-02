@@ -7,8 +7,8 @@ change must follow. Target architecture, deployment modes and open decisions are
 read it first, it is the source of truth for the design.
 
 Quoll is a public, header-only C++20 framework for cross-platform applications: sans-IO async runtime, HTTP client and
-server, and a typed REST DSL exposed to a web UI through tRPC. The same application runs as a native server + web app,
-a standalone PWA (core in WASM), or a native webview shell. Namespace `quoll::`.
+server, and a typed REST DSL exposed to a web UI through a generated OpenAPI contract. The same application runs as a
+native server + web app, a standalone PWA (core in WASM), or a native webview shell. Namespace `quoll::`.
 
 The maintainer communicates in French; code, comments, docs and commit messages stay in English.
 
