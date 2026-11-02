@@ -47,7 +47,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <coroutine>
 #include <cstddef>
 #include <cstdlib>
@@ -62,15 +61,17 @@
 #include <system_error>
 #include <utility>
 
-// Counts the allocations of the whole test program, to check that operations on an any_stream make none.
+// Counts the allocations of each thread, to check that operations on an any_stream make none. The replacement is
+// global to the test program, the count is per thread: threads of other tests do not show in it. The standard's
+// array and nothrow forms call this one; over-aligned allocations are not counted.
 namespace {
 
-std::atomic<std::size_t> allocations{0};
+constinit thread_local std::size_t allocations = 0;
 
 } // namespace
 
 void *operator new(std::size_t size) {
-  allocations.fetch_add(1, std::memory_order_relaxed);
+  ++allocations;
 
   if (auto *const memory = std::malloc(size == 0 ? 1 : size)) {
     return memory;
@@ -203,7 +204,7 @@ task<io::io_result> write_all(io::any_stream &stream, std::string_view text) {
 // Reads and writes `rounds` times, and returns the allocations they made.
 task<std::size_t> read_and_write(io::any_stream &stream, int rounds) {
   std::array<std::byte, 16> buffer{};
-  auto const before = allocations.load();
+  auto const before = allocations;
 
   for (int round = 0; round < rounds; ++round) {
     auto const read = co_await stream.read_some(buffer);
@@ -216,7 +217,7 @@ task<std::size_t> read_and_write(io::any_stream &stream, int rounds) {
     }
   }
 
-  co_return allocations.load() - before;
+  co_return allocations - before;
 }
 
 } // namespace
@@ -269,14 +270,14 @@ TEST_CASE("any_stream: reading and writing do not allocate", "[io][any_stream]")
 }
 
 TEST_CASE("any_stream: a small stream is held in place, a big one on the heap", "[io][any_stream]") {
-  auto const before = allocations.load();
+  auto const before = allocations;
   io::any_stream small{small_stream{}};
 
-  REQUIRE(allocations.load() == before);
+  REQUIRE(allocations == before);
 
   io::any_stream big{big_stream{}};
 
-  REQUIRE(allocations.load() == before + 1);
+  REQUIRE(allocations == before + 1);
 
   auto const *const small_address = small.target<small_stream>();
   auto const *const big_address = big.target<big_stream>();
@@ -294,10 +295,10 @@ TEST_CASE("any_stream: a small stream is held in place, a big one on the heap", 
 }
 
 TEST_CASE("any_stream: a stream whose move may throw is put on the heap", "[io][any_stream]") {
-  auto const before = allocations.load();
+  auto const before = allocations;
   io::any_stream stream{throwing_move_stream{}};
 
-  REQUIRE(allocations.load() == before + 1);
+  REQUIRE(allocations == before + 1);
 
   auto const *const address = stream.target<throwing_move_stream>();
   auto moved = std::move(stream);
