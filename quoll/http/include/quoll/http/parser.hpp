@@ -157,8 +157,10 @@ public:
       return {consumed, {}};
     }
     case HPE_PAUSED_UPGRADE:
-      // What follows belongs to the upgraded protocol: leave it unconsumed.
-      return {offset(data), {}};
+      // Only reached after the upgrade message was released (on_message_complete pauses first): what follows
+      // belongs to the upgraded protocol. Leave it unconsumed.
+      error_ = error::upgraded;
+      return {offset(data), error_};
     default:
       if (!error_) {
         error_ = error::bad_message;
@@ -213,7 +215,10 @@ public:
   /** @brief When done(): whether the connection may carry another message. */
   [[nodiscard]] bool keep_alive() const noexcept { return keep_alive_; }
 
-  /** @brief When done(): the connection switches protocol (101, CONNECT); its next bytes are not HTTP/1.x. */
+  /**
+   * @brief When done(): the connection switches protocol (101, CONNECT); its next bytes are not HTTP/1.x, and
+   * feeding them after release() reports `error::upgraded`.
+   */
   [[nodiscard]] bool upgrade() const noexcept { return upgrade_; }
 
   /** @brief Why the input was rejected, for diagnostics. */

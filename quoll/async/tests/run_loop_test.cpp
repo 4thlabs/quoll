@@ -38,6 +38,7 @@
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/yield.hpp>
+#include <quoll/test/overloaded.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -51,10 +52,7 @@ using quoll::async::co_spawn;
 using quoll::async::run_loop;
 using quoll::async::task;
 
-template <class... Fs>
-struct overloaded : Fs... {
-  using Fs::operator()...;
-};
+using quoll::test::overloaded;
 
 auto const ignore_success = [] {};
 auto const fail_on_error = [](std::exception_ptr) { FAIL("unexpected exception"); };

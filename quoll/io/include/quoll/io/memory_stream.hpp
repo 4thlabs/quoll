@@ -48,7 +48,10 @@
 #include <coroutine>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <span>
+#include <stop_token>
+#include <system_error>
 #include <utility>
 
 namespace quoll::io {
@@ -58,10 +61,11 @@ namespace quoll::io {
  * reads. For tests, and for connecting two components of the same process.
  *
  * Writes never wait (the pipe is unbounded) and a read waits until the peer writes or closes; the reader resumes
- * on its own executor. Stop requests are ignored. Destroying an end closes it, and the peer's writes then fail with
+ * on its own executor. A stop request on the reader's await_context ends a waiting read with
+ * `std::errc::operation_canceled`. Destroying an end closes it, and the peer's writes then fail with
  * `std::errc::broken_pipe`. An end must not be destroyed or moved while one of its reads is pending.
  *
- * Move-only. Thread safety: none; both ends are used from one thread.
+ * Move-only. Thread safety: none; both ends, and the stop requests reaching their reads, are used from one thread.
  */
 class memory_stream {
   using channels = std::array<detail::memory_channel, 2>;
@@ -70,22 +74,57 @@ public:
   /** @brief Awaitable returned by read_some(). */
   class [[nodiscard]] read_awaitable {
   public:
+    read_awaitable(read_awaitable const &) = delete;
+    read_awaitable &operator=(read_awaitable const &) = delete;
+    read_awaitable &operator=(read_awaitable &&) = delete;
+
+    // Moved into the awaiting coroutine before it suspends, when no stop callback is registered yet.
+    read_awaitable(read_awaitable &&other) noexcept : channel_(other.channel_), buffer_(other.buffer_) {}
+
+    ~read_awaitable() = default;
+
     [[nodiscard]] bool await_ready() const noexcept { return buffer_.empty() || channel_->readable(); }
 
-    void await_suspend(std::coroutine_handle<> handle, async::await_context const &context) noexcept {
+    void await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
       channel_->wait(handle, context.executor);
+
+      // Invoked at once if stop was already requested.
+      if (context.stop_token.stop_possible()) {
+        stop_callback_.emplace(context.stop_token, canceller{this});
+      }
     }
 
-    [[nodiscard]] io_result await_resume() noexcept { return channel_->read(buffer_); }
+    [[nodiscard]] io_result await_resume() noexcept {
+      stop_callback_.reset();
+      channel_->end_wait();
+
+      if (canceled_) {
+        return {std::make_error_code(std::errc::operation_canceled), 0};
+      }
+
+      return channel_->read(buffer_);
+    }
 
   private:
     friend class memory_stream;
+
+    struct canceller {
+      read_awaitable *self;
+
+      void operator()() const {
+        if (self->channel_->cancel()) {
+          self->canceled_ = true;
+        }
+      }
+    };
 
     read_awaitable(detail::memory_channel &channel, std::span<std::byte> buffer) noexcept
         : channel_(&channel), buffer_(buffer) {}
 
     detail::memory_channel *channel_;
     std::span<std::byte> buffer_;
+    bool canceled_ = false;
+    std::optional<std::stop_callback<canceller>> stop_callback_;
   };
 
   /** @brief Awaitable returned by write_some(). Completes without suspending. */
@@ -155,7 +194,8 @@ private:
   }
 
   // Closing wakes the peer's pending read through its executor. If that post throws (e.g. a full queue failing to
-  // allocate), the destructor terminates: dropping the wake-up instead would leave the peer suspended forever.
+  // allocate), the destructor and the move assignment, both noexcept, terminate: dropping the wake-up instead would
+  // leave the peer suspended forever.
   void release() {
     if (channels_) {
       assert(!inbound().has_reader() && "memory_stream destroyed or moved while one of its reads is pending");

@@ -98,6 +98,8 @@ function(quoll_main_tests)
 
   add_executable(quoll_tests ${sources})
   target_link_libraries(quoll_tests PRIVATE Catch2::Catch2WithMain quoll_warnings ${deps})
+  # Helpers shared by the tests of every module (quoll/test/...).
+  target_include_directories(quoll_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
 
   # Under Emscripten, CTest runs the target through CMAKE_CROSSCOMPILING_EMULATOR (node).
   add_test(NAME quoll COMMAND quoll_tests)

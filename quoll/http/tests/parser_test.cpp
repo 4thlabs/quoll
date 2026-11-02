@@ -397,6 +397,12 @@ TEST_CASE("A protocol switch leaves the next bytes unconsumed", "[http][parser]"
   REQUIRE(parser.done());
   REQUIRE(parser.upgrade());
   REQUIRE(parser.release().status == http::status::switching_protocols);
+
+  // What follows is the new protocol, not an HTTP message.
+  auto const next = parser.feed(bytes(std::string_view{wire}.substr(result.consumed)));
+
+  REQUIRE(next.error == http::error::upgraded);
+  REQUIRE(next.consumed == 0);
 }
 
 TEST_CASE("A parser can be moved between messages", "[http][parser]") {

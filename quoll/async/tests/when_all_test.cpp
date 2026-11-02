@@ -39,6 +39,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
+#include <quoll/test/run.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -57,10 +58,6 @@ using quoll::async::run_loop;
 using quoll::async::task;
 using quoll::async::when_all;
 
-template <class... Fs>
-struct overloaded : Fs... {
-  using Fs::operator()...;
-};
 
 task<int> number(int value) {
   co_await quoll::async::yield();
@@ -89,17 +86,7 @@ task<> set_after_yield(bool &done) {
   done = true;
 }
 
-template <class T>
-std::optional<T> run(task<T> work) {
-  run_loop loop;
-  std::optional<T> result;
-
-  co_spawn(loop.get_executor(), std::move(work),
-           overloaded{[&](T value) { result = std::move(value); },
-                      [](std::exception_ptr) { FAIL("unexpected exception"); }});
-  loop.run();
-  return result;
-}
+using quoll::test::run;
 
 task<std::tuple<int, std::string, std::monostate>> mixed() {
   co_return co_await when_all(number(1), text(), nothing());
