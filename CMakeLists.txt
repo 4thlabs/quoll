@@ -28,6 +28,7 @@ add_subdirectory(quoll/async)
 add_subdirectory(quoll/threads)
 add_subdirectory(quoll/io)
 add_subdirectory(quoll/http)
+add_subdirectory(quoll/asio)
 
 if(QUOLL_BUILD_TESTS)
   enable_testing()

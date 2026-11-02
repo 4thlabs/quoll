@@ -39,6 +39,7 @@
 
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/byte_stream.hpp>
+#include <quoll/io/connector.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/io_result.hpp>
 #include <quoll/io/memory_stream.hpp>

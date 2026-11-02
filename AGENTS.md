@@ -15,12 +15,13 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 ## Status
 
 Exploration. Modules so far: `quoll::async` (task, executor_ref, await_context with stop token, co_spawn, when_all,
-run_loop), `quoll::threads` (thread pool executor; its tests do not run under WASM), `quoll::io` (`ByteStream` concept,
-`any_stream` type erasure, in-memory stream pair, `io::write`) and `quoll::http` (messages, llhttp parser, serializer,
-`http::read` / `http::write` over a byte stream; llhttp is compiled and exported as `quoll::llhttp`). A client GET runs
-end to end over a memory stream (prototype criterion 1). The prototype described in `docs/PLAN.md` continues with an
-asio connector. Do not settle its open questions or write the module design into this file before the prototype
-validates them.
+run_loop), `quoll::threads` (thread pool executor; its tests do not run under WASM), `quoll::io` (`ByteStream` and
+`Connector` concepts, `any_stream` type erasure, in-memory stream pair, `io::write`), `quoll::http` (messages, llhttp
+parser, serializer, `http::read` / `http::write` over a byte stream; llhttp is compiled and exported as `quoll::llhttp`)
+and `quoll::asio` (asio executor, `tcp_stream`, TCP connector; native only, the application provides standalone asio). A
+client GET runs end to end over a memory stream and over TCP through the asio connector (prototype criteria 1 to 3). The
+prototype described in `docs/PLAN.md` continues with the Emscripten build of the HTTP core and a `fetch` transport. Do
+not settle its open questions or write the module design into this file before the prototype validates them.
 
 ## Build & test
 
@@ -62,8 +63,8 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 - Header-only, C++20 minimum (GCC ≥ 12, Clang ≥ 17). CMake, dependencies via CPM.
 - WASM is a first-class target: core modules never require threads or blocking waits.
-- No Qt. Adapters: thread pool (`quoll::threads`); planned: asio, Emscripten (browser loop, `fetch`,
-  `postMessage`), webview shell, memory (tests).
+- No Qt. Adapters: thread pool (`quoll::threads`), asio (`quoll::asio`); planned: Emscripten (browser loop,
+  `fetch`, `postMessage`), webview shell, memory (tests).
 
 ## Related projects
 
