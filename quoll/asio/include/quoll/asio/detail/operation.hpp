@@ -123,7 +123,9 @@ private:
   struct completion {
     operation *self;
 
-    void operator()(std::error_code error, Values... values) const {
+    // noexcept: a post failing here would escape io_context::run() and leave the coroutine suspended forever, so it
+    // terminates instead (see async::Executor).
+    void operator()(std::error_code error, Values... values) const noexcept {
       self->result_.emplace(error, std::move(values)...);
       self->context_->executor.post(self->item_);
     }
