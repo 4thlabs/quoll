@@ -40,14 +40,19 @@
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/io.hpp>
+#include <quoll/test/run.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <coroutine>
 #include <cstddef>
 #include <exception>
+#include <new>
 #include <optional>
 #include <span>
+#include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -61,29 +66,8 @@ namespace io = quoll::io;
 
 using quoll::async::task;
 
-template <class... Fs>
-struct overloaded : Fs... {
-  using Fs::operator()...;
-};
-
-template <class T>
-std::optional<T> run(task<T> work) {
-  quoll::async::run_loop loop;
-  std::optional<T> result;
-  std::exception_ptr failure;
-
-  co_spawn(loop.get_executor(), std::move(work),
-           overloaded{[&](T value) { result = std::move(value); },
-                      [&](std::exception_ptr error) { failure = std::move(error); }});
-  loop.run();
-
-  // Rethrown here rather than failing in the handler, which must not throw: Catch2 reports the message.
-  if (failure) {
-    std::rethrow_exception(failure);
-  }
-
-  return result;
-}
+using quoll::test::overloaded;
+using quoll::test::run;
 
 std::span<std::byte const> bytes(std::string_view text) { return std::as_bytes(std::span{text}); }
 
@@ -122,6 +106,31 @@ task<io::io_result> write_all(io::memory_stream &stream, std::string_view text) 
 task<std::tuple<received, io::io_result>> read_while_peer_writes(io::memory_stream &reader, io::memory_stream &writer) {
   co_return co_await quoll::async::when_all(read_once(reader), write_later(writer, "ping"));
 }
+
+task<> fail_later() {
+  co_await quoll::async::yield();
+  throw std::runtime_error{"sibling failed"};
+}
+
+task<std::tuple<received, std::monostate>> read_while_sibling_fails(io::memory_stream &reader) {
+  co_return co_await quoll::async::when_all(read_once(reader), fail_later());
+}
+
+// Posts to a run_loop, or throws while `failing` is set, as a queue failing to allocate would.
+struct flaky_executor {
+  quoll::async::run_loop::executor inner;
+  bool const *failing;
+
+  void post(std::coroutine_handle<> handle) const {
+    if (*failing) {
+      throw std::bad_alloc{};
+    }
+
+    inner.post(handle);
+  }
+
+  [[nodiscard]] bool operator==(flaky_executor const &) const noexcept = default;
+};
 
 task<std::tuple<received, std::monostate>> read_while_peer_closes(io::memory_stream &reader,
                                                                   io::memory_stream &writer) {
@@ -227,6 +236,79 @@ TEST_CASE("memory_stream: a moved end keeps the connection", "[io][memory_stream
 
   REQUIRE(run(write_once(right, "still here")));
   REQUIRE(run(read_once(moved))->text == "still here");
+}
+
+TEST_CASE("memory_stream: a stop request ends a waiting read", "[io][memory_stream]") {
+  auto [left, right] = io::make_memory_stream_pair();
+  quoll::async::run_loop loop;
+  std::stop_source source;
+  std::optional<received> read;
+
+  co_spawn(loop.get_executor(), read_once(left),
+           overloaded{[&](received value) { read = std::move(value); }, [](std::exception_ptr) {}}, source.get_token());
+  loop.run();
+
+  REQUIRE_FALSE(read);
+
+  source.request_stop();
+  loop.run();
+
+  REQUIRE(read);
+  REQUIRE(read->error == std::errc::operation_canceled);
+
+  // The stream is still usable.
+  REQUIRE(run(write_once(right, "late")));
+  REQUIRE(run(read_once(left))->text == "late");
+}
+
+TEST_CASE("memory_stream: a stop request after the bytes arrived loses nothing", "[io][memory_stream]") {
+  auto [left, right] = io::make_memory_stream_pair();
+  quoll::async::run_loop loop;
+  std::stop_source source;
+  std::optional<received> read;
+
+  co_spawn(loop.get_executor(), read_once(left),
+           overloaded{[&](received value) { read = std::move(value); }, [](std::exception_ptr) {}}, source.get_token());
+  loop.run();
+
+  // The write wakes the read; the stop request comes before it resumes.
+  REQUIRE(run(write_once(right, "arrived")));
+  source.request_stop();
+  loop.run();
+
+  REQUIRE(read);
+  REQUIRE(!read->error);
+  REQUIRE(read->text == "arrived");
+}
+
+TEST_CASE("memory_stream: when_all stops a waiting read when a sibling fails", "[io][memory_stream]") {
+  auto [left, right] = io::make_memory_stream_pair();
+
+  REQUIRE_THROWS_AS(run(read_while_sibling_fails(left)), std::runtime_error);
+}
+
+TEST_CASE("memory_stream: a write that throws sends nothing", "[io][memory_stream]") {
+  auto [left, right] = io::make_memory_stream_pair();
+  quoll::async::run_loop loop;
+  bool failing = false;
+  std::optional<received> read;
+
+  co_spawn(flaky_executor{loop.get_executor(), &failing}, read_once(left),
+           overloaded{[&](received value) { read = std::move(value); }, [](std::exception_ptr) {}});
+  loop.run();
+
+  failing = true;
+
+  REQUIRE_THROWS_AS(right.write_some(bytes("data")).await_resume(), std::bad_alloc);
+
+  failing = false;
+
+  REQUIRE(!right.write_some(bytes("data")).await_resume().error);
+
+  loop.run();
+
+  REQUIRE(read);
+  REQUIRE(read->text == "data");
 }
 
 TEST_CASE("io::write writes every byte", "[io][write]") {

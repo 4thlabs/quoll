@@ -50,6 +50,7 @@
 #include <quoll/io/error.hpp>
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/io/write.hpp>
+#include <quoll/test/run.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -73,29 +74,8 @@ namespace io = quoll::io;
 
 using quoll::async::task;
 
-template <class... Fs>
-struct overloaded : Fs... {
-  using Fs::operator()...;
-};
-
-template <class T>
-std::optional<T> run(task<T> work) {
-  quoll::async::run_loop loop;
-  std::optional<T> result;
-  std::exception_ptr failure;
-
-  co_spawn(loop.get_executor(), std::move(work),
-           overloaded{[&](T value) { result = std::move(value); },
-                      [&](std::exception_ptr error) { failure = std::move(error); }});
-  loop.run();
-
-  // Rethrown here rather than failing in the handler, which must not throw: Catch2 reports the message.
-  if (failure) {
-    std::rethrow_exception(failure);
-  }
-
-  return result;
-}
+using quoll::test::overloaded;
+using quoll::test::run;
 
 std::span<std::byte const> bytes(std::string_view text) { return std::as_bytes(std::span{text}); }
 
@@ -135,6 +115,37 @@ task<http::request> serve_one(io::memory_stream &stream) {
   response.body = R"({"id":42})";
   check(co_await http::write(stream, response));
   co_return request;
+}
+
+// Reads the request, then fails before answering.
+task<> fail_to_serve(io::memory_stream &stream) {
+  std::string buffer;
+  http::request_parser parser;
+
+  check(co_await http::read(stream, buffer, parser));
+  throw std::runtime_error{"server failed"};
+}
+
+task<std::tuple<http::response, std::monostate>> get_from_failing_server(io::memory_stream &client,
+                                                                         io::memory_stream &server) {
+  co_return co_await quoll::async::when_all(get(client, "/accounts/42"), fail_to_serve(server));
+}
+
+// Reads a protocol switch, then tries to read an HTTP message again.
+task<std::tuple<std::error_code, std::error_code, std::string>> read_past_upgrade(io::memory_stream &stream) {
+  std::string buffer;
+  http::response_parser parser;
+  auto const first = co_await http::read(stream, buffer, parser);
+
+  if (first || !parser.upgrade()) {
+    co_return std::tuple{first, std::error_code{}, buffer};
+  }
+
+  (void)parser.release();
+
+  auto const second = co_await http::read(stream, buffer, parser);
+
+  co_return std::tuple{first, second, buffer};
 }
 
 task<std::tuple<http::response, http::request>> get_from_server(io::memory_stream &client, io::memory_stream &server) {
@@ -225,6 +236,33 @@ TEST_CASE("http over a stream: a client GET, end to end", "[http][stream]") {
   REQUIRE(response.fields.find("content-type") == "application/json");
   REQUIRE(response.fields.find("content-length") == "9");
   REQUIRE(response.body == R"({"id":42})");
+}
+
+TEST_CASE("http over a stream: a failing server stops the client's read", "[http][stream]") {
+  auto [client, server] = io::make_memory_stream_pair();
+
+  REQUIRE_THROWS_AS(run(get_from_failing_server(client, server)), std::runtime_error);
+}
+
+TEST_CASE("http over a stream: no HTTP is read past a protocol switch", "[http][stream]") {
+  auto [client, server] = io::make_memory_stream_pair();
+
+  REQUIRE(!run(io::write(server, bytes("HTTP/1.1 101 Switching Protocols\r\n"
+                                       "Connection: Upgrade\r\n"
+                                       "Upgrade: websocket\r\n"
+                                       "\r\n"
+                                       "\x81\x05")))
+               ->error);
+
+  auto const result = run(read_past_upgrade(client));
+
+  REQUIRE(result);
+
+  auto const &[first, second, left_over] = *result;
+
+  REQUIRE(!first);
+  REQUIRE(second == http::error::upgraded);
+  REQUIRE(left_over == "\x81\x05");
 }
 
 TEST_CASE("http over a stream: a response arriving byte by byte is read whole", "[http][stream]") {

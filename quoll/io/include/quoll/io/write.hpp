@@ -58,6 +58,7 @@ template <ByteStream Stream>
   while (written < data.size()) {
     auto const result = co_await stream.write_some(data.subspan(written));
 
+    assert(result.transferred <= data.size() - written && "ByteStream::write_some() wrote more than it was given");
     written += result.transferred;
 
     if (result.error) {

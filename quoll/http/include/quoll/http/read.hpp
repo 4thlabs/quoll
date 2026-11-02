@@ -43,6 +43,7 @@
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/error.hpp>
 
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <span>
@@ -66,7 +67,8 @@ template <io::ByteStream Stream, class Message>
 [[nodiscard]] async::task<std::error_code> read(Stream &stream, std::string &buffer, parser<Message> &message_parser) {
   assert(!message_parser.done() && "http::read() with a message not released yet");
 
-  constexpr std::size_t chunk_size = 4096;
+  // In the coroutine frame rather than in `buffer`: an exception or a destroyed task leaves `buffer` untouched.
+  std::array<char, 4096> chunk;
 
   for (;;) {
     if (!buffer.empty()) {
@@ -83,15 +85,11 @@ template <io::ByteStream Stream, class Message>
       }
     }
 
-    // The parser took every byte: the buffer is empty again, and only grows by what one read brings.
-    auto const size = buffer.size();
-
-    buffer.resize(size + chunk_size);
-
-    auto const received = co_await stream.read_some(std::as_writable_bytes(std::span{buffer}.subspan(size)));
+    auto const received = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
 
     assert((!received.error || received.transferred == 0) && "ByteStream::read_some() returned bytes with an error");
-    buffer.resize(size + received.transferred);
+    assert((received.error || received.transferred > 0) && "ByteStream::read_some() read nothing without an error");
+    buffer.append(chunk.data(), received.transferred);
 
     if (received.error == io::error::end_of_stream) {
       if (auto const finished = message_parser.finish()) {

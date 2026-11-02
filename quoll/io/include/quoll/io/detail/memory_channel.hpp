@@ -48,7 +48,6 @@
 #include <optional>
 #include <span>
 #include <system_error>
-#include <utility>
 #include <vector>
 
 namespace quoll::io::detail {
@@ -57,7 +56,8 @@ namespace quoll::io::detail {
 // the reader suspended until some arrive.
 class memory_channel {
 public:
-  [[nodiscard]] bool has_reader() const noexcept { return static_cast<bool>(reader_); }
+  // A read is suspended, or woken and not resumed yet.
+  [[nodiscard]] bool has_reader() const noexcept { return reading_; }
 
   // Something to read now: bytes, or the end of the stream.
   [[nodiscard]] bool readable() const noexcept { return offset_ < bytes_.size() || closed_; }
@@ -98,7 +98,15 @@ public:
     }
 
     bytes_.insert(bytes_.end(), data.begin(), data.end());
-    wake();
+
+    // A write that throws must not have sent anything: the caller may retry it.
+    try {
+      wake();
+    } catch (...) {
+      bytes_.resize(bytes_.size() - data.size());
+      throw;
+    }
+
     return {{}, data.size()};
   }
 
@@ -112,18 +120,38 @@ public:
   void detach_reader() noexcept {
     reader_alive_ = false;
     reader_ = {};
+    reading_ = false;
   }
 
   void wait(std::coroutine_handle<> reader, async::executor_ref executor) noexcept {
-    assert(!reader_ && "memory_stream: a read is already pending");
+    assert(!reading_ && "memory_stream: a read is already pending");
     reader_ = reader;
     executor_.emplace(executor);
+    reading_ = true;
+  }
+
+  // The read that waited has resumed.
+  void end_wait() noexcept {
+    reader_ = {};
+    reading_ = false;
+  }
+
+  // Resumes the suspended read without bytes. False when there is none, or when it was already woken.
+  [[nodiscard]] bool cancel() {
+    if (!reader_) {
+      return false;
+    }
+
+    wake();
+    return true;
   }
 
 private:
+  // The handle is forgotten only once posted: if post throws, the reader can still be woken later.
   void wake() {
     if (reader_) {
-      executor_->post(std::exchange(reader_, {}));
+      executor_->post(reader_);
+      reader_ = {};
     }
   }
 
@@ -131,6 +159,7 @@ private:
   std::size_t offset_ = 0;
   bool closed_ = false;
   bool reader_alive_ = true;
+  bool reading_ = false;
   std::coroutine_handle<> reader_;
   std::optional<async::executor_ref> executor_;
 };

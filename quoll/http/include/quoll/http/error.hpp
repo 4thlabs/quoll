@@ -55,6 +55,8 @@ enum class error {
   unsupported_method,
   /** @brief The connection ended in the middle of a message. */
   partial_message,
+  /** @brief The connection switched protocols (see parser::upgrade()): what follows is not HTTP/1.x. */
+  upgraded,
 };
 
 namespace detail {
@@ -76,6 +78,8 @@ public:
       return "unsupported HTTP method";
     case error::partial_message:
       return "HTTP message truncated by the end of the stream";
+    case error::upgraded:
+      return "HTTP connection switched to another protocol";
     }
     return "unknown quoll.http error";
   }

@@ -40,6 +40,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
+#include <quoll/test/overloaded.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -58,10 +59,7 @@ using quoll::async::task;
 using quoll::async::when_all;
 using quoll::async::yield;
 
-template <class... Fs>
-struct overloaded : Fs... {
-  using Fs::operator()...;
-};
+using quoll::test::overloaded;
 
 // Bounds the loops below, so that a stop request that never arrives fails the test instead of hanging it.
 constexpr int max_steps = 100;
