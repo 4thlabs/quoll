@@ -90,6 +90,7 @@ template <io::ByteStream Stream, class Message>
 
     auto const received = co_await stream.read_some(std::as_writable_bytes(std::span{buffer}.subspan(size)));
 
+    assert((!received.error || received.transferred == 0) && "ByteStream::read_some() returned bytes with an error");
     buffer.resize(size + received.transferred);
 
     if (received.error == io::error::end_of_stream) {

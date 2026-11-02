@@ -50,7 +50,8 @@ namespace quoll::io {
  * @brief A bidirectional stream of raw bytes (socket, TLS session, in-memory pipe).
  *
  * `read_some(buffer)` and `write_some(data)` return ContextAwaitables resuming with an io_result:
- * - `read_some` transfers at least one byte into `buffer`, unless `buffer` is empty or an error is reported;
+ * - `read_some` transfers at least one byte into `buffer`, unless `buffer` is empty or an error is reported. An
+ *   error comes with no bytes: bytes read before it are reported first, the error by the next call.
  *   `io::error::end_of_stream` once the peer has closed its side and every byte sent before was read;
  * - `write_some` transfers at least one byte of `data`, unless `data` is empty or an error is reported.
  *
