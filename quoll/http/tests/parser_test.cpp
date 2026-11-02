@@ -312,6 +312,24 @@ TEST_CASE("A method outside http::verb is rejected", "[http][parser]") {
   auto const result = parser.feed(bytes("PURGE /cache HTTP/1.1\r\n\r\n"));
 
   REQUIRE(result.error == http::error::unsupported_method);
+  REQUIRE(parser.error_reason() == "unsupported method");
+}
+
+TEST_CASE("A 2xx response to CONNECT opens a tunnel", "[http][parser]") {
+  constexpr std::string_view head = "HTTP/1.1 200 Connection established\r\n\r\n";
+  std::string const wire = std::string{head} + "\x16\x03\x01";
+  http::response_parser parser;
+
+  parser.set_request_method(http::verb::connect);
+
+  auto const result = parser.feed(bytes(wire));
+
+  REQUIRE_FALSE(result.error);
+  REQUIRE(result.consumed == head.size());
+  REQUIRE(parser.done());
+  REQUIRE(parser.upgrade());
+  REQUIRE(parser.release().body.empty());
+  REQUIRE_FALSE(parser.upgrade());
 }
 
 TEST_CASE("The size limits are enforced", "[http][parser]") {
@@ -323,6 +341,17 @@ TEST_CASE("The size limits are enforced", "[http][parser]") {
     http::response_parser parser{limits};
 
     REQUIRE(parser.feed(bytes(simple_response)).error == http::error::header_too_large);
+  }
+
+  SECTION("field count") {
+    http::parse_limits limits;
+
+    limits.max_field_count = 1;
+
+    http::response_parser parser{limits};
+
+    REQUIRE(parser.feed(bytes(simple_response)).error == http::error::header_too_large);
+    REQUIRE(parser.error_reason() == "too many fields");
   }
 
   SECTION("body") {

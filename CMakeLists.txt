@@ -2,7 +2,11 @@ cmake_minimum_required(VERSION 3.23)
 
 project(quoll VERSION 0.1.0 LANGUAGES C CXX)
 
+# Dependencies built by CPM (Catch2) get the same standard as Quoll: Catch2 compiled as C++14 lacks the string_view
+# support its C++20 users expect.
 if(PROJECT_IS_TOP_LEVEL)
+  set(CMAKE_CXX_STANDARD 20)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
   set(CMAKE_CXX_EXTENSIONS OFF)
 endif()
 

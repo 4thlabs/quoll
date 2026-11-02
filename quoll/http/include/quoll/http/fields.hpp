@@ -44,6 +44,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace quoll::http {
@@ -73,6 +74,9 @@ public:
   void add(std::string_view name, std::string_view value) {
     fields_.push_back(field{std::string{name}, std::string{value}});
   }
+
+  /** @brief Appends a field, keeping the ones of the same name. */
+  void add(field entry) { fields_.push_back(std::move(entry)); }
 
   /** @brief Replaces every field named `name` by a single one. */
   void set(std::string_view name, std::string_view value) {

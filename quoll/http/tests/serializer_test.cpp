@@ -131,6 +131,44 @@ TEST_CASE("A response gets its reason phrase and framing", "[http][serializer]")
   }
 }
 
+TEST_CASE("A response may announce a length it does not send", "[http][serializer]") {
+  SECTION("response to HEAD") {
+    http::response response;
+
+    response.fields.add("Content-Length", "12");
+
+    REQUIRE(http::serialize(response) == "HTTP/1.1 200 OK\r\n"
+                                         "Content-Length: 12\r\n"
+                                         "\r\n");
+  }
+
+  SECTION("304") {
+    http::response response;
+
+    response.status = http::status::not_modified;
+    response.fields.add("Content-Length", "12");
+
+    REQUIRE(http::serialize(response) == "HTTP/1.1 304 Not Modified\r\n"
+                                         "Content-Length: 12\r\n"
+                                         "\r\n");
+  }
+}
+
+TEST_CASE("Chunked coding may follow other codings", "[http][serializer]") {
+  http::request request;
+
+  request.method = http::verb::post;
+  request.body = "abc";
+  request.fields.add("Transfer-Encoding", "gzip, chunked");
+
+  REQUIRE(http::serialize(request) == "POST / HTTP/1.1\r\n"
+                                      "Transfer-Encoding: gzip, chunked\r\n"
+                                      "\r\n"
+                                      "3\r\nabc\r\n"
+                                      "0\r\n"
+                                      "\r\n");
+}
+
 TEST_CASE("A chunked response carries its trailers", "[http][serializer]") {
   http::response response;
 
@@ -200,6 +238,55 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
     request.fields.add("Transfer-Encoding", "chunked");
 
     REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+  }
+
+  SECTION("a Content-Length that does not match the body") {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.body = "hello world";
+    request.fields.add("Content-Length", "5");
+
+    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+  }
+
+  SECTION("Content-Length fields that disagree") {
+    http::response response;
+
+    response.body = "abc";
+    response.fields.add("Content-Length", "3");
+    response.fields.add("Content-Length", "4");
+
+    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+  }
+
+  SECTION("a last transfer coding other than chunked") {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.body = "abc";
+    request.fields.add("Transfer-Encoding", "chunked");
+    request.fields.add("Transfer-Encoding", "gzip");
+
+    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+  }
+
+  SECTION("chunked coding in HTTP/1.0") {
+    http::response response;
+
+    response.version = http::version::http_1_0;
+    response.fields.add("Transfer-Encoding", "chunked");
+
+    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+  }
+
+  SECTION("Content-Length on a 204") {
+    http::response response;
+
+    response.status = http::status::no_content;
+    response.fields.add("Content-Length", "0");
+
+    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
   }
 
   SECTION("trailers without chunked coding") {
