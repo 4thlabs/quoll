@@ -68,6 +68,7 @@ constexpr int max_steps = 100;
 
 task<> count_until_stopped(int &steps) {
   auto const stop_token = co_await current_stop_token();
+
   while (!stop_token.stop_requested() && steps < max_steps) {
     ++steps;
     co_await yield();
@@ -76,6 +77,7 @@ task<> count_until_stopped(int &steps) {
 
 task<int> steps_until_stopped() {
   int steps = 0;
+
   co_await count_until_stopped(steps);
   co_return steps;
 }
@@ -84,11 +86,13 @@ task<> stop_after(std::stop_source source, int yields) {
   for (int step = 0; step < yields; ++step) {
     co_await yield();
   }
+
   source.request_stop();
 }
 
 task<bool> stop_possible() {
   auto const stop_token = co_await current_stop_token();
+
   co_return stop_token.stop_possible();
 }
 
@@ -99,11 +103,13 @@ task<> fail_after_yield() {
 
 task<int> sibling_steps_after_failure() {
   int steps = 0;
+
   try {
     co_await when_all(fail_after_yield(), count_until_stopped(steps));
   } catch (std::runtime_error const &) {
     co_return steps;
   }
+
   co_return -1;
 }
 

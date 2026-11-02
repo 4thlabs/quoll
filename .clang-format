@@ -10,3 +10,4 @@ AccessModifierOffset: -2
 AlwaysBreakTemplateDeclarations: true
 FixNamespaceComments: true
 NamespaceIndentation: None
+SeparateDefinitionBlocks: Always

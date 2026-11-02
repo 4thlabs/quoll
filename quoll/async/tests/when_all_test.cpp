@@ -93,6 +93,7 @@ template <class T>
 std::optional<T> run(task<T> work) {
   run_loop loop;
   std::optional<T> result;
+
   co_spawn(loop.get_executor(), std::move(work),
            overloaded{[&](T value) { result = std::move(value); },
                       [](std::exception_ptr) { FAIL("unexpected exception"); }});
@@ -113,11 +114,13 @@ task<std::tuple<std::monostate, std::monostate>> interleave(std::vector<std::str
 // True when when_all threw, and only after the child that did not fail had finished.
 task<bool> rethrows_after_all_completed() {
   bool done = false;
+
   try {
     co_await when_all(fail(), set_after_yield(done));
   } catch (std::runtime_error const &) {
     co_return done;
   }
+
   co_return false;
 }
 

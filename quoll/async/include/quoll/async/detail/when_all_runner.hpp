@@ -59,6 +59,7 @@ struct when_all_final_awaiter {
   template <class Promise>
   [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> handle) const noexcept {
     auto &state = handle.promise().state();
+
     handle.destroy();
     return state.arrive();
   }
@@ -102,6 +103,7 @@ public:
       destroy();
       handle_ = std::exchange(other.handle_, {});
     }
+
     return *this;
   }
 
@@ -110,6 +112,7 @@ public:
   // Runs the child inline until its first suspension; the frame then owns itself.
   void start(await_context const &context, when_all_state &state) {
     auto &promise = handle_.promise();
+
     promise.set_context(context);
     promise.set_state(state);
     std::exchange(handle_, {}).resume();

@@ -78,6 +78,7 @@ public:
     if (remaining_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
       return parent_;
     }
+
     return std::noop_coroutine();
   }
 

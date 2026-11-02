@@ -81,6 +81,7 @@ public:
   run_loop(run_loop &&) = delete;
   run_loop &operator=(run_loop const &) = delete;
   run_loop &operator=(run_loop &&) = delete;
+
   ~run_loop() { assert(queue_.empty() && "run_loop destroyed with queued coroutines: run() it first"); }
 
   [[nodiscard]] executor get_executor() noexcept { return executor{*this}; }
@@ -91,12 +92,15 @@ public:
    */
   std::size_t run() {
     std::size_t resumed = 0;
+
     while (!queue_.empty()) {
       auto const handle = queue_.front();
+
       queue_.pop_front();
       handle.resume();
       ++resumed;
     }
+
     return resumed;
   }
 

@@ -78,11 +78,13 @@ public:
     for (auto &runner : runners) {
       runner.start(*child_context_, state_);
     }
+
     return state_.arrive();
   }
 
   [[nodiscard]] std::tuple<non_void_t<Ts>...> await_resume() {
     state_.rethrow_if_failed();
+
     return [this]<std::size_t... I>(std::index_sequence<I...>) {
       return std::tuple<non_void_t<Ts>...>{std::move(*std::get<I>(slots_))...};
     }(std::index_sequence_for<Ts...>{});

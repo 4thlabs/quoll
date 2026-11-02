@@ -56,6 +56,7 @@ namespace quoll::async {
 template <class... Ts>
 [[nodiscard]] task<std::tuple<detail::non_void_t<Ts>...>> when_all(task<Ts>... children) {
   detail::when_all_awaiter<Ts...> awaiter{std::move(children)...};
+
   co_return co_await awaiter;
 }
 
