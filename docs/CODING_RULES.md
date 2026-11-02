@@ -83,6 +83,9 @@ C++ Core Guidelines.
 ## Readability
 
 - One component per header; short functions with early returns, no deep nesting.
+- Air out function bodies: a blank line after the local declarations, and around every control block (`if` /
+  `else`, loops, `try` / `catch`) that has statements before or after it, at the same level. clang-format keeps these
+  lines but does not add them.
 - Factor what template specializations share into a `detail` base instead of duplicating it (e.g. `task<T>` /
   `task<void>`).
 - Descriptive names (`handle`, `executor`, `parent`) except conventional ones (`T`, `It`, loop indices).
