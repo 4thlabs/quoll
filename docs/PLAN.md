@@ -164,6 +164,12 @@ flowchart LR
 No server needed: the core runs in a Web Worker (keeps the UI thread free, works single-threaded). Installable,
 offline-capable. The core can only be a client: outgoing calls go through `fetch`.
 
+Installing the UI as a PWA (manifest + service worker caching it) works in every mode; what sets this mode apart is
+that the **logic** runs in the browser. It is for applications that must work without a server: no infrastructure,
+local data (IndexedDB / OPFS) that never leaves the device, full offline use, client-side computing with the same C++
+code. A UI that only calls a server is mode 1, installed as a PWA. The WASM build of the core is kept in any case: it
+is cheap, it enforces the WASM constraints of the core, and it also serves a future GPU-drawn UI in the browser.
+
 ```mermaid
 flowchart LR
   subgraph browser["Browser / installed PWA"]
@@ -393,8 +399,9 @@ cannot run in the PWA or the native shell. Offline caching of the `.wasm` is the
 
 Kept for later, not planned: a "modern Qt" assembled from SDL3 (platform, IME, lifecycle), WebGPU (Dawn natively,
 browser API on the web), Skia or ThorVG + HarfBuzz (2D + text), Yoga (layout), AccessKit (accessibility), with
-`quoll::async` driving the frame loop and reactive signals instead of moc. The hard, multi-year parts are text, IME
-and accessibility on mobile and web, which the hybrid web model gets for free.
+`quoll::async` driving the frame loop and reactive signals instead of moc. In the browser it would run on the same
+WASM build of the core as mode 2. The hard, multi-year parts are text, IME and accessibility on mobile and web,
+which the hybrid web model gets for free.
 
 ## WASM constraints
 
