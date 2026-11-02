@@ -51,9 +51,9 @@ flowchart TB
   subgraph quoll["Quoll (header-only, sans-IO)"]
     rest["quoll::rest<br/>typed API DSL, codecs, OpenAPI generation"]
     bridge["quoll::bridge<br/>HTTP requests as messages"]
-    server["quoll::server<br/>HTTP/1.1 server, router, middlewares, static files"]
+    server["quoll::server<br/>HTTP/1.1 connections, middlewares, static files"]
     client["quoll::client<br/>pool, keep-alive, redirects, retry, auth, timeouts"]
-    http["quoll::http<br/>messages, parser, serializer"]
+    http["quoll::http<br/>messages, parser, serializer, router"]
     async["quoll::async<br/>task, executor_ref, await_context, when_all, co_spawn"]
   end
 
@@ -75,9 +75,9 @@ flowchart TB
 
   ui --> bridge
   handlers --> rest
-  rest --> server
+  rest --> http
   rest --> client
-  bridge --> server
+  bridge --> http
   server --> http
   client --> http
   http --> async
@@ -104,6 +104,11 @@ flowchart TB
 | `http_transport` | `request -> task<response>`, for platforms that do HTTP themselves | `quoll::client` over a connector, browser `fetch` |
 | `message_channel` | send / receive HTTP requests and responses between UI and core | `postMessage` (Worker), webview IPC, HTTP, memory |
 
+The router lives in `quoll::http` and does no I/O: it maps a method and a path template to a handler
+`request -> task<response>`. `quoll::rest` registers the DSL routes in it; `quoll::server` feeds it the requests read
+from connections, `quoll::bridge` the requests received as messages. The PWA Worker has no `quoll::server` (no
+sockets): there the bridge drives the router alone.
+
 Design references taken from Boost.Capy: `await_context` propagated through `await_suspend(h, env)`,
 `executor_ref`, zero-allocation `any_stream`.
 
@@ -115,11 +120,12 @@ it.
 ```mermaid
 flowchart LR
   dsl["API definition<br/>(quoll::rest DSL, C++)"]
-  dsl --> routes["Server routes<br/>quoll::server"]
+  dsl --> routes["Routes<br/>quoll::http router"]
   dsl --> cppclient["C++ client<br/>quoll::client / http_transport"]
   dsl --> spec["OpenAPI 3.1 document<br/>(generated)"]
   spec --> ts["TS types (openapi-typescript)<br/>for openapi-fetch"]
-  routes --> dispatch["Message dispatcher<br/>quoll::bridge, same router"]
+  routes --> srv["quoll::server<br/>requests from connections"]
+  routes --> dispatch["quoll::bridge<br/>requests from messages"]
 ```
 
 ## UI: hybrid web model
@@ -216,7 +222,7 @@ sequenceDiagram
   participant UI as Web UI
   participant TS as openapi-fetch (generated types)
   participant CH as fetch / message_channel
-  participant R as Router (quoll::server, or quoll::bridge in process)
+  participant R as Router (quoll::http), fed by quoll::server or quoll::bridge
   participant H as C++ handler
 
   UI->>TS: client.GET("/accounts/{id}", { params: { path: { id: 42 } } })
@@ -239,7 +245,7 @@ The DSL generates an OpenAPI 3.1 document; `openapi-typescript` turns it into a 
 flowchart LR
   dsl["API definition<br/>(quoll::rest DSL)"]
   dsl --> spec["openapi.json"]
-  dsl --> routes["quoll::server routes<br/>(C++ handlers)"]
+  dsl --> routes["Routes, quoll::http router<br/>(C++ handlers)"]
   spec -- "openapi-typescript" --> types["api.d.ts<br/>(paths, components)"]
   types -- "import type { paths }" --> cl["openapi-fetch<br/>+ openapi-react-query"]
   cl -- "plain REST<br/>GET /api/accounts/42" --> routes
@@ -261,7 +267,8 @@ errors are `application/problem+json` (RFC 9457) responses declared in the docum
 document is served by the application (e.g. `/api/openapi.json`) and written at build time for the TS build.
 
 **Other modes.** The `fetch` given to the client serializes the `Request` (method, URL, headers, body) over the
-`message_channel`; `quoll::bridge` hands it to the same router as `quoll::server` and sends the response back. The
+`message_channel`; `quoll::bridge` hands it to the router, the one `quoll::server` feeds in server mode, and sends
+the response back. The
 UI code does not change between modes, and there is no protocol of our own: the bridge carries HTTP messages.
 Streamed bodies (Server-Sent Events, large downloads) cross the bridge as a head message followed by body chunk
 messages, which the TS side exposes as the `ReadableStream` of the `Response`: the bridge `fetch` must support it
@@ -273,10 +280,16 @@ must be defined: `std::optional` → not required, `std::variant` → `oneOf` wi
 64-bit integers (beyond 2^53, JSON numbers lose precision in JS: string format or documented limit).
 
 **What tRPC gave and this does not.** Automatic request batching (add a batch endpoint if a real need shows up) and
-subscriptions (Server-Sent Events, described separately, streamed through the bridge as above). Operation names come
+subscriptions (Server-Sent Events, see below). Operation names come
 from paths instead of nested router keys. End-to-end typing is kept: `tsc` checks parameters, bodies and responses
 against the generated types, and the C++ side decodes and validates every input through the DSL codecs, as the
 `.input(...)` validators did with tRPC.
+
+**Server-Sent Events.** The replacement for subscriptions, not in the first prototype. A DSL route kind returns
+a stream of typed events; the route is documented as a `text/event-stream` response whose event payload has a JSON
+Schema (OpenAPI 3.1 has no first-class SSE, so the event type travels through that schema). The TS side reads it
+with a streamed `fetch` (not `EventSource`, which takes neither a custom `fetch` nor headers) through a small typed
+helper, so it works in every mode once the bridge streams bodies. Open: the exact shape of that helper.
 
 **Risks.** Generator corner cases (`oneOf` / discriminators, recursive types) and the extra generation step in the
 TS build (`openapi-typescript` is a dev dependency). Pin versions, and type-check a sample UI against the generated
