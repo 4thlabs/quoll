@@ -71,7 +71,7 @@ flowchart TB
 
   subgraph adapters["Adapters"]
     pool["quoll::threads<br/>thread_pool"]
-    asio["asio (+ssl)"]
+    asio["quoll::asio<br/>executor, tcp_stream, connector (+ssl)"]
     emscripten["emscripten<br/>browser loop, fetch, postMessage"]
     shell["webview shell<br/>desktop / iOS / Android"]
     memory["memory (tests)"]
