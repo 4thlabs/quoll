@@ -14,8 +14,8 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 
 ## Status
 
-Exploration: the build skeleton exists, no module yet. The HTTP layer is decided (own stack on llhttp); the next
-step is the prototype described in `docs/PLAN.md`. Do not settle its open questions or write the module design into
+Exploration: first module `quoll::async` (task, executor_ref, await_context, co_spawn, when_all, run_loop). The
+HTTP layer is decided (own stack on llhttp); the prototype described in `docs/PLAN.md` continues with `quoll::http`. Do not settle its open questions or write the module design into
 this file before the prototype validates them.
 
 ## Build & test
