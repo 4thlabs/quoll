@@ -18,7 +18,7 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
 
 - Name: **Quoll**, a new public library (namespace `quoll::`, same name for the C++ package and the npm package of
   the TS side). It holds `async`, `http`, `client`, `server`, `rest` (DSL), `trpc` and `bridge`. Puffin keeps its
-  existing utility modules (events, ioc, maths, imdb...). Repository: Forgejo `4thlabs/quoll` for now, GitHub later.
+  existing utility modules (events, ioc, maths, imdb...). Repository: GitHub `4thlabs/quoll`.
 - Header-only, C++20 minimum, rules in [`CODING_RULES.md`](CODING_RULES.md). Third-party C/C++ dependencies may be
   compiled targets fetched by CPM; Quoll's own code stays header-only.
 - Prior art: the `claude/project-thread-*` branches of the Puffin repo (earlier `async`, `webkit`, `rest`) were

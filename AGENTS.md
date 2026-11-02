@@ -34,5 +34,5 @@ architecture into this file before the prototype validates them.
 
 ## Repository
 
-Hosted on Forgejo (`forgejo.4thlabs.cc/4thlabs/quoll`) for now; a GitHub mirror is planned. No CI yet. Formatting:
-`clang-format -i <file>` with the repo `.clang-format`; format only the files you touch.
+Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). No CI yet. Formatting: `clang-format -i <file>`
+with the repo `.clang-format`; format only the files you touch.
