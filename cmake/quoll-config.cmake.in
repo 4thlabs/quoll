@@ -1,5 +1,10 @@
 @PACKAGE_INIT@
 
+include(CMakeFindDependencyMacro)
+
+# quoll::threads links Threads::Threads.
+find_dependency(Threads)
+
 include("${CMAKE_CURRENT_LIST_DIR}/quoll-targets.cmake")
 
 foreach(quoll_module IN ITEMS @QUOLL_PACKAGE_MODULES@)
