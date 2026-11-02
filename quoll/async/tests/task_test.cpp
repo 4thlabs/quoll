@@ -66,6 +66,7 @@ task<int> add_one(int value) { co_return value + 1; }
 
 task<int> chain() {
   int const value = co_await answer();
+
   co_return co_await add_one(value);
 }
 
@@ -80,6 +81,7 @@ task<std::string> recover() {
   } catch (std::runtime_error const &error) {
     co_return error.what();
   }
+
   co_return "not thrown";
 }
 
@@ -142,6 +144,7 @@ TEST_CASE("A task is lazy and frees its frame when destroyed without running", "
     auto work = hold(resource, started);
     REQUIRE(resource.use_count() == 2);
   }
+
   REQUIRE_FALSE(started);
   REQUIRE(resource.use_count() == 1);
 }

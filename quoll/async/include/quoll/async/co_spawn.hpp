@@ -68,6 +68,7 @@ detached spawn_root(E executor, task<T> work, Handler handler, std::stop_token s
     } catch (...) {
       error = std::current_exception();
     }
+
     if (error) {
       std::invoke(handler, std::move(error));
     } else {
@@ -75,11 +76,13 @@ detached spawn_root(E executor, task<T> work, Handler handler, std::stop_token s
     }
   } else {
     std::optional<T> value;
+
     try {
       value.emplace(co_await context_adapter<task<T>>{std::move(work), context});
     } catch (...) {
       error = std::current_exception();
     }
+
     if (error) {
       std::invoke(handler, std::move(error));
     } else {
@@ -102,6 +105,7 @@ detached spawn_root(E executor, task<T> work, Handler handler, std::stop_token s
 template <Executor E, class T, CompletionHandler<T> Handler>
 void co_spawn(E const &executor, task<T> work, Handler handler, std::stop_token stop_token = {}) {
   auto root = detail::spawn_root(executor, std::move(work), std::move(handler), std::move(stop_token));
+
   executor.post(root.handle());
   root.release();
 }

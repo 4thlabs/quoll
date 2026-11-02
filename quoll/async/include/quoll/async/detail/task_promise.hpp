@@ -98,6 +98,7 @@ public:
     if (result_.index() == error_index) {
       std::rethrow_exception(std::get<error_index>(result_));
     }
+
     if constexpr (!std::is_void_v<T>) {
       return std::move(std::get<value_index>(result_));
     }

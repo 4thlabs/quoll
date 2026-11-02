@@ -77,6 +77,7 @@ public:
       destroy();
       handle_ = std::exchange(other.handle_, {});
     }
+
     return *this;
   }
 
