@@ -52,9 +52,10 @@ namespace quoll::async {
  * context.
  *
  * `post` may throw (e.g. an adapter whose host loop allocates); it has then not queued the item, which the caller
- * still owns. Where the exception cannot propagate, std::terminate is called: when a stop callback or a destructor
- * wakes a waiting coroutine (see io::memory_stream). An executor whose `post` cannot fail, like run_loop's, never
- * gets there.
+ * still owns. Where the exception cannot propagate, std::terminate is called: when a stop callback, a destructor
+ * (see io::memory_stream) or the completion handler of an I/O operation (see quoll::asio) wakes a waiting
+ * coroutine. Letting it escape there would leave that coroutine suspended forever. An executor whose `post` cannot
+ * fail, like run_loop's, never gets there.
  */
 template <class E>
 concept Executor = std::copy_constructible<E> && std::equality_comparable<E> &&
