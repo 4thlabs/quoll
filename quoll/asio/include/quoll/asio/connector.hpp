@@ -90,8 +90,8 @@ inline async::task<io::any_stream> connect(::asio::any_io_executor executor, std
  *
  * The connection is a tcp_stream on `executor`, handed over as an io::any_stream. Resolution and connection failures
  * throw std::system_error from the task, with asio's error code (`asio::error::connection_refused`...). A stop
- * request abandons the attempt, with `std::errc::operation_canceled`; like the stream's, it must come from the thread
- * running `executor`.
+ * request abandons the attempt, with `std::errc::operation_canceled`; as for the stream, a coroutine whose stop token
+ * can stop runs on the thread running `executor`, and so do the stop requests.
  *
  * The task copies what it needs: the connector does not have to outlive it.
  */

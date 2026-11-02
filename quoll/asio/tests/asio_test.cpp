@@ -50,8 +50,10 @@
 #include <quoll/io/error.hpp>
 #include <quoll/io/io_result.hpp>
 #include <quoll/test/overloaded.hpp>
+#include <quoll/threads/thread_pool.hpp>
 
 #include <asio/error.hpp>
+#include <asio/executor_work_guard.hpp>
 #include <asio/io_context.hpp>
 #include <asio/ip/address_v4.hpp>
 #include <asio/ip/tcp.hpp>
@@ -62,6 +64,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <future>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -303,4 +306,36 @@ TEST_CASE("asio: a stop request abandons a connection attempt", "[asio]") {
 
   REQUIRE(error);
   REQUIRE(*error == std::errc::operation_canceled);
+}
+
+TEST_CASE("asio: a client on a thread pool talks through sockets run by another thread", "[asio][http]") {
+  ::asio::io_context context;
+  auto acceptor = listen(context);
+  // Keeps run() going while the client runs on the pool between two of its socket operations.
+  auto work = ::asio::make_work_guard(context);
+  quoll::threads::thread_pool pool{2};
+  std::promise<http::response> response;
+  std::optional<http::request> request;
+  std::exception_ptr failure;
+
+  acceptor.async_accept([&](std::error_code error, tcp::socket socket) {
+    check(error);
+    spawn(context, serve_one(quoll::asio::tcp_stream{std::move(socket)}), request, failure);
+  });
+  co_spawn(pool.get_executor(), get(quoll::asio::connector{context.get_executor()}, port_of(acceptor)),
+           overloaded{[&](http::response value) {
+                        response.set_value(std::move(value));
+                        work.reset();
+                      },
+                      [&](std::exception_ptr error) {
+                        response.set_exception(std::move(error));
+                        work.reset();
+                      }});
+  run(context, failure);
+
+  auto const received = response.get_future().get();
+
+  REQUIRE(request);
+  REQUIRE(request->target == "/accounts/42");
+  REQUIRE(received.body == "hello over TCP");
 }
