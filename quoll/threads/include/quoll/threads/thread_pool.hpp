@@ -98,8 +98,7 @@ public:
 
   /** @brief Starts one worker per hardware thread, or a single one when that
    * number is unknown. */
-  thread_pool()
-      : thread_pool(std::max(1U, std::thread::hardware_concurrency())) {}
+  thread_pool() : thread_pool(std::max(1U, std::thread::hardware_concurrency())) {}
 
   /**
    * @brief Starts `threads` workers.
@@ -108,16 +107,14 @@ public:
    */
   explicit thread_pool(std::size_t threads) {
     if (threads == 0) {
-      throw std::invalid_argument{
-          "quoll::threads::thread_pool needs at least one thread"};
+      throw std::invalid_argument{"quoll::threads::thread_pool needs at least one thread"};
     }
 
     workers_.reserve(threads);
 
     try {
       for (std::size_t index = 0; index < threads; ++index) {
-        workers_.emplace_back(
-            [this](std::stop_token const &token) { work(token); });
+        workers_.emplace_back([this](std::stop_token const &token) { work(token); });
       }
     } catch (...) {
       // The workers already started would otherwise wait forever, and their
@@ -139,8 +136,7 @@ public:
       worker.join();
     }
 
-    assert(incoming_.load() == nullptr && ready_ == nullptr &&
-           "thread_pool posted to after its destruction started");
+    assert(incoming_.load() == nullptr && ready_ == nullptr && "thread_pool posted to after its destruction started");
   }
 
   [[nodiscard]] executor get_executor() noexcept { return executor{*this}; }
@@ -181,8 +177,7 @@ private:
 
   // The stack holds the most recent post first: reversed, it gives the posting
   // order back.
-  [[nodiscard]] static async::work_item *
-  reverse(async::work_item *stack) noexcept {
+  [[nodiscard]] static async::work_item *reverse(async::work_item *stack) noexcept {
     async::work_item *queue = nullptr;
 
     while (stack != nullptr) {

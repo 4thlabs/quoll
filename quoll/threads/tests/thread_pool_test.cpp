@@ -66,16 +66,14 @@ using quoll::test::overloaded;
 // Runs `work` on the pool. The handler runs on a worker, where Catch2
 // assertions are not allowed: the outcome goes through a future, read by the
 // test thread.
-template <class T> std::future<T> spawn(thread_pool &pool, task<T> work) {
+template <class T>
+std::future<T> spawn(thread_pool &pool, task<T> work) {
   auto promise = std::make_shared<std::promise<T>>();
   auto future = promise->get_future();
 
-  co_spawn(
-      pool.get_executor(), std::move(work),
-      overloaded{[promise](T value) { promise->set_value(std::move(value)); },
-                 [promise](std::exception_ptr error) {
-                   promise->set_exception(std::move(error));
-                 }});
+  co_spawn(pool.get_executor(), std::move(work),
+           overloaded{[promise](T value) { promise->set_value(std::move(value)); },
+                      [promise](std::exception_ptr error) { promise->set_exception(std::move(error)); }});
   return future;
 }
 
@@ -94,8 +92,7 @@ task<int> count_yields(int yields) {
 task<bool> meet(std::atomic<std::size_t> &arrived, std::size_t expected) {
   arrived.fetch_add(1);
 
-  auto const deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds{10};
+  auto const deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
 
   while (arrived.load() < expected) {
     if (std::chrono::steady_clock::now() > deadline) {
@@ -109,8 +106,7 @@ task<bool> meet(std::atomic<std::size_t> &arrived, std::size_t expected) {
 }
 
 task<std::tuple<int, int>> both(int first, int second) {
-  co_return co_await quoll::async::when_all(count_yields(first),
-                                            count_yields(second));
+  co_return co_await quoll::async::when_all(count_yields(first), count_yields(second));
 }
 
 task<int> fail() {
@@ -120,8 +116,7 @@ task<int> fail() {
 
 } // namespace
 
-TEST_CASE("thread_pool resumes a spawned task on a worker thread",
-          "[threads][thread_pool]") {
+TEST_CASE("thread_pool resumes a spawned task on a worker thread", "[threads][thread_pool]") {
   thread_pool pool{2};
 
   auto const id = spawn(pool, thread_id()).get();
@@ -129,8 +124,7 @@ TEST_CASE("thread_pool resumes a spawned task on a worker thread",
   REQUIRE(id != std::this_thread::get_id());
 }
 
-TEST_CASE("thread_pool hands the exception of a task to its handler",
-          "[threads][thread_pool]") {
+TEST_CASE("thread_pool hands the exception of a task to its handler", "[threads][thread_pool]") {
   thread_pool pool{2};
 
   auto outcome = spawn(pool, fail());
@@ -138,8 +132,7 @@ TEST_CASE("thread_pool hands the exception of a task to its handler",
   REQUIRE_THROWS_AS(outcome.get(), std::runtime_error);
 }
 
-TEST_CASE("thread_pool resumes coroutines on all its workers at once",
-          "[threads][thread_pool]") {
+TEST_CASE("thread_pool resumes coroutines on all its workers at once", "[threads][thread_pool]") {
   constexpr std::size_t threads = 4;
   thread_pool pool{threads};
   std::atomic<std::size_t> arrived{0};
@@ -154,8 +147,7 @@ TEST_CASE("thread_pool resumes coroutines on all its workers at once",
   }
 }
 
-TEST_CASE("thread_pool runs many tasks posting from every worker",
-          "[threads][thread_pool]") {
+TEST_CASE("thread_pool runs many tasks posting from every worker", "[threads][thread_pool]") {
   thread_pool pool{4};
   std::vector<std::future<int>> outcomes;
 
@@ -168,8 +160,7 @@ TEST_CASE("thread_pool runs many tasks posting from every worker",
   }
 }
 
-TEST_CASE("thread_pool joins when_all children resumed on different workers",
-          "[threads][thread_pool]") {
+TEST_CASE("thread_pool joins when_all children resumed on different workers", "[threads][thread_pool]") {
   thread_pool pool{4};
 
   auto const result = spawn(pool, both(50, 70)).get();
@@ -177,8 +168,7 @@ TEST_CASE("thread_pool joins when_all children resumed on different workers",
   REQUIRE(result == std::tuple{50, 70});
 }
 
-TEST_CASE("thread_pool destruction runs what is still queued",
-          "[threads][thread_pool]") {
+TEST_CASE("thread_pool destruction runs what is still queued", "[threads][thread_pool]") {
   std::atomic<int> completed{0};
 
   {
@@ -186,8 +176,7 @@ TEST_CASE("thread_pool destruction runs what is still queued",
 
     for (int index = 0; index < 100; ++index) {
       co_spawn(pool.get_executor(), count_yields(3),
-               overloaded{[&](int) { completed.fetch_add(1); },
-                          [](std::exception_ptr) {}});
+               overloaded{[&](int) { completed.fetch_add(1); }, [](std::exception_ptr) {}});
     }
   }
 
@@ -198,8 +187,7 @@ TEST_CASE("thread_pool needs at least one thread", "[threads][thread_pool]") {
   REQUIRE_THROWS_AS(thread_pool{0}, std::invalid_argument);
 }
 
-TEST_CASE("thread_pool executors are equal when they post to the same pool",
-          "[threads][thread_pool]") {
+TEST_CASE("thread_pool executors are equal when they post to the same pool", "[threads][thread_pool]") {
   thread_pool pool{1};
   thread_pool other{1};
 
