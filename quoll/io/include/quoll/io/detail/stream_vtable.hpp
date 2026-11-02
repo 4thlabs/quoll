@@ -58,6 +58,11 @@ using read_awaitable_t = decltype(std::declval<S &>().read_some(std::declval<std
 template <class S>
 using write_awaitable_t = decltype(std::declval<S &>().write_some(std::declval<std::span<std::byte const>>()));
 
+// A stream whose operations return their awaitable by value: it can be built in a slot of the block.
+template <class S>
+concept erasable_stream =
+    ByteStream<S> && std::is_object_v<read_awaitable_t<S>> && std::is_object_v<write_awaitable_t<S>>;
+
 // An erased stream and room for the awaitables of its pending read and write: allocated once with the stream, so
 // that operations never allocate.
 template <ByteStream S>
@@ -109,7 +114,7 @@ template <class A>
 inline constexpr awaitable_vtable awaitable_vtable_for{
     [](void *awaitable) -> bool { return static_cast<A *>(awaitable)->await_ready(); },
     [](void *awaitable, std::coroutine_handle<> handle, async::await_context const &context) {
-      return suspend(*static_cast<A *>(awaitable), handle, context);
+      return detail::suspend(*static_cast<A *>(awaitable), handle, context);
     },
     [](void *awaitable) -> io_result { return static_cast<A *>(awaitable)->await_resume(); },
     [](void *awaitable) noexcept { std::destroy_at(static_cast<A *>(awaitable)); },

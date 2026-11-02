@@ -47,6 +47,7 @@
 
 #include <algorithm>
 #include <array>
+#include <concepts>
 #include <coroutine>
 #include <cstddef>
 #include <cstdlib>
@@ -185,6 +186,26 @@ static_assert(io::ByteStream<small_stream>);
 static_assert(io::ByteStream<big_stream>);
 static_assert(io::ByteStream<throwing_move_stream>);
 
+// Returns a reference to an awaitable it keeps: a ByteStream, but not one any_stream can build awaitables for.
+struct reference_stream {
+  struct awaitable {
+    [[nodiscard]] bool await_ready() const noexcept { return true; }
+
+    void await_suspend(std::coroutine_handle<>, quoll::async::await_context const &) const noexcept {}
+
+    [[nodiscard]] io::io_result await_resume() const noexcept { return {}; }
+  };
+
+  [[nodiscard]] awaitable &read_some(std::span<std::byte>) noexcept { return operation; }
+
+  [[nodiscard]] awaitable &write_some(std::span<std::byte const>) noexcept { return operation; }
+
+  awaitable operation;
+};
+
+static_assert(io::ByteStream<reference_stream>);
+static_assert(!std::constructible_from<io::any_stream, reference_stream>);
+
 // The memory_stream tests below cover the third form of await_suspend: theirs returns void.
 static_assert(std::is_void_v<decltype(std::declval<io::memory_stream::read_awaitable &>().await_suspend(
                   std::coroutine_handle<>{}, std::declval<quoll::async::await_context const &>()))>);
@@ -275,14 +296,16 @@ TEST_CASE("any_stream: reading and writing do not allocate", "[io][any_stream]")
 }
 
 TEST_CASE("any_stream: a small stream is held in place, a big one on the heap", "[io][any_stream]") {
-  auto const before = allocations;
+  // Each count brackets one construction only: Catch2 may allocate while it checks an assertion.
+  auto const before_small = allocations;
   io::any_stream small{small_stream{}};
-
-  REQUIRE(allocations == before);
-
+  auto const small_allocations = allocations - before_small;
+  auto const before_big = allocations;
   io::any_stream big{big_stream{}};
+  auto const big_allocations = allocations - before_big;
 
-  REQUIRE(allocations == before + 1);
+  REQUIRE(small_allocations == 0U);
+  REQUIRE(big_allocations == 1U);
 
   auto const *const small_address = small.target<small_stream>();
   auto const *const big_address = big.target<big_stream>();
@@ -302,8 +325,9 @@ TEST_CASE("any_stream: a small stream is held in place, a big one on the heap", 
 TEST_CASE("any_stream: a stream whose move may throw is put on the heap", "[io][any_stream]") {
   auto const before = allocations;
   io::any_stream stream{throwing_move_stream{}};
+  auto const made = allocations - before;
 
-  REQUIRE(allocations == before + 1);
+  REQUIRE(made == 1U);
 
   auto const *const address = stream.target<throwing_move_stream>();
   auto moved = std::move(stream);

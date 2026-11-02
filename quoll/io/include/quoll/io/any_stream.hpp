@@ -58,10 +58,11 @@ namespace quoll::io {
 /**
  * @brief Owning, type-erased ByteStream; models ByteStream itself.
  *
- * Wraps any ByteStream (a socket, a TLS session, a memory_stream) behind one type, for code that cannot be a
- * template over the stream: connectors, connection pools. The wrapped stream is kept with room for the awaitables
- * of one read and one write. A stream that fits in 192 bytes with them, and moves without throwing, is held in
- * place; a bigger one is allocated once, when it is wrapped. Reading and writing never allocate.
+ * Wraps any ByteStream whose operations return their awaitable by value (a socket, a TLS session, a memory_stream)
+ * behind one type, for code that cannot be a template over the stream: connectors, connection pools. The wrapped
+ * stream is kept with room for the awaitables of one read and one write. A stream that fits in 192 bytes with them,
+ * and moves without throwing, is held in place; a bigger one is allocated once, when it is wrapped. Reading and
+ * writing never allocate.
  *
  * Move-only. Like the wrapped stream, it must not be moved or destroyed while one of its operations is pending, and
  * has at most one read and one write pending at a time. A moved-from any_stream can only be assigned to or
@@ -112,8 +113,8 @@ public:
   /** @brief Takes `stream` over. */
   // The exclusion comes first: it stops ByteStream<any_stream> from checking this constructor against itself.
   template <class S>
-    requires(!std::same_as<std::remove_cvref_t<S>, any_stream> && !std::is_lvalue_reference_v<S> && ByteStream<S> &&
-             std::move_constructible<S>)
+    requires(!std::same_as<std::remove_cvref_t<S>, any_stream> && !std::is_lvalue_reference_v<S> &&
+             detail::erasable_stream<S> && std::move_constructible<S>)
   explicit any_stream(S &&stream) {
     using block = detail::stream_block<S>;
 
