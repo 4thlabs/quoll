@@ -170,6 +170,16 @@ TEST_CASE("finish between two messages is a clean end", "[http][parser]") {
 
   REQUIRE_FALSE(parser.finish());
   REQUIRE_FALSE(parser.done());
+
+  // Right after a message, too: llhttp alone would report the end of the stream as unsafe there.
+  REQUIRE_FALSE(parser.feed(bytes(simple_response)).error);
+  REQUIRE(parser.release().body == "hello");
+  REQUIRE_FALSE(parser.finish());
+  REQUIRE_FALSE(parser.done());
+
+  // And the parser is ready for a new stream.
+  REQUIRE_FALSE(parser.feed(bytes(simple_response)).error);
+  REQUIRE(parser.release().body == "hello");
 }
 
 TEST_CASE("A response to HEAD has no body despite its Content-Length", "[http][parser]") {

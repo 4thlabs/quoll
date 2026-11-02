@@ -108,7 +108,8 @@ public:
         field_name_(std::move(other.field_name_)), field_value_(std::move(other.field_value_)),
         header_size_(other.header_size_), field_count_(other.field_count_), error_(other.error_),
         reason_(other.reason_), request_method_(other.request_method_), done_(other.done_),
-        keep_alive_(other.keep_alive_), upgrade_(other.upgrade_), in_trailers_(other.in_trailers_) {
+        keep_alive_(other.keep_alive_), upgrade_(other.upgrade_), in_message_(other.in_message_),
+        in_trailers_(other.in_trailers_) {
     state_.data = this;
   }
 
@@ -128,6 +129,7 @@ public:
       done_ = other.done_;
       keep_alive_ = other.keep_alive_;
       upgrade_ = other.upgrade_;
+      in_message_ = other.in_message_;
       in_trailers_ = other.in_trailers_;
     }
 
@@ -173,6 +175,13 @@ public:
   [[nodiscard]] std::error_code finish() {
     if (done_ || error_) {
       return error_;
+    }
+
+    // The stream may end between two messages. llhttp would disagree right after one: paused in
+    // on_message_complete, it has not yet recorded that ending there is safe.
+    if (!in_message_) {
+      llhttp_reset(&state_);
+      return {};
     }
 
     auto const code = llhttp_finish(&state_);
@@ -287,6 +296,7 @@ private:
     self_.field_value_.clear();
     self_.header_size_ = 0;
     self_.field_count_ = 0;
+    self_.in_message_ = true;
     self_.in_trailers_ = false;
     return 0;
   }
@@ -407,6 +417,7 @@ private:
     auto &self_ = self(state);
 
     self_.done_ = true;
+    self_.in_message_ = false;
     self_.keep_alive_ = llhttp_should_keep_alive(state) != 0;
     self_.upgrade_ = llhttp_get_upgrade(state) != 0;
     return HPE_PAUSED;
@@ -450,6 +461,7 @@ private:
   bool done_ = false;
   bool keep_alive_ = false;
   bool upgrade_ = false;
+  bool in_message_ = false;
   bool in_trailers_ = false;
 };
 
