@@ -37,6 +37,7 @@
 #ifndef QUOLL_ASIO_CONNECTOR_HPP
 #define QUOLL_ASIO_CONNECTOR_HPP
 
+#include <quoll/asio/detail/cancellation.hpp>
 #include <quoll/asio/detail/io_error.hpp>
 #include <quoll/asio/detail/operation.hpp>
 #include <quoll/asio/tcp_stream.hpp>
@@ -45,11 +46,13 @@
 #include <quoll/io/connector.hpp>
 
 #include <asio/any_io_executor.hpp>
-#include <asio/cancellation_signal.hpp>
+#include <asio/associated_cancellation_slot.hpp>
+#include <asio/cancellation_type.hpp>
 #include <asio/connect.hpp>
 #include <asio/ip/tcp.hpp>
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -59,12 +62,21 @@ namespace quoll::asio {
 namespace detail {
 
 inline async::task<io::any_stream> connect(::asio::any_io_executor executor, std::string host, std::uint16_t port) {
-  ::asio::cancellation_signal signal;
+  auto const cancel = std::make_shared<cancellation>(executor);
   ::asio::ip::tcp::resolver resolver{executor};
   auto const service = std::to_string(port);
 
-  auto [resolve_error, endpoints] = co_await make_operation<::asio::ip::tcp::resolver::results_type>(
-      signal, [&](auto handler) { resolver.async_resolve(host, service, std::move(handler)); });
+  auto [resolve_error, endpoints] =
+      co_await make_operation<::asio::ip::tcp::resolver::results_type>(cancel, [&](auto handler) {
+        // async_resolve ignores the cancellation slot: a cancellation cancels the resolver instead.
+        auto slot = ::asio::get_associated_cancellation_slot(handler);
+
+        if (slot.is_connected()) {
+          slot.assign([&resolver](::asio::cancellation_type) { resolver.cancel(); });
+        }
+
+        resolver.async_resolve(host, service, std::move(handler));
+      });
 
   if (resolve_error) {
     throw std::system_error{to_io_error(resolve_error), "quoll::asio::connector: cannot resolve " + host};
@@ -73,7 +85,7 @@ inline async::task<io::any_stream> connect(::asio::any_io_executor executor, std
   ::asio::ip::tcp::socket socket{executor};
 
   auto const [connect_error, endpoint] = co_await make_operation<::asio::ip::tcp::endpoint>(
-      signal, [&](auto handler) { ::asio::async_connect(socket, endpoints, std::move(handler)); });
+      cancel, [&](auto handler) { ::asio::async_connect(socket, endpoints, std::move(handler)); });
 
   if (connect_error) {
     throw std::system_error{to_io_error(connect_error),
@@ -90,8 +102,8 @@ inline async::task<io::any_stream> connect(::asio::any_io_executor executor, std
  *
  * The connection is a tcp_stream on `executor`, handed over as an io::any_stream. Resolution and connection failures
  * throw std::system_error from the task, with asio's error code (`asio::error::connection_refused`...). A stop
- * request abandons the attempt, with `std::errc::operation_canceled`; as for the stream, a coroutine whose stop token
- * can stop runs on the thread running `executor`, and so do the stop requests.
+ * request, from any thread, abandons the attempt, with `std::errc::operation_canceled`. `executor` runs one handler
+ * at a time (an io_context run by one thread, or a strand).
  *
  * The task copies what it needs: the connector does not have to outlive it.
  */

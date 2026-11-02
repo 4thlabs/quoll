@@ -49,6 +49,7 @@
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/io_result.hpp>
+#include <quoll/test/check.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/threads/thread_pool.hpp>
 
@@ -79,6 +80,7 @@ namespace http = quoll::http;
 namespace io = quoll::io;
 
 using quoll::async::task;
+using quoll::test::check;
 using quoll::test::overloaded;
 using tcp = ::asio::ip::tcp;
 
@@ -107,12 +109,6 @@ tcp::acceptor listen(::asio::io_context &context) {
 }
 
 [[nodiscard]] std::uint16_t port_of(tcp::acceptor const &acceptor) { return acceptor.local_endpoint().port(); }
-
-void check(std::error_code error) {
-  if (error) {
-    throw std::system_error{error};
-  }
-}
 
 task<int> count_yields(int yields) {
   for (int index = 0; index < yields; ++index) {
@@ -180,6 +176,14 @@ task<io::io_result> read_until_stopped(quoll::asio::connector connector, std::ui
   auto const [read, stopped] = co_await quoll::async::when_all(read_once(stream, buffer), request_stop(source));
 
   co_return read;
+}
+
+// Starts connecting, then requests stop while the attempt is pending.
+task<std::error_code> connect_then_stop(quoll::asio::connector connector, std::uint16_t port,
+                                        std::stop_source &source) {
+  auto const [error, stopped] = co_await quoll::async::when_all(connect_error(connector, port), request_stop(source));
+
+  co_return error;
 }
 
 task<io::io_result> connect_and_read(quoll::asio::connector connector, std::uint16_t port) {
@@ -338,4 +342,49 @@ TEST_CASE("asio: a client on a thread pool talks through sockets run by another 
   REQUIRE(request);
   REQUIRE(request->target == "/accounts/42");
   REQUIRE(received.body == "hello over TCP");
+}
+
+TEST_CASE("asio: a stop request while connecting abandons the attempt", "[asio]") {
+  ::asio::io_context context;
+  auto acceptor = listen(context);
+  std::optional<std::error_code> error;
+  std::exception_ptr failure;
+  std::stop_source source;
+
+  spawn(context, connect_then_stop(quoll::asio::connector{context.get_executor()}, port_of(acceptor), source), error,
+        failure, source.get_token());
+  run(context, failure);
+
+  REQUIRE(error);
+  REQUIRE(*error == std::errc::operation_canceled);
+}
+
+TEST_CASE("asio: a stop request from a pool thread cancels a read pending on the I/O thread", "[asio]") {
+  ::asio::io_context context;
+  auto acceptor = listen(context);
+  auto work = ::asio::make_work_guard(context);
+  quoll::threads::thread_pool pool{2};
+  std::optional<tcp::socket> silent_peer;
+  std::promise<io::io_result> read;
+  std::stop_source source;
+
+  acceptor.async_accept([&](std::error_code error, tcp::socket socket) {
+    check(error);
+    silent_peer.emplace(std::move(socket));
+  });
+  // when_all runs on the pool: its second child requests stop there, while the read waits on the I/O thread.
+  co_spawn(pool.get_executor(),
+           read_until_stopped(quoll::asio::connector{context.get_executor()}, port_of(acceptor), source),
+           overloaded{[&](io::io_result value) {
+                        read.set_value(value);
+                        work.reset();
+                      },
+                      [&](std::exception_ptr error) {
+                        read.set_exception(std::move(error));
+                        work.reset();
+                      }},
+           source.get_token());
+  context.run();
+
+  REQUIRE(read.get_future().get().error == std::errc::operation_canceled);
 }
