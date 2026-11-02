@@ -1,0 +1,12 @@
+TabWidth: 2
+IndentWidth: 2
+UseTab: Never
+
+Language: Cpp
+#BasedOnStyle: LLVM
+ColumnLimit: 120
+Standard: Latest
+AccessModifierOffset: -2
+AlwaysBreakTemplateDeclarations: true
+FixNamespaceComments: true
+NamespaceIndentation: None
