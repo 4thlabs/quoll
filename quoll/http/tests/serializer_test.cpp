@@ -271,6 +271,16 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
     REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
   }
 
+  SECTION("a coding that only ends with chunked") {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.body = "abc";
+    request.fields.add("Transfer-Encoding", "x-chunked");
+
+    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+  }
+
   SECTION("chunked coding in HTTP/1.0") {
     http::response response;
 
