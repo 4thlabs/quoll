@@ -47,6 +47,8 @@
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/http/write.hpp>
+#include <quoll/io/any_stream.hpp>
+#include <quoll/io/byte_stream.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/io/write.hpp>
@@ -85,7 +87,8 @@ void check(std::error_code error) {
   }
 }
 
-task<http::response> get(io::memory_stream &stream, std::string target) {
+template <io::ByteStream Stream>
+task<http::response> get(Stream &stream, std::string target) {
   http::request request;
 
   request.method = http::verb::get;
@@ -101,7 +104,8 @@ task<http::response> get(io::memory_stream &stream, std::string target) {
 }
 
 // Answers one request with a JSON body, and hands the request over for inspection.
-task<http::request> serve_one(io::memory_stream &stream) {
+template <io::ByteStream Stream>
+task<http::request> serve_one(Stream &stream) {
   std::string buffer;
   http::request_parser parser;
 
@@ -148,7 +152,8 @@ task<std::tuple<std::error_code, std::error_code, std::string>> read_past_upgrad
   co_return std::tuple{first, second, buffer};
 }
 
-task<std::tuple<http::response, http::request>> get_from_server(io::memory_stream &client, io::memory_stream &server) {
+template <io::ByteStream Stream>
+task<std::tuple<http::response, http::request>> get_from_server(Stream &client, Stream &server) {
   co_return co_await quoll::async::when_all(get(client, "/accounts/42"), serve_one(server));
 }
 
@@ -235,6 +240,21 @@ TEST_CASE("http over a stream: a client GET, end to end", "[http][stream]") {
   REQUIRE(response.status == http::status::ok);
   REQUIRE(response.fields.find("content-type") == "application/json");
   REQUIRE(response.fields.find("content-length") == "9");
+  REQUIRE(response.body == R"({"id":42})");
+}
+
+TEST_CASE("http over a stream: a client GET over type-erased streams", "[http][stream]") {
+  auto [left, right] = io::make_memory_stream_pair();
+  io::any_stream client{std::move(left)};
+  io::any_stream server{std::move(right)};
+
+  auto const result = run(get_from_server(client, server));
+
+  REQUIRE(result);
+
+  auto const &[response, request] = *result;
+
+  REQUIRE(request.target == "/accounts/42");
   REQUIRE(response.body == R"({"id":42})");
 }
 

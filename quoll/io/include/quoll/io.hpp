@@ -37,6 +37,7 @@
 #ifndef QUOLL_IO_HPP
 #define QUOLL_IO_HPP
 
+#include <quoll/io/any_stream.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/io_result.hpp>

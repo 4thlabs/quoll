@@ -57,7 +57,7 @@ flowchart TB
     server["quoll::server<br/>HTTP/1.1 connections, middlewares, static files"]
     client["quoll::client<br/>pool, keep-alive, redirects, retry, auth, timeouts"]
     http["quoll::http<br/>messages, parser, serializer, router"]
-    io["quoll::io<br/>byte streams, memory stream"]
+    io["quoll::io<br/>byte streams, any_stream, memory stream"]
     async["quoll::async<br/>task, executor_ref, await_context, when_all, co_spawn"]
   end
 
