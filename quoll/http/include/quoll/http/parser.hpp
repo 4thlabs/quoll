@@ -200,14 +200,25 @@ public:
     return reason != nullptr ? std::string_view{reason} : std::string_view{};
   }
 
-  /** @brief Takes the parsed message and gets ready for the next one. Precondition: done(). */
+  /**
+   * @brief Takes the parsed message and gets ready for the next one. Precondition: done().
+   *
+   * Responses: after a final (non-1xx) response, the request method set by set_request_method() is forgotten.
+   */
   [[nodiscard]] Message release() {
     assert(done_ && "parser::release() without a complete message");
 
     auto message = std::exchange(message_, Message{});
 
     done_ = false;
-    request_method_ = verb::get;
+
+    // The request method holds until its final response: an interim 1xx answers the same request.
+    if constexpr (is_request) {
+      request_method_ = verb::get;
+    } else if (!is_informational(message.status)) {
+      request_method_ = verb::get;
+    }
+
     return message;
   }
 
