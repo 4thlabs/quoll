@@ -34,8 +34,6 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/async/co_spawn.hpp>
-#include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
@@ -53,11 +51,8 @@
 
 namespace {
 
-using quoll::async::co_spawn;
-using quoll::async::run_loop;
 using quoll::async::task;
 using quoll::async::when_all;
-
 
 task<int> number(int value) {
   co_await quoll::async::yield();
