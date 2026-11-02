@@ -166,7 +166,10 @@ public:
     }
   }
 
-  /** @brief The peer closed the stream: ends a body delimited by it, or reports a truncated message. */
+  /**
+   * @brief The peer closed the stream: ends a body delimited by it, or reports a truncated message. Without an
+   * error, the parser is then ready for a new stream.
+   */
   [[nodiscard]] std::error_code finish() {
     if (done_ || error_) {
       return error_;
@@ -174,7 +177,10 @@ public:
 
     auto const code = llhttp_finish(&state_);
 
+    // HPE_PAUSED: on_message_complete ended the message with the stream. Either way the stream is over and llhttp
+    // would ignore anything fed next: start afresh, ready for a new connection.
     if (code == HPE_OK || code == HPE_PAUSED) {
+      llhttp_reset(&state_);
       return {};
     }
 

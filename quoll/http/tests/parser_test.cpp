@@ -146,6 +146,13 @@ TEST_CASE("A body delimited by the end of the stream completes on finish", "[htt
   REQUIRE(parser.done());
   REQUIRE_FALSE(parser.keep_alive());
   REQUIRE(parser.release().body == "until the end");
+
+  // The parser is ready for a new stream.
+  auto const next = parser.feed(bytes(simple_response));
+
+  REQUIRE_FALSE(next.error);
+  REQUIRE(parser.done());
+  REQUIRE(parser.release().body == "hello");
 }
 
 TEST_CASE("finish reports a message cut short", "[http][parser]") {
