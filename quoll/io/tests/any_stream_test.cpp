@@ -94,10 +94,10 @@ using quoll::test::run;
 
 std::span<std::byte const> bytes(std::string_view text) { return std::as_bytes(std::span{text}); }
 
-// A stream that never allocates: reads fill the buffer with `Fill` after a round trip through the executor, writes
-// accept everything and resume the writer at once. `Padding` makes it too big to be held in place. Its awaitables
-// cannot move, which any_stream supports: it builds them where they stay.
-template <std::size_t Padding>
+// A stream that never allocates: reads fill the buffer with `fill` after a round trip through the executor, writes
+// accept everything and resume the writer at once. `Padding` makes it too big to be held in place, and so does a
+// move that may throw. Its awaitables cannot move, which any_stream supports: it builds them where they stay.
+template <std::size_t Padding, bool NothrowMove = true>
 class fixed_stream {
 public:
   static constexpr std::byte fill{0x2a};
@@ -159,6 +159,14 @@ public:
     std::span<std::byte const> data_;
   };
 
+  fixed_stream() = default;
+  fixed_stream(fixed_stream const &) = delete;
+  fixed_stream &operator=(fixed_stream const &) = delete;
+  fixed_stream &operator=(fixed_stream &&) = delete;
+  ~fixed_stream() = default;
+
+  fixed_stream(fixed_stream &&) noexcept(NothrowMove) {}
+
   [[nodiscard]] read_awaitable read_some(std::span<std::byte> buffer) noexcept { return read_awaitable{buffer}; }
 
   [[nodiscard]] write_awaitable write_some(std::span<std::byte const> data) noexcept { return write_awaitable{data}; }
@@ -169,9 +177,11 @@ private:
 
 using small_stream = fixed_stream<0>;
 using big_stream = fixed_stream<256>;
+using throwing_move_stream = fixed_stream<0, false>;
 
 static_assert(io::ByteStream<small_stream>);
 static_assert(io::ByteStream<big_stream>);
+static_assert(io::ByteStream<throwing_move_stream>);
 
 // What a read brought, as text, with its error.
 struct received {
@@ -281,6 +291,39 @@ TEST_CASE("any_stream: a small stream is held in place, a big one on the heap", 
   REQUIRE(big.target<big_stream>() == nullptr);
   REQUIRE(run(read_and_write(moved_small, 1)) == 0U);
   REQUIRE(run(read_and_write(moved_big, 1)) == 0U);
+}
+
+TEST_CASE("any_stream: a stream whose move may throw is put on the heap", "[io][any_stream]") {
+  auto const before = allocations.load();
+  io::any_stream stream{throwing_move_stream{}};
+
+  REQUIRE(allocations.load() == before + 1);
+
+  auto const *const address = stream.target<throwing_move_stream>();
+  auto moved = std::move(stream);
+
+  REQUIRE(moved.target<throwing_move_stream>() == address);
+  REQUIRE(run(read_and_write(moved, 1)) == 0U);
+}
+
+TEST_CASE("any_stream: move assignment replaces the wrapped stream", "[io][any_stream]") {
+  io::any_stream stream{small_stream{}};
+  io::any_stream big{big_stream{}};
+  auto const *const big_address = big.target<big_stream>();
+
+  // Over a stream held in place, with one from the heap.
+  stream = std::move(big);
+
+  REQUIRE(stream.target<small_stream>() == nullptr);
+  REQUIRE(stream.target<big_stream>() == big_address);
+  REQUIRE(run(read_and_write(stream, 1)) == 0U);
+
+  // Over a stream from the heap, with one held in place.
+  stream = io::any_stream{small_stream{}};
+
+  REQUIRE(stream.target<big_stream>() == nullptr);
+  REQUIRE(stream.target<small_stream>() != nullptr);
+  REQUIRE(run(read_and_write(stream, 1)) == 0U);
 }
 
 TEST_CASE("any_stream: target() recovers the wrapped stream by its exact type", "[io][any_stream]") {
