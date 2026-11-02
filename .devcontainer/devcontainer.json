@@ -1,0 +1,30 @@
+{
+  "name": "quoll",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "USERNAME": "dev",
+      "USER_UID": "1000",
+      "USER_GID": "1000"
+    }
+  },
+  "remoteUser": "dev",
+  "workspaceFolder": "/workspaces/quoll",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/quoll,type=bind",
+  "mounts": [
+    "source=quoll-cache,target=/home/dev/.cache,type=volume"
+  ],
+  "postCreateCommand": "sudo chown dev:dev /home/dev/.cache",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "llvm-vs-code-extensions.vscode-clangd",
+        "ms-vscode.cmake-tools"
+      ],
+      "settings": {
+        "cmake.configureArgs": ["-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"],
+        "clangd.arguments": ["--compile-commands-dir=${workspaceFolder}/build"]
+      }
+    }
+  }
+}

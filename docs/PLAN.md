@@ -354,8 +354,8 @@ Goal: decide with code, not opinions. Success criteria:
 
 ## Environment
 
-- Dev container: Puffin PR #11 (`.devcontainer/`, GCC 13, Clang 18, OpenSSL), to bring over. To add: Emscripten SDK,
-  Node; Qt 6 can be removed now that Qt is out of the plan.
+- Dev container (`.devcontainer/`): Ubuntu 24.04, GCC 13, Clang 18, CMake / Ninja / ccache, OpenSSL, Emscripten SDK
+  (`EMSDK_VERSION`, default `latest`), Node.js (`NODE_MAJOR`, default 24). Not built yet (see below).
 - Agent machine: `devcontainer` and `docker` CLIs in `~/.local/bin`. Blocked until user `orca` can access
   `/var/run/docker.sock` (group 281, `--group-add 281` on the Unraid container). Bind mounts are resolved by the
   host daemon: `/home/orca` is `appdata/orca/home` on the Unraid share, so the workspace mount needs the host path.
