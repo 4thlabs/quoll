@@ -19,7 +19,8 @@ endif()
 include(cmake/QuollHelpers.cmake)
 include(cmake/CPM.cmake)
 
-# Modules, in dependency order: add_subdirectory(quoll/<module>)
+# Modules, in dependency order.
+add_subdirectory(quoll/async)
 
 if(QUOLL_BUILD_TESTS)
   enable_testing()
