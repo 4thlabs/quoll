@@ -37,6 +37,7 @@
 #ifndef QUOLL_REST_DETAIL_CLIENT_REQUEST_HPP
 #define QUOLL_REST_DETAIL_CLIENT_REQUEST_HPP
 
+#include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/percent.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
@@ -46,6 +47,8 @@
 #include <quoll/rest/detail/fields_of.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/path_template.hpp>
+#include <quoll/rest/detail/query_string.hpp>
+#include <quoll/rest/detail/scheme_traits.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/header.hpp>
@@ -53,10 +56,13 @@
 #include <quoll/rest/query.hpp>
 #include <quoll/rest/security.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <functional>
 #include <map>
+#include <ranges>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -68,30 +74,11 @@ namespace quoll::rest::detail {
 // The credentials a client was given, by scheme.
 using credential_map = std::map<std::string, std::string, std::less<>>;
 
-[[nodiscard]] inline std::string scheme_key(std::type_identity<bearer_auth>) { return "bearer"; }
-
-template <fixed_string Header>
-[[nodiscard]] std::string scheme_key(std::type_identity<api_key<Header>>) {
-  return "header:" + std::string{Header.view()};
-}
-
-template <fixed_string Param>
-[[nodiscard]] std::string scheme_key(std::type_identity<api_key_query<Param>>) {
-  return "query:" + std::string{Param.view()};
-}
-
 // A request under construction: its query string and fields grow part by part.
 struct request_draft {
   std::string query;
   http::request request;
 };
-
-inline void add_query(request_draft &draft, std::string_view name, std::string_view value) {
-  draft.query += draft.query.empty() ? "" : "&";
-  draft.query += http::detail::percent_encode(name);
-  draft.query += '=';
-  draft.query += http::detail::percent_encode(value);
-}
 
 // Calls `add(text)` for each text of a query or header value: every element of a vector, the value of an optional
 // that has one, the value itself otherwise.
@@ -112,19 +99,35 @@ void for_each_text(T const &value, Add &&add) {
 
 template <fixed_string Name, class T>
 void add_part(std::type_identity<query<Name, T>>, T const &value, request_draft &draft) {
-  for_each_text(value, [&](std::string const &text) { add_query(draft, Name.view(), text); });
+  for_each_text(value, [&](std::string const &text) { append_query(draft.query, Name.view(), text); });
 }
 
 template <class Struct>
 void add_part(std::type_identity<query_params<Struct>>, Struct const &value, request_draft &draft) {
   for_each_field(value, [&](std::string_view name, auto const &field) {
-    for_each_text(field, [&](std::string const &text) { add_query(draft, name, text); });
+    for_each_text(field, [&](std::string const &text) { append_query(draft.query, name, text); });
   });
+}
+
+// A header value the server reads back as it is: no surrounding whitespace, which parsers trim, and in a list header
+// no comma, where the server splits, nor an empty element, which it skips.
+template <class T>
+void check_header_text(std::string_view name, std::string_view text) {
+  auto const trimmed = http::detail::trim(text) == text;
+  auto const listed = !is_vector<T>::value || (!text.empty() && !text.contains(','));
+
+  if (!trimmed || !listed) {
+    throw std::invalid_argument{"quoll::rest::client: header " + std::string{name} +
+                                " has a value the server would read differently"};
+  }
 }
 
 template <fixed_string Name, class T>
 void add_part(std::type_identity<header<Name, T>>, T const &value, request_draft &draft) {
-  for_each_text(value, [&](std::string const &text) { draft.request.fields.add(Name.view(), text); });
+  for_each_text(value, [&](std::string const &text) {
+    check_header_text<T>(Name.view(), text);
+    draft.request.fields.add(Name.view(), text);
+  });
 }
 
 template <class T, class BodyCodec>
@@ -135,40 +138,51 @@ void add_part(std::type_identity<body<T, BodyCodec>>, T const &value, request_dr
   draft.request.fields.add("Content-Type", codec.content_type);
 }
 
-inline void add_credential(std::type_identity<bearer_auth>, std::string const &value, request_draft &draft) {
-  draft.request.fields.add("Authorization", "Bearer " + value);
-}
-
-template <fixed_string Header>
-void add_credential(std::type_identity<api_key<Header>>, std::string const &value, request_draft &draft) {
-  draft.request.fields.add(Header.view(), value);
-}
-
-template <fixed_string Param>
-void add_credential(std::type_identity<api_key_query<Param>>, std::string const &value, request_draft &draft) {
-  add_query(draft, Param.view(), value);
-}
-
 // The credentials the client has for the schemes of a route; a scheme without one is left out.
 template <class... Scheme>
 void add_credentials(type_list<Scheme...>, credential_map const &credentials, request_draft &draft) {
   (
       [&] {
-        if (auto const found = credentials.find(scheme_key(std::type_identity<Scheme>{})); found != credentials.end()) {
-          add_credential(std::type_identity<Scheme>{}, found->second, draft);
+        if (auto const found = credentials.find(scheme_traits<Scheme>::key.view()); found != credentials.end()) {
+          scheme_traits<Scheme>::add(found->second, draft.request.fields, draft.query);
         }
       }(),
       ...);
 }
 
+// A path parameter the server reads back as it is, and that stays where the template puts it: not empty (no segment),
+// not `.` or `..` (a URL parser resolves them, so a request could reach another endpoint with the client's
+// credentials), nor holding such a segment in the rest of a path.
+inline void check_path_text(std::string_view name, std::string_view text, bool rest_of_path) {
+  auto const invalid = [](std::string_view segment) { return segment == "." || segment == ".."; };
+  bool valid = rest_of_path || (!text.empty() && !invalid(text));
+
+  if (rest_of_path) {
+    for (auto const segment : std::views::split(text, '/')) {
+      valid = valid && !invalid(std::string_view{segment.begin(), segment.end()});
+    }
+  }
+
+  if (!valid) {
+    throw std::invalid_argument{"quoll::rest::client: invalid path parameter " + std::string{name}};
+  }
+}
+
+template <class Route, std::size_t Index>
+[[nodiscard]] std::string path_text(typename Route::arguments const &arguments) {
+  constexpr auto param = checked_path<Route::path_value>::parsed.params[Index];
+  constexpr bool rest_of_path = param.kind == param_kind::rest_of_path;
+
+  auto text = param_traits<std::tuple_element_t<Index, typename Route::arguments>>::to_text(std::get<Index>(arguments));
+
+  check_path_text(param.name, text, rest_of_path);
+  return http::detail::percent_encode(text, rest_of_path ? "/" : "");
+}
+
 // The path of a route with its parameters: each one's text, percent-encoded; the rest of a path keeps its '/'.
 template <class Route, std::size_t... Index>
 [[nodiscard]] std::string fill_path(typename Route::arguments const &arguments, std::index_sequence<Index...>) {
-  constexpr auto &parsed = checked_path<Route::path_value>::parsed;
-
-  std::array<std::string, sizeof...(Index)> const texts{http::detail::percent_encode(
-      param_traits<std::tuple_element_t<Index, typename Route::arguments>>::to_text(std::get<Index>(arguments)),
-      parsed.params[Index].kind == param_kind::rest_of_path ? "/" : "")...};
+  std::array<std::string, sizeof...(Index)> const texts{path_text<Route, Index>(arguments)...};
   std::string_view const path = Route::path;
   std::string filled;
   std::size_t next = 0;

@@ -48,6 +48,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -255,15 +256,16 @@ TEST_CASE("client: try_call hands over any declared response", "[rest][client]")
   REQUIRE(run(client.try_call<users::remove>(42)).has_value());
 }
 
-TEST_CASE("client: call throws http_error for any other outcome", "[rest][client]") {
+TEST_CASE("client: call throws call_error for any other outcome", "[rest][client]") {
   auto const router = make_router();
   auto const client = make_client(router);
 
   try {
     (void)run(client.call<users::get>(7));
     FAIL("call returned");
-  } catch (rest::http_error const &error) {
+  } catch (rest::call_error const &error) {
     REQUIRE(error.status() == http::status::not_found);
+    REQUIRE(error.failure().reason == "declared response 404: read it with try_call");
   }
 }
 
@@ -279,7 +281,7 @@ TEST_CASE("client: credentials are sent to the endpoints that require them", "[r
   try {
     (void)run(anonymous.call<users::get>(42));
     FAIL("call returned");
-  } catch (rest::http_error const &error) {
+  } catch (rest::call_error const &error) {
     // The detail of the server's problem.
     REQUIRE(error.status() == http::status::unauthorized);
     REQUIRE(std::string{error.what()} == "missing credentials");
@@ -301,5 +303,60 @@ TEST_CASE("client: a declared response whose body does not decode is unexpected"
 
   REQUIRE_FALSE(received.has_value());
   REQUIRE(received.error().reason.starts_with("invalid body: "));
-  REQUIRE_THROWS_AS(run(client.call<users::get>(42)), rest::http_error);
+  REQUIRE_THROWS_AS(run(client.call<users::get>(42)), rest::call_error);
+}
+
+TEST_CASE("client: a path parameter must stay a segment where the template puts it", "[rest][client]") {
+  auto const router = make_router();
+  auto const client = make_client(router);
+
+  // A URL parser resolves dot segments: the request would reach another endpoint, with the credentials.
+  REQUIRE_THROWS_AS((void)client.call<files::one>("..", std::nullopt, {}), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<files::one>(".", std::nullopt, {}), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<files::one>("", std::nullopt, {}), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<files::rest_of>("a/../../admin"), std::invalid_argument);
+  // Dots inside a name are fine.
+  REQUIRE(run(client.call<files::one>("..a", std::nullopt, {})) == "..a|-");
+}
+
+TEST_CASE("client: a header value the server would read differently is refused", "[rest][client]") {
+  auto const router = make_router();
+  auto const client = make_client(router);
+
+  REQUIRE_THROWS_AS((void)client.call<files::one>("x", std::nullopt, {"a,b"}), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<files::one>("x", std::nullopt, {" c"}), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<files::one>("x", std::nullopt, {""}), std::invalid_argument);
+}
+
+TEST_CASE("client: the detail of a problem, whatever the case of its media type", "[rest][client]") {
+  http::response gone;
+
+  gone.status = http::status::not_found;
+  gone.fields.add("Content-Type", "Application/Problem+JSON");
+  gone.body = R"({"detail":"gone for good"})";
+
+  rest::client<v1, canned_transport> const client{canned_transport{gone}};
+
+  try {
+    run(completes(client.call<users::remove>(42)));
+    FAIL("call returned");
+  } catch (rest::call_error const &error) {
+    REQUIRE(std::string{error.what()} == "gone for good");
+  }
+}
+
+TEST_CASE("client: a response declared by a with<> is not held by reply<Endpoint>, and says so", "[rest][client]") {
+  using wrapped = rest::api<"/api/v1", rest::with<rest::returns<not_found, status::conflict>, users::api>>;
+
+  http::response missing;
+
+  missing.status = http::status::conflict;
+  missing.body = R"({"detail":"no such user"})";
+
+  rest::client<wrapped, canned_transport> const client{canned_transport{missing}};
+  auto const removed = run(client.try_call<users::remove>(42));
+
+  REQUIRE_FALSE(removed.has_value());
+  REQUIRE(removed.error().reason ==
+          "status 409 is declared by a with<> around the endpoint: reply<Endpoint> does not hold it");
 }

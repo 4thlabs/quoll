@@ -48,6 +48,7 @@
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/query_string.hpp>
 #include <quoll/rest/detail/response_value.hpp>
+#include <quoll/rest/detail/scheme_traits.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/http_error.hpp>
@@ -109,57 +110,11 @@ struct task_value<async::task<T>> {
   return response;
 }
 
-// The credential a request carries for a scheme, if any.
-template <fixed_string Header>
-[[nodiscard]] std::optional<std::string> find_credential(std::type_identity<api_key<Header>>,
-                                                         request_input const &input) {
-  auto const value = input.request.fields.find(Header.view());
-
-  // An empty key is no key, as an empty bearer token is no token.
-  return value && !value->empty() ? std::optional<std::string>{*value} : std::nullopt;
-}
-
-template <fixed_string Param>
-[[nodiscard]] std::optional<std::string> find_credential(std::type_identity<api_key_query<Param>>,
-                                                         request_input const &input) {
-  auto const texts = query_texts(input.query, Param.view());
-
-  return texts.empty() || texts.front().empty() ? std::nullopt : std::optional<std::string>{texts.front()};
-}
-
-[[nodiscard]] inline std::optional<std::string> find_credential(std::type_identity<bearer_auth>,
-                                                                request_input const &input) {
-  constexpr std::string_view scheme = "Bearer ";
-  auto const value = input.request.fields.find("Authorization");
-
-  if (!value || value->size() <= scheme.size() || !http::detail::iequals(value->substr(0, scheme.size()), scheme)) {
-    return std::nullopt;
-  }
-
-  auto const token = http::detail::trim(value->substr(scheme.size()));
-
-  return token.empty() ? std::nullopt : std::optional<std::string>{token};
-}
-
-// The challenge of a 401, which RFC 9110 requires: `Bearer`, or `ApiKey` with where the key goes (API keys have no
-// registered scheme; the name tells the client what to send).
-[[nodiscard]] inline std::string challenge(std::type_identity<bearer_auth>) { return "Bearer"; }
-
-template <fixed_string Header>
-[[nodiscard]] std::string challenge(std::type_identity<api_key<Header>>) {
-  return "ApiKey header=\"" + std::string{Header.view()} + "\"";
-}
-
-template <fixed_string Param>
-[[nodiscard]] std::string challenge(std::type_identity<api_key_query<Param>>) {
-  return "ApiKey query=\"" + std::string{Param.view()} + "\"";
-}
-
 template <class Scheme>
 [[nodiscard]] http::response unauthorized(std::string detail) {
   auto response = problem_response(http::status::unauthorized, std::move(detail));
 
-  response.fields.add("WWW-Authenticate", challenge(std::type_identity<Scheme>{}));
+  response.fields.add("WWW-Authenticate", scheme_traits<Scheme>::challenge());
   return response;
 }
 
@@ -195,7 +150,7 @@ async::task<std::optional<http::response>> check_security(type_list<>, Validator
 template <class Scheme, class... Rest, class Validators>
 async::task<std::optional<http::response>> check_security(type_list<Scheme, Rest...>, Validators &validators,
                                                           request_input const &input) {
-  auto value = find_credential(std::type_identity<Scheme>{}, input);
+  auto value = scheme_traits<Scheme>::find(input.request.fields, input.query);
 
   if (!value) {
     co_return unauthorized<Scheme>("missing credentials");
@@ -338,7 +293,7 @@ template <class Route>
   if constexpr (Route::schemes::size > 0) {
     if (error.status() == http::status::unauthorized) {
       response.fields.add("WWW-Authenticate",
-                          challenge(std::type_identity<typename front<typename Route::schemes>::type>{}));
+                          scheme_traits<typename front<typename Route::schemes>::type>::challenge());
     }
   }
 

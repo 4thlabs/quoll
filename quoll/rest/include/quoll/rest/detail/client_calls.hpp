@@ -40,6 +40,7 @@
 #include <quoll/rest/detail/type_list.hpp>
 
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <tuple>
 #include <utility>
@@ -82,6 +83,14 @@ struct client_calls<Client, Api, std::index_sequence<Index...>> {
         arguments_of<Api, Endpoint>{std::move(args)...});
   }
 };
+
+template <class Scheme, class... Routes>
+[[nodiscard]] consteval bool uses_scheme(type_list<Routes...>) {
+  return ([]<class... Schemes>(type_list<Schemes...>) {
+    return (std::same_as<Schemes, Scheme> || ...);
+  }(typename Routes::schemes{}) ||
+          ...);
+}
 
 // The most arguments a call to an endpoint of the api takes: the client has an overload per arity up to it.
 template <class... Routes>

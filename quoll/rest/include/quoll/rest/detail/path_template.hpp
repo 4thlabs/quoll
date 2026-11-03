@@ -38,6 +38,7 @@
 #define QUOLL_REST_DETAIL_PATH_TEMPLATE_HPP
 
 #include <quoll/http/detail/route_template.hpp>
+#include <quoll/rest/detail/join_strings.hpp>
 #include <quoll/rest/fixed_string.hpp>
 
 #include <algorithm>
@@ -210,20 +211,15 @@ struct path_template {
 // result is "/".
 template <fixed_string Prefix, fixed_string Path>
 [[nodiscard]] consteval auto join_paths() {
-  constexpr std::string_view prefix = Prefix.view();
-  constexpr std::string_view tail = Path.view() == "/" ? std::string_view{} : Path.view();
-  constexpr std::size_t length = prefix.size() + tail.size() == 0 ? 1 : prefix.size() + tail.size();
+  constexpr bool root = Path.view() == "/" || Path.view().empty();
 
-  fixed_string<length + 1> joined;
-
-  if constexpr (prefix.size() + tail.size() == 0) {
-    joined.value[0] = '/';
+  if constexpr (root && Prefix.view().empty()) {
+    return fixed_string{"/"};
+  } else if constexpr (root) {
+    return Prefix;
   } else {
-    std::ranges::copy(prefix, joined.value);
-    std::ranges::copy(tail, joined.value + prefix.size());
+    return join_strings<Prefix, Path>();
   }
-
-  return joined;
 }
 
 } // namespace quoll::rest::detail

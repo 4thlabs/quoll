@@ -141,19 +141,6 @@ template <class T>
   }
 }
 
-[[nodiscard]] inline std::vector<std::string_view> query_texts(std::vector<query_entry> const &query,
-                                                               std::string_view name) {
-  std::vector<std::string_view> texts;
-
-  for (auto const &entry : query) {
-    if (entry.name == name) {
-      texts.push_back(entry.value);
-    }
-  }
-
-  return texts;
-}
-
 [[nodiscard]] inline std::vector<std::string_view> header_texts(http::fields const &fields, std::string_view name) {
   std::vector<std::string_view> texts;
 

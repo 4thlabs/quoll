@@ -39,6 +39,7 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/http/transport.hpp>
+#include <quoll/rest/call_error.hpp>
 #include <quoll/rest/detail/client_calls.hpp>
 #include <quoll/rest/detail/client_request.hpp>
 #include <quoll/rest/detail/client_response.hpp>
@@ -56,25 +57,13 @@ namespace quoll::rest {
 template <class Endpoint>
 using result = detail::call_result<Endpoint>;
 
-namespace detail {
-
-template <class Scheme, class... Routes>
-[[nodiscard]] consteval bool uses_scheme(type_list<Routes...>) {
-  return ([]<class... Schemes>(type_list<Schemes...>) {
-    return (std::same_as<Schemes, Scheme> || ...);
-  }(typename Routes::schemes{}) ||
-          ...);
-}
-
-} // namespace detail
-
 /**
  * @brief Calls the endpoints of `Api` through `Transport` (an http::HttpTransport): fetch in a browser, a Worker or
  * Node, a connection natively, a router of the same program (http::local_transport). The api may be a third-party
  * one: its contract is all a client needs.
  *
  * - `call<Endpoint>(arguments...)` returns a task of the body of the endpoint's first returns<> (nothing for an
- *   endpoint without one, or whose first response has no body). Any other outcome throws http_error from the task:
+ *   endpoint without one, or whose first response has no body). Any other outcome throws call_error from the task:
  *   another declared response (read it with try_call), an undeclared status (its problem detail, if any), a body that
  *   does not decode.
  * - `try_call<Endpoint>(arguments...)` returns a task of result<Endpoint>: a reply<Endpoint> holding the declared
@@ -83,7 +72,8 @@ template <class Scheme, class... Routes>
  *
  * The arguments are those of the endpoint, in its order: path parameters (prefixes first), then the argument parts,
  * then the inherited ones; their types come from the endpoint, so braced lists convert (`{.limit = 20}`). They are
- * encoded into the request by the call: an invalid one throws there, before the task runs.
+ * encoded into the request by the call: an invalid one throws std::invalid_argument there, before the task runs (a
+ * path parameter that is empty or a dot segment, a header value the server would read differently).
  *
  * The task does not refer to the client: the request is built by the call, and the transport's task owns what it
  * needs. Thread safety: none (credentials() changes the client); calls on a const client may be concurrent.
@@ -94,7 +84,7 @@ class client : public detail::client_call_set<client<Api, Transport>, Api,
 public:
   /** @brief The arguments of a call to `Endpoint`, as a tuple. */
   template <class Endpoint>
-  using arguments = typename Api::template route<Endpoint>::arguments;
+  using arguments = detail::arguments_of<Api, Endpoint>;
 
   explicit client(Transport transport) noexcept(std::is_nothrow_move_constructible_v<Transport>)
       : transport_(std::move(transport)) {}
@@ -105,7 +95,7 @@ public:
     static_assert(detail::uses_scheme<Scheme>(typename Api::routes{}), "quoll::rest::client: the api has no endpoint "
                                                                        "that requires this scheme");
 
-    credentials_.insert_or_assign(detail::scheme_key(std::type_identity<Scheme>{}), std::move(value));
+    credentials_.insert_or_assign(std::string{detail::scheme_traits<Scheme>::key.view()}, std::move(value));
   }
 
   [[nodiscard]] Transport const &transport() const noexcept { return transport_; }
@@ -118,14 +108,14 @@ private:
   [[nodiscard]] async::task<typename detail::call_value<Endpoint>::type> call_with(arguments<Endpoint> args) const {
     using route = typename Api::template route<Endpoint>;
 
-    return detail::receive_value<Endpoint>(transport_.send(detail::build_request<route>(args, credentials_)));
+    return detail::receive_value<route>(transport_.send(detail::build_request<route>(args, credentials_)));
   }
 
   template <class Endpoint>
   [[nodiscard]] async::task<result<Endpoint>> try_call_with(arguments<Endpoint> args) const {
     using route = typename Api::template route<Endpoint>;
 
-    return detail::receive<Endpoint>(transport_.send(detail::build_request<route>(args, credentials_)));
+    return detail::receive<route>(transport_.send(detail::build_request<route>(args, credentials_)));
   }
 
   Transport transport_;
