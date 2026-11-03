@@ -44,8 +44,8 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
   set services, `call` / `try_call` / `scope` clients), rewritten to the rules with: one typed response per status,
   `query_params<Struct>`, Glaze's aggregate reflection instead of macros, a client over `http::HttpTransport`, routes
   in the sans-IO router. A contract stands alone: clients of third-party APIs need no Quoll server. Decided: this
-  shape and these adjustments. Still open, for the prototype to settle: `reply` / `result`, whether braced arguments
-  hold, and how much of Glaze's JSON Schema serves OpenAPI as is (see [Open questions](#open-questions)).
+  shape and these adjustments. Still open, for the prototype to settle: `reply` / `result`, and whether braced
+  arguments hold (see [Open questions](#open-questions)).
 - Web build (2026-11-02, see [Web integration and build chain](#web-integration-and-build-chain)): **React + Vite**
   for the reference sample and the scaffolding template, while Quoll's npm side stays framework-agnostic; **SPA /
   static builds only** (no SSR Node server); `openapi.json` is **generated, never committed**.
@@ -300,8 +300,11 @@ of `components/schemas`.
   them.
 - The client skips unknown keys when it decodes the responses of a third-party API (`error_on_unknown_keys`
   off); Quoll's server may keep rejecting them in requests.
-- The prototype checks Glaze's JSON Schema against what `components/schemas` needs: `$ref` for named types, optional
-  fields, 64-bit integers. Where it falls short, the DSL writes the schema itself from the same reflection.
+- Reflected types need external linkage: Glaze reads field names through an `extern` object, which Clang rejects
+  for a type in an anonymous namespace.
+- The DSL writes the JSON Schemas itself, from the same reflection. Glaze 9.1's own JSON Schema does not serve
+  `components/schemas` as is: no `required` list, named types inlined instead of `$ref`, 64-bit integers as a
+  `minimum` / `maximum` range instead of `format: int64`.
 
 ## UI: hybrid web model
 
@@ -603,9 +606,7 @@ Decision: **B** (2026-11-02).
 
 Every point the plan leaves open, gathered here; the linked sections give the context.
 
-- C++ → JSON Schema mapping details, 64-bit integers in particular, and how much of Glaze's JSON Schema serves
-  `components/schemas` as is ([TypeScript client](#typescript-client-openapi),
-  [REST DSL](#rest-dsl-contract-server-client)).
+- C++ → JSON Schema mapping details, 64-bit integers in particular ([TypeScript client](#typescript-client-openapi)).
 - How a service picks the status of a `rest::reply<E>` when two declared responses share a type, and the exact shape
   of `rest::result<E>` ([REST DSL](#rest-dsl-contract-server-client)).
 - Whether braced arguments (`call<E>({.limit = 20})`) convert as described on GCC and Clang, checked by the
