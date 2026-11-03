@@ -34,6 +34,7 @@ quoll_declare_tests(
   SOURCES
     tests/fields_test.cpp
     tests/parser_test.cpp
+    tests/percent_test.cpp
     tests/router_test.cpp
     tests/serializer_test.cpp
     tests/stream_test.cpp
