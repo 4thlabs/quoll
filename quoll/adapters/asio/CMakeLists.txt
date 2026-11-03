@@ -33,5 +33,6 @@ quoll_declare_tests(
   DEPS
     quoll::asio
     quoll::http
+    quoll::server
     quoll::threads
 )

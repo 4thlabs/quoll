@@ -45,12 +45,14 @@
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
+#include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/http/write.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/io_result.hpp>
+#include <quoll/server/serve.hpp>
 #include <quoll/test/check.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/threads/thread_pool.hpp>
@@ -136,6 +138,14 @@ task<http::response> get(quoll::asio::connector connector, std::uint16_t port) {
 
   check(co_await http::read(stream, buffer, parser));
   co_return parser.release();
+}
+
+// A GET, then a stop request: the server's accept loop ends once the response is in.
+task<http::response> get_then_stop(quoll::asio::connector connector, std::uint16_t port, std::stop_source &source) {
+  auto response = co_await get(std::move(connector), port);
+
+  source.request_stop();
+  co_return response;
 }
 
 task<http::request> serve_one(quoll::asio::tcp_stream stream) {
@@ -450,4 +460,36 @@ TEST_CASE("asio: an operation that cannot start rethrows to its awaiter", "[asio
   REQUIRE_FALSE(result);
   REQUIRE(failure);
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::runtime_error);
+}
+
+TEST_CASE("asio: quoll::server serves a router over TCP, until a stop request", "[asio][server][http]") {
+  ::asio::io_context context;
+  quoll::asio::acceptor acceptor{listen(context)};
+  auto const port = acceptor.socket().local_endpoint().port();
+  quoll::asio::executor const executor{context.get_executor()};
+  http::router router;
+
+  router.add(http::verb::get, "/accounts/{id}", "accounts.get",
+             [](http::request, http::route_match match) -> task<http::response> {
+               http::response response;
+
+               response.body = "account " + match.params.front();
+               co_return response;
+             });
+
+  std::stop_source source;
+  std::optional<http::response> response;
+  std::exception_ptr failure;
+  bool served = false;
+
+  co_spawn(executor, quoll::server::serve(executor, acceptor, router),
+           overloaded{[&] { served = true; }, [&](std::exception_ptr error) { failure = std::move(error); }},
+           source.get_token());
+  spawn(context, get_then_stop(quoll::asio::connector{context.get_executor()}, port, source), response, failure);
+  run(context, failure);
+
+  REQUIRE(served);
+  REQUIRE(response);
+  REQUIRE(response->status == http::status::ok);
+  REQUIRE(response->body == "account 42");
 }
