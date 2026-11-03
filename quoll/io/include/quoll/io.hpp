@@ -40,12 +40,16 @@
 #include <quoll/io/any_listener.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/byte_stream.hpp>
+#include <quoll/io/connect.hpp>
 #include <quoll/io/connector.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/io_result.hpp>
+#include <quoll/io/listen.hpp>
 #include <quoll/io/listener.hpp>
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/io/network.hpp>
+#include <quoll/io/network_connector.hpp>
+#include <quoll/io/network_ref.hpp>
 #include <quoll/io/write.hpp>
 
 #endif // QUOLL_IO_HPP

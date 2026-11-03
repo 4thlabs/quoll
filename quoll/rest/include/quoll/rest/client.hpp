@@ -92,8 +92,9 @@ public:
       : transport_(std::move(transport)) {}
 
   /**
-   * @brief A client of the server at `base_url`, through a transport built from it: by default a connection over the
-   * network of the executor that calls (see quoll::client::transport, sync_wait), fetch_transport in a browser.
+   * @brief A client of the server at `base_url`, through a transport built from it: with the default one, a connection
+   * over the network of the executor that calls (see quoll::client::transport, sync_wait); in a browser, name
+   * fetch_transport as the transport, which also takes a base URL.
    *
    * @code
    * quoll::rest::client<bank::v1> bank{"http://127.0.0.1:8080"};

@@ -49,7 +49,7 @@
 #include <quoll/http/serializer.hpp>
 #include <quoll/http/version.hpp>
 #include <quoll/io/connector.hpp>
-#include <quoll/io/network.hpp>
+#include <quoll/io/network_connector.hpp>
 
 #include <cassert>
 #include <concepts>

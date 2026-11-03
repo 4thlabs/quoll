@@ -44,7 +44,12 @@
 #include <asio/io_context.hpp>
 #include <asio/signal_set.hpp>
 
+#include <signal.h>
+
+#include <array>
+#include <concepts>
 #include <csignal>
+#include <cstddef>
 #include <exception>
 #include <optional>
 #include <stdexcept>
@@ -57,6 +62,60 @@ namespace quoll::asio {
 
 namespace detail {
 
+// SIGINT and SIGTERM turned into a stop request while sync_wait() runs. Their actions from before are saved, and given
+// back by release(): at the first signal, so that the next one has its usual effect (ending a process whose task does
+// not stop), and once the task is done.
+class stop_signals {
+public:
+  stop_signals(::asio::io_context &context, std::stop_source &stop) : signals_(context), stop_(&stop) {
+    for (std::size_t index = 0; index < numbers.size(); ++index) {
+      ::sigaction(numbers[index], nullptr, &saved_[index]);
+      signals_.add(numbers[index]);
+    }
+
+    signals_.async_wait([this](std::error_code error, int) {
+      if (!error) {
+        stop_->request_stop();
+        release();
+      }
+    });
+  }
+
+  stop_signals(stop_signals const &) = delete;
+  stop_signals(stop_signals &&) = delete;
+  stop_signals &operator=(stop_signals const &) = delete;
+  stop_signals &operator=(stop_signals &&) = delete;
+
+  ~stop_signals() { release(); }
+
+  void release() noexcept {
+    if (released_) {
+      return;
+    }
+
+    std::error_code ignored;
+
+    // Ends the wait, which would keep the loop running; then asio sets the default action as it lets the signals go,
+    // and the saved one replaces it.
+    signals_.cancel(ignored);
+    signals_.clear(ignored);
+
+    for (std::size_t index = 0; index < numbers.size(); ++index) {
+      ::sigaction(numbers[index], &saved_[index], nullptr);
+    }
+
+    released_ = true;
+  }
+
+private:
+  static constexpr std::array<int, 2> numbers{SIGINT, SIGTERM};
+
+  ::asio::signal_set signals_;
+  std::stop_source *stop_;
+  std::array<struct sigaction, 2> saved_{};
+  bool released_ = false;
+};
+
 // Where sync_wait() keeps the outcome of its task.
 template <class T>
 struct sync_outcome {
@@ -64,35 +123,35 @@ struct sync_outcome {
   std::exception_ptr failure;
 };
 
-// Stores the task's outcome, and stops waiting for signals: the loop can then drain.
+// Stores the task's outcome, then asks what the task started to stop and lets the signals go: the loop can drain.
 template <class T>
 struct sync_completion {
   sync_outcome<T> *outcome;
-  ::asio::signal_set *signals;
+  std::stop_source *stop;
+  stop_signals *signals;
 
   void operator()(std::exception_ptr failure) const {
     outcome->failure = std::move(failure);
-    stop_waiting();
+    done();
   }
 
   void operator()() const
     requires std::is_void_v<T>
   {
     outcome->value.emplace(true);
-    stop_waiting();
+    done();
   }
 
   template <class U>
     requires(!std::is_void_v<T> && std::same_as<U, T>)
   void operator()(U value) const {
     outcome->value.emplace(std::move(value));
-    stop_waiting();
+    done();
   }
 
-  void stop_waiting() const {
-    std::error_code ignored;
-
-    signals->cancel(ignored);
+  void done() const {
+    stop->request_stop();
+    signals->release();
   }
 };
 
@@ -103,32 +162,25 @@ struct sync_completion {
  * entry point of a program, like std::this_thread::sync_wait.
  *
  * The task runs on an executor offering the loop's network, so that io::connect(), io::listen(), and what is built on
- * them (quoll::server::listen, quoll::client::transport, a REST client), work without being handed anything. While
- * it waits, the first SIGINT or SIGTERM (Ctrl-C) requests stop on the task, which ends a server; the next one has its
- * default action, ending a process whose task does not stop.
+ * them (quoll::server::listen, quoll::client::transport, a REST client), work without being handed anything.
  *
- * Returns once the task has completed and the work it started has drained (connections cancelled by the stop request
- * finish). Throws std::logic_error if the loop runs out of work before the task completes.
+ * While the task runs, the first SIGINT or SIGTERM (Ctrl-C) requests stop on it, which ends a server; the signals
+ * then get their former actions back, so that the next Ctrl-C ends a process whose task does not stop. Once the task
+ * has completed, what it started and left running (connections) is asked to stop too, and sync_wait() returns when
+ * the loop has drained. A task waiting for something that never comes keeps sync_wait() waiting, as with std's; if a
+ * stop request leaves it waiting with nothing left to run, sync_wait() throws std::logic_error.
+ *
+ * POSIX signals: native only, like the adapter.
  */
 template <class T>
 T sync_wait(async::task<T> work) {
   ::asio::io_context context{1};
-  ::asio::signal_set signals{context, SIGINT, SIGTERM};
   std::stop_source stop;
+  detail::stop_signals signals{context, stop};
   detail::sync_outcome<T> outcome;
 
-  // The first signal asks the task to stop, and gives the signals their default action back: if the task does not
-  // stop, a second Ctrl-C ends the process.
-  signals.async_wait([&stop, &signals](std::error_code error, int) {
-    if (!error) {
-      std::error_code ignored;
-
-      stop.request_stop();
-      signals.clear(ignored);
-    }
-  });
   async::co_spawn(executor<::asio::io_context::executor_type>{context.get_executor()}, std::move(work),
-                  detail::sync_completion<T>{&outcome, &signals}, stop.get_token());
+                  detail::sync_completion<T>{&outcome, &stop, &signals}, stop.get_token());
   context.run();
 
   if (outcome.failure) {
@@ -136,7 +188,7 @@ T sync_wait(async::task<T> work) {
   }
 
   if (!outcome.value) {
-    throw std::logic_error{"quoll::asio::sync_wait: the task waits for something that cannot come"};
+    throw std::logic_error{"quoll::asio::sync_wait: the stopped task waits for something that cannot come"};
   }
 
   if constexpr (!std::is_void_v<T>) {

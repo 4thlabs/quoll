@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async.hpp>
+#include <quoll/async/offers_service.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/test/run.hpp>
 

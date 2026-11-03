@@ -40,8 +40,12 @@
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_listener.hpp>
 #include <quoll/io/any_stream.hpp>
+#include <quoll/io/connect.hpp>
+#include <quoll/io/listen.hpp>
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/io/network.hpp>
+#include <quoll/io/network_connector.hpp>
+#include <quoll/io/network_ref.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/test/run.hpp>
 
@@ -104,13 +108,15 @@ static_assert(io::Network<fake_network>);
 // An executor of a run_loop offering the fake network, as an I/O loop's executor would.
 class network_executor {
 public:
-  using services = async::service_list<io::network>;
+  using services = async::service_list<io::network_ref>;
 
   network_executor(async::run_loop &loop, network_log &log) : loop_(loop.get_executor()), log_(&log) {}
 
   void post(async::work_item &item) const { loop_.post(item); }
 
-  [[nodiscard]] io::network query(async::service_tag<io::network>) const { return io::network{fake_network{log_}}; }
+  [[nodiscard]] io::network_ref query(async::service_tag<io::network_ref>) const {
+    return io::network_ref{fake_network{log_}};
+  }
 
   [[nodiscard]] bool operator==(network_executor const &) const noexcept = default;
 

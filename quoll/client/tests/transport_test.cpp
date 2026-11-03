@@ -529,7 +529,8 @@ TEST_CASE("client::transport: built from an http URL", "[client]") {
   for (std::string_view const url :
        {"https://example.com", "ftp://example.com", "example.com", "http://", "http://example.com/api",
         "http://example.com:0", "http://example.com:65536", "http://example.com:", "http://example.com:8o",
-        "http://[::1", "http://[::1]8080", "http://user@example.com", "http://exa mple.com"}) {
+        "http://[::1", "http://[::1]8080", "http://[example.com]", "http://[192.0.2.1]:80", "http://user@example.com",
+        "http://exa mple.com"}) {
     REQUIRE_THROWS_AS(client::transport<>{url}, std::invalid_argument);
   }
 

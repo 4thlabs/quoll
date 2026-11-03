@@ -71,6 +71,8 @@ struct network {
   }
 };
 
+static_assert(io::Network<network<::asio::any_io_executor>>);
+
 } // namespace quoll::asio::detail
 
 #endif // QUOLL_ASIO_DETAIL_NETWORK_HPP

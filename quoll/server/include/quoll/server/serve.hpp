@@ -41,6 +41,7 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/executor.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/io/any_stream.hpp>
@@ -111,24 +112,23 @@ async::task<> serve_shared(Stream stream, http::router const &router, std::share
 } // namespace detail
 
 /**
- * @brief Accepts the connections of `listener` and serves each one with `router`, concurrently.
+ * @brief Accepts the connections of `listener` and serves each one with `router`, concurrently, on `executor`.
  *
- * Each connection runs serve_connection() as a task of its own, spawned with the stop token of the awaiter on a copy
- * of the executor the task runs on. A stop request is immediate, not graceful: it ends the accept loop and cancels
- * whatever the connections have pending, a read, a handler's operations, a write.
+ * Each connection runs serve_connection() as a task of its own, spawned on `executor` with the stop token of the
+ * awaiter: a thread pool or a strand, for instance, while the accept loop stays on its I/O loop. A stop request is
+ * immediate, not graceful: it ends the accept loop and cancels whatever the connections have pending, a read, a
+ * handler's operations, a write.
  *
  * The task completes when accepting stops with `std::errc::operation_canceled`: a stop request, or the application
  * closing its listener. Another accept failure goes to `options.on_accept_error`, or by default is skipped when it
  * concerns one connection only and rethrown otherwise; a rethrow ends the accept loop, not the connections already
  * served.
  *
- * The spawned connections may outlive the task: `listener` and `router` outlive them, for instance until the
- * executor has drained (as sync_wait does).
+ * The spawned connections may outlive the task: `listener` and `router` outlive them, for instance until `executor`
+ * has drained (as sync_wait does).
  */
-template <io::Listener Listener>
-async::task<> serve(Listener &listener, http::router const &router, serve_options options = {}) {
-  // A copy: the connections may outlive the executor of the awaiting chain.
-  async::any_executor const executor{co_await async::current_executor()};
+template <async::Executor Executor, io::Listener Listener>
+async::task<> serve(Executor executor, Listener &listener, http::router const &router, serve_options options = {}) {
   auto const stop_token = co_await async::current_stop_token();
   auto const shared = std::make_shared<detail::shared_options const>(std::move(options));
   auto const &accept_error = shared->options.on_accept_error;
@@ -162,6 +162,21 @@ async::task<> serve(Listener &listener, http::router const &router, serve_option
     async::co_spawn(executor, detail::serve_shared(std::move(*stream), router, shared),
                     detail::connection_outcome{shared}, stop_token);
   }
+}
+
+/**
+ * @brief serve() on the executor the task runs on: the connections run where the accept loop does.
+ *
+ * @code
+ * co_await quoll::server::serve(listener, router);
+ * @endcode
+ */
+template <io::Listener Listener>
+async::task<> serve(Listener &listener, http::router const &router, serve_options options = {}) {
+  // A copy: the connections may outlive the executor of the awaiting chain.
+  async::any_executor executor{co_await async::current_executor()};
+
+  co_await serve(std::move(executor), listener, router, std::move(options));
 }
 
 } // namespace quoll::server
