@@ -43,7 +43,7 @@ Requires CMake ≥ 3.23. Tests and install rules are ON by default when Quoll is
 ```bash
 cmake -B build
 cmake --build build -j
-ctest --test-dir build                # "quoll" (every test case) and compile_fail.<case> (what must not compile)
+ctest --test-dir build                # "quoll" (every test case), compile_fail.<case>, and the samples' tests
 ./build/tests/quoll_tests "[tag]"     # Catch2 filters
 emcmake cmake -B build-wasm && cmake --build build-wasm -j && ctest --test-dir build-wasm   # runs under node
 ```
@@ -77,6 +77,9 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   per case under `tests/compile_fail/`, starting with `// expect: <message>`, declared with
   `quoll_declare_compile_fail_tests(SOURCES ... DEPS ...)`. Each becomes a ctest `compile_fail.<case>` that builds it
   and passes only when the build fails with that message, taken literally (native builds only).
+- `samples/<sample>/`: small programs using Quoll, built when `QUOLL_BUILD_SAMPLES` is ON (default when top-level;
+  native only). `samples/notes`: a REST contract, its server and its client over TCP; with tests ON, the ctest
+  `notes_round_trip` runs them against each other.
 - With tests ON, every header is also compiled alone in its own translation unit (`quoll_<module>_header_check`),
   so a header that is not self-contained breaks the build.
 - Dependencies come from CPM (`cmake/CPM.cmake`, always included: modules need it, not only tests). Under
