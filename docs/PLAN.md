@@ -39,7 +39,7 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
 - REST DSL (2026-11-03, see [REST DSL](#rest-dsl-contract-server-client)): the shape of Puffin's earlier `rest`
   module (one `endpoint<"name", method, "/path", parts...>` alias per operation, nested `api<>`, `with<>`, overload
   set services, `call` / `try_call` / `scope` clients), rewritten to the rules with: one typed response per status,
-  `query<Struct>`, aggregate reflection instead of macros, a client over `http::HttpTransport`, routes in the
+  `query_params<Struct>`, aggregate reflection instead of macros, a client over `http::HttpTransport`, routes in the
   sans-IO router. A contract stands alone: clients of third-party APIs need no Quoll server. Decided: this shape and
   these adjustments. Still open, for the prototype to settle: the JSON codec, `reply` / `result`, and whether braced
   arguments and aggregate reflection hold on GCC and Clang (see [Open questions](#open-questions)).
@@ -175,7 +175,7 @@ namespace users {
 using namespace quoll::rest;
 using quoll::http::verb;
 
-using list = endpoint<"users.list", verb::get, "/", query<user_filter>, returns<std::vector<user>>>;
+using list = endpoint<"users.list", verb::get, "/", query_params<user_filter>, returns<std::vector<user>>>;
 using get = endpoint<"users.get", verb::get, "/{id:int64}", returns<user>, returns<problem, status::not_found>>;
 using create = endpoint<"users.create", verb::post, "/", body<new_user>, returns<user, status::created>,
                         returns<problem, status::conflict>>;
@@ -197,8 +197,9 @@ using v1 = rest::api<"/api/v1", auth::api, rest::with<rest::security<rest::beare
   by default, `path` for the rest of the path), and parsed at compile time.
 - Parts:
   - `query<"name", T>`: `std::optional<T>` when optional, `std::vector<T>` when repeated.
-  - `query<Struct>`: each field of the struct is a query parameter. This is for operations with many optional
-    parameters, common in third-party APIs; the call then uses designated initializers.
+  - `query_params<Struct>`: each field of the struct is a query parameter. This is for operations with many optional
+    parameters, common in third-party APIs; the call then uses designated initializers. A name of its own: a class
+    template cannot also take the `<"name", T>` form of `query`.
   - `header<"Name", T>` and `body<T, Codec>`.
   - `returns<T, status, Codec>`: repeatable, one per status, each with its own type (200 by default). An endpoint
     without `returns` answers 204.
@@ -211,8 +212,8 @@ using v1 = rest::api<"/api/v1", auth::api, rest::with<rest::security<rest::beare
 
 Arguments are the same on both sides: the path parameters (prefixes first), then the parts in order, then the parts
 inherited from `with<>`. The endpoint computes their types: `call` and the service take exactly those, not deduced
-`Args&&...`, so that a braced list (`{.limit = 20}` for a `query<Struct>`) converts to its parameter. The prototype
-checks this.
+`Args&&...`, so that a braced list (`{.limit = 20}` for a `query_params<Struct>`) converts to its parameter. The
+prototype checks this.
 
 **Serving it.** A service is an overload set, one `operator()(Endpoint, args...)` per endpoint, with no base class.
 A missing service, or one with the wrong arguments, is a compile error.
