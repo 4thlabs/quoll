@@ -40,7 +40,9 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
   module (one `endpoint<"name", method, "/path", parts...>` alias per operation, nested `api<>`, `with<>`, overload
   set services, `call` / `try_call` / `scope` clients), rewritten to the rules with: one typed response per status,
   `query<Struct>`, aggregate reflection instead of macros, a client over `http::HttpTransport`, routes in the
-  sans-IO router. A contract stands alone: clients of third-party APIs need no Quoll server.
+  sans-IO router. A contract stands alone: clients of third-party APIs need no Quoll server. Decided: this shape and
+  these adjustments. Still open, for the prototype to settle: the JSON codec, `reply` / `result`, and whether braced
+  arguments and aggregate reflection hold on GCC and Clang (see [Open questions](#open-questions)).
 - Web build (2026-11-02, see [Web integration and build chain](#web-integration-and-build-chain)): **React + Vite**
   for the reference sample and the scaffolding template, while Quoll's npm side stays framework-agnostic; **SPA /
   static builds only** (no SSR Node server); `openapi.json` is **generated, never committed**.
@@ -602,6 +604,8 @@ Every point the plan leaves open, gathered here; the linked sections give the co
   slow to compile, Boost.JSON brings Boost, simdjson only parses) ([REST DSL](#rest-dsl-contract-server-client)).
 - How a service picks the status of a `rest::reply<E>` when two declared responses share a type, and the exact shape
   of `rest::result<E>` ([REST DSL](#rest-dsl-contract-server-client)).
+- Whether braced arguments (`call<E>({.limit = 20})`) and aggregate reflection work as described on GCC and Clang,
+  checked by the prototype ([REST DSL](#rest-dsl-contract-server-client)).
 - A generator from an existing OpenAPI document to a contract header, for third-party APIs
   ([REST DSL](#rest-dsl-contract-server-client)).
 - Shape of the typed SSE helper on the TS side, and streamed bodies over the bridge
