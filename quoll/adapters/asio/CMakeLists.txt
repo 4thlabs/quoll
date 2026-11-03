@@ -32,7 +32,9 @@ quoll_declare_tests(
     tests/asio_test.cpp
   DEPS
     quoll::asio
+    quoll::client
     quoll::http
+    quoll::rest
     quoll::server
     quoll::threads
 )

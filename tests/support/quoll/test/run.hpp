@@ -50,13 +50,12 @@
 namespace quoll::test {
 
 /**
- * @brief Runs `work` on a fresh run_loop until the loop is drained. Returns its value, or nothing if it never
- * completed (it waits for something that did not come); rethrows its exception, so that Catch2 reports it.
+ * @brief Runs `work` on `loop` until the loop is drained. Returns its value, or nothing if it never completed (it
+ * waits for something that did not come); rethrows its exception, so that Catch2 reports it.
  */
 template <class T>
   requires(!std::is_void_v<T>)
-std::optional<T> run(async::task<T> work) {
-  async::run_loop loop;
+std::optional<T> run(async::run_loop &loop, async::task<T> work) {
   std::optional<T> result;
   std::exception_ptr failure;
 
@@ -71,6 +70,15 @@ std::optional<T> run(async::task<T> work) {
   }
 
   return result;
+}
+
+/** @brief run() on a fresh run_loop. */
+template <class T>
+  requires(!std::is_void_v<T>)
+std::optional<T> run(async::task<T> work) {
+  async::run_loop loop;
+
+  return run(loop, std::move(work));
 }
 
 } // namespace quoll::test
