@@ -76,7 +76,8 @@ struct prepared_request {
 
 // Sends `request` on `connection` and reads its final response, skipping the interim 1xx ones; the connection goes
 // back to `pool` if it can carry another request. With `retry_if_closed`, a connection found closed before any
-// response is not an error: no response, the caller sends the request again on a new connection.
+// response is not an error: no response, the caller sends the request again on a new connection. Without it, a
+// response or an exception.
 inline async::task<std::optional<http::response>> exchange(connection_pool &pool, http::parse_limits limits,
                                                            io::any_stream connection, prepared_request const &request,
                                                            bool retry_if_closed) {

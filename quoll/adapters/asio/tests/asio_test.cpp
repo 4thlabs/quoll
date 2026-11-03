@@ -59,6 +59,7 @@
 #include <quoll/test/overloaded.hpp>
 #include <quoll/threads/thread_pool.hpp>
 
+#include <asio/buffer.hpp>
 #include <asio/error.hpp>
 #include <asio/executor_work_guard.hpp>
 #include <asio/io_context.hpp>
@@ -287,6 +288,17 @@ private:
   quoll::asio::connector connector_;
   int *connections_;
 };
+
+// Sends a GET on `transport`: the error it fails with, if any.
+task<std::error_code> send_error(quoll::client::transport<quoll::asio::connector> transport) {
+  try {
+    (void)co_await transport.send(http::request{});
+  } catch (std::system_error const &error) {
+    co_return error.code();
+  }
+
+  co_return std::error_code{};
+}
 
 using accounts_client = quoll::rest::client<asio_test::accounts::api, quoll::client::transport<counting_connector>>;
 
@@ -601,4 +613,30 @@ TEST_CASE("asio: a REST client calls a mounted API over TCP, on one connection k
   REQUIRE(calls->opened.id == 7);
   REQUIRE(calls->opened.owner == "Grace");
   REQUIRE(connections == 1);
+}
+
+TEST_CASE("asio: a stop request abandons a request waiting for its response", "[asio][client]") {
+  ::asio::io_context context;
+  auto acceptor = listen(context);
+  tcp::socket peer{context};
+  std::array<char, 64> received{};
+  std::stop_source source;
+
+  // A server that reads the request, then never answers: the stop request comes once the client waits.
+  acceptor.async_accept(peer, [&](std::error_code error) {
+    check(error);
+    peer.async_read_some(::asio::buffer(received), [&](std::error_code, std::size_t) { source.request_stop(); });
+  });
+
+  std::optional<std::error_code> error;
+  std::exception_ptr failure;
+
+  spawn(context,
+        send_error(
+            quoll::client::transport{quoll::asio::connector{context.get_executor()}, "127.0.0.1", port_of(acceptor)}),
+        error, failure, source.get_token());
+  run(context, failure);
+
+  REQUIRE(error);
+  REQUIRE(*error == std::errc::operation_canceled);
 }
