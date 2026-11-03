@@ -24,6 +24,7 @@ quoll_declare_tests(
   SOURCES
     tests/contract_test.cpp
     tests/json_codec_test.cpp
+    tests/mount_test.cpp
     tests/param_traits_test.cpp
     tests/path_template_test.cpp
   DEPS

@@ -40,16 +40,22 @@
 #include <quoll/rest/api.hpp>
 #include <quoll/rest/body.hpp>
 #include <quoll/rest/codec.hpp>
+#include <quoll/rest/credential.hpp>
 #include <quoll/rest/decode_error.hpp>
 #include <quoll/rest/endpoint.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/header.hpp>
+#include <quoll/rest/http_error.hpp>
 #include <quoll/rest/json_codec.hpp>
+#include <quoll/rest/mount.hpp>
 #include <quoll/rest/param_traits.hpp>
 #include <quoll/rest/parameter.hpp>
+#include <quoll/rest/problem.hpp>
 #include <quoll/rest/query.hpp>
+#include <quoll/rest/reply.hpp>
 #include <quoll/rest/returns.hpp>
 #include <quoll/rest/security.hpp>
 #include <quoll/rest/text_codec.hpp>
+#include <quoll/rest/validators.hpp>
 
 #endif // QUOLL_REST_HPP
