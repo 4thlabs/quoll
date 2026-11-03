@@ -1,6 +1,6 @@
 # Quoll — plan
 
-Status: **exploration**, nothing decided beyond what is marked *Decided*. Last update: 2026-11-02.
+Status: **exploration**, nothing decided beyond what is marked *Decided*. Last update: 2026-11-03.
 
 ## Goal
 
@@ -36,6 +36,11 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
   [TypeScript client](#typescript-client-openapi).
 - Main UI direction: **hybrid web UI** (see [UI](#ui-hybrid-web-model)). Qt is no longer a target: no Qt adapter in
   the plan.
+- REST DSL (2026-11-03, see [REST DSL](#rest-dsl-contract-server-client)): the shape of Puffin's earlier `rest`
+  module (one `endpoint<"name", METHOD, "/path", parts...>` alias per operation, nested `api<>`, `with<>`, overload
+  set services, `call` / `try_call` / `scope` clients), rewritten to the rules with: one typed response per status,
+  `query<Struct>`, aggregate reflection instead of macros, a client over `http::HttpTransport`, routes in the
+  sans-IO router. A contract stands alone: clients of third-party APIs need no Quoll server.
 - Web build (2026-11-02, see [Web integration and build chain](#web-integration-and-build-chain)): **React + Vite**
   for the reference sample and the scaffolding template, while Quoll's npm side stays framework-agnostic; **SPA /
   static builds only** (no SSR Node server); `openapi.json` is **generated, never committed**.
@@ -132,6 +137,149 @@ flowchart LR
   routes --> srv["quoll::server<br/>requests from connections"]
   routes --> dispatch["quoll::bridge<br/>requests from messages"]
 ```
+
+### REST DSL: contract, server, client
+
+An API description is a **contract**: C++ types, with no I/O and no server or client code. A server implements a
+contract and a client consumes one, but neither needs the other. Describing a third-party API (a payment provider, a
+public service, another team's service) means writing only its contract, then calling it with a client: no Quoll
+server is involved. The shape comes from the `rest` module of Puffin's `claude/project-thread-*` branches (ideas
+only, see [Decided](#decided)), adjusted for OpenAPI, typed errors and third-party APIs.
+
+**Describing an API.** One type alias per operation:
+
+```cpp
+namespace rest = quoll::rest;
+
+namespace bank {
+
+struct user {
+  std::int64_t id = 0;
+  std::string name;
+  std::optional<std::string> email;
+};
+
+struct new_user {
+  std::string name;
+  std::string email;
+};
+
+struct user_filter {
+  std::optional<int> limit;
+  std::optional<std::string> name;
+};
+
+namespace users {
+using namespace quoll::rest;
+
+using list = endpoint<"users.list", GET, "/", query<user_filter>, returns<std::vector<user>>>;
+using get = endpoint<"users.get", GET, "/{id:int64}", returns<user>, returns<problem, status::not_found>>;
+using create = endpoint<"users.create", POST, "/", body<new_user>, returns<user, status::created>,
+                        returns<problem, status::conflict>>;
+using remove = endpoint<"users.remove", DELETE, "/{id:int64}">; // 204
+
+using api = rest::api<"/users", list, get, create, remove>;
+} // namespace users
+
+using v1 = rest::api<"/api/v1", auth::api, rest::with<rest::security<rest::bearer_auth>, users::api, cards::api>>;
+
+} // namespace bank
+```
+
+- `endpoint<"name", METHOD, "/path", parts...>`: the name is mandatory and unique in its API, which is checked at
+  compile time. It is the OpenAPI `operationId` and the name of the route on the server.
+- Path parameters are typed in the template, `{name:type}` (`int`, `int64`, `uint64`, `double`, `bool`, `string`
+  by default, `path` for the rest of the path), and parsed at compile time.
+- Parts:
+  - `query<"name", T>`: `std::optional<T>` when optional, `std::vector<T>` when repeated.
+  - `query<Struct>`: each field of the struct is a query parameter. This is for operations with many optional
+    parameters, common in third-party APIs; the call then uses designated initializers.
+  - `header<"Name", T>` and `body<T, Codec>`.
+  - `returns<T, status, Codec>`: repeatable, one per status, each with its own type (200 by default). An endpoint
+    without `returns` answers 204.
+- `api<"/prefix", ...>` nests APIs, and a prefix may have parameters. `with<parts..., apis...>` adds parts to every
+  endpoint of the APIs it wraps.
+- Security schemes: `api_key<"Header">`, `api_key_query<"param">`, `bearer_auth`, mapped to OpenAPI
+  `securitySchemes`. They are not arguments: the server checks them with validators, and the client sends the
+  credentials it was given for each scheme.
+- `param_traits<T>` converts path, query and header values to and from text; enums go by name.
+
+Arguments are the same on both sides: the path parameters (prefixes first), then the parts in order, then the parts
+inherited from `with<>`.
+
+**Serving it.** A service is an overload set, one `operator()(Endpoint, args...)` per endpoint, with no base class.
+A missing service, or one with the wrong arguments, is a compile error.
+
+```cpp
+namespace bank {
+
+struct users_service {
+  task<std::vector<user>> operator()(users::list, user_filter filter);
+  task<rest::reply<users::get>> operator()(users::get, std::int64_t id);
+  task<user> operator()(users::create, new_user created);
+  task<> operator()(users::remove, std::int64_t id);
+};
+
+} // namespace bank
+
+http::router router;
+
+rest::mount<bank::v1>(router, bank::auth_service{}, bank::users_service{}, bank::cards_service{},
+                      rest::validators([&](rest::bearer_token const &token) { return sessions.valid(token); }));
+```
+
+- A service returns the type of the first `returns`, or `rest::reply<E>`, which holds any declared response with its
+  status. An undeclared status, or the wrong type for a status, does not compile.
+- Errors without a declared response:
+  - 400 for an invalid argument or body, 415 for a wrong `Content-Type`, 401 for missing or rejected credentials.
+  - `throw rest::http_error(status, detail)` answers that status as `application/problem+json`.
+  - Any other exception answers 500 without detail.
+- `mount` registers the routes in the sans-IO `quoll::http` router, which both `quoll::server` (connections) and
+  `quoll::bridge` (messages) feed. Middlewares (logs, metrics, auth beyond the schemes) wrap the router, so every
+  mode runs them.
+
+**Calling it.** A client takes the contract and an `http::HttpTransport`: `fetch_transport` in the browser, a Worker
+or Node, and the `quoll::client` transport over a connector natively. The base URL belongs to the transport.
+
+```cpp
+using quoll::emscripten::fetch_transport;
+
+rest::client<bank::v1, fetch_transport> api{fetch_transport{"https://bank.example.com"}};
+
+api.credentials<rest::bearer_auth>(token);
+
+bank::user found = co_await api.call<bank::users::get>(42);
+auto maybe = co_await api.try_call<bank::users::get>(7);
+auto page = co_await api.call<bank::users::list>({.limit = 20});
+auto alice_cards = api.scope<bank::cards::api>(1); // fixes {user_id}
+```
+
+- `call` returns the first declared response. Any other status throws `rest::http_error`, carrying the decoded body
+  when its status is declared.
+- `try_call` returns `rest::result<E>`: one of the declared responses, or an error for an undeclared status or a body
+  that does not decode.
+- Transport failures (network, cancellation) stay exceptions from the task in both cases (`std::system_error`).
+- The client is a template over its transport: no virtual call. Type erasure, if a use needs it, goes through
+  function-pointer tables, like `any_stream`.
+- Interceptors (retry, token refresh on 401) wrap `send`.
+- Arguments are copied into the task.
+
+**Third-party APIs.** A contract written for someone else's API must express what that API does, not what Quoll
+would choose:
+
+- JSON names that are not C++ names (`created_at`, `htmlUrl`, reserved words), through a per-type renaming trait.
+- Unknown fields are ignored. An enum may declare an enumerator for the values it does not know.
+- Error bodies of any shape, one type per status (`returns<github_error, status::not_found>`), not only
+  `problem+json`.
+- Bodies other than JSON through codecs: text, form, bytes.
+- Later: a tool generating the contract header from an existing OpenAPI document, the reverse of
+  `quoll_add_openapi`. The DSL stays able to express what such documents commonly hold.
+
+**Types, JSON and schemas.** Bodies are plain aggregates. Their fields come from C++20 aggregate reflection (the
+Boost.PFR technique: the field count from aggregate initialization, the names from `__PRETTY_FUNCTION__` on pointers
+to the members of a static instance, with GCC and Clang): no macro and no declaration. C++26 reflection replaces it
+once compilers have it. The same reflection drives the JSON codec and the JSON Schema of `components/schemas`. An
+optional trait per type adds renames, descriptions and formats.
 
 ## UI: hybrid web model
 
@@ -286,8 +434,8 @@ messages, which the TS side exposes as the `ReadableStream` of the `Response`: t
 before SSE does, in every mode. The first prototype only needs complete bodies.
 
 **Consequences for the DSL.** Every route declares its method, path template, path / query / header parameters,
-body, and response type per status code; named C++ types become `components/schemas`. The C++ → JSON Schema mapping
-must be defined: `std::optional` → not required, `std::variant` → `oneOf` with a discriminator, enums, maps, and
+body, and response type per status code (see [REST DSL](#rest-dsl-contract-server-client)); named C++ types become
+`components/schemas`. The C++ → JSON Schema mapping must be defined: `std::optional` → not required, `std::variant` → `oneOf` with a discriminator, enums, maps, and
 64-bit integers (beyond 2^53, JSON numbers lose precision in JS: string format or documented limit).
 
 **What tRPC gave and this does not.** Automatic request batching (add a batch endpoint if a real need shows up) and
@@ -433,6 +581,12 @@ Decision: **B** (2026-11-02).
 Every point the plan leaves open, gathered here; the linked sections give the context.
 
 - C++ → JSON Schema mapping details, 64-bit integers in particular ([TypeScript client](#typescript-client-openapi)).
+- JSON codec: our own, small and driven by the reflected types, or a library (Glaze needs C++23, nlohmann::json is
+  slow to compile, Boost.JSON brings Boost, simdjson only parses) ([REST DSL](#rest-dsl-contract-server-client)).
+- How a service picks the status of a `rest::reply<E>` when two declared responses share a type, and the exact shape
+  of `rest::result<E>` ([REST DSL](#rest-dsl-contract-server-client)).
+- A generator from an existing OpenAPI document to a contract header, for third-party APIs
+  ([REST DSL](#rest-dsl-contract-server-client)).
 - Shape of the typed SSE helper on the TS side, and streamed bodies over the bridge
   ([TypeScript client](#typescript-client-openapi)).
 - A batch endpoint, only if a real need shows up ([TypeScript client](#typescript-client-openapi)).
@@ -454,7 +608,10 @@ Goal: validate the design with code. Success criteria:
    same React + Vite sample (`samples/`) in three modes: native server (browser `fetch`), PWA (Quoll in a Worker,
    `fetch` over `postMessage`), native webview shell (`fetch` over IPC). Typed errors and type checking (`tsc` fails
    on a wrong parameter or body) must work, and the document validates against the OpenAPI 3.1 schema.
-6. The build chain of the sample works both ways in CI: `npm run dev` with `quoll/vite` (development path) and
+6. A client of a third-party API described only by its contract (no Quoll server in the program, renamed JSON
+   fields, error bodies that are not `problem+json`), called through `fetch_transport` in Node and through the
+   native transport, with `call`, `try_call` and credentials.
+7. The build chain of the sample works both ways in CI: `npm run dev` with `quoll/vite` (development path) and
    `cmake --build` with `quoll_add_openapi` / `quoll_add_web_ui` (release path).
 
 ## Environment
