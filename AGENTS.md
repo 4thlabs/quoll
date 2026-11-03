@@ -50,10 +50,14 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
   This creates the `INTERFACE` target `quoll_<module>`, alias `quoll::<module>`, exported as `quoll::<module>`
   by `find_package(quoll)`. Modules are added in dependency order in the root `CMakeLists.txt`.
+- Adapters (thread pool, asio, later Emscripten, webview...) are modules like the others, grouped under
+  `quoll/adapters/<adapter>/` (added by `quoll/adapters/CMakeLists.txt`) rather than at the root. Only the directory
+  changes: the target stays `quoll::<adapter>` and the headers `<quoll/<adapter>/...>`.
 - All test sources compile into one executable, `build/tests/quoll_tests` (Catch2 v3 via CPM, built by
   `quoll_main_tests()` in `tests/CMakeLists.txt`).
   Helpers shared by the tests of every module live in `tests/support/quoll/test/` (`quoll::test::run` runs a
-  task on a run_loop, `quoll::test::overloaded`, `quoll::test::check`): use them rather than copying them into a test file.
+  task on a run_loop, `quoll::test::overloaded`, `quoll::test::check`): use them rather than copying them into a
+  test file.
 - With tests ON, every header is also compiled alone in its own translation unit (`quoll_<module>_header_check`),
   so a header that is not self-contained breaks the build.
 - Dependencies come from CPM (`cmake/CPM.cmake`, always included: modules need it, not only tests). Under

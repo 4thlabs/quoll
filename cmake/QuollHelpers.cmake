@@ -19,13 +19,13 @@ if(NOT TARGET quoll_warnings)
 endif()
 
 #
-# Declare a header-only module from the CMakeLists.txt of quoll/<module>/:
+# Declare a header-only module from its CMakeLists.txt (quoll/<module>/, or quoll/adapters/<module>/ for an adapter):
 #
 #   quoll_declare_module(NAME <module> [DEPS <targets>...])
 #
-# Creates the INTERFACE target quoll_<module> with alias quoll::<module>, publishing every header under
-# quoll/<module>/include/. With QUOLL_BUILD_TESTS, each header is also compiled alone in its own translation unit,
-# which enforces the self-contained header rule.
+# Creates the INTERFACE target quoll_<module> with alias quoll::<module>, publishing every header under the include/
+# directory next to that CMakeLists.txt. With QUOLL_BUILD_TESTS, each header is also compiled alone in its own
+# translation unit, which enforces the self-contained header rule.
 #
 function(quoll_declare_module)
   cmake_parse_arguments(PARSE_ARGV 0 QUOLL_MODULE "" "NAME" "DEPS")

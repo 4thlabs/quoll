@@ -23,12 +23,11 @@ endif()
 include(cmake/QuollHelpers.cmake)
 include(cmake/CPM.cmake)
 
-# Modules, in dependency order.
+# Modules, in dependency order: the core, then the adapters.
 add_subdirectory(quoll/async)
-add_subdirectory(quoll/threads)
 add_subdirectory(quoll/io)
 add_subdirectory(quoll/http)
-add_subdirectory(quoll/asio)
+add_subdirectory(quoll/adapters)
 
 if(QUOLL_BUILD_TESTS)
   enable_testing()
