@@ -64,6 +64,9 @@ using param_traits_test::sort_order;
 using quoll::rest::param_traits;
 
 static_assert(quoll::rest::Parameter<sort_order>);
+// Integral, but not numbers std::from_chars reads: no traits, a clean constraint failure.
+static_assert(!quoll::rest::Parameter<char8_t>);
+static_assert(!quoll::rest::Parameter<wchar_t>);
 
 } // namespace
 

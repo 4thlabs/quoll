@@ -48,6 +48,9 @@
 
 namespace quoll::rest::detail {
 
+template <class T, class... Candidates>
+inline constexpr bool is_any_of = (std::same_as<T, Candidates> || ...);
+
 // The whole text must be the number: no sign for unsigned types, no leading `+`, no trailing characters. Floating
 // point values must be finite: from_chars also reads `nan` and `inf`, which no parameter means.
 template <class T>
