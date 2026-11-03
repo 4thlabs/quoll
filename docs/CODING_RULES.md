@@ -10,9 +10,11 @@ C++ Core Guidelines.
 - No ODR violations: non-template free functions and out-of-class member definitions are `inline`, namespace-scope
   constants are `inline constexpr`, no `static` or unnamed-namespace entities and no mutable global state in headers.
 - Never `using namespace` at namespace scope in a header.
-- Implementation details live in `quoll::<module>::detail` (files under
-  `quoll/<module>/include/quoll/<module>/detail/`). A user never has to name anything in `detail`.
-- Public API: one header per component plus an umbrella `quoll/<module>/include/quoll/<module>.hpp`.
+- A module lives in `quoll/<module>/`, or in `quoll/adapters/<module>/` for an adapter (thread pool, asio...); paths
+  below are relative to that directory.
+- Implementation details live in `quoll::<module>::detail` (files under `include/quoll/<module>/detail/`). A user
+  never has to name anything in `detail`.
+- Public API: one header per component plus an umbrella `include/quoll/<module>.hpp`.
 - No `.cpp`, no explicit instantiation / `extern template`. Third-party C/C++ dependencies (e.g. llhttp) may be
   compiled targets fetched by CPM; Quoll's own code stays header-only.
 - Macros only for include guards and `QUOLL_`-prefixed configuration switches.

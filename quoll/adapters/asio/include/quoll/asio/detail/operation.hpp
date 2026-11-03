@@ -48,6 +48,7 @@
 #include <cassert>
 #include <coroutine>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <optional>
 #include <stop_token>
@@ -62,17 +63,17 @@ namespace quoll::asio::detail {
 // I/O object's executor, stores what the operation produced and posts the coroutine back to its own executor, which
 // may be another one (a thread pool): await_resume hands the results over there.
 //
-// When the awaiter's stop token can stop, the operation is cancellable through `cancellation` (see there): it starts
-// on the I/O object's executor, bound to the cancellation slot, and a stop request, from any thread, cancels it
-// there. Otherwise it starts at once, on the awaiter's thread. A stop requested before the operation starts
-// completes it with `operation_aborted` without starting it, as some operations (resolve) ignore cancellation slots.
+// The operation always starts on the I/O object's executor, like everything touching an asio I/O object. When the
+// awaiter's stop token can stop, it is bound to the cancellation slot of `cancellation` (see there), and a stop
+// request, from any thread, cancels it there. A stop requested before the operation starts completes it with
+// `operation_aborted` without starting it: at once if requested before await_suspend, else when it would start.
 //
 // The handler points to the operation, in the frame of the suspended coroutine: that frame is destroyed only after it
 // resumes, so the handler always finds it. A suspended chain of tasks is never destroyed from outside; destroying the
 // I/O object's executor destroys the handler without running it.
 //
-// A failure to post the coroutine back, or to start the operation from the I/O object's executor, cannot reach the
-// awaiter: it calls std::terminate (see async::Executor).
+// An exception thrown by the initiation is rethrown by await_resume. A failure to post the coroutine back cannot
+// reach the awaiter: it calls std::terminate (see async::Executor).
 //
 // Movable until it suspends, so that it can be co_await-ed as a temporary.
 template <class Initiation, class... Values>
@@ -96,30 +97,34 @@ public:
 
   [[nodiscard]] bool await_ready() const noexcept { return false; }
 
-  void await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
+  // Returns false, resuming the awaiter at once, when stop is already requested.
+  [[nodiscard]] bool await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
+    if (context.stop_token.stop_requested()) {
+      result_.emplace(std::error_code{::asio::error::operation_aborted}, Values{}...);
+      return false;
+    }
+
     item_.handle = handle;
     context_ = &context;
 
-    if (context.stop_token.stop_requested()) {
-      result_.emplace(std::error_code{::asio::error::operation_aborted}, Values{}...);
-      context.executor.post(item_);
-      return;
+    if (context.stop_token.stop_possible()) {
+      // Registered before the start: once started, the operation may complete and the coroutine resume and destroy
+      // the callback on another thread.
+      ticket_ = cancellation_->next();
+      stop_callback_.emplace(context.stop_token, canceller{cancellation_, ticket_});
     }
 
-    if (!context.stop_token.stop_possible()) {
-      initiation_(completion{this, nullptr});
-      return;
-    }
-
-    // Registered before the start: once started, the operation may complete and the coroutine resume and destroy
-    // the callback on another thread.
-    ticket_ = cancellation_->next();
-    stop_callback_.emplace(context.stop_token, canceller{cancellation_, ticket_});
     ::asio::dispatch(cancellation_->executor(), starter{this});
+    return true;
   }
 
   [[nodiscard]] result_type await_resume() {
     stop_callback_.reset();
+
+    if (exception_) {
+      std::rethrow_exception(exception_);
+    }
+
     assert(result_ && "asio operation resumed before its handler ran");
     return std::move(*result_);
   }
@@ -154,14 +159,31 @@ private:
     void operator()() const noexcept { cancellation::request(state, ticket); }
   };
 
-  void start() {
+  void start() noexcept {
     // A request that arrived before the start found nothing to cancel: the token tells.
     if (context_->stop_token.stop_requested()) {
       completion{this, nullptr}(std::error_code{::asio::error::operation_aborted}, Values{}...);
       return;
     }
 
-    initiation_(::asio::bind_cancellation_slot(cancellation_->start(ticket_), completion{this, cancellation_.get()}));
+    bool const stoppable = stop_callback_.has_value();
+
+    try {
+      if (stoppable) {
+        initiation_(
+            ::asio::bind_cancellation_slot(cancellation_->start(ticket_), completion{this, cancellation_.get()}));
+      } else {
+        initiation_(completion{this, nullptr});
+      }
+    } catch (...) {
+      // Not started: its handler will not run.
+      if (stoppable) {
+        cancellation_->finish();
+      }
+
+      exception_ = std::current_exception();
+      context_->executor.post(item_);
+    }
   }
 
   Initiation initiation_;
@@ -170,6 +192,7 @@ private:
   async::work_item item_;
   std::uint64_t ticket_ = 0;
   std::optional<result_type> result_;
+  std::exception_ptr exception_;
   std::optional<std::stop_callback<canceller>> stop_callback_;
 };
 

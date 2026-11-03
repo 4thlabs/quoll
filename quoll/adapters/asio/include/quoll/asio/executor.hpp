@@ -55,6 +55,8 @@ namespace quoll::asio {
  * post() hands asio a small function object resuming the work item. Unlike run_loop and the thread pool, asio
  * allocates it (from a per-thread cache once warm), so post() may throw std::bad_alloc; see async::Executor.
  * Equal when the asio executors are.
+ *
+ * Thread safety: post() may be called from any thread, as asio's post can.
  */
 template <class AsioExecutor = ::asio::any_io_executor>
   requires std::copy_constructible<AsioExecutor> && std::equality_comparable<AsioExecutor>

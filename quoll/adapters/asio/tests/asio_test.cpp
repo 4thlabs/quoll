@@ -35,6 +35,8 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/asio.hpp>
+#include <quoll/asio/detail/cancellation.hpp>
+#include <quoll/asio/detail/operation.hpp>
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
@@ -66,12 +68,14 @@
 #include <cstdint>
 #include <exception>
 #include <future>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -191,6 +195,28 @@ task<io::io_result> connect_and_read(quoll::asio::connector connector, std::uint
   std::array<std::byte, 16> buffer{};
 
   co_return co_await stream.read_some(buffer);
+}
+
+// Awaits an operation that records the thread starting it, then completes from `context`.
+task<std::thread::id> start_thread(::asio::io_context &context) {
+  std::thread::id started_on;
+  auto const cancel = std::make_shared<quoll::asio::detail::cancellation>(context.get_executor());
+  auto const [error] = co_await quoll::asio::detail::make_operation<>(cancel, [&](auto handler) {
+    started_on = std::this_thread::get_id();
+    ::asio::post(context, [handler = std::move(handler)]() mutable { std::move(handler)(std::error_code{}); });
+  });
+
+  check(error);
+  co_return started_on;
+}
+
+// Awaits an operation whose initiation throws.
+task<int> start_failing(::asio::io_context &context) {
+  auto const cancel = std::make_shared<quoll::asio::detail::cancellation>(context.get_executor());
+  [[maybe_unused]] auto const [error] =
+      co_await quoll::asio::detail::make_operation<>(cancel, [](auto) { throw std::runtime_error{"cannot start"}; });
+
+  co_return 0;
 }
 
 } // namespace
@@ -387,4 +413,41 @@ TEST_CASE("asio: a stop request from a pool thread cancels a read pending on the
   context.run();
 
   REQUIRE(read.get_future().get().error == std::errc::operation_canceled);
+}
+
+TEST_CASE("asio: an operation starts on its I/O executor, even awaited from a pool without a stop token", "[asio]") {
+  ::asio::io_context context;
+  auto work = ::asio::make_work_guard(context);
+  quoll::threads::thread_pool pool{1};
+  std::promise<std::thread::id> started_on;
+
+  co_spawn(pool.get_executor(), start_thread(context),
+           overloaded{[&](std::thread::id value) {
+                        started_on.set_value(value);
+                        work.reset();
+                      },
+                      [&](std::exception_ptr error) {
+                        started_on.set_exception(std::move(error));
+                        work.reset();
+                      }});
+  context.run();
+
+  REQUIRE(started_on.get_future().get() == std::this_thread::get_id());
+}
+
+TEST_CASE("asio: an operation that cannot start rethrows to its awaiter", "[asio]") {
+  ::asio::io_context context;
+  std::optional<int> result;
+  std::exception_ptr failure;
+  std::stop_source source;
+
+  SECTION("without a stop token") { spawn(context, start_failing(context), result, failure); }
+
+  SECTION("with a stop token") { spawn(context, start_failing(context), result, failure, source.get_token()); }
+
+  context.run();
+
+  REQUIRE_FALSE(result);
+  REQUIRE(failure);
+  REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::runtime_error);
 }
