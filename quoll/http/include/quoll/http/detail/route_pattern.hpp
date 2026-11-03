@@ -110,28 +110,35 @@ struct route_segment {
   });
 }
 
-// The path and query of a request target: origin-form as it is, absolute-form (`http://host/path?query`) without
-// its scheme and authority. Empty for another form (`*`).
-[[nodiscard]] inline std::string_view origin_form(std::string_view target) noexcept {
-  if (target.starts_with('/')) {
-    return target;
+struct target_parts {
+  std::string_view path;
+  // After '?', still encoded; empty without one.
+  std::string_view query;
+};
+
+// The path and query of a request target: origin-form (`/path?query`), or absolute-form (`http://host/path?query`)
+// without its scheme and authority, where an empty path is "/". Nothing for another form (`*`).
+[[nodiscard]] inline std::optional<target_parts> split_target(std::string_view target) noexcept {
+  auto rest = target;
+
+  if (!target.starts_with('/')) {
+    auto const scheme = target.find("://");
+
+    if (scheme == std::string_view::npos ||
+        !(iequals(target.substr(0, scheme), "http") || iequals(target.substr(0, scheme), "https"))) {
+      return std::nullopt;
+    }
+
+    auto const path = target.find_first_of("/?", scheme + 3);
+
+    rest = path == std::string_view::npos ? std::string_view{} : target.substr(path);
   }
 
-  auto const scheme = target.find("://");
+  auto const question = rest.find('?');
+  auto const path = rest.substr(0, question);
+  auto const query = question == std::string_view::npos ? std::string_view{} : rest.substr(question + 1);
 
-  if (scheme == std::string_view::npos ||
-      !(iequals(target.substr(0, scheme), "http") || iequals(target.substr(0, scheme), "https"))) {
-    return {};
-  }
-
-  auto const path = target.find_first_of("/?", scheme + 3);
-
-  if (path == std::string_view::npos) {
-    return "/";
-  }
-
-  // `http://host?query` has an empty path, which is "/".
-  return target[path] == '/' ? target.substr(path) : std::string_view{};
+  return target_parts{path.empty() ? std::string_view{"/"} : path, query};
 }
 
 // The percent-decoded segments of a path, or nothing for an invalid escape, a NUL (`%00`, which C APIs would cut at)
