@@ -161,6 +161,40 @@ struct one_then_broken {
 
 static_assert(io::Listener<one_then_broken>);
 
+// A stream that never receives anything: its read waits for a stop request, as a socket's does.
+struct idle_stream {
+  struct read_awaitable {
+    wait_for_stop wait;
+
+    [[nodiscard]] bool await_ready() const noexcept { return false; }
+
+    void await_suspend(std::coroutine_handle<> handle, quoll::async::await_context const &context) {
+      wait.await_suspend(handle, context);
+    }
+
+    io::io_result await_resume() {
+      wait.await_resume();
+      return {std::make_error_code(std::errc::operation_canceled), 0};
+    }
+  };
+
+  struct write_awaitable {
+    std::size_t size;
+
+    [[nodiscard]] bool await_ready() const noexcept { return true; }
+
+    void await_suspend(std::coroutine_handle<>, quoll::async::await_context const &) noexcept {}
+
+    io::io_result await_resume() const noexcept { return {{}, size}; }
+  };
+
+  [[nodiscard]] read_awaitable read_some(std::span<std::byte>) { return {}; }
+
+  [[nodiscard]] write_awaitable write_some(std::span<std::byte const> data) { return {data.size()}; }
+};
+
+static_assert(io::ByteStream<idle_stream>);
+
 // A stream whose operations throw: what serve_connection() cannot handle.
 struct broken_stream {
   struct awaitable {
@@ -405,4 +439,39 @@ TEST_CASE("serve: completes once its connections have ended, and rethrows an acc
   REQUIRE(body == "served");
   REQUIRE(failure);
   REQUIRE(failed_after_answer);
+}
+
+TEST_CASE("serve: a failure of its accept loop stops the connections, then reaches the awaiter", "[server]") {
+  auto const router = make_router();
+  quoll::async::run_loop loop;
+  one_then_broken listener{io::any_stream{idle_stream{}}};
+  std::exception_ptr failure;
+
+  // The connection waits for a request that never comes: only a stop request ends it.
+  quoll::async::co_spawn(loop.get_executor(), quoll::server::serve(listener, router),
+                         overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }});
+  loop.run();
+
+  REQUIRE(failure);
+  REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::system_error);
+}
+
+TEST_CASE("serve: an exception from on_accept_error stops the connections, then reaches the awaiter", "[server]") {
+  auto const router = make_router();
+  quoll::async::run_loop loop;
+  canned_listener listener;
+  quoll::server::serve_options options;
+  std::exception_ptr failure;
+
+  listener.failures.push_back(std::make_error_code(std::errc::connection_reset));
+  options.on_accept_error = [](std::error_code) -> task<bool> {
+    throw std::runtime_error{"on_accept_error"};
+    co_return false;
+  };
+  quoll::async::co_spawn(loop.get_executor(), quoll::server::serve(listener, router, std::move(options)),
+                         overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }});
+  loop.run();
+
+  REQUIRE(failure);
+  REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::runtime_error);
 }
