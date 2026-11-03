@@ -9,6 +9,6 @@ if(QUOLL_BUILD_TESTS AND UNIX)
   add_test(
     NAME notes_round_trip
     COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/round_trip.sh $<TARGET_FILE:quoll_notes_server>
-            $<TARGET_FILE:quoll_notes_client> 18080
+            $<TARGET_FILE:quoll_notes_client>
   )
 endif()

@@ -16,24 +16,25 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 
 Exploration. Modules so far: `quoll::async` (task, executor_ref, any_executor, await_context with stop token,
 current_executor and current_stop_token, executor services, co_spawn and its `detached` handler, when_all, run_loop),
-`quoll::io` (`ByteStream`, `Connector`, `Listener` and `Network` concepts, `any_stream` / `any_listener` type erasure,
-`io::network_ref` with `io::connect` / `io::listen` through the executor's network, `io::network_connector`, in-memory
-stream pair, `io::write`), `quoll::http` (messages, llhttp parser, serializer, `http::read` / `http::write` over a byte
-stream, `HttpTransport` concept, sans-IO `router`, `local_transport` to a router of the same program; llhttp is compiled
-and exported as `quoll::llhttp`), `quoll::server` (`serve_connection` serves a router on a byte stream, `serve` accepts
-connections from a `Listener`, `listen(router, port)`), `quoll::client` (`transport`, an `HttpTransport` over a
-`Connector` with keep-alive connections, built from an `http://` URL), `quoll::rest` (the server, `mount`, the `client`
-over an `HttpTransport`, `client::transport` by default, and the contract: `endpoint`, `api`, `with`, the parts and
-compile-time checked path templates; and the codecs: `json_codec` on Glaze, `text_codec`, `param_traits`), the adapters
-`quoll::threads` (thread pool executor; its tests do not run under WASM), `quoll::asio` (asio executor offering the
-network, `tcp_stream`, TCP connector and acceptor, `runtime`; native only, the application provides standalone asio) and
-`quoll::emscripten` (JavaScript event loop executor, `fetch_transport`; Emscripten only, its JavaScript side
-`js/quoll_emscripten.js` is linked with `--js-library`), and `quoll::runtime` (`<quoll/runtime.hpp>`: `quoll::runtime`,
-the runtime of the adapter chosen with `QUOLL_RUNTIME`, asio natively; none under Emscripten). A client GET runs end to
-end over a memory stream, over TCP through the asio connector, and over `fetch` in Node (prototype criteria 1 to 4); a
-`rest::client` built from a URL calls `server::listen` over TCP on a `quoll::runtime`. The prototype described in
-`docs/PLAN.md` continues with OpenAPI and the React sample. Do not settle its open questions or write the module design
-into this file before the prototype validates them.
+`quoll::io` (`ByteStream`, `Connector`, `Listener`, `BoundListener` and `Network` concepts, `any_stream` /
+`any_listener` type erasure, `io::network_ref` with `io::connect` / `io::listen` through the executor's network,
+`io::network_connector`, in-memory stream pair, `io::write`), `quoll::http` (messages, llhttp parser, serializer,
+`http::read` / `http::write` over a byte stream, `HttpTransport` concept, sans-IO `router`, `local_transport` to a
+router of the same program; llhttp is compiled and exported as `quoll::llhttp`), `quoll::server` (`serve_connection`
+serves a router on a byte stream, `serve` accepts connections from a `Listener`, `listen(router, port)`),
+`quoll::client` (`transport`, an `HttpTransport` over a `Connector` with keep-alive connections, built from an `http://`
+URL), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `client::transport` by default, and the
+contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates; and the codecs: `json_codec` on
+Glaze, `text_codec`, `param_traits`), the adapters `quoll::threads` (thread pool executor; its tests do not run under
+WASM), `quoll::asio` (asio executor offering the network, `tcp_stream`, TCP connector and acceptor, `runtime`; native
+only, the application provides standalone asio) and `quoll::emscripten` (JavaScript event loop executor,
+`fetch_transport`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`), and
+`quoll::runtime` (`<quoll/runtime.hpp>`: `quoll::runtime`, the runtime of the adapter chosen with `QUOLL_RUNTIME`, asio
+natively; none under Emscripten). A client GET runs end to end over a memory stream, over TCP through the asio
+connector, and over `fetch` in Node (prototype criteria 1 to 4); a `rest::client` built from a URL calls
+`server::listen` over TCP on a `quoll::runtime`. The prototype described in `docs/PLAN.md` continues with OpenAPI and
+the React sample. Do not settle its open questions or write the module design into this file before the prototype
+validates them.
 
 ## Build & test
 

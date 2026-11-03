@@ -3,14 +3,14 @@
 # with SIGTERM, as a service manager would (a job started in the background of a script ignores SIGINT, and so does the
 # runtime then).
 #
-#   round_trip.sh <quoll_notes_server> <quoll_notes_client> <port>
+#   round_trip.sh <quoll_notes_server> <quoll_notes_client>
 set -eu
 
 server=$1
 client=$2
-port=$3
 log=$(mktemp)
-"$server" "$port" >"$log" 2>&1 &
+# Port 0: the system picks a free port, which the server prints.
+"$server" 0 >"$log" 2>&1 &
 pid=$!
 trap 'kill "$pid" 2>/dev/null || true; rm -f "$log"' EXIT
 
@@ -20,7 +20,7 @@ fail() {
   exit 1
 }
 
-# The server prints its address once it listens; it exits at once if it cannot (the port is taken).
+# The server prints its address once it listens; it exits at once if it cannot.
 for _ in $(seq 50); do
   kill -0 "$pid" 2>/dev/null || fail "the server ended before listening"
   grep -q '^notes API on ' "$log" && break
@@ -28,6 +28,7 @@ for _ in $(seq 50); do
 done
 
 grep -q '^notes API on ' "$log" || fail "the server did not start"
+port=$(sed -n 's|^notes API on http://localhost:\([0-9]*\)/.*|\1|p' "$log")
 
 output=$("$client" "http://127.0.0.1:$port" 2>&1) || fail "the client failed: $output"
 printf '%s\n' "$output"
