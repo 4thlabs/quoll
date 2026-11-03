@@ -53,6 +53,7 @@
 #include <coroutine>
 #include <exception>
 #include <optional>
+#include <stdexcept>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -66,11 +67,16 @@ inline constexpr std::array<std::string_view, 9> fetch_managed_fields{
     "Connection", "Content-Length", "Expect", "Host", "Keep-Alive", "TE", "Trailer", "Transfer-Encoding", "Upgrade",
 };
 
-// The fields of a request, one "name:value\n" line each, for quoll_emscripten_fetch_start.
+// The fields of a request, one "name:value\n" line each, for quoll_emscripten_fetch_start. A name that is not a token,
+// or a value with a line break, would split into other fields there: rejected, as by http::serialize().
 [[nodiscard]] inline std::string pack_fields(http::fields const &fields) {
   std::string packed;
 
   for (auto const &entry : fields) {
+    if (!http::detail::is_token(entry.name) || http::detail::has_line_break(entry.value)) {
+      throw std::invalid_argument{"quoll::emscripten::fetch_transport: invalid field " + entry.name};
+    }
+
     auto const managed = std::ranges::any_of(
         fetch_managed_fields, [&entry](std::string_view name) { return http::detail::iequals(entry.name, name); });
 
@@ -92,14 +98,17 @@ inline constexpr std::array<std::string_view, 9> fetch_managed_fields{
 // resumes. Movable until it suspends, so that it can be co_await-ed as a temporary.
 class fetch_operation {
 public:
-  fetch_operation(std::string url, http::request const &request) : url_(std::move(url)), request_(&request) {}
+  // `fields`: the request's fields, packed by pack_fields().
+  fetch_operation(std::string url, std::string fields, http::request const &request)
+      : url_(std::move(url)), fields_(std::move(fields)), request_(&request) {}
 
   fetch_operation(fetch_operation const &) = delete;
   fetch_operation &operator=(fetch_operation const &) = delete;
   fetch_operation &operator=(fetch_operation &&) = delete;
 
   // Only moved before it suspends: nothing is pending yet.
-  fetch_operation(fetch_operation &&other) noexcept : url_(std::move(other.url_)), request_(other.request_) {}
+  fetch_operation(fetch_operation &&other) noexcept
+      : url_(std::move(other.url_)), fields_(std::move(other.fields_)), request_(other.request_) {}
 
   ~fetch_operation() = default;
 
@@ -113,11 +122,10 @@ public:
     }
 
     std::string const method{http::to_string(request_->method)};
-    auto const fields = pack_fields(request_->fields);
 
     item_.handle = handle;
     context_ = &context;
-    auto const id = quoll_emscripten_fetch_start(url_.c_str(), method.c_str(), fields.c_str(), request_->body.data(),
+    auto const id = quoll_emscripten_fetch_start(url_.c_str(), method.c_str(), fields_.c_str(), request_->body.data(),
                                                  request_->body.size(), &complete, this);
 
     stop_callback_.emplace(context.stop_token, aborter{id});
@@ -199,6 +207,7 @@ private:
   }
 
   std::string url_;
+  std::string fields_;
   http::request const *request_;
   async::await_context const *context_ = nullptr;
   async::work_item item_;

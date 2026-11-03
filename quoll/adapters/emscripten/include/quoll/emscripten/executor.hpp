@@ -60,8 +60,13 @@ public:
   [[nodiscard]] bool operator==(executor const &) const noexcept = default;
 
 private:
-  // The handle is read before the coroutine runs: it may destroy the item.
-  static void resume(void *item) noexcept { static_cast<async::work_item *>(item)->handle.resume(); }
+  // Run by the microtask: the item, owned by the suspended coroutine, is alive until then. Its handle is read before
+  // the coroutine runs, as the coroutine may destroy the item.
+  static void resume(void *item) noexcept {
+    auto const handle = static_cast<async::work_item *>(item)->handle;
+
+    handle.resume();
+  }
 };
 
 static_assert(async::Executor<executor>);

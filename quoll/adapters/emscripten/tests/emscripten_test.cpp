@@ -54,6 +54,7 @@
 #include <cstdlib>
 #include <exception>
 #include <optional>
+#include <stdexcept>
 #include <stop_token>
 #include <string>
 #include <system_error>
@@ -259,4 +260,16 @@ TEST_CASE("fetch_transport: a stop request made before fetching", "[emscripten]"
   source.request_stop();
 
   REQUIRE(run(send_error(fetch_transport{server.url()}, "/"), source) == std::errc::operation_canceled);
+}
+
+TEST_CASE("fetch_transport: a field that would split into others is rejected before fetching", "[emscripten]") {
+  fetch_transport const transport{"http://127.0.0.1"};
+  http::request injected_value;
+  http::request injected_name;
+
+  injected_value.fields.add("X-Test", "a\nX-Injected:1");
+  injected_name.fields.add("X-Test:a", "b");
+
+  REQUIRE_THROWS_AS((void)transport.send(std::move(injected_value)), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)transport.send(std::move(injected_name)), std::invalid_argument);
 }
