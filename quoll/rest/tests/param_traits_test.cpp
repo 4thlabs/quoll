@@ -88,6 +88,12 @@ TEST_CASE("param_traits: floating-point numbers in their shortest form", "[rest]
   REQUIRE(param_traits<double>::to_text(0.1) == "0.1");
   REQUIRE(param_traits<double>::from_text(param_traits<double>::to_text(1.0 / 3.0)) == 1.0 / 3.0);
   REQUIRE_FALSE(param_traits<double>::from_text("one"));
+  REQUIRE_FALSE(param_traits<double>::from_text("-"));
+  // from_chars reads these, but no parameter means them.
+  REQUIRE_FALSE(param_traits<double>::from_text("nan"));
+  REQUIRE_FALSE(param_traits<double>::from_text("inf"));
+  REQUIRE_FALSE(param_traits<double>::from_text("-Infinity"));
+  REQUIRE_FALSE(param_traits<double>::from_text("1e999"));
 }
 
 TEST_CASE("param_traits: booleans are true or false", "[rest][param]") {

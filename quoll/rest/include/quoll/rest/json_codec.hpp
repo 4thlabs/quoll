@@ -39,6 +39,7 @@
 
 #include <quoll/rest/codec.hpp>
 #include <quoll/rest/decode_error.hpp>
+#include <quoll/rest/detail/json_read_options.hpp>
 
 #include <glaze/json/read.hpp>
 #include <glaze/json/write.hpp>
@@ -64,8 +65,9 @@ struct json_options {
  * an enum to names, or describes a type that is not an aggregate. Empty `std::optional` fields are not written.
  *
  * Decoding is strict on what the type requires: every field that is not an `std::optional` (or another nullable type)
- * must be present, and a value of the wrong type is an error. Unknown keys are rejected unless `Options` ignores them,
- * as a client of a third-party API does (lenient_json_codec). Decoded types are default constructible.
+ * must be present, a value of the wrong type is an error, and so is anything but whitespace after the value. Unknown
+ * keys are rejected unless `Options` ignores them, as a client of a third-party API does (lenient_json_codec). Decoded
+ * types are default constructible.
  *
  * Reflected types need external linkage: Glaze reads their field names through an `extern` object, which Clang
  * rejects for a type in an anonymous namespace.
@@ -101,11 +103,7 @@ public:
   }
 
 private:
-  static constexpr glz::opts read_options{
-      .null_terminated = false,
-      .error_on_unknown_keys = !Options.ignore_unknown_keys,
-      .error_on_missing_keys = true,
-  };
+  static constexpr auto read_options = detail::make_json_read_options(Options.ignore_unknown_keys);
 };
 
 /** @brief JSON codec of Quoll's own APIs: unknown keys are errors. */

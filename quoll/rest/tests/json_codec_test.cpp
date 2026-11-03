@@ -180,6 +180,17 @@ TEST_CASE("json_codec: a body that is part of a larger buffer", "[rest][json]") 
   REQUIRE(received->stars == 1);
 }
 
+TEST_CASE("json_codec: anything but whitespace after the value is an error", "[rest][json]") {
+  REQUIRE(json.decode<repository>(R"({"full_name":"a","stargazers_count":1} )"
+                                  "\n")
+              .has_value());
+  REQUIRE_FALSE(json.decode<repository>(R"({"full_name":"a","stargazers_count":1}xyz)").has_value());
+  REQUIRE_FALSE(
+      json.decode<repository>(R"({"full_name":"a","stargazers_count":1}{"full_name":"b","stargazers_count":2})")
+          .has_value());
+  REQUIRE_FALSE(lenient.decode<repository>(R"({"full_name":"a","stargazers_count":1},)").has_value());
+}
+
 TEST_CASE("json_codec: a value Glaze cannot write throws", "[rest][json]") {
   user sent;
 
