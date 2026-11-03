@@ -47,6 +47,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -87,23 +88,38 @@ public:
 
   /**
    * @brief Routes `method` requests on `path` to `target`, under `name`.
-   * @throws std::invalid_argument for an invalid template.
+   * @throws std::invalid_argument for an invalid template, an empty handler, or a route this method already has with
+   * the same shape (`/users/{id}` and `/users/{uid}`).
    */
   void add(verb method, std::string_view path, std::string name, handler target) {
+    if (!target) {
+      throw std::invalid_argument{"quoll::http::router: empty handler"};
+    }
+
     auto segments = detail::parse_route(path);
+
+    for (auto const &route : routes_) {
+      if (route.method == method && detail::same_shape(route.segments, segments)) {
+        throw std::invalid_argument{"quoll::http::router: " + route.name + " already routes this method and path"};
+      }
+    }
+
     auto rank = detail::route_rank(segments);
 
     routes_.push_back(entry{method, std::move(segments), std::move(rank), std::move(name), std::move(target)});
   }
 
-  /** @brief The response of the route `message` matches, from its handler, or the 404 / 405 / 400 above. */
+  /**
+   * @brief The response of the route `message` matches, from its handler, or the 404 / 405 / 400 above. Anything the
+   * handler throws, even before it returns its task, comes out of the task.
+   */
   [[nodiscard]] async::task<response> dispatch(request message) const {
     std::string_view const target = message.target;
     auto const question = target.find('?');
     auto const segments = detail::decode_segments(target.substr(0, question));
 
     if (!segments) {
-      return detail::ready(detail::status_response(status::bad_request));
+      co_return detail::status_response(status::bad_request);
     }
 
     entry const *best = nullptr;
@@ -135,17 +151,17 @@ public:
       route_match match{best->name, std::move(best_params),
                         question == std::string_view::npos ? std::string{} : std::string{target.substr(question + 1)}};
 
-      return best->target(std::move(message), std::move(match));
+      co_return co_await best->target(std::move(message), std::move(match));
     }
 
     if (!allowed.empty()) {
       auto rejected = detail::status_response(status::method_not_allowed);
 
       rejected.fields.add("Allow", detail::join_methods(allowed));
-      return detail::ready(std::move(rejected));
+      co_return rejected;
     }
 
-    return detail::ready(detail::status_response(status::not_found));
+    co_return detail::status_response(status::not_found);
   }
 
 private:

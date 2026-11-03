@@ -37,7 +37,6 @@
 #ifndef QUOLL_HTTP_DETAIL_ROUTER_RESPONSES_HPP
 #define QUOLL_HTTP_DETAIL_ROUTER_RESPONSES_HPP
 
-#include <quoll/async/task.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
@@ -46,9 +45,6 @@
 #include <vector>
 
 namespace quoll::http::detail {
-
-// A task that produces `message` as soon as it is awaited: the router's own answers.
-inline async::task<response> ready(response message) { co_return message; }
 
 [[nodiscard]] inline response status_response(status code) {
   response message;
