@@ -55,6 +55,7 @@
 #include <cstddef>
 #include <expected>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -229,10 +230,34 @@ template <class Struct>
   return value;
 }
 
+// The elements of a list header: its field lines, each split at commas, as RFC 9110 lets a sender or a proxy combine
+// repeated fields into one; empty elements are skipped.
+[[nodiscard]] inline std::vector<std::string_view> list_elements(std::vector<std::string_view> const &lines) {
+  std::vector<std::string_view> elements;
+
+  for (auto const line : lines) {
+    for (auto const element : std::views::split(line, ',')) {
+      auto const text = http::detail::trim(std::string_view{element.begin(), element.end()});
+
+      if (!text.empty()) {
+        elements.push_back(text);
+      }
+    }
+  }
+
+  return elements;
+}
+
 template <fixed_string Name, class T>
 [[nodiscard]] std::expected<T, argument_error> decode_source(std::type_identity<header<Name, T>>,
                                                              request_input const &input) {
-  return from_texts<T>("header", Name.view(), header_texts(input.request.fields, Name.view()));
+  auto lines = header_texts(input.request.fields, Name.view());
+
+  if constexpr (is_vector<T>::value) {
+    lines = list_elements(lines);
+  }
+
+  return from_texts<T>("header", Name.view(), lines);
 }
 
 template <class T, class BodyCodec>
@@ -241,11 +266,11 @@ template <class T, class BodyCodec>
   constexpr BodyCodec codec;
   auto const content_type = input.request.fields.find("Content-Type");
 
-  if (!content_type) {
+  if (!content_type && input.request.body.empty()) {
     return std::unexpected{argument_error{http::status::bad_request, "missing body"}};
   }
 
-  if (!http::detail::iequals(media_type(*content_type), media_type(codec.content_type))) {
+  if (!content_type || !http::detail::iequals(media_type(*content_type), media_type(codec.content_type))) {
     return std::unexpected{argument_error{http::status::unsupported_media_type,
                                           "the body is " + std::string{media_type(codec.content_type)}}};
   }

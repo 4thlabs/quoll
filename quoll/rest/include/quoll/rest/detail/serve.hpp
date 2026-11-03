@@ -69,6 +69,7 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace quoll::rest::detail {
 
@@ -100,9 +101,10 @@ struct front<type_list<First, Rest...>> {
 
 // An error the server answers itself, as an RFC 9457 problem; `detail` is sent as it is.
 [[nodiscard]] inline http::response problem_response(http::status code, std::optional<std::string> detail) {
+  auto const reason = http::reason_phrase(code);
   problem const body{
       .type = std::nullopt,
-      .title = std::string{http::reason_phrase(code)},
+      .title = reason.empty() ? std::nullopt : std::optional<std::string>{reason},
       .status = static_cast<int>(code),
       .detail = std::move(detail),
       .instance = std::nullopt,
@@ -121,7 +123,8 @@ template <fixed_string Header>
                                                          request_input const &input) {
   auto const value = input.request.fields.find(Header.view());
 
-  return value ? std::optional<std::string>{*value} : std::nullopt;
+  // An empty key is no key, as an empty bearer token is no token.
+  return value && !value->empty() ? std::optional<std::string>{*value} : std::nullopt;
 }
 
 template <fixed_string Param>
@@ -129,7 +132,7 @@ template <fixed_string Param>
                                                          request_input const &input) {
   auto const texts = query_texts(input.query, Param.view());
 
-  return texts.empty() ? std::nullopt : std::optional<std::string>{texts.front()};
+  return texts.empty() || texts.front().empty() ? std::nullopt : std::optional<std::string>{texts.front()};
 }
 
 [[nodiscard]] inline std::optional<std::string> find_credential(std::type_identity<bearer_auth>,
@@ -171,10 +174,8 @@ template <class Scheme>
 // The validator taking the credentials of `Scheme`: the first one invocable with them.
 template <class Scheme, class... Validators>
 [[nodiscard]] consteval std::size_t validator_index(type_list<Validators...>) {
-  constexpr std::array<bool, sizeof...(Validators)> invocable{
-      std::is_invocable_v<Validators &, credential<Scheme> const &>...};
-
-  return static_cast<std::size_t>(std::ranges::find(invocable, true) - invocable.begin());
+  return first_true(
+      std::array<bool, sizeof...(Validators)>{std::is_invocable_v<Validators &, credential<Scheme> const &>...});
 }
 
 template <class Scheme, class... Validators>
@@ -215,20 +216,22 @@ async::task<std::optional<http::response>> check_security(type_list<Scheme, Rest
   co_return co_await check_security(type_list<Rest...>{}, validators, input);
 }
 
-// A declared response, as an HTTP response.
+// A declared response, as an HTTP response: with its body, or without for a void one.
 template <class Response>
-[[nodiscard]] http::response make_response(response_value<Response> const &held) {
+[[nodiscard]] http::response make_response() {
   http::response response;
 
   response.status = Response::status;
+  return response;
+}
 
-  if constexpr (!std::is_void_v<typename Response::type>) {
-    constexpr typename Response::codec codec;
+template <class Response, class T>
+[[nodiscard]] http::response make_response(T const &value) {
+  constexpr typename Response::codec codec;
+  auto response = make_response<Response>();
 
-    response.body = codec.encode(held.value);
-    response.fields.add("Content-Type", codec.content_type);
-  }
-
+  response.body = codec.encode(value);
+  response.fields.add("Content-Type", codec.content_type);
   return response;
 }
 
@@ -239,7 +242,15 @@ using own_responses = filter_t<is_response_part, typename Endpoint::parts>;
 template <class Endpoint, class T>
 [[nodiscard]] http::response encode_result(T const &value) {
   if constexpr (std::same_as<T, reply<Endpoint>>) {
-    return value.visit([](auto const &held) { return make_response(held); });
+    return value.visit([](auto const &held) {
+      using response = typename std::decay_t<decltype(held)>::response;
+
+      if constexpr (std::is_void_v<typename response::type>) {
+        return make_response<response>();
+      } else {
+        return make_response<response>(held.value);
+      }
+    });
   } else {
     using responses = own_responses<Endpoint>;
 
@@ -251,7 +262,7 @@ template <class Endpoint, class T>
     static_assert(std::same_as<T, typename first::type>, "quoll::rest::mount: a service returns the type of its "
                                                          "endpoint's first returns<>, or a reply<Endpoint>");
 
-    return make_response(response_value<first>{value});
+    return make_response<first>(value);
   }
 }
 
@@ -271,22 +282,21 @@ template <class Endpoint>
     static_assert(std::is_void_v<typename first::type>,
                   "quoll::rest::mount: a service returns nothing for an endpoint whose first returns<> has a body");
 
-    return make_response(response_value<first>{});
+    return make_response<first>();
   }
 }
 
 // The service for an endpoint: the one invocable with it and its arguments.
 template <class Endpoint, class... Arguments, class... Services>
 [[nodiscard]] consteval std::size_t service_index(std::tuple<Arguments...> const *, type_list<Services...>) {
-  constexpr std::array<bool, sizeof...(Services)> invocable{
-      std::is_invocable_v<Services &, Endpoint, Arguments &&...>...};
-
-  return static_cast<std::size_t>(std::ranges::find(invocable, true) - invocable.begin());
+  return first_true(
+      std::array<bool, sizeof...(Services)>{std::is_invocable_v<Services &, Endpoint, Arguments &&...>...});
 }
 
 template <class Endpoint, class... Arguments, class... Services>
 [[nodiscard]] consteval std::size_t service_count(std::tuple<Arguments...> const *, type_list<Services...>) {
-  return (std::size_t{0} + ... + (std::is_invocable_v<Services &, Endpoint, Arguments &&...> ? 1 : 0));
+  return count_true(
+      std::array<bool, sizeof...(Services)>{std::is_invocable_v<Services &, Endpoint, Arguments &&...>...});
 }
 
 template <class Route, class Validators, class... Services>
@@ -324,21 +334,44 @@ async::task<http::response> answer(mounted<Validators, Services...> &state, type
   }
 }
 
+// The answer to an http_error a service or a validator threw: its status if it is an error one, with the challenge
+// of the route's first scheme on a 401 (RFC 9110); otherwise 500, as for any other exception.
+template <class Route>
+[[nodiscard]] http::response error_response(http_error const &error) {
+  auto const code = static_cast<int>(error.status());
+
+  if (code < 400 || code > 599) {
+    return problem_response(http::status::internal_server_error, std::nullopt);
+  }
+
+  auto response = problem_response(error.status(), error.what());
+
+  if constexpr (Route::schemes::size > 0) {
+    if (error.status() == http::status::unauthorized) {
+      response.fields.add("WWW-Authenticate",
+                          challenge(std::type_identity<typename front<typename Route::schemes>::type>{}));
+    }
+  }
+
+  return response;
+}
+
 // Serves a request routed to `Route`: credentials (401), arguments (400, 415), the service, its response. A service
 // throwing http_error answers its status, anything else 500 without detail.
 template <class Route, class State>
 async::task<http::response> serve(std::shared_ptr<State> state, http::request request, http::route_match match) {
-  auto const query = parse_query(match.query);
-
-  if (!query) {
-    co_return problem_response(http::status::bad_request, "invalid query string");
-  }
-
-  request_input const input{request, match, *query};
-
   try {
+    // An invalid query string is reported after the credentials, which an api_key_query cannot then find.
+    auto const query = parse_query(match.query);
+    std::vector<query_entry> const none;
+    request_input const input{request, match, query ? *query : none};
+
     if (auto refused = co_await check_security(typename Route::schemes{}, state->validators, input)) {
       co_return std::move(*refused);
+    }
+
+    if (!query) {
+      co_return problem_response(http::status::bad_request, "invalid query string");
     }
 
     auto arguments = decode_arguments<Route>(input);
@@ -349,7 +382,7 @@ async::task<http::response> serve(std::shared_ptr<State> state, http::request re
 
     co_return co_await answer<Route>(*state, std::move(*arguments));
   } catch (http_error const &error) {
-    co_return problem_response(error.status(), error.what());
+    co_return error_response<Route>(error);
   } catch (...) {
     co_return problem_response(http::status::internal_server_error, std::nullopt);
   }

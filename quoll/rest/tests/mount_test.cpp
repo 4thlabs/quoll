@@ -122,7 +122,11 @@ using namespace quoll::rest;
 using list = endpoint<"cards.list", verb::get, "/", query<"status", std::optional<std::string>>,
                       header<"X-Request-Id", std::string>, returns<std::vector<card>>>;
 
-using api = rest::api<"/users/{user_id:int64}/cards", list>;
+// A list header: its values may come on several lines, or combined on one.
+using tagged = endpoint<"cards.tagged", verb::get, "/tagged", header<"X-Tag", std::vector<std::string>>,
+                        returns<std::vector<std::string>>>;
+
+using api = rest::api<"/users/{user_id:int64}/cards", list, tagged>;
 } // namespace cards
 
 namespace keys {
@@ -181,6 +185,18 @@ struct users_service {
       throw rest::http_error{status::conflict, "name taken"};
     }
 
+    if (created.name == "unauthorized") {
+      throw rest::http_error{status::unauthorized, "expired session"};
+    }
+
+    if (created.name == "teapot") {
+      throw rest::http_error{static_cast<status>(418), "short and stout"};
+    }
+
+    if (created.name == "fine") {
+      throw rest::http_error{status::ok, "not an error"};
+    }
+
     co_return user{.id = 7, .name = std::move(created.name), .email = std::move(created.email)};
   }
 
@@ -192,6 +208,8 @@ struct cards_service {
                                std::string request_id) const {
     return {{.owner = owner, .request_id = std::move(request_id), .status = std::move(state)}};
   }
+
+  std::vector<std::string> operator()(cards::tagged, std::int64_t, std::vector<std::string> tags) const { return tags; }
 };
 
 struct keys_service {
@@ -394,4 +412,76 @@ TEST_CASE("mount: a service returning nothing answers 204", "[rest][mount]") {
 
   REQUIRE(removed.status == http::status::no_content);
   REQUIRE(removed.body.empty());
+}
+
+TEST_CASE("mount: credentials come before arguments, and empty ones are missing", "[rest][mount]") {
+  auto const router = make_router();
+
+  REQUIRE(send(router, verb::get, "/api/v1/users?name=%zz", {}).status == http::status::unauthorized);
+  REQUIRE(problem_of(send(router, verb::get, "/api/v1/keys/ping", {{"X-Api-Key", ""}})).detail ==
+          "missing credentials");
+  REQUIRE(problem_of(send(router, verb::get, "/api/v1/keys/ping-query?key=", {})).detail == "missing credentials");
+}
+
+TEST_CASE("mount: a NUL in the query string is refused", "[rest][mount]") {
+  auto const router = make_router();
+
+  REQUIRE(problem_of(send(router, verb::get, "/api/v1/users?name=a%00b")).detail == "invalid query string");
+  // The key cannot be read: missing, not "key".
+  REQUIRE(send(router, verb::get, "/api/v1/keys/ping-query?key=key%00garbage", {}).status ==
+          http::status::unauthorized);
+}
+
+TEST_CASE("mount: a list header takes its values from every line, split at commas", "[rest][mount]") {
+  auto const router = make_router();
+  auto const tagged = send(router, verb::get, "/api/v1/users/5/cards/tagged",
+                           {{"Authorization", "Bearer valid"}, {"X-Tag", "a, b"}, {"X-Tag", "c"}, {"X-Tag", " , "}});
+
+  REQUIRE(tagged.status == http::status::ok);
+  REQUIRE(json.decode<std::vector<std::string>>(tagged.body) == std::vector<std::string>{"a", "b", "c"});
+}
+
+TEST_CASE("mount: a body without media type is 415, not missing", "[rest][mount]") {
+  auto const router = make_router();
+  auto const untyped = send(router, verb::post, "/api/v1/users", bearer, R"({"name":"Ada","email":"a"})");
+
+  REQUIRE(untyped.status == http::status::unsupported_media_type);
+}
+
+TEST_CASE("mount: what http_error answers", "[rest][mount]") {
+  auto const router = make_router();
+  auto create = [&](std::string name) {
+    return send(router, verb::post, "/api/v1/users",
+                {{"Authorization", "Bearer valid"}, {"Content-Type", "application/json"}},
+                R"({"name":")" + name + R"(","email":"x"})");
+  };
+
+  // On a secured route, a 401 gets the challenge of its scheme.
+  auto const expired = create("unauthorized");
+
+  REQUIRE(expired.status == http::status::unauthorized);
+  REQUIRE(expired.fields.find("WWW-Authenticate") == "Bearer");
+  // A status without a reason phrase: no title.
+  auto const teapot = create("teapot");
+
+  REQUIRE(static_cast<int>(teapot.status) == 418);
+  REQUIRE_FALSE(problem_of(teapot).title.has_value());
+  // Not an error status: a programming error, answered as one.
+  REQUIRE(create("fine").status == http::status::internal_server_error);
+}
+
+TEST_CASE("mount: adds all the routes or none", "[rest][mount]") {
+  http::router router;
+
+  router.add(verb::get, "/api/v1/users/{x}", "taken",
+             [](http::request, http::route_match) -> task<http::response> { co_return http::response{}; });
+
+  REQUIRE_THROWS_AS(
+      rest::mount<v1>(router, auth_service{}, users_service{}, cards_service{}, keys_service{},
+                      rest::validators([](rest::credential<rest::bearer_auth> const &) { return true; },
+                                       [](rest::credential<rest::api_key<"X-Api-Key">> const &) { return true; },
+                                       [](rest::credential<rest::api_key_query<"key">> const &) { return true; })),
+      std::invalid_argument);
+  // Routes mount() would have added before the clash are not there.
+  REQUIRE(send(router, verb::post, "/api/v1/auth/login").status == http::status::not_found);
 }
