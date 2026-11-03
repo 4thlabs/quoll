@@ -37,6 +37,7 @@
 #ifndef QUOLL_REST_DETAIL_PATH_TEMPLATE_HPP
 #define QUOLL_REST_DETAIL_PATH_TEMPLATE_HPP
 
+#include <quoll/http/detail/route_template.hpp>
 #include <quoll/rest/fixed_string.hpp>
 
 #include <algorithm>
@@ -105,6 +106,7 @@ enum class path_error {
   not_whole_segment,
   rest_not_last,
   duplicate_name,
+  invalid_escape,
   too_many_parameters,
 };
 
@@ -121,13 +123,8 @@ struct path_template {
   std::array<path_param, max_path_params> params{};
 };
 
-[[nodiscard]] consteval bool is_name_char(char character) {
-  return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-         (character >= '0' && character <= '9') || character == '_';
-}
-
 [[nodiscard]] consteval bool parse_kind(std::string_view text, param_kind &kind) {
-  constexpr std::array<std::pair<std::string_view, param_kind>, 8> kinds{{
+  constexpr std::array<std::pair<std::string_view, param_kind>, 7> kinds{{
       {"int", param_kind::int32},
       {"int64", param_kind::int64},
       {"uint", param_kind::uint32},
@@ -135,7 +132,6 @@ struct path_template {
       {"double", param_kind::floating},
       {"bool", param_kind::boolean},
       {"string", param_kind::string},
-      {"path", param_kind::rest_of_path},
   }};
 
   for (auto const &[spelling, value] : kinds) {
@@ -148,70 +144,63 @@ struct path_template {
   return false;
 }
 
-// Parses `{name}` (a string) and `{name:type}` segments. A parameter takes a whole segment; `path`, the rest of the
-// path, comes last. An empty template is valid (the root of an api).
-[[nodiscard]] consteval path_template parse_path(std::string_view text) {
-  path_template parsed;
+[[nodiscard]] consteval path_error to_path_error(http::detail::template_error error) {
+  using http::detail::template_error;
 
-  auto fail = [&parsed](path_error error) {
-    parsed.error = error;
-    return parsed;
-  };
-
-  if (!text.empty() && text.front() != '/') {
-    return fail(path_error::no_leading_slash);
+  switch (error) {
+  case template_error::none:
+    break;
+  case template_error::no_leading_slash:
+    return path_error::no_leading_slash;
+  case template_error::unbalanced_brace:
+    return path_error::unbalanced_brace;
+  case template_error::invalid_name:
+    return path_error::invalid_name;
+  case template_error::not_whole_segment:
+    return path_error::not_whole_segment;
+  case template_error::rest_not_last:
+    return path_error::rest_not_last;
+  case template_error::duplicate_name:
+    return path_error::duplicate_name;
+  case template_error::invalid_escape:
+    return path_error::invalid_escape;
   }
 
-  for (std::size_t index = 0; index < text.size(); ++index) {
-    if (text[index] == '}') {
-      return fail(path_error::unbalanced_brace);
-    }
+  return path_error::none;
+}
 
-    if (text[index] != '{') {
+// The grammar is the router's (http::detail::parse_template); the DSL adds the parameter types: `{name}` is a string,
+// `{name:type}` one of the types above, `{name:path}` the rest of the path. An empty template is valid (the root of
+// an api).
+[[nodiscard]] consteval path_template parse_path(std::string_view text) {
+  path_template parsed;
+  auto const grammar = http::detail::parse_template(text);
+
+  parsed.error = to_path_error(grammar.error);
+
+  for (auto const &segment : grammar.segments) {
+    if (segment.kind == http::detail::segment_kind::literal) {
       continue;
     }
 
-    auto const close = text.find('}', index);
+    path_param param{segment.text, param_kind::rest_of_path};
 
-    if (close == std::string_view::npos ||
-        text.substr(index + 1, close - index - 1).find('{') != std::string_view::npos) {
-      return fail(path_error::unbalanced_brace);
+    if (segment.kind == http::detail::segment_kind::param && !segment.type.empty() &&
+        !parse_kind(segment.type, param.kind)) {
+      parsed.error = path_error::unknown_type;
+      return parsed;
     }
 
-    if (text[index - 1] != '/' || (close + 1 < text.size() && text[close + 1] != '/')) {
-      return fail(path_error::not_whole_segment);
-    }
-
-    auto const inside = text.substr(index + 1, close - index - 1);
-    auto const colon = inside.find(':');
-    auto const name = inside.substr(0, colon);
-    path_param param{name, param_kind::string};
-
-    if (name.empty() || !std::ranges::all_of(name, is_name_char)) {
-      return fail(path_error::invalid_name);
-    }
-
-    if (colon != std::string_view::npos && !parse_kind(inside.substr(colon + 1), param.kind)) {
-      return fail(path_error::unknown_type);
-    }
-
-    for (std::size_t other = 0; other < parsed.size; ++other) {
-      if (parsed.params[other].name == name) {
-        return fail(path_error::duplicate_name);
-      }
+    if (segment.kind == http::detail::segment_kind::param && segment.type.empty()) {
+      param.kind = param_kind::string;
     }
 
     if (parsed.size == max_path_params) {
-      return fail(path_error::too_many_parameters);
-    }
-
-    // The rest of the path: nothing may follow, neither a parameter nor a literal segment.
-    if (param.kind == param_kind::rest_of_path && close + 1 < text.size()) {
-      return fail(path_error::rest_not_last);
+      parsed.error = path_error::too_many_parameters;
+      return parsed;
     }
 
     parsed.params[parsed.size++] = param;
-    index = close;
   }
 
   return parsed;

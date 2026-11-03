@@ -47,6 +47,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -71,11 +72,17 @@ struct route_match {
  * Templates are `/users/{id}`: a parameter takes a whole segment, `{name:type}` leaves the type to the caller, and
  * `{name:path}` takes the rest of the path (at least one segment, possibly empty), last. When several routes match a
  * path, the most specific wins, segment by segment: a literal beats a parameter, which beats the rest of the path, so
- * `/users/me` wins over `/users/{id}`. Segments are compared after percent-decoding. `/users` and `/users/` are
- * different paths.
+ * `/users/me` wins over `/users/{id}`. Segments are compared after percent-decoding, literals of the template too.
+ * `/users` and `/users/` are different paths. An encoded slash (`%2F`) is a character of its segment: it may be in a
+ * `{name}` parameter, but not in the rest of the path, where it would read as a separator.
  *
- * A path that matches no route answers 404, a path whose routes have other methods 405 with `Allow`, and a path that
- * is not an origin-form target or has an invalid escape 400. These responses have no body.
+ * Targets are origin-form (`/users?limit=2`) or absolute-form (`http://host/users`). A HEAD request without a HEAD
+ * route goes to the GET route: its response carries the GET body, which whoever writes it for a HEAD request leaves
+ * out.
+ *
+ * A path that matches no route answers 404, a path whose routes have other methods 405 with `Allow`, and another form
+ * of target, an invalid escape, a NUL or a dot segment (`.`, `..`, which the router does not resolve) 400. These
+ * responses have no body.
  *
  * Thread safety: add routes first; dispatch() may then be called from any thread. The router outlives the tasks it
  * returns.
@@ -96,7 +103,7 @@ public:
       throw std::invalid_argument{"quoll::http::router: empty handler"};
     }
 
-    auto segments = detail::parse_route(path);
+    auto segments = detail::compile_route(path);
 
     for (auto const &route : routes_) {
       if (route.method == method && detail::same_shape(route.segments, segments)) {
@@ -104,9 +111,7 @@ public:
       }
     }
 
-    auto rank = detail::route_rank(segments);
-
-    routes_.push_back(entry{method, std::move(segments), std::move(rank), std::move(name), std::move(target)});
+    routes_.push_back(entry{method, std::move(segments), std::move(name), std::move(target)});
   }
 
   /**
@@ -114,44 +119,45 @@ public:
    * handler throws, even before it returns its task, comes out of the task.
    */
   [[nodiscard]] async::task<response> dispatch(request message) const {
-    std::string_view const target = message.target;
+    auto const target = detail::origin_form(message.target);
     auto const question = target.find('?');
-    auto const segments = detail::decode_segments(target.substr(0, question));
+    auto const segments = target.empty() ? std::nullopt : detail::decode_segments(target.substr(0, question));
 
     if (!segments) {
       co_return detail::status_response(status::bad_request);
     }
 
-    entry const *best = nullptr;
-    std::vector<std::string> best_params;
+    entry const *chosen = nullptr;
+    entry const *get_route = nullptr;
     std::vector<verb> allowed;
 
     for (auto const &route : routes_) {
-      auto params = detail::match_route(route.segments, *segments);
-
-      if (!params) {
+      if (!detail::matches(route.segments, *segments)) {
         continue;
       }
 
-      if (route.method != message.method) {
-        if (std::ranges::find(allowed, route.method) == allowed.end()) {
-          allowed.push_back(route.method);
-        }
-
+      if (route.method == message.method) {
+        chosen = more_specific(chosen, route);
         continue;
       }
 
-      if (best == nullptr || std::ranges::lexicographical_compare(best->rank, route.rank)) {
-        best = &route;
-        best_params = std::move(*params);
+      if (route.method == verb::get) {
+        get_route = more_specific(get_route, route);
       }
+
+      allow(allowed, route.method);
     }
 
-    if (best != nullptr) {
-      route_match match{best->name, std::move(best_params),
+    // HEAD is served by the GET route, as RFC 9110 asks of a general-purpose server.
+    if (chosen == nullptr && message.method == verb::head) {
+      chosen = get_route;
+    }
+
+    if (chosen != nullptr) {
+      route_match match{chosen->name, detail::extract_params(chosen->segments, *segments),
                         question == std::string_view::npos ? std::string{} : std::string{target.substr(question + 1)}};
 
-      co_return co_await best->target(std::move(message), std::move(match));
+      co_return co_await chosen->target(std::move(message), std::move(match));
     }
 
     if (!allowed.empty()) {
@@ -168,10 +174,36 @@ private:
   struct entry {
     verb method;
     std::vector<detail::route_segment> segments;
-    std::vector<int> rank;
     std::string name;
     handler target;
   };
+
+  // The more specific of two matching routes, segment by segment; the first added on a tie.
+  [[nodiscard]] static entry const *more_specific(entry const *current, entry const &candidate) {
+    auto const kind = &detail::route_segment::kind;
+
+    if (current == nullptr ||
+        std::ranges::lexicographical_compare(current->segments, candidate.segments, {}, kind, kind)) {
+      return &candidate;
+    }
+
+    return current;
+  }
+
+  // Adds `method` to the methods of `Allow`, and HEAD with GET.
+  static void allow(std::vector<verb> &allowed, verb method) {
+    auto const add_once = [&allowed](verb each) {
+      if (std::ranges::find(allowed, each) == allowed.end()) {
+        allowed.push_back(each);
+      }
+    };
+
+    add_once(method);
+
+    if (method == verb::get) {
+      add_once(verb::head);
+    }
+  }
 
   std::vector<entry> routes_;
 };

@@ -60,20 +60,14 @@ namespace quoll::http::detail {
   return -1;
 }
 
-// Decodes the %XX escapes of a URL component; `plus_is_space` for query strings, where a form sends spaces as '+'.
-// Nothing for a '%' not followed by two hex digits.
-[[nodiscard]] inline std::optional<std::string> percent_decode(std::string_view text, bool plus_is_space = false) {
+// Decodes the %XX escapes of a URL component. Nothing for a '%' not followed by two hex digits.
+[[nodiscard]] inline std::optional<std::string> percent_decode(std::string_view text) {
   std::string decoded;
 
   decoded.reserve(text.size());
 
   for (std::size_t index = 0; index < text.size(); ++index) {
     auto const character = text[index];
-
-    if (character == '+' && plus_is_space) {
-      decoded += ' ';
-      continue;
-    }
 
     if (character != '%') {
       decoded += character;
