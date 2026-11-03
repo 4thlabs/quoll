@@ -37,6 +37,8 @@
 #ifndef QUOLL_HTTP_DETAIL_ROUTE_TEMPLATE_HPP
 #define QUOLL_HTTP_DETAIL_ROUTE_TEMPLATE_HPP
 
+#include <quoll/http/detail/ascii.hpp>
+
 #include <algorithm>
 #include <cstddef>
 #include <string_view>
@@ -88,11 +90,6 @@ struct parsed_template {
 [[nodiscard]] constexpr bool is_name_char(char character) noexcept {
   return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
          (character >= '0' && character <= '9') || character == '_';
-}
-
-[[nodiscard]] constexpr bool is_hex_digit(char character) noexcept {
-  return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') ||
-         (character >= 'A' && character <= 'F');
 }
 
 // Whether every '%' starts a %XX escape.

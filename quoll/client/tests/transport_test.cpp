@@ -38,6 +38,7 @@
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/async/yield.hpp>
 #include <quoll/client.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/parser.hpp>
@@ -125,12 +126,15 @@ http::router make_router() {
     response.fields.add("X-Host", request.fields.find("Host").value_or(""));
     co_return response;
   });
-  router.add(verb::post, "/echo", "echo", [](http::request request, http::route_match) -> task<http::response> {
+  auto const echo = [](http::request request, http::route_match) -> task<http::response> {
     http::response response;
 
     response.body = std::move(request.body);
     co_return response;
-  });
+  };
+
+  router.add(verb::post, "/echo", "echo.post", echo);
+  router.add(verb::put, "/echo", "echo.put", echo);
   router.add(verb::get, "/bye", "bye", [](http::request, http::route_match) -> task<http::response> {
     http::response response;
 
@@ -192,19 +196,21 @@ struct outcome {
   std::string destination;
 };
 
-// Sends `requests` in turn on one transport, until one fails. The transport is gone when the task ends, closing its
-// idle connections while the loop still runs.
+// Sends `requests` in turn on one transport; `error` is what the first one to fail threw. The transport is gone when
+// the task ends, closing its idle connections while the loop still runs.
 task<std::vector<http::response>> send_all(memory_server &server, std::vector<http::request> requests, origin to,
                                            client::transport_options options, std::error_code &error) {
   client::transport transport{memory_connector{server}, to.host, to.port, options};
   std::vector<http::response> responses;
 
-  try {
-    for (auto &request : requests) {
+  for (auto &request : requests) {
+    try {
       responses.push_back(co_await transport.send(std::move(request)));
+    } catch (std::system_error const &failure) {
+      if (!error) {
+        error = failure.code();
+      }
     }
-  } catch (std::system_error const &failure) {
-    error = failure.code();
   }
 
   co_return responses;
@@ -238,8 +244,8 @@ outcome roundtrip(std::vector<http::request> requests, origin to = {}, client::t
 } // namespace
 
 TEST_CASE("client::transport: requests reuse a connection kept alive", "[client]") {
-  auto const result = roundtrip({make_request(verb::get, "/hello"), make_request(verb::post, "/echo", "ping"),
-                                 make_request(verb::get, "/hello")});
+  auto const result = roundtrip(
+      {make_request(verb::get, "/hello"), make_request(verb::put, "/echo", "ping"), make_request(verb::get, "/hello")});
 
   REQUIRE(result.responses.size() == 3);
   REQUIRE(result.responses[0].body == "hello");
@@ -247,6 +253,15 @@ TEST_CASE("client::transport: requests reuse a connection kept alive", "[client]
   REQUIRE(result.responses[2].body == "hello");
   REQUIRE(result.connections == 1);
   REQUIRE(result.destination == "example.com:80");
+}
+
+TEST_CASE("client::transport: a POST opens its own connection, kept for the next requests", "[client]") {
+  auto const result = roundtrip({make_request(verb::get, "/hello"), make_request(verb::post, "/echo", "ping"),
+                                 make_request(verb::get, "/hello"), make_request(verb::get, "/hello")});
+
+  REQUIRE(result.responses.size() == 4);
+  REQUIRE(result.responses[1].body == "ping");
+  REQUIRE(result.connections == 2);
 }
 
 TEST_CASE("client::transport: the Host field names the server, and its port unless it is 80", "[client]") {
@@ -304,6 +319,14 @@ TEST_CASE("client::transport: interim responses are skipped", "[client]") {
   REQUIRE(result.responses.size() == 1);
   REQUIRE(result.responses.front().status == http::status::ok);
   REQUIRE(result.responses.front().body == "ok");
+
+  std::string endless;
+
+  for (int index = 0; index < 9; ++index) {
+    endless += "HTTP/1.1 100 Continue\r\n\r\n";
+  }
+
+  REQUIRE(roundtrip(answering({endless}), {make_request(verb::get, "/")}).error == http::error::bad_message);
 }
 
 TEST_CASE("client::transport: an idempotent request goes again when its kept connection turns out closed", "[client]") {
@@ -320,26 +343,93 @@ TEST_CASE("client::transport: an idempotent request goes again when its kept con
     REQUIRE(result.connections == 2);
   }
 
-  // The request may have reached the server: a POST is not sent twice.
+  // A POST, which cannot be sent twice, does not take the idle connection.
   auto const post = roundtrip(answering({ok}, true), {make_request(verb::get, "/"), make_request(verb::post, "/")});
 
-  REQUIRE(post.responses.size() == 1);
-  REQUIRE(post.error == io::error::end_of_stream);
-  REQUIRE(post.connections == 1);
+  REQUIRE_FALSE(post.error);
+  REQUIRE(post.responses.size() == 2);
+  REQUIRE(post.connections == 2);
+}
+
+namespace {
+
+// Answers a request, then times the connection out: a 408 the client reads as the response to its next request.
+task<> answer_then_time_out(io::memory_stream stream) {
+  std::string buffer;
+  http::request_parser parser;
+
+  if (co_await http::read(stream, buffer, parser)) {
+    co_return;
+  }
+
+  (void)parser.release();
+
+  std::string const ok = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+  std::string const timeout = "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+
+  (void)co_await io::write(stream, std::as_bytes(std::span{ok}));
+  // The client reads its response, and keeps the connection, before the 408 comes.
+  co_await async::yield();
+  (void)co_await io::write(stream, std::as_bytes(std::span{timeout}));
+  (void)co_await http::read(stream, buffer, parser);
+}
+
+} // namespace
+
+TEST_CASE("client::transport: a 408 on an idle connection sends the request again", "[client]") {
+  auto const result = roundtrip(answer_then_time_out, {make_request(verb::get, "/"), make_request(verb::get, "/")});
+
+  REQUIRE_FALSE(result.error);
+  REQUIRE(result.responses.size() == 2);
+  REQUIRE(result.responses[1].status == http::status::ok);
+  REQUIRE(result.connections == 2);
+}
+
+TEST_CASE("client::transport: an idle connection found closed closes the older idle ones", "[client]") {
+  async::run_loop loop;
+  auto const router = make_router();
+  auto served = 0;
+  // The first two connections answer once, then close; the next ones serve the router.
+  memory_server server{loop.get_executor(),
+                       [&](io::memory_stream stream) {
+                         return ++served <= 2 ? answer(std::move(stream),
+                                                       {"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"}, false)
+                                              : quoll::server::serve_connection(std::move(stream), router);
+                       },
+                       0,
+                       {},
+                       {}};
+  auto const bodies = quoll::test::run(loop, [](memory_server &target) -> task<std::vector<std::string>> {
+    client::transport transport{memory_connector{target}, "example.com", 80};
+    auto [first, second] = co_await async::when_all(transport.send(make_request(verb::get, "/")),
+                                                    transport.send(make_request(verb::get, "/")));
+    // Finds the last idle connection closed, closes the other one, and connects.
+    auto third = co_await transport.send(make_request(verb::get, "/hello"));
+    // Reuses the new connection.
+    auto fourth = co_await transport.send(make_request(verb::get, "/hello"));
+
+    co_return std::vector<std::string>{first.body, second.body, third.body, fourth.body};
+  }(server));
+
+  REQUIRE(bodies == std::vector<std::string>{"ok", "ok", "hello", "hello"});
+  REQUIRE(server.connections == 3);
 }
 
 TEST_CASE("client::transport: a response that cannot be read fails, and its connection is dropped", "[client]") {
-  auto const truncated =
-      roundtrip(answering({"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc"}), {make_request(verb::get, "/")});
+  // The second request of each case connects again.
+  auto const truncated = roundtrip(answering({"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc"}),
+                                   {make_request(verb::get, "/"), make_request(verb::get, "/")});
 
   REQUIRE(truncated.responses.empty());
   REQUIRE(truncated.error == http::error::partial_message);
+  REQUIRE(truncated.connections == 2);
 
   auto const too_large = roundtrip({make_request(verb::get, "/hello"), make_request(verb::get, "/hello")}, {},
                                    {.limits = {.max_body_size = 2}, .max_idle_connections = 8});
 
   REQUIRE(too_large.responses.empty());
   REQUIRE(too_large.error == http::error::body_too_large);
+  REQUIRE(too_large.connections == 2);
 }
 
 TEST_CASE("client::transport: a connection with bytes past its response is not reused", "[client]") {
@@ -363,7 +453,7 @@ TEST_CASE("client::transport: concurrent requests open their own connections, ke
   auto const bodies = quoll::test::run(loop, [](memory_server &target) -> task<std::vector<std::string>> {
     client::transport transport{memory_connector{target}, "example.com", 80};
     auto [first, second] = co_await async::when_all(transport.send(make_request(verb::get, "/hello")),
-                                                    transport.send(make_request(verb::post, "/echo", "ping")));
+                                                    transport.send(make_request(verb::put, "/echo", "ping")));
     auto third = co_await transport.send(make_request(verb::get, "/hello"));
 
     co_return std::vector<std::string>{first.body, second.body, third.body};
@@ -377,15 +467,36 @@ TEST_CASE("client::transport: what cannot be sent is refused before the task run
   async::run_loop loop;
   memory_server server{loop.get_executor(), answering({}), 0, {}, {}};
 
-  for (std::string_view const host : {"", "a b", "user@example.com", "[::1]", "example.com/path", "localhost:8080",
-                                      "fe80::1%eth0", "a\x7f", "tab\there"}) {
+  for (std::string_view const host : {"",
+                                      "a b",
+                                      "user@example.com",
+                                      "[::1]",
+                                      "example.com/path",
+                                      "localhost:8080",
+                                      "fe80::1%eth0",
+                                      "a\x7f",
+                                      "tab\there",
+                                      "a,b",
+                                      "a<b",
+                                      ":",
+                                      "a:b",
+                                      "cafe:babe",
+                                      ":::",
+                                      "1::2::3",
+                                      "1:2:3:4:5:6:7:8:9",
+                                      "1:2:3:4:5:6:7",
+                                      "1:",
+                                      "::1.2.3",
+                                      "::1.2.3.256",
+                                      "::12345"}) {
     REQUIRE_THROWS_AS((client::transport{memory_connector{server}, std::string{host}, 80}), std::invalid_argument);
   }
 
   REQUIRE_THROWS_AS((client::transport{memory_connector{server}, std::string{"nul\0", 4}, 80}), std::invalid_argument);
-  // IPv6 addresses, with an IPv4 suffix too.
-  REQUIRE_NOTHROW(client::transport{memory_connector{server}, "2001:DB8::1", 80});
-  REQUIRE_NOTHROW(client::transport{memory_connector{server}, "::ffff:192.0.2.1", 80});
+  for (std::string_view const host : {"my-host_1.example.com", "192.0.2.1", "2001:DB8::1", "::ffff:192.0.2.1",
+                                      "::", "1::", "1:2:3:4:5:6:7:8", "1:2:3:4:5:6:192.0.2.1"}) {
+    REQUIRE_NOTHROW(client::transport{memory_connector{server}, std::string{host}, 80});
+  }
 
   client::transport const transport{memory_connector{server}, "example.com", 80};
   auto field = make_request(verb::get, "/");

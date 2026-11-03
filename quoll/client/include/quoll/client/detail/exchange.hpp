@@ -39,6 +39,7 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/client/detail/connection_pool.hpp>
+#include <quoll/http/error.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/response.hpp>
@@ -64,10 +65,24 @@ struct prepared_request {
   bool keep_alive = false;
 };
 
-// Methods whose request may be sent twice: the server may have received the first copy before closing.
+// Methods whose request may be sent twice: the server may have received the first copy before closing. Listed rather
+// than excluded, so that a method added to http::verb is not sent twice by default.
 [[nodiscard]] constexpr bool idempotent(http::verb method) noexcept {
-  return method != http::verb::post && method != http::verb::patch && method != http::verb::connect;
+  switch (method) {
+  case http::verb::get:
+  case http::verb::head:
+  case http::verb::put:
+  case http::verb::delete_:
+  case http::verb::options:
+  case http::verb::trace:
+    return true;
+  default:
+    return false;
+  }
 }
+
+// Interim responses read before the final one, against a server sending them forever.
+inline constexpr int max_interim_responses = 8;
 
 // How a connection kept from an earlier request shows that the server closed it meanwhile.
 [[nodiscard]] inline bool closed_meanwhile(std::error_code error) noexcept {
@@ -75,9 +90,10 @@ struct prepared_request {
 }
 
 // Sends `request` on `connection` and reads its final response, skipping the interim 1xx ones; the connection goes
-// back to `pool` if it can carry another request. With `retry_if_closed`, a connection found closed before any
-// response is not an error: no response, the caller sends the request again on a new connection. Without it, a
-// response or an exception.
+// back to `pool` if it can carry another request. With `retry_if_closed` (an idle connection), a connection found
+// closed before any response, or answering 408 first (sent by the server before it closed the idle connection), is
+// not an error: no response, the caller sends the request again on a new connection. Without it, a response or an
+// exception.
 inline async::task<std::optional<http::response>> exchange(connection_pool &pool, http::parse_limits limits,
                                                            io::any_stream connection, prepared_request const &request,
                                                            bool retry_if_closed) {
@@ -93,13 +109,13 @@ inline async::task<std::optional<http::response>> exchange(connection_pool &pool
 
   std::string buffer;
   http::response_parser parser{limits};
-  auto answered = false;
+  auto interim = 0;
 
   parser.set_request_method(request.method);
 
   for (;;) {
     if (auto const error = co_await http::read(connection, buffer, parser)) {
-      if (retry_if_closed && !answered && closed_meanwhile(error)) {
+      if (retry_if_closed && interim == 0 && closed_meanwhile(error)) {
         co_return std::nullopt;
       }
 
@@ -110,10 +126,16 @@ inline async::task<std::optional<http::response>> exchange(connection_pool &pool
     auto const upgrade = parser.upgrade();
     auto response = parser.release();
 
-    answered = true;
-
     if (http::is_informational(response.status) && !upgrade) {
+      if (++interim > max_interim_responses) {
+        throw std::system_error{http::error::bad_message, "quoll::client: too many interim responses"};
+      }
+
       continue;
+    }
+
+    if (retry_if_closed && interim == 0 && response.status == http::status::request_timeout) {
+      co_return std::nullopt;
     }
 
     // Bytes past the response would be read as the next one: a connection carrying them is not reused.

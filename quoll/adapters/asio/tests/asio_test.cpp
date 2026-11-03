@@ -314,9 +314,10 @@ task<accounts_calls> call_accounts(accounts_client client, std::stop_source &sou
 
   accounts_calls calls;
 
+  // The POST first: it opens a connection, which the GETs then reuse (a POST never takes an idle one).
+  calls.opened = co_await client.call<accounts::open>({.owner = "Grace"});
   calls.found = co_await client.call<accounts::get>(42);
   calls.missing = (co_await client.try_call<accounts::get>(7))->get<http::status::not_found>().detail;
-  calls.opened = co_await client.call<accounts::open>({.owner = "Grace"});
   source.request_stop();
   co_return calls;
 }
