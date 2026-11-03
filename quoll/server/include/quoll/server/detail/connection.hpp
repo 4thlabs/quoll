@@ -47,6 +47,7 @@
 #include <quoll/io/byte_stream.hpp>
 
 #include <exception>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -129,11 +130,18 @@ async::task<std::error_code> write_response(Stream &stream, http::response const
   co_return co_await std::move(*sending);
 }
 
-// The outcome of a connection spawned by serve(): it ends by itself, and a failure only ends it.
-struct ignore_outcome {
+// The outcome of a connection spawned by serve(): it ends by itself, and a failure only ends it, reported to the
+// application's callback if it gave one.
+struct connection_outcome {
+  std::function<void(std::exception_ptr)> on_error;
+
   void operator()() const noexcept {}
 
-  void operator()(std::exception_ptr) const noexcept {}
+  void operator()(std::exception_ptr failure) const noexcept {
+    if (on_error) {
+      on_error(std::move(failure));
+    }
+  }
 };
 
 } // namespace quoll::server::detail
