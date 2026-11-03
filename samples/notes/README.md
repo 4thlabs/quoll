@@ -1,7 +1,8 @@
 # Notes: a REST server and its client
 
-One contract, `notes_api.hpp`: the types and the endpoints of a small notes API, with no I/O. The server mounts it on
-a router and listens; the client calls it from its URL. Each `main()` creates the build's runtime, spawns the program's coroutine on it and runs it.
+One contract, `notes_api.hpp`: the types and the endpoints of a small notes API, with no I/O. The server mounts it on a
+router and listens; the client calls it from its URL. Each `main()` creates the build's runtime, spawns the program's
+coroutine on it and runs it.
 
 ```bash
 cmake -B build && cmake --build build -j
