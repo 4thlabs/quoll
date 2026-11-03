@@ -40,6 +40,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_listener.hpp>
 #include <quoll/io/any_stream.hpp>
+#include <quoll/io/bound_listener.hpp>
 #include <quoll/io/connect.hpp>
 #include <quoll/io/listen.hpp>
 #include <quoll/io/memory_stream.hpp>
@@ -82,6 +83,21 @@ struct idle_listener {
     co_return io::any_stream{io::make_memory_stream_pair().first};
   }
 };
+
+// A listener bound to a port, as a TCP acceptor is.
+struct bound_listener {
+  int *accepts;
+
+  task<io::any_stream> accept() {
+    ++*accepts;
+    co_return io::any_stream{io::make_memory_stream_pair().first};
+  }
+
+  [[nodiscard]] std::uint16_t local_port() const noexcept { return 4242; }
+};
+
+static_assert(io::BoundListener<bound_listener>);
+static_assert(!io::BoundListener<idle_listener>);
 
 struct fake_network {
   network_log *log;
@@ -178,4 +194,11 @@ TEST_CASE("network_ref refers to a network, and recovers it", "[io][network]") {
 
   REQUIRE(ref.target<fake_network>() == &network);
   REQUIRE(ref.target<int>() == nullptr);
+}
+
+TEST_CASE("any_listener reports the port of a listener bound to one", "[io][network]") {
+  int accepts = 0;
+  io::any_listener const listener{bound_listener{&accepts}};
+
+  REQUIRE(listener.local_port() == 4242);
 }
