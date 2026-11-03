@@ -72,6 +72,14 @@ struct type_list {
   static constexpr std::size_t size = sizeof...(Ts);
 };
 
+template <class List>
+struct front;
+
+template <class First, class... Rest>
+struct front<type_list<First, Rest...>> {
+  using type = First;
+};
+
 template <class... Lists>
 struct concat;
 

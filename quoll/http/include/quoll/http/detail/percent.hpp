@@ -92,6 +92,37 @@ namespace quoll::http::detail {
   return decoded;
 }
 
+// Characters a URL component never needs to escape (RFC 3986 "unreserved").
+[[nodiscard]] constexpr bool is_unreserved(char character) noexcept {
+  return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+         (character >= '0' && character <= '9') || character == '-' || character == '.' || character == '_' ||
+         character == '~';
+}
+
+// Escapes every character of `text` but the unreserved ones and those of `keep` (such as '/' for the rest of a path)
+// as %XX.
+[[nodiscard]] inline std::string percent_encode(std::string_view text, std::string_view keep = {}) {
+  constexpr std::string_view digits = "0123456789ABCDEF";
+  std::string encoded;
+
+  encoded.reserve(text.size());
+
+  for (auto const character : text) {
+    if (is_unreserved(character) || keep.find(character) != std::string_view::npos) {
+      encoded += character;
+      continue;
+    }
+
+    auto const byte = static_cast<unsigned char>(character);
+
+    encoded += '%';
+    encoded += digits[byte >> 4U];
+    encoded += digits[byte & 0x0FU];
+  }
+
+  return encoded;
+}
+
 } // namespace quoll::http::detail
 
 #endif // QUOLL_HTTP_DETAIL_PERCENT_HPP

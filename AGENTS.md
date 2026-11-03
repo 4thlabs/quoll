@@ -17,15 +17,16 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 Exploration. Modules so far: `quoll::async` (task, executor_ref, await_context with stop token, co_spawn, when_all,
 run_loop), `quoll::io` (`ByteStream` and `Connector` concepts, `any_stream` type erasure, in-memory stream pair,
 `io::write`), `quoll::http` (messages, llhttp parser, serializer, `http::read` / `http::write` over a byte stream,
-`HttpTransport` concept, sans-IO `router`; llhttp is compiled and exported as `quoll::llhttp`), `quoll::rest` (so far
-the server, `mount`, and the contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates; and
-the codecs: `json_codec` on Glaze, `text_codec`, `param_traits`), and the adapters `quoll::threads` (thread pool
-executor; its tests do not run under WASM), `quoll::asio` (asio executor, `tcp_stream`, TCP connector; native only, the
-application provides standalone asio) and `quoll::emscripten` (JavaScript event loop executor, `fetch_transport`;
-Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`). A client GET runs end to
-end over a memory stream, over TCP through the asio connector, and over `fetch` in Node (prototype criteria 1 to 4). The
-prototype described in `docs/PLAN.md` continues with the DSL, OpenAPI and the React sample. Do not settle its open
-questions or write the module design into this file before the prototype validates them.
+`HttpTransport` concept, sans-IO `router`, `local_transport` to a router of the same program; llhttp is compiled and
+exported as `quoll::llhttp`), `quoll::rest` (so far the server, `mount`, the `client` over an `HttpTransport`, and the
+contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates; and the codecs: `json_codec` on
+Glaze, `text_codec`, `param_traits`), and the adapters `quoll::threads` (thread pool executor; its tests do not run
+under WASM), `quoll::asio` (asio executor, `tcp_stream`, TCP connector; native only, the application provides standalone
+asio) and `quoll::emscripten` (JavaScript event loop executor, `fetch_transport`; Emscripten only, its JavaScript side
+`js/quoll_emscripten.js` is linked with `--js-library`). A client GET runs end to end over a memory stream, over TCP
+through the asio connector, and over `fetch` in Node (prototype criteria 1 to 4). The prototype described in
+`docs/PLAN.md` continues with the DSL, OpenAPI and the React sample. Do not settle its open questions or write the
+module design into this file before the prototype validates them.
 
 ## Build & test
 

@@ -91,14 +91,6 @@ struct task_value<async::task<T>> {
   using type = T;
 };
 
-template <class List>
-struct front;
-
-template <class First, class... Rest>
-struct front<type_list<First, Rest...>> {
-  using type = First;
-};
-
 // An error the server answers itself, as an RFC 9457 problem; `detail` is sent as it is.
 [[nodiscard]] inline http::response problem_response(http::status code, std::optional<std::string> detail) {
   auto const reason = http::reason_phrase(code);
@@ -234,9 +226,6 @@ template <class Response, class T>
   response.fields.add("Content-Type", codec.content_type);
   return response;
 }
-
-template <class Endpoint>
-using own_responses = filter_t<is_response_part, typename Endpoint::parts>;
 
 // What a service returned: a reply<Endpoint>, or the body of the endpoint's first response.
 template <class Endpoint, class T>
