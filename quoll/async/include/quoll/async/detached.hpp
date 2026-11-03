@@ -34,45 +34,39 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_ASIO_DETAIL_NETWORK_HPP
-#define QUOLL_ASIO_DETAIL_NETWORK_HPP
+#ifndef QUOLL_ASYNC_DETACHED_HPP
+#define QUOLL_ASYNC_DETACHED_HPP
 
-#include <quoll/asio/acceptor.hpp>
-#include <quoll/asio/detail/connect.hpp>
-#include <quoll/async/task.hpp>
-#include <quoll/io/any_listener.hpp>
-#include <quoll/io/any_stream.hpp>
-#include <quoll/io/network.hpp>
+#include <exception>
 
-#include <asio/any_io_executor.hpp>
-#include <asio/ip/address.hpp>
-#include <asio/ip/tcp.hpp>
+namespace quoll::async {
 
-#include <cstdint>
-#include <string>
-#include <utility>
+/** @brief Type of async::detached. */
+struct detached_t {
+  /** @brief A task without a value completed. */
+  void operator()() const noexcept {}
 
-namespace quoll::asio::detail {
+  /** @brief A task completed with a value, dropped. */
+  template <class T>
+  void operator()(T &&) const noexcept {}
 
-// The network of an asio executor: connections and listening sockets on its execution context. Points to the
-// executor that offered it.
-template <class AsioExecutor>
-struct network {
-  AsioExecutor const *executor;
-
-  [[nodiscard]] async::task<io::any_stream> connect(std::string host, std::uint16_t port) const {
-    return detail::connect(::asio::any_io_executor{*executor}, std::move(host), port);
-  }
-
-  [[nodiscard]] io::any_listener listen(std::string address, std::uint16_t port) const {
-    ::asio::ip::tcp::endpoint const endpoint{::asio::ip::make_address(address), port};
-
-    return io::any_listener{acceptor{::asio::ip::tcp::acceptor{*executor, endpoint}}};
-  }
+  /**
+   * @brief A task let an exception escape: it ends the program, as an exception escaping a std::thread does; the
+   * standard library's terminate handler reports it.
+   */
+  [[noreturn]] void operator()(std::exception_ptr failure) const noexcept { std::rethrow_exception(failure); }
 };
 
-static_assert(io::Network<network<::asio::any_io_executor>>);
+/**
+ * @brief Completion handler for co_spawn() whose task is on its own, like asio::detached: its value is dropped, and an
+ * exception it lets escape ends the program.
+ *
+ * @code
+ * co_spawn(runtime.get_executor(), serve_notes(8080), quoll::async::detached, runtime.get_stop_token());
+ * @endcode
+ */
+inline constexpr detached_t detached{};
 
-} // namespace quoll::asio::detail
+} // namespace quoll::async
 
-#endif // QUOLL_ASIO_DETAIL_NETWORK_HPP
+#endif // QUOLL_ASYNC_DETACHED_HPP

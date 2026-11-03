@@ -41,7 +41,7 @@
 // never names the adapter.
 
 #if defined(QUOLL_RUNTIME_ASIO)
-#include <quoll/asio/sync_wait.hpp>
+#include <quoll/asio/runtime.hpp>
 #else
 #error "<quoll/runtime.hpp>: no runtime selected; link the quoll::runtime target"
 #endif
@@ -49,8 +49,8 @@
 namespace quoll {
 
 #if defined(QUOLL_RUNTIME_ASIO)
-/** @brief The entry point of a program: runs a task in the calling thread (see quoll::asio::sync_wait). */
-using asio::sync_wait;
+/** @brief The runtime of the build: the loop a program's tasks run on (see quoll::asio::runtime). */
+using runtime = asio::runtime;
 #endif
 
 } // namespace quoll

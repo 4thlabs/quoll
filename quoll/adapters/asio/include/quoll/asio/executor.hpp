@@ -37,17 +37,26 @@
 #ifndef QUOLL_ASIO_EXECUTOR_HPP
 #define QUOLL_ASIO_EXECUTOR_HPP
 
-#include <quoll/asio/detail/network.hpp>
+#include <quoll/asio/acceptor.hpp>
+#include <quoll/asio/detail/connect.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/offers_service.hpp>
 #include <quoll/async/service.hpp>
+#include <quoll/async/task.hpp>
 #include <quoll/async/work_item.hpp>
+#include <quoll/io/any_listener.hpp>
+#include <quoll/io/any_stream.hpp>
+#include <quoll/io/network.hpp>
 #include <quoll/io/network_ref.hpp>
 
 #include <asio/any_io_executor.hpp>
+#include <asio/ip/address.hpp>
+#include <asio/ip/tcp.hpp>
 #include <asio/post.hpp>
 
 #include <concepts>
+#include <cstdint>
+#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -60,8 +69,8 @@ namespace quoll::asio {
  * allocates it (from a per-thread cache once warm), so post() may throw std::bad_alloc; see async::Executor.
  * Equal when the asio executors are.
  *
- * Offers the network of its execution context (io::network_ref): io::connect() and io::listen() open TCP connections
- * and listening sockets there, for the tasks it runs.
+ * It is also the network of its execution context (io::Network), and offers itself as such (io::network_ref):
+ * io::connect() and io::listen() open TCP connections and listening sockets there, for the tasks it runs.
  *
  * Thread safety: post() may be called from any thread, as asio's post can.
  */
@@ -76,10 +85,20 @@ public:
 
   void post(async::work_item &item) const { ::asio::post(inner_, resumer{&item}); }
 
-  /** @brief The network of the execution context, valid while this executor lives. */
-  [[nodiscard]] io::network_ref query(async::service_tag<io::network_ref>) const {
-    return io::network_ref{detail::network<AsioExecutor>{&inner_}};
+  /** @brief Opens a TCP connection to `host` (a name or an address) on `port`, on the execution context. */
+  [[nodiscard]] async::task<io::any_stream> connect(std::string host, std::uint16_t port) const {
+    return detail::connect(::asio::any_io_executor{inner_}, std::move(host), port);
   }
+
+  /** @brief Listens on `address` (an IP address) and `port` (0 for any free port), on the execution context. */
+  [[nodiscard]] io::any_listener listen(std::string address, std::uint16_t port) const {
+    ::asio::ip::tcp::endpoint const endpoint{::asio::ip::make_address(address), port};
+
+    return io::any_listener{acceptor{::asio::ip::tcp::acceptor{inner_, endpoint}}};
+  }
+
+  /** @brief This executor, as the network of its execution context: valid while it lives (see io::network_ref). */
+  [[nodiscard]] io::network_ref query(async::service_tag<io::network_ref>) const { return io::network_ref{*this}; }
 
   [[nodiscard]] bool operator==(executor const &) const noexcept = default;
 
@@ -95,6 +114,7 @@ private:
 };
 
 static_assert(async::Executor<executor<>>);
+static_assert(io::Network<executor<>>);
 static_assert(async::OffersService<executor<>, io::network_ref>);
 
 } // namespace quoll::asio

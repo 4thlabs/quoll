@@ -50,7 +50,7 @@ namespace quoll::io {
 
 /**
  * @brief Opens a connection to `host` (a name or an address) on `port`, through the network of the executor the task
- * runs on (as sync_wait provides it).
+ * runs on (as quoll::runtime provides it).
  *
  * Fails like a Connector; throws std::logic_error if the executor offers no network.
  */

@@ -94,6 +94,15 @@ struct origin {
   }
 
   auto authority = url.substr(http.size());
+
+  if (authority.find_first_of("?#") != std::string_view::npos) {
+    invalid_url("a query or a fragment is not part of a server's URL");
+  }
+
+  if (authority.find('@') != std::string_view::npos) {
+    invalid_url("credentials in the URL are not supported; send them with the requests");
+  }
+
   auto const slash = authority.find('/');
 
   if (slash != std::string_view::npos) {

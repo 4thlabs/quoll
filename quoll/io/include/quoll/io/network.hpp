@@ -44,19 +44,20 @@
 #include <concepts>
 #include <cstdint>
 #include <string>
-#include <type_traits>
 
 namespace quoll::io {
 
 /**
  * @brief A network: TCP connections out (`connect`) and in (`listen`), as an I/O loop provides them.
  *
- * A small, trivially copyable handle on the loop (see network_ref). `connect(host, port)` behaves as a Connector;
+ * Typically the executor of an I/O loop, which offers itself as the loop's network (see network_ref and
+ * async::service_list). `connect(host, port)` behaves as a Connector;
  * `listen(address, port)` binds a listening socket on `address` (an IP address) and `port` (0 for any free port), or
- * throws std::system_error.
+ * throws std::system_error; the streams its listener accepts do not depend on it, and outlive it (a server stops
+ * listening while its connections finish).
  */
 template <class N>
-concept Network = std::is_trivially_copyable_v<N> && requires(N const &network, std::string text, std::uint16_t port) {
+concept Network = requires(N const &network, std::string text, std::uint16_t port) {
   { network.connect(text, port) } -> std::same_as<async::task<any_stream>>;
   { network.listen(text, port) } -> std::same_as<any_listener>;
 };

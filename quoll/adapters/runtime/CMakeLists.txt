@@ -1,11 +1,11 @@
-# The runtime of the build: the adapter providing quoll::sync_wait, the entry point of a program. Each adapter able to
-# run a loop in the calling thread provides <adapter>::sync_wait; QUOLL_RUNTIME picks one. Nothing blocks in a browser,
-# so there is no runtime under Emscripten yet.
+# The runtime of the build: the adapter providing quoll::runtime, the loop a program's tasks run on. Each adapter able
+# to run a loop in the calling thread provides <adapter>::runtime; QUOLL_RUNTIME picks one. A browser runs its own
+# loop, so there is no runtime under Emscripten yet.
 if(EMSCRIPTEN)
   return()
 endif()
 
-set(QUOLL_RUNTIME asio CACHE STRING "The adapter providing quoll::sync_wait")
+set(QUOLL_RUNTIME asio CACHE STRING "The adapter providing quoll::runtime")
 set_property(CACHE QUOLL_RUNTIME PROPERTY STRINGS asio)
 
 quoll_declare_module(NAME runtime DEPS quoll::${QUOLL_RUNTIME})

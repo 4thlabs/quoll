@@ -49,8 +49,8 @@
 
 namespace quoll::async::detail {
 
-// Room for an executor held in place by an any_executor: a pointer to a loop or a pool, an asio executor
-// (any_io_executor is 7 pointers).
+// Room for an executor held in place by an any_executor, eight pointers: a pointer to a loop or a pool, an asio
+// executor (any_io_executor is seven).
 inline constexpr std::size_t executor_storage_size = 8 * sizeof(void *);
 
 // One table per executor type, shared by executor_ref (post, equal, query, type) and any_executor (all of it).

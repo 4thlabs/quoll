@@ -125,7 +125,7 @@ async::task<> serve_shared(Stream stream, http::router const &router, std::share
  * served.
  *
  * The spawned connections may outlive the task: `listener` and `router` outlive them, for instance until `executor`
- * has drained (as sync_wait does).
+ * has drained (as a runtime does).
  */
 template <async::Executor Executor, io::Listener Listener>
 async::task<> serve(Executor executor, Listener &listener, http::router const &router, serve_options options = {}) {

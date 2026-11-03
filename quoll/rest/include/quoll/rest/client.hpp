@@ -93,8 +93,10 @@ public:
 
   /**
    * @brief A client of the server at `base_url`, through a transport built from it: with the default one, a connection
-   * over the network of the executor that calls (see quoll::client::transport, sync_wait); in a browser, name
+   * over the network of the executor that calls (see quoll::client::transport, quoll::runtime); in a browser, name
    * fetch_transport as the transport, which also takes a base URL.
+   *
+   * A trailing `/` is dropped, so that every transport reads the same URL (fetch_transport appends the targets to it).
    *
    * @code
    * quoll::rest::client<bank::v1> bank{"http://127.0.0.1:8080"};
@@ -102,7 +104,7 @@ public:
    */
   explicit client(std::string base_url)
     requires std::constructible_from<Transport, std::string>
-      : transport_(std::move(base_url)) {}
+      : transport_(without_trailing_slash(std::move(base_url))) {}
 
   /** @brief The credential sent, from now on, to the endpoints that require `Scheme`. */
   template <class Scheme>
@@ -131,6 +133,14 @@ private:
     using route = typename Api::template route<Endpoint>;
 
     return detail::receive<route>(transport_.send(detail::build_request<route>(args, credentials_)));
+  }
+
+  [[nodiscard]] static std::string without_trailing_slash(std::string url) {
+    if (url.ends_with('/')) {
+      url.pop_back();
+    }
+
+    return url;
   }
 
   Transport transport_;

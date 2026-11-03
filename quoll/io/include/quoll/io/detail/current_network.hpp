@@ -50,7 +50,8 @@ namespace quoll::io::detail {
   auto found = executor.query<network_ref>();
 
   if (!found) {
-    throw std::logic_error{std::string{caller} + ": the executor offers no network (run the task with sync_wait)"};
+    throw std::logic_error{std::string{caller} +
+                           ": the executor offers no network (spawn the task on a runtime executor)"};
   }
 
   return *found;
