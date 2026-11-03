@@ -48,6 +48,8 @@
 
 namespace quoll::async {
 
+class any_executor;
+
 /**
  * @brief Non-owning, type-erased reference to an Executor; models Executor itself.
  *
@@ -56,8 +58,6 @@ namespace quoll::async {
  *
  * Thread safety: same as the referenced executor.
  */
-class any_executor;
-
 class executor_ref {
 public:
   // The exclusion comes first: it stops Executor<executor_ref> from checking this constructor against itself.
