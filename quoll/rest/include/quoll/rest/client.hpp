@@ -83,15 +83,14 @@ template <class Scheme, class... Routes>
  *
  * The arguments are those of the endpoint, in its order: path parameters (prefixes first), then the argument parts,
  * then the inherited ones; their types come from the endpoint, so braced lists convert (`{.limit = 20}`). They are
- * encoded into the request by the call: an invalid one throws there, before the task runs. A call takes at most
- * detail::max_call_arguments arguments.
+ * encoded into the request by the call: an invalid one throws there, before the task runs.
  *
  * The task does not refer to the client: the request is built by the call, and the transport's task owns what it
  * needs. Thread safety: none (credentials() changes the client); calls on a const client may be concurrent.
  */
 template <class Api, http::HttpTransport Transport>
 class client : public detail::client_call_set<client<Api, Transport>, Api,
-                                              std::make_index_sequence<detail::max_call_arguments + 1>> {
+                                              std::make_index_sequence<detail::max_arity(typename Api::routes{}) + 1>> {
 public:
   /** @brief The arguments of a call to `Endpoint`, as a tuple. */
   template <class Endpoint>

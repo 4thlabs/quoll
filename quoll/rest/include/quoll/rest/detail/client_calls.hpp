@@ -37,6 +37,9 @@
 #ifndef QUOLL_REST_DETAIL_CLIENT_CALLS_HPP
 #define QUOLL_REST_DETAIL_CLIENT_CALLS_HPP
 
+#include <quoll/rest/detail/type_list.hpp>
+
+#include <algorithm>
 #include <cstddef>
 #include <tuple>
 #include <utility>
@@ -80,6 +83,15 @@ struct client_calls<Client, Api, std::index_sequence<Index...>> {
   }
 };
 
+// The most arguments a call to an endpoint of the api takes: the client has an overload per arity up to it.
+template <class... Routes>
+[[nodiscard]] consteval std::size_t max_arity(type_list<Routes...>) {
+  std::size_t largest = 0;
+
+  ((largest = std::max(largest, std::tuple_size_v<typename Routes::arguments>)), ...);
+  return largest;
+}
+
 // Every arity up to the last of `Arities`.
 template <class Client, class Api, class Arities>
 struct client_call_set;
@@ -90,9 +102,6 @@ struct client_call_set<Client, Api, std::index_sequence<Arity...>>
   using client_calls<Client, Api, std::make_index_sequence<Arity>>::call...;
   using client_calls<Client, Api, std::make_index_sequence<Arity>>::try_call...;
 };
-
-// The most arguments a call takes: path parameters and parts together.
-inline constexpr std::size_t max_call_arguments = 12;
 
 } // namespace quoll::rest::detail
 
