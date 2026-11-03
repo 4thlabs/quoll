@@ -43,7 +43,6 @@
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/validators.hpp>
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <memory>
@@ -66,9 +65,8 @@ struct is_validator_set<validator_set<Validators...>> : std::true_type {};
 template <class... Args>
 struct mount_arguments {
   static constexpr std::array<bool, sizeof...(Args)> validators{is_validator_set<Args>::value...};
-  static constexpr std::size_t validator_count = std::ranges::count(validators, true);
-  static constexpr std::size_t validator_position =
-      static_cast<std::size_t>(std::ranges::find(validators, true) - validators.begin());
+  static constexpr std::size_t validator_count = count_true(validators);
+  static constexpr std::size_t validator_position = first_true(validators);
   static constexpr std::size_t service_count = sizeof...(Args) - validator_count;
 
   static constexpr auto service_positions = [] {
@@ -127,20 +125,26 @@ template <class... Args>
  * service throwing http_error answers its status, anything else answers 500 without detail. These errors are
  * application/problem+json (problem).
  *
+ * Adds all the routes or none: @throws std::invalid_argument, leaving `router` as it was, for a route it already has.
+ *
  * Services and validators are moved into storage shared by the routes, which lives as long as the router; they are
  * called from the thread awaiting the dispatch, concurrently if the router is dispatched concurrently.
  */
 template <class Api, class... Args>
 void mount(http::router &router, Args &&...args) {
   auto state = detail::make_mounted(std::forward<Args>(args)...);
+  // All the routes or none: on a route the router refuses (one it already has), `router` is left as it was.
+  auto staged = router;
 
   [&]<class... Routes>(detail::type_list<Routes...>) {
-    (router.add(Routes::endpoint::method, std::string{Routes::path}, std::string{Routes::endpoint::name},
+    (staged.add(Routes::endpoint::method, std::string{Routes::path}, std::string{Routes::endpoint::name},
                 [state](http::request request, http::route_match match) {
                   return detail::serve<Routes>(state, std::move(request), std::move(match));
                 }),
      ...);
   }(typename Api::routes{});
+
+  router = std::move(staged);
 }
 
 } // namespace quoll::rest

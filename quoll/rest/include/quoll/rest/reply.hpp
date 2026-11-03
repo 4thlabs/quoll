@@ -88,14 +88,15 @@ public:
 
   // Not explicit, nor the next one: a service co_returns the value, or respond<Status>(value), as it is.
   template <class T>
-    requires(detail::count_type<std::decay_t<T>>(responses{}) == 1)
+    requires(detail::count_true(detail::with_type<std::decay_t<T>>(responses{})) == 1)
   reply(T &&value)
-      : value_(std::in_place_index<detail::index_of_type<std::decay_t<T>>(responses{})>, std::forward<T>(value)) {}
+      : value_(std::in_place_index<detail::first_true(detail::with_type<std::decay_t<T>>(responses{}))>,
+               std::forward<T>(value)) {}
 
   template <http::status Status, class T>
-    requires(detail::index_of_status<Status, T>(responses{}) < responses::size)
+    requires(detail::first_true(detail::with_status<Status, T>(responses{})) < responses::size)
   reply(status_value<Status, T> value)
-      : value_(make<detail::index_of_status<Status, T>(responses{})>(std::move(value))) {}
+      : value_(make<detail::first_true(detail::with_status<Status, T>(responses{}))>(std::move(value))) {}
 
   /** @brief The status of the response held. */
   [[nodiscard]] http::status status() const noexcept {
@@ -142,17 +143,7 @@ private:
 
   template <http::status Status>
   [[nodiscard]] static consteval std::size_t status_index() {
-    constexpr auto index = []<class... Responses>(detail::type_list<Responses...>) {
-      constexpr std::array statuses{Responses::status...};
-
-      for (std::size_t each = 0; each < statuses.size(); ++each) {
-        if (statuses[each] == Status) {
-          return each;
-        }
-      }
-
-      return statuses.size();
-    }(responses{});
+    constexpr auto index = detail::first_true(detail::with_status_only<Status>(responses{}));
 
     static_assert(index < responses::size, "quoll::rest::reply: the endpoint declares no response with this status");
     return index;

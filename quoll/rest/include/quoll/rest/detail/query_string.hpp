@@ -63,7 +63,7 @@ struct query_entry {
 }
 
 // The `name=value` pairs of a query string, decoded and in order; `name` alone has an empty value. Nothing for an
-// invalid escape.
+// invalid escape or a NUL (`%00`), which C APIs would cut at, as the router refuses one in the path.
 [[nodiscard]] inline std::optional<std::vector<query_entry>> parse_query(std::string_view query) {
   std::vector<query_entry> entries;
 
@@ -79,7 +79,7 @@ struct query_entry {
     auto value =
         decode_query_component(equals == std::string_view::npos ? std::string_view{} : text.substr(equals + 1));
 
-    if (!name || !value) {
+    if (!name || !value || name->contains('\0') || value->contains('\0')) {
       return std::nullopt;
     }
 

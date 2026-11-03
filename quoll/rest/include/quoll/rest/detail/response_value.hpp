@@ -69,36 +69,20 @@ struct response_variant<type_list<Responses...>> {
   using type = std::variant<response_value<Responses>...>;
 };
 
-// How many of the responses have body type T, and the index of the first one.
+// Which responses have body type T, or status Status and body type T.
 template <class T, class... Responses>
-[[nodiscard]] consteval std::size_t count_type(type_list<Responses...>) {
-  return (std::size_t{0} + ... + (std::same_as<typename Responses::type, T> ? 1 : 0));
-}
-
-template <class T, class... Responses>
-[[nodiscard]] consteval std::size_t index_of_type(type_list<Responses...>) {
-  constexpr std::array matches{std::same_as<typename Responses::type, T>...};
-
-  for (std::size_t index = 0; index < matches.size(); ++index) {
-    if (matches[index]) {
-      return index;
-    }
-  }
-
-  return matches.size();
+[[nodiscard]] consteval std::array<bool, sizeof...(Responses)> with_type(type_list<Responses...>) {
+  return {std::same_as<typename Responses::type, T>...};
 }
 
 template <auto Status, class T, class... Responses>
-[[nodiscard]] consteval std::size_t index_of_status(type_list<Responses...>) {
-  constexpr std::array matches{(Responses::status == Status && std::same_as<typename Responses::type, T>)...};
+[[nodiscard]] consteval std::array<bool, sizeof...(Responses)> with_status(type_list<Responses...>) {
+  return {(Responses::status == Status && std::same_as<typename Responses::type, T>)...};
+}
 
-  for (std::size_t index = 0; index < matches.size(); ++index) {
-    if (matches[index]) {
-      return index;
-    }
-  }
-
-  return matches.size();
+template <auto Status, class... Responses>
+[[nodiscard]] consteval std::array<bool, sizeof...(Responses)> with_status_only(type_list<Responses...>) {
+  return {(Responses::status == Status)...};
 }
 
 } // namespace quoll::rest::detail

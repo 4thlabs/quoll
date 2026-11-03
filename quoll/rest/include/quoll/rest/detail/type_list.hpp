@@ -37,11 +37,35 @@
 #ifndef QUOLL_REST_DETAIL_TYPE_LIST_HPP
 #define QUOLL_REST_DETAIL_TYPE_LIST_HPP
 
+#include <array>
 #include <cstddef>
 #include <tuple>
 #include <type_traits>
 
 namespace quoll::rest::detail {
+
+// The index of the first true flag, or N if none is.
+template <std::size_t N>
+[[nodiscard]] consteval std::size_t first_true(std::array<bool, N> const &flags) {
+  for (std::size_t index = 0; index < N; ++index) {
+    if (flags[index]) {
+      return index;
+    }
+  }
+
+  return N;
+}
+
+template <std::size_t N>
+[[nodiscard]] consteval std::size_t count_true(std::array<bool, N> const &flags) {
+  std::size_t count = 0;
+
+  for (auto const flag : flags) {
+    count += flag ? 1 : 0;
+  }
+
+  return count;
+}
 
 template <class... Ts>
 struct type_list {
