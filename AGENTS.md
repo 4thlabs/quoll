@@ -15,13 +15,16 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 ## Status
 
 Exploration. Modules so far: `quoll::async` (task, executor_ref, await_context with stop token, co_spawn, when_all,
-run_loop), `quoll::threads` (thread pool executor; its tests do not run under WASM), `quoll::io` (`ByteStream` and
-`Connector` concepts, `any_stream` type erasure, in-memory stream pair, `io::write`), `quoll::http` (messages, llhttp
-parser, serializer, `http::read` / `http::write` over a byte stream; llhttp is compiled and exported as `quoll::llhttp`)
-and `quoll::asio` (asio executor, `tcp_stream`, TCP connector; native only, the application provides standalone asio). A
-client GET runs end to end over a memory stream and over TCP through the asio connector (prototype criteria 1 to 3). The
-prototype described in `docs/PLAN.md` continues with the Emscripten build of the HTTP core and a `fetch` transport. Do
-not settle its open questions or write the module design into this file before the prototype validates them.
+run_loop), `quoll::io` (`ByteStream` and `Connector` concepts, `any_stream` type erasure, in-memory stream pair,
+`io::write`), `quoll::http` (messages, llhttp parser, serializer, `http::read` / `http::write` over a byte stream,
+`HttpTransport` concept; llhttp is compiled and exported as `quoll::llhttp`), and the adapters `quoll::threads`
+(thread pool executor; its tests do not run under WASM), `quoll::asio` (asio executor, `tcp_stream`, TCP connector;
+native only, the application provides standalone asio) and `quoll::emscripten` (JavaScript event loop executor,
+`fetch_transport`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`). A
+client GET runs end to end over a memory stream, over TCP through the asio connector, and over `fetch` in Node
+(prototype criteria 1 to 4). The prototype described in `docs/PLAN.md` continues with the DSL, OpenAPI and the React
+sample. Do not settle its open questions or write the module design into this file before the prototype validates
+them.
 
 ## Build & test
 
@@ -62,13 +65,15 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   so a header that is not self-contained breaks the build.
 - Dependencies come from CPM (`cmake/CPM.cmake`, always included: modules need it, not only tests). Under
   Emscripten the root sets `-fwasm-exceptions` before any dependency is added.
+- Under Emscripten the test executable is linked with JSPI and run by `node --experimental-wasm-jspi`: a test waits
+  for the JavaScript event loop (fetch) by suspending there with `emscripten_sleep`. Library code never does.
 
 ## Hard constraints
 
 - Header-only, C++20 minimum (GCC ≥ 12, Clang ≥ 17). CMake, dependencies via CPM.
 - WASM is a first-class target: core modules never require threads or blocking waits.
-- No Qt. Adapters: thread pool (`quoll::threads`), asio (`quoll::asio`); planned: Emscripten (browser loop,
-  `fetch`, `postMessage`), webview shell, memory (tests).
+- No Qt. Adapters: thread pool (`quoll::threads`), asio (`quoll::asio`), Emscripten (`quoll::emscripten`: event
+  loop, `fetch`; planned: `postMessage`); planned: webview shell, memory (tests).
 
 ## Related projects
 
