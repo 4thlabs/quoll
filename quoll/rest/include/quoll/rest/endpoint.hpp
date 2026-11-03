@@ -37,46 +37,16 @@
 #ifndef QUOLL_REST_ENDPOINT_HPP
 #define QUOLL_REST_ENDPOINT_HPP
 
-#include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
+#include <quoll/rest/detail/category.hpp>
 #include <quoll/rest/detail/checked_path.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
 
-#include <array>
-#include <cstddef>
 #include <string_view>
 
 namespace quoll::rest {
-
-namespace detail {
-
-struct endpoint_category {};
-
-template <class... Parts>
-[[nodiscard]] consteval std::size_t count_bodies() {
-  return (std::size_t{0} + ... + (is_argument_part<Parts>::value && requires { typename Parts::codec; } ? 1 : 0));
-}
-
-template <class... Parts>
-[[nodiscard]] consteval bool distinct_statuses() {
-  constexpr auto statuses = []<class... Responses>(type_list<Responses...>) {
-    return std::array<http::status, sizeof...(Responses)>{Responses::status...};
-  }(filter_t<is_response_part, type_list<Parts...>>{});
-
-  for (std::size_t first = 0; first < statuses.size(); ++first) {
-    for (std::size_t second = first + 1; second < statuses.size(); ++second) {
-      if (statuses[first] == statuses[second]) {
-        return false;
-      }
-    }
-  }
-
-  return true;
-}
-
-} // namespace detail
 
 /**
  * @brief One operation of an API: its name, method and path template, then its parts.
@@ -97,10 +67,13 @@ struct endpoint {
   static_assert(detail::checked_path<Path>::valid);
   static_assert((detail::Part<Parts> && ...), "quoll::rest::endpoint: a part is not query<>, query_params<>, "
                                               "header<>, body<>, returns<> or security<>");
-  static_assert(detail::count_bodies<Parts...>() <= 1, "quoll::rest::endpoint: more than one body<>");
-  static_assert(detail::count_bodies<Parts...>() == 0 || (Method != http::verb::get && Method != http::verb::head),
+  static_assert(detail::count_bodies(detail::type_list<Parts...>{}) <= 1,
+                "quoll::rest::endpoint: more than one body<>");
+  static_assert(detail::count_bodies(detail::type_list<Parts...>{}) == 0 ||
+                    (Method != http::verb::get && Method != http::verb::head),
                 "quoll::rest::endpoint: a GET or HEAD endpoint has no body<> (fetch rejects one)");
-  static_assert(detail::distinct_statuses<Parts...>(), "quoll::rest::endpoint: two returns<> have the same status");
+  static_assert(detail::distinct_statuses(detail::type_list<Parts...>{}),
+                "quoll::rest::endpoint: two returns<> have the same status");
 
   using contract_category = detail::endpoint_category;
   using parts = detail::type_list<Parts...>;
@@ -109,18 +82,6 @@ struct endpoint {
   static constexpr http::verb method = Method;
   static constexpr std::string_view path = Path.view();
 };
-
-namespace detail {
-
-template <class E>
-struct endpoint_traits;
-
-template <fixed_string Name, http::verb Method, fixed_string Path, class... Parts>
-struct endpoint_traits<endpoint<Name, Method, Path, Parts...>> {
-  static constexpr auto path = Path;
-};
-
-} // namespace detail
 
 } // namespace quoll::rest
 

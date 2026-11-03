@@ -85,6 +85,13 @@ struct route {
   using inherited = Inherited;
   using parts = concat_t<typename Endpoint::parts, Inherited>;
 
+  // The endpoint checks its own parts; these hold with the parts inherited from with<> too.
+  static_assert(count_bodies(parts{}) <= 1, "quoll::rest::with: the endpoint gets more than one body<>");
+  static_assert(count_bodies(parts{}) == 0 ||
+                    (Endpoint::method != http::verb::get && Endpoint::method != http::verb::head),
+                "quoll::rest::with: a GET or HEAD endpoint gets a body<> (fetch rejects one)");
+  static_assert(distinct_statuses(parts{}), "quoll::rest::with: the endpoint gets two returns<> with the same status");
+
   // The arguments of a call and of the service: path parameters, then argument parts in order.
   using arguments = as_tuple_t<concat_t<typename path_argument_types<Path>::type,
                                         typename part_argument_types<filter_t<is_argument_part, parts>>::type>>;

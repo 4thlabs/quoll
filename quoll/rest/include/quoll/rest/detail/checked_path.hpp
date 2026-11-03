@@ -54,7 +54,7 @@ struct checked_path {
   static_assert(parsed.error != path_error::unknown_type,
                 "quoll::rest: unknown path parameter type (int, int64, uint, uint64, double, bool, string, path)");
   static_assert(parsed.error != path_error::not_whole_segment, "quoll::rest: a path parameter is a whole segment");
-  static_assert(parsed.error != path_error::rest_not_last, "quoll::rest: a {name:path} parameter comes last");
+  static_assert(parsed.error != path_error::rest_not_last, "quoll::rest: nothing follows a {name:path} parameter");
   static_assert(parsed.error != path_error::duplicate_name, "quoll::rest: two path parameters have the same name");
   static_assert(parsed.error != path_error::too_many_parameters, "quoll::rest: too many path parameters");
 

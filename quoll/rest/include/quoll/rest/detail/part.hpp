@@ -37,9 +37,13 @@
 #ifndef QUOLL_REST_DETAIL_PART_HPP
 #define QUOLL_REST_DETAIL_PART_HPP
 
+#include <quoll/http/status.hpp>
+#include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/parameter.hpp>
 
+#include <array>
 #include <concepts>
+#include <cstddef>
 #include <optional>
 #include <type_traits>
 #include <vector>
@@ -79,6 +83,30 @@ struct is_parameter_value<std::vector<T>> : std::bool_constant<Parameter<T>> {};
 
 // Tags the security schemes, so that security<> accepts nothing else.
 struct security_scheme {};
+
+// The checks endpoint<> makes on its own parts, and route on them with the inherited ones.
+
+template <class... Parts>
+[[nodiscard]] consteval std::size_t count_bodies(type_list<Parts...>) {
+  return (std::size_t{0} + ... + (is_argument_part<Parts>::value && requires { typename Parts::codec; } ? 1 : 0));
+}
+
+template <class... Parts>
+[[nodiscard]] consteval bool distinct_statuses(type_list<Parts...>) {
+  constexpr auto statuses = []<class... Responses>(type_list<Responses...>) {
+    return std::array<http::status, sizeof...(Responses)>{Responses::status...};
+  }(filter_t<is_response_part, type_list<Parts...>>{});
+
+  for (std::size_t first = 0; first < statuses.size(); ++first) {
+    for (std::size_t second = first + 1; second < statuses.size(); ++second) {
+      if (statuses[first] == statuses[second]) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
 
 } // namespace quoll::rest::detail
 

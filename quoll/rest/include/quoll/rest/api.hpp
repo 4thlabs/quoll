@@ -37,103 +37,17 @@
 #ifndef QUOLL_REST_API_HPP
 #define QUOLL_REST_API_HPP
 
+#include <quoll/rest/detail/category.hpp>
 #include <quoll/rest/detail/checked_path.hpp>
 #include <quoll/rest/detail/part.hpp>
-#include <quoll/rest/detail/path_template.hpp>
 #include <quoll/rest/detail/route.hpp>
+#include <quoll/rest/detail/routes.hpp>
 #include <quoll/rest/detail/type_list.hpp>
-#include <quoll/rest/endpoint.hpp>
 #include <quoll/rest/fixed_string.hpp>
 
-#include <concepts>
 #include <string_view>
-#include <type_traits>
 
 namespace quoll::rest {
-
-namespace detail {
-
-struct api_category {};
-
-struct with_category {};
-
-template <class T>
-concept Endpoint = std::same_as<typename T::contract_category, endpoint_category>;
-
-template <class T>
-concept Api = std::same_as<typename T::contract_category, api_category>;
-
-template <class T>
-concept With = std::same_as<typename T::contract_category, with_category>;
-
-template <class T>
-struct is_part : std::bool_constant<Part<T>> {};
-
-template <class T>
-struct is_member : std::bool_constant<!Part<T>> {};
-
-// Moves routes under Prefix, and gives them the Inherited parts after their own.
-template <fixed_string Prefix, class Inherited, class Routes>
-struct rebase;
-
-template <fixed_string Prefix, class Inherited, class... Routes>
-struct rebase<Prefix, Inherited, type_list<Routes...>> {
-  using type = type_list<route<typename Routes::endpoint, join_paths<Prefix, Routes::path_value>(),
-                               concat_t<typename Routes::inherited, Inherited>>...>;
-};
-
-template <fixed_string Prefix, class Member>
-struct routes_of;
-
-template <fixed_string Prefix, Endpoint E>
-struct routes_of<Prefix, E> {
-  using type = type_list<route<E, join_paths<Prefix, endpoint_traits<E>::path>(), type_list<>>>;
-};
-
-template <fixed_string Prefix, Api A>
-struct routes_of<Prefix, A> {
-  using type = typename rebase<Prefix, type_list<>, typename A::routes>::type;
-};
-
-template <class Members>
-struct member_routes;
-
-template <class... Members>
-struct member_routes<type_list<Members...>> {
-  using type = concat_t<type_list<>, typename routes_of<"", Members>::type...>;
-};
-
-template <fixed_string Prefix, With W>
-struct routes_of<Prefix, W> {
-  using type = typename rebase<Prefix, filter_t<is_part, typename W::members>,
-                               typename member_routes<filter_t<is_member, typename W::members>>::type>::type;
-};
-
-template <class E, class Routes>
-struct matching_routes;
-
-template <class E, class... Routes>
-struct matching_routes<E, type_list<Routes...>> {
-  using type =
-      concat_t<type_list<>,
-               std::conditional_t<std::same_as<typename Routes::endpoint, E>, type_list<Routes>, type_list<>>...>;
-};
-
-template <class E, class Matches>
-struct single_route {
-  static_assert(Matches::size != 0, "quoll::rest::api: the endpoint is not in this api");
-  static_assert(Matches::size < 2, "quoll::rest::api: the endpoint is in this api more than once");
-};
-
-template <class E, class Route>
-struct single_route<E, type_list<Route>> {
-  using type = Route;
-};
-
-template <class E, class Routes>
-using find_route_t = typename single_route<E, typename matching_routes<E, Routes>::type>::type;
-
-} // namespace detail
 
 /**
  * @brief Adds parts to every endpoint of the apis and endpoints it wraps: `with<security<bearer_auth>, users::api>`.
