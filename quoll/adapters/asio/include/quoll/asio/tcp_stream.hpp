@@ -37,16 +37,14 @@
 #ifndef QUOLL_ASIO_TCP_STREAM_HPP
 #define QUOLL_ASIO_TCP_STREAM_HPP
 
-#include <quoll/asio/detail/cancellation.hpp>
 #include <quoll/asio/detail/io_error.hpp>
 #include <quoll/asio/detail/operation.hpp>
+#include <quoll/asio/detail/tcp_state.hpp>
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/io_result.hpp>
 
-#include <asio/any_io_executor.hpp>
-#include <asio/buffer.hpp>
 #include <asio/ip/tcp.hpp>
 
 #include <cassert>
@@ -58,51 +56,6 @@
 #include <utility>
 
 namespace quoll::asio {
-
-namespace detail {
-
-// The cancellation of each direction, allocated together.
-struct tcp_cancellations {
-  explicit tcp_cancellations(::asio::any_io_executor const &executor) noexcept : read(executor), write(executor) {}
-
-  cancellation read;
-  cancellation write;
-};
-
-// What a tcp_stream keeps at a stable address: the socket, and the cancellation of each direction.
-struct tcp_state {
-  explicit tcp_state(::asio::ip::tcp::socket &&connected)
-      : socket(std::move(connected)), cancellations(std::make_shared<tcp_cancellations>(socket.get_executor())),
-        read(cancellations, &cancellations->read), write(cancellations, &cancellations->write) {}
-
-  ::asio::ip::tcp::socket socket;
-  std::shared_ptr<tcp_cancellations> cancellations;
-  // Share the ownership of `cancellations`.
-  std::shared_ptr<cancellation> read;
-  std::shared_ptr<cancellation> write;
-};
-
-struct read_some_initiation {
-  ::asio::ip::tcp::socket *socket;
-  std::span<std::byte> buffer;
-
-  template <class Handler>
-  void operator()(Handler &&handler) const {
-    socket->async_read_some(::asio::buffer(buffer.data(), buffer.size()), std::forward<Handler>(handler));
-  }
-};
-
-struct write_some_initiation {
-  ::asio::ip::tcp::socket *socket;
-  std::span<std::byte const> data;
-
-  template <class Handler>
-  void operator()(Handler &&handler) const {
-    socket->async_write_some(::asio::buffer(data.data(), data.size()), std::forward<Handler>(handler));
-  }
-};
-
-} // namespace detail
 
 /**
  * @brief ByteStream over a connected asio TCP socket.
