@@ -51,7 +51,7 @@ namespace quoll::server {
 /** @brief Where listen() listens, and how it serves. */
 struct listen_options {
   /** @brief The IP address to listen on: loopback by default, `0.0.0.0` or `::` for every interface. */
-  std::string address = "127.0.0.1";
+  std::string address = std::string{io::default_listen_address};
   serve_options serve;
 };
 
@@ -60,7 +60,7 @@ struct listen_options {
  *
  * Listens through the network of the executor the task runs on (io::listen), a runtime's: spawned with the runtime's
  * stop token, it stops on Ctrl-C. Throws std::system_error when the address cannot be bound, and fails like serve()
- * otherwise. `router` outlives the task and the connections it serves.
+ * otherwise. `router` outlives the task, which completes once its connections have ended.
  *
  * @code
  * quoll::async::task<> serve_notes(std::uint16_t port) {

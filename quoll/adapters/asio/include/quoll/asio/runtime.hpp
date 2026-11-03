@@ -39,12 +39,9 @@
 
 #include <quoll/asio/detail/stop_signals.hpp>
 #include <quoll/asio/executor.hpp>
+#include <quoll/async/offers_service.hpp>
 #include <quoll/async/service.hpp>
-#include <quoll/async/task.hpp>
 #include <quoll/async/work_item.hpp>
-#include <quoll/io/any_listener.hpp>
-#include <quoll/io/any_stream.hpp>
-#include <quoll/io/network.hpp>
 #include <quoll/io/network_ref.hpp>
 
 #include <asio/execution/outstanding_work.hpp>
@@ -54,11 +51,9 @@
 
 #include <atomic>
 #include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <optional>
 #include <stop_token>
-#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -109,7 +104,7 @@ struct runtime_state {
  * }
  * @endcode
  *
- * Its executor is the loop's network (io::Network) and offers itself as such, so that io::connect(), io::listen() and
+ * Its executor offers the loop's network (io::network_ref), so that io::connect(), io::listen() and
  * what is built on them (quoll::server::listen, quoll::client::transport, a REST client) need nothing handed to them.
  * What does I/O on the loop (a server, a client and its kept connections) lives in the tasks, created and destroyed by
  * them: the program's main coroutine rather than main().
@@ -126,7 +121,7 @@ struct runtime_state {
  */
 class runtime {
 public:
-  /** @brief The executor of the runtime: posts to its loop, and is its network. */
+  /** @brief The executor of the runtime: posts to its loop, and offers its network. */
   class executor {
   public:
     using services = async::service_list<io::network_ref>;
@@ -162,18 +157,8 @@ public:
 
     void post(async::work_item &item) const { inner_.post(item); }
 
-    /** @brief Opens a TCP connection to `host` (a name or an address) on `port`, on the runtime's loop. */
-    [[nodiscard]] async::task<io::any_stream> connect(std::string host, std::uint16_t port) const {
-      return inner_.connect(std::move(host), port);
-    }
-
-    /** @brief Listens on `address` (an IP address) and `port` (0 for any free port), on the runtime's loop. */
-    [[nodiscard]] io::any_listener listen(std::string address, std::uint16_t port) const {
-      return inner_.listen(std::move(address), port);
-    }
-
-    /** @brief This executor, as the network of the runtime's loop (see io::network_ref). */
-    [[nodiscard]] io::network_ref query(async::service_tag<io::network_ref>) const { return io::network_ref{*this}; }
+    /** @brief The network of the runtime's loop: its asio executor (see io::network_ref), as long-lived as this. */
+    [[nodiscard]] io::network_ref query(async::service_tag<io::network_ref>) const { return io::network_ref{inner_}; }
 
     [[nodiscard]] bool operator==(executor const &other) const noexcept { return inner_ == other.inner_; }
 
@@ -247,7 +232,7 @@ private:
 };
 
 static_assert(async::Executor<runtime::executor>);
-static_assert(io::Network<runtime::executor>);
+static_assert(async::OffersService<runtime::executor, io::network_ref>);
 
 } // namespace quoll::asio
 
