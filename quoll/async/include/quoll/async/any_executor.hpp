@@ -57,8 +57,8 @@ namespace quoll::async {
  *
  * Holds a copy of any executor, for code that keeps one without being a template over its type: what serve() spawns
  * its connections on, for instance. Built from an executor_ref, it copies the referenced executor, which may then go
- * away. An executor of up to four pointers, that moves without throwing, is held in place; a bigger one is allocated
- * on the heap. Posting never allocates.
+ * away. An executor of up to eight pointers (an asio::any_io_executor), that moves without throwing, is held in place;
+ * a bigger one is allocated on the heap. Posting never allocates.
  *
  * Answers the wrapped executor's service queries (see service_list). A moved-from any_executor can only be assigned to
  * or destroyed.

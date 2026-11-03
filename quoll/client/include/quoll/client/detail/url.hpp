@@ -115,6 +115,11 @@ struct origin {
 
     result.host = authority.substr(1, closing - 1);
 
+    // Brackets hold an IPv6 address only (RFC 3986): a name or an IPv4 address goes without.
+    if (!result.host.contains(':')) {
+      invalid_url("brackets around a host that is not an IPv6 address");
+    }
+
     auto const rest = authority.substr(closing + 1);
 
     if (!rest.empty()) {

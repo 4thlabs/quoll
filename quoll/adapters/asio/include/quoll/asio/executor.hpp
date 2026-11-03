@@ -39,9 +39,10 @@
 
 #include <quoll/asio/detail/network.hpp>
 #include <quoll/async/executor.hpp>
+#include <quoll/async/offers_service.hpp>
 #include <quoll/async/service.hpp>
 #include <quoll/async/work_item.hpp>
-#include <quoll/io/network.hpp>
+#include <quoll/io/network_ref.hpp>
 
 #include <asio/any_io_executor.hpp>
 #include <asio/post.hpp>
@@ -59,7 +60,7 @@ namespace quoll::asio {
  * allocates it (from a per-thread cache once warm), so post() may throw std::bad_alloc; see async::Executor.
  * Equal when the asio executors are.
  *
- * Offers the network of its execution context (io::network): io::connect() and io::listen() open TCP connections
+ * Offers the network of its execution context (io::network_ref): io::connect() and io::listen() open TCP connections
  * and listening sockets there, for the tasks it runs.
  *
  * Thread safety: post() may be called from any thread, as asio's post can.
@@ -68,7 +69,7 @@ template <class AsioExecutor = ::asio::any_io_executor>
   requires std::copy_constructible<AsioExecutor> && std::equality_comparable<AsioExecutor>
 class executor {
 public:
-  using services = async::service_list<io::network>;
+  using services = async::service_list<io::network_ref>;
 
   explicit executor(AsioExecutor inner) noexcept(std::is_nothrow_move_constructible_v<AsioExecutor>)
       : inner_(std::move(inner)) {}
@@ -76,8 +77,8 @@ public:
   void post(async::work_item &item) const { ::asio::post(inner_, resumer{&item}); }
 
   /** @brief The network of the execution context, valid while this executor lives. */
-  [[nodiscard]] io::network query(async::service_tag<io::network>) const {
-    return io::network{detail::network<AsioExecutor>{&inner_}};
+  [[nodiscard]] io::network_ref query(async::service_tag<io::network_ref>) const {
+    return io::network_ref{detail::network<AsioExecutor>{&inner_}};
   }
 
   [[nodiscard]] bool operator==(executor const &) const noexcept = default;
@@ -94,6 +95,7 @@ private:
 };
 
 static_assert(async::Executor<executor<>>);
+static_assert(async::OffersService<executor<>, io::network_ref>);
 
 } // namespace quoll::asio
 

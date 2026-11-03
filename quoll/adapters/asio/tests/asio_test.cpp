@@ -37,7 +37,9 @@
 #include <quoll/asio.hpp>
 #include <quoll/asio/detail/cancellation.hpp>
 #include <quoll/asio/detail/operation.hpp>
+#include <quoll/async/any_executor.hpp>
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
@@ -52,9 +54,10 @@
 #include <quoll/http/verb.hpp>
 #include <quoll/http/write.hpp>
 #include <quoll/io/any_stream.hpp>
+#include <quoll/io/connect.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/io_result.hpp>
-#include <quoll/io/network.hpp>
+#include <quoll/io/listen.hpp>
 #include <quoll/io/write.hpp>
 #include <quoll/rest.hpp>
 #include <quoll/server/listen.hpp>
@@ -315,7 +318,6 @@ struct accounts_calls {
   asio_test::account opened;
 };
 
-// REST calls on one client, then a stop request for the server.
 // The REST calls of the TCP tests, on one client.
 template <class Client>
 task<accounts_calls> make_calls(Client &client) {
@@ -338,7 +340,8 @@ task<accounts_calls> call_accounts(accounts_client client, std::stop_source &sou
   co_return calls;
 }
 
-// A port free on the loopback interface, as the system picks it: bound, read, released.
+// A port free on the loopback interface, as the system picks it: bound, read, released. Another process could take
+// it before the test uses it; on a test machine's loopback, that is unlikely enough.
 std::uint16_t free_port() {
   ::asio::io_context context;
 
@@ -377,8 +380,16 @@ task<accounts_calls> serve_and_call(http::router const &router, std::uint16_t po
   co_return calls;
 }
 
-// Ctrl-C: the task is asked to stop, and the next Ctrl-C would have the default action, ending the process.
-task<bool> interrupt_then_check_default() {
+// The action SIGINT has.
+[[nodiscard]] void (*sigint_handler())(int) {
+  struct sigaction action {};
+
+  ::sigaction(SIGINT, nullptr, &action);
+  return action.sa_handler;
+}
+
+// Ctrl-C: the task is asked to stop, and SIGINT gets the action it had before sync_wait back.
+task<bool> interrupt_then_check_restored(void (*before)(int)) {
   std::raise(SIGINT);
 
   auto const stop_token = co_await quoll::async::current_stop_token();
@@ -387,10 +398,23 @@ task<bool> interrupt_then_check_default() {
     co_await quoll::async::yield();
   }
 
-  struct sigaction action {};
+  co_return sigint_handler() == before;
+}
 
-  ::sigaction(SIGINT, nullptr, &action);
-  co_return action.sa_handler == SIG_DFL;
+// Runs until a stop request.
+task<> until_stopped(std::stop_token stop_token) {
+  while (!stop_token.stop_requested()) {
+    co_await quoll::async::yield();
+  }
+}
+
+// Leaves work running when it completes, as a server leaves connections.
+task<int> leave_work_running() {
+  auto const executor = quoll::async::any_executor{co_await quoll::async::current_executor()};
+
+  co_spawn(executor, until_stopped(co_await quoll::async::current_stop_token()),
+           overloaded{[] {}, [](std::exception_ptr) {}}, co_await quoll::async::current_stop_token());
+  co_return 7;
 }
 
 task<int> answer() { co_return 42; }
@@ -726,9 +750,16 @@ TEST_CASE("asio::sync_wait runs a task to its end, and hands over its outcome", 
   REQUIRE_THROWS_AS(quoll::asio::sync_wait(io::connect("127.0.0.1", free_port())), std::system_error);
 }
 
-TEST_CASE("asio::sync_wait turns the first Ctrl-C into a stop request, then lets the next one through",
+TEST_CASE("asio::sync_wait turns the first Ctrl-C into a stop request, then gives SIGINT its action back",
           "[asio][sync_wait]") {
-  REQUIRE(quoll::asio::sync_wait(interrupt_then_check_default()));
+  auto const before = sigint_handler();
+
+  REQUIRE(quoll::asio::sync_wait(interrupt_then_check_restored(before)));
+  REQUIRE(sigint_handler() == before);
+}
+
+TEST_CASE("asio::sync_wait asks what its task left running to stop, and waits for it", "[asio][sync_wait]") {
+  REQUIRE(quoll::asio::sync_wait(leave_work_running()) == 7);
 }
 
 TEST_CASE("asio::sync_wait offers the loop's network to its task", "[asio][sync_wait]") {

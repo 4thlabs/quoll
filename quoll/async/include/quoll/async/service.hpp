@@ -37,11 +37,9 @@
 #ifndef QUOLL_ASYNC_SERVICE_HPP
 #define QUOLL_ASYNC_SERVICE_HPP
 
-#include <concepts>
-
 namespace quoll::async {
 
-/** @brief Names the service `S` in an executor's `query()`: `executor.query(async::service<io::network>)`. */
+/** @brief Names the service `S` in an executor's `query()`: `executor.query(async::service<io::network_ref>)`. */
 template <class S>
 struct service_tag {
   explicit service_tag() = default;
@@ -61,12 +59,6 @@ inline constexpr service_tag<S> service{};
  */
 template <class... S>
 struct service_list {};
-
-/** @brief `E` offers the service `S`. */
-template <class E, class S>
-concept OffersService = requires(E const &executor) {
-  { executor.query(service<S>) } -> std::same_as<S>;
-};
 
 } // namespace quoll::async
 

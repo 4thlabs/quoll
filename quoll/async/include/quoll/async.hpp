@@ -46,6 +46,7 @@
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/executor_ref.hpp>
+#include <quoll/async/offers_service.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/service.hpp>
 #include <quoll/async/task.hpp>
