@@ -39,6 +39,7 @@
 
 #include <quoll/http/detail/percent.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <stdexcept>
@@ -125,6 +126,11 @@ struct route_segment {
 
     auto const inside = segment.substr(1, segment.size() - 2);
     auto const colon = inside.find(':');
+
+    if (colon == 0) {
+      throw std::invalid_argument{"quoll::http::router: a parameter has a name"};
+    }
+
     auto const kind = colon != std::string_view::npos && inside.substr(colon + 1) == "path" ? segment_kind::rest
                                                                                             : segment_kind::param;
 
@@ -132,6 +138,15 @@ struct route_segment {
   }
 
   return parsed;
+}
+
+// Whether two templates have the same shape: the same literals and parameters in the same places, whatever the
+// parameter names. Two such routes for one method could never be told apart.
+[[nodiscard]] inline bool same_shape(std::vector<route_segment> const &first,
+                                     std::vector<route_segment> const &second) {
+  return std::ranges::equal(first, second, [](route_segment const &left, route_segment const &right) {
+    return left.kind == right.kind && (left.kind != segment_kind::literal || left.text == right.text);
+  });
 }
 
 // How specific a route is, segment by segment: a literal beats a parameter, which beats the rest of the path.

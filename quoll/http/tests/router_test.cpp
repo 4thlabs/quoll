@@ -131,6 +131,42 @@ TEST_CASE("router: no route is 404, another method 405 with Allow, a bad target 
   REQUIRE(dispatch(router, verb::get, "http://example.com/users").status == http::status::bad_request);
 }
 
+TEST_CASE("router: a route a method already has, under other parameter names, throws", "[http][router]") {
+  auto router = make_router();
+
+  REQUIRE_THROWS_AS(router.add(verb::get, "/users/{uid}", "users.find", echo), std::invalid_argument);
+  REQUIRE_THROWS_AS(router.add(verb::get, "/users/me", "users.self", echo), std::invalid_argument);
+  // Same path, another method: a route of its own.
+  REQUIRE_NOTHROW(router.add(verb::post, "/users/{uid}", "users.update", echo));
+  REQUIRE_THROWS_AS(router.add(verb::get, "/users", "users.empty", http::router::handler{}), std::invalid_argument);
+}
+
+TEST_CASE("router: a {name} parameter beats the rest of the path", "[http][router]") {
+  http::router router;
+
+  router.add(verb::get, "/files/{rest:path}", "files.rest", echo);
+  router.add(verb::get, "/files/{name}", "files.one", echo);
+
+  REQUIRE(dispatch(router, verb::get, "/files/a").body == "files.one\na\n?");
+  REQUIRE(dispatch(router, verb::get, "/files/a/b").body == "files.rest\na/b\n?");
+}
+
+TEST_CASE("router: what a handler throws comes out of the task", "[http][router]") {
+  http::router router;
+
+  // Throws when called, before it returns a task.
+  router.add(verb::get, "/fails", "fails",
+             [](http::request, http::route_match) -> task<http::response> { throw std::runtime_error{"refused"}; });
+
+  http::request message;
+
+  message.target = "/fails";
+
+  auto work = router.dispatch(std::move(message));
+
+  REQUIRE_THROWS_AS(quoll::test::run(std::move(work)), std::runtime_error);
+}
+
 TEST_CASE("router: an invalid template throws", "[http][router]") {
   http::router router;
 
@@ -138,5 +174,6 @@ TEST_CASE("router: an invalid template throws", "[http][router]") {
   REQUIRE_THROWS_AS(router.add(verb::get, "/users/x{id}", "x", echo), std::invalid_argument);
   REQUIRE_THROWS_AS(router.add(verb::get, "/users/{id", "x", echo), std::invalid_argument);
   REQUIRE_THROWS_AS(router.add(verb::get, "/users/{}", "x", echo), std::invalid_argument);
+  REQUIRE_THROWS_AS(router.add(verb::get, "/users/{:int}", "x", echo), std::invalid_argument);
   REQUIRE_THROWS_AS(router.add(verb::get, "/files/{rest:path}/meta", "x", echo), std::invalid_argument);
 }
