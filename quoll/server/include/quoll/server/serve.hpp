@@ -54,6 +54,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stop_token>
 #include <system_error>
 #include <utility>
 
@@ -118,23 +119,27 @@ async::task<> serve_shared(Stream stream, http::router const &router, std::share
 /**
  * @brief Accepts the connections of `listener` and serves each one with `router`, concurrently, on `executor`.
  *
- * Each connection runs serve_connection() as a task of its own, spawned on `executor` with the stop token of the
- * awaiter: a thread pool or a strand, for instance, while the accept loop stays on its I/O loop. A stop request is
- * immediate, not graceful: it ends the accept loop and cancels whatever the connections have pending, a read, a
- * handler's operations, a write.
+ * Each connection runs serve_connection() as a task of its own, spawned on `executor` (a thread pool or a strand,
+ * for instance, while the accept loop stays on its I/O loop) with a stop token that stops with serve(). A stop
+ * request is immediate, not graceful: it ends the accept loop and cancels whatever the connections have pending, a
+ * read, a handler's operations, a write.
  *
  * Accepting stops with `std::errc::operation_canceled`: a stop request, or the application closing its listener.
  * Another accept failure goes to `options.on_accept_error`, or by default is skipped when it concerns one connection
  * only and rethrown otherwise; a rethrow ends the accept loop, not the connections already served.
  *
- * Either way, the task completes once the connections it spawned have ended (a stop request cancels them), then
- * rethrows the accept failure if there was one: `listener` and `router` need to outlive the task only.
+ * However the accept loop ends (a stop request, a closed listener, a failure, an exception from
+ * `options.on_accept_error`), the connections it spawned are asked to stop, and the task completes once they have
+ * ended, then rethrows the failure if there was one: `listener` and `router` need to outlive the task only.
  */
 template <async::Executor Executor, io::Listener Listener>
 async::task<> serve(Executor executor, Listener &listener, http::router const &router, serve_options options = {}) {
   auto const stop_token = co_await async::current_stop_token();
   auto const shared = std::make_shared<detail::shared_options>(std::move(options));
   auto const &accept_error = shared->options.on_accept_error;
+  // The connections stop with serve(): on its stop request, and when its accept loop ends for another reason.
+  std::stop_source connections_stop;
+  std::stop_callback const forward_stop{stop_token, [&connections_stop] { connections_stop.request_stop(); }};
   std::exception_ptr ending;
 
   while (!stop_token.stop_requested()) {
@@ -147,6 +152,9 @@ async::task<> serve(Executor executor, Listener &listener, http::router const &r
     } catch (std::system_error const &thrown) {
       failure = std::current_exception();
       error = thrown.code();
+    } catch (...) {
+      ending = std::current_exception();
+      break;
     }
 
     if (!stream) {
@@ -154,7 +162,14 @@ async::task<> serve(Executor executor, Listener &listener, http::router const &r
         break;
       }
 
-      auto const again = accept_error ? co_await accept_error(error) : detail::one_connection_failure(error);
+      auto again = false;
+
+      try {
+        again = accept_error ? co_await accept_error(error) : detail::one_connection_failure(error);
+      } catch (...) {
+        ending = std::current_exception();
+        break;
+      }
 
       if (!again) {
         ending = failure;
@@ -168,15 +183,16 @@ async::task<> serve(Executor executor, Listener &listener, http::router const &r
 
     try {
       async::co_spawn(executor, detail::serve_shared(std::move(*stream), router, shared),
-                      detail::connection_outcome{shared}, stop_token);
+                      detail::connection_outcome{shared}, connections_stop.get_token());
     } catch (...) {
-      // Not spawned: wait for the others, then fail.
+      // Not spawned: stop the others, wait for them, then fail.
       shared->connections.ended();
       ending = std::current_exception();
       break;
     }
   }
 
+  connections_stop.request_stop();
   co_await shared->connections.join();
 
   if (ending) {
