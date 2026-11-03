@@ -48,24 +48,43 @@
 #include <quoll/server/detail/connection.hpp>
 #include <quoll/server/serve_connection.hpp>
 
+#include <exception>
+#include <functional>
 #include <optional>
 #include <system_error>
 #include <utility>
 
 namespace quoll::server {
 
+/** @brief How serve() handles its connections. */
+struct serve_options {
+  /** @brief What a request may hold (see serve_connection). */
+  http::parse_limits limits;
+
+  /**
+   * @brief Called with the exception that ended a connection (a stream exception, `std::bad_alloc`...), on the
+   * executor; must not throw. Handler failures are not among them: they answer 500. Empty: the failure only ends the
+   * connection.
+   */
+  std::function<void(std::exception_ptr)> on_connection_error;
+};
+
 /**
  * @brief Accepts the connections of `listener` and serves each one with `router`, concurrently, on `executor`.
  *
  * Each connection runs serve_connection() as a task of its own, spawned on `executor` with the stop token of the
- * awaiter: a stop request ends the accept loop and cancels the reads of the connections. The task completes when
- * accepting stops (a stop request); another failure to accept is rethrown. A connection's own failure only ends it.
+ * awaiter: a stop request ends the accept loop and cancels the reads of the connections.
+ *
+ * The task completes when accepting stops with `std::errc::operation_canceled`: a stop request, or the application
+ * closing its listener. An accept failing for one connection only (`connection_aborted`, `connection_reset`: a peer
+ * that gave up during the handshake) is skipped; any other failure is rethrown, which ends the accept loop but not the
+ * connections already served.
  *
  * The spawned connections may outlive the task: `listener` and `router` outlive them, for instance until `executor`
  * has drained.
  */
 template <async::Executor Executor, io::Listener Listener>
-async::task<> serve(Executor executor, Listener &listener, http::router const &router, http::parse_limits limits = {}) {
+async::task<> serve(Executor executor, Listener &listener, http::router const &router, serve_options options = {}) {
   auto const stop_token = co_await async::current_stop_token();
 
   while (!stop_token.stop_requested()) {
@@ -78,11 +97,15 @@ async::task<> serve(Executor executor, Listener &listener, http::router const &r
         co_return;
       }
 
-      throw;
+      if (error.code() != std::errc::connection_aborted && error.code() != std::errc::connection_reset) {
+        throw;
+      }
+
+      continue;
     }
 
-    async::co_spawn(executor, serve_connection(std::move(*stream), router, limits), detail::ignore_outcome{},
-                    stop_token);
+    async::co_spawn(executor, serve_connection(std::move(*stream), router, options.limits),
+                    detail::connection_outcome{options.on_connection_error}, stop_token);
   }
 }
 
