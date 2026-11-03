@@ -126,9 +126,10 @@ TEST_CASE("router: no route is 404, another method 405 with Allow, a bad target 
   auto const rejected = dispatch(router, verb::post, "/users/42");
 
   REQUIRE(rejected.status == http::status::method_not_allowed);
-  REQUIRE(rejected.fields.find("Allow") == "GET, DELETE");
+  REQUIRE(rejected.fields.find("Allow") == "GET, HEAD, DELETE");
   REQUIRE(dispatch(router, verb::get, "/users/%zz").status == http::status::bad_request);
-  REQUIRE(dispatch(router, verb::get, "http://example.com/users").status == http::status::bad_request);
+  REQUIRE(dispatch(router, verb::get, "*").status == http::status::bad_request);
+  REQUIRE(dispatch(router, verb::get, "ftp://example.com/users").status == http::status::bad_request);
 }
 
 TEST_CASE("router: a route a method already has, under other parameter names, throws", "[http][router]") {
@@ -167,6 +168,44 @@ TEST_CASE("router: what a handler throws comes out of the task", "[http][router]
   REQUIRE_THROWS_AS(quoll::test::run(std::move(work)), std::runtime_error);
 }
 
+TEST_CASE("router: an absolute-form target is routed by its path", "[http][router]") {
+  auto const router = make_router();
+
+  REQUIRE(dispatch(router, verb::get, "http://example.com/users?limit=1").body == "users.list\n?limit=1");
+  REQUIRE(dispatch(router, verb::get, "HTTPS://example.com:8443/users/42").body == "users.get\n42\n?");
+  REQUIRE(dispatch(router, verb::get, "http://example.com").body == "root\n?");
+}
+
+TEST_CASE("router: HEAD goes to the GET route", "[http][router]") {
+  auto const router = make_router();
+
+  REQUIRE(dispatch(router, verb::head, "/users/42").body == "users.get\n42\n?");
+  // A method of its own when routed: DELETE has no GET counterpart to fall back on.
+  REQUIRE(dispatch(router, verb::head, "/accounts").status == http::status::not_found);
+}
+
+TEST_CASE("router: dot segments are refused, an encoded slash stays in its segment", "[http][router]") {
+  auto const router = make_router();
+
+  REQUIRE(dispatch(router, verb::get, "/files/../etc/passwd").status == http::status::bad_request);
+  REQUIRE(dispatch(router, verb::get, "/files/%2E%2E/%2e%2e/etc").status == http::status::bad_request);
+  REQUIRE(dispatch(router, verb::get, "/files/./a").status == http::status::bad_request);
+  REQUIRE(dispatch(router, verb::get, "/users/a%00b").status == http::status::bad_request);
+  // In a {name} parameter, a character like any other.
+  REQUIRE(dispatch(router, verb::get, "/users/a%2Fb").body == "users.get\na/b\n?");
+  // In the rest of the path, it would read as a separator once joined.
+  REQUIRE(dispatch(router, verb::get, "/files/a%2Fb").status == http::status::not_found);
+}
+
+TEST_CASE("router: a literal of the template is matched decoded", "[http][router]") {
+  http::router router;
+
+  router.add(verb::get, "/caf%C3%A9/a b", "cafe", echo);
+
+  REQUIRE(dispatch(router, verb::get, "/caf%C3%A9/a%20b").body == "cafe\n?");
+  REQUIRE(dispatch(router, verb::get, "/café/a%20b").body == "cafe\n?");
+}
+
 TEST_CASE("router: an invalid template throws", "[http][router]") {
   http::router router;
 
@@ -175,5 +214,11 @@ TEST_CASE("router: an invalid template throws", "[http][router]") {
   REQUIRE_THROWS_AS(router.add(verb::get, "/users/{id", "x", echo), std::invalid_argument);
   REQUIRE_THROWS_AS(router.add(verb::get, "/users/{}", "x", echo), std::invalid_argument);
   REQUIRE_THROWS_AS(router.add(verb::get, "/users/{:int}", "x", echo), std::invalid_argument);
+  REQUIRE_THROWS_AS(router.add(verb::get, "/x/{a{b}", "x", echo), std::invalid_argument);
+  REQUIRE_THROWS_AS(router.add(verb::get, "/x/{a}b}", "x", echo), std::invalid_argument);
+  REQUIRE_THROWS_AS(router.add(verb::get, "/x/{a-b}", "x", echo), std::invalid_argument);
+  REQUIRE_THROWS_AS(router.add(verb::get, "/x/{id}/{id}", "x", echo), std::invalid_argument);
+  REQUIRE_THROWS_AS(router.add(verb::get, "/caf%zz", "x", echo), std::invalid_argument);
+  REQUIRE_THROWS_AS(router.add(verb::get, "", "x", echo), std::invalid_argument);
   REQUIRE_THROWS_AS(router.add(verb::get, "/files/{rest:path}/meta", "x", echo), std::invalid_argument);
 }

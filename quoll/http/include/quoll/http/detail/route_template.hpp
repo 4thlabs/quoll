@@ -1,0 +1,188 @@
+//   ___              _ _
+//  / _ \ _   _  ___ | | |
+// | | | | | | |/ _ \| | |
+// | |_| | |_| | (_) | | |
+//  \__\_\\__,_|\___/|_|_|
+//
+// BSD 3-Clause License
+//
+// Copyright (c) 2026, Thomas Gourgues (thomas.gourgues@gmail.com)
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#ifndef QUOLL_HTTP_DETAIL_ROUTE_TEMPLATE_HPP
+#define QUOLL_HTTP_DETAIL_ROUTE_TEMPLATE_HPP
+
+#include <algorithm>
+#include <cstddef>
+#include <string_view>
+#include <vector>
+
+namespace quoll::http::detail {
+
+// In order of precedence: a literal segment beats a parameter, which beats the rest of the path.
+enum class segment_kind { rest, param, literal };
+
+// What makes a route template invalid.
+enum class template_error {
+  none,
+  no_leading_slash,
+  unbalanced_brace,
+  invalid_name,
+  not_whole_segment,
+  rest_not_last,
+  duplicate_name,
+  invalid_escape,
+};
+
+struct template_segment {
+  segment_kind kind = segment_kind::literal;
+  // The literal as written, or the parameter name.
+  std::string_view text;
+  // The `type` of `{name:type}`: empty for `{name}` and for literals, "path" for the rest of the path.
+  std::string_view type;
+};
+
+struct parsed_template {
+  template_error error = template_error::none;
+  std::vector<template_segment> segments;
+};
+
+[[nodiscard]] constexpr bool is_name_char(char character) noexcept {
+  return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+         (character >= '0' && character <= '9') || character == '_';
+}
+
+[[nodiscard]] constexpr bool is_hex_digit(char character) noexcept {
+  return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') ||
+         (character >= 'A' && character <= 'F');
+}
+
+// Whether every '%' starts a %XX escape.
+[[nodiscard]] constexpr bool valid_escapes(std::string_view text) noexcept {
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    if (text[index] != '%') {
+      continue;
+    }
+
+    if (text.size() - index < 3 || !is_hex_digit(text[index + 1]) || !is_hex_digit(text[index + 2])) {
+      return false;
+    }
+
+    index += 2;
+  }
+
+  return true;
+}
+
+[[nodiscard]] constexpr template_error check_parameter(std::string_view segment) noexcept {
+  auto const open = segment.find('{');
+  auto const close = segment.find('}');
+
+  if (open == std::string_view::npos || close == std::string_view::npos || close < open ||
+      segment.find('{', open + 1) != std::string_view::npos || segment.find('}', close + 1) != std::string_view::npos) {
+    return template_error::unbalanced_brace;
+  }
+
+  if (open != 0 || close != segment.size() - 1) {
+    return template_error::not_whole_segment;
+  }
+
+  return template_error::none;
+}
+
+// The grammar of route templates, shared by http::router (at run time) and the rest DSL (at compile time):
+// `/users/{id}`, `{name:type}`, `{name:path}` for the rest of the path, last. A parameter takes a whole segment and
+// has a name of letters, digits and '_', unique in the template. Literals may hold %XX escapes. "" has no segment
+// (the root of an api prefix), "/" one empty literal.
+[[nodiscard]] constexpr parsed_template parse_template(std::string_view path) {
+  parsed_template parsed;
+
+  auto fail = [&parsed](template_error error) {
+    parsed.error = error;
+    parsed.segments.clear();
+    return parsed;
+  };
+
+  if (path.empty()) {
+    return parsed;
+  }
+
+  if (path.front() != '/') {
+    return fail(template_error::no_leading_slash);
+  }
+
+  for (std::size_t start = 1;;) {
+    auto const slash = path.find('/', start);
+    auto const segment = path.substr(start, slash == std::string_view::npos ? std::string_view::npos : slash - start);
+
+    if (!parsed.segments.empty() && parsed.segments.back().kind == segment_kind::rest) {
+      return fail(template_error::rest_not_last);
+    }
+
+    if (segment.find_first_of("{}") == std::string_view::npos) {
+      if (!valid_escapes(segment)) {
+        return fail(template_error::invalid_escape);
+      }
+
+      parsed.segments.push_back({segment_kind::literal, segment, {}});
+    } else {
+      if (auto const error = check_parameter(segment); error != template_error::none) {
+        return fail(error);
+      }
+
+      auto const inside = segment.substr(1, segment.size() - 2);
+      auto const colon = inside.find(':');
+      auto const name = inside.substr(0, colon);
+      auto const type = colon == std::string_view::npos ? std::string_view{} : inside.substr(colon + 1);
+
+      if (name.empty() || !std::ranges::all_of(name, is_name_char)) {
+        return fail(template_error::invalid_name);
+      }
+
+      auto const same_name = [name](template_segment const &other) {
+        return other.kind != segment_kind::literal && other.text == name;
+      };
+
+      if (std::ranges::any_of(parsed.segments, same_name)) {
+        return fail(template_error::duplicate_name);
+      }
+
+      parsed.segments.push_back({type == "path" ? segment_kind::rest : segment_kind::param, name, type});
+    }
+
+    if (slash == std::string_view::npos) {
+      return parsed;
+    }
+
+    start = slash + 1;
+  }
+}
+
+} // namespace quoll::http::detail
+
+#endif // QUOLL_HTTP_DETAIL_ROUTE_TEMPLATE_HPP
