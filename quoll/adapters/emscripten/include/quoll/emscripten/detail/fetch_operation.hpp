@@ -39,9 +39,11 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/task.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/emscripten/detail/js.hpp>
 #include <quoll/http/detail/ascii.hpp>
+#include <quoll/http/detail/check.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
@@ -53,7 +55,7 @@
 #include <coroutine>
 #include <exception>
 #include <optional>
-#include <stdexcept>
+#include <span>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -67,20 +69,28 @@ inline constexpr std::array<std::string_view, 9> fetch_managed_fields{
     "Connection", "Content-Length", "Expect", "Host", "Keep-Alive", "TE", "Trailer", "Transfer-Encoding", "Upgrade",
 };
 
-// The fields of a request, one "name:value\n" line each, for quoll_emscripten_fetch_start. A name that is not a token,
-// or a value with a line break, would split into other fields there: rejected, as by http::serialize().
+// Fields of a response that describe the bytes on the wire, which fetch has already decoded (decompressed,
+// de-chunked): they do not describe the body it hands over.
+inline constexpr std::array<std::string_view, 3> fetch_decoded_fields{
+    "Content-Encoding",
+    "Content-Length",
+    "Transfer-Encoding",
+};
+
+[[nodiscard]] inline bool is_one_of(std::string_view name, std::span<std::string_view const> names) noexcept {
+  return std::ranges::any_of(names,
+                             [name](std::string_view candidate) { return http::detail::iequals(name, candidate); });
+}
+
+// The fields of a request, one "name:value\n" line each, for quoll_emscripten_fetch_start. Checked as by
+// http::serialize(): a name that is not a token, or a value with a line break, would split into other fields there.
 [[nodiscard]] inline std::string pack_fields(http::fields const &fields) {
   std::string packed;
 
   for (auto const &entry : fields) {
-    if (!http::detail::is_token(entry.name) || http::detail::has_line_break(entry.value)) {
-      throw std::invalid_argument{"quoll::emscripten::fetch_transport: invalid field " + entry.name};
-    }
+    http::detail::check_field(entry);
 
-    auto const managed = std::ranges::any_of(
-        fetch_managed_fields, [&entry](std::string_view name) { return http::detail::iequals(entry.name, name); });
-
-    if (managed) {
+    if (is_one_of(entry.name, fetch_managed_fields)) {
       continue;
     }
 
@@ -121,12 +131,14 @@ public:
       return false;
     }
 
-    std::string const method{http::to_string(request_->method)};
+    auto const method = http::to_string(request_->method);
 
     item_.handle = handle;
     context_ = &context;
-    auto const id = quoll_emscripten_fetch_start(url_.c_str(), method.c_str(), fields_.c_str(), request_->body.data(),
-                                                 request_->body.size(), &complete, this);
+
+    auto const id =
+        quoll_emscripten_fetch_start(url_.c_str(), method.data(), method.size(), fields_.data(), fields_.size(),
+                                     request_->body.data(), request_->body.size(), &complete, this);
 
     stop_callback_.emplace(context.stop_token, aborter{id});
     return true;
@@ -195,7 +207,10 @@ private:
       auto const colon = line.find(':');
 
       rest.remove_prefix(std::min(rest.size(), line.size() + 1));
-      response_.fields.add(line.substr(0, colon), line.substr(colon + 1));
+
+      if (!is_one_of(line.substr(0, colon), fetch_decoded_fields)) {
+        response_.fields.add(line.substr(0, colon), line.substr(colon + 1));
+      }
     }
   }
 
@@ -219,6 +234,11 @@ private:
 };
 
 static_assert(async::ContextAwaitable<fetch_operation>);
+
+// `fields`: the request's fields, packed by pack_fields().
+inline async::task<http::response> fetch(std::string url, std::string fields, http::request request) {
+  co_return co_await fetch_operation{std::move(url), std::move(fields), request};
+}
 
 } // namespace quoll::emscripten::detail
 

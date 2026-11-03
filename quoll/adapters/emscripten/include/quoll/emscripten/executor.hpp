@@ -55,8 +55,10 @@ namespace quoll::emscripten {
  */
 class executor {
 public:
+  /** @brief Resumes `item.handle` in a microtask; `item` stays alive and unchanged until then. */
   void post(async::work_item &item) const noexcept { detail::quoll_emscripten_post(&resume, &item); }
 
+  /** @brief Always true: every executor posts to the same event loop. */
   [[nodiscard]] bool operator==(executor const &) const noexcept = default;
 
 private:

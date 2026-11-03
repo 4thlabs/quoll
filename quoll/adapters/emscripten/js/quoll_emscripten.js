@@ -56,16 +56,31 @@ addToLibrary({
     });
   },
 
+  // HTTP methods, field values and status texts are byte strings: one byte per character, both ways.
+  $quollBytesToString: (pointer, size) => String.fromCharCode(...HEAPU8.subarray(pointer, pointer + size)),
+  $quollStringToBytes: (text) => Uint8Array.from(text, (character) => character.charCodeAt(0)),
+
   // Starts fetch(url, {method, headers, body}). `headers` holds one "name:value\n" line per field. Calls
-  // complete(operation, id, outcome) once settled, outcome being 0 (response), 1 (aborted) or 2 (failure).
-  quoll_emscripten_fetch_start__deps: ['$quollFetches', '$UTF8ToString', '$callUserCallback'],
-  quoll_emscripten_fetch_start: (url, method, headers, body, bodySize, complete, operation) => {
+  // complete(operation, id, outcome) once settled, outcome being 0 (response), 1 (aborted by
+  // quoll_emscripten_fetch_abort) or 2 (failure).
+  quoll_emscripten_fetch_start__deps: [
+    '$quollFetches',
+    '$quollBytesToString',
+    '$quollStringToBytes',
+    '$UTF8ToString',
+    '$callUserCallback',
+  ],
+  quoll_emscripten_fetch_start: (
+    url, method, methodSize, headers, headersSize, body, bodySize, complete, operation) => {
     const id = quollFetches.next++;
     const entry = { controller: new AbortController(), status: 0, parts: [] };
-    const init = { method: UTF8ToString(method), headers: [], signal: entry.controller.signal };
-    const encoder = new TextEncoder();
+    const init = {
+      method: quollBytesToString(method, methodSize),
+      headers: [],
+      signal: entry.controller.signal,
+    };
 
-    for (const line of UTF8ToString(headers).split('\n')) {
+    for (const line of quollBytesToString(headers, headersSize).split('\n')) {
       const colon = line.indexOf(':');
 
       if (colon > 0) {
@@ -85,8 +100,8 @@ addToLibrary({
 
         response.headers.forEach((value, name) => fields.push(`${name}:${value}\n`));
         entry.parts = [
-          encoder.encode(response.statusText),
-          encoder.encode(fields.join('')),
+          quollStringToBytes(response.statusText),
+          quollStringToBytes(fields.join('')),
           new Uint8Array(await response.arrayBuffer()),
         ];
         entry.status = response.status;
@@ -95,8 +110,11 @@ addToLibrary({
         // Node's fetch tells why in the cause (ECONNREFUSED...).
         const cause = error.cause ? `: ${error.cause.message ?? error.cause}` : '';
 
-        entry.parts = [encoder.encode(`${error.message ?? error}${cause}`), new Uint8Array(), new Uint8Array()];
-        return error.name === 'AbortError' ? 1 : 2;
+        const message = new TextEncoder().encode(`${error.message ?? error}${cause}`);
+
+        entry.parts = [message, new Uint8Array(), new Uint8Array()];
+        // Only our own abort is a cancellation: the browser aborts too (page unloaded), as a failure.
+        return entry.controller.signal.aborted ? 1 : 2;
       }
     };
 
@@ -116,7 +134,7 @@ addToLibrary({
   quoll_emscripten_fetch_status__deps: ['$quollFetches'],
   quoll_emscripten_fetch_status: (id) => quollFetches.entries[id].status,
 
-  // Part 0: status text, or failure message; 1: header fields, "name:value\n" each; 2: body.
+  // Part 0: status text (bytes), or failure message (UTF-8); 1: header fields, "name:value\n" each (bytes); 2: body.
   quoll_emscripten_fetch_size__deps: ['$quollFetches'],
   quoll_emscripten_fetch_size: (id, part) => quollFetches.entries[id].parts[part].length,
 

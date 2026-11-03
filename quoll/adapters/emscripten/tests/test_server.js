@@ -37,6 +37,7 @@
 
 // A Node HTTP server for the quoll::emscripten tests, in the process running them. It answers:
 // - /hang: never;
+// - /gzip: "hello gzipped", compressed (Content-Encoding: gzip);
 // - /status/<code>: that status;
 // - anything else: 200, with the request's body as body ("hello over fetch" if empty).
 // Every response tells the request's method, target and x-test field in x-method, x-target and x-test.
@@ -50,12 +51,19 @@ addToLibrary({
   quoll_test_server_start__deps: ['$quollTestServer'],
   quoll_test_server_start: () => {
     const http = require('node:http');
+    const zlib = require('node:zlib');
     const server = http.createServer((request, response) => {
       const chunks = [];
 
       request.on('data', (chunk) => chunks.push(chunk));
       request.on('end', () => {
         if (request.url === '/hang') {
+          return;
+        }
+
+        if (request.url === '/gzip') {
+          response.writeHead(200, { 'content-encoding': 'gzip' });
+          response.end(zlib.gzipSync('hello gzipped'));
           return;
         }
 
@@ -73,12 +81,16 @@ addToLibrary({
 
     quollTestServer.server = server;
     quollTestServer.port = 0;
+    server.on('error', (error) => {
+      console.error(`quoll test server: ${error.message}`);
+      quollTestServer.port = -1;
+    });
     server.listen(0, '127.0.0.1', () => {
       quollTestServer.port = server.address().port;
     });
   },
 
-  // 0 until the server listens.
+  // 0 until the server listens, -1 if it failed to.
   quoll_test_server_port__deps: ['$quollTestServer'],
   quoll_test_server_port: () => quollTestServer.port,
 

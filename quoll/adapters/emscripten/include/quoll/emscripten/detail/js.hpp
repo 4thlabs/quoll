@@ -46,9 +46,10 @@ extern "C" {
 
 void quoll_emscripten_post(void (*resume)(void *item), void *item);
 
-int quoll_emscripten_fetch_start(char const *url, char const *method, char const *headers, void const *body,
-                                 std::size_t body_size, void (*complete)(void *operation, int id, int outcome),
-                                 void *operation);
+// `url` is null-terminated UTF-8; `method` and `headers` are bytes, one per character of the JavaScript string.
+int quoll_emscripten_fetch_start(char const *url, char const *method, std::size_t method_size, char const *headers,
+                                 std::size_t headers_size, void const *body, std::size_t body_size,
+                                 void (*complete)(void *operation, int id, int outcome), void *operation);
 void quoll_emscripten_fetch_abort(int id);
 int quoll_emscripten_fetch_status(int id);
 std::size_t quoll_emscripten_fetch_size(int id, int part);
@@ -66,9 +67,9 @@ enum class fetch_outcome : int {
 
 // Parts of a settled fetch, for quoll_emscripten_fetch_size / _copy.
 enum class fetch_part : int {
-  // The status text, or the failure message.
+  // The status text (bytes), or the failure message (UTF-8).
   reason = 0,
-  // The header fields, "name:value\n" each.
+  // The header fields, "name:value\n" each (bytes).
   fields = 1,
   body = 2,
 };
