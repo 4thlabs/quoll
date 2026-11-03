@@ -12,6 +12,7 @@ endif()
 
 option(QUOLL_BUILD_TESTS "Build the Quoll tests" ${PROJECT_IS_TOP_LEVEL})
 option(QUOLL_INSTALL "Generate the Quoll install rules" ${PROJECT_IS_TOP_LEVEL})
+option(QUOLL_BUILD_SAMPLES "Build the Quoll samples" ${PROJECT_IS_TOP_LEVEL})
 
 # Emscripten disables exceptions by default. Set before any dependency is added, so that Quoll and everything CPM
 # builds (Catch2, llhttp) agree on the exception model.
@@ -31,6 +32,10 @@ add_subdirectory(quoll/server)
 add_subdirectory(quoll/client)
 add_subdirectory(quoll/rest)
 add_subdirectory(quoll/adapters)
+
+if(QUOLL_BUILD_SAMPLES)
+  add_subdirectory(samples)
+endif()
 
 if(QUOLL_BUILD_TESTS)
   enable_testing()

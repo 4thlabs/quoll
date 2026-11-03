@@ -65,6 +65,8 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   Helpers shared by the tests of every module live in `tests/support/quoll/test/` (`quoll::test::run` runs a
   task on a run_loop, `quoll::test::overloaded`, `quoll::test::check`): use them rather than copying them into a
   test file.
+- `samples/<sample>/`: small programs using Quoll, built when `QUOLL_BUILD_SAMPLES` is ON (default when top-level;
+  native only). `samples/notes`: a REST contract, its server and its client over TCP.
 - With tests ON, every header is also compiled alone in its own translation unit (`quoll_<module>_header_check`),
   so a header that is not self-contained breaks the build.
 - Dependencies come from CPM (`cmake/CPM.cmake`, always included: modules need it, not only tests). Under
