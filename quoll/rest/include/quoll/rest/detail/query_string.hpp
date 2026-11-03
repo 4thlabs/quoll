@@ -89,6 +89,28 @@ struct query_entry {
   return entries;
 }
 
+// The values of the parameter `name`, in order.
+[[nodiscard]] inline std::vector<std::string_view> query_texts(std::vector<query_entry> const &query,
+                                                               std::string_view name) {
+  std::vector<std::string_view> texts;
+
+  for (auto const &entry : query) {
+    if (entry.name == name) {
+      texts.push_back(entry.value);
+    }
+  }
+
+  return texts;
+}
+
+// Appends `name=value` to a query string under construction, both percent-encoded.
+inline void append_query(std::string &query, std::string_view name, std::string_view value) {
+  query += query.empty() ? "" : "&";
+  query += http::detail::percent_encode(name);
+  query += '=';
+  query += http::detail::percent_encode(value);
+}
+
 } // namespace quoll::rest::detail
 
 #endif // QUOLL_REST_DETAIL_QUERY_STRING_HPP

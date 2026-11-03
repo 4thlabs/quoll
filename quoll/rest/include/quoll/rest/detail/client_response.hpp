@@ -38,18 +38,20 @@
 #define QUOLL_REST_DETAIL_CLIENT_RESPONSE_HPP
 
 #include <quoll/async/task.hpp>
+#include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
+#include <quoll/rest/call_error.hpp>
 #include <quoll/rest/detail/arguments.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/response_value.hpp>
 #include <quoll/rest/detail/type_list.hpp>
-#include <quoll/rest/http_error.hpp>
 #include <quoll/rest/json_codec.hpp>
 #include <quoll/rest/problem.hpp>
 #include <quoll/rest/reply.hpp>
 #include <quoll/rest/unexpected_response.hpp>
 
+#include <array>
 #include <expected>
 #include <optional>
 #include <string>
@@ -76,13 +78,26 @@ struct call_value<Endpoint, true> {
   using type = typename front<own_responses<Endpoint>>::type::type;
 };
 
-[[nodiscard]] inline unexpected_response unexpected(http::response response, std::string reason) {
-  return {std::move(response), std::move(reason)};
+template <class... Responses>
+[[nodiscard]] constexpr bool has_status(type_list<Responses...>, [[maybe_unused]] http::status status) noexcept {
+  return ((Responses::status == status) || ...);
 }
 
-// The declared response `Response`, if the response has its status.
+// Why a response of a route's endpoint is not one reply<Endpoint> holds.
+template <class Route>
+[[nodiscard]] std::string unexpected_reason(http::status status) {
+  auto const code = std::to_string(static_cast<int>(status));
+
+  if (has_status(typename Route::responses{}, status)) {
+    return "status " + code + " is declared by a with<> around the endpoint: reply<Endpoint> does not hold it";
+  }
+
+  return "undeclared status " + code;
+}
+
+// The declared response `Response`, if the response has its status. The response is moved into an error only.
 template <class Endpoint, class Response>
-void read_declared(http::response const &response, std::optional<call_result<Endpoint>> &result) {
+void read_declared(http::response &response, std::optional<call_result<Endpoint>> &result) {
   if (result || response.status != Response::status) {
     return;
   }
@@ -95,45 +110,41 @@ void read_declared(http::response const &response, std::optional<call_result<End
     if (auto value = codec.template decode<typename Response::type>(response.body)) {
       result.emplace(reply<Endpoint>{respond<Response::status>(std::move(*value))});
     } else {
-      result.emplace(std::unexpected{unexpected(response, "invalid body: " + value.error().message)});
+      auto reason = "invalid body: " + value.error().message;
+
+      result.emplace(std::unexpected{unexpected_response{std::move(response), std::move(reason)}});
     }
   }
 }
 
-template <class Endpoint>
-[[nodiscard]] call_result<Endpoint> read_response(http::response response) {
-  auto const undeclared = [&] {
-    auto reason = "undeclared status " + std::to_string(static_cast<int>(response.status));
+template <class Route>
+[[nodiscard]] call_result<typename Route::endpoint> read_response(http::response response) {
+  using endpoint = typename Route::endpoint;
 
-    return std::unexpected{unexpected(std::move(response), std::move(reason))};
-  };
-
-  if constexpr (has_responses<Endpoint>) {
-    std::optional<call_result<Endpoint>> result;
+  if constexpr (has_responses<endpoint>) {
+    std::optional<call_result<endpoint>> result;
 
     [&]<class... Response>(type_list<Response...>) {
-      (read_declared<Endpoint, Response>(response, result), ...);
-    }(own_responses<Endpoint>{});
+      (read_declared<endpoint, Response>(response, result), ...);
+    }(own_responses<endpoint>{});
 
     if (result) {
       return std::move(*result);
     }
-
-    return undeclared();
-  } else {
-    if (response.status == http::status::no_content) {
-      return {};
-    }
-
-    return undeclared();
+  } else if (response.status == http::status::no_content) {
+    return {};
   }
+
+  auto reason = unexpected_reason<Route>(response.status);
+
+  return std::unexpected{unexpected_response{std::move(response), std::move(reason)}};
 }
 
 // The detail of a failed call: the problem's when the server sent one, else why the response is unexpected.
 [[nodiscard]] inline std::string failure_detail(unexpected_response const &failure) {
   auto const content_type = failure.response.fields.find("Content-Type");
 
-  if (content_type && media_type(*content_type) == problem_content_type) {
+  if (content_type && http::detail::iequals(media_type(*content_type), problem_content_type)) {
     if (auto const decoded = lenient_json_codec{}.decode<problem>(failure.response.body); decoded && decoded->detail) {
       return *decoded->detail;
     }
@@ -142,30 +153,48 @@ template <class Endpoint>
   return failure.reason;
 }
 
-template <class Endpoint>
-async::task<call_result<Endpoint>> receive(async::task<http::response> sending) {
-  co_return read_response<Endpoint>(co_await std::move(sending));
+[[noreturn]] inline void fail(unexpected_response failure) {
+  auto detail = failure_detail(failure);
+
+  throw call_error{std::move(failure), detail};
 }
 
-// What call produces: the body of the first declared response, or nothing; any other outcome throws http_error.
-template <class Endpoint>
-async::task<typename call_value<Endpoint>::type> receive_value(async::task<http::response> sending) {
-  auto result = read_response<Endpoint>(co_await std::move(sending));
+template <class Route>
+async::task<call_result<typename Route::endpoint>> receive(async::task<http::response> sending) {
+  co_return read_response<Route>(co_await std::move(sending));
+}
 
-  if (!result) {
-    throw http_error{result.error().response.status, failure_detail(result.error())};
-  }
+// What call produces: the body of the first declared response, or nothing; any other outcome throws call_error.
+template <class Route>
+async::task<typename call_value<typename Route::endpoint>::type> receive_value(async::task<http::response> sending) {
+  using endpoint = typename Route::endpoint;
 
-  if constexpr (has_responses<Endpoint>) {
-    using first = typename front<own_responses<Endpoint>>::type;
+  auto response = co_await std::move(sending);
 
-    if (!result->template holds<first::status>()) {
-      throw http_error{result->status(), "declared response " + std::to_string(static_cast<int>(result->status())) +
-                                             ": use try_call to read it"};
+  if constexpr (has_responses<endpoint>) {
+    using first = typename front<own_responses<endpoint>>::type;
+
+    if (response.status != first::status) {
+      auto reason =
+          has_status(own_responses<endpoint>{}, response.status)
+              ? "declared response " + std::to_string(static_cast<int>(response.status)) + ": read it with try_call"
+              : unexpected_reason<Route>(response.status);
+
+      fail(unexpected_response{std::move(response), std::move(reason)});
+    }
+
+    auto result = read_response<Route>(std::move(response));
+
+    if (!result) {
+      fail(std::move(result.error()));
     }
 
     if constexpr (!std::is_void_v<typename first::type>) {
       co_return std::move(result->template get<first::status>());
+    }
+  } else {
+    if (auto result = read_response<Route>(std::move(response)); !result) {
+      fail(std::move(result.error()));
     }
   }
 }

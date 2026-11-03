@@ -42,6 +42,7 @@
 #include <quoll/http/response.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/transport.hpp>
+#include <quoll/http/verb.hpp>
 
 #include <functional>
 #include <utility>
@@ -52,15 +53,28 @@ namespace quoll::http {
  * @brief HttpTransport handing requests to a router of the same program, without serializing them: in-process
  * calls, and tests of a client against its server.
  *
- * Holds a reference: the router outlives the transport and the tasks it returns.
+ * It writes the responses as a connection would: the response to a HEAD request, which the router may take from a
+ * GET route, has no body. Holds a reference: the router outlives the transport and the tasks it returns.
  */
 class local_transport {
 public:
   explicit local_transport(router const &target) noexcept : router_(target) {}
 
-  [[nodiscard]] async::task<response> send(request message) const { return router_.get().dispatch(std::move(message)); }
+  [[nodiscard]] async::task<response> send(request message) const { return send_to(router_, std::move(message)); }
 
 private:
+  // Static: the task holds the router reference, not the transport.
+  static async::task<response> send_to(std::reference_wrapper<router const> target, request message) {
+    auto const head = message.method == verb::head;
+    auto answer = co_await target.get().dispatch(std::move(message));
+
+    if (head) {
+      answer.body.clear();
+    }
+
+    co_return answer;
+  }
+
   std::reference_wrapper<router const> router_;
 };
 

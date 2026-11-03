@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/task.hpp>
+#include <quoll/http/local_transport.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/router.hpp>
@@ -222,4 +223,18 @@ TEST_CASE("router: an invalid template throws", "[http][router]") {
   REQUIRE_THROWS_AS(router.add(verb::get, "/caf%zz", "x", echo), std::invalid_argument);
   REQUIRE_THROWS_AS(router.add(verb::get, "", "x", echo), std::invalid_argument);
   REQUIRE_THROWS_AS(router.add(verb::get, "/files/{rest:path}/meta", "x", echo), std::invalid_argument);
+}
+
+TEST_CASE("local_transport: a HEAD response has no body, as a connection writes it", "[http][router]") {
+  auto const router = make_router();
+  http::local_transport const transport{router};
+  http::request message;
+
+  message.method = verb::head;
+  message.target = "/users/42";
+
+  auto const answer = quoll::test::run(transport.send(std::move(message))).value();
+
+  REQUIRE(answer.status == http::status::ok);
+  REQUIRE(answer.body.empty());
 }
