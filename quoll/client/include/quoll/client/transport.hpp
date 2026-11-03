@@ -73,16 +73,15 @@ namespace quoll::client {
  * closed before any response (or answers 408 Request Timeout, sent before closing it), the request is sent again,
  * once, on a new connection, and the other idle connections, older, are closed too. The other requests (POST,
  * PATCH...), which the server may have received, open a new connection, kept afterwards for the next requests.
-
+ *
  * Interim 1xx responses are skipped, up to 8 of them, but for a 101 switch of protocol, which is returned as the
  * response. Redirects are not followed: a 3xx response is a result like the others.
  *
  * A failure to connect is reported as the connector reports it; a failure to send the request or to read its response
  * throws std::system_error from the task, with the stream's error (`std::errc::connection_reset`...), the parser's
  * (`http::error::partial_message`, `http::error::body_too_large`, `http::error::bad_message` past 8 interim
- responses...) or `io::error::end_of_stream`. A stop request on
- * the awaiter's context abandons the request, with `std::errc::operation_canceled`, and closes its connection. There
- * is no timeout yet.
+ * responses...) or `io::error::end_of_stream`. A stop request on the awaiter's context abandons the request, with
+ * `std::errc::operation_canceled`, and closes its connection. There is no timeout yet.
  *
  * Copies share their connections. The task copies what it needs: the transport does not have to outlive it.
  *
