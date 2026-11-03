@@ -47,6 +47,7 @@
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/listener.hpp>
 #include <quoll/server/connection_options.hpp>
+#include <quoll/server/detail/connection_group.hpp>
 #include <quoll/server/serve_connection.hpp>
 
 #include <exception>
@@ -85,27 +86,30 @@ namespace detail {
   return error == std::errc::connection_aborted || error == std::errc::connection_reset;
 }
 
-// What the connections of a serve() share: its options, kept alive by each connection, which may outlive serve().
+// What the connections of a serve() share: its options, and the count serve() waits on before it completes.
 struct shared_options {
   serve_options options;
+  connection_group connections;
 };
 
 // The outcome of a connection spawned by serve(): it ends by itself, and a failure only ends it, reported to the
 // application's callback if it gave one.
 struct connection_outcome {
-  std::shared_ptr<shared_options const> shared;
+  std::shared_ptr<shared_options> shared;
 
-  void operator()() const noexcept {}
+  void operator()() const noexcept { shared->connections.ended(); }
 
   void operator()(std::exception_ptr failure) const noexcept {
     if (shared->options.on_connection_error) {
       shared->options.on_connection_error(std::move(failure));
     }
+
+    shared->connections.ended();
   }
 };
 
 template <class Stream>
-async::task<> serve_shared(Stream stream, http::router const &router, std::shared_ptr<shared_options const> shared) {
+async::task<> serve_shared(Stream stream, http::router const &router, std::shared_ptr<shared_options> shared) {
   co_await serve_connection(std::move(stream), router, shared->options.connection);
 }
 
@@ -119,19 +123,19 @@ async::task<> serve_shared(Stream stream, http::router const &router, std::share
  * immediate, not graceful: it ends the accept loop and cancels whatever the connections have pending, a read, a
  * handler's operations, a write.
  *
- * The task completes when accepting stops with `std::errc::operation_canceled`: a stop request, or the application
- * closing its listener. Another accept failure goes to `options.on_accept_error`, or by default is skipped when it
- * concerns one connection only and rethrown otherwise; a rethrow ends the accept loop, not the connections already
- * served.
+ * Accepting stops with `std::errc::operation_canceled`: a stop request, or the application closing its listener.
+ * Another accept failure goes to `options.on_accept_error`, or by default is skipped when it concerns one connection
+ * only and rethrown otherwise; a rethrow ends the accept loop, not the connections already served.
  *
- * The spawned connections may outlive the task: `listener` and `router` outlive them, for instance until `executor`
- * has drained (as a runtime does).
+ * Either way, the task completes once the connections it spawned have ended (a stop request cancels them), then
+ * rethrows the accept failure if there was one: `listener` and `router` need to outlive the task only.
  */
 template <async::Executor Executor, io::Listener Listener>
 async::task<> serve(Executor executor, Listener &listener, http::router const &router, serve_options options = {}) {
   auto const stop_token = co_await async::current_stop_token();
-  auto const shared = std::make_shared<detail::shared_options const>(std::move(options));
+  auto const shared = std::make_shared<detail::shared_options>(std::move(options));
   auto const &accept_error = shared->options.on_accept_error;
+  std::exception_ptr ending;
 
   while (!stop_token.stop_requested()) {
     std::optional<io::any_stream> stream;
@@ -147,20 +151,36 @@ async::task<> serve(Executor executor, Listener &listener, http::router const &r
 
     if (!stream) {
       if (error == std::errc::operation_canceled) {
-        co_return;
+        break;
       }
 
       auto const again = accept_error ? co_await accept_error(error) : detail::one_connection_failure(error);
 
       if (!again) {
-        std::rethrow_exception(failure);
+        ending = failure;
+        break;
       }
 
       continue;
     }
 
-    async::co_spawn(executor, detail::serve_shared(std::move(*stream), router, shared),
-                    detail::connection_outcome{shared}, stop_token);
+    shared->connections.started();
+
+    try {
+      async::co_spawn(executor, detail::serve_shared(std::move(*stream), router, shared),
+                      detail::connection_outcome{shared}, stop_token);
+    } catch (...) {
+      // Not spawned: wait for the others, then fail.
+      shared->connections.ended();
+      ending = std::current_exception();
+      break;
+    }
+  }
+
+  co_await shared->connections.join();
+
+  if (ending) {
+    std::rethrow_exception(ending);
   }
 }
 
@@ -173,7 +193,7 @@ async::task<> serve(Executor executor, Listener &listener, http::router const &r
  */
 template <io::Listener Listener>
 async::task<> serve(Listener &listener, http::router const &router, serve_options options = {}) {
-  // A copy: the connections may outlive the executor of the awaiting chain.
+  // A copy, held by each connection: their frames end after serve() resumes.
   async::any_executor executor{co_await async::current_executor()};
 
   co_await serve(std::move(executor), listener, router, std::move(options));

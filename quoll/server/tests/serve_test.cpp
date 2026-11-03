@@ -143,6 +143,24 @@ struct canned_listener {
 
 static_assert(io::Listener<canned_listener>);
 
+// Hands over one connection, then fails for good.
+struct one_then_broken {
+  std::optional<io::any_stream> stream;
+
+  task<io::any_stream> accept() {
+    if (stream) {
+      auto accepted = std::move(*stream);
+
+      stream.reset();
+      co_return accepted;
+    }
+
+    throw std::system_error{std::make_error_code(std::errc::too_many_files_open), "one_then_broken"};
+  }
+};
+
+static_assert(io::Listener<one_then_broken>);
+
 // A stream whose operations throw: what serve_connection() cannot handle.
 struct broken_stream {
   struct awaitable {
@@ -362,4 +380,29 @@ TEST_CASE("serve: a connection's failure goes to on_connection_error", "[server]
   loop.run();
 
   REQUIRE(reported == "broken stream");
+}
+
+TEST_CASE("serve: completes once its connections have ended, and rethrows an accept failure then", "[server]") {
+  auto const router = make_router();
+  quoll::async::run_loop loop;
+  auto [client, server] = io::make_memory_stream_pair();
+  one_then_broken listener{io::any_stream{std::move(server)}};
+  bool answered = false;
+  bool failed_after_answer = false;
+  std::exception_ptr failure;
+  std::optional<std::string> body;
+
+  // The accept failure comes at once, while the connection is still to be served: serve() waits for it.
+  quoll::async::co_spawn(loop.get_executor(), quoll::server::serve(listener, router),
+                         overloaded{[] {},
+                                    [&](std::exception_ptr error) {
+                                      failure = std::move(error);
+                                      failed_after_answer = answered;
+                                    }});
+  quoll::async::co_spawn(loop.get_executor(), get(std::move(client), "/served", answered), store(body));
+  loop.run();
+
+  REQUIRE(body == "served");
+  REQUIRE(failure);
+  REQUIRE(failed_after_answer);
 }

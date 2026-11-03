@@ -44,9 +44,13 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace quoll::io {
+
+/** @brief Where io::listen() and quoll::server::listen() listen by default: the loopback interface only. */
+inline constexpr std::string_view default_listen_address = "127.0.0.1";
 
 /**
  * @brief Listens on `port` (0 for any free port) and `address` (an IP address; loopback by default, `0.0.0.0` for
@@ -54,7 +58,8 @@ namespace quoll::io {
  *
  * Throws std::system_error when the address cannot be bound, std::logic_error if the executor offers no network.
  */
-[[nodiscard]] inline async::task<any_listener> listen(std::uint16_t port, std::string address = "127.0.0.1") {
+[[nodiscard]] inline async::task<any_listener> listen(std::uint16_t port,
+                                                      std::string address = std::string{default_listen_address}) {
   auto const network = detail::current_network(co_await async::current_executor(), "quoll::io::listen");
 
   co_return network.listen(std::move(address), port);

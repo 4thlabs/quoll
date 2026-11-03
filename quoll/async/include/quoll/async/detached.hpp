@@ -54,7 +54,11 @@ struct detached_t {
    * @brief A task let an exception escape: it ends the program, as an exception escaping a std::thread does; the
    * standard library's terminate handler reports it.
    */
-  [[noreturn]] void operator()(std::exception_ptr failure) const noexcept { std::rethrow_exception(failure); }
+  void operator()(std::exception_ptr failure) const noexcept {
+    if (failure) {
+      std::rethrow_exception(failure);
+    }
+  }
 };
 
 /**

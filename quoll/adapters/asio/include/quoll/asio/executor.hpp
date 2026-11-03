@@ -50,9 +50,11 @@
 #include <quoll/io/network_ref.hpp>
 
 #include <asio/any_io_executor.hpp>
+#include <asio/execution/outstanding_work.hpp>
 #include <asio/ip/address.hpp>
 #include <asio/ip/tcp.hpp>
 #include <asio/post.hpp>
+#include <asio/prefer.hpp>
 
 #include <concepts>
 #include <cstdint>
@@ -87,14 +89,14 @@ public:
 
   /** @brief Opens a TCP connection to `host` (a name or an address) on `port`, on the execution context. */
   [[nodiscard]] async::task<io::any_stream> connect(std::string host, std::uint16_t port) const {
-    return detail::connect(::asio::any_io_executor{inner_}, std::move(host), port);
+    return detail::connect(io_executor(), std::move(host), port);
   }
 
   /** @brief Listens on `address` (an IP address) and `port` (0 for any free port), on the execution context. */
   [[nodiscard]] io::any_listener listen(std::string address, std::uint16_t port) const {
     ::asio::ip::tcp::endpoint const endpoint{::asio::ip::make_address(address), port};
 
-    return io::any_listener{acceptor{::asio::ip::tcp::acceptor{inner_, endpoint}}};
+    return io::any_listener{acceptor{::asio::ip::tcp::acceptor{io_executor(), endpoint}}};
   }
 
   /** @brief This executor, as the network of its execution context: valid while it lives (see io::network_ref). */
@@ -103,6 +105,12 @@ public:
   [[nodiscard]] bool operator==(executor const &) const noexcept = default;
 
 private:
+  // The executor of the sockets and acceptors: not counted as work, as an idle connection kept for later is none (a
+  // runtime counts the work of its tasks itself).
+  [[nodiscard]] ::asio::any_io_executor io_executor() const {
+    return ::asio::prefer(::asio::any_io_executor{inner_}, ::asio::execution::outstanding_work.untracked);
+  }
+
   struct resumer {
     async::work_item *item;
 

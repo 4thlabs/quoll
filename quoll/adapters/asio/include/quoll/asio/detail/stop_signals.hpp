@@ -67,6 +67,8 @@ using signal_action = void (*)(int);
 inline void set_action(int number, signal_action const &action) noexcept { std::signal(number, action); }
 
 [[nodiscard]] inline bool ignores(signal_action const &action) noexcept { return action == SIG_IGN; }
+
+[[nodiscard]] inline bool is_default(signal_action const &action) noexcept { return action == SIG_DFL; }
 #else
 using signal_action = struct sigaction;
 
@@ -80,6 +82,8 @@ using signal_action = struct sigaction;
 inline void set_action(int number, signal_action const &action) noexcept { ::sigaction(number, &action, nullptr); }
 
 [[nodiscard]] inline bool ignores(signal_action const &action) noexcept { return action.sa_handler == SIG_IGN; }
+
+[[nodiscard]] inline bool is_default(signal_action const &action) noexcept { return action.sa_handler == SIG_DFL; }
 #endif
 
 // SIGINT and SIGTERM turned into a stop request while a runtime runs, unless the process ignores them (nohup, a
@@ -88,13 +92,19 @@ inline void set_action(int number, signal_action const &action) noexcept { ::sig
 class stop_signals {
 public:
   stop_signals(::asio::io_context &context, std::stop_source &stop) : signals_(context), stop_(&stop) {
-    for (std::size_t index = 0; index < numbers.size(); ++index) {
-      saved_[index] = current_action(numbers[index]);
-      taken_[index] = !ignores(saved_[index]);
+    try {
+      for (std::size_t index = 0; index < numbers.size(); ++index) {
+        saved_[index] = current_action(numbers[index]);
 
-      if (taken_[index]) {
-        signals_.add(numbers[index]);
+        if (!ignores(saved_[index])) {
+          signals_.add(numbers[index]);
+          taken_[index] = true;
+        }
       }
+    } catch (...) {
+      // Gives back what was taken: the destructor does not run for an object that was not built.
+      release();
+      throw;
     }
 
     signals_.async_wait([this](std::error_code error, int) {
@@ -121,13 +131,14 @@ public:
 
     std::error_code ignored;
 
-    // Ends the wait, which would keep the loop running; then asio sets the default action as it lets the signals go,
-    // and the saved one replaces it.
+    // Ends the wait, which would keep the loop running; then asio sets the default action as it lets a signal go that
+    // no other signal_set of the program waits for, and the saved one replaces it. A signal another set still waits
+    // for keeps asio's handler.
     signals_.cancel(ignored);
     signals_.clear(ignored);
 
     for (std::size_t index = 0; index < numbers.size(); ++index) {
-      if (taken_[index]) {
+      if (taken_[index] && is_default(current_action(numbers[index]))) {
         set_action(numbers[index], saved_[index]);
       }
     }
