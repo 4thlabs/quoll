@@ -37,6 +37,7 @@
 #ifndef QUOLL_SERVER_HPP
 #define QUOLL_SERVER_HPP
 
+#include <quoll/server/connection_options.hpp>
 #include <quoll/server/serve.hpp>
 #include <quoll/server/serve_connection.hpp>
 

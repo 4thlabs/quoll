@@ -46,11 +46,13 @@
 #include <quoll/io/error.hpp>
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/io/write.hpp>
+#include <quoll/server/connection_options.hpp>
 #include <quoll/server/serve_connection.hpp>
 #include <quoll/test/run.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <exception>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -82,6 +84,20 @@ http::router make_router() {
   });
   router.add(verb::get, "/fail", "fail", [](http::request, http::route_match) -> task<http::response> {
     throw std::runtime_error{"handler failure"};
+  });
+  router.add(verb::get, "/chunked", "chunked", [](http::request, http::route_match) -> task<http::response> {
+    http::response response;
+
+    response.fields.add("Transfer-Encoding", "chunked");
+    response.body = "in chunks";
+    co_return response;
+  });
+  router.add(verb::get, "/bye", "bye", [](http::request, http::route_match) -> task<http::response> {
+    http::response response;
+
+    response.fields.add("Connection", "keep-alive, Close");
+    response.body = "bye";
+    co_return response;
   });
   router.add(verb::get, "/invalid", "invalid", [](http::request, http::route_match) -> task<http::response> {
     // A 204 cannot have a body: the serializer refuses it.
@@ -130,11 +146,12 @@ task<exchanged> exchange(io::memory_stream client, std::string raw, std::vector<
   co_return result;
 }
 
-exchanged serve(std::string raw, std::vector<verb> methods, bool expect_close = false, http::parse_limits limits = {}) {
+exchanged serve(std::string raw, std::vector<verb> methods, bool expect_close = false,
+                quoll::server::connection_options const &options = {}) {
   auto const router = make_router();
   auto [client, server] = io::make_memory_stream_pair();
   auto outcome = quoll::test::run(
-      quoll::async::when_all(quoll::server::serve_connection(std::move(server), router, limits),
+      quoll::async::when_all(quoll::server::serve_connection(std::move(server), router, options),
                              exchange(std::move(client), std::move(raw), std::move(methods), expect_close)));
 
   return std::move(std::get<1>(outcome.value()));
@@ -186,12 +203,13 @@ TEST_CASE("serve_connection: what cannot be read answers its status and ends the
   REQUIRE(serve("PROPFIND /x HTTP/1.1\r\nHost: x\r\n\r\n", {verb::get}, true).responses.front().status ==
           http::status::not_implemented);
 
-  http::parse_limits const small{.max_header_size = 64, .max_body_size = 4};
+  quoll::server::connection_options const small{.limits = {.max_header_size = 64, .max_body_size = 4},
+                                                .on_handler_error = {}};
+  auto const long_header = serve("GET /hello HTTP/1.1\r\nHost: x\r\nX-Long: " + std::string(100, 'a') + "\r\n\r\n",
+                                 {verb::get}, true, small);
 
-  REQUIRE(static_cast<int>(serve("GET /hello HTTP/1.1\r\nHost: x\r\nX-Long: " + std::string(100, 'a') + "\r\n\r\n",
-                                 {verb::get}, true, small)
-                               .responses.front()
-                               .status) == 431);
+  REQUIRE(long_header.responses.front().status == http::status::request_header_fields_too_large);
+  REQUIRE(long_header.responses.front().reason == "Request Header Fields Too Large");
   REQUIRE(serve("POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\n0123456789", {verb::post}, true, small)
               .responses.front()
               .status == http::status::content_too_large);
@@ -215,4 +233,38 @@ TEST_CASE("serve_connection: the router's own answers go out like any response",
   REQUIRE(result.responses[0].status == http::status::method_not_allowed);
   REQUIRE(result.responses[0].fields.find("Allow") == "GET, HEAD");
   REQUIRE(result.responses[1].status == http::status::not_found);
+}
+
+TEST_CASE("serve_connection: HEAD on a chunked response sends a length, not the terminating chunk", "[server]") {
+  auto const result =
+      serve("HEAD /chunked HTTP/1.1\r\nHost: x\r\n\r\nGET /hello HTTP/1.1\r\nHost: x\r\n\r\n", {verb::head, verb::get});
+
+  REQUIRE(result.responses[0].fields.find("Content-Length") == "9");
+  REQUIRE_FALSE(result.responses[0].fields.contains("Transfer-Encoding"));
+  // No stray terminating chunk: the next response is read whole.
+  REQUIRE(result.responses[1].body == "hello");
+}
+
+TEST_CASE("serve_connection: a handler's Connection: close ends the connection", "[server]") {
+  auto const result = serve("GET /bye HTTP/1.1\r\nHost: x\r\n\r\n", {verb::get}, true);
+
+  REQUIRE(result.responses.front().body == "bye");
+  REQUIRE(result.closed);
+}
+
+TEST_CASE("serve_connection: what a handler throws goes to on_handler_error", "[server]") {
+  std::string reported;
+  quoll::server::connection_options options;
+
+  options.on_handler_error = [&](std::exception_ptr failure) {
+    try {
+      std::rethrow_exception(failure);
+    } catch (std::exception const &error) {
+      reported = error.what();
+    }
+  };
+
+  REQUIRE(serve("GET /fail HTTP/1.1\r\nHost: x\r\n\r\n", {verb::get}, false, options).responses.front().status ==
+          http::status::internal_server_error);
+  REQUIRE(reported == "handler failure");
 }

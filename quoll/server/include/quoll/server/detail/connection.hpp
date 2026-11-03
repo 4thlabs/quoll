@@ -38,6 +38,8 @@
 #define QUOLL_SERVER_DETAIL_CONNECTION_HPP
 
 #include <quoll/async/task.hpp>
+#include <quoll/http/detail/ascii.hpp>
+#include <quoll/http/detail/router_responses.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
@@ -45,12 +47,14 @@
 #include <quoll/http/status.hpp>
 #include <quoll/http/write.hpp>
 #include <quoll/io/byte_stream.hpp>
+#include <quoll/server/connection_options.hpp>
 
 #include <exception>
-#include <functional>
 #include <optional>
+#include <ranges>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -60,8 +64,7 @@ namespace quoll::server::detail {
 // message, or a broken stream, gets nothing.
 [[nodiscard]] inline std::optional<http::status> read_error_status(std::error_code error) noexcept {
   if (error == http::error::header_too_large) {
-    // 431 Request Header Fields Too Large has no name in http::status.
-    return static_cast<http::status>(431);
+    return http::status::request_header_fields_too_large;
   }
 
   if (error == http::error::body_too_large) {
@@ -79,28 +82,46 @@ namespace quoll::server::detail {
   return std::nullopt;
 }
 
-[[nodiscard]] inline http::response status_response(http::status code) {
-  http::response response;
-
-  response.status = code;
-  return response;
-}
-
-// The router's response, or 500 if its handler threw.
-inline async::task<http::response> respond(http::router const &router, http::request request) {
+// The router's response, or 500 if its handler threw, reported to the application's callback if it gave one.
+inline async::task<http::response> respond(http::router const &router, http::request request,
+                                           connection_options const &options) {
   try {
     co_return co_await router.dispatch(std::move(request));
   } catch (...) {
-    co_return status_response(http::status::internal_server_error);
+    if (options.on_handler_error) {
+      options.on_handler_error(std::current_exception());
+    }
   }
+
+  co_return http::detail::status_response(http::status::internal_server_error);
 }
 
-// Ready to write: a response to HEAD announces the length of the body it does not carry, and the last response of a
-// connection says so.
+// Whether a response says the connection closes after it: a `close` token in a Connection field.
+[[nodiscard]] inline bool closes(http::response const &response) {
+  for (auto const &entry : response.fields) {
+    if (!http::detail::iequals(entry.name, "Connection")) {
+      continue;
+    }
+
+    for (auto const token : std::views::split(std::string_view{entry.value}, ',')) {
+      if (http::detail::iequals(http::detail::trim(std::string_view{token.begin(), token.end()}), "close")) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+// Ready to write. A response to HEAD has no body: it announces the length of the one it does not carry, with
+// Content-Length rather than chunked coding, whose terminating chunk would be read as the next response. The last
+// response of a connection says so.
 inline void prepare(http::response &response, bool head, bool keep_alive) {
   if (head) {
-    if (!response.body.empty() && !response.fields.contains("Content-Length") &&
-        !response.fields.contains("Transfer-Encoding")) {
+    if (response.fields.contains("Transfer-Encoding")) {
+      response.fields.erase("Transfer-Encoding");
+      response.fields.set("Content-Length", std::to_string(response.body.size()));
+    } else if (!response.body.empty() && !response.fields.contains("Content-Length")) {
       response.fields.set("Content-Length", std::to_string(response.body.size()));
     }
 
@@ -121,7 +142,7 @@ async::task<std::error_code> write_response(Stream &stream, http::response const
   try {
     sending.emplace(http::write(stream, response));
   } catch (std::invalid_argument const &) {
-    auto failed = status_response(http::status::internal_server_error);
+    auto failed = http::detail::status_response(http::status::internal_server_error);
 
     prepare(failed, false, keep_alive);
     sending.emplace(http::write(stream, failed));
@@ -129,20 +150,6 @@ async::task<std::error_code> write_response(Stream &stream, http::response const
 
   co_return co_await std::move(*sending);
 }
-
-// The outcome of a connection spawned by serve(): it ends by itself, and a failure only ends it, reported to the
-// application's callback if it gave one.
-struct connection_outcome {
-  std::function<void(std::exception_ptr)> on_error;
-
-  void operator()() const noexcept {}
-
-  void operator()(std::exception_ptr failure) const noexcept {
-    if (on_error) {
-      on_error(std::move(failure));
-    }
-  }
-};
 
 } // namespace quoll::server::detail
 

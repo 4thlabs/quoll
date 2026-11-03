@@ -38,11 +38,13 @@
 #define QUOLL_SERVER_SERVE_CONNECTION_HPP
 
 #include <quoll/async/task.hpp>
+#include <quoll/http/detail/router_responses.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/io/byte_stream.hpp>
+#include <quoll/server/connection_options.hpp>
 #include <quoll/server/detail/connection.hpp>
 
 #include <string>
@@ -55,25 +57,30 @@ namespace quoll::server {
  *
  * Each request goes to the router; its response is written back before the next request is read (pipelined requests
  * wait in the connection's buffer). The connection ends when the peer closes it, after a response to a request that
- * does not keep it alive (`Connection: close`, HTTP/1.0 without keep-alive, an upgrade, which is not served), on a
- * stream error, or on a stop request, which cancels the pending read.
+ * does not keep it alive (`Connection: close`, HTTP/1.0 without keep-alive, an upgrade, which is not served), after a
+ * response whose handler set `Connection: close`, on a stream error, or on a stop request, which cancels whatever is
+ * pending: a read, a handler's own operations, a write.
  *
  * - A request that is not valid HTTP answers 400, one with too large a header 431, too large a body 413, an unknown
- *   method 501, and ends the connection. `limits` bound what a request may hold.
- * - A handler that throws answers 500, as does a response that cannot be serialized.
+ *   method 501, and ends the connection.
+ * - A handler that throws answers 500 (and is reported to `options.on_handler_error`), as does a response that cannot
+ *   be serialized.
  * - The response to HEAD carries no body: it announces the length of the one the GET route produced.
  *
- * Owns `stream`; `router` outlives the task.
+ * Not yet: timeouts, `Expect: 100-continue` (a client sends its body after its own delay), a lingering close after an
+ * error response.
+ *
+ * Owns `stream`; `router` and `options` outlive the task.
  */
 template <io::ByteStream Stream>
-async::task<> serve_connection(Stream stream, http::router const &router, http::parse_limits limits = {}) {
+async::task<> serve_connection(Stream stream, http::router const &router, connection_options const &options) {
   std::string buffer;
-  http::request_parser parser{limits};
+  http::request_parser parser{options.limits};
 
   for (;;) {
     if (auto const error = co_await http::read(stream, buffer, parser)) {
       if (auto const answer = detail::read_error_status(error)) {
-        auto rejected = detail::status_response(*answer);
+        auto rejected = http::detail::status_response(*answer);
 
         detail::prepare(rejected, false, false);
         (void)co_await detail::write_response(stream, rejected, false);
@@ -82,17 +89,26 @@ async::task<> serve_connection(Stream stream, http::router const &router, http::
       co_return;
     }
 
-    auto const keep_alive = parser.keep_alive() && !parser.upgrade();
+    auto keep_alive = parser.keep_alive() && !parser.upgrade();
     auto request = parser.release();
     auto const head = request.method == http::verb::head;
-    auto response = co_await detail::respond(router, std::move(request));
+    auto response = co_await detail::respond(router, std::move(request), options);
 
+    keep_alive = keep_alive && !detail::closes(response);
     detail::prepare(response, head, keep_alive);
 
     if (co_await detail::write_response(stream, response, keep_alive) || !keep_alive) {
       co_return;
     }
   }
+}
+
+/** @brief serve_connection() with the default options. */
+template <io::ByteStream Stream>
+async::task<> serve_connection(Stream stream, http::router const &router) {
+  static connection_options const defaults;
+
+  return serve_connection(std::move(stream), router, defaults);
 }
 
 } // namespace quoll::server
