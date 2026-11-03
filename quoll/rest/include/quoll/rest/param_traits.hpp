@@ -37,18 +37,17 @@
 #ifndef QUOLL_REST_PARAM_TRAITS_HPP
 #define QUOLL_REST_PARAM_TRAITS_HPP
 
+#include <quoll/rest/detail/number.hpp>
+
 #include <glaze/core/reflect.hpp>
 #include <glaze/json/read.hpp>
 
 #include <algorithm>
-#include <array>
-#include <charconv>
 #include <concepts>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <type_traits>
 
 namespace quoll::rest {
@@ -63,33 +62,6 @@ namespace quoll::rest {
 template <class T>
 struct param_traits;
 
-namespace detail {
-
-// The whole text must be the number: no sign for unsigned types, no leading `+`, no trailing characters.
-template <class T>
-[[nodiscard]] std::optional<T> parse_number(std::string_view text) noexcept {
-  T value{};
-  auto const last = text.data() + text.size();
-  auto const [end, error] = std::from_chars(text.data(), last, value);
-
-  if (error != std::errc{} || end != last) {
-    return std::nullopt;
-  }
-
-  return value;
-}
-
-template <class T>
-[[nodiscard]] std::string format_number(T value) {
-  // Enough for any 64-bit integer, and for the shortest round-trip form of a double.
-  std::array<char, 32> buffer{};
-  auto const written = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
-
-  return {buffer.data(), written.ptr};
-}
-
-} // namespace detail
-
 /** @brief Integers in decimal, without sign for unsigned types and without a leading `+`. */
 template <std::integral T>
   requires(!std::same_as<T, bool>)
@@ -101,7 +73,8 @@ struct param_traits<T> {
   }
 };
 
-/** @brief Floating-point numbers, in their shortest form that reads back to the same value. */
+/** @brief Finite floating-point numbers, in their shortest form that reads back to the same value; not `nan` or `inf`.
+ */
 template <std::floating_point T>
 struct param_traits<T> {
   [[nodiscard]] static std::string to_text(T value) { return detail::format_number(value); }
