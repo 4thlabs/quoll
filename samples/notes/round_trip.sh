@@ -1,6 +1,6 @@
 #!/bin/sh
-# Starts the notes server, runs the client against it, checks the client's whole session, then stops the server with
-# SIGTERM, as a service manager would (a job started in the background of a script ignores SIGINT, and so does the
+# Starts the notes server, runs the client against it once, checks the client's whole session, then stops the server
+# with SIGTERM, as a service manager would (a job started in the background of a script ignores SIGINT, and so does the
 # runtime then).
 #
 #   round_trip.sh <quoll_notes_server> <quoll_notes_client> <port>
@@ -14,14 +14,24 @@ log=$(mktemp)
 pid=$!
 trap 'kill "$pid" 2>/dev/null || true; rm -f "$log"' EXIT
 
-# Wait until the server listens: the client fails to connect before.
+fail() {
+  echo "$1; the server's output:" >&2
+  cat "$log" >&2
+  exit 1
+}
+
+# The server prints its address as it starts listening; it exits at once if it cannot (the port is taken).
 for _ in $(seq 50); do
-  if output=$("$client" "http://127.0.0.1:$port" 2>&1); then
-    break
-  fi
+  kill -0 "$pid" 2>/dev/null || fail "the server ended before listening"
+  grep -q '^notes API on ' "$log" && break
   sleep 0.1
 done
 
+grep -q '^notes API on ' "$log" || fail "the server did not start"
+sleep 0.2
+kill -0 "$pid" 2>/dev/null || fail "the server ended before listening"
+
+output=$("$client" "http://127.0.0.1:$port" 2>&1) || fail "the client failed: $output"
 printf '%s\n' "$output"
 
 expected='created #1, all the notes:
