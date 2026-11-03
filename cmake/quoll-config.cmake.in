@@ -7,6 +7,16 @@ if(NOT quoll_FIND_COMPONENTS OR "threads" IN_LIST quoll_FIND_COMPONENTS OR "asio
   find_dependency(Threads)
 endif()
 
+# quoll::rest links glaze::glaze: the application defines it before (CPM, add_subdirectory), or it is found here. Only
+# required when rest is asked for by name; otherwise looked for quietly, and needed only by a target linking rest.
+if(NOT TARGET glaze::glaze)
+  if("rest" IN_LIST quoll_FIND_COMPONENTS)
+    find_dependency(glaze)
+  elseif(NOT quoll_FIND_COMPONENTS)
+    find_package(glaze QUIET)
+  endif()
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/quoll-targets.cmake")
 
 foreach(quoll_module IN ITEMS @QUOLL_PACKAGE_MODULES@)
