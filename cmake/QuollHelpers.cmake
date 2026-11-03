@@ -116,11 +116,11 @@ function(quoll_compile_fail_tests)
     get_property(deps GLOBAL PROPERTY "QUOLL_COMPILE_FAIL_DEPS:${path}")
     file(STRINGS "${path}" expect REGEX "^// expect: " LIMIT_COUNT 1)
 
+    # Checked here too, so that a case without it fails at configure time.
     if(NOT expect)
       message(FATAL_ERROR "${path}: no '// expect: <text>' line")
     endif()
 
-    string(REGEX REPLACE "^// expect: " "" expect "${expect}")
     get_filename_component(name "${path}" NAME_WE)
 
     set(target "quoll_compile_fail_${name}")
@@ -131,7 +131,7 @@ function(quoll_compile_fail_tests)
     add_test(
       NAME compile_fail.${name}
       COMMAND ${CMAKE_COMMAND} -DQUOLL_BUILD_DIR=${PROJECT_BINARY_DIR} -DQUOLL_TARGET=${target} -DQUOLL_CONFIG=$<CONFIG>
-              "-DQUOLL_EXPECT=${expect}" -P ${QUOLL_CMAKE_DIR}/QuollCompileFail.cmake
+              -DQUOLL_SOURCE=${path} -P ${QUOLL_CMAKE_DIR}/QuollCompileFail.cmake
     )
     # Serial: concurrent builds of the same tree would contend for its lock.
     set_tests_properties(compile_fail.${name} PROPERTIES RUN_SERIAL TRUE)

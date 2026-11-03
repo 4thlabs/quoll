@@ -1,9 +1,18 @@
 # Run by the compile_fail.<case> ctests (see quoll_compile_fail_tests in QuollHelpers.cmake):
 #
-#   cmake -DQUOLL_BUILD_DIR=<dir> -DQUOLL_TARGET=<target> -DQUOLL_CONFIG=<config> -DQUOLL_EXPECT=<text> -P <this file>
+#   cmake -DQUOLL_BUILD_DIR=<dir> -DQUOLL_TARGET=<target> -DQUOLL_CONFIG=<config> -DQUOLL_SOURCE=<file> -P <this file>
 #
-# Builds the target of a source that must not compile, and succeeds only if the build fails with <text>, taken
-# literally, in its output: a build that succeeds, or fails for another reason, is an error.
+# Builds the target of a source that must not compile, and succeeds only if the build fails with the text of the
+# source's `// expect: <text>` line, taken literally, in its output: a build that succeeds, or fails for another
+# reason, is an error. The text is read here rather than passed: no argument list to split it on a ';'.
+file(READ "${QUOLL_SOURCE}" source)
+string(REGEX MATCH "// expect: [^\n]*" expect_line "${source}")
+string(REPLACE "// expect: " "" QUOLL_EXPECT "${expect_line}")
+
+if(QUOLL_EXPECT STREQUAL "")
+  message(FATAL_ERROR "${QUOLL_SOURCE}: no '// expect: <text>' line")
+endif()
+
 execute_process(
   COMMAND ${CMAKE_COMMAND} --build "${QUOLL_BUILD_DIR}" --target "${QUOLL_TARGET}" --config "${QUOLL_CONFIG}"
   RESULT_VARIABLE result
