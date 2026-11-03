@@ -41,6 +41,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
+#include <quoll/client/transport.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
@@ -52,6 +53,7 @@
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/io_result.hpp>
+#include <quoll/rest.hpp>
 #include <quoll/server/serve.hpp>
 #include <quoll/test/check.hpp>
 #include <quoll/test/overloaded.hpp>
@@ -79,6 +81,47 @@
 #include <system_error>
 #include <thread>
 #include <utility>
+
+// The contract of the REST calls over TCP. Not in the unnamed namespace: Glaze reflects types with external linkage.
+namespace asio_test {
+
+struct account {
+  std::int64_t id = 0;
+  std::string owner;
+};
+
+struct new_account {
+  std::string owner;
+};
+
+struct not_found {
+  std::string detail;
+};
+
+namespace accounts {
+using namespace quoll::rest;
+
+using get = endpoint<"accounts.get", quoll::http::verb::get, "/{id:int64}", returns<account>,
+                     returns<not_found, quoll::http::status::not_found>>;
+using open = endpoint<"accounts.open", quoll::http::verb::post, "/", body<new_account>,
+                      returns<account, quoll::http::status::created>>;
+
+using api = quoll::rest::api<"/api/accounts", get, open>;
+} // namespace accounts
+
+struct accounts_service {
+  quoll::async::task<quoll::rest::reply<accounts::get>> operator()(accounts::get, std::int64_t id) const {
+    if (id == 42) {
+      co_return account{.id = 42, .owner = "Ada"};
+    }
+
+    co_return not_found{"no account " + std::to_string(id)};
+  }
+
+  account operator()(accounts::open, new_account opened) const { return {.id = 7, .owner = std::move(opened.owner)}; }
+};
+
+} // namespace asio_test
 
 namespace {
 
@@ -227,6 +270,43 @@ task<int> start_failing(::asio::io_context &context) {
       co_await quoll::asio::detail::make_operation<>(cancel, [](auto) { throw std::runtime_error{"cannot start"}; });
 
   co_return 0;
+}
+
+// An asio connector counting the connections it opens.
+class counting_connector {
+public:
+  counting_connector(quoll::asio::connector connector, int &connections) noexcept
+      : connector_(std::move(connector)), connections_(&connections) {}
+
+  [[nodiscard]] task<io::any_stream> connect(std::string host, std::uint16_t port) const {
+    ++*connections_;
+    return connector_.connect(std::move(host), port);
+  }
+
+private:
+  quoll::asio::connector connector_;
+  int *connections_;
+};
+
+using accounts_client = quoll::rest::client<asio_test::accounts::api, quoll::client::transport<counting_connector>>;
+
+struct accounts_calls {
+  asio_test::account found;
+  std::string missing;
+  asio_test::account opened;
+};
+
+// REST calls on one client, then a stop request for the server.
+task<accounts_calls> call_accounts(accounts_client client, std::stop_source &source) {
+  using namespace asio_test;
+
+  accounts_calls calls;
+
+  calls.found = co_await client.call<accounts::get>(42);
+  calls.missing = (co_await client.try_call<accounts::get>(7))->get<http::status::not_found>().detail;
+  calls.opened = co_await client.call<accounts::open>({.owner = "Grace"});
+  source.request_stop();
+  co_return calls;
 }
 
 } // namespace
@@ -492,4 +572,33 @@ TEST_CASE("asio: quoll::server serves a router over TCP, until a stop request", 
   REQUIRE(response);
   REQUIRE(response->status == http::status::ok);
   REQUIRE(response->body == "account 42");
+}
+
+TEST_CASE("asio: a REST client calls a mounted API over TCP, on one connection kept alive", "[asio][rest][client]") {
+  ::asio::io_context context;
+  quoll::asio::acceptor acceptor{listen(context)};
+  auto const port = acceptor.socket().local_endpoint().port();
+  quoll::asio::executor const executor{context.get_executor()};
+  http::router router;
+
+  quoll::rest::mount<asio_test::accounts::api>(router, asio_test::accounts_service{});
+
+  std::stop_source source;
+  int connections = 0;
+  accounts_client client{quoll::client::transport{
+      counting_connector{quoll::asio::connector{context.get_executor()}, connections}, "127.0.0.1", port}};
+  std::optional<accounts_calls> calls;
+  std::exception_ptr failure;
+
+  co_spawn(executor, quoll::server::serve(executor, acceptor, router),
+           overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }}, source.get_token());
+  spawn(context, call_accounts(std::move(client), source), calls, failure);
+  run(context, failure);
+
+  REQUIRE(calls);
+  REQUIRE(calls->found.owner == "Ada");
+  REQUIRE(calls->missing == "no account 7");
+  REQUIRE(calls->opened.id == 7);
+  REQUIRE(calls->opened.owner == "Grace");
+  REQUIRE(connections == 1);
 }

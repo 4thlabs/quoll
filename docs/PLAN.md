@@ -616,6 +616,8 @@ Every point the plan leaves open, gathered here; the linked sections give the co
   need a timer, which Quoll does not have yet; a lingering close after an error response (so that the client reads it
   rather than a reset) needs a half-close in `ByteStream`; `Expect: 100-continue` needs the parser to stop after the
   header; a graceful shutdown lets in-flight requests finish, where a stop request now cancels them.
+- `quoll::client` beyond the prototype: connect and response timeouts (the same timer), a limit of connections per
+  transport (requests now open a connection when none is idle), redirects, TLS through the connector.
 - A generator from an existing OpenAPI document to a contract header, for third-party APIs
   ([REST DSL](#rest-dsl-contract-server-client)).
 - Shape of the typed SSE helper on the TS side, and streamed bodies over the bridge

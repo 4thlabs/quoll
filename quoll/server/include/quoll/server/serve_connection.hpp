@@ -38,6 +38,7 @@
 #define QUOLL_SERVER_SERVE_CONNECTION_HPP
 
 #include <quoll/async/task.hpp>
+#include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/detail/router_responses.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
@@ -94,7 +95,7 @@ async::task<> serve_connection(Stream stream, http::router const &router, connec
     auto const head = request.method == http::verb::head;
     auto response = co_await detail::respond(router, std::move(request), options);
 
-    keep_alive = keep_alive && !detail::closes(response);
+    keep_alive = keep_alive && !http::detail::closes_connection(response.fields);
     detail::prepare(response, head, keep_alive);
 
     if (co_await detail::write_response(stream, response, keep_alive) || !keep_alive) {

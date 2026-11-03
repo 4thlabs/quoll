@@ -38,7 +38,6 @@
 #define QUOLL_SERVER_DETAIL_CONNECTION_HPP
 
 #include <quoll/async/task.hpp>
-#include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/router_responses.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/request.hpp>
@@ -51,10 +50,8 @@
 
 #include <exception>
 #include <optional>
-#include <ranges>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -94,23 +91,6 @@ inline async::task<http::response> respond(http::router const &router, http::req
   }
 
   co_return http::detail::status_response(http::status::internal_server_error);
-}
-
-// Whether a response says the connection closes after it: a `close` token in a Connection field.
-[[nodiscard]] inline bool closes(http::response const &response) {
-  for (auto const &entry : response.fields) {
-    if (!http::detail::iequals(entry.name, "Connection")) {
-      continue;
-    }
-
-    for (auto const token : std::views::split(std::string_view{entry.value}, ',')) {
-      if (http::detail::iequals(http::detail::trim(std::string_view{token.begin(), token.end()}), "close")) {
-        return true;
-      }
-    }
-  }
-
-  return false;
 }
 
 // Ready to write. A response to HEAD has no body: it announces the length of the one it does not carry, with
