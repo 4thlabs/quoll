@@ -162,6 +162,8 @@ TEST_CASE("any_listener moves, and recovers the listener it wraps", "[io][networ
 
   REQUIRE(moved.target<idle_listener>() != nullptr);
   REQUIRE(moved.target<int>() == nullptr);
+  // Not bound to a port.
+  REQUIRE_FALSE(moved.local_port());
   REQUIRE(quoll::test::run(moved.accept()).has_value());
   REQUIRE(accepts == 1);
 

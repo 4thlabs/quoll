@@ -36,7 +36,7 @@
 
 // Serves the notes API over HTTP until Ctrl-C:
 //
-//   quoll_notes_server [port]      (8080 by default)
+//   quoll_notes_server [port]      (8080 by default, 0 for any free port)
 //   curl -X POST localhost:8080/api/notes -H 'Content-Type: application/json' -d '{"text":"buy milk"}'
 //   curl 'localhost:8080/api/notes?contains=milk'
 
@@ -108,7 +108,8 @@ quoll::async::task<> serve_notes(std::uint16_t port) {
 
   auto listener = co_await quoll::io::listen(port);
 
-  std::cout << "notes API on http://localhost:" << port << "/api/notes" << std::endl;
+  // With port 0, the system picks a free one.
+  std::cout << "notes API on http://localhost:" << listener.local_port().value_or(port) << "/api/notes" << std::endl;
   co_await quoll::server::serve(listener, router);
   std::cout << "stopped\n";
 }

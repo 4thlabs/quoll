@@ -352,7 +352,7 @@ std::uint16_t free_port() {
 // A connection through the network of the runtime's executor, to a socket listening there: the bytes sent arrive.
 task<std::string> loop_through_network() {
   auto listener = co_await io::listen(0);
-  auto const port = listener.target<quoll::asio::acceptor>()->socket().local_endpoint().port();
+  auto const port = listener.local_port().value();
   auto [accepted, connected] = co_await quoll::async::when_all(listener.accept(), io::connect("127.0.0.1", port));
   std::string const sent = "ping";
   std::array<char, 16> received{};

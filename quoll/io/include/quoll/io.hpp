@@ -39,6 +39,7 @@
 
 #include <quoll/io/any_listener.hpp>
 #include <quoll/io/any_stream.hpp>
+#include <quoll/io/bound_listener.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/connect.hpp>
 #include <quoll/io/connector.hpp>

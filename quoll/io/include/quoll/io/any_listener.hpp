@@ -40,11 +40,14 @@
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_stream.hpp>
+#include <quoll/io/bound_listener.hpp>
 #include <quoll/io/listener.hpp>
 
 #include <cassert>
 #include <concepts>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
@@ -54,6 +57,8 @@ namespace detail {
 
 struct listener_vtable {
   async::task<any_stream> (*accept)(void *listener);
+  // Empty for a listener that is not a BoundListener.
+  std::optional<std::uint16_t> (*local_port)(void const *listener);
   void (*destroy)(void *listener) noexcept;
   async::detail::type_id type;
 };
@@ -61,6 +66,13 @@ struct listener_vtable {
 template <Listener L>
 inline constexpr listener_vtable listener_vtable_for{
     [](void *listener) { return static_cast<L *>(listener)->accept(); },
+    [](void const *listener) -> std::optional<std::uint16_t> {
+      if constexpr (BoundListener<L>) {
+        return static_cast<L const *>(listener)->local_port();
+      } else {
+        return std::nullopt;
+      }
+    },
     [](void *listener) noexcept {
       // Owned from here: the unique_ptr frees the listener.
       std::unique_ptr<L> const owned{static_cast<L *>(listener)};
@@ -113,6 +125,15 @@ public:
   [[nodiscard]] async::task<any_stream> accept() {
     assert(vtable_ != nullptr && "any_listener used after being moved from");
     return vtable_->accept(listener_);
+  }
+
+  /**
+   * @brief The port the wrapped listener accepts on, if it is a BoundListener (a TCP acceptor): the one the system
+   * picked for port 0.
+   */
+  [[nodiscard]] std::optional<std::uint16_t> local_port() const {
+    assert(vtable_ != nullptr && "any_listener used after being moved from");
+    return vtable_->local_port(listener_);
   }
 
   /** @brief The wrapped listener if its type is exactly `L`, otherwise `nullptr`. */

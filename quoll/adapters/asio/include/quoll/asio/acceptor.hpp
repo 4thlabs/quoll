@@ -40,11 +40,12 @@
 #include <quoll/asio/detail/accept.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_stream.hpp>
-#include <quoll/io/listener.hpp>
+#include <quoll/io/bound_listener.hpp>
 
 #include <asio/ip/tcp.hpp>
 
 #include <cassert>
+#include <cstdint>
 #include <memory>
 #include <utility>
 
@@ -70,6 +71,9 @@ public:
   /** @brief The next connection a peer opens. */
   [[nodiscard]] async::task<io::any_stream> accept() { return detail::accept(checked_state()); }
 
+  /** @brief The port it accepts on: the one the system picked when it was bound to port 0. */
+  [[nodiscard]] std::uint16_t local_port() const { return checked_state().acceptor.local_endpoint().port(); }
+
   /** @brief The listening socket, for its options and local_endpoint(). */
   [[nodiscard]] ::asio::ip::tcp::acceptor &socket() noexcept { return checked_state().acceptor; }
 
@@ -82,7 +86,7 @@ private:
   std::unique_ptr<detail::acceptor_state> state_;
 };
 
-static_assert(io::Listener<acceptor>);
+static_assert(io::BoundListener<acceptor>);
 
 } // namespace quoll::asio
 
