@@ -2,3 +2,4 @@
 # so that an application only pulls the adapters it uses and their dependencies.
 add_subdirectory(threads)
 add_subdirectory(asio)
+add_subdirectory(emscripten)

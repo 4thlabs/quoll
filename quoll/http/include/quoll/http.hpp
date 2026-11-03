@@ -45,6 +45,7 @@
 #include <quoll/http/response.hpp>
 #include <quoll/http/serializer.hpp>
 #include <quoll/http/status.hpp>
+#include <quoll/http/transport.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/http/version.hpp>
 #include <quoll/http/write.hpp>

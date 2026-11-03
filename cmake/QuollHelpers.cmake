@@ -101,7 +101,14 @@ function(quoll_main_tests)
   # Helpers shared by the tests of every module (quoll/test/...).
   target_include_directories(quoll_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
 
-  # Under Emscripten, CTest runs the target through CMAKE_CROSSCOMPILING_EMULATOR (node).
+  # Under Emscripten, CTest runs the target through CMAKE_CROSSCOMPILING_EMULATOR (node). Tests may wait for the
+  # JavaScript event loop (fetch, timers) by suspending there with JSPI, which node 24 still hides behind a flag.
+  if(EMSCRIPTEN)
+    target_link_options(quoll_tests PRIVATE -sJSPI)
+    set_property(TARGET quoll_tests PROPERTY CROSSCOMPILING_EMULATOR ${CMAKE_CROSSCOMPILING_EMULATOR}
+                                                                     --experimental-wasm-jspi)
+  endif()
+
   add_test(NAME quoll COMMAND quoll_tests)
 endfunction()
 
