@@ -62,9 +62,12 @@ namespace quoll::rest {
 template <class T>
 struct param_traits;
 
-/** @brief Integers in decimal, without sign for unsigned types and without a leading `+`. */
+/**
+ * @brief Integers in decimal, without sign for unsigned types and without a leading `+`. Not `bool`, nor the
+ * character types that std::from_chars does not read.
+ */
 template <std::integral T>
-  requires(!std::same_as<T, bool>)
+  requires(!detail::is_any_of<T, bool, wchar_t, char8_t, char16_t, char32_t>)
 struct param_traits<T> {
   [[nodiscard]] static std::string to_text(T value) { return detail::format_number(value); }
 
