@@ -93,7 +93,8 @@ public:
    * @brief A transport to `host` (a name, or an address; IPv6 without brackets) on `port`.
    *
    * @throws std::invalid_argument for an empty host, or one with characters that do not belong to a host name or an
-   * address (spaces, `/`, `@`, brackets...).
+   * address (controls, spaces, `/`, `@`, brackets...), including a port (`localhost:8080`): a colon is only valid in
+   * an IPv6 address.
    */
   transport(Connector connector, std::string host, std::uint16_t port, transport_options options = {})
       : state_(std::make_shared<state>(std::move(connector), std::move(host), port, options)) {}
@@ -136,7 +137,7 @@ private:
 
   // The Host field: an IPv6 address in brackets, the port unless it is HTTP's default.
   [[nodiscard]] static std::string make_host_field(std::string_view host, std::uint16_t port) {
-    if (host.empty() || host.find_first_of(" \t\r\n/\\?#@[]") != std::string_view::npos) {
+    if (!valid_host(host)) {
       throw std::invalid_argument{"quoll::client::transport: invalid host"};
     }
 
@@ -147,6 +148,34 @@ private:
     }
 
     return field;
+  }
+
+  // A name or an address, without what would change the meaning of the Host field: controls, spaces, the delimiters
+  // of a URL. A colon only belongs to an IPv6 address (hex digits, colons, and the dots of an IPv4 suffix), so that a
+  // port written into the host (`localhost:8080`) is refused here rather than by the connection.
+  [[nodiscard]] static bool valid_host(std::string_view host) noexcept {
+    if (host.empty()) {
+      return false;
+    }
+
+    auto const ipv6 = host.contains(':');
+
+    for (auto const character : host) {
+      auto const code = static_cast<unsigned char>(character);
+
+      if (code < 0x21 || code == 0x7f || std::string_view{"/\\?#@[]%"}.contains(character)) {
+        return false;
+      }
+
+      auto const hex = (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') ||
+                       (character >= 'A' && character <= 'F');
+
+      if (ipv6 && !hex && character != ':' && character != '.') {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   // Static: the task holds the shared state, not the transport.

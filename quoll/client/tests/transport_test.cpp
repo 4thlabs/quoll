@@ -67,6 +67,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -376,9 +377,15 @@ TEST_CASE("client::transport: what cannot be sent is refused before the task run
   async::run_loop loop;
   memory_server server{loop.get_executor(), answering({}), 0, {}, {}};
 
-  for (auto const *const host : {"", "a b", "user@example.com", "[::1]", "example.com/path"}) {
-    REQUIRE_THROWS_AS((client::transport{memory_connector{server}, host, 80}), std::invalid_argument);
+  for (std::string_view const host : {"", "a b", "user@example.com", "[::1]", "example.com/path", "localhost:8080",
+                                      "fe80::1%eth0", "a\x7f", "tab\there"}) {
+    REQUIRE_THROWS_AS((client::transport{memory_connector{server}, std::string{host}, 80}), std::invalid_argument);
   }
+
+  REQUIRE_THROWS_AS((client::transport{memory_connector{server}, std::string{"nul\0", 4}, 80}), std::invalid_argument);
+  // IPv6 addresses, with an IPv4 suffix too.
+  REQUIRE_NOTHROW(client::transport{memory_connector{server}, "2001:DB8::1", 80});
+  REQUIRE_NOTHROW(client::transport{memory_connector{server}, "::ffff:192.0.2.1", 80});
 
   client::transport const transport{memory_connector{server}, "example.com", 80};
   auto field = make_request(verb::get, "/");
