@@ -50,7 +50,7 @@ namespace quoll::io {
 
 /**
  * @brief Listens on `port` (0 for any free port) and `address` (an IP address; loopback by default, `0.0.0.0` for
- * every interface), through the network of the executor the task runs on (as sync_wait provides it).
+ * every interface), through the network of the executor the task runs on (as quoll::runtime provides it).
  *
  * Throws std::system_error when the address cannot be bound, std::logic_error if the executor offers no network.
  */

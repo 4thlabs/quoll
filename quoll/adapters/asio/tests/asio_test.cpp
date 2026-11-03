@@ -41,6 +41,7 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detached.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
@@ -348,7 +349,7 @@ std::uint16_t free_port() {
   return port_of(listen(context));
 }
 
-// A connection through the network of sync_wait's executor, to a socket listening there: the bytes sent arrive.
+// A connection through the network of the runtime's executor, to a socket listening there: the bytes sent arrive.
 task<std::string> loop_through_network() {
   auto listener = co_await io::listen(0);
   auto const port = listener.target<quoll::asio::acceptor>()->socket().local_endpoint().port();
@@ -364,7 +365,7 @@ task<std::string> loop_through_network() {
   co_return std::string{received.data(), read.transferred};
 }
 
-// REST calls with a client built from a URL, then Ctrl-C, which sync_wait turns into a stop request.
+// REST calls with a client built from a URL, then Ctrl-C, which the runtime turns into a stop request.
 task<accounts_calls> call_then_interrupt(std::uint16_t port) {
   quoll::rest::client<asio_test::accounts::api> client{"http://127.0.0.1:" + std::to_string(port)};
   auto calls = co_await make_calls(client);
@@ -388,7 +389,7 @@ task<accounts_calls> serve_and_call(http::router const &router, std::uint16_t po
   return action.sa_handler;
 }
 
-// Ctrl-C: the task is asked to stop, and SIGINT gets the action it had before sync_wait back.
+// Ctrl-C: the task is asked to stop, and SIGINT gets the action it had before the runtime back.
 task<bool> interrupt_then_check_restored(void (*before)(int)) {
   std::raise(SIGINT);
 
@@ -401,27 +402,47 @@ task<bool> interrupt_then_check_restored(void (*before)(int)) {
   co_return sigint_handler() == before;
 }
 
-// Runs until a stop request.
-task<> until_stopped(std::stop_token stop_token) {
-  while (!stop_token.stop_requested()) {
+// Yields `count` times, counting.
+task<> keep_yielding(int &yields, int count) {
+  for (int index = 0; index < count; ++index) {
     co_await quoll::async::yield();
+    ++yields;
   }
 }
 
 // Leaves work running when it completes, as a server leaves connections.
-task<int> leave_work_running() {
+task<int> leave_work_running(int &yields) {
   auto const executor = quoll::async::any_executor{co_await quoll::async::current_executor()};
 
-  co_spawn(executor, until_stopped(co_await quoll::async::current_stop_token()),
-           overloaded{[] {}, [](std::exception_ptr) {}}, co_await quoll::async::current_stop_token());
+  co_spawn(executor, keep_yielding(yields, 100), quoll::async::detached);
   co_return 7;
+}
+
+// Runs `work` as a program would, on a runtime stopped by Ctrl-C, and hands over its outcome.
+template <class T>
+T run_task(task<T> work) {
+  quoll::asio::runtime runtime;
+  std::optional<T> value;
+  std::exception_ptr failure;
+
+  co_spawn(runtime.get_executor(), std::move(work),
+           overloaded{[&](T result) { value = std::move(result); },
+                      [&](std::exception_ptr error) { failure = std::move(error); }},
+           runtime.get_stop_token());
+  runtime.run();
+
+  if (failure) {
+    std::rethrow_exception(failure);
+  }
+
+  return std::move(value.value());
 }
 
 task<int> answer() { co_return 42; }
 
-task<> fail() {
+task<int> fail() {
   throw std::runtime_error{"failed"};
-  co_return;
+  co_return 0;
 }
 
 } // namespace
@@ -744,34 +765,72 @@ TEST_CASE("asio: a stop request abandons a request waiting for its response", "[
   REQUIRE(*error == std::errc::operation_canceled);
 }
 
-TEST_CASE("asio::sync_wait runs a task to its end, and hands over its outcome", "[asio][sync_wait]") {
-  REQUIRE(quoll::asio::sync_wait(answer()) == 42);
-  REQUIRE_THROWS_AS(quoll::asio::sync_wait(fail()), std::runtime_error);
-  REQUIRE_THROWS_AS(quoll::asio::sync_wait(io::connect("127.0.0.1", free_port())), std::system_error);
+TEST_CASE("asio::runtime runs a task to its end", "[asio][runtime]") {
+  REQUIRE(run_task(answer()) == 42);
+  REQUIRE_THROWS_AS(run_task(fail()), std::runtime_error);
+  REQUIRE_THROWS_AS(run_task(io::connect("127.0.0.1", free_port())), std::system_error);
 }
 
-TEST_CASE("asio::sync_wait turns the first Ctrl-C into a stop request, then gives SIGINT its action back",
-          "[asio][sync_wait]") {
+TEST_CASE("asio::runtime turns the first Ctrl-C into a stop request, then gives SIGINT its action back",
+          "[asio][runtime]") {
+  if (sigint_handler() == SIG_IGN) {
+    SKIP("SIGINT is ignored by this process (started in the background): raise() would not reach the runtime");
+  }
+
   auto const before = sigint_handler();
 
-  REQUIRE(quoll::asio::sync_wait(interrupt_then_check_restored(before)));
+  REQUIRE(run_task(interrupt_then_check_restored(before)));
   REQUIRE(sigint_handler() == before);
 }
 
-TEST_CASE("asio::sync_wait asks what its task left running to stop, and waits for it", "[asio][sync_wait]") {
-  REQUIRE(quoll::asio::sync_wait(leave_work_running()) == 7);
+TEST_CASE("asio::runtime runs again, with a fresh stop token and the signals waited for again", "[asio][runtime]") {
+  if (sigint_handler() == SIG_IGN) {
+    SKIP("SIGINT is ignored by this process (started in the background): raise() would not reach the runtime");
+  }
+
+  auto const before = sigint_handler();
+  quoll::asio::runtime runtime;
+
+  for (int round = 0; round < 2; ++round) {
+    auto const stop_token = runtime.get_stop_token();
+    std::optional<bool> restored;
+    std::exception_ptr failure;
+
+    REQUIRE_FALSE(stop_token.stop_requested());
+    co_spawn(runtime.get_executor(), interrupt_then_check_restored(before),
+             overloaded{[&](bool value) { restored = value; }, [&](std::exception_ptr error) { failure = error; }},
+             stop_token);
+    runtime.run();
+
+    if (failure) {
+      std::rethrow_exception(failure);
+    }
+
+    REQUIRE(restored == true);
+  }
 }
 
-TEST_CASE("asio::sync_wait offers the loop's network to its task", "[asio][sync_wait]") {
-  REQUIRE(quoll::asio::sync_wait(loop_through_network()) == "ping");
+TEST_CASE("asio::runtime runs until the work its tasks started has ended", "[asio][runtime]") {
+  int yields = 0;
+
+  REQUIRE(run_task(leave_work_running(yields)) == 7);
+  REQUIRE(yields == 100);
 }
 
-TEST_CASE("asio: a REST client from a URL calls server::listen, until Ctrl-C", "[asio][sync_wait][rest][client]") {
+TEST_CASE("asio::runtime offers its loop's network to its tasks", "[asio][runtime]") {
+  REQUIRE(run_task(loop_through_network()) == "ping");
+}
+
+TEST_CASE("asio: a REST client from a URL calls server::listen, until Ctrl-C", "[asio][runtime][rest][client]") {
+  if (sigint_handler() == SIG_IGN) {
+    SKIP("SIGINT is ignored by this process (started in the background): raise() would not reach the runtime");
+  }
+
   http::router router;
 
   quoll::rest::mount<asio_test::accounts::api>(router, asio_test::accounts_service{});
 
-  auto const calls = quoll::asio::sync_wait(serve_and_call(router, free_port()));
+  auto const calls = run_task(serve_and_call(router, free_port()));
 
   REQUIRE(calls.found.owner == "Ada");
   REQUIRE(calls.missing == "no account 7");

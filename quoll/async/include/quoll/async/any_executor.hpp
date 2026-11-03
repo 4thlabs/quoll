@@ -57,8 +57,8 @@ namespace quoll::async {
  *
  * Holds a copy of any executor, for code that keeps one without being a template over its type: what serve() spawns
  * its connections on, for instance. Built from an executor_ref, it copies the referenced executor, which may then go
- * away. An executor of up to eight pointers (an asio::any_io_executor), that moves without throwing, is held in place;
- * a bigger one is allocated on the heap. Posting never allocates.
+ * away. An executor of up to eight pointers (an asio::any_io_executor is seven), that moves without throwing, is held
+ * in place; a bigger one is allocated on the heap. Posting never allocates.
  *
  * Answers the wrapped executor's service queries (see service_list). A moved-from any_executor can only be assigned to
  * or destroyed.
@@ -71,12 +71,13 @@ public:
   template <class E>
     requires(!std::same_as<E, any_executor> && !std::same_as<E, executor_ref> && Executor<E>)
   explicit any_executor(E const &executor) : vtable_(&detail::executor_vtable_for<E>) {
-    executor_ = vtable_->copy(&executor, storage_);
+    keep(vtable_->copy(&executor, storage_));
   }
 
   /** @brief A copy of the executor `executor` references. */
-  explicit any_executor(executor_ref executor)
-      : vtable_(executor.vtable_), executor_(vtable_->copy(executor.executor_, storage_)) {}
+  explicit any_executor(executor_ref executor) : vtable_(executor.vtable_) {
+    keep(vtable_->copy(executor.executor_, storage_));
+  }
 
   any_executor(any_executor const &other) { copy_from(other); }
 
@@ -107,13 +108,13 @@ public:
   /** @brief Posts `item` to the wrapped executor. */
   void post(work_item &item) const {
     assert(vtable_ != nullptr && "any_executor used after being moved from");
-    vtable_->post(executor_, item);
+    vtable_->post(get(), item);
   }
 
   /** @brief The wrapped executor if its type is exactly `E`, otherwise `nullptr`. */
   template <class E>
   [[nodiscard]] E const *target() const noexcept {
-    return vtable_ != nullptr && vtable_->type == detail::type_id_of<E>() ? static_cast<E const *>(executor_) : nullptr;
+    return vtable_ != nullptr && vtable_->type == detail::type_id_of<E>() ? static_cast<E const *>(get()) : nullptr;
   }
 
   /** @brief The service `S` offered by the wrapped executor, if it offers it (see service_list). */
@@ -123,13 +124,13 @@ public:
 
     std::optional<S> found;
 
-    static_cast<void>(vtable_->query(executor_, detail::type_id_of<S>(), &found));
+    static_cast<void>(vtable_->query(get(), detail::type_id_of<S>(), &found));
     return found;
   }
 
   /** @brief Equal when both wrap executors of the same type that compare equal. */
   [[nodiscard]] friend bool operator==(any_executor const &lhs, any_executor const &rhs) noexcept {
-    return lhs.vtable_ == rhs.vtable_ && (lhs.vtable_ == nullptr || lhs.vtable_->equal(lhs.executor_, rhs.executor_));
+    return lhs.vtable_ == rhs.vtable_ && (lhs.vtable_ == nullptr || lhs.vtable_->equal(lhs.get(), rhs.get()));
   }
 
 private:
@@ -138,7 +139,7 @@ private:
   void copy_from(any_executor const &other) {
     assert(other.vtable_ != nullptr && "any_executor copied after being moved from");
     vtable_ = other.vtable_;
-    executor_ = vtable_->copy(other.executor_, storage_);
+    keep(vtable_->copy(other.get(), storage_));
   }
 
   void take(any_executor &other) noexcept {
@@ -149,32 +150,44 @@ private:
     }
 
     if (vtable_->in_place) {
-      vtable_->relocate(other.executor_, storage_);
-      executor_ = storage_;
+      vtable_->relocate(other.storage_, storage_);
     } else {
-      executor_ = other.executor_;
+      heap_ = std::exchange(other.heap_, nullptr);
     }
-
-    other.executor_ = nullptr;
   }
 
   void reset() noexcept {
     if (vtable_ != nullptr) {
-      vtable_->destroy(executor_);
+      vtable_->destroy(get());
       vtable_ = nullptr;
-      executor_ = nullptr;
+      heap_ = nullptr;
+    }
+  }
+
+  // Where the executor is: in storage_, or on the heap.
+  [[nodiscard]] void *get() noexcept { return vtable_->in_place ? static_cast<void *>(storage_) : heap_; }
+
+  [[nodiscard]] void const *get() const noexcept {
+    return vtable_->in_place ? static_cast<void const *>(storage_) : heap_;
+  }
+
+  // Records the copy made by the table: in storage_ already, or on the heap.
+  void keep(void *copy) noexcept {
+    if (!vtable_->in_place) {
+      heap_ = copy;
     }
   }
 
   alignas(std::max_align_t) std::byte storage_[detail::executor_storage_size];
   detail::executor_vtable const *vtable_ = nullptr;
-  void *executor_ = nullptr;
+  // The executor when it is not held in place.
+  void *heap_ = nullptr;
 };
 
 static_assert(Executor<any_executor>);
 
 inline executor_ref::executor_ref(any_executor const &executor) noexcept
-    : executor_(executor.executor_), vtable_(executor.vtable_) {
+    : executor_(executor.get()), vtable_(executor.vtable_) {
   assert(vtable_ != nullptr && "executor_ref to an any_executor moved from");
 }
 

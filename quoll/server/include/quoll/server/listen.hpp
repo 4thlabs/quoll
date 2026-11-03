@@ -58,12 +58,17 @@ struct listen_options {
 /**
  * @brief Listens on `port` and serves `router` there, until a stop request: the server of a program.
  *
- * Listens through the network of the executor the task runs on (io::listen): run it with sync_wait, which stops it on
- * Ctrl-C. Throws std::system_error when the address cannot be bound, and fails like serve() otherwise. `router`
- * outlives the task and the connections it serves.
+ * Listens through the network of the executor the task runs on (io::listen), a runtime's: spawned with the runtime's
+ * stop token, it stops on Ctrl-C. Throws std::system_error when the address cannot be bound, and fails like serve()
+ * otherwise. `router` outlives the task and the connections it serves.
  *
  * @code
- * quoll::sync_wait(quoll::server::listen(router, 8080));
+ * quoll::async::task<> serve_notes(std::uint16_t port) {
+ *   quoll::http::router router;
+ *
+ *   quoll::rest::mount<notes::api>(router, notes_service{});
+ *   co_await quoll::server::listen(router, port);
+ * }
  * @endcode
  */
 [[nodiscard]] inline async::task<> listen(http::router const &router, std::uint16_t port, listen_options options = {}) {

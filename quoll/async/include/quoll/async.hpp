@@ -44,6 +44,7 @@
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detached.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/executor_ref.hpp>
 #include <quoll/async/offers_service.hpp>

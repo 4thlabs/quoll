@@ -40,7 +40,7 @@
 #include <quoll/asio/acceptor.hpp>
 #include <quoll/asio/connector.hpp>
 #include <quoll/asio/executor.hpp>
-#include <quoll/asio/sync_wait.hpp>
+#include <quoll/asio/runtime.hpp>
 #include <quoll/asio/tcp_stream.hpp>
 
 #endif // QUOLL_ASIO_HPP

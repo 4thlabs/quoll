@@ -110,19 +110,19 @@ class network_executor {
 public:
   using services = async::service_list<io::network_ref>;
 
-  network_executor(async::run_loop &loop, network_log &log) : loop_(loop.get_executor()), log_(&log) {}
+  network_executor(async::run_loop &loop, network_log &log) : loop_(loop.get_executor()), network_{&log} {}
 
   void post(async::work_item &item) const { loop_.post(item); }
 
-  [[nodiscard]] io::network_ref query(async::service_tag<io::network_ref>) const {
-    return io::network_ref{fake_network{log_}};
-  }
+  [[nodiscard]] io::network_ref query(async::service_tag<io::network_ref>) const { return io::network_ref{network_}; }
 
-  [[nodiscard]] bool operator==(network_executor const &) const noexcept = default;
+  [[nodiscard]] bool operator==(network_executor const &other) const noexcept {
+    return loop_ == other.loop_ && network_.log == other.network_.log;
+  }
 
 private:
   async::run_loop::executor loop_;
-  network_log *log_;
+  fake_network network_;
 };
 
 task<int> use_network() {
@@ -167,4 +167,13 @@ TEST_CASE("any_listener moves, and recovers the listener it wraps", "[io][networ
 
   listener = std::move(moved);
   REQUIRE(listener.target<idle_listener>()->accepts == &accepts);
+}
+
+TEST_CASE("network_ref refers to a network, and recovers it", "[io][network]") {
+  network_log log;
+  fake_network const network{&log};
+  io::network_ref const ref{network};
+
+  REQUIRE(ref.target<fake_network>() == &network);
+  REQUIRE(ref.target<int>() == nullptr);
 }

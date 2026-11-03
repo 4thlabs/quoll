@@ -37,68 +37,78 @@
 #ifndef QUOLL_IO_NETWORK_REF_HPP
 #define QUOLL_IO_NETWORK_REF_HPP
 
+#include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_listener.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/network.hpp>
 
-#include <cstddef>
+#include <concepts>
 #include <cstdint>
-#include <memory>
-#include <new>
 #include <string>
 #include <utility>
 
 namespace quoll::io {
 
 /**
- * @brief The network service of an executor, `executor.query<io::network_ref>()`, as an asio executor offers it.
+ * @brief Non-owning, type-erased reference to a Network; models Network itself. The service an executor of an I/O
+ * loop offers: `executor.query<io::network_ref>()`.
  *
- * A type-erased reference to a Network: valid while the executor that handed it out lives and stays where it is, like
- * a std::string_view. Use it at once, from the task that got it; io::connect() and io::listen() do.
+ * Trivially copyable and never allocates. The referenced network, usually the executor that answered the query, must
+ * outlive the reference: io::connect() and io::listen() use it at once, from the task's own executor.
+ *
+ * Thread safety: same as the referenced network.
  */
 class network_ref {
 public:
-  template <Network N>
-    requires(sizeof(N) <= 2 * sizeof(void *) && alignof(N) <= alignof(void *))
-  explicit network_ref(N network) noexcept : vtable_(&vtable_for<N>) {
-    std::construct_at(reinterpret_cast<N *>(storage_), network);
-  }
+  // The exclusion comes first: it stops Network<network_ref> from checking this constructor against itself.
+  template <class N>
+    requires(!std::same_as<N, network_ref> && Network<N>)
+  explicit network_ref(N const &network) noexcept : network_(&network), vtable_(&vtable_for<N>) {}
+
+  template <class N>
+    requires(!std::same_as<N, network_ref> && Network<N>)
+  explicit network_ref(N const &&network) = delete;
 
   /** @brief Opens a connection to `host` (a name or an address) on `port`. */
   [[nodiscard]] async::task<any_stream> connect(std::string host, std::uint16_t port) const {
-    return vtable_->connect(storage_, std::move(host), port);
+    return vtable_->connect(network_, std::move(host), port);
   }
 
   /** @brief Listens on `address` (an IP address) and `port` (0 for any free port). */
   [[nodiscard]] any_listener listen(std::string address, std::uint16_t port) const {
-    return vtable_->listen(storage_, std::move(address), port);
+    return vtable_->listen(network_, std::move(address), port);
+  }
+
+  /** @brief The referenced network if its type is exactly `N`, otherwise `nullptr`. */
+  template <class N>
+  [[nodiscard]] N const *target() const noexcept {
+    return vtable_->type == async::detail::type_id_of<N>() ? static_cast<N const *>(network_) : nullptr;
   }
 
 private:
   struct vtable {
     async::task<any_stream> (*connect)(void const *network, std::string host, std::uint16_t port);
     any_listener (*listen)(void const *network, std::string address, std::uint16_t port);
+    async::detail::type_id type;
   };
-
-  template <Network N>
-  [[nodiscard]] static N const &held(void const *storage) noexcept {
-    return *std::launder(static_cast<N const *>(storage));
-  }
 
   template <Network N>
   static constexpr vtable vtable_for{
       [](void const *network, std::string host, std::uint16_t port) {
-        return held<N>(network).connect(std::move(host), port);
+        return static_cast<N const *>(network)->connect(std::move(host), port);
       },
       [](void const *network, std::string address, std::uint16_t port) {
-        return held<N>(network).listen(std::move(address), port);
+        return static_cast<N const *>(network)->listen(std::move(address), port);
       },
+      async::detail::type_id_of<N>(),
   };
 
-  alignas(void *) std::byte storage_[2 * sizeof(void *)];
+  void const *network_;
   vtable const *vtable_;
 };
+
+static_assert(Network<network_ref>);
 
 } // namespace quoll::io
 

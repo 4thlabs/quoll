@@ -73,7 +73,7 @@ public:
    * @brief References the executor `executor` wraps, rather than the wrapper: its target() and query() are the wrapped
    * executor's. Valid while `executor` lives and is not moved. Defined in any_executor.hpp.
    */
-  explicit executor_ref(any_executor const &executor) noexcept;
+  inline explicit executor_ref(any_executor const &executor) noexcept;
   explicit executor_ref(any_executor const &&executor) = delete;
 
   /** @brief Posts `item` to the referenced executor. */

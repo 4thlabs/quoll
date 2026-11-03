@@ -34,25 +34,29 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detached.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/runtime.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
-#include <stdexcept>
-
 namespace {
 
-quoll::async::task<int> answer() { co_return 42; }
-
-quoll::async::task<> fail() {
-  throw std::runtime_error{"failed"};
+quoll::async::task<> count(int &runs) {
+  ++runs;
   co_return;
 }
 
 } // namespace
 
-TEST_CASE("quoll::sync_wait runs a task on the build's runtime", "[runtime]") {
-  REQUIRE(quoll::sync_wait(answer()) == 42);
-  REQUIRE_THROWS_AS(quoll::sync_wait(fail()), std::runtime_error);
+TEST_CASE("quoll::runtime runs the tasks spawned on it, then returns", "[runtime]") {
+  quoll::runtime runtime;
+  int runs = 0;
+
+  co_spawn(runtime.get_executor(), count(runs), quoll::async::detached, runtime.get_stop_token());
+  co_spawn(runtime.get_executor(), count(runs), quoll::async::detached);
+  runtime.run();
+
+  REQUIRE(runs == 2);
 }

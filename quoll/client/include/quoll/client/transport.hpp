@@ -64,7 +64,7 @@ namespace quoll::client {
 
 /**
  * @brief HttpTransport speaking HTTP/1.1 to one server, over the byte streams of a connector: by default the network
- * of the executor that sends (io::network_connector), as sync_wait provides it.
+ * of the executor that sends (io::network_connector), as quoll::runtime provides it.
  *
  * Each request goes to `host` on `port`, with a `Host` field naming them unless the request has one. Connections are
  * kept open once their response is read (keep-alive), up to `max_idle_connections`, and the next requests reuse them;
@@ -106,7 +106,7 @@ public:
   /**
    * @brief A transport to the server of `url`, `http://host[:port]` (an IPv6 address in brackets), connecting with a
    * default-constructed connector: by default through the network of the executor that sends (io::network_connector),
-   * as sync_wait provides it.
+   * as quoll::runtime provides it.
    *
    * @code
    * quoll::client::transport<> transport{"http://127.0.0.1:8080"};
