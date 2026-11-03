@@ -45,6 +45,7 @@
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/io_result.hpp>
 
+#include <asio/any_io_executor.hpp>
 #include <asio/buffer.hpp>
 #include <asio/ip/tcp.hpp>
 
@@ -60,13 +61,23 @@ namespace quoll::asio {
 
 namespace detail {
 
+// The cancellation of each direction, allocated together.
+struct tcp_cancellations {
+  explicit tcp_cancellations(::asio::any_io_executor const &executor) noexcept : read(executor), write(executor) {}
+
+  cancellation read;
+  cancellation write;
+};
+
 // What a tcp_stream keeps at a stable address: the socket, and the cancellation of each direction.
 struct tcp_state {
   explicit tcp_state(::asio::ip::tcp::socket &&connected)
-      : socket(std::move(connected)), read(std::make_shared<cancellation>(socket.get_executor())),
-        write(std::make_shared<cancellation>(socket.get_executor())) {}
+      : socket(std::move(connected)), cancellations(std::make_shared<tcp_cancellations>(socket.get_executor())),
+        read(cancellations, &cancellations->read), write(cancellations, &cancellations->write) {}
 
   ::asio::ip::tcp::socket socket;
+  std::shared_ptr<tcp_cancellations> cancellations;
+  // Share the ownership of `cancellations`.
   std::shared_ptr<cancellation> read;
   std::shared_ptr<cancellation> write;
 };
@@ -113,8 +124,8 @@ public:
   public:
     [[nodiscard]] bool await_ready() const noexcept { return operation_.await_ready(); }
 
-    void await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
-      operation_.await_suspend(handle, context);
+    [[nodiscard]] bool await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
+      return operation_.await_suspend(handle, context);
     }
 
     // Bytes read along with an error are reported alone: the socket reports the error again on the next read.
@@ -143,8 +154,8 @@ public:
   public:
     [[nodiscard]] bool await_ready() const noexcept { return operation_.await_ready(); }
 
-    void await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
-      operation_.await_suspend(handle, context);
+    [[nodiscard]] bool await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
+      return operation_.await_suspend(handle, context);
     }
 
     [[nodiscard]] io::io_result await_resume() {

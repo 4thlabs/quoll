@@ -42,7 +42,6 @@
 #include <asio/cancellation_type.hpp>
 #include <asio/post.hpp>
 
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -54,7 +53,8 @@ namespace quoll::asio::detail {
 // asio's cancellation signals are not thread-safe, and neither are its I/O objects. So everything touching the signal
 // runs on the I/O object's executor: the start of an operation (start()), its end (finish(), from its handler) and
 // its cancellation, which request() posts there. Each operation gets a ticket when it is about to start: a request
-// only cancels the operation it was made for, never a later one, nor one that has already finished.
+// only cancels the operation it was made for, while it runs (started_ holds its ticket until it finishes), never a
+// later one, nor one that has already finished.
 //
 // Shared: a posted cancellation keeps it alive, even past the I/O object.
 class cancellation {
@@ -69,8 +69,9 @@ public:
 
   [[nodiscard]] ::asio::any_io_executor const &executor() const noexcept { return executor_; }
 
-  // Any thread: the ticket of the operation about to start, which makes every earlier request obsolete.
-  [[nodiscard]] std::uint64_t next() noexcept { return ++latest_; }
+  // By the awaiter of the operation about to start. The operations of one direction follow one another (each resumes
+  // its awaiter before the next starts), so the counter needs no synchronisation.
+  [[nodiscard]] std::uint64_t next() noexcept { return ++issued_; }
 
   // On the executor: the slot to bind the operation of `ticket` to.
   [[nodiscard]] ::asio::cancellation_slot start(std::uint64_t ticket) noexcept {
@@ -87,7 +88,7 @@ public:
     auto executor = self->executor_;
 
     ::asio::post(executor, [self = std::move(self), ticket] {
-      if (self->started_ == ticket && self->latest_.load() == ticket) {
+      if (self->started_ == ticket) {
         self->signal_.emit(::asio::cancellation_type::terminal);
       }
     });
@@ -95,7 +96,7 @@ public:
 
 private:
   ::asio::any_io_executor executor_;
-  std::atomic<std::uint64_t> latest_{0};
+  std::uint64_t issued_ = 0;
   // Executor only.
   std::uint64_t started_ = 0;
   ::asio::cancellation_signal signal_;

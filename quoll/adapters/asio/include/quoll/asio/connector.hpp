@@ -49,10 +49,12 @@
 #include <asio/associated_cancellation_slot.hpp>
 #include <asio/cancellation_type.hpp>
 #include <asio/connect.hpp>
+#include <asio/error.hpp>
 #include <asio/ip/tcp.hpp>
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -61,22 +63,61 @@ namespace quoll::asio {
 
 namespace detail {
 
+// async_resolve ignores cancellation slots, and a lookup in progress (getaddrinfo, on asio's resolver thread) cannot be
+// interrupted. So a cancellation completes the operation at once, with operation_aborted, and the lookup's own
+// completion is dropped when it comes. Both run on the resolver's executor: the first one completes the operation.
+struct resolve_initiation {
+  ::asio::ip::tcp::resolver *resolver;
+  std::string const *host;
+  std::string const *service;
+
+  template <class Handler>
+  void operator()(Handler handler) const {
+    auto pending = std::make_shared<std::optional<Handler>>(std::move(handler));
+    auto slot = ::asio::get_associated_cancellation_slot(**pending);
+
+    if (slot.is_connected()) {
+      slot.assign([pending](::asio::cancellation_type) {
+        complete(*pending, ::asio::error::operation_aborted, ::asio::ip::tcp::resolver::results_type{});
+      });
+    }
+
+    try {
+      resolver->async_resolve(*host, *service,
+                              [pending](std::error_code error, ::asio::ip::tcp::resolver::results_type endpoints) {
+                                complete(*pending, error, std::move(endpoints));
+                              });
+    } catch (...) {
+      // Not started: nothing left to cancel.
+      if (slot.is_connected()) {
+        slot.clear();
+      }
+
+      throw;
+    }
+  }
+
+  template <class Handler>
+  static void complete(std::optional<Handler> &pending, std::error_code error,
+                       ::asio::ip::tcp::resolver::results_type endpoints) {
+    if (!pending) {
+      return;
+    }
+
+    auto handler = std::move(*pending);
+
+    pending.reset();
+    std::move(handler)(error, std::move(endpoints));
+  }
+};
+
 inline async::task<io::any_stream> connect(::asio::any_io_executor executor, std::string host, std::uint16_t port) {
   auto const cancel = std::make_shared<cancellation>(executor);
   ::asio::ip::tcp::resolver resolver{executor};
   auto const service = std::to_string(port);
 
-  auto [resolve_error, endpoints] =
-      co_await make_operation<::asio::ip::tcp::resolver::results_type>(cancel, [&](auto handler) {
-        // async_resolve ignores the cancellation slot: a cancellation cancels the resolver instead.
-        auto slot = ::asio::get_associated_cancellation_slot(handler);
-
-        if (slot.is_connected()) {
-          slot.assign([&resolver](::asio::cancellation_type) { resolver.cancel(); });
-        }
-
-        resolver.async_resolve(host, service, std::move(handler));
-      });
+  auto [resolve_error, endpoints] = co_await make_operation<::asio::ip::tcp::resolver::results_type>(
+      cancel, resolve_initiation{&resolver, &host, &service});
 
   if (resolve_error) {
     throw std::system_error{to_io_error(resolve_error), "quoll::asio::connector: cannot resolve " + host};
@@ -106,6 +147,8 @@ inline async::task<io::any_stream> connect(::asio::any_io_executor executor, std
  * at a time (an io_context run by one thread, or a strand).
  *
  * The task copies what it needs: the connector does not have to outlive it.
+ *
+ * Thread safety: connect() may be called from any thread, concurrently; each attempt has its own resolver and socket.
  */
 class connector {
 public:
