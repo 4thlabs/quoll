@@ -146,14 +146,25 @@ template <fixed_string Param>
   return token.empty() ? std::nullopt : std::optional<std::string>{token};
 }
 
+// The challenge of a 401, which RFC 9110 requires: `Bearer`, or `ApiKey` with where the key goes (API keys have no
+// registered scheme; the name tells the client what to send).
+[[nodiscard]] inline std::string challenge(std::type_identity<bearer_auth>) { return "Bearer"; }
+
+template <fixed_string Header>
+[[nodiscard]] std::string challenge(std::type_identity<api_key<Header>>) {
+  return "ApiKey header=\"" + std::string{Header.view()} + "\"";
+}
+
+template <fixed_string Param>
+[[nodiscard]] std::string challenge(std::type_identity<api_key_query<Param>>) {
+  return "ApiKey query=\"" + std::string{Param.view()} + "\"";
+}
+
 template <class Scheme>
 [[nodiscard]] http::response unauthorized(std::string detail) {
   auto response = problem_response(http::status::unauthorized, std::move(detail));
 
-  if constexpr (std::same_as<Scheme, bearer_auth>) {
-    response.fields.add("WWW-Authenticate", "Bearer");
-  }
-
+  response.fields.add("WWW-Authenticate", challenge(std::type_identity<Scheme>{}));
   return response;
 }
 
