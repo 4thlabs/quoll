@@ -174,6 +174,7 @@ TEST_CASE("router: an absolute-form target is routed by its path", "[http][route
   REQUIRE(dispatch(router, verb::get, "http://example.com/users?limit=1").body == "users.list\n?limit=1");
   REQUIRE(dispatch(router, verb::get, "HTTPS://example.com:8443/users/42").body == "users.get\n42\n?");
   REQUIRE(dispatch(router, verb::get, "http://example.com").body == "root\n?");
+  REQUIRE(dispatch(router, verb::get, "http://example.com?limit=1").body == "root\n?limit=1");
 }
 
 TEST_CASE("router: HEAD goes to the GET route", "[http][router]") {

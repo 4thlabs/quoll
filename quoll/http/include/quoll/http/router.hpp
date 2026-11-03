@@ -119,9 +119,8 @@ public:
    * handler throws, even before it returns its task, comes out of the task.
    */
   [[nodiscard]] async::task<response> dispatch(request message) const {
-    auto const target = detail::origin_form(message.target);
-    auto const question = target.find('?');
-    auto const segments = target.empty() ? std::nullopt : detail::decode_segments(target.substr(0, question));
+    auto const target = detail::split_target(message.target);
+    auto const segments = target ? detail::decode_segments(target->path) : std::nullopt;
 
     if (!segments) {
       co_return detail::status_response(status::bad_request);
@@ -154,8 +153,7 @@ public:
     }
 
     if (chosen != nullptr) {
-      route_match match{chosen->name, detail::extract_params(chosen->segments, *segments),
-                        question == std::string_view::npos ? std::string{} : std::string{target.substr(question + 1)}};
+      route_match match{chosen->name, detail::extract_params(chosen->segments, *segments), std::string{target->query}};
 
       co_return co_await chosen->target(std::move(message), std::move(match));
     }
