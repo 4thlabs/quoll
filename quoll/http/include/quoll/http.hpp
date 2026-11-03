@@ -43,6 +43,7 @@
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
+#include <quoll/http/router.hpp>
 #include <quoll/http/serializer.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/transport.hpp>

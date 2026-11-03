@@ -1,0 +1,142 @@
+//   ___              _ _
+//  / _ \ _   _  ___ | | |
+// | | | | | | |/ _ \| | |
+// | |_| | |_| | (_) | | |
+//  \__\_\\__,_|\___/|_|_|
+//
+// BSD 3-Clause License
+//
+// Copyright (c) 2026, Thomas Gourgues (thomas.gourgues@gmail.com)
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#include <quoll/async/task.hpp>
+#include <quoll/http/request.hpp>
+#include <quoll/http/response.hpp>
+#include <quoll/http/router.hpp>
+#include <quoll/http/status.hpp>
+#include <quoll/http/verb.hpp>
+#include <quoll/test/run.hpp>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <stdexcept>
+#include <string>
+#include <utility>
+
+namespace {
+
+namespace http = quoll::http;
+
+using http::verb;
+using quoll::async::task;
+
+// Answers with what it was routed with: the route name, then each parameter, then the query, one per line.
+task<http::response> echo(http::request, http::route_match match) {
+  http::response answer;
+
+  answer.body = std::string{match.name};
+
+  for (auto const &param : match.params) {
+    answer.body += "\n" + param;
+  }
+
+  answer.body += "\n?" + match.query;
+  co_return answer;
+}
+
+http::router make_router() {
+  http::router router;
+
+  router.add(verb::get, "/users/{id:int64}", "users.get", echo);
+  router.add(verb::delete_, "/users/{id}", "users.remove", echo);
+  router.add(verb::get, "/users/me", "users.me", echo);
+  router.add(verb::get, "/users", "users.list", echo);
+  router.add(verb::get, "/files/{rest:path}", "files.get", echo);
+  router.add(verb::get, "/", "root", echo);
+  return router;
+}
+
+http::response dispatch(http::router const &router, verb method, std::string target) {
+  http::request message;
+
+  message.method = method;
+  message.target = std::move(target);
+  return quoll::test::run(router.dispatch(std::move(message))).value();
+}
+
+} // namespace
+
+TEST_CASE("router: a route gets its name, its decoded parameters and the query", "[http][router]") {
+  auto const router = make_router();
+
+  REQUIRE(dispatch(router, verb::get, "/users/42").body == "users.get\n42\n?");
+  REQUIRE(dispatch(router, verb::get, "/users/caf%C3%A9?limit=2&x=%20").body == "users.get\ncafé\n?limit=2&x=%20");
+  REQUIRE(dispatch(router, verb::delete_, "/users/42").body == "users.remove\n42\n?");
+  REQUIRE(dispatch(router, verb::get, "/users").body == "users.list\n?");
+  REQUIRE(dispatch(router, verb::get, "/").body == "root\n?");
+}
+
+TEST_CASE("router: a literal segment beats a parameter, whatever the order they were added in", "[http][router]") {
+  auto const router = make_router();
+
+  REQUIRE(dispatch(router, verb::get, "/users/me").body == "users.me\n?");
+  REQUIRE(dispatch(router, verb::get, "/users/mE").body == "users.get\nmE\n?");
+}
+
+TEST_CASE("router: {name:path} takes the rest of the path", "[http][router]") {
+  auto const router = make_router();
+
+  REQUIRE(dispatch(router, verb::get, "/files/a/b%20c").body == "files.get\na/b c\n?");
+  REQUIRE(dispatch(router, verb::get, "/files/").body == "files.get\n\n?");
+  REQUIRE(dispatch(router, verb::get, "/files").status == http::status::not_found);
+}
+
+TEST_CASE("router: no route is 404, another method 405 with Allow, a bad target 400", "[http][router]") {
+  auto const router = make_router();
+
+  REQUIRE(dispatch(router, verb::get, "/accounts").status == http::status::not_found);
+  // Trailing slash: another path, and an empty segment is no {id}.
+  REQUIRE(dispatch(router, verb::get, "/users/").status == http::status::not_found);
+
+  auto const rejected = dispatch(router, verb::post, "/users/42");
+
+  REQUIRE(rejected.status == http::status::method_not_allowed);
+  REQUIRE(rejected.fields.find("Allow") == "GET, DELETE");
+  REQUIRE(dispatch(router, verb::get, "/users/%zz").status == http::status::bad_request);
+  REQUIRE(dispatch(router, verb::get, "http://example.com/users").status == http::status::bad_request);
+}
+
+TEST_CASE("router: an invalid template throws", "[http][router]") {
+  http::router router;
+
+  REQUIRE_THROWS_AS(router.add(verb::get, "users", "x", echo), std::invalid_argument);
+  REQUIRE_THROWS_AS(router.add(verb::get, "/users/x{id}", "x", echo), std::invalid_argument);
+  REQUIRE_THROWS_AS(router.add(verb::get, "/users/{id", "x", echo), std::invalid_argument);
+  REQUIRE_THROWS_AS(router.add(verb::get, "/users/{}", "x", echo), std::invalid_argument);
+  REQUIRE_THROWS_AS(router.add(verb::get, "/files/{rest:path}/meta", "x", echo), std::invalid_argument);
+}
