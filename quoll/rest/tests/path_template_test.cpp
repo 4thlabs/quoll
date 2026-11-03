@@ -73,6 +73,8 @@ static_assert(parse_path("/users/{id:float}").error == path_error::unknown_type)
 static_assert(parse_path("/users/x{id}").error == path_error::not_whole_segment);
 static_assert(parse_path("/users/{id}.json").error == path_error::not_whole_segment);
 static_assert(parse_path("/{rest:path}/{id}").error == path_error::rest_not_last);
+static_assert(parse_path("/files/{rest:path}/meta").error == path_error::rest_not_last);
+static_assert(parse_path("/files/{rest:path}/").error == path_error::rest_not_last);
 static_assert(parse_path("/{id}/{id:int}").error == path_error::duplicate_name);
 
 static_assert(join_paths<"/api", "/users">().view() == "/api/users");

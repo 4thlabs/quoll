@@ -159,6 +159,16 @@ static_assert(std::same_as<v1::route<auth::login>::schemes, type_list<>>);
 static_assert(users::api::route<users::get>::path == "/users/{id:int64}");
 static_assert(std::same_as<users::api::route<users::get>::arguments, std::tuple<std::int64_t>>);
 
+// What endpoint<> and route (with the parts inherited from with<>) reject, checked on the predicates of their
+// static_asserts.
+static_assert(quoll::rest::detail::count_bodies(
+                  type_list<quoll::rest::body<new_user>, quoll::rest::query<"q", int>, quoll::rest::body<user>>{}) ==
+              2);
+static_assert(!quoll::rest::detail::distinct_statuses(
+    type_list<quoll::rest::returns<user>, quoll::rest::returns<not_found, status::not_found>,
+              quoll::rest::returns<card, status::not_found>>{}));
+static_assert(quoll::rest::detail::distinct_statuses(v1::route<users::get>::parts{}));
+
 // What api<> rejects, checked on the predicates its static_asserts use.
 using clash = quoll::rest::endpoint<"users.get", verb::get, "/other">;
 using same_route = quoll::rest::endpoint<"users.find", verb::get, "/{uid:int64}">;

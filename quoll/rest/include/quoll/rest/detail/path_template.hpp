@@ -195,10 +195,6 @@ struct path_template {
       return fail(path_error::unknown_type);
     }
 
-    if (parsed.size > 0 && parsed.params[parsed.size - 1].kind == param_kind::rest_of_path) {
-      return fail(path_error::rest_not_last);
-    }
-
     for (std::size_t other = 0; other < parsed.size; ++other) {
       if (parsed.params[other].name == name) {
         return fail(path_error::duplicate_name);
@@ -207,6 +203,11 @@ struct path_template {
 
     if (parsed.size == max_path_params) {
       return fail(path_error::too_many_parameters);
+    }
+
+    // The rest of the path: nothing may follow, neither a parameter nor a literal segment.
+    if (param.kind == param_kind::rest_of_path && close + 1 < text.size()) {
+      return fail(path_error::rest_not_last);
     }
 
     parsed.params[parsed.size++] = param;
