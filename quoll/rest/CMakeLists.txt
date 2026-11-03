@@ -22,8 +22,10 @@ quoll_declare_module(NAME rest DEPS quoll::http $<BUILD_INTERFACE:${quoll_glaze_
 
 quoll_declare_tests(
   SOURCES
+    tests/contract_test.cpp
     tests/json_codec_test.cpp
     tests/param_traits_test.cpp
+    tests/path_template_test.cpp
   DEPS
     quoll::rest
 )

@@ -17,8 +17,9 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 Exploration. Modules so far: `quoll::async` (task, executor_ref, await_context with stop token, co_spawn, when_all,
 run_loop), `quoll::io` (`ByteStream` and `Connector` concepts, `any_stream` type erasure, in-memory stream pair,
 `io::write`), `quoll::http` (messages, llhttp parser, serializer, `http::read` / `http::write` over a byte stream,
-`HttpTransport` concept; llhttp is compiled and exported as `quoll::llhttp`), `quoll::rest` (so far its codecs:
-`json_codec` on Glaze, `text_codec`, `param_traits` for parameters), and the adapters `quoll::threads`
+`HttpTransport` concept; llhttp is compiled and exported as `quoll::llhttp`), `quoll::rest` (so far the contract:
+`endpoint`, `api`, `with`, the parts and compile-time checked path templates; and the codecs: `json_codec` on Glaze,
+`text_codec`, `param_traits`), and the adapters `quoll::threads`
 (thread pool executor; its tests do not run under WASM), `quoll::asio` (asio executor, `tcp_stream`, TCP connector;
 native only, the application provides standalone asio) and `quoll::emscripten` (JavaScript event loop executor,
 `fetch_transport`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`). A
