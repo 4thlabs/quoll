@@ -53,7 +53,10 @@
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/io_result.hpp>
+#include <quoll/io/network.hpp>
+#include <quoll/io/write.hpp>
 #include <quoll/rest.hpp>
+#include <quoll/server/listen.hpp>
 #include <quoll/server/serve.hpp>
 #include <quoll/test/check.hpp>
 #include <quoll/test/overloaded.hpp>
@@ -69,6 +72,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -309,17 +313,72 @@ struct accounts_calls {
 };
 
 // REST calls on one client, then a stop request for the server.
-task<accounts_calls> call_accounts(accounts_client client, std::stop_source &source) {
+// The REST calls of the TCP tests, on one client.
+template <class Client>
+task<accounts_calls> make_calls(Client &client) {
   using namespace asio_test;
 
   accounts_calls calls;
 
   // The POST first: it opens a connection, which the GETs then reuse (a POST never takes an idle one).
-  calls.opened = co_await client.call<accounts::open>({.owner = "Grace"});
-  calls.found = co_await client.call<accounts::get>(42);
-  calls.missing = (co_await client.try_call<accounts::get>(7))->get<http::status::not_found>().detail;
+  calls.opened = co_await client.template call<accounts::open>({.owner = "Grace"});
+  calls.found = co_await client.template call<accounts::get>(42);
+  calls.missing = (co_await client.template try_call<accounts::get>(7))->template get<http::status::not_found>().detail;
+  co_return calls;
+}
+
+// REST calls on one client, then a stop request for the server.
+task<accounts_calls> call_accounts(accounts_client client, std::stop_source &source) {
+  auto calls = co_await make_calls(client);
+
   source.request_stop();
   co_return calls;
+}
+
+// A port free on the loopback interface, as the system picks it: bound, read, released.
+std::uint16_t free_port() {
+  ::asio::io_context context;
+
+  return port_of(listen(context));
+}
+
+// A connection through the network of sync_wait's executor, to a socket listening there: the bytes sent arrive.
+task<std::string> loop_through_network() {
+  auto listener = co_await io::listen(0);
+  auto const port = listener.target<quoll::asio::acceptor>()->socket().local_endpoint().port();
+  auto [accepted, connected] = co_await quoll::async::when_all(listener.accept(), io::connect("127.0.0.1", port));
+  std::string const sent = "ping";
+  std::array<char, 16> received{};
+
+  check((co_await io::write(connected, std::as_bytes(std::span{sent}))).error);
+
+  auto const read = co_await accepted.read_some(std::as_writable_bytes(std::span{received}));
+
+  check(read.error);
+  co_return std::string{received.data(), read.transferred};
+}
+
+// REST calls with a client built from a URL, then Ctrl-C, which sync_wait turns into a stop request.
+task<accounts_calls> call_then_interrupt(std::uint16_t port) {
+  quoll::rest::client<asio_test::accounts::api> client{"http://127.0.0.1:" + std::to_string(port)};
+  auto calls = co_await make_calls(client);
+
+  std::raise(SIGINT);
+  co_return calls;
+}
+
+task<accounts_calls> serve_and_call(http::router const &router, std::uint16_t port) {
+  auto [served, calls] =
+      co_await quoll::async::when_all(quoll::server::listen(router, port), call_then_interrupt(port));
+
+  co_return calls;
+}
+
+task<int> answer() { co_return 42; }
+
+task<> fail() {
+  throw std::runtime_error{"failed"};
+  co_return;
 }
 
 } // namespace
@@ -575,7 +634,7 @@ TEST_CASE("asio: quoll::server serves a router over TCP, until a stop request", 
   std::exception_ptr failure;
   bool served = false;
 
-  co_spawn(executor, quoll::server::serve(executor, acceptor, router),
+  co_spawn(executor, quoll::server::serve(acceptor, router),
            overloaded{[&] { served = true; }, [&](std::exception_ptr error) { failure = std::move(error); }},
            source.get_token());
   spawn(context, get_then_stop(quoll::asio::connector{context.get_executor()}, port, source), response, failure);
@@ -603,7 +662,7 @@ TEST_CASE("asio: a REST client calls a mounted API over TCP, on one connection k
   std::optional<accounts_calls> calls;
   std::exception_ptr failure;
 
-  co_spawn(executor, quoll::server::serve(executor, acceptor, router),
+  co_spawn(executor, quoll::server::serve(acceptor, router),
            overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }}, source.get_token());
   spawn(context, call_accounts(std::move(client), source), calls, failure);
   run(context, failure);
@@ -640,4 +699,26 @@ TEST_CASE("asio: a stop request abandons a request waiting for its response", "[
 
   REQUIRE(error);
   REQUIRE(*error == std::errc::operation_canceled);
+}
+
+TEST_CASE("asio::sync_wait runs a task to its end, and hands over its outcome", "[asio][sync_wait]") {
+  REQUIRE(quoll::asio::sync_wait(answer()) == 42);
+  REQUIRE_THROWS_AS(quoll::asio::sync_wait(fail()), std::runtime_error);
+  REQUIRE_THROWS_AS(quoll::asio::sync_wait(io::connect("127.0.0.1", free_port())), std::system_error);
+}
+
+TEST_CASE("asio::sync_wait offers the loop's network to its task", "[asio][sync_wait]") {
+  REQUIRE(quoll::asio::sync_wait(loop_through_network()) == "ping");
+}
+
+TEST_CASE("asio: a REST client from a URL calls server::listen, until Ctrl-C", "[asio][sync_wait][rest][client]") {
+  http::router router;
+
+  quoll::rest::mount<asio_test::accounts::api>(router, asio_test::accounts_service{});
+
+  auto const calls = quoll::asio::sync_wait(serve_and_call(router, free_port()));
+
+  REQUIRE(calls.found.owner == "Ada");
+  REQUIRE(calls.missing == "no account 7");
+  REQUIRE(calls.opened.owner == "Grace");
 }

@@ -49,6 +49,11 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
 - Web build (2026-11-02, see [Web integration and build chain](#web-integration-and-build-chain)): **React + Vite**
   for the reference sample and the scaffolding template, while Quoll's npm side stays framework-agnostic; **SPA /
   static builds only** (no SSR Node server); `openapi.json` is **generated, never committed**.
+- Program entry point (2026-11-03): application code names no adapter. `quoll::sync_wait(task)` (like
+  `std::this_thread::sync_wait`) runs the build's runtime in the calling thread, stopped by Ctrl-C; the runtime is the
+  adapter chosen with `QUOLL_RUNTIME` (asio natively). Executors carry the services of their loop
+  (`executor.query<io::network>()`), so `io::connect` / `io::listen`, `server::listen(router, port)` and
+  `rest::client<api>{"http://host:port"}` need no executor, connector or acceptor handed to them.
 
 ## Architecture
 
@@ -616,6 +621,8 @@ Every point the plan leaves open, gathered here; the linked sections give the co
   need a timer, which Quoll does not have yet; a lingering close after an error response (so that the client reads it
   rather than a reset) needs a half-close in `ByteStream`; `Expect: 100-continue` needs the parser to stop after the
   header; a graceful shutdown lets in-flight requests finish, where a stop request now cancels them.
+- The entry point in a browser, where nothing blocks: no `sync_wait` there; tasks start with `co_spawn` on the event
+  loop, and the Worker is driven by the bridge. The default `rest::client` transport there would be `fetch`.
 - `quoll::client` beyond the prototype: connect and response timeouts (the same timer), a limit of connections per
   transport (requests now open a connection when none is idle), redirects, TLS through the connector. Idle connections
   are only found closed when a request uses them: closing them after an idle time needs the timer, and letting a POST

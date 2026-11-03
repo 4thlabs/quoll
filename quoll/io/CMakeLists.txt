@@ -4,6 +4,7 @@ quoll_declare_tests(
   SOURCES
     tests/any_stream_test.cpp
     tests/memory_stream_test.cpp
+    tests/network_test.cpp
   DEPS
     quoll::io
 )

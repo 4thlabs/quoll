@@ -2,6 +2,7 @@ quoll_declare_module(NAME async)
 
 quoll_declare_tests(
   SOURCES
+    tests/any_executor_test.cpp
     tests/executor_ref_test.cpp
     tests/run_loop_test.cpp
     tests/stop_token_test.cpp

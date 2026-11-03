@@ -38,6 +38,7 @@
 #define QUOLL_REST_CLIENT_HPP
 
 #include <quoll/async/task.hpp>
+#include <quoll/client/transport.hpp>
 #include <quoll/http/transport.hpp>
 #include <quoll/rest/call_error.hpp>
 #include <quoll/rest/detail/client_calls.hpp>
@@ -58,8 +59,9 @@ template <class Endpoint>
 using result = detail::call_result<Endpoint>;
 
 /**
- * @brief Calls the endpoints of `Api` through `Transport` (an http::HttpTransport): fetch in a browser, a Worker or
- * Node, a connection natively, a router of the same program (http::local_transport). The api may be a third-party
+ * @brief Calls the endpoints of `Api` through `Transport` (an http::HttpTransport): a connection natively
+ * (quoll::client::transport, the default), fetch in a browser, a Worker or Node, a router of the same program
+ * (http::local_transport). The api may be a third-party
  * one: its contract is all a client needs.
  *
  * - `call<Endpoint>(arguments...)` returns a task of the body of the endpoint's first returns<> (nothing for an
@@ -78,7 +80,7 @@ using result = detail::call_result<Endpoint>;
  * The task does not refer to the client: the request is built by the call, and the transport's task owns what it
  * needs. Thread safety: none (credentials() changes the client); calls on a const client may be concurrent.
  */
-template <class Api, http::HttpTransport Transport>
+template <class Api, http::HttpTransport Transport = ::quoll::client::transport<>>
 class client : public detail::client_call_set<client<Api, Transport>, Api,
                                               std::make_index_sequence<detail::max_arity(typename Api::routes{}) + 1>> {
 public:
@@ -88,6 +90,18 @@ public:
 
   explicit client(Transport transport) noexcept(std::is_nothrow_move_constructible_v<Transport>)
       : transport_(std::move(transport)) {}
+
+  /**
+   * @brief A client of the server at `base_url`, through a transport built from it: by default a connection over the
+   * network of the executor that calls (see quoll::client::transport, sync_wait), fetch_transport in a browser.
+   *
+   * @code
+   * quoll::rest::client<bank::v1> bank{"http://127.0.0.1:8080"};
+   * @endcode
+   */
+  explicit client(std::string base_url)
+    requires std::constructible_from<Transport, std::string>
+      : transport_(std::move(base_url)) {}
 
   /** @brief The credential sent, from now on, to the endpoints that require `Scheme`. */
   template <class Scheme>

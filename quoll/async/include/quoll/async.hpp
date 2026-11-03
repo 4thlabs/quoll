@@ -37,14 +37,17 @@
 #ifndef QUOLL_ASYNC_HPP
 #define QUOLL_ASYNC_HPP
 
+#include <quoll/async/any_executor.hpp>
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/completion_handler.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/executor_ref.hpp>
 #include <quoll/async/run_loop.hpp>
+#include <quoll/async/service.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/work_item.hpp>

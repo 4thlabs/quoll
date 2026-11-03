@@ -43,6 +43,7 @@
 #include <quoll/async/work_item.hpp>
 
 #include <concepts>
+#include <optional>
 #include <type_traits>
 
 namespace quoll::async {
@@ -55,16 +56,25 @@ namespace quoll::async {
  *
  * Thread safety: same as the referenced executor.
  */
+class any_executor;
+
 class executor_ref {
 public:
   // The exclusion comes first: it stops Executor<executor_ref> from checking this constructor against itself.
   template <class E>
-    requires(!std::same_as<E, executor_ref> && Executor<E>)
+    requires(!std::same_as<E, executor_ref> && !std::same_as<E, any_executor> && Executor<E>)
   explicit executor_ref(E const &executor) noexcept : executor_(&executor), vtable_(&detail::executor_vtable_for<E>) {}
 
   template <class E>
-    requires(!std::same_as<E, executor_ref> && Executor<E>)
+    requires(!std::same_as<E, executor_ref> && !std::same_as<E, any_executor> && Executor<E>)
   explicit executor_ref(E const &&executor) = delete;
+
+  /**
+   * @brief References the executor `executor` wraps, rather than the wrapper: its target() and query() are the wrapped
+   * executor's. Valid while `executor` lives and is not moved. Defined in any_executor.hpp.
+   */
+  explicit executor_ref(any_executor const &executor) noexcept;
+  explicit executor_ref(any_executor const &&executor) = delete;
 
   /** @brief Posts `item` to the referenced executor. */
   void post(work_item &item) const { vtable_->post(executor_, item); }
@@ -75,12 +85,23 @@ public:
     return vtable_->type == detail::type_id_of<E>() ? static_cast<E const *>(executor_) : nullptr;
   }
 
+  /** @brief The service `S` offered by the referenced executor, if it offers it (see service_list). */
+  template <class S>
+  [[nodiscard]] std::optional<S> query() const {
+    std::optional<S> found;
+
+    static_cast<void>(vtable_->query(executor_, detail::type_id_of<S>(), &found));
+    return found;
+  }
+
   /** @brief Equal when both reference executors of the same type that compare equal. */
   [[nodiscard]] friend bool operator==(executor_ref const &lhs, executor_ref const &rhs) noexcept {
     return lhs.vtable_ == rhs.vtable_ && lhs.vtable_->equal(lhs.executor_, rhs.executor_);
   }
 
 private:
+  friend class any_executor;
+
   void const *executor_;
   detail::executor_vtable const *vtable_;
 };
