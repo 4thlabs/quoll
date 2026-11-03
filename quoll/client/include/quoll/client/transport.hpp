@@ -41,6 +41,7 @@
 #include <quoll/client/detail/connection_pool.hpp>
 #include <quoll/client/detail/exchange.hpp>
 #include <quoll/client/detail/host.hpp>
+#include <quoll/client/detail/url.hpp>
 #include <quoll/client/transport_options.hpp>
 #include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/request.hpp>
@@ -48,19 +49,22 @@
 #include <quoll/http/serializer.hpp>
 #include <quoll/http/version.hpp>
 #include <quoll/io/connector.hpp>
+#include <quoll/io/network.hpp>
 
 #include <cassert>
+#include <concepts>
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace quoll::client {
 
 /**
- * @brief HttpTransport speaking HTTP/1.1 to one server, over the byte streams of a connector (TCP with
- * quoll::asio::connector).
+ * @brief HttpTransport speaking HTTP/1.1 to one server, over the byte streams of a connector: by default the network
+ * of the executor that sends (io::network_connector), as sync_wait provides it.
  *
  * Each request goes to `host` on `port`, with a `Host` field naming them unless the request has one. Connections are
  * kept open once their response is read (keep-alive), up to `max_idle_connections`, and the next requests reuse them;
@@ -87,7 +91,7 @@ namespace quoll::client {
  *
  * Thread safety: send() may be called from any thread, concurrently, if the connector allows it.
  */
-template <io::Connector Connector>
+template <io::Connector Connector = io::network_connector>
 class transport {
 public:
   /**
@@ -98,6 +102,21 @@ public:
    */
   transport(Connector connector, std::string host, std::uint16_t port, transport_options options = {})
       : state_(std::make_shared<state>(std::move(connector), std::move(host), port, options)) {}
+
+  /**
+   * @brief A transport to the server of `url`, `http://host[:port]` (an IPv6 address in brackets), connecting with a
+   * default-constructed connector: by default through the network of the executor that sends (io::network_connector),
+   * as sync_wait provides it.
+   *
+   * @code
+   * quoll::client::transport<> transport{"http://127.0.0.1:8080"};
+   * @endcode
+   *
+   * @throws std::invalid_argument for another URL: `https` and a path prefix are not supported yet.
+   */
+  explicit transport(std::string_view url, transport_options options = {})
+    requires std::default_initializable<Connector>
+      : transport(Connector{}, detail::parse_url(url), options) {}
 
   /**
    * @brief Sends `request` and produces its response.
@@ -122,6 +141,9 @@ public:
   }
 
 private:
+  transport(Connector connector, detail::origin server, transport_options options)
+      : transport(std::move(connector), std::move(server.host), server.port, options) {}
+
   struct state {
     state(Connector connector_, std::string host_, std::uint16_t port_, transport_options const &options_)
         : connector(std::move(connector_)), host(std::move(host_)), port(port_),

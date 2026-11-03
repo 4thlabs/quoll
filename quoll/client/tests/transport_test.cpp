@@ -506,3 +506,38 @@ TEST_CASE("client::transport: what cannot be sent is refused before the task run
   REQUIRE_THROWS_AS(transport.send(std::move(field)), std::invalid_argument);
   REQUIRE(server.connections == 0);
 }
+
+TEST_CASE("client::transport: built from an http URL", "[client]") {
+  using quoll::client::detail::parse_url;
+
+  auto const plain = parse_url("http://example.com");
+
+  REQUIRE(plain.host == "example.com");
+  REQUIRE(plain.port == 80);
+
+  auto const with_port = parse_url("HTTP://Example.com:8080/");
+
+  REQUIRE(with_port.host == "Example.com");
+  REQUIRE(with_port.port == 8080);
+
+  auto const ipv6 = parse_url("http://[::1]:8080");
+
+  REQUIRE(ipv6.host == "::1");
+  REQUIRE(ipv6.port == 8080);
+  REQUIRE(parse_url("http://[2001:db8::1]").port == 80);
+
+  for (std::string_view const url :
+       {"https://example.com", "ftp://example.com", "example.com", "http://", "http://example.com/api",
+        "http://example.com:0", "http://example.com:65536", "http://example.com:", "http://example.com:8o",
+        "http://[::1", "http://[::1]8080", "http://user@example.com", "http://exa mple.com"}) {
+    REQUIRE_THROWS_AS(client::transport<>{url}, std::invalid_argument);
+  }
+
+  REQUIRE_NOTHROW(client::transport<>{"http://127.0.0.1:8080"});
+}
+
+TEST_CASE("client::transport: the default connector needs an executor offering a network", "[client]") {
+  client::transport<> const transport{"http://127.0.0.1:8080"};
+
+  REQUIRE_THROWS_AS(quoll::test::run(transport.send(make_request(verb::get, "/"))), std::logic_error);
+}

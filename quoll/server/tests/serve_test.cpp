@@ -235,7 +235,7 @@ TEST_CASE("serve: connections are served concurrently", "[server]") {
   std::optional<std::string> first;
   std::optional<std::string> second;
 
-  quoll::async::co_spawn(loop.get_executor(), quoll::server::serve(loop.get_executor(), listener, router),
+  quoll::async::co_spawn(loop.get_executor(), quoll::server::serve(listener, router),
                          overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
   quoll::async::co_spawn(loop.get_executor(), get_after(std::move(first_client), "/one", second_done, first_done),
                          overloaded{[&](std::string body) {
@@ -261,7 +261,7 @@ TEST_CASE("serve: a stop request ends the accept loop and cancels idle connectio
   bool served = false;
 
   listener.streams.emplace_back(std::move(idle_server));
-  quoll::async::co_spawn(loop.get_executor(), quoll::server::serve(loop.get_executor(), listener, router),
+  quoll::async::co_spawn(loop.get_executor(), quoll::server::serve(listener, router),
                          overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token());
   quoll::async::co_spawn(loop.get_executor(), request_stop_soon(source), overloaded{[] {}, [](std::exception_ptr) {}});
   loop.run();
@@ -283,7 +283,7 @@ TEST_CASE("serve: an accept failing for one connection is skipped, another is re
   listener.failures = {std::make_error_code(std::errc::connection_aborted),
                        std::make_error_code(std::errc::connection_reset)};
   listener.streams.emplace_back(std::move(server));
-  quoll::async::co_spawn(loop.get_executor(), quoll::server::serve(loop.get_executor(), listener, router),
+  quoll::async::co_spawn(loop.get_executor(), quoll::server::serve(listener, router),
                          overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
   quoll::async::co_spawn(loop.get_executor(), get(std::move(client), "/after", done),
                          overloaded{[&](std::string received) {
@@ -310,8 +310,7 @@ TEST_CASE("serve: an accept failing for one connection is skipped, another is re
     seen.push_back(error);
     co_return true;
   };
-  quoll::async::co_spawn(loop.get_executor(),
-                         quoll::server::serve(loop.get_executor(), retrying, router, std::move(patient)),
+  quoll::async::co_spawn(loop.get_executor(), quoll::server::serve(retrying, router, std::move(patient)),
                          overloaded{[] {}, [](std::exception_ptr) {}}, retry_source.get_token());
   quoll::async::co_spawn(loop.get_executor(), get(std::move(retried_client), "/retried", retried_done),
                          overloaded{[&](std::string received) {
@@ -328,7 +327,7 @@ TEST_CASE("serve: an accept failing for one connection is skipped, another is re
   std::exception_ptr failure;
 
   failing.failures = {std::make_error_code(std::errc::too_many_files_open)};
-  quoll::async::co_spawn(loop.get_executor(), quoll::server::serve(loop.get_executor(), failing, router),
+  quoll::async::co_spawn(loop.get_executor(), quoll::server::serve(failing, router),
                          overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }});
   loop.run();
 
@@ -357,8 +356,7 @@ TEST_CASE("serve: a connection's failure goes to on_connection_error", "[server]
     source.request_stop();
   };
 
-  quoll::async::co_spawn(loop.get_executor(),
-                         quoll::server::serve(loop.get_executor(), listener, router, std::move(options)),
+  quoll::async::co_spawn(loop.get_executor(), quoll::server::serve(listener, router, std::move(options)),
                          overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
   loop.run();
 

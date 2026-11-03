@@ -18,7 +18,7 @@ else()
   set(quoll_glaze_dependency quoll_glaze_headers)
 endif()
 
-quoll_declare_module(NAME rest DEPS quoll::http $<BUILD_INTERFACE:${quoll_glaze_dependency}> $<INSTALL_INTERFACE:glaze::glaze>)
+quoll_declare_module(NAME rest DEPS quoll::client quoll::http $<BUILD_INTERFACE:${quoll_glaze_dependency}> $<INSTALL_INTERFACE:glaze::glaze>)
 
 quoll_declare_tests(
   SOURCES

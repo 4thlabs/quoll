@@ -3,3 +3,5 @@
 add_subdirectory(threads)
 add_subdirectory(asio)
 add_subdirectory(emscripten)
+# After the adapters: it picks one of them.
+add_subdirectory(runtime)
