@@ -28,7 +28,10 @@ jobs:
       matrix:
         compiler:
           - { name: gcc-13, cxx: g++-13 }
-          - { name: clang-19, cxx: clang++-19 }
+          # The runner's default libstdc++ is GCC 14's: with Clang 19, its C++23 tuple-like comparisons break
+          # Catch2's expression decomposition (REQUIRE on a tuple or an optional of one). Clang uses GCC 13's
+          # libstdc++, as the dev container does.
+          - { name: clang-19, cxx: clang++-19, cxxflags: --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/13 }
 
     steps:
       - name: Checkout repository
@@ -49,6 +52,7 @@ jobs:
         run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
         env:
           CXX: ${{ matrix.compiler.cxx }}
+          CXXFLAGS: ${{ matrix.compiler.cxxflags }}
 
       - name: Build
         run: cmake --build build -j
