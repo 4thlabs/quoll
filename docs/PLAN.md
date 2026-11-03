@@ -612,6 +612,10 @@ Every point the plan leaves open, gathered here; the linked sections give the co
 - C++ → JSON Schema mapping details, 64-bit integers in particular ([TypeScript client](#typescript-client-openapi)).
 - `scope<Api>(prefix arguments...)` on the client, and interceptors around `send`
   ([REST DSL](#rest-dsl-contract-server-client)).
+- Server robustness, beyond the prototype: read and idle timeouts and a connection limit (against slow or idle peers)
+  need a timer, which Quoll does not have yet; a lingering close after an error response (so that the client reads it
+  rather than a reset) needs a half-close in `ByteStream`; `Expect: 100-continue` needs the parser to stop after the
+  header; a graceful shutdown lets in-flight requests finish, where a stop request now cancels them.
 - A generator from an existing OpenAPI document to a contract header, for third-party APIs
   ([REST DSL](#rest-dsl-contract-server-client)).
 - Shape of the typed SSE helper on the TS side, and streamed bodies over the bridge

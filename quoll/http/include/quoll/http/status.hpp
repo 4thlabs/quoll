@@ -71,6 +71,7 @@ enum class status : std::uint16_t {
   unsupported_media_type = 415,
   unprocessable_content = 422,
   too_many_requests = 429,
+  request_header_fields_too_large = 431,
   internal_server_error = 500,
   not_implemented = 501,
   bad_gateway = 502,
@@ -125,6 +126,8 @@ enum class status : std::uint16_t {
     return "Unprocessable Content";
   case status::too_many_requests:
     return "Too Many Requests";
+  case status::request_header_fields_too_large:
+    return "Request Header Fields Too Large";
   case status::internal_server_error:
     return "Internal Server Error";
   case status::not_implemented:

@@ -295,6 +295,35 @@ TEST_CASE("serve: an accept failing for one connection is skipped, another is re
 
   REQUIRE(body == "after");
 
+  // A policy may retry other failures (after waiting, with the application's timer): the stream after them is served.
+  auto [retried_client, retried_server] = io::make_memory_stream_pair();
+  canned_listener retrying;
+  std::stop_source retry_source;
+  std::vector<std::error_code> seen;
+  std::optional<std::string> retried;
+  bool retried_done = false;
+  quoll::server::serve_options patient;
+
+  retrying.failures = {std::make_error_code(std::errc::too_many_files_open)};
+  retrying.streams.emplace_back(std::move(retried_server));
+  patient.on_accept_error = [&](std::error_code error) -> task<bool> {
+    seen.push_back(error);
+    co_return true;
+  };
+  quoll::async::co_spawn(loop.get_executor(),
+                         quoll::server::serve(loop.get_executor(), retrying, router, std::move(patient)),
+                         overloaded{[] {}, [](std::exception_ptr) {}}, retry_source.get_token());
+  quoll::async::co_spawn(loop.get_executor(), get(std::move(retried_client), "/retried", retried_done),
+                         overloaded{[&](std::string received) {
+                                      retried = std::move(received);
+                                      retry_source.request_stop();
+                                    },
+                                    [](std::exception_ptr) {}});
+  loop.run();
+
+  REQUIRE(seen == std::vector{std::make_error_code(std::errc::too_many_files_open)});
+  REQUIRE(retried == "retried");
+
   canned_listener failing;
   std::exception_ptr failure;
 
