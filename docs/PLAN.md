@@ -37,7 +37,7 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
 - Main UI direction: **hybrid web UI** (see [UI](#ui-hybrid-web-model)). Qt is no longer a target: no Qt adapter in
   the plan.
 - REST DSL (2026-11-03, see [REST DSL](#rest-dsl-contract-server-client)): the shape of Puffin's earlier `rest`
-  module (one `endpoint<"name", METHOD, "/path", parts...>` alias per operation, nested `api<>`, `with<>`, overload
+  module (one `endpoint<"name", method, "/path", parts...>` alias per operation, nested `api<>`, `with<>`, overload
   set services, `call` / `try_call` / `scope` clients), rewritten to the rules with: one typed response per status,
   `query<Struct>`, aggregate reflection instead of macros, a client over `http::HttpTransport`, routes in the
   sans-IO router. A contract stands alone: clients of third-party APIs need no Quoll server.
@@ -171,12 +171,13 @@ struct user_filter {
 
 namespace users {
 using namespace quoll::rest;
+using quoll::http::verb;
 
-using list = endpoint<"users.list", GET, "/", query<user_filter>, returns<std::vector<user>>>;
-using get = endpoint<"users.get", GET, "/{id:int64}", returns<user>, returns<problem, status::not_found>>;
-using create = endpoint<"users.create", POST, "/", body<new_user>, returns<user, status::created>,
+using list = endpoint<"users.list", verb::get, "/", query<user_filter>, returns<std::vector<user>>>;
+using get = endpoint<"users.get", verb::get, "/{id:int64}", returns<user>, returns<problem, status::not_found>>;
+using create = endpoint<"users.create", verb::post, "/", body<new_user>, returns<user, status::created>,
                         returns<problem, status::conflict>>;
-using remove = endpoint<"users.remove", DELETE, "/{id:int64}">; // 204
+using remove = endpoint<"users.remove", verb::delete_, "/{id:int64}">; // 204
 
 using api = rest::api<"/users", list, get, create, remove>;
 } // namespace users
@@ -186,8 +187,10 @@ using v1 = rest::api<"/api/v1", auth::api, rest::with<rest::security<rest::beare
 } // namespace bank
 ```
 
-- `endpoint<"name", METHOD, "/path", parts...>`: the name is mandatory and unique in its API, which is checked at
-  compile time. It is the OpenAPI `operationId` and the name of the route on the server.
+- `endpoint<"name", method, "/path", parts...>`: the name is mandatory and unique in its API, which is checked at
+  compile time. It is the OpenAPI `operationId` and the name of the route on the server. The method is an
+  `http::verb` value, not a bare `GET` / `DELETE`: those are macros on some platforms (`DELETE` in `<winnt.h>`), and
+  the rules allow no macro of our own.
 - Path parameters are typed in the template, `{name:type}` (`int`, `int64`, `uint64`, `double`, `bool`, `string`
   by default, `path` for the rest of the path), and parsed at compile time.
 - Parts:
@@ -205,7 +208,9 @@ using v1 = rest::api<"/api/v1", auth::api, rest::with<rest::security<rest::beare
 - `param_traits<T>` converts path, query and header values to and from text; enums go by name.
 
 Arguments are the same on both sides: the path parameters (prefixes first), then the parts in order, then the parts
-inherited from `with<>`.
+inherited from `with<>`. The endpoint computes their types: `call` and the service take exactly those, not deduced
+`Args&&...`, so that a braced list (`{.limit = 20}` for a `query<Struct>`) converts to its parameter. The prototype
+checks this.
 
 **Serving it.** A service is an overload set, one `operator()(Endpoint, args...)` per endpoint, with no base class.
 A missing service, or one with the wrong arguments, is a compile error.
@@ -262,7 +267,7 @@ auto alice_cards = api.scope<bank::cards::api>(1); // fixes {user_id}
 - The client is a template over its transport: no virtual call. Type erasure, if a use needs it, goes through
   function-pointer tables, like `any_stream`.
 - Interceptors (retry, token refresh on 401) wrap `send`.
-- Arguments are copied into the task.
+- Arguments are taken by value, as the endpoint's types, and live in the task.
 
 **Third-party APIs.** A contract written for someone else's API must express what that API does, not what Quoll
 would choose:
@@ -280,6 +285,17 @@ Boost.PFR technique: the field count from aggregate initialization, the names fr
 to the members of a static instance, with GCC and Clang): no macro and no declaration. C++26 reflection replaces it
 once compilers have it. The same reflection drives the JSON codec and the JSON Schema of `components/schemas`. An
 optional trait per type adds renames, descriptions and formats.
+
+The technique has limits, each checked by a `static_assert` that names the type and the reason:
+
+- Aggregates only, without base classes (they break the field count) and without C arrays (`std::array` instead).
+  Nested aggregates and `std::optional` / `std::vector` of aggregates are fields like any other: the codec recurses
+  into their type.
+- The names come from an `extern` object that is declared, never defined, so a type need not be default
+  constructible. The text of `__PRETTY_FUNCTION__` differs between GCC and Clang (MSVC would need its own parsing):
+  the prototype pins it with tests on both.
+- A type that does not fit (a class with invariants, a third-party type) declares its fields through the trait
+  instead.
 
 ## UI: hybrid web model
 
