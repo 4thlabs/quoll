@@ -6,7 +6,7 @@ Guidance for AI coding agents working in this repository.
 change must follow. Target architecture, deployment modes and open decisions are in [`docs/PLAN.md`](docs/PLAN.md):
 read it first, it is the source of truth for the design.
 
-Quoll is a public, header-only C++20 framework for cross-platform applications: sans-IO async runtime, HTTP client and
+Quoll is a public, header-only C++23 framework for cross-platform applications: sans-IO async runtime, HTTP client and
 server, and a typed REST DSL exposed to a web UI through a generated OpenAPI contract. The same application runs as a
 native server + web app, a standalone PWA (core in WASM), or a native webview shell. Namespace `quoll::`.
 
@@ -70,7 +70,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 ## Hard constraints
 
-- Header-only, C++20 minimum (GCC ≥ 12, Clang ≥ 17). CMake, dependencies via CPM.
+- Header-only, C++23 minimum (GCC ≥ 13, Clang ≥ 19). CMake, dependencies via CPM.
 - WASM is a first-class target: core modules never require threads or blocking waits.
 - No Qt. Adapters: thread pool (`quoll::threads`), asio (`quoll::asio`), Emscripten (`quoll::emscripten`: event
   loop, `fetch`; planned: `postMessage`); planned: webview shell, memory (tests).
@@ -84,7 +84,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 ## Repository
 
-Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). CI (`.github/workflows/ci.yml`): GCC 13, Clang 18
+Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). CI (`.github/workflows/ci.yml`): GCC 13, Clang 19
 and Emscripten build + tests, GCC 13 with TSan and with ASan / UBSan, and a clang-format check, on every PR and push to
 `main`. Claude reviews every PR (`claude-review.yml`, rules from this file and `docs/`). Formatting: `clang-format -i
 <file>` with the repo `.clang-format`; format only the files you touch.

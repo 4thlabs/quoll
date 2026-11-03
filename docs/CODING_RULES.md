@@ -1,7 +1,7 @@
 # Quoll coding rules
 
-Quoll is a **modern C++ header-only library, C++20 minimum**. Rules follow the Boost library guidelines and the
-C++ Core Guidelines.
+Quoll is a **modern C++ header-only library, C++23 minimum** (GCC ≥ 13, Clang ≥ 19). Rules follow the Boost library
+guidelines and the C++ Core Guidelines.
 
 ## Header-only rules
 
@@ -60,7 +60,7 @@ C++ Core Guidelines.
   single-argument and conversion constructors; observers are `const`.
 - Static polymorphism (templates + concepts) by default; type erasure (see below) when runtime polymorphism is
   required. No `virtual` in value types.
-- Use the standard library: `std::optional`, `std::variant`, `std::invoke`, `std::ranges`.
+- Use the standard library: `std::optional`, `std::expected`, `std::variant`, `std::invoke`, `std::ranges`.
 - Concurrency: document the thread-safety of each class; prefer `std::jthread` + `std::stop_token`; a destructor never
   leaves a joinable thread behind. The core modules never require threads (WASM, see `PLAN.md`).
 - Errors: exceptions derived from standard exception types for failures the caller cannot anticipate;
