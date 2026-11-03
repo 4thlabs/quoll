@@ -435,8 +435,9 @@ before SSE does, in every mode. The first prototype only needs complete bodies.
 
 **Consequences for the DSL.** Every route declares its method, path template, path / query / header parameters,
 body, and response type per status code (see [REST DSL](#rest-dsl-contract-server-client)); named C++ types become
-`components/schemas`. The C++ → JSON Schema mapping must be defined: `std::optional` → not required, `std::variant` → `oneOf` with a discriminator, enums, maps, and
-64-bit integers (beyond 2^53, JSON numbers lose precision in JS: string format or documented limit).
+`components/schemas`. The C++ → JSON Schema mapping must be defined: `std::optional` → not required, `std::variant` →
+`oneOf` with a discriminator, enums, maps, and 64-bit integers (beyond 2^53, JSON numbers lose precision in JS: string
+format or documented limit).
 
 **What tRPC gave and this does not.** Automatic request batching (add a batch endpoint if a real need shows up) and
 subscriptions (Server-Sent Events, see below). Operation names come
