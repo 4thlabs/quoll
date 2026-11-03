@@ -6,8 +6,9 @@
 # source's `// expect: <text>` line, taken literally, in its output: a build that succeeds, or fails for another
 # reason, is an error. The text is read here rather than passed: no argument list to split it on a ';'.
 file(READ "${QUOLL_SOURCE}" source)
-string(REGEX MATCH "// expect: [^\n]*" expect_line "${source}")
-string(REPLACE "// expect: " "" QUOLL_EXPECT "${expect_line}")
+# At the start of a line, without the line end (LF or CRLF), as the configure step finds it.
+string(REGEX MATCH "(^|\n)// expect: [^\r\n]*" expect_line "${source}")
+string(REGEX REPLACE "^\n?// expect: " "" QUOLL_EXPECT "${expect_line}")
 
 if(QUOLL_EXPECT STREQUAL "")
   message(FATAL_ERROR "${QUOLL_SOURCE}: no '// expect: <text>' line")
