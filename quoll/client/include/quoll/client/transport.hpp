@@ -49,6 +49,7 @@
 #include <quoll/http/version.hpp>
 #include <quoll/io/connector.hpp>
 
+#include <cassert>
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
@@ -163,6 +164,8 @@ private:
     auto response =
         co_await detail::exchange(shared->pool, shared->options.limits, std::move(connection), request, false);
 
+    // Without retry_if_closed, exchange() produces a response or throws.
+    assert(response && "client::detail::exchange() without retry_if_closed produced no response");
     co_return std::move(*response);
   }
 

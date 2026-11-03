@@ -48,7 +48,8 @@
 namespace quoll::client::detail {
 
 // The idle connections of a transport, between two requests. Thread safety: take() and give_back() may be called
-// from any thread, concurrently.
+// from any thread, concurrently. The lock serves the requests of one transport sent from several threads (a thread
+// pool); with a single thread, as under WASM, it is never contended, and std::mutex needs no thread support there.
 class connection_pool {
 public:
   explicit connection_pool(std::size_t capacity) : capacity_(capacity) {}
