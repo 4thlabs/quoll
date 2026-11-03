@@ -196,7 +196,10 @@ using v1 = rest::api<"/api/v1", auth::api, rest::with<rest::security<rest::beare
 - Path parameters are typed in the template, `{name:type}` (`int`, `int64`, `uint64`, `double`, `bool`, `string`
   by default, `path` for the rest of the path), and parsed at compile time.
 - Parts:
-  - `query<"name", T>`: `std::optional<T>` when optional, `std::vector<T>` when repeated.
+  - `query<"name", T>`: `T` is the argument type. `query<"limit", std::optional<int>>` is optional (not required in
+    the document, omitted from the URL when empty), `query<"tag", std::vector<std::string>>` repeats the parameter
+    (`?tag=a&tag=b`), anything else is required. `header<>` follows the same rule, as do the fields of
+    `query_params<Struct>`.
   - `query_params<Struct>`: each field of the struct is a query parameter. This is for operations with many optional
     parameters, common in third-party APIs; the call then uses designated initializers. A name of its own: a class
     template cannot also take the `<"name", T>` form of `query`.
