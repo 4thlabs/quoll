@@ -77,6 +77,17 @@ public:
     }
   }
 
+  // Closes the idle connections.
+  void clear() {
+    std::vector<io::any_stream> closed;
+
+    {
+      std::lock_guard const lock{mutex_};
+
+      closed.swap(idle_);
+    }
+  }
+
 private:
   std::mutex mutex_;
   std::vector<io::any_stream> idle_;

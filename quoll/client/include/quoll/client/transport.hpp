@@ -40,12 +40,12 @@
 #include <quoll/async/task.hpp>
 #include <quoll/client/detail/connection_pool.hpp>
 #include <quoll/client/detail/exchange.hpp>
+#include <quoll/client/detail/host.hpp>
 #include <quoll/client/transport_options.hpp>
 #include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/serializer.hpp>
-#include <quoll/http/transport.hpp>
 #include <quoll/http/version.hpp>
 #include <quoll/io/connector.hpp>
 
@@ -54,7 +54,6 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <utility>
 
 namespace quoll::client {
@@ -69,16 +68,19 @@ namespace quoll::client {
  * request or a response that closes it (`Connection: close`, HTTP/1.0), a response delimited by the end of the stream,
  * a switch of protocol, or a stream error.
  *
- * A server may close an idle connection at any time. When a reused connection turns out closed before any response,
- * a request whose method is idempotent (all but POST, PATCH and CONNECT) is sent again, once, on a new connection;
- * the others fail, as the server may have received them.
- *
- * Interim 1xx responses are skipped, but for a 101 switch of protocol, which is returned as the response. Redirects
- * are not followed: a 3xx response is a result like the others.
+ * A server may close an idle connection at any time, which shows only once a request is sent on it. Only the requests
+ * whose method is idempotent (GET, HEAD, PUT, DELETE, OPTIONS, TRACE) take an idle connection: when it turns out
+ * closed before any response (or answers 408 Request Timeout, sent before closing it), the request is sent again,
+ * once, on a new connection, and the other idle connections, older, are closed too. The other requests (POST,
+ * PATCH...), which the server may have received, open a new connection, kept afterwards for the next requests.
+
+ * Interim 1xx responses are skipped, up to 8 of them, but for a 101 switch of protocol, which is returned as the
+ * response. Redirects are not followed: a 3xx response is a result like the others.
  *
  * A failure to connect is reported as the connector reports it; a failure to send the request or to read its response
  * throws std::system_error from the task, with the stream's error (`std::errc::connection_reset`...), the parser's
- * (`http::error::partial_message`, `http::error::body_too_large`...) or `io::error::end_of_stream`. A stop request on
+ * (`http::error::partial_message`, `http::error::body_too_large`, `http::error::bad_message` past 8 interim
+ responses...) or `io::error::end_of_stream`. A stop request on
  * the awaiter's context abandons the request, with `std::errc::operation_canceled`, and closes its connection. There
  * is no timeout yet.
  *
@@ -92,9 +94,8 @@ public:
   /**
    * @brief A transport to `host` (a name, or an address; IPv6 without brackets) on `port`.
    *
-   * @throws std::invalid_argument for an empty host, or one with characters that do not belong to a host name or an
-   * address (controls, spaces, `/`, `@`, brackets...), including a port (`localhost:8080`): a colon is only valid in
-   * an IPv6 address.
+   * @throws std::invalid_argument for a host that is neither a name (letters, digits, `-`, `_` and dots), an IPv4 nor
+   * an IPv6 address: one with a port (`localhost:8080`), brackets, a zone index, spaces...
    */
   transport(Connector connector, std::string host, std::uint16_t port, transport_options options = {})
       : state_(std::make_shared<state>(std::move(connector), std::move(host), port, options)) {}
@@ -125,7 +126,7 @@ private:
   struct state {
     state(Connector connector_, std::string host_, std::uint16_t port_, transport_options const &options_)
         : connector(std::move(connector_)), host(std::move(host_)), port(port_),
-          host_field(make_host_field(host, port)), options(options_), pool(options_.max_idle_connections) {}
+          host_field(detail::host_field(host, port)), options(options_), pool(options_.max_idle_connections) {}
 
     Connector connector;
     std::string host;
@@ -135,57 +136,19 @@ private:
     detail::connection_pool pool;
   };
 
-  // The Host field: an IPv6 address in brackets, the port unless it is HTTP's default.
-  [[nodiscard]] static std::string make_host_field(std::string_view host, std::uint16_t port) {
-    if (!valid_host(host)) {
-      throw std::invalid_argument{"quoll::client::transport: invalid host"};
-    }
-
-    auto field = host.contains(':') ? "[" + std::string{host} + "]" : std::string{host};
-
-    if (port != 80) {
-      field += ':' + std::to_string(port);
-    }
-
-    return field;
-  }
-
-  // A name or an address, without what would change the meaning of the Host field: controls, spaces, the delimiters
-  // of a URL. A colon only belongs to an IPv6 address (hex digits, colons, and the dots of an IPv4 suffix), so that a
-  // port written into the host (`localhost:8080`) is refused here rather than by the connection.
-  [[nodiscard]] static bool valid_host(std::string_view host) noexcept {
-    if (host.empty()) {
-      return false;
-    }
-
-    auto const ipv6 = host.contains(':');
-
-    for (auto const character : host) {
-      auto const code = static_cast<unsigned char>(character);
-
-      if (code < 0x21 || code == 0x7f || std::string_view{"/\\?#@[]%"}.contains(character)) {
-        return false;
-      }
-
-      auto const hex = (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') ||
-                       (character >= 'A' && character <= 'F');
-
-      if (ipv6 && !hex && character != ':' && character != '.') {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
   // Static: the task holds the shared state, not the transport.
   static async::task<http::response> send_prepared(std::shared_ptr<state> shared, detail::prepared_request request) {
-    if (auto idle = shared->pool.take()) {
-      auto response = co_await detail::exchange(shared->pool, shared->options.limits, std::move(*idle), request,
-                                                detail::idempotent(request.method));
+    if (detail::idempotent(request.method)) {
+      if (auto idle = shared->pool.take()) {
+        auto response =
+            co_await detail::exchange(shared->pool, shared->options.limits, std::move(*idle), request, true);
 
-      if (response) {
-        co_return std::move(*response);
+        if (response) {
+          co_return std::move(*response);
+        }
+
+        // Closed by the server after some idle time: the connections idle for longer are likely closed as well.
+        shared->pool.clear();
       }
     }
 

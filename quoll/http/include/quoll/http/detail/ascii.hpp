@@ -101,6 +101,24 @@ namespace quoll::http::detail {
   return text.substr(first, text.find_last_not_of(" \t") - first + 1);
 }
 
+[[nodiscard]] constexpr int hex_value(char character) noexcept {
+  if (character >= '0' && character <= '9') {
+    return character - '0';
+  }
+
+  if (character >= 'a' && character <= 'f') {
+    return character - 'a' + 10;
+  }
+
+  if (character >= 'A' && character <= 'F') {
+    return character - 'A' + 10;
+  }
+
+  return -1;
+}
+
+[[nodiscard]] constexpr bool is_hex_digit(char character) noexcept { return hex_value(character) >= 0; }
+
 } // namespace quoll::http::detail
 
 #endif // QUOLL_HTTP_DETAIL_ASCII_HPP

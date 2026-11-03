@@ -37,28 +37,14 @@
 #ifndef QUOLL_HTTP_DETAIL_PERCENT_HPP
 #define QUOLL_HTTP_DETAIL_PERCENT_HPP
 
+#include <quoll/http/detail/ascii.hpp>
+
 #include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
 
 namespace quoll::http::detail {
-
-[[nodiscard]] constexpr int hex_value(char character) noexcept {
-  if (character >= '0' && character <= '9') {
-    return character - '0';
-  }
-
-  if (character >= 'a' && character <= 'f') {
-    return character - 'a' + 10;
-  }
-
-  if (character >= 'A' && character <= 'F') {
-    return character - 'A' + 10;
-  }
-
-  return -1;
-}
 
 // Decodes the %XX escapes of a URL component. Nothing for a '%' not followed by two hex digits.
 [[nodiscard]] inline std::optional<std::string> percent_decode(std::string_view text) {
