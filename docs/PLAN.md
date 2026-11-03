@@ -4,7 +4,7 @@ Status: **exploration**, nothing decided beyond what is marked *Decided*. Last u
 
 ## Goal
 
-Quoll is the C++20 core of cross-platform applications: asynchronous HTTP **clients and servers** and typed REST
+Quoll is the C++23 core of cross-platform applications: asynchronous HTTP **clients and servers** and typed REST
 APIs, without doing any I/O itself (sans-IO). The UI is written once with web technologies and talks to the core only
 through the typed API contract. The same application can be deployed as:
 
@@ -19,8 +19,11 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
 - Name: **Quoll**, a new public library (namespace `quoll::`, same name for the C++ package and the npm package of
   the TS side). It holds `async`, `io`, `http`, `client`, `server`, `rest` (DSL) and `bridge`. Puffin keeps its
   existing utility modules (events, ioc, maths, imdb...). Repository: GitHub `4thlabs/quoll`.
-- Header-only, C++20 minimum, rules in [`CODING_RULES.md`](CODING_RULES.md). Third-party C/C++ dependencies may be
-  compiled targets fetched by CPM; Quoll's own code stays header-only.
+- Header-only, **C++23** minimum (GCC ≥ 13, Clang ≥ 19; C++20 until 2026-11-03, raised for Glaze), rules in
+  [`CODING_RULES.md`](CODING_RULES.md). Third-party C/C++ dependencies may be compiled targets fetched by CPM;
+  Quoll's own code stays header-only.
+- JSON: [Glaze](https://github.com/stephenberry/glaze) (2026-11-03), header-only, fetched by CPM with a pinned
+  version. Its aggregate reflection also serves the REST DSL (see [REST DSL](#rest-dsl-contract-server-client)).
 - Prior art: the `claude/project-thread-*` branches of the Puffin repo (earlier `async`, `webkit`, `rest`) were
   removed from Puffin's `master` for quality reasons. Ideas only: never port code from them, rewrite to the rules.
 - Type erasure: non-intrusive function-pointer tables, `xxx_ref` + `any_xxx` (see the rules).
@@ -39,10 +42,10 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
 - REST DSL (2026-11-03, see [REST DSL](#rest-dsl-contract-server-client)): the shape of Puffin's earlier `rest`
   module (one `endpoint<"name", method, "/path", parts...>` alias per operation, nested `api<>`, `with<>`, overload
   set services, `call` / `try_call` / `scope` clients), rewritten to the rules with: one typed response per status,
-  `query_params<Struct>`, aggregate reflection instead of macros, a client over `http::HttpTransport`, routes in the
-  sans-IO router. A contract stands alone: clients of third-party APIs need no Quoll server. Decided: this shape and
-  these adjustments. Still open, for the prototype to settle: the JSON codec, `reply` / `result`, and whether braced
-  arguments and aggregate reflection hold on GCC and Clang (see [Open questions](#open-questions)).
+  `query_params<Struct>`, Glaze's aggregate reflection instead of macros, a client over `http::HttpTransport`, routes
+  in the sans-IO router. A contract stands alone: clients of third-party APIs need no Quoll server. Decided: this
+  shape and these adjustments. Still open, for the prototype to settle: `reply` / `result`, whether braced arguments
+  hold, and how much of Glaze's JSON Schema serves OpenAPI as is (see [Open questions](#open-questions)).
 - Web build (2026-11-02, see [Web integration and build chain](#web-integration-and-build-chain)): **React + Vite**
   for the reference sample and the scaffolding template, while Quoll's npm side stays framework-agnostic; **SPA /
   static builds only** (no SSR Node server); `openapi.json` is **generated, never committed**.
@@ -286,22 +289,19 @@ would choose:
 - Later: a tool generating the contract header from an existing OpenAPI document, the reverse of
   `quoll_add_openapi`. The DSL stays able to express what such documents commonly hold.
 
-**Types, JSON and schemas.** Bodies are plain aggregates. Their fields come from C++20 aggregate reflection (the
-Boost.PFR technique: the field count from aggregate initialization, the names from `__PRETTY_FUNCTION__` on pointers
-to the members of a static instance, with GCC and Clang): no macro and no declaration. C++26 reflection replaces it
-once compilers have it. The same reflection drives the JSON codec and the JSON Schema of `components/schemas`. An
-optional trait per type adds renames, descriptions and formats.
+**Types, JSON and schemas.** Bodies are plain aggregates, read and written by
+[Glaze](https://github.com/stephenberry/glaze). Its aggregate reflection gives their fields with no macro and no
+declaration, and the DSL uses the same reflection for the fields of `query_params<Struct>` and for the JSON Schema
+of `components/schemas`.
 
-The technique has limits, each checked by a `static_assert` that names the type and the reason:
-
-- Aggregates only, without base classes (they break the field count) and without C arrays (`std::array` instead).
-  Nested aggregates and `std::optional` / `std::vector` of aggregates are fields like any other: the codec recurses
-  into their type.
-- The names come from an `extern` object that is declared, never defined, so a type need not be default
-  constructible. The text of `__PRETTY_FUNCTION__` differs between GCC and Clang (MSVC would need its own parsing):
-  the prototype pins it with tests on both.
-- A type that does not fit (a class with invariants, a third-party type) declares its fields through the trait
-  instead.
+- A `glz::meta<T>` specialization renames fields (`created_at`, reserved words), maps enums to names, and describes
+  the types that are not aggregates: a class with invariants, a third-party type.
+- Decoding errors come back as values (Glaze's `expected`): the server answers 400 with them, and `try_call` reports
+  them.
+- The client skips unknown keys when it decodes the responses of a third-party API (`error_on_unknown_keys`
+  off); Quoll's server may keep rejecting them in requests.
+- The prototype checks Glaze's JSON Schema against what `components/schemas` needs: `$ref` for named types, optional
+  fields, 64-bit integers. Where it falls short, the DSL writes the schema itself from the same reflection.
 
 ## UI: hybrid web model
 
@@ -603,13 +603,13 @@ Decision: **B** (2026-11-02).
 
 Every point the plan leaves open, gathered here; the linked sections give the context.
 
-- C++ → JSON Schema mapping details, 64-bit integers in particular ([TypeScript client](#typescript-client-openapi)).
-- JSON codec: our own, small and driven by the reflected types, or a library (Glaze needs C++23, nlohmann::json is
-  slow to compile, Boost.JSON brings Boost, simdjson only parses) ([REST DSL](#rest-dsl-contract-server-client)).
+- C++ → JSON Schema mapping details, 64-bit integers in particular, and how much of Glaze's JSON Schema serves
+  `components/schemas` as is ([TypeScript client](#typescript-client-openapi),
+  [REST DSL](#rest-dsl-contract-server-client)).
 - How a service picks the status of a `rest::reply<E>` when two declared responses share a type, and the exact shape
   of `rest::result<E>` ([REST DSL](#rest-dsl-contract-server-client)).
-- Whether braced arguments (`call<E>({.limit = 20})`) and aggregate reflection work as described on GCC and Clang,
-  checked by the prototype ([REST DSL](#rest-dsl-contract-server-client)).
+- Whether braced arguments (`call<E>({.limit = 20})`) convert as described on GCC and Clang, checked by the
+  prototype ([REST DSL](#rest-dsl-contract-server-client)).
 - A generator from an existing OpenAPI document to a contract header, for third-party APIs
   ([REST DSL](#rest-dsl-contract-server-client)).
 - Shape of the typed SSE helper on the TS side, and streamed bodies over the bridge
@@ -643,7 +643,7 @@ Goal: validate the design with code. Success criteria:
 
 - Scaffolding: once the prototype holds, a `web-quoll` template in cpp-init (`../cpp-init`: React + Vite + CMake
   presets), following its `templates/cli-puffin`.
-- Dev container (`.devcontainer/`): Ubuntu 24.04, GCC 13, Clang 18, CMake / Ninja / ccache, OpenSSL, Emscripten SDK
+- Dev container (`.devcontainer/`): Ubuntu 24.04, GCC 13, Clang 19, CMake / Ninja / ccache, OpenSSL, Emscripten SDK
   (`EMSDK_VERSION`, default `latest`), Node.js (`NODE_MAJOR`, default 24).
 - Agent machine: no local toolchain. Docker goes through the docker-in-docker daemon `DOCKER_HOST=tcp://orca-dind:2375`
   (the local socket is not accessible). The image builds there (`docker build -t quoll-dev .devcontainer`), but the

@@ -44,7 +44,7 @@ function(quoll_declare_module)
   set_target_properties(${target} PROPERTIES EXPORT_NAME ${QUOLL_MODULE_NAME})
 
   target_sources(${target} INTERFACE FILE_SET HEADERS BASE_DIRS "${include_dir}" FILES ${headers})
-  target_compile_features(${target} INTERFACE cxx_std_20)
+  target_compile_features(${target} INTERFACE cxx_std_23)
   target_link_libraries(${target} INTERFACE ${QUOLL_MODULE_DEPS})
 
   set_property(GLOBAL APPEND PROPERTY QUOLL_MODULES ${QUOLL_MODULE_NAME})

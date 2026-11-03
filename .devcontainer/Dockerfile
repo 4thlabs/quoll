@@ -10,19 +10,20 @@ ARG NODE_MAJOR=24
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Toolchains (GCC 13 + Clang 18), build tools, and OpenSSL for the asio::ssl adapter.
+# Toolchains (GCC 13 + Clang 19, the oldest compilers Quoll supports), build tools, and OpenSSL for the asio::ssl
+# adapter. clang-format stays at 18, the version the CI format check uses.
 # Header-only or source dependencies (asio, llhttp, Catch2...) are fetched by CPM at configure time.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       g++-13 \
-      clang-18 clang-format-18 clang-tidy-18 clangd-18 lld-18 \
+      clang-19 clang-format-18 clang-tidy-19 clangd-19 lld-19 \
       cmake ninja-build ccache gdb \
       git ca-certificates curl gnupg sudo xz-utils \
       libssl-dev zlib1g-dev pkg-config \
       python3 \
  && rm -rf /var/lib/apt/lists/* \
  && update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-18 100 \
- && update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-18 100 \
- && update-alternatives --install /usr/bin/clangd clangd /usr/bin/clangd-18 100
+ && update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-19 100 \
+ && update-alternatives --install /usr/bin/clangd clangd /usr/bin/clangd-19 100
 
 # Node.js from NodeSource (Ubuntu's package is too old for current TS tooling).
 RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
