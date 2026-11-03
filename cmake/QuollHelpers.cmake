@@ -8,6 +8,7 @@ set(QUOLL_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 set_property(GLOBAL PROPERTY QUOLL_MODULES "")
 set_property(GLOBAL PROPERTY QUOLL_TEST_SOURCES "")
 set_property(GLOBAL PROPERTY QUOLL_TEST_DEPS "")
+set_property(GLOBAL PROPERTY QUOLL_COMPILE_FAIL_SOURCES "")
 
 # Warnings for Quoll's own translation units (tests, header checks). Never exported to users.
 if(NOT TARGET quoll_warnings)
@@ -77,6 +78,64 @@ function(quoll_declare_tests)
   endforeach()
 
   set_property(GLOBAL APPEND PROPERTY QUOLL_TEST_DEPS ${QUOLL_TESTS_DEPS})
+endfunction()
+
+#
+# Declare sources that must not compile, from a module's CMakeLists.txt: the compile-time checks of its API.
+#
+#   quoll_declare_compile_fail_tests(SOURCES <files>... [DEPS <targets>...])
+#
+# Each source has a line `// expect: <text>`: a ctest named compile_fail.<file> compiles it, and passes when the
+# compiler fails with <text> in its output, the message of the static_assert the source trips. <text> is a regular
+# expression: keep to words and punctuation that have no meaning there. Not under Emscripten (the native builds check
+# the same messages). Does nothing unless QUOLL_BUILD_TESTS is ON.
+#
+function(quoll_declare_compile_fail_tests)
+  if(NOT QUOLL_BUILD_TESTS OR EMSCRIPTEN)
+    return()
+  endif()
+
+  cmake_parse_arguments(PARSE_ARGV 0 QUOLL_FAIL "" "" "SOURCES;DEPS")
+
+  foreach(source IN LISTS QUOLL_FAIL_SOURCES)
+    set(path "${CMAKE_CURRENT_SOURCE_DIR}/${source}")
+
+    set_property(GLOBAL APPEND PROPERTY QUOLL_COMPILE_FAIL_SOURCES "${path}")
+    set_property(GLOBAL PROPERTY "QUOLL_COMPILE_FAIL_DEPS:${path}" ${QUOLL_FAIL_DEPS})
+  endforeach()
+endfunction()
+
+#
+# Create the targets and the ctests of the sources declared with quoll_declare_compile_fail_tests. Called once from
+# tests/CMakeLists.txt, after enable_testing(). Each source is an object library left out of the default build; its
+# ctest builds it.
+#
+function(quoll_compile_fail_tests)
+  get_property(sources GLOBAL PROPERTY QUOLL_COMPILE_FAIL_SOURCES)
+
+  foreach(path IN LISTS sources)
+    get_property(deps GLOBAL PROPERTY "QUOLL_COMPILE_FAIL_DEPS:${path}")
+    file(STRINGS "${path}" expect REGEX "^// expect: " LIMIT_COUNT 1)
+
+    if(NOT expect)
+      message(FATAL_ERROR "${path}: no '// expect: <text>' line")
+    endif()
+
+    string(REGEX REPLACE "^// expect: " "" expect "${expect}")
+    get_filename_component(name "${path}" NAME_WE)
+
+    set(target "quoll_compile_fail_${name}")
+
+    add_library(${target} OBJECT EXCLUDE_FROM_ALL "${path}")
+    target_link_libraries(${target} PRIVATE ${deps})
+
+    add_test(
+      NAME compile_fail.${name}
+      COMMAND ${CMAKE_COMMAND} --build ${PROJECT_BINARY_DIR} --target ${target} --config $<CONFIG>
+    )
+    # Serial: concurrent builds of the same tree would contend for its lock.
+    set_tests_properties(compile_fail.${name} PROPERTIES PASS_REGULAR_EXPRESSION "${expect}" RUN_SERIAL TRUE)
+  endforeach()
 endfunction()
 
 #

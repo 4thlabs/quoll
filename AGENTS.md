@@ -65,6 +65,10 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   Helpers shared by the tests of every module live in `tests/support/quoll/test/` (`quoll::test::run` runs a
   task on a run_loop, `quoll::test::overloaded`, `quoll::test::check`): use them rather than copying them into a
   test file.
+- What must not compile (the compile-time checks of an API, `static_assert` messages included) is tested too: one source
+  per case under `tests/compile_fail/`, starting with `// expect: <message>`, declared with
+  `quoll_declare_compile_fail_tests(SOURCES ... DEPS ...)`. Each becomes a ctest `compile_fail.<case>` that builds it
+  and passes when the compiler fails with that message (native builds only).
 - With tests ON, every header is also compiled alone in its own translation unit (`quoll_<module>_header_check`),
   so a header that is not self-contained breaks the build.
 - Dependencies come from CPM (`cmake/CPM.cmake`, always included: modules need it, not only tests). Under

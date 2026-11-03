@@ -31,3 +31,33 @@ quoll_declare_tests(
   DEPS
     quoll::rest
 )
+
+# What the contract, mount and the client refuse at compile time, with the message the user gets.
+quoll_declare_compile_fail_tests(
+  SOURCES
+    tests/compile_fail/bad_escape.cpp
+    tests/compile_fail/body_on_get.cpp
+    tests/compile_fail/client_unused_scheme.cpp
+    tests/compile_fail/endpoint_not_in_api.cpp
+    tests/compile_fail/mount_no_service.cpp
+    tests/compile_fail/mount_no_services_at_all.cpp
+    tests/compile_fail/mount_no_validator.cpp
+    tests/compile_fail/mount_two_services.cpp
+    tests/compile_fail/mount_two_validators.cpp
+    tests/compile_fail/mount_wrong_return.cpp
+    tests/compile_fail/not_a_part.cpp
+    tests/compile_fail/parameter_repeated_by_prefix.cpp
+    tests/compile_fail/path_after_rest_of_path.cpp
+    tests/compile_fail/path_parameter_type.cpp
+    tests/compile_fail/path_without_slash.cpp
+    tests/compile_fail/prefix_trailing_slash.cpp
+    tests/compile_fail/query_type.cpp
+    tests/compile_fail/same_name.cpp
+    tests/compile_fail/same_route.cpp
+    tests/compile_fail/same_status.cpp
+    tests/compile_fail/with_body_on_get.cpp
+    tests/compile_fail/with_same_status.cpp
+    tests/compile_fail/with_two_bodies.cpp
+  DEPS
+    quoll::rest
+)
