@@ -143,9 +143,11 @@ struct canned_listener {
 
 static_assert(io::Listener<canned_listener>);
 
-// Hands over one connection, then fails for good.
+// Hands over one connection, then fails with `failure` (by default, one that ends serve()).
 struct one_then_broken {
   std::optional<io::any_stream> stream;
+  std::exception_ptr failure =
+      std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::too_many_files_open), "broken"});
 
   task<io::any_stream> accept() {
     if (stream) {
@@ -155,7 +157,7 @@ struct one_then_broken {
       co_return accepted;
     }
 
-    throw std::system_error{std::make_error_code(std::errc::too_many_files_open), "one_then_broken"};
+    std::rethrow_exception(failure);
   }
 };
 
@@ -459,11 +461,13 @@ TEST_CASE("serve: a failure of its accept loop stops the connections, then reach
 TEST_CASE("serve: an exception from on_accept_error stops the connections, then reaches the awaiter", "[server]") {
   auto const router = make_router();
   quoll::async::run_loop loop;
-  canned_listener listener;
+  // A failure of one connection, which on_accept_error is asked about, after an idle connection.
+  one_then_broken listener{
+      io::any_stream{idle_stream{}},
+      std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::connection_reset), "reset"})};
   quoll::server::serve_options options;
   std::exception_ptr failure;
 
-  listener.failures.push_back(std::make_error_code(std::errc::connection_reset));
   options.on_accept_error = [](std::error_code) -> task<bool> {
     throw std::runtime_error{"on_accept_error"};
     co_return false;
@@ -474,4 +478,18 @@ TEST_CASE("serve: an exception from on_accept_error stops the connections, then 
 
   REQUIRE(failure);
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::runtime_error);
+}
+
+TEST_CASE("serve: an accept that throws something else stops the connections, then reaches the awaiter", "[server]") {
+  auto const router = make_router();
+  quoll::async::run_loop loop;
+  one_then_broken listener{io::any_stream{idle_stream{}}, std::make_exception_ptr(std::logic_error{"accept"})};
+  std::exception_ptr failure;
+
+  quoll::async::co_spawn(loop.get_executor(), quoll::server::serve(listener, router),
+                         overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }});
+  loop.run();
+
+  REQUIRE(failure);
+  REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::logic_error);
 }
