@@ -20,7 +20,7 @@ fail() {
   exit 1
 }
 
-# The server prints its address as it starts listening; it exits at once if it cannot (the port is taken).
+# The server prints its address once it listens; it exits at once if it cannot (the port is taken).
 for _ in $(seq 50); do
   kill -0 "$pid" 2>/dev/null || fail "the server ended before listening"
   grep -q '^notes API on ' "$log" && break
@@ -28,8 +28,6 @@ for _ in $(seq 50); do
 done
 
 grep -q '^notes API on ' "$log" || fail "the server did not start"
-sleep 0.2
-kill -0 "$pid" 2>/dev/null || fail "the server ended before listening"
 
 output=$("$client" "http://127.0.0.1:$port" 2>&1) || fail "the client failed: $output"
 printf '%s\n' "$output"
