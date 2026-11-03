@@ -11,6 +11,9 @@ curl 'localhost:8080/api/notes?contains=buy'
 curl -i localhost:8080/api/notes/1     # 404, an application/problem+json body
 ```
 
+`ctest --test-dir build -R notes_round_trip` runs the same session automatically: `round_trip.sh` starts the server
+on a free port (`0`), runs the client against it and stops the server.
+
 | Endpoint | Request | Response |
 |---|---|---|
 | `notes.list` | `GET /api/notes?contains=...` | `200`, the notes |

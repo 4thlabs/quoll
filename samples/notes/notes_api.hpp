@@ -65,9 +65,13 @@ struct note_filter {
 };
 
 namespace endpoints {
-using namespace quoll::rest;
 using quoll::http::status;
 using quoll::http::verb;
+
+using quoll::rest::body;
+using quoll::rest::endpoint;
+using quoll::rest::query_params;
+using quoll::rest::returns;
 
 using list = endpoint<"notes.list", verb::get, "/", query_params<note_filter>, returns<std::vector<note>>>;
 using get = endpoint<"notes.get", verb::get, "/{id:int64}", returns<note>>;

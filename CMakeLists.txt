@@ -33,12 +33,16 @@ add_subdirectory(quoll/client)
 add_subdirectory(quoll/rest)
 add_subdirectory(quoll/adapters)
 
+# Before the samples: they declare a test of their own.
+if(QUOLL_BUILD_TESTS)
+  enable_testing()
+endif()
+
 if(QUOLL_BUILD_SAMPLES)
   add_subdirectory(samples)
 endif()
 
 if(QUOLL_BUILD_TESTS)
-  enable_testing()
   add_subdirectory(tests)
 endif()
 
