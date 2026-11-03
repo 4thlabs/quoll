@@ -27,6 +27,7 @@ include(cmake/CPM.cmake)
 add_subdirectory(quoll/async)
 add_subdirectory(quoll/io)
 add_subdirectory(quoll/http)
+add_subdirectory(quoll/server)
 add_subdirectory(quoll/rest)
 add_subdirectory(quoll/adapters)
 

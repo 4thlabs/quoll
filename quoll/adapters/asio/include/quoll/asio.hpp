@@ -37,6 +37,7 @@
 #ifndef QUOLL_ASIO_HPP
 #define QUOLL_ASIO_HPP
 
+#include <quoll/asio/acceptor.hpp>
 #include <quoll/asio/connector.hpp>
 #include <quoll/asio/executor.hpp>
 #include <quoll/asio/tcp_stream.hpp>
