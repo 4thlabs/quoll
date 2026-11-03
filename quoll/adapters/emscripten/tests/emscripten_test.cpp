@@ -45,6 +45,13 @@
 #include <quoll/http/status.hpp>
 #include <quoll/http/transport.hpp>
 #include <quoll/http/verb.hpp>
+#include <quoll/rest/api.hpp>
+#include <quoll/rest/body.hpp>
+#include <quoll/rest/client.hpp>
+#include <quoll/rest/endpoint.hpp>
+#include <quoll/rest/header.hpp>
+#include <quoll/rest/returns.hpp>
+#include <quoll/rest/text_codec.hpp>
 #include <quoll/test/overloaded.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -322,4 +329,32 @@ TEST_CASE("fetch_transport: field values are bytes, both ways", "[emscripten][ht
   auto const response = run(get_target(fetch_transport{server.url()}, "/", std::move(fields)));
 
   REQUIRE(response.fields.find("x-test") == "caf\xE9");
+}
+
+namespace {
+
+// The Node test server as a third-party API, described by its contract only: no Quoll server behind it.
+namespace node_server_api {
+using namespace quoll::rest;
+
+using echo = endpoint<"echo", http::verb::post, "/echo/{name}", header<"X-Test", std::string>,
+                      body<std::string, text_codec>, returns<std::string, http::status::ok, text_codec>>;
+using missing = endpoint<"missing", http::verb::get, "/status/404", returns<std::string, http::status::ok, text_codec>>;
+
+using api = quoll::rest::api<"", echo, missing>;
+} // namespace node_server_api
+
+} // namespace
+
+TEST_CASE("rest::client over fetch_transport calls an API that only has a contract", "[emscripten][rest]") {
+  test_server const server;
+  quoll::rest::client<node_server_api::api, fetch_transport> const client{fetch_transport{server.url()}};
+
+  REQUIRE(run(client.call<node_server_api::echo>("a b", "from the contract", "the body")) == "the body");
+
+  auto const missing = run(client.try_call<node_server_api::missing>());
+
+  REQUIRE_FALSE(missing.has_value());
+  REQUIRE(missing.error().response.status == http::status::not_found);
+  REQUIRE(missing.error().reason == "undeclared status 404");
 }

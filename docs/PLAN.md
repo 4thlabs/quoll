@@ -44,8 +44,8 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
   set services, `call` / `try_call` / `scope` clients), rewritten to the rules with: one typed response per status,
   `query_params<Struct>`, Glaze's aggregate reflection instead of macros, a client over `http::HttpTransport`, routes
   in the sans-IO router. A contract stands alone: clients of third-party APIs need no Quoll server. Decided: this
-  shape and these adjustments. Still open, for the prototype to settle: `reply` / `result`, and whether braced
-  arguments hold (see [Open questions](#open-questions)).
+  shape and these adjustments. The prototype settled `reply` / `result` and braced arguments (2026-11-03, see the
+  section).
 - Web build (2026-11-02, see [Web integration and build chain](#web-integration-and-build-chain)): **React + Vite**
   for the reference sample and the scaffolding template, while Quoll's npm side stays framework-agnostic; **SPA /
   static builds only** (no SSR Node server); `openapi.json` is **generated, never committed**.
@@ -243,7 +243,9 @@ rest::mount<bank::v1>(router, bank::auth_service{}, bank::users_service{}, bank:
 ```
 
 - A service returns the type of the first `returns`, or `rest::reply<E>`, which holds any declared response with its
-  status. An undeclared status, or the wrong type for a status, does not compile.
+  status: built from a value whose type only one response has, or from `rest::respond<Status>(value)` when several
+  share it. An undeclared status, or the wrong type for a status, does not compile. Only the endpoint's own responses:
+  those inherited from `with<>` are the server's (credentials, errors).
 - Errors without a declared response:
   - 400 for an invalid argument or body, 415 for a wrong `Content-Type`, 401 for missing or rejected credentials.
   - `throw rest::http_error(status, detail)` answers that status as `application/problem+json`.
@@ -268,10 +270,11 @@ auto page = co_await api.call<bank::users::list>({.limit = 20});
 auto alice_cards = api.scope<bank::cards::api>(1); // fixes {user_id}
 ```
 
-- `call` returns the first declared response. Any other status throws `rest::http_error`, carrying the decoded body
-  when its status is declared.
-- `try_call` returns `rest::result<E>`: one of the declared responses, or an error for an undeclared status or a body
-  that does not decode.
+- `call` returns the first declared response. Any other outcome throws `rest::http_error` with the status and the
+  detail of the server's problem, if any; another declared response is read with `try_call`.
+- `try_call` returns `rest::result<E>`, `std::expected<rest::reply<E>, rest::unexpected_response>`: the declared
+  response received, or the whole response with why it is unexpected (an undeclared status, a body that does not
+  decode).
 - Transport failures (network, cancellation) stay exceptions from the task in both cases (`std::system_error`).
 - The client is a template over its transport: no virtual call. Type erasure, if a use needs it, goes through
   function-pointer tables, like `any_stream`.
@@ -607,10 +610,8 @@ Decision: **B** (2026-11-02).
 Every point the plan leaves open, gathered here; the linked sections give the context.
 
 - C++ → JSON Schema mapping details, 64-bit integers in particular ([TypeScript client](#typescript-client-openapi)).
-- How a service picks the status of a `rest::reply<E>` when two declared responses share a type, and the exact shape
-  of `rest::result<E>` ([REST DSL](#rest-dsl-contract-server-client)).
-- Whether braced arguments (`call<E>({.limit = 20})`) convert as described on GCC and Clang, checked by the
-  prototype ([REST DSL](#rest-dsl-contract-server-client)).
+- `scope<Api>(prefix arguments...)` on the client, and interceptors around `send`
+  ([REST DSL](#rest-dsl-contract-server-client)).
 - A generator from an existing OpenAPI document to a contract header, for third-party APIs
   ([REST DSL](#rest-dsl-contract-server-client)).
 - Shape of the typed SSE helper on the TS side, and streamed bodies over the bridge

@@ -48,6 +48,10 @@
 
 namespace quoll::rest::detail {
 
+// The responses an endpoint declares itself, without those inherited from with<>.
+template <class Endpoint>
+using own_responses = filter_t<is_response_part, typename Endpoint::parts>;
+
 // The value of one declared response; a distinct type per returns<>, even when two have the same body type.
 template <class Response, class T = typename Response::type>
 struct response_value {

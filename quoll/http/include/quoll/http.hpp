@@ -39,6 +39,7 @@
 
 #include <quoll/http/error.hpp>
 #include <quoll/http/fields.hpp>
+#include <quoll/http/local_transport.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>

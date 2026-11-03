@@ -29,6 +29,7 @@ if(QUOLL_BUILD_TESTS)
       tests/emscripten_test.cpp
     DEPS
       quoll::emscripten
+      quoll::rest
       quoll_emscripten_test_server
   )
 endif()
