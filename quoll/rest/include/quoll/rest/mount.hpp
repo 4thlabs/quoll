@@ -121,7 +121,8 @@ template <class... Args>
  * as is or in a task<>. Each endpoint has exactly one service, and each security scheme of the api a validator:
  * otherwise mount() does not compile.
  *
- * For each request: credentials (401 if missing or rejected, with `WWW-Authenticate: Bearer` for bearer_auth), then
+ * For each request: credentials (401 if missing or rejected, with the `WWW-Authenticate` challenge of the scheme:
+ * `Bearer`, or `ApiKey header="X-Api-Key"` / `ApiKey query="key"` for keys, which have no registered scheme), then
  * the arguments (400 for an invalid or missing one, 415 for a body of another media type), then the service. A
  * service throwing http_error answers its status, anything else answers 500 without detail. These errors are
  * application/problem+json (problem).

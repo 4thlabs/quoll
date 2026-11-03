@@ -301,9 +301,18 @@ TEST_CASE("mount: api keys, in a header or in the query", "[rest][mount]") {
   REQUIRE(pong.status == http::status::ok);
   REQUIRE(pong.body == "pong");
   REQUIRE(pong.fields.find("Content-Type") == "text/plain; charset=utf-8");
-  REQUIRE(send(router, verb::get, "/api/v1/keys/ping", {{"X-Api-Key", "other"}}).status == http::status::unauthorized);
   REQUIRE(send(router, verb::get, "/api/v1/keys/ping-query?key=key", {}).body == "pong from the query");
-  REQUIRE(send(router, verb::get, "/api/v1/keys/ping-query", {}).status == http::status::unauthorized);
+
+  // RFC 9110: a 401 always carries a challenge; API keys get one saying where the key goes.
+  auto const rejected = send(router, verb::get, "/api/v1/keys/ping", {{"X-Api-Key", "other"}});
+
+  REQUIRE(rejected.status == http::status::unauthorized);
+  REQUIRE(rejected.fields.find("WWW-Authenticate") == R"(ApiKey header="X-Api-Key")");
+
+  auto const missing = send(router, verb::get, "/api/v1/keys/ping-query", {});
+
+  REQUIRE(missing.status == http::status::unauthorized);
+  REQUIRE(missing.fields.find("WWW-Authenticate") == R"(ApiKey query="key")");
 }
 
 TEST_CASE("mount: path and query arguments are decoded, or answer 400", "[rest][mount]") {
