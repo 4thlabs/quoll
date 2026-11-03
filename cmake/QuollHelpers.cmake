@@ -86,9 +86,8 @@ endfunction()
 #   quoll_declare_compile_fail_tests(SOURCES <files>... [DEPS <targets>...])
 #
 # Each source has a line `// expect: <text>`: a ctest named compile_fail.<file> compiles it, and passes when the
-# compiler fails with <text> in its output, the message of the static_assert the source trips. <text> is a regular
-# expression: keep to words and punctuation that have no meaning there. Not under Emscripten (the native builds check
-# the same messages). Does nothing unless QUOLL_BUILD_TESTS is ON.
+# compilation fails with <text>, taken literally, in its output: the message of the static_assert the source trips.
+# Not under Emscripten (the native builds check the same messages). Does nothing unless QUOLL_BUILD_TESTS is ON.
 #
 function(quoll_declare_compile_fail_tests)
   if(NOT QUOLL_BUILD_TESTS OR EMSCRIPTEN)
@@ -131,10 +130,11 @@ function(quoll_compile_fail_tests)
 
     add_test(
       NAME compile_fail.${name}
-      COMMAND ${CMAKE_COMMAND} --build ${PROJECT_BINARY_DIR} --target ${target} --config $<CONFIG>
+      COMMAND ${CMAKE_COMMAND} -DQUOLL_BUILD_DIR=${PROJECT_BINARY_DIR} -DQUOLL_TARGET=${target} -DQUOLL_CONFIG=$<CONFIG>
+              "-DQUOLL_EXPECT=${expect}" -P ${QUOLL_CMAKE_DIR}/QuollCompileFail.cmake
     )
     # Serial: concurrent builds of the same tree would contend for its lock.
-    set_tests_properties(compile_fail.${name} PROPERTIES PASS_REGULAR_EXPRESSION "${expect}" RUN_SERIAL TRUE)
+    set_tests_properties(compile_fail.${name} PROPERTIES RUN_SERIAL TRUE)
   endforeach()
 endfunction()
 
