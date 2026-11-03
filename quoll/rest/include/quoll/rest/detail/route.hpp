@@ -115,8 +115,16 @@ struct route {
 
   while (left < first.size() && right < second.size()) {
     if (first[left] == '{' && second[right] == '{') {
-      left = http::detail::find_char(first, '}', left) + 1;
-      right = http::detail::find_char(second, '}', right) + 1;
+      auto const first_close = http::detail::find_char(first, '}', left);
+      auto const second_close = http::detail::find_char(second, '}', right);
+
+      // Checked templates have their braces; an unbalanced one compares as different rather than wrapping around.
+      if (first_close == std::string_view::npos || second_close == std::string_view::npos) {
+        return false;
+      }
+
+      left = first_close + 1;
+      right = second_close + 1;
       continue;
     }
 

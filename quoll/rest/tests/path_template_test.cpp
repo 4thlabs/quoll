@@ -89,6 +89,7 @@ static_assert(same_operation(verb::get, "/users/{id}", verb::get, "/users/{uid:i
 static_assert(!same_operation(verb::get, "/users/{id}", verb::delete_, "/users/{id}"));
 static_assert(!same_operation(verb::get, "/users/{id}", verb::get, "/users/{id}/cards"));
 static_assert(!same_operation(verb::get, "/users", verb::get, "/user"));
+static_assert(!same_operation(verb::get, "/users/{id", verb::get, "/users/{id"));
 
 } // namespace
 
