@@ -50,8 +50,8 @@ namespace quoll::emscripten {
 
 namespace detail {
 
-inline async::task<http::response> fetch(std::string url, http::request request) {
-  co_return co_await fetch_operation{std::move(url), request};
+inline async::task<http::response> fetch(std::string url, std::string fields, http::request request) {
+  co_return co_await fetch_operation{std::move(url), std::move(fields), request};
 }
 
 } // namespace detail
@@ -80,11 +80,17 @@ public:
 
   explicit fetch_transport(std::string base_url) noexcept : base_url_(std::move(base_url)) {}
 
-  /** @brief Fetches `request`. */
+  /**
+   * @brief Fetches `request`.
+   *
+   * @throws std::invalid_argument here, before the task runs, for a field name that is not a token or a value with a
+   * line break, as http::serialize() does.
+   */
   [[nodiscard]] async::task<http::response> send(http::request request) const {
     auto url = base_url_ + request.target;
+    auto fields = detail::pack_fields(request.fields);
 
-    return detail::fetch(std::move(url), std::move(request));
+    return detail::fetch(std::move(url), std::move(fields), std::move(request));
   }
 
 private:
