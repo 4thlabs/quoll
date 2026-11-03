@@ -39,6 +39,7 @@
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/emscripten.hpp>
+#include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
@@ -124,16 +125,24 @@ T run(task<T> work, std::stop_source source = {}) {
 }
 
 // The Node HTTP server of tests/test_server.js, listening on a free port of the loopback interface while it lives.
+// Throws if it cannot listen within a time limit.
 class test_server {
 public:
   test_server() {
     quoll_test_server_start();
 
-    while (quoll_test_server_port() == 0) {
+    auto const start = emscripten_get_now();
+
+    while (quoll_test_server_port() == 0 && emscripten_get_now() - start < 10'000.0) {
       emscripten_sleep(1);
     }
 
     port_ = quoll_test_server_port();
+
+    if (port_ <= 0) {
+      quoll_test_server_stop();
+      throw std::runtime_error{"quoll test server: cannot listen"};
+    }
   }
 
   test_server(test_server const &) = delete;
@@ -176,6 +185,14 @@ task<http::response> post(fetch_transport transport, std::string target, std::st
   request.target = std::move(target);
   request.body = std::move(body);
   request.fields.add("Content-Length", std::to_string(request.body.size()));
+  co_return co_await transport.send(std::move(request));
+}
+
+task<http::response> get_target(fetch_transport transport, std::string target, http::fields fields = {}) {
+  http::request request;
+
+  request.target = std::move(target);
+  request.fields = std::move(fields);
   co_return co_await transport.send(std::move(request));
 }
 
@@ -272,4 +289,37 @@ TEST_CASE("fetch_transport: a field that would split into others is rejected bef
 
   REQUIRE_THROWS_AS((void)transport.send(std::move(injected_value)), std::invalid_argument);
   REQUIRE_THROWS_AS((void)transport.send(std::move(injected_name)), std::invalid_argument);
+}
+
+TEST_CASE("fetch_transport: a target that could leave the origin is rejected before fetching", "[emscripten]") {
+  fetch_transport const transport{"http://127.0.0.1"};
+  http::request other_host;
+  http::request with_space;
+
+  other_host.target = "@evil.example/";
+  with_space.target = "/a b";
+
+  REQUIRE_THROWS_AS((void)transport.send(std::move(other_host)), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)transport.send(std::move(with_space)), std::invalid_argument);
+}
+
+TEST_CASE("fetch_transport: a compressed body comes decoded, without the fields of the wire", "[emscripten][http]") {
+  test_server const server;
+  auto const response = run(get_target(fetch_transport{server.url()}, "/gzip"));
+
+  REQUIRE(response.body == "hello gzipped");
+  REQUIRE_FALSE(response.fields.contains("Content-Encoding"));
+  REQUIRE_FALSE(response.fields.contains("Content-Length"));
+}
+
+TEST_CASE("fetch_transport: field values are bytes, both ways", "[emscripten][http]") {
+  test_server const server;
+  http::fields fields;
+
+  // Latin-1 'é', not valid UTF-8 on its own.
+  fields.add("X-Test", "caf\xE9");
+
+  auto const response = run(get_target(fetch_transport{server.url()}, "/", std::move(fields)));
+
+  REQUIRE(response.fields.find("x-test") == "caf\xE9");
 }

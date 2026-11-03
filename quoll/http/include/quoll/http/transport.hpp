@@ -51,7 +51,8 @@ namespace quoll::http {
  * stack (the browser's fetch).
  *
  * A transport is bound to an origin: `request.target` is in origin form (`/path?query`). `send(request)` returns a
- * task producing the response; every response is a result, error statuses included. A failure to get one (network
+ * task producing the response; every response is a result, error statuses included. Whether redirects are followed
+ * depends on the transport (fetch follows them). A failure to get one (network
  * error) is reported by the task's exception (std::system_error), and a stop request on the awaiter's context
  * abandons the request, with `std::errc::operation_canceled`.
  */

@@ -37,19 +37,16 @@
 #ifndef QUOLL_HTTP_DETAIL_SERIALIZE_FIELDS_HPP
 #define QUOLL_HTTP_DETAIL_SERIALIZE_FIELDS_HPP
 
-#include <quoll/http/detail/ascii.hpp>
+#include <quoll/http/detail/check.hpp>
 #include <quoll/http/fields.hpp>
 
-#include <stdexcept>
 #include <string>
 
 namespace quoll::http::detail {
 
 inline void serialize_fields(fields const &entries, std::string &out) {
   for (auto const &entry : entries) {
-    if (!is_token(entry.name) || has_line_break(entry.value)) {
-      throw std::invalid_argument{"quoll::http: invalid field " + entry.name};
-    }
+    check_field(entry);
 
     out += entry.name;
     out += ": ";

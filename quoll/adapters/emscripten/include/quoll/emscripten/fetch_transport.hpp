@@ -39,22 +39,16 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/emscripten/detail/fetch_operation.hpp>
+#include <quoll/http/detail/check.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/transport.hpp>
 
+#include <stdexcept>
 #include <string>
 #include <utility>
 
 namespace quoll::emscripten {
-
-namespace detail {
-
-inline async::task<http::response> fetch(std::string url, std::string fields, http::request request) {
-  co_return co_await fetch_operation{std::move(url), std::move(fields), request};
-}
-
-} // namespace detail
 
 /**
  * @brief HttpTransport over the JavaScript fetch() of the browser, a Worker or Node.
@@ -62,9 +56,13 @@ inline async::task<http::response> fetch(std::string url, std::string fields, ht
  * Each request goes to `base_url` followed by its target: `https://api.example.com` and `/accounts/42` fetch
  * `https://api.example.com/accounts/42`. An empty base URL keeps the target relative, to the page's origin in a
  * browser. The fields fetch manages itself (Host, Content-Length, Connection and the other hop-by-hop fields) are not
- * sent; the request's trailers neither. The response has the status, status text, fields and complete body that fetch
- * exposes: its fields are named in lower case, repeated ones are combined, and its version is not known
- * (`http_1_1`).
+ * sent; the request's trailers neither.
+ *
+ * The response has the status, status text, fields and complete body that fetch exposes. fetch decodes the body
+ * (decompressed, de-chunked), so the fields describing the bytes on the wire (Content-Encoding, Content-Length,
+ * Transfer-Encoding) are dropped; the other fields are named in lower case, repeated ones are combined, and the
+ * version is not known (`http_1_1`). Unlike a client over a connector, fetch follows redirects itself, possibly to
+ * another origin: a browser does not expose the 3xx response.
  *
  * A failure to get a response (network error, refused connection, CORS) throws std::system_error from the task, with
  * `std::errc::io_error` and fetch's message; a stop request aborts the fetch, with `std::errc::operation_canceled`.
@@ -78,15 +76,26 @@ public:
   /** @brief A transport sending relative requests, to the page's origin. */
   fetch_transport() = default;
 
+  /**
+   * @brief A transport sending requests to `base_url`: a scheme and a host (`https://api.example.com`), optionally a
+   * port and a path prefix, without a trailing slash.
+   */
   explicit fetch_transport(std::string base_url) noexcept : base_url_(std::move(base_url)) {}
 
   /**
    * @brief Fetches `request`.
    *
-   * @throws std::invalid_argument here, before the task runs, for a field name that is not a token or a value with a
-   * line break, as http::serialize() does.
+   * @throws std::invalid_argument here, before the task runs, for a target not in origin form (starting with `/`),
+   * which could leave the base URL's host (`@evil.example/`), and for what http::serialize() rejects: a target with
+   * spaces or line breaks, a field name that is not a token, a value with a line break.
    */
   [[nodiscard]] async::task<http::response> send(http::request request) const {
+    if (!request.target.starts_with('/')) {
+      throw std::invalid_argument{"quoll::emscripten::fetch_transport: the target is not in origin form"};
+    }
+
+    http::detail::check_target(request.target);
+
     auto url = base_url_ + request.target;
     auto fields = detail::pack_fields(request.fields);
 

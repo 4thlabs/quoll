@@ -37,6 +37,8 @@
 #ifndef QUOLL_HTTP_SERIALIZER_HPP
 #define QUOLL_HTTP_SERIALIZER_HPP
 
+#include <quoll/http/detail/ascii.hpp>
+#include <quoll/http/detail/check.hpp>
 #include <quoll/http/detail/serialize_framing.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
@@ -68,10 +70,7 @@ namespace quoll::http {
  * other than chunked, chunked coding in HTTP/1.0, trailers without chunked coding.
  */
 inline void serialize(request const &message, std::string &out) {
-  if (message.target.empty() || message.target.find(' ') != std::string::npos ||
-      detail::has_line_break(message.target)) {
-    throw std::invalid_argument{"quoll::http: invalid request target"};
-  }
+  detail::check_target(message.target);
 
   out += to_string(message.method);
   out += ' ';
