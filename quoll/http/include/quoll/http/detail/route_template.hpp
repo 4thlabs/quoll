@@ -72,6 +72,19 @@ struct parsed_template {
   std::vector<template_segment> segments;
 };
 
+// string_view::find, by index: GCC 13 cannot evaluate the null check of char_traits::find at compile time on a
+// template parameter object (a rest::fixed_string) when UBSan instruments the code, and this grammar runs at compile
+// time for the rest DSL.
+[[nodiscard]] constexpr std::size_t find_char(std::string_view text, char character, std::size_t from = 0) noexcept {
+  for (auto index = from; index < text.size(); ++index) {
+    if (text[index] == character) {
+      return index;
+    }
+  }
+
+  return std::string_view::npos;
+}
+
 [[nodiscard]] constexpr bool is_name_char(char character) noexcept {
   return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
          (character >= '0' && character <= '9') || character == '_';
@@ -100,11 +113,12 @@ struct parsed_template {
 }
 
 [[nodiscard]] constexpr template_error check_parameter(std::string_view segment) noexcept {
-  auto const open = segment.find('{');
-  auto const close = segment.find('}');
+  auto const open = find_char(segment, '{');
+  auto const close = find_char(segment, '}');
 
   if (open == std::string_view::npos || close == std::string_view::npos || close < open ||
-      segment.find('{', open + 1) != std::string_view::npos || segment.find('}', close + 1) != std::string_view::npos) {
+      find_char(segment, '{', open + 1) != std::string_view::npos ||
+      find_char(segment, '}', close + 1) != std::string_view::npos) {
     return template_error::unbalanced_brace;
   }
 
@@ -137,7 +151,7 @@ struct parsed_template {
   }
 
   for (std::size_t start = 1;;) {
-    auto const slash = path.find('/', start);
+    auto const slash = find_char(path, '/', start);
     auto const segment = path.substr(start, slash == std::string_view::npos ? std::string_view::npos : slash - start);
 
     if (!parsed.segments.empty() && parsed.segments.back().kind == segment_kind::rest) {
@@ -156,7 +170,7 @@ struct parsed_template {
       }
 
       auto const inside = segment.substr(1, segment.size() - 2);
-      auto const colon = inside.find(':');
+      auto const colon = find_char(inside, ':');
       auto const name = inside.substr(0, colon);
       auto const type = colon == std::string_view::npos ? std::string_view{} : inside.substr(colon + 1);
 

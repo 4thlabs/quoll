@@ -37,6 +37,7 @@
 #ifndef QUOLL_REST_DETAIL_ROUTE_HPP
 #define QUOLL_REST_DETAIL_ROUTE_HPP
 
+#include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/rest/detail/checked_path.hpp>
 #include <quoll/rest/detail/part.hpp>
@@ -114,8 +115,8 @@ struct route {
 
   while (left < first.size() && right < second.size()) {
     if (first[left] == '{' && second[right] == '{') {
-      left = first.find('}', left) + 1;
-      right = second.find('}', right) + 1;
+      left = http::detail::find_char(first, '}', left) + 1;
+      right = http::detail::find_char(second, '}', right) + 1;
       continue;
     }
 
