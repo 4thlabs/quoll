@@ -38,6 +38,7 @@
 #include <quoll/asio/detail/cancellation.hpp>
 #include <quoll/asio/detail/operation.hpp>
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
@@ -70,6 +71,8 @@
 #include <asio/ip/tcp.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+
+#include <signal.h>
 
 #include <array>
 #include <csignal>
@@ -372,6 +375,22 @@ task<accounts_calls> serve_and_call(http::router const &router, std::uint16_t po
       co_await quoll::async::when_all(quoll::server::listen(router, port), call_then_interrupt(port));
 
   co_return calls;
+}
+
+// Ctrl-C: the task is asked to stop, and the next Ctrl-C would have the default action, ending the process.
+task<bool> interrupt_then_check_default() {
+  std::raise(SIGINT);
+
+  auto const stop_token = co_await quoll::async::current_stop_token();
+
+  while (!stop_token.stop_requested()) {
+    co_await quoll::async::yield();
+  }
+
+  struct sigaction action {};
+
+  ::sigaction(SIGINT, nullptr, &action);
+  co_return action.sa_handler == SIG_DFL;
 }
 
 task<int> answer() { co_return 42; }
@@ -705,6 +724,11 @@ TEST_CASE("asio::sync_wait runs a task to its end, and hands over its outcome", 
   REQUIRE(quoll::asio::sync_wait(answer()) == 42);
   REQUIRE_THROWS_AS(quoll::asio::sync_wait(fail()), std::runtime_error);
   REQUIRE_THROWS_AS(quoll::asio::sync_wait(io::connect("127.0.0.1", free_port())), std::system_error);
+}
+
+TEST_CASE("asio::sync_wait turns the first Ctrl-C into a stop request, then lets the next one through",
+          "[asio][sync_wait]") {
+  REQUIRE(quoll::asio::sync_wait(interrupt_then_check_default()));
 }
 
 TEST_CASE("asio::sync_wait offers the loop's network to its task", "[asio][sync_wait]") {

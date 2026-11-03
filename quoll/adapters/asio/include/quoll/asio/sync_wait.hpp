@@ -104,7 +104,8 @@ struct sync_completion {
  *
  * The task runs on an executor offering the loop's network, so that io::connect(), io::listen(), and what is built on
  * them (quoll::server::listen, quoll::client::transport, a REST client), work without being handed anything. While
- * it waits, SIGINT and SIGTERM (Ctrl-C) request stop on the task, which ends a server.
+ * it waits, the first SIGINT or SIGTERM (Ctrl-C) requests stop on the task, which ends a server; the next one has its
+ * default action, ending a process whose task does not stop.
  *
  * Returns once the task has completed and the work it started has drained (connections cancelled by the stop request
  * finish). Throws std::logic_error if the loop runs out of work before the task completes.
@@ -116,9 +117,14 @@ T sync_wait(async::task<T> work) {
   std::stop_source stop;
   detail::sync_outcome<T> outcome;
 
-  signals.async_wait([&stop](std::error_code error, int) {
+  // The first signal asks the task to stop, and gives the signals their default action back: if the task does not
+  // stop, a second Ctrl-C ends the process.
+  signals.async_wait([&stop, &signals](std::error_code error, int) {
     if (!error) {
+      std::error_code ignored;
+
       stop.request_stop();
+      signals.clear(ignored);
     }
   });
   async::co_spawn(executor<::asio::io_context::executor_type>{context.get_executor()}, std::move(work),
