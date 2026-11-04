@@ -123,21 +123,30 @@ Codex reviews the PRs (the ChatGPT Codex Connector, set up in Codex's settings, 
 `@codex review` once the PR is open and after each later push: its automatic trigger is not relied on.
 `codex-review.yml` sets the status `Codex` once it has finished reviewing the last commit.
 
-Claude Code may merge the PRs it opened, giving the commit it checked
-(`gh pr merge N -R 4thlabs/quoll --rebase --delete-branch --match-head-commit <sha>`), on one condition:
-`/code-review high` runs before every push, except a clean merge of `main`, and its valid findings are fixed first. The
-PR says what that review found and why any finding was not taken. A PR merges once every required check is green on its
-last commit, Codex raises nothing new on it, and its threads are answered, with the fixing commit or the reason a point
-is not taken, then resolved. If Codex has not completed a review of the last commit 30 minutes after a request, the
-maintainer decides. If GitHub refuses `--rebase`, use `--squash` with the same commit, and a `--body` summing up the PR,
-as the default lists every commit. The maintainer merges a big architecture change, even with every check green: a new
-module, a change to a hard constraint above, a redesign of how modules fit together, and any change to this rule. In
-doubt, it counts as one.
+Claude Code may merge the PRs it opened, giving the commit it checked, on one condition: `/code-review high` runs before
+every push, except a clean merge of `main`, and its valid findings are fixed first.
+
+```bash
+gh pr merge N -R 4thlabs/quoll --rebase --delete-branch --match-head-commit <sha>
+# If GitHub refuses the rebase. The default body lists every commit.
+gh pr merge N -R 4thlabs/quoll --squash --delete-branch --match-head-commit <sha> --body "<what the PR does>"
+```
+
+The PR says what that review found and why any finding was not taken. A PR merges once every required check is green on
+its last commit, Codex raises nothing new on it, and its threads are answered, with the fixing commit or the reason a
+point is not taken, then resolved. If Codex has not completed a review of the last commit 30 minutes after a request,
+request it once more; 30 minutes later, the maintainer decides, who alone can lift the protection.
+
+The maintainer merges a big architecture change, even with every check green: a new module, a change to a hard constraint
+above, a redesign of how modules fit together, and any change to this rule, to the Code Review Rules or to
+`codex-review.yml`. In doubt, it counts as one.
 
 ## Code Review Rules
 
-Read `docs/CODING_RULES.md` and `docs/PLAN.md` first: their rules and decisions are part of what you check. Look for, in
-this order:
+Read `docs/CODING_RULES.md` and `docs/PLAN.md` first: their rules and decisions are part of what you check. Go through the
+whole diff and report every finding of P1 or above in one review: do not stop at the first ones, as each further round costs
+a push. Read the code the diff calls and what calls it, as bugs often sit where changed code meets the rest; outside the
+diff, report only what the diff causes or exposes. Look for, in this order:
 
 - bugs: undefined behaviour, lifetimes and dangling references (coroutine frames, `_ref` wrappers, `string_view` /
   `span`), unhandled cases, data races, errors swallowed;
@@ -150,8 +159,9 @@ this order:
 Severity, as only P0 and P1 reach a pull request:
 
 - At least P1, wherever they are, samples included: undefined behaviour, lifetimes, data races.
-- P1: other bugs and the WASM point, in `quoll/`, in the build and CI. A break of a rule or a decision with a consequence you
-  can name, such as an ODR violation or a header that does not compile alone. A test that does not execute what it claims.
+- P1: other bugs and the WASM point, in `quoll/`, `tests/`, the build and CI. A break of a rule or a decision with a
+  consequence you can name, such as an ODR violation or a header that does not compile alone. A test that does not execute
+  what it claims, and a fix or a new behaviour without a test.
 - In samples and in the sample's Vite plugin, other bugs are P1 only when a user meets them in normal use.
 - Anything else is P2 at most: naming, layout and wording.
 
