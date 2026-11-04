@@ -60,7 +60,6 @@ jobs:
       - name: Configure
         run: >-
           cmake -B build -DCMAKE_BUILD_TYPE=Debug -DQUOLL_HEADER_CHECKS=${{ matrix.compiler.header-checks }} -DQUOLL_TLS=ON
-          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
         env:
           CXX: ${{ matrix.compiler.cxx }}
           CXXFLAGS: ${{ matrix.compiler.cxxflags }}
@@ -71,13 +70,14 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure --parallel "$(nproc)"
 
-      # Quoll's own sources only: the rules are in .clang-tidy.
+      # Quoll's own sources only: the rules are in .clang-tidy. It also reports when a test failed, and it would pass
+      # with no file selected, hence the count. Keep the command in step with AGENTS.md.
       - name: clang-tidy
-        if: startsWith(matrix.compiler.name, 'clang')
-        run: >-
-          run-clang-tidy-19 -p build -quiet -j "$(nproc)"
-          -header-filter "$PWD/(quoll|samples|tests)/.*"
-          "$PWD/(quoll|samples)/.*\.cpp$"
+        if: ${{ !cancelled() && startsWith(matrix.compiler.name, 'clang') }}
+        run: |
+          sources='/(quoll|samples)/.*\.cpp$'
+          test "$(jq -r '.[].file' build/compile_commands.json | grep -cE "$PWD$sources")" -gt 0
+          run-clang-tidy-19 -p build -quiet -j "$(nproc)" "$PWD$sources"
 
       # Without OpenSSL, which applications may lack: the tests say what https:// then does.
       - name: Test without TLS

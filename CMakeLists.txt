@@ -8,6 +8,8 @@ if(PROJECT_IS_TOP_LEVEL)
   set(CMAKE_CXX_STANDARD 23)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
   set(CMAKE_CXX_EXTENSIONS OFF)
+  # For clang-tidy.
+  set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 endif()
 
 option(QUOLL_BUILD_TESTS "Build the Quoll tests" ${PROJECT_IS_TOP_LEVEL})
@@ -25,6 +27,8 @@ endif()
 include(cmake/QuollHelpers.cmake)
 include(cmake/CPM.cmake)
 
+include(cmake/QuollGlaze.cmake)
+
 # Modules, in dependency order: the core, then the adapters.
 add_subdirectory(quoll/async)
 add_subdirectory(quoll/io)
@@ -32,6 +36,7 @@ add_subdirectory(quoll/http)
 add_subdirectory(quoll/server)
 add_subdirectory(quoll/client)
 add_subdirectory(quoll/rest)
+add_subdirectory(quoll/ui)
 add_subdirectory(quoll/adapters)
 
 # Before the samples: they declare a test of their own.

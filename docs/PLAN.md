@@ -67,6 +67,12 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
   .private_key_file = ...}`. OpenSSL is detected when configuring (`QUOLL_TLS`: `AUTO`, `ON`, `OFF`): without it, what
   needs TLS throws at run time, saying so. A server's handshake takes place on the connection's first read, so that a
   slow peer holds nobody back and the idle timeout covers it. In a browser, `fetch` does it all.
+- UI in C++ (2026-11-04), to be proven by a prototype before it replaces React in this plan: `quoll::ui`, compiled to WASM,
+  styled with Tailwind. Elements with pipes and class strings (`button("Add") | tw("btn") | on_click(...)`), components as
+  aggregates holding `state<T>` members rather than functions with hooks, a view that runs again and a diff that reaches a
+  `Renderer`. Hot reload in three levels: CSS through Vite, `tw("...")` and `text("...")` literals patched without
+  compiling, and a rebuilt module with its states restored. See
+  [Usable server and client](#usable-server-and-client-current-step).
 
 ## Architecture
 
@@ -664,6 +670,10 @@ per topic, in this order:
 4. Missing features: server middlewares and static files; client redirects, connection limit, path prefix in the base
    URL. Streaming large bodies stays out unless asked.
 
+Before topic 3, a prototype of the UI in C++, one pull request per step: `quoll::ui` without a browser (done), then the
+DOM renderer with a sample, measuring the size of the WASM and the time to rebuild, then Vite, Tailwind and the first two
+levels of hot reload.
+
 Left over from the first topic, to settle along the way:
 
 - If a benchmark shows it matters: a TLS client builds its context per connection, and resumes no session.
@@ -681,10 +691,31 @@ Left over from the first topic, to settle along the way:
 - Housekeeping: ccache for the Emscripten job, now the slowest once the cache is warm (it wraps its compiler); the
   leftover MSVC branch of `quoll_warnings`, as only GCC and Clang are supported.
 
-Fuzzing, not started: the sanitizers only see what the tests run, and a reverse proxy in front stops malformed HTTP but
-lets valid requests through, with whatever their bodies, parameters and headers hold. Fuzz what those reach, under ASan
-and UBSan: `serve_connection` over a memory stream, the router, and the REST decoding (path and query parameters, JSON
-bodies through Glaze).
+Reliability, in the manner of Rust, not started. C++ has no borrow checker, but types and tools give a good part of what
+it guarantees. One pull request per point:
+
+1. `clang-tidy` in CI, on Quoll's own headers, with its findings as errors. `bugprone-use-after-move` refuses part of what
+   Rust refuses after a move, within one function; `cppcoreguidelines-avoid-capturing-lambda-coroutines` a coroutine
+   lambda whose captures die with it.
+2. The standard library's checks on the test builds: `_GLIBCXX_ASSERTIONS`, and `_LIBCPP_HARDENING_MODE` for libc++, so
+   for WASM. A checked access out of bounds stops rather than corrupts. A pointer and a count stay unchecked.
+3. `QUOLL_LIFETIMEBOUND` (`[[clang::lifetimebound]]`) on the functions returning views, and
+   `[[clang::coro_return_type, clang::coro_lifetimebound]]` on `async::task`, with `-Werror=dangling` on the Clang job:
+   Clang refuses some dangling references. Local and partial, at no run-time cost. The macro only hides an attribute from
+   GCC, so the coding rules have to allow it.
+4. `synchronized<T>`, a mutex holding its data, where a mutex sits next to what it protects (`connection_pool`,
+   `task_group`): the lock cannot be forgotten. It takes a function rather than handing out a guard, and refuses a function
+   returning something to await, as a lock held across a `co_await` would be unlocked from another thread. Clang's
+   `-Wthread-safety` may do this at compile time, with no new type: compare them first.
+5. Fuzzing: the sanitizers only see what the tests run, and a reverse proxy in front stops malformed HTTP but lets valid
+   requests through, with whatever their bodies, parameters and headers hold. Fuzz what those reach, under ASan and UBSan:
+   `serve_connection` over a memory stream, the router, and the REST decoding (path and query parameters, JSON bodies
+   through Glaze). A client parses what any server sends, with no proxy in front: fuzz its exchange over a memory stream
+   and the decoding of REST responses too.
+
+What stays out of reach: the lifetimes of coroutines remain mostly documented rules ("`router` outlives the task", when
+the task outlives the line it was made on), a use after move across functions or through a member goes unseen, and a lambda
+can still capture by reference what dies before it.
 
 ## Prototype (next step)
 
