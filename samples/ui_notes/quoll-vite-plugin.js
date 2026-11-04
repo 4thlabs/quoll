@@ -67,6 +67,11 @@ function callsQuoll(before) {
     return qualifier[1] === 'ui';
   }
 
+  // After a pointer, a reference or a template, it is a declaration, like after a word. A wrong guess only takes a rebuild.
+  if (/[*&>]\s*$/.test(before)) {
+    return false;
+  }
+
   const word = /([A-Za-z_][A-Za-z_0-9]*)\s+$/.exec(before);
 
   return !word || ['return', 'co_return', 'co_yield', 'co_await', 'case', 'else'].includes(word[1]);
@@ -98,8 +103,25 @@ export function scan(source) {
   let code = '';
   const raws = [];
   const literals = [];
-  let line = 1;
-  let lineStart = 0;
+  const lineStarts = [0];
+
+  for (let at = 0; at < source.length; ++at) {
+    if (source[at] === '\n') {
+      lineStarts.push(at + 1);
+    }
+  }
+
+  // Asked for growing offsets. The column is in bytes, as the compiler counts: an accent earlier on the line counts for two.
+  let currentLine = 0;
+
+  const locate = (offset) => {
+    while (currentLine + 1 < lineStarts.length && lineStarts[currentLine + 1] <= offset) {
+      ++currentLine;
+    }
+
+    return { line: currentLine + 1, column: Buffer.byteLength(source.slice(lineStarts[currentLine], offset)) + 1 };
+  };
+
   let index = 0;
 
   while (index < source.length) {
@@ -110,16 +132,8 @@ export function scan(source) {
       index = index < 0 ? source.length : index;
     } else if (source.startsWith('/*', index)) {
       const end = source.indexOf('*/', index + 2);
-      const stop = end < 0 ? source.length : end + 2;
 
-      for (let at = index; at < stop; ++at) {
-        if (source[at] === '\n') {
-          ++line;
-          lineStart = at + 1;
-        }
-      }
-
-      index = stop;
+      index = end < 0 ? source.length : end + 2;
     } else if (character === 'R' && source[index + 1] === '"') {
       // A raw string is code here: changing it needs a rebuild.
       const open = source.indexOf('(', index);
@@ -129,14 +143,6 @@ export function scan(source) {
 
       raws.push(source.slice(index, end));
       code += 'R""';
-
-      for (let at = index; at < end; ++at) {
-        if (source[at] === '\n') {
-          ++line;
-          lineStart = at + 1;
-        }
-      }
-
       index = end;
     } else if (character === '"') {
       let end = index + 1;
@@ -145,21 +151,21 @@ export function scan(source) {
         end += source[end] === '\\' ? 2 : 1;
       }
 
-      const call = /([A-Za-z_][A-Za-z_0-9]*)\s*\(\s*$/.exec(code);
+      // What precedes a literal is enough: not the whole file, for each literal.
+      const tail = code.slice(-256);
+      const call = /([A-Za-z_][A-Za-z_0-9]*)\s*\(\s*$/.exec(tail);
       const after = /^\s*([),])/.exec(source.slice(end + 1));
       const name = call?.[1];
-      const isCall = call !== null && callsQuoll(code.slice(0, call.index));
+      const isCall = call !== null && callsQuoll(tail.slice(0, call.index));
 
       literals.push({
         raw: source.slice(index, end + 1),
-        line,
-        // In bytes, as the compiler counts: an accent earlier on the line counts for two.
-        column: Buffer.byteLength(source.slice(lineStart, index)) + 1,
-        replaceable: isCall && replaceable.has(name) && after?.[1] === ')' && !code.endsWith('include '),
+        ...locate(index),
+        replaceable: isCall && replaceable.has(name) && after?.[1] === ')',
       });
       code += '""';
       index = end + 1;
-    } else if (character === "'" && /[0-9a-fA-F]/.test(source[index - 1] ?? '') && /[0-9a-fA-F]/.test(source[index + 1] ?? '')) {
+    } else if (character === "'" && /(^|[^A-Za-z_0-9])[0-9][0-9a-fA-F']*$/.test(code.slice(-64)) && /[0-9a-fA-F]/.test(source[index + 1] ?? '')) {
       // A digit separator: 1'000'000.
       code += character;
       ++index;
@@ -170,11 +176,6 @@ export function scan(source) {
       code += source.slice(index, stop);
       index = stop;
     } else {
-      if (character === '\n') {
-        ++line;
-        lineStart = index + 1;
-      }
-
       code += character;
       ++index;
     }
@@ -247,7 +248,6 @@ export function firstError(output) {
 export function quoll({ target, sources, buildDir = 'build' }) {
   const base = process.cwd();
   const configured = new Set();
-  let config;
 
   const build = async (dir, options) => {
     // Once per start: a directory left by a failed configuration, or configured with other options, gets it right.
@@ -269,10 +269,6 @@ export function quoll({ target, sources, buildDir = 'build' }) {
 
   return {
     name: 'quoll',
-
-    configResolved(resolved) {
-      config = resolved;
-    },
 
     async configureServer(server) {
       const dir = resolve(base, buildDir);

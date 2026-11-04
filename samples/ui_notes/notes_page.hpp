@@ -51,9 +51,9 @@
 
 namespace notes_ui {
 
-using namespace quoll::ui;
-
 using quoll::async::task;
+using quoll::ui::element;
+using quoll::ui::state;
 
 struct notes_page {
   state<std::vector<notes::note>> items;
@@ -103,6 +103,8 @@ struct notes_page {
   }
 
   element note_row(notes::note const &item) {
+    using namespace quoll::ui;
+
     return li({
                span(item.text) | tw("flex-1"),
                button("Delete") | tw("btn btn-ghost btn-sm") |
@@ -112,6 +114,8 @@ struct notes_page {
   }
 
   element view() {
+    using namespace quoll::ui;
+
     return main_({
                h1("Notes") | tw("text-4xl font-bold"),
                div({
