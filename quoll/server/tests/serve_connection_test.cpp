@@ -55,6 +55,7 @@
 #include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <array>
 #include <chrono>
@@ -260,6 +261,51 @@ private:
 
 static_assert(io::ByteStream<stuck_writes>);
 
+// A request that starts, then a stream that fails with `failure`; what is written goes to `written`.
+class failing_reads {
+public:
+  failing_reads(std::error_code failure, std::string &written) noexcept : failure_(failure), written_(&written) {}
+
+  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte> buffer) {
+    if (started_) {
+      co_return io::io_result{failure_, 0};
+    }
+
+    started_ = true;
+    buffer[0] = std::byte{'G'};
+    co_return io::io_result{std::error_code{}, 1};
+  }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
+    written_->append(reinterpret_cast<char const *>(data.data()), data.size());
+    co_return io::io_result{std::error_code{}, data.size()};
+  }
+
+private:
+  std::error_code failure_;
+  std::string *written_;
+  bool started_ = false;
+};
+
+static_assert(io::ByteStream<failing_reads>);
+
+// serve_connection() with a peer that sends `raw` and no longer reads: its time on the clock.
+std::chrono::nanoseconds time_until_stuck_writes_end(connection_options const &options) {
+  virtual_time time;
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  std::string const raw = "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n";
+
+  auto const answer = [&]() -> task<int> {
+    (void)co_await io::write(client, std::as_bytes(std::span{raw}));
+    co_await quoll::server::serve_connection(stuck_writes{std::move(server)}, router, options);
+    co_return 1;
+  };
+
+  REQUIRE(quoll::test::run(time, answer()) == 1);
+  return time.now();
+}
+
 } // namespace
 
 TEST_CASE("serve_connection: requests get their responses, on a connection kept alive", "[server]") {
@@ -443,20 +489,57 @@ TEST_CASE("serve_connection: a pipelined request is not idle", "[server][timer]"
 }
 
 TEST_CASE("serve_connection: a response that does not leave in time ends the connection", "[server][timer]") {
-  virtual_time time;
-  auto const router = make_router();
-  auto [client, server] = io::make_memory_stream_pair();
-  std::string const raw = "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n";
+  REQUIRE(time_until_stuck_writes_end(connection_options{.write_timeout = 4s}) == 4s);
+}
 
-  auto const answer = [&]() -> task<int> {
-    (void)co_await io::write(client, std::as_bytes(std::span{raw}));
-    co_await quoll::server::serve_connection(stuck_writes{std::move(server)}, router,
-                                             connection_options{.write_timeout = 4s});
+TEST_CASE("serve_connection: empty lines after a request are no request", "[server][timer]") {
+  virtual_time time;
+
+  // Without a read timeout left to end it: the idle timeout has to.
+  auto const received = session(time, connection_options{.idle_timeout = 5s, .read_timeout = 0s}, [](auto client) {
+    return peer(std::move(client), "POST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\n\r\nhi\r\n", 0s, "");
+  });
+
+  REQUIRE(received.starts_with("HTTP/1.1 200"));
+  REQUIRE_FALSE(received.contains("408"));
+  REQUIRE(time.now() == 5s);
+}
+
+TEST_CASE("serve_connection: a peer sending only empty lines stays idle", "[server][timer]") {
+  virtual_time time;
+
+  auto const received = session(time, connection_options{.idle_timeout = 5s, .read_timeout = 0s},
+                                [](auto client) { return peer(std::move(client), "\r\n\r\n", 1s, "\r\n"); });
+
+  REQUIRE(received.empty());
+  REQUIRE(time.now() == 5s);
+}
+
+TEST_CASE("serve_connection: empty lines before a request are skipped", "[server][timer]") {
+  virtual_time time;
+
+  auto const received = session(time, connection_options{.idle_timeout = 5s}, [](auto client) {
+    return peer(std::move(client), "\r\n\r\nGET /hello HTTP/1.1\r\nHost: h\r\n\r\n", 0s, "");
+  });
+
+  REQUIRE(received.starts_with("HTTP/1.1 200"));
+}
+
+TEST_CASE("serve_connection: only its own timeout answers 408", "[server][timer]") {
+  auto const router = make_router();
+
+  // Reported by the stream, not by a timeout: a peer gone (ETIMEDOUT), a stream cancelled by someone else.
+  auto const failure = GENERATE(std::errc::timed_out, std::errc::operation_canceled);
+  std::string written;
+  virtual_time time;
+
+  auto const serve_it = [&]() -> task<int> {
+    co_await quoll::server::serve_connection(failing_reads{std::make_error_code(failure), written}, router);
     co_return 1;
   };
 
-  REQUIRE(quoll::test::run(time, answer()) == 1);
-  REQUIRE(time.now() == 4s);
+  REQUIRE(quoll::test::run(time, serve_it()) == 1);
+  REQUIRE(written.empty());
 }
 
 TEST_CASE("serve_connection: the default timeouts apply", "[server][timer]") {
@@ -469,6 +552,17 @@ TEST_CASE("serve_connection: the default timeouts apply", "[server][timer]") {
             return peer(std::move(client), "GET", 0s, "");
           }).starts_with("HTTP/1.1 408"));
   REQUIRE(read.now() == 30s);
+  REQUIRE(time_until_stuck_writes_end({}) == 30s);
+}
+
+TEST_CASE("serve_connection: a negative timeout has expired, rather than lifting the limit", "[server][timer]") {
+  virtual_time time;
+
+  auto const received = session(time, connection_options{.idle_timeout = -1s},
+                                [](auto client) { return peer(std::move(client), "", 0s, ""); });
+
+  REQUIRE(received.empty());
+  REQUIRE(time.now() == 0s);
 }
 
 TEST_CASE("serve_connection: a timeout of zero does not apply", "[server][timer]") {

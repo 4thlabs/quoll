@@ -629,6 +629,11 @@ Every point the plan leaves open, gathered here; the linked sections give the co
   lingering close after an error response (so that the client
   reads it rather than a reset) needs a half-close in `ByteStream`; `Expect: 100-continue` needs the parser to stop after
   the header; a graceful shutdown lets in-flight requests finish, where a stop request now cancels them.
+- The server's read and write timeouts cover a message as a whole, which is strong against slow peers but also ends a
+  legitimate transfer on a slow link (8 MiB in 30 s is about 2.2 Mbit/s). Static files and streamed bodies will need a
+  limit on progress instead, or a minimum rate.
+- Connections running on an executor without a timer (`serve` on a thread pool) have no timeouts. `serve` could hand
+  them the timer of its own loop.
 - The runtime in a browser, where the event loop already runs: no `run()` there; tasks start with `co_spawn` on the
   event loop, and the Worker is driven by the bridge. The default `rest::client` transport there would be `fetch`.
 - A default `main()` provided by Quoll, creating the runtime and running an application coroutine, once the shape of

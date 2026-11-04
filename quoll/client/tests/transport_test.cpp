@@ -701,7 +701,26 @@ TEST_CASE("client::transport: the default timeouts apply", "[client][timer]") {
 
   REQUIRE(quoll::test::run(connecting, send_gets(never_connects, {})) == std::errc::timed_out);
   REQUIRE(connecting.now() == 30s);
-  REQUIRE(quoll::test::run(responding, send_gets(never_answers, {})) == std::errc::timed_out);
+
+  std::chrono::nanoseconds failed_at{};
+
+  auto const send = [&]() -> task<std::error_code> {
+    auto const error = co_await send_gets(never_answers, {});
+
+    failed_at = responding.now();
+    co_return error;
+  };
+
+  REQUIRE(quoll::test::run(responding, send()) == std::errc::timed_out);
+  REQUIRE(failed_at == 60s);
+}
+
+TEST_CASE("client::transport: a negative timeout has expired, rather than lifting the limit", "[client][timer]") {
+  virtual_time time;
+  slow_network network{.time = &time, .connect_delay = 1h};
+
+  REQUIRE(quoll::test::run(time, send_gets(network, {.connect_timeout = -1s})) == std::errc::timed_out);
+  REQUIRE(time.now() == 0s);
 }
 
 TEST_CASE("client::transport: a timeout of zero does not apply", "[client][timer]") {
