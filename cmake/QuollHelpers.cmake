@@ -10,13 +10,16 @@ set_property(GLOBAL PROPERTY QUOLL_TEST_SOURCES "")
 set_property(GLOBAL PROPERTY QUOLL_TEST_DEPS "")
 set_property(GLOBAL PROPERTY QUOLL_COMPILE_FAIL_SOURCES "")
 
-# Warnings for Quoll's own translation units (tests, header checks). Never exported to users.
+# Warnings and checks for Quoll's own translation units (tests, header checks). Never exported to users.
 if(NOT TARGET quoll_warnings)
   add_library(quoll_warnings INTERFACE)
   target_compile_options(quoll_warnings INTERFACE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>
     $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive->
   )
+  # libstdc++ checks what it can at run time, such as an index out of bounds or an empty optional read: the test stops
+  # rather than reading what it should not. It changes no ABI, so that what is built without it still links.
+  target_compile_definitions(quoll_warnings INTERFACE _GLIBCXX_ASSERTIONS)
 endif()
 
 #
