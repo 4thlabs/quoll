@@ -39,10 +39,13 @@
 
 #include <quoll/asio/acceptor.hpp>
 #include <quoll/asio/detail/connect.hpp>
+#include <quoll/asio/detail/wait.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/offers_service.hpp>
 #include <quoll/async/service.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/timer.hpp>
+#include <quoll/async/timer_ref.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/io/any_listener.hpp>
 #include <quoll/io/any_stream.hpp>
@@ -56,6 +59,7 @@
 #include <asio/post.hpp>
 #include <asio/prefer.hpp>
 
+#include <chrono>
 #include <concepts>
 #include <cstdint>
 #include <string>
@@ -72,7 +76,8 @@ namespace quoll::asio {
  * Equal when the asio executors are.
  *
  * It is also the network of its execution context (io::Network), and offers itself as such (io::network_ref):
- * io::connect() and io::listen() open TCP connections and listening sockets there, for the tasks it runs.
+ * io::connect() and io::listen() open TCP connections and listening sockets there, for the tasks it runs. Likewise, it
+ * is the timer of its execution context (async::Timer), for async::sleep_for() and async::with_timeout().
  *
  * Thread safety: post() may be called from any thread, as asio's post can.
  */
@@ -80,7 +85,7 @@ template <class AsioExecutor = ::asio::any_io_executor>
   requires std::copy_constructible<AsioExecutor> && std::equality_comparable<AsioExecutor>
 class executor {
 public:
-  using services = async::service_list<io::network_ref>;
+  using services = async::service_list<io::network_ref, async::timer_ref>;
 
   explicit executor(AsioExecutor inner) noexcept(std::is_nothrow_move_constructible_v<AsioExecutor>)
       : inner_(std::move(inner)) {}
@@ -102,11 +107,19 @@ public:
   /** @brief This executor, as the network of its execution context: valid while it lives (see io::network_ref). */
   [[nodiscard]] io::network_ref query(async::service_tag<io::network_ref>) const { return io::network_ref{*this}; }
 
+  /** @brief Completes with true once `duration` has elapsed, with false on a stop request (see async::Timer). */
+  [[nodiscard]] async::task<bool> wait_for(std::chrono::nanoseconds duration) const {
+    return detail::wait(io_executor(), duration);
+  }
+
+  /** @brief This executor, as the timer of its execution context: valid while it lives (see async::timer_ref). */
+  [[nodiscard]] async::timer_ref query(async::service_tag<async::timer_ref>) const { return async::timer_ref{*this}; }
+
   [[nodiscard]] bool operator==(executor const &) const noexcept = default;
 
 private:
-  // The executor of the sockets and acceptors: not counted as work, as an idle connection kept for later is none (a
-  // runtime counts the work of its tasks itself).
+  // The executor of the sockets, acceptors and timers: not counted as work, as an idle connection kept for later is
+  // none (a runtime counts the work of its tasks itself; a pending wait counts on its own).
   [[nodiscard]] ::asio::any_io_executor io_executor() const {
     return ::asio::prefer(::asio::any_io_executor{inner_}, ::asio::execution::outstanding_work.untracked);
   }
@@ -123,7 +136,9 @@ private:
 
 static_assert(async::Executor<executor<>>);
 static_assert(io::Network<executor<>>);
+static_assert(async::Timer<executor<>>);
 static_assert(async::OffersService<executor<>, io::network_ref>);
+static_assert(async::OffersService<executor<>, async::timer_ref>);
 
 } // namespace quoll::asio
 

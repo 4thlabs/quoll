@@ -34,29 +34,30 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_IO_DETAIL_CURRENT_NETWORK_HPP
-#define QUOLL_IO_DETAIL_CURRENT_NETWORK_HPP
+#ifndef QUOLL_ASYNC_DETAIL_REQUIRE_SERVICE_HPP
+#define QUOLL_ASYNC_DETAIL_REQUIRE_SERVICE_HPP
 
 #include <quoll/async/executor_ref.hpp>
-#include <quoll/io/network_ref.hpp>
 
 #include <stdexcept>
 #include <string>
 
-namespace quoll::io::detail {
+namespace quoll::async::detail {
 
-// The network of the executor the awaiting task runs on, for io::connect() and io::listen().
-[[nodiscard]] inline network_ref current_network(async::executor_ref executor, char const *caller) {
-  auto found = executor.query<network_ref>();
+// The service `S` of the executor the awaiting task runs on, for the free functions built on it (`what` names it in the
+// error): a task on an executor that lacks it is a programming error.
+template <class S>
+[[nodiscard]] S require_service(executor_ref executor, char const *caller, char const *what) {
+  auto found = executor.template query<S>();
 
   if (!found) {
-    throw std::logic_error{std::string{caller} +
-                           ": the executor offers no network (spawn the task on a runtime executor)"};
+    throw std::logic_error{std::string{caller} + ": the executor offers no " + what +
+                           " (spawn the task on a runtime executor)"};
   }
 
   return *found;
 }
 
-} // namespace quoll::io::detail
+} // namespace quoll::async::detail
 
-#endif // QUOLL_IO_DETAIL_CURRENT_NETWORK_HPP
+#endif // QUOLL_ASYNC_DETAIL_REQUIRE_SERVICE_HPP

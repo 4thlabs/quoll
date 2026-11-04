@@ -35,8 +35,10 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/async/with_timeout.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/emscripten.hpp>
 #include <quoll/http/fields.hpp>
@@ -58,6 +60,7 @@
 
 #include <emscripten.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -229,7 +232,70 @@ task<std::error_code> send_then_stop(fetch_transport transport, std::stop_source
   co_return error;
 }
 
+// The milliseconds a sleep of `duration` takes.
+task<double> measure_sleep(std::chrono::nanoseconds duration) {
+  auto const start = emscripten_get_now();
+
+  co_await quoll::async::sleep_for(duration);
+  co_return emscripten_get_now() - start;
+}
+
+task<std::error_code> sleep_error(std::chrono::nanoseconds duration) {
+  try {
+    co_await quoll::async::sleep_for(duration);
+  } catch (std::system_error const &error) {
+    co_return error.code();
+  }
+
+  co_return std::error_code{};
+}
+
+// Sleeps, then requests stop: when_all starts the sleep first.
+task<std::error_code> sleep_then_stop(std::stop_source &source) {
+  using namespace std::chrono_literals;
+
+  auto const [error, stopped] = co_await quoll::async::when_all(sleep_error(1h), request_stop(source));
+
+  co_return error;
+}
+
+// Requests a target the server never answers, up to the timeout.
+task<std::error_code> fetch_with_timeout(fetch_transport transport, std::chrono::nanoseconds timeout) {
+  http::request request;
+
+  request.target = "/hang";
+
+  try {
+    (void)co_await quoll::async::with_timeout(timeout, transport.send(std::move(request)));
+  } catch (std::system_error const &error) {
+    co_return error.code();
+  }
+
+  co_return std::error_code{};
+}
+
 } // namespace
+
+TEST_CASE("emscripten executor offers a timer on the event loop", "[emscripten][timer]") {
+  using namespace std::chrono_literals;
+
+  // Node's timers run on a clock rounded to the millisecond: one may end just under its duration here.
+  REQUIRE(run(measure_sleep(20ms)) >= 19.0);
+}
+
+TEST_CASE("emscripten timer: a stop request ends a sleep", "[emscripten][timer]") {
+  std::stop_source source;
+
+  REQUIRE(run(sleep_then_stop(source), source) == std::errc::operation_canceled);
+}
+
+TEST_CASE("fetch_transport: with_timeout aborts a pending fetch", "[emscripten][timer]") {
+  using namespace std::chrono_literals;
+
+  test_server const server;
+
+  REQUIRE(run(fetch_with_timeout(fetch_transport{server.url()}, 20ms)) == std::errc::timed_out);
+}
 
 TEST_CASE("emscripten executor resumes coroutines on the event loop", "[emscripten]") {
   REQUIRE(run(count_yields(3)) == 3);

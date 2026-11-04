@@ -50,8 +50,12 @@
 #include <quoll/async/offers_service.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/service.hpp>
+#include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/timer.hpp>
+#include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/async/with_timeout.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 

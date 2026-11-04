@@ -38,8 +38,16 @@
 #define QUOLL_EMSCRIPTEN_EXECUTOR_HPP
 
 #include <quoll/async/executor.hpp>
+#include <quoll/async/offers_service.hpp>
+#include <quoll/async/service.hpp>
+#include <quoll/async/task.hpp>
+#include <quoll/async/timer.hpp>
+#include <quoll/async/timer_ref.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/emscripten/detail/js.hpp>
+#include <quoll/emscripten/detail/timer_operation.hpp>
+
+#include <chrono>
 
 namespace quoll::emscripten {
 
@@ -51,12 +59,25 @@ namespace quoll::emscripten {
  * completions keep coming. A coroutine that yields endlessly starves the loop, as an endless chain of promises would.
  * post() never fails and allocates nothing in WebAssembly memory. All executors are equal: there is one event loop.
  *
+ * It is also the timer of the event loop (async::Timer), for async::sleep_for() and async::with_timeout(), through
+ * setTimeout: a wait lasts at most what setTimeout can, about 24.8 days.
+ *
  * Thread safety: post() from the thread running the event loop (the only one, in a build without pthreads).
  */
 class executor {
 public:
+  using services = async::service_list<async::timer_ref>;
+
   /** @brief Resumes `item.handle` in a microtask; `item` stays alive and unchanged until then. */
   void post(async::work_item &item) const noexcept { detail::quoll_emscripten_post(&resume, &item); }
+
+  /** @brief Completes with true once `duration` has elapsed, with false on a stop request (see async::Timer). */
+  [[nodiscard]] async::task<bool> wait_for(std::chrono::nanoseconds duration) const {
+    co_return co_await detail::timer_operation{duration};
+  }
+
+  /** @brief This executor, as the timer of the event loop: valid while it lives (see async::timer_ref). */
+  [[nodiscard]] async::timer_ref query(async::service_tag<async::timer_ref>) const { return async::timer_ref{*this}; }
 
   /** @brief Always true: every executor posts to the same event loop. */
   [[nodiscard]] bool operator==(executor const &) const noexcept = default;
@@ -72,6 +93,8 @@ private:
 };
 
 static_assert(async::Executor<executor>);
+static_assert(async::Timer<executor>);
+static_assert(async::OffersService<executor, async::timer_ref>);
 
 } // namespace quoll::emscripten
 

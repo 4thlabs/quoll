@@ -15,7 +15,8 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 ## Status
 
 Exploration. Modules so far: `quoll::async` (task, executor_ref, any_executor, await_context with stop token,
-current_executor and current_stop_token, executor services, co_spawn and its `detached` handler, when_all, run_loop),
+current_executor and current_stop_token, executor services, co_spawn and its `detached` handler, when_all, run_loop,
+`Timer` and `timer_ref`, `sleep_for`, `with_timeout`),
 `quoll::io` (`ByteStream`, `Connector`, `Listener`, `BoundListener` and `Network` concepts, `any_stream` /
 `any_listener` type erasure, `io::network_ref` with `io::connect` / `io::listen` through the executor's network,
 `io::network_connector`, in-memory stream pair, `io::write`), `quoll::http` (messages, llhttp parser, serializer,
@@ -26,14 +27,15 @@ serves a router on a byte stream, `serve` accepts connections from a `Listener`,
 URL), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `client::transport` by default, and the
 contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates; and the codecs: `json_codec` on
 Glaze, `text_codec`, `param_traits`), the adapters `quoll::threads` (thread pool executor; its tests do not run under
-WASM), `quoll::asio` (asio executor offering the network, `tcp_stream`, TCP connector and acceptor, `runtime`; native
-only, the application provides standalone asio) and `quoll::emscripten` (JavaScript event loop executor,
-`fetch_transport`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`), and
+WASM), `quoll::asio` (asio executor offering the network and a timer, `tcp_stream`, TCP connector and acceptor, `runtime`;
+native only, the application provides standalone asio) and `quoll::emscripten` (JavaScript event loop executor offering
+a timer, `fetch_transport`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`),
+and
 `quoll::runtime` (`<quoll/runtime.hpp>`: `quoll::runtime`, the runtime of the adapter chosen with `QUOLL_RUNTIME`, asio
 natively; none under Emscripten). A client GET runs end to end over a memory stream, over TCP through the asio
 connector, and over `fetch` in Node (prototype criteria 1 to 4); a `rest::client` built from a URL calls
-`server::listen` over TCP on a `quoll::runtime`. The prototype described in `docs/PLAN.md` continues with OpenAPI and
-the React sample. Do not settle its open questions or write the module design into this file before the prototype
+`server::listen` over TCP on a `quoll::runtime`. The prototype described in `docs/PLAN.md` (OpenAPI, the React sample)
+is paused while the server and the client become fully usable: see "Usable server and client" there. Do not settle its open questions or write the module design into this file before the prototype
 validates them.
 
 ## Build & test
@@ -73,8 +75,8 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 - All test sources compile into one executable, `build/tests/quoll_tests` (Catch2 v3 via CPM, built by
   `quoll_main_tests()` in `tests/CMakeLists.txt`).
   Helpers shared by the tests of every module live in `tests/support/quoll/test/` (`quoll::test::run` runs a
-  task on a run_loop, `quoll::test::overloaded`, `quoll::test::check`): use them rather than copying them into a
-  test file.
+  task on a run_loop or a `virtual_time`, whose timer jumps to the next deadline instead of waiting;
+  `quoll::test::overloaded`, `quoll::test::check`): use them rather than copying them into a test file.
 - What must not compile (the compile-time checks of an API, `static_assert` messages included) is tested too: one source
   per case under `tests/compile_fail/`, starting with `// expect: <message>`, declared with
   `quoll_declare_compile_fail_tests(SOURCES ... DEPS ...)`. Each becomes a ctest `compile_fail.<case>` that compiles it

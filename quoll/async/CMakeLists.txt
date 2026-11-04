@@ -7,6 +7,7 @@ quoll_declare_tests(
     tests/run_loop_test.cpp
     tests/stop_token_test.cpp
     tests/task_test.cpp
+    tests/timer_test.cpp
     tests/when_all_test.cpp
   DEPS
     quoll::async

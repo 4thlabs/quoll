@@ -56,6 +56,44 @@ addToLibrary({
     });
   },
 
+  // Timers started and not settled yet, by id: the setTimeout handle and how to settle.
+  $quollTimers: {
+    next: 1,
+    entries: {},
+  },
+
+  // Calls complete(operation, elapsed) once the time has elapsed, or once cancelled. Rounded up, as a timer never ends
+  // early; setTimeout fires at once past its limit, a 32-bit count of milliseconds.
+  quoll_emscripten_timer_start__deps: ['$quollTimers', '$callUserCallback'],
+  quoll_emscripten_timer_start: (milliseconds, complete, operation) => {
+    const id = quollTimers.next++;
+    const settle = (elapsed) => {
+      delete quollTimers.entries[id];
+      {{{ runtimeKeepalivePop() }}}
+      callUserCallback(() => {{{ makeDynCall('vpi', 'complete') }}}(operation, elapsed));
+    };
+
+    {{{ runtimeKeepalivePush() }}}
+    quollTimers.entries[id] = {
+      handle: setTimeout(() => settle(1), Math.min(Math.ceil(milliseconds), 2147483647)),
+      settle,
+    };
+    return id;
+  },
+
+  // Ignores a timer already settled. The completion comes later, from the event loop: the stop request that cancels may
+  // be made by the coroutine that would resume.
+  quoll_emscripten_timer_cancel__deps: ['$quollTimers'],
+  quoll_emscripten_timer_cancel: (id) => {
+    const entry = quollTimers.entries[id];
+
+    if (entry) {
+      delete quollTimers.entries[id];
+      clearTimeout(entry.handle);
+      queueMicrotask(() => entry.settle(0));
+    }
+  },
+
   // HTTP methods, field values and status texts are byte strings: one byte per character, both ways.
   $quollBytesToString: (pointer, size) => String.fromCharCode(...HEAPU8.subarray(pointer, pointer + size)),
   $quollStringToBytes: (text) => Uint8Array.from(text, (character) => character.charCodeAt(0)),

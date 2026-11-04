@@ -46,6 +46,10 @@ extern "C" {
 
 void quoll_emscripten_post(void (*resume)(void *item), void *item);
 
+// `complete` always runs, from the event loop, with `elapsed` false once cancelled.
+int quoll_emscripten_timer_start(double milliseconds, void (*complete)(void *operation, int elapsed), void *operation);
+void quoll_emscripten_timer_cancel(int id);
+
 // `url` is null-terminated UTF-8; `method` and `headers` are bytes, one per character of the JavaScript string.
 int quoll_emscripten_fetch_start(char const *url, char const *method, std::size_t method_size, char const *headers,
                                  std::size_t headers_size, void const *body, std::size_t body_size,

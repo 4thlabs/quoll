@@ -44,25 +44,28 @@
 
 #include <exception>
 #include <optional>
+#include <stop_token>
 #include <type_traits>
 #include <utility>
 
 namespace quoll::test {
 
 /**
- * @brief Runs `work` on `loop` until the loop is drained. Returns its value, or nothing if it never completed (it
- * waits for something that did not come); rethrows its exception, so that Catch2 reports it.
+ * @brief Runs `work` on `context` (a run_loop, a virtual_time) until the context is drained. Returns its value, or
+ * nothing if it never completed (it waits for something that did not come); rethrows its exception, so that Catch2
+ * reports it.
  */
-template <class T>
+template <class Context, class T>
   requires(!std::is_void_v<T>)
-std::optional<T> run(async::run_loop &loop, async::task<T> work) {
+std::optional<T> run(Context &context, async::task<T> work, std::stop_token stop_token = {}) {
   std::optional<T> result;
   std::exception_ptr failure;
 
-  co_spawn(loop.get_executor(), std::move(work),
+  co_spawn(context.get_executor(), std::move(work),
            overloaded{[&](T value) { result = std::move(value); },
-                      [&](std::exception_ptr error) { failure = std::move(error); }});
-  loop.run();
+                      [&](std::exception_ptr error) { failure = std::move(error); }},
+           std::move(stop_token));
+  context.run();
 
   // Rethrown here: the handler itself must not throw.
   if (failure) {
