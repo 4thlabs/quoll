@@ -70,7 +70,7 @@ TEST_CASE("ui: decorators complete an element, in order", "[ui]") {
 
   REQUIRE(styled.classes == "flex gap-2 p-4");
   REQUIRE(styled.key == "first");
-  REQUIRE(styled.attributes.at(0) == std::pair<std::string, std::string>{"id", "main"});
+  REQUIRE(styled.attributes.at("id") == "main");
   REQUIRE((div() | key(42)).key == "42");
 }
 

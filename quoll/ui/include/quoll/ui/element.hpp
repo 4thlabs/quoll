@@ -42,6 +42,7 @@
 
 #include <functional>
 #include <initializer_list>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -81,7 +82,7 @@ struct element {
   std::string key{};
   // The value of an input.
   std::optional<std::string> value{};
-  std::vector<std::pair<std::string, std::string>> attributes{};
+  std::map<std::string, std::string> attributes{};
   std::vector<event_binding> events{};
   std::vector<element> children{};
   // Given when the element is shown.

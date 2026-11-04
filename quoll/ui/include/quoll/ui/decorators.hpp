@@ -115,10 +115,13 @@ template <std::integral T>
   return decorator([name = std::to_string(number)](element &target) { target.key = name; });
 }
 
-/** @brief Sets an attribute of the element. */
+/**
+ * @brief Sets an attribute of the element: set again, it takes the last value. `class` and `value` have their own ways,
+ * tw() and bind(), and are not to be set here.
+ */
 [[nodiscard]] inline auto attribute(std::string_view name, std::string_view value) {
   return decorator([name = std::string{name}, value = std::string{value}](element &target) {
-    target.attributes.emplace_back(name, value);
+    target.attributes.insert_or_assign(name, value);
   });
 }
 
