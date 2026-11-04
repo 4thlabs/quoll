@@ -114,3 +114,8 @@ and Emscripten build + tests, GCC 13 with TSan and with ASan / UBSan, and a clan
 `main`; the header checks run on GCC 13 and Emscripten, the `compile_fail` ctests on GCC 13 and Clang 19, and the native
 jobs keep their compilations in ccache. Claude reviews every PR (`claude-review.yml`, rules from this file and `docs/`). Formatting: `clang-format -i
 <file>` with the repo `.clang-format`; format only the files you touch.
+
+Claude Code may merge the PRs it opened (`gh pr merge N -R 4thlabs/quoll --rebase --delete-branch`), on one condition:
+`/code-review high` runs before every push, and its valid findings are fixed first. The PR says what that review found
+and why any finding was not taken. A PR merges once every check, the Claude review included, is green on its last
+commit, the latest review raises nothing new, and its threads are answered.
