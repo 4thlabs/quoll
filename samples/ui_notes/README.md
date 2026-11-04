@@ -25,7 +25,7 @@ In the dev container, or with Emscripten, Node and a C++23 compiler at hand, `sa
 
 ## Try hot reload
 
-Add a note, start typing another one, and change `main.cpp` in your editor:
+Add a note, start typing another one, and change `notes_page.cpp` in your editor:
 
 | Change | What happens | The note you are typing |
 |---|---|---|
@@ -33,7 +33,7 @@ Add a note, start typing another one, and change `main.cpp` in your editor:
 | `tw("btn btn-primary")` to `tw("btn btn-secondary")` | shows at once | stays |
 | `tw("text-4xl font-bold")` to `tw("text-4xl font-bold text-rose-500")`, a class not used yet | Tailwind generates it, and it shows at once | stays |
 | A comment, or spaces | nothing | stays |
-| Anything else, such as adding a `state` | a rebuild of about 4 s, then the page reloads | **lost** |
+| Anything else, such as adding a `state` | a rebuild of less than a second, then the page reloads | **lost** |
 | `int x = oops;` | the compiler's first error, over the page | |
 
 ## The API
@@ -73,12 +73,30 @@ int main() { quoll::emscripten::mount<counter>(); }   // in the element #app
 | Change a state | `count = 1;`, `count.set(1);`, `items.update([](auto &all) { all.clear(); });` | the view then runs again, once |
 | Read a state | `*count`, `items->size()` | |
 | Load at the start | `task<> mounted() { items = co_await api.call<notes::list>({}); }` | an optional member |
-| Call an API | `quoll::rest::client<notes::api, fetch_transport> api{fetch_transport{""}};` | a member; the same contract as the server, so a wrong call does not compile |
+| Call an API | `quoll::rest::client<notes::api, fetch_transport> api{fetch_transport{""}};` | the same contract as the server, so a wrong call does not compile; in a source of its own, see below |
 | Split the view | a member function returning `element` | nested components with a state of their own are not there yet |
 | Make a decorator | `decorator([](element &target) { target.classes += " card"; })` | |
 
 Capture `this` in handlers, or values: the component lives at a stable address, and a handler stays alive until its task
 ends.
+
+## Keep rebuilds short
+
+The sample is split so that a change in what shows compiles little:
+
+| Source | Holds | Compiles again when |
+|---|---|---|
+| `notes_page.cpp` | what shows, and what it does | it changes: all the time |
+| `main.cpp` | `mount`, which instantiates `app<C, R>` | the struct changes |
+| `notes_client.cpp` | the calls, with REST and JSON | a call changes |
+
+`CMakeLists.txt` also precompiles the headers `notes_page.cpp` needs.
+
+Measured from a save to the end of the build, for a change in the page, on one machine with 8 cores:
+
+| Everything in one source | + REST apart, and precompiled headers | + `main` apart |
+|---|---|---|
+| 3.9 s | 1.05 s | **0.74 s** |
 
 ## Build for production
 

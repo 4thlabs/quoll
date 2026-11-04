@@ -41,7 +41,21 @@ import { defineConfig } from 'vite';
 import { quoll } from './quoll-vite-plugin.js';
 
 export default defineConfig({
-  plugins: [tailwindcss(), quoll({ target: 'quoll_ui_notes', sources: ['main.cpp', '../notes/notes_api.hpp'] })],
+  plugins: [
+    tailwindcss(),
+    quoll({
+      target: 'quoll_ui_notes',
+      sources: [
+        'main.cpp',
+        'notes_page.cpp',
+        'notes_page.hpp',
+        'notes_client.cpp',
+        'notes_client.hpp',
+        '../notes/note.hpp',
+        '../notes/notes_api.hpp',
+      ],
+    }),
+  ],
   server: {
     proxy: { '/api': 'http://localhost:8080' },
     // A folder shared with a container does not always report its changes: QUOLL_POLL=1 looks for them.
