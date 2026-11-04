@@ -4,7 +4,15 @@ if(NOT EMSCRIPTEN)
   return()
 endif()
 
-quoll_declare_module(NAME emscripten DEPS quoll::http quoll::ui)
+quoll_declare_module(
+  NAME emscripten
+  SOURCES
+    src/executor.cpp
+    src/fetch_transport.cpp
+  DEPS
+    quoll::http
+    quoll::ui
+)
 
 set(quoll_emscripten_library ${CMAKE_CURRENT_SOURCE_DIR}/js/quoll_emscripten.js)
 set(quoll_emscripten_library_installed ${CMAKE_INSTALL_DATADIR}/quoll/quoll_emscripten.js)

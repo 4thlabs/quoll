@@ -37,15 +37,11 @@
 #ifndef QUOLL_IO_CONNECT_HPP
 #define QUOLL_IO_CONNECT_HPP
 
-#include <quoll/async/current_executor.hpp>
-#include <quoll/async/detail/require_service.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_stream.hpp>
-#include <quoll/io/network_ref.hpp>
 
 #include <cstdint>
 #include <string>
-#include <utility>
 
 namespace quoll::io {
 
@@ -55,12 +51,7 @@ namespace quoll::io {
  *
  * Fails like a Connector; throws std::logic_error if the executor offers no network.
  */
-[[nodiscard]] inline async::task<any_stream> connect(std::string host, std::uint16_t port) {
-  auto const network =
-      async::detail::require_service<network_ref>(co_await async::current_executor(), "quoll::io::connect", "network");
-
-  co_return co_await network.connect(std::move(host), port);
-}
+[[nodiscard]] async::task<any_stream> connect(std::string host, std::uint16_t port);
 
 } // namespace quoll::io
 

@@ -45,7 +45,6 @@
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/emscripten/detail/js.hpp>
-#include <quoll/emscripten/detail/timer_operation.hpp>
 
 #include <chrono>
 
@@ -72,9 +71,7 @@ public:
   void post(async::work_item &item) const noexcept { detail::quoll_emscripten_post(&resume, &item); }
 
   /** @brief Completes with true once `duration` has elapsed, with false on a stop request (see async::Timer). */
-  [[nodiscard]] async::task<bool> wait_for(std::chrono::nanoseconds duration) const {
-    co_return co_await detail::timer_operation{duration};
-  }
+  [[nodiscard]] async::task<bool> wait_for(std::chrono::nanoseconds duration) const;
 
   /** @brief This executor, as the timer of the event loop: valid while it lives (see async::timer_ref). */
   [[nodiscard]] async::timer_ref query(async::service_tag<async::timer_ref>) const { return async::timer_ref{*this}; }

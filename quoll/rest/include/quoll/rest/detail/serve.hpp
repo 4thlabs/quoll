@@ -38,7 +38,6 @@
 #define QUOLL_REST_DETAIL_SERVE_HPP
 
 #include <quoll/async/task.hpp>
-#include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/router.hpp>
@@ -52,8 +51,6 @@
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/http_error.hpp>
-#include <quoll/rest/json_codec.hpp>
-#include <quoll/rest/problem.hpp>
 #include <quoll/rest/reply.hpp>
 #include <quoll/rest/security.hpp>
 #include <quoll/rest/validators.hpp>
@@ -93,22 +90,7 @@ struct task_value<async::task<T>> {
 };
 
 // An error the server answers itself, as an RFC 9457 problem; `detail` is sent as it is.
-[[nodiscard]] inline http::response problem_response(http::status code, std::optional<std::string> detail) {
-  auto const reason = http::reason_phrase(code);
-  problem const body{
-      .type = std::nullopt,
-      .title = reason.empty() ? std::nullopt : std::optional<std::string>{reason},
-      .status = static_cast<int>(code),
-      .detail = std::move(detail),
-      .instance = std::nullopt,
-  };
-  http::response response;
-
-  response.status = code;
-  response.body = json_codec{}.encode(body);
-  response.fields.add("Content-Type", problem_content_type);
-  return response;
-}
+[[nodiscard]] http::response problem_response(http::status code, std::optional<std::string> detail);
 
 template <class Scheme>
 [[nodiscard]] http::response unauthorized(std::string detail) {

@@ -34,8 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_EMSCRIPTEN_DETAIL_FETCH_OPERATION_HPP
-#define QUOLL_EMSCRIPTEN_DETAIL_FETCH_OPERATION_HPP
+#include <quoll/emscripten/fetch_transport.hpp>
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
@@ -56,35 +55,40 @@
 #include <exception>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <stop_token>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
 
-namespace quoll::emscripten::detail {
+namespace quoll::emscripten {
+
+namespace detail {
+
+namespace {
 
 // Fields that fetch sets itself, and rejects or ignores when given.
-inline constexpr std::array<std::string_view, 9> fetch_managed_fields{
+constexpr std::array<std::string_view, 9> fetch_managed_fields{
     "Connection", "Content-Length", "Expect", "Host", "Keep-Alive", "TE", "Trailer", "Transfer-Encoding", "Upgrade",
 };
 
 // Fields of a response that describe the bytes on the wire, which fetch has already decoded (decompressed,
 // de-chunked): they do not describe the body it hands over.
-inline constexpr std::array<std::string_view, 3> fetch_decoded_fields{
+constexpr std::array<std::string_view, 3> fetch_decoded_fields{
     "Content-Encoding",
     "Content-Length",
     "Transfer-Encoding",
 };
 
-[[nodiscard]] inline bool is_one_of(std::string_view name, std::span<std::string_view const> names) noexcept {
+[[nodiscard]] bool is_one_of(std::string_view name, std::span<std::string_view const> names) noexcept {
   return std::ranges::any_of(names,
                              [name](std::string_view candidate) { return http::detail::iequals(name, candidate); });
 }
 
 // The fields of a request, one "name:value\n" line each, for quoll_emscripten_fetch_start. Checked as by
 // http::serialize(): a name that is not a token, or a value with a line break, would split into other fields there.
-[[nodiscard]] inline std::string pack_fields(http::fields const &fields) {
+[[nodiscard]] std::string pack_fields(http::fields const &fields) {
   std::string packed;
 
   for (auto const &entry : fields) {
@@ -236,10 +240,25 @@ private:
 static_assert(async::ContextAwaitable<fetch_operation>);
 
 // `fields`: the request's fields, packed by pack_fields().
-inline async::task<http::response> fetch(std::string url, std::string fields, http::request request) {
+[[nodiscard]] async::task<http::response> fetch(std::string url, std::string fields, http::request request) {
   co_return co_await fetch_operation{std::move(url), std::move(fields), request};
 }
 
-} // namespace quoll::emscripten::detail
+} // namespace
 
-#endif // QUOLL_EMSCRIPTEN_DETAIL_FETCH_OPERATION_HPP
+} // namespace detail
+
+async::task<http::response> fetch_transport::send(http::request request) const {
+  if (!request.target.starts_with('/')) {
+    throw std::invalid_argument{"quoll::emscripten::fetch_transport: the target is not in origin form"};
+  }
+
+  http::detail::check_target(request.target);
+
+  auto url = base_url_ + request.target;
+  auto fields = detail::pack_fields(request.fields);
+
+  return detail::fetch(std::move(url), std::move(fields), std::move(request));
+}
+
+} // namespace quoll::emscripten

@@ -61,7 +61,6 @@
 #include <cstddef>
 #include <functional>
 #include <map>
-#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -153,20 +152,7 @@ void add_credentials(type_list<Scheme...>, credential_map const &credentials, re
 // A path parameter the server reads back as it is, and that stays where the template puts it: not empty (no segment),
 // not `.` or `..` (a URL parser resolves them, so a request could reach another endpoint with the client's
 // credentials), nor holding such a segment in the rest of a path.
-inline void check_path_text(std::string_view name, std::string_view text, bool rest_of_path) {
-  auto const invalid = [](std::string_view segment) { return segment == "." || segment == ".."; };
-  bool valid = rest_of_path || (!text.empty() && !invalid(text));
-
-  if (rest_of_path) {
-    for (auto const segment : std::views::split(text, '/')) {
-      valid = valid && !invalid(std::string_view{segment.begin(), segment.end()});
-    }
-  }
-
-  if (!valid) {
-    throw std::invalid_argument{"quoll::rest::client: invalid path parameter " + std::string{name}};
-  }
-}
+void check_path_text(std::string_view name, std::string_view text, bool rest_of_path);
 
 template <class Route, std::size_t Index>
 [[nodiscard]] std::string path_text(typename Route::arguments const &arguments) {

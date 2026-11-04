@@ -38,13 +38,10 @@
 #define QUOLL_EMSCRIPTEN_FETCH_TRANSPORT_HPP
 
 #include <quoll/async/task.hpp>
-#include <quoll/emscripten/detail/fetch_operation.hpp>
-#include <quoll/http/detail/check.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/transport.hpp>
 
-#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -89,18 +86,7 @@ public:
    * which could leave the base URL's host (`@evil.example/`), and for what http::serialize() rejects: a target with
    * spaces or line breaks, a field name that is not a token, a value with a line break.
    */
-  [[nodiscard]] async::task<http::response> send(http::request request) const {
-    if (!request.target.starts_with('/')) {
-      throw std::invalid_argument{"quoll::emscripten::fetch_transport: the target is not in origin form"};
-    }
-
-    http::detail::check_target(request.target);
-
-    auto url = base_url_ + request.target;
-    auto fields = detail::pack_fields(request.fields);
-
-    return detail::fetch(std::move(url), std::move(fields), std::move(request));
-  }
+  [[nodiscard]] async::task<http::response> send(http::request request) const;
 
 private:
   std::string base_url_;

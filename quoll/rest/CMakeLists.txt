@@ -1,4 +1,16 @@
-quoll_declare_module(NAME rest DEPS quoll::client quoll::http $<BUILD_INTERFACE:${quoll_glaze_dependency}> $<INSTALL_INTERFACE:glaze::glaze>)
+quoll_declare_module(
+  NAME rest
+  SOURCES
+    src/arguments.cpp
+    src/client.cpp
+    src/query_string.cpp
+    src/serve.cpp
+  DEPS
+    quoll::client
+    quoll::http
+    $<BUILD_INTERFACE:${quoll_glaze_dependency}>
+    $<INSTALL_INTERFACE:glaze::glaze>
+)
 
 quoll_declare_tests(
   SOURCES

@@ -34,8 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_EMSCRIPTEN_DETAIL_TIMER_OPERATION_HPP
-#define QUOLL_EMSCRIPTEN_DETAIL_TIMER_OPERATION_HPP
+#include <quoll/emscripten/executor.hpp>
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
@@ -47,7 +46,11 @@
 #include <optional>
 #include <stop_token>
 
-namespace quoll::emscripten::detail {
+namespace quoll::emscripten {
+
+namespace detail {
+
+namespace {
 
 // A setTimeout() awaited by a coroutine; a stop request clears it. Everything runs on the event loop's thread: the
 // operation is not thread-safe.
@@ -113,6 +116,12 @@ private:
 
 static_assert(async::ContextAwaitable<timer_operation>);
 
-} // namespace quoll::emscripten::detail
+} // namespace
 
-#endif // QUOLL_EMSCRIPTEN_DETAIL_TIMER_OPERATION_HPP
+} // namespace detail
+
+async::task<bool> executor::wait_for(std::chrono::nanoseconds duration) const {
+  co_return co_await detail::timer_operation{duration};
+}
+
+} // namespace quoll::emscripten

@@ -37,19 +37,13 @@
 #ifndef QUOLL_IO_LISTEN_TLS_HPP
 #define QUOLL_IO_LISTEN_TLS_HPP
 
-#include <quoll/async/current_executor.hpp>
-#include <quoll/async/detail/require_service.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_listener.hpp>
-#include <quoll/io/detail/tls_service.hpp>
 #include <quoll/io/listen.hpp>
-#include <quoll/io/tls_network_ref.hpp>
 #include <quoll/io/tls_options.hpp>
 
 #include <cstdint>
-#include <stdexcept>
 #include <string>
-#include <utility>
 
 namespace quoll::io {
 
@@ -61,17 +55,8 @@ namespace quoll::io {
  * Throws std::invalid_argument without both a certificate and its key, std::system_error when they cannot be loaded or
  * the address cannot be bound, std::logic_error if the executor offers no TLS network.
  */
-[[nodiscard]] inline async::task<any_listener> listen_tls(std::uint16_t port, tls_server_options options,
-                                                          std::string address = std::string{default_listen_address}) {
-  if (options.certificate_file.empty() || options.private_key_file.empty()) {
-    throw std::invalid_argument{"quoll::io::listen_tls: both a certificate and its private key are needed"};
-  }
-
-  auto const network = async::detail::require_service<tls_network_ref>(
-      co_await async::current_executor(), "quoll::io::listen_tls", detail::tls_service_name);
-
-  co_return network.listen_tls(std::move(address), port, options);
-}
+[[nodiscard]] async::task<any_listener> listen_tls(std::uint16_t port, tls_server_options options,
+                                                   std::string address = std::string{default_listen_address});
 
 } // namespace quoll::io
 
