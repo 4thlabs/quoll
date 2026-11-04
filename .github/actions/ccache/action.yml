@@ -1,6 +1,6 @@
 name: ccache
 description: >-
-  Updates the package lists, installs ccache and restores its cache, kept per job. CMake then finds it through the
+  Installs ccache, updating the package lists on Linux, and restores its cache, kept per job. CMake then finds it through the
   launcher variables of the environment, and Emscripten through its compiler wrapper.
 
 inputs:
@@ -15,8 +15,17 @@ runs:
   using: composite
   steps:
     - name: Install ccache
+      if: runner.os == 'Linux'
       shell: bash
       run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ccache
+
+    - name: Install ccache
+      if: runner.os == 'macOS'
+      shell: bash
+      # The compiler is a shim there, whose date says nothing of the Xcode behind it.
+      run: |
+        brew install ccache
+        echo "CCACHE_COMPILERCHECK=%compiler% --version" >> "$GITHUB_ENV"
 
     - name: Cache compilations
       uses: actions/cache@v4
@@ -25,9 +34,13 @@ runs:
         key: ccache-${{ inputs.job }}-${{ github.sha }}
         restore-keys: ccache-${{ inputs.job }}-
 
+    # In one place on every system, where the cache above restores it.
     - name: Limit the cache
       shell: bash
-      run: ccache --set-config=max_size=500M
+      run: |
+        export CCACHE_DIR="$HOME/.cache/ccache"
+        echo "CCACHE_DIR=$CCACHE_DIR" >> "$GITHUB_ENV"
+        ccache --set-config=max_size=500M
 
     - name: Use ccache through CMake
       if: inputs.emscripten != 'true'

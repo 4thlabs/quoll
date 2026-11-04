@@ -87,13 +87,12 @@ jobs:
           cmake --build build-no-tls --parallel "$(nproc)"
           ctest --test-dir build-no-tls --output-on-failure --parallel "$(nproc)" --exclude-regex "^compile_fail"
 
-  # Apple Clang and its libc++, which the maintainer's Mac also has, in a version of its own. Advisory: not a required check
-  # until it passes, and not yet a supported compiler. The compile_fail ctests stay on the supported compilers, and a build
-  # goes on after an error, to list all that breaks at once.
+  # Apple Clang and its libc++, in a version of its own: Apple numbers them apart from LLVM. Xcode is pinned on the oldest
+  # supported, as Clang is on Linux. The header checks run here too, as Emscripten's libc++ does not cover the native
+  # modules. The compile_fail ctests do not: two compilers check them, and they bypass ccache.
   macos:
     name: macos
-    runs-on: macos-latest
-    continue-on-error: true
+    runs-on: macos-26
 
     steps:
       - name: Checkout repository
@@ -105,6 +104,14 @@ jobs:
           path: .cpm-cache
           key: cpm-${{ hashFiles('**/CMakeLists.txt', 'cmake/**') }}
 
+      - name: Set up ccache
+        uses: ./.github/actions/ccache
+        with:
+          job: macos
+
+      - name: Choose Xcode
+        run: sudo xcode-select --switch /Applications/Xcode_26.6.app
+
       - name: Show the compiler
         run: c++ --version
 
@@ -114,12 +121,14 @@ jobs:
           -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
 
       - name: Build
-        run: cmake --build build --parallel "$(sysctl -n hw.ncpu)" -- -k
+        run: cmake --build build --parallel "$(sysctl -n hw.ncpu)"
 
       - name: Test
-        if: ${{ !cancelled() }}
         run: >-
           ctest --test-dir build --output-on-failure --parallel "$(sysctl -n hw.ncpu)" --exclude-regex "^compile_fail"
+
+      - name: Show how ccache did
+        run: ccache --show-stats
 
   sanitizers:
     name: gcc-13 ${{ matrix.sanitizer.name }}

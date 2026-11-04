@@ -1,6 +1,6 @@
 # Quoll coding rules
 
-Quoll is a **modern C++ header-only library, C++23 minimum** (GCC ≥ 13, Clang ≥ 19). Rules follow the Boost library
+Quoll is a **modern C++ header-only library, C++23 minimum** (GCC ≥ 13, Clang ≥ 19, Apple Clang ≥ 21). Rules follow the Boost library
 guidelines and the C++ Core Guidelines.
 
 ## Header-only rules
