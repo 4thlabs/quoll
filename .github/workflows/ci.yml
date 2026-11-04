@@ -195,12 +195,17 @@ jobs:
           job: emscripten
           emscripten: 'true'
 
-      # In a fixed folder: it otherwise lands in a random one, whose paths would differ from ccache's on each run.
+      # Rather than setup-emsdk, whose v14 fails to restore its cache (a 400) and so installs in a random folder: that path is
+      # in every compilation, and ccache would never find one again.
       - name: Set up Emscripten
-        uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: latest
-          actions-cache-folder: emsdk-cache
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$HOME/emsdk"
+          "$HOME/emsdk/emsdk" install latest
+          "$HOME/emsdk/emsdk" activate latest
+          {
+            echo "$HOME/emsdk"
+            echo "$HOME/emsdk/upstream/emscripten"
+          } >> "$GITHUB_PATH"
 
       # emcmake sets CMAKE_CROSSCOMPILING_EMULATOR to emsdk's node: ctest runs the tests under node.
       - name: Configure
