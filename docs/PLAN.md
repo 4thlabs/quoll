@@ -691,10 +691,22 @@ Left over from the first topic, to settle along the way:
 - Housekeeping: ccache for the Emscripten job, now the slowest once the cache is warm (it wraps its compiler); the
   leftover MSVC branch of `quoll_warnings`, as only GCC and Clang are supported.
 
-Fuzzing, not started: the sanitizers only see what the tests run, and a reverse proxy in front stops malformed HTTP but
-lets valid requests through, with whatever their bodies, parameters and headers hold. Fuzz what those reach, under ASan
-and UBSan: `serve_connection` over a memory stream, the router, and the REST decoding (path and query parameters, JSON
-bodies through Glaze).
+Reliability, in the manner of Rust, not started. C++ has no borrow checker, but types and tools give a good part of what
+it guarantees. One pull request per point:
+
+1. `clang-tidy` in CI, with `bugprone-use-after-move` among its checks: what Rust refuses after a move.
+2. `_GLIBCXX_ASSERTIONS` on the test builds: an access out of bounds stops rather than corrupts.
+3. `QUOLL_LIFETIMEBOUND` (`[[clang::lifetimebound]]`) on the functions returning views: Clang warns about some dangling
+   references. Local and partial, at no run-time cost.
+4. `synchronized<T>`, a mutex holding its data, where a mutex sits next to what it protects (`connection_pool`): the lock
+   cannot be forgotten.
+5. Fuzzing: the sanitizers only see what the tests run, and a reverse proxy in front stops malformed HTTP but lets valid
+   requests through, with whatever their bodies, parameters and headers hold. Fuzz what those reach, under ASan and UBSan:
+   `serve_connection` over a memory stream, the router, and the REST decoding (path and query parameters, JSON bodies
+   through Glaze).
+
+What stays out of reach: the lifetimes of coroutines remain documented rules ("`router` outlives the task"), data races
+are only found by TSan on the code that runs, and a lambda can still capture by reference what dies before it.
 
 ## Prototype (next step)
 
