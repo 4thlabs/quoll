@@ -44,10 +44,10 @@ and leave the header checks to CI with `-DQUOLL_HEADER_CHECKS=OFF`.
 
 ```bash
 cmake -B build
-cmake --build build -j
-ctest --test-dir build -j8            # "quoll" (every test case), compile_fail.<case>, and the samples' tests
+cmake --build build -j"$(nproc)"
+ctest --test-dir build -j"$(nproc)"   # "quoll" (every test case), compile_fail.<case>, and the samples' tests
 ./build/tests/quoll_tests "[tag]"     # Catch2 filters
-emcmake cmake -B build-wasm && cmake --build build-wasm -j && ctest --test-dir build-wasm   # runs under node
+emcmake cmake -B build-wasm && cmake --build build-wasm -j"$(nproc)" && ctest --test-dir build-wasm   # runs under node
 ```
 
 ## Layout

@@ -1,7 +1,7 @@
 # Run by the compile_fail.<case> ctests (see quoll_compile_fail_tests in QuollHelpers.cmake):
 #
-#   cmake -DQUOLL_COMPILER=<compiler> -DQUOLL_FLAGS=<flags> -DQUOLL_INCLUDES=<directories> -DQUOLL_SOURCE=<file>
-#         -P <this file>
+#   cmake -DQUOLL_COMPILER=<compiler> -DQUOLL_FLAGS=<flags> -DQUOLL_INCLUDES=<directories>
+#         -DQUOLL_DEFINITIONS=<definitions> -DQUOLL_SOURCE=<file> -P <this file>
 #
 # Compiles a source that must not compile, and succeeds only if the compilation fails with the text of the source's
 # `// expect: <text>` line, taken literally, in its output: a compilation that succeeds, or fails for another reason, is
@@ -16,10 +16,14 @@ if(QUOLL_EXPECT STREQUAL "")
   message(FATAL_ERROR "${QUOLL_SOURCE}: no '// expect: <text>' line")
 endif()
 
+# A dependency without any leaves an empty item.
+list(REMOVE_ITEM QUOLL_INCLUDES "")
+list(REMOVE_ITEM QUOLL_DEFINITIONS "")
 list(TRANSFORM QUOLL_INCLUDES PREPEND "-I")
+list(TRANSFORM QUOLL_DEFINITIONS PREPEND "-D")
 
 execute_process(
-  COMMAND "${QUOLL_COMPILER}" ${QUOLL_FLAGS} ${QUOLL_INCLUDES} -fsyntax-only "${QUOLL_SOURCE}"
+  COMMAND "${QUOLL_COMPILER}" ${QUOLL_FLAGS} ${QUOLL_DEFINITIONS} ${QUOLL_INCLUDES} -fsyntax-only "${QUOLL_SOURCE}"
   RESULT_VARIABLE result
   OUTPUT_VARIABLE output
   ERROR_VARIABLE output

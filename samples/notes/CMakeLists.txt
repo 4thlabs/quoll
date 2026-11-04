@@ -11,4 +11,5 @@ if(QUOLL_BUILD_TESTS AND UNIX)
     COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/round_trip.sh $<TARGET_FILE:quoll_notes_server>
             $<TARGET_FILE:quoll_notes_client>
   )
+  set_tests_properties(notes_round_trip PROPERTIES RESOURCE_LOCK quoll_ports)
 endif()
