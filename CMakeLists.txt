@@ -25,6 +25,8 @@ endif()
 include(cmake/QuollHelpers.cmake)
 include(cmake/CPM.cmake)
 
+include(cmake/QuollGlaze.cmake)
+
 # Modules, in dependency order: the core, then the adapters.
 add_subdirectory(quoll/async)
 add_subdirectory(quoll/io)
@@ -32,6 +34,7 @@ add_subdirectory(quoll/http)
 add_subdirectory(quoll/server)
 add_subdirectory(quoll/client)
 add_subdirectory(quoll/rest)
+add_subdirectory(quoll/ui)
 add_subdirectory(quoll/adapters)
 
 # Before the samples: they declare a test of their own.

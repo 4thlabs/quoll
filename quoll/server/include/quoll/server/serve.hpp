@@ -41,13 +41,13 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/listener.hpp>
 #include <quoll/server/connection_options.hpp>
-#include <quoll/server/detail/connection_group.hpp>
 #include <quoll/server/serve_connection.hpp>
 
 #include <exception>
@@ -90,7 +90,7 @@ namespace detail {
 // What the connections of a serve() share: its options, and the count serve() waits on before it completes.
 struct shared_options {
   serve_options options;
-  connection_group connections;
+  async::detail::task_group connections;
 };
 
 // The outcome of a connection spawned by serve(): it ends by itself, and a failure only ends it, reported to the

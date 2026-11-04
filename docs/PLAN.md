@@ -67,6 +67,12 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
   .private_key_file = ...}`. OpenSSL is detected when configuring (`QUOLL_TLS`: `AUTO`, `ON`, `OFF`): without it, what
   needs TLS throws at run time, saying so. A server's handshake takes place on the connection's first read, so that a
   slow peer holds nobody back and the idle timeout covers it. In a browser, `fetch` does it all.
+- UI in C++ (2026-11-04), to be proven by a prototype before it replaces React in this plan: `quoll::ui`, compiled to WASM,
+  styled with Tailwind. Elements with pipes and class strings (`button("Add") | tw("btn") | on_click(...)`), components as
+  aggregates holding `state<T>` members rather than functions with hooks, a view that runs again and a diff that reaches a
+  `Renderer`. Hot reload in three levels: CSS through Vite, `tw("...")` and `text("...")` literals patched without
+  compiling, and a rebuilt module with its states restored. See
+  [Usable server and client](#usable-server-and-client-current-step).
 
 ## Architecture
 
@@ -663,6 +669,10 @@ per topic, in this order:
    in front (decided 2026-11-04), which takes care of the rest; see below for going without one.
 4. Missing features: server middlewares and static files; client redirects, connection limit, path prefix in the base
    URL. Streaming large bodies stays out unless asked.
+
+Before topic 3, a prototype of the UI in C++, one pull request per step: `quoll::ui` without a browser (done), then the
+DOM renderer with a sample, measuring the size of the WASM and the time to rebuild, then Vite, Tailwind and the first two
+levels of hot reload.
 
 Left over from the first topic, to settle along the way:
 
