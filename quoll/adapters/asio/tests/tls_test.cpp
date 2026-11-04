@@ -91,6 +91,7 @@ http::request make_request(http::verb method, std::string target, std::string bo
 #include <quoll/io/error.hpp>
 #include <quoll/io/listen.hpp>
 #include <quoll/io/tls_options.hpp>
+#include <quoll/io/write.hpp>
 #include <quoll/server/serve.hpp>
 #include <quoll/test/overloaded.hpp>
 
@@ -286,6 +287,24 @@ task<std::error_code> tls_client_of_plain_server() {
   co_return error;
 }
 
+// A server that reads a request, sends `response`, and closes without TLS's closing message: what the client gets.
+task<std::error_code> closing_without_notice(std::string response) {
+  auto listener = co_await io::listen_tls(0, server_certificate());
+  auto const url = "https://127.0.0.1:" + std::to_string(listener.local_port().value());
+
+  auto const serving = [&]() -> task<> {
+    auto stream = co_await listener.accept();
+    std::array<char, 1024> received{};
+
+    static_cast<void>(co_await stream.read_some(std::as_writable_bytes(std::span{received})));
+    static_cast<void>(co_await io::write(stream, std::as_bytes(std::span{response})));
+  };
+
+  auto [served, error] = co_await when_all(serving(), get_error(trusting_the_authority())(url));
+
+  co_return error;
+}
+
 // Listens through server::listen, as a program does, and gets a page.
 task<std::string> listen_and_get(std::uint16_t port) {
   auto const router = make_router();
@@ -336,6 +355,31 @@ TEST_CASE("TLS: requests reuse a connection kept alive", "[tls][asio][runtime]")
 
   REQUIRE(run_task(with_server<std::string>(server_certificate(), call, {}, &accepted)) == "hello");
   REQUIRE(accepted == 1);
+}
+
+TEST_CASE("TLS: a kept connection the server closed is replaced", "[tls][asio][runtime][timer]") {
+  int accepted = 0;
+
+  std::function<task<std::string>(std::string)> const call = [](std::string url) -> task<std::string> {
+    client::transport<> const transport{url, trusting_the_authority()};
+
+    static_cast<void>(co_await transport.send(make_request(http::verb::get, "/hello")));
+    co_await quoll::async::sleep_for(100ms);
+    co_return (co_await transport.send(make_request(http::verb::get, "/hello"))).body;
+  };
+
+  REQUIRE(run_task(with_server<std::string>(server_certificate(), call, idle_for(20ms), &accepted)) == "hello");
+  REQUIRE(accepted == 2);
+}
+
+TEST_CASE("TLS: a response of a known length is complete, however the connection closes", "[tls][asio][runtime]") {
+  REQUIRE(run_task(closing_without_notice("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")) ==
+          std::error_code{});
+}
+
+TEST_CASE("TLS: a response delimited by the end of the stream needs TLS's closing message", "[tls][asio][runtime]") {
+  // Anyone on the way could have cut it: it does not pass for complete.
+  REQUIRE(run_task(closing_without_notice("HTTP/1.1 200 OK\r\n\r\nmaybe all of it")) == std::errc::connection_reset);
 }
 
 TEST_CASE("TLS: a body larger than a TLS record goes both ways", "[tls][asio][runtime]") {
