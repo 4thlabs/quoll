@@ -57,6 +57,8 @@ First, as all later code is then written for it. Decided on 2026-11-04, for appl
   on #39. What builds elements stays in headers: it returns decorators, or changes with `QUOLL_UI_HOT`.
 - `quoll::http`: the parser, the router, the serializer and percent-encoding are compiled once, and llhttp no longer shows in a
   program's headers.
+- `quoll::server` and `quoll::client`: compiled once, as what they do goes through `io::any_stream`, behind thin templates over
+  the stream, listener, executor or connector.
 
 *Done when:* application code is unchanged (a `main.cpp` and headers), and each pull request gives before and after
 figures for a full build, a page rebuild (about 1 s today) and the size of the WASM (51 KB gzipped today).

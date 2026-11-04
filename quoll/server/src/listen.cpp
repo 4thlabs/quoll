@@ -34,66 +34,21 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_CLIENT_DETAIL_CONNECTION_POOL_HPP
-#define QUOLL_CLIENT_DETAIL_CONNECTION_POOL_HPP
+#include <quoll/server/listen.hpp>
 
-#include <quoll/io/any_stream.hpp>
+#include <quoll/io/any_listener.hpp>
+#include <quoll/io/listen_tls.hpp>
 
-#include <cstddef>
-#include <mutex>
-#include <optional>
 #include <utility>
-#include <vector>
 
-namespace quoll::client::detail {
+namespace quoll::server {
 
-// The idle connections of a transport, between two requests. Thread safety: take() and give_back() may be called
-// from any thread, concurrently. The lock serves the requests of one transport sent from several threads (a thread
-// pool); with a single thread, as under WASM, it is never contended, and std::mutex needs no thread support there.
-class connection_pool {
-public:
-  explicit connection_pool(std::size_t capacity) : capacity_(capacity) {}
+async::task<> listen(http::router const &router, std::uint16_t port, listen_options options) {
+  auto listener = options.tls.enabled()
+                      ? co_await io::listen_tls(port, std::move(options.tls), std::move(options.address))
+                      : co_await io::listen(port, std::move(options.address));
 
-  // The connection used last, the least likely to have been closed by the server for being idle.
-  [[nodiscard]] std::optional<io::any_stream> take() {
-    std::lock_guard const lock{mutex_};
+  co_await serve(listener, router, std::move(options.serve));
+}
 
-    if (idle_.empty()) {
-      return std::nullopt;
-    }
-
-    auto connection = std::move(idle_.back());
-
-    idle_.pop_back();
-    return connection;
-  }
-
-  // Keeps `connection` for a next request, or closes it if the pool is full.
-  void give_back(io::any_stream connection) {
-    std::lock_guard const lock{mutex_};
-
-    if (idle_.size() < capacity_) {
-      idle_.push_back(std::move(connection));
-    }
-  }
-
-  // Closes the idle connections.
-  void clear() {
-    std::vector<io::any_stream> closed;
-
-    {
-      std::lock_guard const lock{mutex_};
-
-      closed.swap(idle_);
-    }
-  }
-
-private:
-  std::mutex mutex_;
-  std::vector<io::any_stream> idle_;
-  std::size_t capacity_;
-};
-
-} // namespace quoll::client::detail
-
-#endif // QUOLL_CLIENT_DETAIL_CONNECTION_POOL_HPP
+} // namespace quoll::server
