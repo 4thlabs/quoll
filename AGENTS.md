@@ -113,5 +113,35 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). CI (`.github/workflows/ci.yml`): GCC 13, Clang 19
 and Emscripten build + tests, GCC 13 with TSan and with ASan / UBSan, and a clang-format check, on every PR and push to
 `main`; the header checks run on GCC 13 and Emscripten, the `compile_fail` ctests on GCC 13 and Clang 19, and the native
-jobs keep their compilations in ccache. Claude reviews every PR (`claude-review.yml`, rules from this file and `docs/`). Formatting: `clang-format -i
-<file>` with the repo `.clang-format`; format only the files you touch.
+jobs keep their compilations in ccache. Formatting: `clang-format -i <file>` with the repo `.clang-format`; format only
+the files you touch.
+
+`main` is protected: everything goes through a PR, with every CI job and the status `Codex` green, up to date with
+`main` and its threads resolved, with no bypass for admins.
+
+Codex reviews the PRs (the ChatGPT Codex Connector, set up in Codex's settings, following the rules below).
+`codex-review.yml` sets the status `Codex` once it has finished reviewing the last commit.
+
+Claude Code may merge the PRs it opened, giving the commit it checked
+(`gh pr merge N -R 4thlabs/quoll --rebase --delete-branch --match-head-commit <sha>`), on one condition:
+`/code-review high` runs before every push, except a clean merge of `main`, and its valid findings are fixed first. The
+PR says what that review found and why any finding was not taken. A PR merges once every required check is green on its
+last commit, Codex raises nothing new on it, and its threads are answered, with the fixing commit or the reason a point
+is not taken, then resolved. If Codex does not review a commit, comment `@codex review` once; if it still does not, the
+maintainer decides. The maintainer merges a big architecture change, even with every check green: a new module, a change
+to a hard constraint above, a redesign of how modules fit together. In doubt, it counts as one.
+
+## Code Review Rules
+
+Read `docs/CODING_RULES.md` and `docs/PLAN.md` first: their rules and decisions are part of what you check. Flag each of
+these as P1 at least, in this order:
+
+- bugs: undefined behaviour, lifetimes and dangling references (coroutine frames, `_ref` wrappers, `string_view` /
+  `span`), unhandled cases, data races, errors swallowed;
+- WASM: anything in a core module that requires threads or blocking waits;
+- breaks of `docs/CODING_RULES.md`: header-only and ODR rules, self-contained headers, naming and layout, concepts instead
+  of SFINAE, special members and `noexcept`, type-erasure rules, `detail` namespaces;
+- breaks of the decisions in `docs/PLAN.md`;
+- missing tests, or tests that do not execute what they claim to test.
+
+Do not repeat a point already answered in a thread. Skip style nits clang-format would catch.

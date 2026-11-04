@@ -19,6 +19,7 @@ quoll_declare_tests(
 quoll_declare_compile_fail_tests(
   SOURCES
     tests/compile_fail/component_not_aggregate.cpp
+    tests/compile_fail/event_function_signature.cpp
   DEPS
     quoll::ui
 )

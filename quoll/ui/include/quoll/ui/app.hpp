@@ -39,6 +39,7 @@
 
 #include <quoll/async/any_executor.hpp>
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/task.hpp>
@@ -56,6 +57,7 @@
 #include <cstdio>
 #include <exception>
 #include <functional>
+#include <stdexcept>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -172,9 +174,15 @@ public:
     }
   }
 
-  /** @brief Asks the running handlers to stop, and completes once they have ended. Nothing shows afterwards. Await it
-   * once. */
+  /**
+   * @brief Asks the running handlers to stop, and completes once they have ended. Nothing shows afterwards. One at a
+   * time. Throws `std::logic_error` from one of the app's own tasks, which would wait for itself.
+   */
   [[nodiscard]] async::task<> stop() {
+    if (co_await async::current_stop_token() == stop_.get_token()) {
+      throw std::logic_error{"quoll::ui::app: stop() awaited from one of its own tasks"};
+    }
+
     stopped_ = true;
     stop_.request_stop();
     co_await tasks_.join();
@@ -187,8 +195,15 @@ public:
   [[nodiscard]] R &renderer() noexcept { return renderer_; }
 
 private:
-  // Holds a copy of the handler until its task ends: the element it came from may be gone by then.
+  // Holds a copy of the handler until its task ends: the element it came from may be gone by then. Calling it here
+  // sends what it throws to on_error. stop() may have come before this starts, and nothing starts after it.
   [[nodiscard]] static async::task<> run_handler(event_handler handler, std::string value) {
+    auto const stop = co_await async::current_stop_token();
+
+    if (stop.stop_requested()) {
+      co_return;
+    }
+
     co_await handler(std::move(value));
   }
 
