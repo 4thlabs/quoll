@@ -28,10 +28,10 @@ serves a router on a byte stream, `serve` accepts connections from a `Listener`,
 `http[s]://` URL), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `client::transport` by default, and the
 contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates; and the codecs: `json_codec` on
 Glaze, `text_codec`, `param_traits`), `quoll::ui` (a prototype: elements, decorators, `state`, `app` and the `Renderer`
-concept; no browser yet), the adapters `quoll::threads` (thread pool executor; its tests do not run under
+concept), the adapters `quoll::threads` (thread pool executor; its tests do not run under
 WASM), `quoll::asio` (asio executor offering the network, a timer and TLS, `tcp_stream`, `tls_stream`, connector and acceptors,
 `runtime`; native only, the application provides standalone asio, TLS needs OpenSSL) and `quoll::emscripten` (JavaScript event loop executor offering
-a timer, `fetch_transport`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`),
+a timer, `fetch_transport`, `dom_renderer` and `mount`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`),
 and
 `quoll::runtime` (`<quoll/runtime.hpp>`: `quoll::runtime`, the runtime of the adapter chosen with `QUOLL_RUNTIME`, asio
 natively; none under Emscripten). A client GET runs end to end over a memory stream, over TCP through the asio
@@ -85,9 +85,9 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   per case under `tests/compile_fail/`, starting with `// expect: <message>`, declared with
   `quoll_declare_compile_fail_tests(SOURCES ... DEPS ...)`. Each becomes a ctest `compile_fail.<case>` that compiles it
   and passes only when the compilation fails with that message, taken literally (native builds only).
-- `samples/<sample>/`: small programs using Quoll, built when `QUOLL_BUILD_SAMPLES` is ON (default when top-level;
-  native only). `samples/notes`: a REST contract, its server and its client over TCP; with tests ON, the ctest
-  `notes_round_trip` runs them against each other.
+- `samples/<sample>/`: small programs using Quoll, built when `QUOLL_BUILD_SAMPLES` is ON (default when top-level).
+  `samples/notes` (native): a REST contract, its server and its client over TCP; with tests ON, the ctest
+  `notes_round_trip` runs them against each other. `samples/ui_notes` (Emscripten): the same contract in a browser.
 - With tests ON, every header is also compiled alone in its own translation unit (`quoll_<module>_header_check`),
   so a header that is not self-contained breaks the build (`QUOLL_HEADER_CHECKS`, ON by default).
 - Dependencies come from CPM (`cmake/CPM.cmake`, always included: modules need it, not only tests). Under

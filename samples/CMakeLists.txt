@@ -1,5 +1,6 @@
-# Native only: the samples talk over TCP through quoll::asio.
+# Under Emscripten, the interface in a browser; natively, what talks over TCP through quoll::asio.
 if(EMSCRIPTEN)
+  add_subdirectory(ui_notes)
   return()
 endif()
 

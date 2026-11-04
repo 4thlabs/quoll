@@ -139,10 +139,17 @@ public:
       return;
     }
 
-    render();
+    try {
+      render();
 
-    if constexpr (MountedComponent<C>) {
-      spawn(component_.mounted());
+      if constexpr (MountedComponent<C>) {
+        spawn(component_.mounted());
+      }
+    } catch (...) {
+      // What the view left pending, or the mounted() it spawned, must show nothing more. stop() still waits for them.
+      stopped_ = true;
+      stop_.request_stop();
+      throw;
     }
   }
 
@@ -216,7 +223,14 @@ private:
     }
 
     owner.render_pending_ = true;
-    owner.spawn(owner.render_later());
+
+    try {
+      owner.spawn(owner.render_later());
+    } catch (...) {
+      // Not spawned: the next change has to try again.
+      owner.render_pending_ = false;
+      throw;
+    }
   }
 
   void render() {

@@ -36,6 +36,7 @@
 
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/work_item.hpp>
 #include <quoll/test/memory_renderer.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
@@ -169,6 +170,18 @@ struct stopping_handler {
   }
 };
 
+// A first view asking for another render, then failing.
+struct changing_then_failing {
+  state<int> count;
+  int views = 0;
+
+  element view() {
+    ++views;
+    count = 1;
+    throw std::runtime_error{"not yet"};
+  }
+};
+
 // An input bound or not, depending on a state.
 struct optional_binding {
   state<bool> bound{true};
@@ -254,6 +267,22 @@ struct failing_handler {
              throw std::runtime_error{"boom"};
            });
   }
+};
+
+// An executor that can be made to fail.
+struct failing_executor {
+  virtual_time::executor inner;
+  bool *fail;
+
+  void post(quoll::async::work_item &item) const {
+    if (*fail) {
+      throw std::runtime_error{"no more"};
+    }
+
+    inner.post(item);
+  }
+
+  [[nodiscard]] bool operator==(failing_executor const &) const noexcept = default;
 };
 
 // Starts `the_app`, runs `act`, then stops it: all of it within one run of the clock.
@@ -563,6 +592,28 @@ TEST_CASE("ui::app: stop() from one of its handlers fails rather than wait for i
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::logic_error);
 }
 
+TEST_CASE("ui::app: a start that fails stops the app, and what it left pending shows nothing", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<changing_then_failing> instance{time.get_executor(), shown};
+  bool failed = false;
+
+  auto const start_then_stop = [&]() -> task<int> {
+    try {
+      instance.start();
+    } catch (std::runtime_error const &) {
+      failed = true;
+    }
+
+    co_await settle();
+    co_await instance.stop();
+    co_return instance.component().views;
+  };
+
+  REQUIRE(quoll::test::run(time, start_then_stop()) == 1);
+  REQUIRE(failed);
+}
+
 TEST_CASE("ui::app: another tag makes another node", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
@@ -701,4 +752,30 @@ TEST_CASE("ui::app: nothing runs after stop()", "[ui]") {
   };
 
   REQUIRE(quoll::test::run(time, stop_then_click()) == 0);
+}
+
+TEST_CASE("ui::app: a view that could not be scheduled is tried again at the next change", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  bool fail = false;
+  test_app<counter> instance{failing_executor{time.get_executor(), &fail}, shown};
+  bool thrown = false;
+
+  auto const act = [&]() -> task<> {
+    fail = true;
+
+    try {
+      instance.component().count = 1;
+    } catch (std::runtime_error const &) {
+      thrown = true;
+    }
+
+    fail = false;
+    instance.component().count = 2;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(thrown);
+  REQUIRE(shown.html() == R"(<div class="flex">count: 2<button>Add</button></div>)");
 }
