@@ -39,30 +39,16 @@
 #ifndef QUOLL_SAMPLES_NOTES_API_HPP
 #define QUOLL_SAMPLES_NOTES_API_HPP
 
+#include "note.hpp"
+
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
 #include <cstdint>
-#include <optional>
-#include <string>
 #include <vector>
 
 namespace notes {
-
-struct note {
-  std::int64_t id = 0;
-  std::string text;
-};
-
-struct new_note {
-  std::string text;
-};
-
-struct note_filter {
-  /** @brief Only the notes whose text contains this. */
-  std::optional<std::string> contains;
-};
 
 namespace http = quoll::http;
 namespace rest = quoll::rest;

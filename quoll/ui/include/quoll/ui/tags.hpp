@@ -37,6 +37,7 @@
 #ifndef QUOLL_UI_TAGS_HPP
 #define QUOLL_UI_TAGS_HPP
 
+#include <quoll/ui/detail/hot.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/state.hpp>
 
@@ -51,8 +52,8 @@
 namespace quoll::ui {
 
 /** @brief Some text. */
-[[nodiscard]] inline element text(std::string_view content) {
-  return {.type = element::kind::text, .content = std::string{content}};
+[[nodiscard]] inline element text(detail::literal_text content) {
+  return {.type = element::kind::text, .content = std::string{std::string_view{content}}};
 }
 
 /** @brief An element named `tag`, holding `children`: for what has no function of its own. */
@@ -68,7 +69,7 @@ struct tag_function {
 
   [[nodiscard]] element operator()(std::initializer_list<child> children = {}) const { return node(name, children); }
 
-  [[nodiscard]] element operator()(std::string_view content) const { return node(name, {text(content)}); }
+  [[nodiscard]] element operator()(literal_text content) const { return node(name, {text(content)}); }
 };
 
 } // namespace detail
@@ -96,7 +97,7 @@ inline constexpr detail::tag_function ul{"ul"};
 // object would be ambiguous with it.
 [[nodiscard]] inline element div(std::initializer_list<detail::child> children = {}) { return node("div", children); }
 
-[[nodiscard]] inline element div(std::string_view content) { return node("div", {text(content)}); }
+[[nodiscard]] inline element div(detail::literal_text content) { return node("div", {text(content)}); }
 
 /** @brief An input: its value comes from bind(). */
 [[nodiscard]] inline element input() { return node("input"); }

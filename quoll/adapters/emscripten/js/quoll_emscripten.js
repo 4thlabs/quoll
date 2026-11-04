@@ -202,6 +202,24 @@ addToLibrary({
     }
   },
 
+  // What samples/ui_notes/src/app.js and the like call when the development server says a literal has changed.
+  quoll_emscripten_ui_hot_install__deps: ['$stringToNewUTF8', '$callUserCallback', 'free'],
+  quoll_emscripten_ui_hot_install: (replace) => {
+    globalThis.quollHotReplace = (file, line, column, value) => {
+      callUserCallback(() => {
+        const filePointer = stringToNewUTF8(file);
+        const valuePointer = stringToNewUTF8(value);
+
+        {{{ makeDynCall('vpiip', 'replace') }}}(filePointer, line, column, valuePointer);
+        _free(filePointer);
+        _free(valuePointer);
+      });
+    };
+
+    // A page reloading asks again for what it was sent, now that the program can take it.
+    globalThis.quollHotReady?.();
+  },
+
   // Timers started and not settled yet, by id: the setTimeout handle and how to settle.
   $quollTimers: {
     next: 1,

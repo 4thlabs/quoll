@@ -66,6 +66,9 @@ void quoll_emscripten_ui_unlisten(int instance, std::uint32_t id, char const *na
 void quoll_emscripten_ui_insert(int instance, std::uint32_t parent, std::uint32_t child, std::uint32_t before);
 void quoll_emscripten_ui_remove(int instance, std::uint32_t id);
 void quoll_emscripten_ui_close(int instance);
+// For hot reload: makes `replace` what the development server's messages call.
+void quoll_emscripten_ui_hot_install(void (*replace)(char const *file, unsigned line, unsigned column,
+                                                     char const *value));
 
 // `complete` always runs, from the event loop, with `elapsed` false once cancelled.
 int quoll_emscripten_timer_start(double milliseconds, void (*complete)(void *operation, int elapsed), void *operation);
