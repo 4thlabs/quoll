@@ -89,7 +89,13 @@ C &mount(std::string_view selector = "#app", ui::app_options options = {}) {
   });
 #endif
 
-  instance->start();
+  try {
+    instance->start();
+  } catch (...) {
+    // Its first view failed: nothing is running, and a later mount can try again.
+    instance.reset();
+    throw;
+  }
 
   return instance->component();
 }
