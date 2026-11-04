@@ -95,7 +95,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 ## Hard constraints
 
-- Header-only until step 1 of the roadmap, then compiled libraries. C++23 minimum (GCC ≥ 13, Clang ≥ 19). CMake, dependencies
+- Header-only until step 1 of the roadmap, then compiled libraries. C++23 minimum (GCC ≥ 13, Clang ≥ 19, Apple Clang ≥ 21). CMake, dependencies
   via CPM.
 - WASM is a first-class target: core modules never require threads or blocking waits.
 - Adapters: thread pool (`quoll::threads`), asio (`quoll::asio`), Emscripten (`quoll::emscripten`: event loop, `fetch`, the
@@ -112,7 +112,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). CI (`.github/workflows/ci.yml`): GCC 13, Clang 19
 and Emscripten build + tests, GCC 13 with TSan and with ASan / UBSan, and a clang-format check, on every PR and push to
-`main`, and an advisory job on macOS with Apple Clang; the header checks run on GCC 13, Emscripten and macOS, the `compile_fail` ctests on GCC 13 and Clang 19, `clang-tidy`
+`main`, and Apple Clang on macOS; the header checks run on GCC 13, Emscripten and macOS, the `compile_fail` ctests on GCC 13 and Clang 19, `clang-tidy`
 (`.clang-tidy`) on Clang 19, and the native jobs keep their compilations in ccache. Formatting: `clang-format -i <file>` with the repo `.clang-format`; format only
 the files you touch.
 

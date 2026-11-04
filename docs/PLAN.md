@@ -28,8 +28,7 @@ roadmap was written.
 
 `async`, `io`, `http`, `client`, `server` and `rest`, with timeouts by default and TLS (a client GET and a REST client
 over TCP, over `fetch`, and through OpenSSL). A first `quoll::ui` with its DOM renderer, Tailwind through Vite, and two
-levels of hot reload, in the sample `ui_notes`. In CI: `clang-tidy`, the standard library's checks, Codex's review and a
-protected `main`.
+levels of hot reload, in the sample `ui_notes`. In CI: `clang-tidy`, the standard library's checks, Apple Clang on macOS, Codex's review and a protected `main`.
 
 Measured on `ui_notes`: 51 KB of gzipped WASM with the REST client, against about 45 KB for React and ReactDOM alone; a
 literal shows in about 31 ms, keeping the state; any other change in a page builds in about 1 s and reloads the page in
@@ -37,15 +36,14 @@ about 1.2 s.
 
 ### Step 0: finish the setup
 
-Small, process only.
+What is left is the maintainer's:
 
-- A `macos-latest` CI job (Apple Clang, libc++): nothing native has ever run on the maintainer's Mac. Not required until
-  it passes, so that it blocks nobody meanwhile. What it finds says whether Apple Clang becomes a supported compiler, for
-  the maintainer to settle.
-- Maintainer: delete the secret `CLAUDE_CODE_OAUTH_TOKEN`, and decide on the `quoll-ui-demo` container. The branch `ui-ipp`
-  stays, for step 1.
+- Require the job `macos` on `main`.
+- Delete the secret `CLAUDE_CODE_OAUTH_TOKEN`.
 
-*Done when:* the Mac job runs in CI, either passing and required or with what breaks listed.
+The branch `ui-ipp` stays, for step 1.
+
+*Done when:* both are done.
 
 ### Step 1: compiled libraries *(maintainer merges)*
 
@@ -187,7 +185,7 @@ them.
 
 - Name: **Quoll**, a new public library (namespace `quoll::`). Puffin keeps its existing utility modules (events, ioc,
   maths, imdb...). Repository: GitHub `4thlabs/quoll`.
-- Header-only until [step 1](#step-1-compiled-libraries-maintainer-merges), **C++23** minimum (GCC ≥ 13, Clang ≥ 19;
+- Header-only until [step 1](#step-1-compiled-libraries-maintainer-merges), **C++23** minimum (GCC ≥ 13, Clang ≥ 19, Apple Clang ≥ 21 since 2026-11-04, the maintainer's;
   C++20 until 2026-11-03, raised for Glaze), rules in [`CODING_RULES.md`](CODING_RULES.md). Third-party C/C++
   dependencies may be compiled targets fetched by CPM.
 - The UI is a **C++ DSL compiled to WASM** (2026-11-04), which replaces the React, TypeScript client and `quoll::bridge`
