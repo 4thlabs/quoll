@@ -120,8 +120,7 @@ async::task<> app_core::stop() {
     throw std::logic_error{"quoll::ui::app: stop() awaited from one of its own tasks"};
   }
 
-  stopped_ = true;
-  stop_.request_stop();
+  abandon();
   co_await tasks_.join();
 }
 
@@ -129,6 +128,8 @@ void app_core::abandon() noexcept {
   stopped_ = true;
   stop_.request_stop();
 }
+
+void app_core::forget_view() noexcept { shown_.clear(); }
 
 async::task<> app_core::render_later() {
   render_pending_ = false;

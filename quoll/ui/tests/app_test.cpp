@@ -182,6 +182,49 @@ struct changing_then_failing {
   }
 };
 
+// A handler holding what reads the component when the handler goes.
+struct handler_with_guard {
+  struct guard {
+    int *read = nullptr;
+    int const *from = nullptr;
+
+    guard() = default;
+
+    guard(int *into, int const *source) : read(into), from(source) {}
+
+    guard(guard const &) = default;
+    guard &operator=(guard const &) = default;
+    guard(guard &&) = default;
+    guard &operator=(guard &&) = default;
+
+    ~guard() {
+      if (read != nullptr) {
+        *read = *from;
+      }
+    }
+  };
+
+  // What its destructor changes shows whether the guard read it before or after.
+  struct marker {
+    int value = 7;
+
+    marker() = default;
+    marker(marker const &) = default;
+    marker &operator=(marker const &) = default;
+    marker(marker &&) = default;
+    marker &operator=(marker &&) = default;
+
+    ~marker() { value = 0; }
+  };
+
+  marker alive;
+  int *read = nullptr;
+
+  element view() {
+    return button("Go") | on_click([held = std::make_shared<guard>(read, &alive.value)] {});
+  }
+};
+
 // An input bound or not, depending on a state.
 struct optional_binding {
   state<bool> bound{true};
@@ -301,6 +344,18 @@ using test_app = app<C, memory_renderer>;
 task<> settle() { co_await quoll::async::sleep_for(1ms); }
 
 } // namespace
+
+TEST_CASE("ui::renderer_ref forwards to its renderer, and gives it back", "[ui]") {
+  memory_renderer shown;
+  renderer_ref const erased{shown};
+
+  erased.create_element(1, "p");
+  erased.insert(no_node, 1, no_node);
+
+  REQUIRE(shown.html() == "<p></p>");
+  REQUIRE(erased.target<memory_renderer>() == &shown);
+  REQUIRE(erased.target<renderer_ref>() == nullptr);
+}
 
 TEST_CASE("ui::app shows its component", "[ui]") {
   virtual_time time;
@@ -612,6 +667,21 @@ TEST_CASE("ui::app: a start that fails stops the app, and what it left pending s
 
   REQUIRE(quoll::test::run(time, start_then_stop()) == 1);
   REQUIRE(failed);
+}
+
+TEST_CASE("ui::app: the handlers of the view go before the component they may read", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  int read = 0;
+
+  {
+    test_app<handler_with_guard> instance{time.get_executor(), shown};
+
+    instance.component().read = &read;
+    REQUIRE(quoll::test::run(time, session(instance, []() -> task<> { co_await settle(); })) == 0);
+  }
+
+  REQUIRE(read == 7);
 }
 
 TEST_CASE("ui::app: another tag makes another node", "[ui]") {

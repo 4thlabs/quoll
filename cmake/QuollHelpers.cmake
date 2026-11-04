@@ -48,13 +48,13 @@ function(quoll_declare_module)
   if(QUOLL_MODULE_SOURCES)
     set(scope PUBLIC)
     add_library(${target} STATIC ${QUOLL_MODULE_SOURCES})
-    # An application may link it into a shared library.
-    set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-    # A throw crosses this library and the program: both need the same exception model.
     if(EMSCRIPTEN)
+      # A throw crosses this library and the program: both need the same exception model.
       target_compile_options(${target} PUBLIC -fwasm-exceptions)
       target_link_options(${target} PUBLIC -fwasm-exceptions)
+    else()
+      # An application may link it into a shared library.
+      set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     endif()
 
     if(PROJECT_IS_TOP_LEVEL)
