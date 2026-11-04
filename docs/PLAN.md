@@ -670,9 +670,11 @@ per topic, in this order:
 4. Missing features: server middlewares and static files; client redirects, connection limit, path prefix in the base
    URL. Streaming large bodies stays out unless asked.
 
-Before topic 3, a prototype of the UI in C++, one pull request per step: `quoll::ui` without a browser (done), then the
-DOM renderer with a sample, measuring the size of the WASM and the time to rebuild, then Vite, Tailwind and the first two
-levels of hot reload.
+Before topic 3, a prototype of the UI in C++ (`samples/ui_notes`), one pull request per step, all done: `quoll::ui` without
+a browser, the DOM renderer, then Vite, Tailwind and the first two levels of hot reload. Measured on it: 49 KB of gzipped
+WASM with the REST client, and 25 KB for a counter alone, against about 45 KB for React and ReactDOM; a literal shows in
+some milliseconds without compiling, keeping the state; anything else takes about 4 s, and reloads the page. Left: restoring
+the states at that third level, nested stateful components, and whether this replaces React in this plan.
 
 Left over from the first topic, to settle along the way:
 

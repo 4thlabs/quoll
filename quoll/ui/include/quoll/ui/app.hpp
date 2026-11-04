@@ -43,6 +43,7 @@
 #include <quoll/async/executor.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/component.hpp>
+#include <quoll/ui/detail/hot.hpp>
 #include <quoll/ui/detail/reconciler.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/node_id.hpp>
@@ -122,6 +123,10 @@ public:
   app(E executor, R renderer, app_options options = {})
       : executor_(std::move(executor)), renderer_(std::move(renderer)), options_(std::move(options)) {
     detail::link_states(component_, {this, &app::state_changed});
+
+#if defined(QUOLL_UI_HOT)
+    detail::hot_subscribe(this, &app::state_changed);
+#endif
   }
 
   app(app const &) = delete;
@@ -129,7 +134,11 @@ public:
   app &operator=(app const &) = delete;
   app &operator=(app &&) = delete;
 
-  ~app() = default;
+  ~app() {
+#if defined(QUOLL_UI_HOT)
+    detail::hot_unsubscribe(this);
+#endif
+  }
 
   /** @brief Shows the component for the first time, and starts its mounted(). Nothing, once stopped. */
   void start() {

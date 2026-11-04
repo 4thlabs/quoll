@@ -38,6 +38,7 @@
 #define QUOLL_UI_DECORATORS_HPP
 
 #include <quoll/async/task.hpp>
+#include <quoll/ui/detail/hot.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/state.hpp>
 
@@ -83,8 +84,8 @@ template <class F>
  * Tailwind finds the classes it generates by reading the sources, so write them whole: `tw("bg-red-500")`, never a name
  * put together at run time.
  */
-[[nodiscard]] inline auto tw(std::string_view classes) {
-  return decorator([classes = std::string{classes}](element &target) {
+[[nodiscard]] inline auto tw(detail::literal_text classes) {
+  return decorator([classes = std::string{std::string_view{classes}}](element &target) {
     if (classes.empty()) {
       return;
     }
@@ -99,7 +100,17 @@ template <class F>
 
 /** @brief tw(), when `condition` holds. */
 [[nodiscard]] inline auto tw_if(bool condition, std::string_view classes) {
-  return tw(condition ? classes : std::string_view{});
+  return decorator([classes = condition ? std::string{classes} : std::string{}](element &target) {
+    if (classes.empty()) {
+      return;
+    }
+
+    if (!target.classes.empty()) {
+      target.classes += ' ';
+    }
+
+    target.classes += classes;
+  });
 }
 
 /** @brief Names an element among its siblings, so that it keeps its node when they move. */

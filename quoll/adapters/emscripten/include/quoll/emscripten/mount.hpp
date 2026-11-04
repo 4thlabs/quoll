@@ -41,6 +41,7 @@
 #include <quoll/emscripten/executor.hpp>
 #include <quoll/ui/app.hpp>
 #include <quoll/ui/component.hpp>
+#include <quoll/ui/detail/hot.hpp>
 #include <quoll/ui/node_id.hpp>
 
 #include <optional>
@@ -75,6 +76,13 @@ C &mount(std::string_view selector = "#app", ui::app_options options = {}) {
   };
 
   instance->renderer().on_event(dispatch, &*instance);
+
+#if defined(QUOLL_UI_HOT)
+  detail::quoll_emscripten_ui_hot_install([](char const *file, unsigned line, unsigned column, char const *value) {
+    ui::detail::hot_replace(file, line, column, value);
+  });
+#endif
+
   instance->start();
 
   return instance->component();

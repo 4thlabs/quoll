@@ -57,7 +57,6 @@ using quoll::async::task;
 struct notes_page {
   state<std::vector<notes::note>> items;
   state<std::string> draft;
-  state<std::string> problem;
   quoll::rest::client<notes::api, quoll::emscripten::fetch_transport> api{quoll::emscripten::fetch_transport{""}};
 
   task<> mounted() { items = co_await api.call<notes::list>({}); }
@@ -76,22 +75,25 @@ struct notes_page {
 
   element note_row(notes::note const &item) {
     return li({
-               span(item.text),
-               button("Delete") | on_click([this, id = item.id]() -> task<> { co_await remove(id); }),
+               span(item.text) | tw("flex-1"),
+               button("Delete") | tw("btn btn-ghost btn-sm") |
+                   on_click([this, id = item.id]() -> task<> { co_await remove(id); }),
            }) |
-           key(item.id);
+           tw("flex items-center gap-2 rounded-box bg-base-100 px-4 py-2 shadow-sm") | key(item.id);
   }
 
   element view() {
     return main_({
-        h1("Notes"),
-        div({
-            input() | bind(draft) | attribute("placeholder", "A new note"),
-            button("Add") | attribute("id", "add") | on_click([this]() -> task<> { co_await add(); }),
-        }),
-        when(!problem->empty(), [this] { return p(*problem) | attribute("role", "alert"); }),
-        ul({list(items, [this](notes::note const &item) { return note_row(item); })}),
-    });
+               h1("Notes") | tw("text-4xl font-bold"),
+               div({
+                   input() | bind(draft) | tw("input input-bordered flex-1") | attribute("placeholder", "A new note"),
+                   button("Add") | tw("btn btn-primary") | attribute("id", "add") |
+                       on_click([this]() -> task<> { co_await add(); }),
+               }) | tw("flex gap-2"),
+               ul({list(items, [this](notes::note const &item) { return note_row(item); })}) |
+                   tw("flex flex-col gap-2"),
+           }) |
+           tw("mx-auto flex max-w-xl flex-col gap-6 p-8");
   }
 };
 
