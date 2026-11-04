@@ -103,6 +103,18 @@ struct list_page {
   }
 };
 
+struct failing_at_first {
+  static inline bool fail = true;
+
+  element view() {
+    if (fail) {
+      throw std::runtime_error{"not yet"};
+    }
+
+    return p("shown");
+  }
+};
+
 } // namespace
 
 TEST_CASE("mount shows a component in the page, and events reach it", "[emscripten][ui]") {
@@ -145,4 +157,16 @@ TEST_CASE("dom_renderer: nothing matching the selector is an error", "[emscripte
   quoll_test_dom_reset();
 
   REQUIRE_THROWS_AS(quoll::emscripten::dom_renderer{"#missing"}, std::invalid_argument);
+}
+
+TEST_CASE("mount: a failed first view can be tried again, a second mount cannot", "[emscripten][ui]") {
+  quoll_test_dom_reset();
+
+  REQUIRE_THROWS_AS(quoll::emscripten::mount<failing_at_first>(), std::runtime_error);
+
+  failing_at_first::fail = false;
+  quoll::emscripten::mount<failing_at_first>();
+
+  REQUIRE(page() == "<p>shown</p>");
+  REQUIRE_THROWS_AS(quoll::emscripten::mount<failing_at_first>(), std::logic_error);
 }
