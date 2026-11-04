@@ -1,7 +1,7 @@
 # Notes in a browser
 
 The notes of [`samples/notes`](../notes) as an interface in C++: compiled to WASM, styled with Tailwind and daisyUI, on the
-same contract as the server. A prototype: see "UI in C++" in [`docs/PLAN.md`](../../docs/PLAN.md).
+same contract as the server. A prototype: see the UI DSL in [`docs/PLAN.md`](../../docs/PLAN.md).
 
 ## Run it
 
@@ -94,5 +94,5 @@ in one source and nothing precompiled, about 1 s as it is here.
 
 ## Build for production
 
-`npm run build` writes everything to `dist/`, the C++ compiled for size: about 49 KB of gzipped WASM, 7 KB of CSS and 5 KB of
+`npm run build` writes everything to `dist/`, the C++ compiled for size: about 51 KB of gzipped WASM, 7 KB of CSS and 5 KB of
 JavaScript. Quoll's server does not serve static files yet.

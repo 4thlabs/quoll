@@ -1,78 +1,225 @@
 # Quoll — plan
 
-Status: **exploration**, nothing decided beyond what is marked *Decided*. Last update: 2026-11-03.
+Last update: 2026-11-04. The [roadmap](#roadmap) says what comes next, and is the reference for the order of the work.
 
-## Goal
+## Target
 
-Quoll is the C++23 core of cross-platform applications: asynchronous HTTP **clients and servers** and typed REST
-APIs, without doing any I/O itself (sans-IO). The UI is written once with web technologies and talks to the core only
-through the typed API contract. The same application can be deployed as:
+A C++ web framework aimed at **performance and ease of use**, in three parts that work apart or together:
 
-- a **native server + web app** (no WASM),
-- a **standalone PWA** (core compiled to WASM),
-- a **native app** (desktop / mobile webview shell + native core),
+- **Client and server:** HTTP over any runtime, secure, streaming and fast, with SSE and WebSocket.
+- **REST:** an API described once with the DSL, then served or called, from a command-line program as from anywhere
+  else, with a runtime (asio, or another).
+- **UI:** a C++ DSL compiled to WASM (the Emscripten runtime), which gives one application for web, desktop and mobile.
+  Styled with Tailwind, with base components provided and hot reload. Quoll drives the tools, Vite among them, and not
+  the reverse.
 
-and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll server).
+Build time and hot reload are kept short and measured all along.
+
+## Roadmap
+
+One pull request per topic, under the rule in [`AGENTS.md`](../AGENTS.md). A new public API is shown to the maintainer
+before much is built on it. Points marked "To settle" and the [open questions](#open-questions) are the maintainer's to
+decide. Steps marked *(maintainer merges)* are big architecture changes. Figures given as "today" were measured when this
+roadmap was written.
+
+**Current step: 0.**
+
+### Done
+
+`async`, `io`, `http`, `client`, `server` and `rest`, with timeouts by default and TLS (a client GET and a REST client
+over TCP, over `fetch`, and through OpenSSL). A first `quoll::ui` with its DOM renderer, Tailwind through Vite, and two
+levels of hot reload, in the sample `ui_notes`. In CI: `clang-tidy`, the standard library's checks, Codex's review and a
+protected `main`.
+
+Measured on `ui_notes`: 51 KB of gzipped WASM with the REST client, against about 45 KB for React and ReactDOM alone; a
+literal shows in about 31 ms, keeping the state; any other change in a page builds in about 1 s and reloads the page in
+about 1.2 s.
+
+### Step 0: finish the setup
+
+Small, process only.
+
+- See Codex review a push on a pull request opened after the setting, or post `@codex review` from the workflow. So far
+  it has only reviewed on request.
+- Settle the merge method: a branch holding a merge that resolved a conflict cannot rebase, so `--rebase` fails on it.
+- Reword "P1 at least" in the [review rules](../AGENTS.md#code-review-rules), which makes every small point a P1.
+- A `macos-latest` CI job (Apple Clang, libc++): nothing native has ever run on the maintainer's Mac. Not required until
+  it passes, so that it blocks nobody meanwhile. What it finds says whether Apple Clang becomes a supported compiler, for
+  the maintainer to settle.
+- Housekeeping: ccache for the Emscripten job, the leftover MSVC branch of `quoll_warnings`.
+- Maintainer: delete the secret `CLAUDE_CODE_OAUTH_TOKEN`, and decide on the `quoll-ui-demo` container. The branch `ui-ipp`
+  stays, for step 1.
+
+*Done when:* the loop runs with no manual request, and the Mac job runs in CI, either passing and required or with what
+breaks listed.
+
+### Step 1: compiled libraries *(maintainer merges)*
+
+First, as all later code is then written for it. Decided on 2026-11-04, for applications that stay reliable over time.
+
+- `src/*.cpp` and one mode, like Capy and Corosio, rather than the two modes of `.ipp` files. Templates over application
+  types stay in headers.
+- In order: the rules and `quoll::ui`, starting from the `app_core` / `renderer_ref` split on the branch `ui-ipp`; then
+  `http`; then `server` and `client`; then the adapters, hiding asio and OpenSSL from application headers if that holds.
+- The global state of hot reload (`hot()`) moves to a source file, which settles the review point left open on #39.
+
+*Done when:* application code is unchanged (a `main.cpp` and headers), and each pull request gives before and after
+figures for a full build, a page rebuild (about 1 s today) and the size of the WASM (51 KB gzipped today).
+
+### Step 2: client and server, security and completeness
+
+**To settle at its start:** this plan has assumed a reverse proxy in front, and security is now part of the target. If
+Quoll may be exposed directly, `Expect: 100-continue` (the parser stopping after the header), a lingering close after an
+error response and TLS's closing message join this step; the last two need a half-close in `ByteStream`.
+
+- Limits and shutdown: graceful shutdown (requests under way finish, within a time limit), a connection limit, limits on
+  headers and bodies, the timer of the connections on a thread pool, which `serve` can hand them from its own loop.
+- Reliability, in the manner of Rust. C++ has no borrow checker, but types and tools give a good part of what it
+  guarantees:
+  - `QUOLL_LIFETIMEBOUND` (`[[clang::lifetimebound]]`) on the functions returning views, and `[[clang::coro_return_type,
+    clang::coro_lifetimebound]]` on `async::task`, with `-Werror=dangling` on the Clang job: Clang refuses some dangling
+    references. The macro only hides an attribute from GCC, so the coding rules have to allow it.
+  - `synchronized<T>`, a mutex holding its data, where a mutex sits next to what it protects (`connection_pool`,
+    `task_group`). It takes a function rather than handing out a guard, and refuses a function returning something to
+    await, as a lock held across a `co_await` would be unlocked from another thread. Clang's `-Wthread-safety` may do
+    this at compile time, with no new type: compare them first.
+  - `cppcoreguidelines-avoid-capturing-lambda-coroutines` in `clang-tidy`, if it can be kept quiet: coroutine lambdas
+    with captures are a pattern here, kept alive by the app.
+- Fuzzing in CI, under ASan and UBSan: `serve_connection` over a memory stream, the router, the REST decoding (path and
+  query parameters, JSON bodies through Glaze). A client parses what any server sends, so its exchange and the decoding
+  of REST responses too.
+- Features: server middlewares and static files; client redirects, a connection limit per transport, a path prefix in
+  the base URL. A client's `response_timeout` applies per attempt, so a deadline over the whole `send` if that proves
+  confusing.
+
+What stays out of reach: the lifetimes of coroutines remain mostly documented rules ("`router` outlives the task", when
+the task outlives the line it was made on), a use after move across functions or through a member goes unseen, and a
+lambda can still capture by reference what dies before it.
+
+*Done when:* the question above is settled and what it brings is done, the fuzz targets run in CI with no open crash, the
+limits, the shutdown and the features are tested, and the reliability points are in place or dropped with a reason.
+
+### Step 3: streaming
+
+- First pull request: a benchmark harness (requests per second, latency, allocations per request) and its baseline, as
+  streaming touches the hot paths.
+- Streamed request and response bodies, on the server, the client and browser `fetch`.
+- A limit on progress or a minimum rate, as the read and write timeouts now cover a message as a whole, which ends a
+  legitimate transfer on a slow link (8 MiB in 30 s is about 2.2 Mbit/s). The same goes for static files.
+- A half-close in `ByteStream`, if step 2 did not bring it.
+
+*Done when:* a transfer far larger than memory runs in bounded memory, on both sides, with the figure measured.
+
+### Step 4: performance
+
+Only what the harness shows. Candidates:
+
+- Each bounded phase allocates coroutine frames and an asio timer, about three times per request on the server. A timer
+  per connection avoids it.
+- A client copies the request body into the serialized message: write the head and the body as two buffers.
+- A TLS client builds its context per connection, and resumes no session.
+- Idle connections are only found closed when a request uses them: closing them after an idle time, and letting a POST
+  reuse one, which needs a stream that tells a closed peer before writing.
+
+*Done when:* figures are published against the baseline, and each change is justified by a measure.
+
+### Step 5: REST from a command-line program
+
+The DSL and a runtime, with no UI.
+
+- On the client: `scope<Api>(prefix arguments...)`, and interceptors around `send` (retry, token refresh on 401).
+- Third-party APIs, as [the REST DSL](#rest-dsl-contract-server-client) describes: renamed fields, unknown fields, error
+  bodies of any shape, codecs. A contract alone, with no Quoll server in the program.
+- A sample and a guide for a command-line program.
+- After this, and optional: an OpenAPI document generated from the DSL, to document an API or for third-party clients,
+  and a generator of contracts from existing documents.
+
+*Done when:* a real third-party API is called from a command-line program, natively and through `fetch_transport`, with
+`call`, `try_call` and credentials.
+
+### Step 6: SSE, then WebSocket
+
+- SSE first, as it rests on step 3: a DSL route kind returning typed events, a client, the browser. The browser reads a
+  streamed `fetch` rather than `EventSource`, which takes no headers: an API with credentials could not use it.
+- WebSocket: the upgrade, frames, a client, the browser adapter, its shape in the DSL.
+
+*Done when:* each runs end to end, natively and in the browser, with its frame parsing fuzzed.
+
+### Step 7: the UI DSL, complete
+
+- Nested stateful components: a component is the root of an app for now.
+- Restoring the states after a rebuild, which the third level of hot reload still lacks.
+- How a page writes its names: `using namespace quoll::ui;` now sits in each `view()`, as the rules forbid it at
+  namespace scope in a header.
+- Base components, styled with Tailwind.
+- In the sample: adding a note during the first load can hide it until a reload.
+- A trial on a real screen of an application, chosen with the maintainer at the start of this step.
+
+*Done when:* that screen runs with the base components, with what it lacks listed.
+
+### Step 8: the `quoll` command, driving Vite *(maintainer merges the first pull request)*
+
+**To settle at its start:** a native binary, or an npm package (`npx quoll`), as Node is needed for Vite anyway and it
+avoids a binary per platform. The commands are shown to the maintainer first.
+
+```bash
+quoll new my_app
+cd my_app
+quoll dev      # build, watch, Vite, hot reload
+quoll build    # dist/
+```
+
+- The plugin leaves the sample, with its scanner tested in CI. Vite and Tailwind's setup become internal, and an
+  application writes neither.
+- Its limits as a prototype: a failed first build stops the server, a Vite restart during a build can run two builds in
+  one directory, an error with no page open can show once on the next page, and a multi-line macro holding a tag is not
+  told apart.
+- Build time and hot reload, measured, with a target set at the start of this step from the figures of step 1.
+
+*Done when:* a new project reaches a running page with hot reload through these commands, and `samples/ui_notes` uses
+them.
+
+### Step 9: desktop and mobile *(maintainer merges)*
+
+- A PWA first, then a webview shell on desktop, then on mobile, all loading the same WASM.
+- Native capabilities (files, sockets) through a small gateway, designed at this step. The webview library is to be
+  chosen.
+- Installed PWAs are restricted on iOS (storage eviction, background work), and webview engines differ: WebKit on iOS,
+  macOS and Linux, Chromium on Windows and Android. To check on each.
+
+*Done when:* the sample runs on each target, with the differences between engines listed.
 
 ## Decided
 
-- Name: **Quoll**, a new public library (namespace `quoll::`, same name for the C++ package and the npm package of
-  the TS side). It holds `async`, `io`, `http`, `client`, `server`, `rest` (DSL) and `bridge`. Puffin keeps its
-  existing utility modules (events, ioc, maths, imdb...). Repository: GitHub `4thlabs/quoll`.
-- Header-only, **C++23** minimum (GCC ≥ 13, Clang ≥ 19; C++20 until 2026-11-03, raised for Glaze), rules in
-  [`CODING_RULES.md`](CODING_RULES.md). Third-party C/C++ dependencies may be compiled targets fetched by CPM;
-  Quoll's own code stays header-only.
-- JSON: [Glaze](https://github.com/stephenberry/glaze) (2026-11-03), header-only, fetched by CPM with a pinned
-  version. Its aggregate reflection also serves the REST DSL (see [REST DSL](#rest-dsl-contract-server-client)).
-- Prior art: the `claude/project-thread-*` branches of the Puffin repo (earlier `async`, `webkit`, `rest`) were
-  removed from Puffin's `master` for quality reasons. Ideas only: never port code from them, rewrite to the rules.
+- Name: **Quoll**, a new public library (namespace `quoll::`). Puffin keeps its existing utility modules (events, ioc,
+  maths, imdb...). Repository: GitHub `4thlabs/quoll`.
+- Header-only until [step 1](#step-1-compiled-libraries-maintainer-merges), **C++23** minimum (GCC ≥ 13, Clang ≥ 19;
+  C++20 until 2026-11-03, raised for Glaze), rules in [`CODING_RULES.md`](CODING_RULES.md). Third-party C/C++
+  dependencies may be compiled targets fetched by CPM.
+- The UI is a **C++ DSL compiled to WASM** (2026-11-04), which replaces the React, TypeScript client and `quoll::bridge`
+  of the earlier plan: elements with pipes and class strings (`button("Add") | tw("btn") | on_click(...)`), components
+  as aggregates holding `state<T>` members rather than functions with hooks, a view that runs again and a diff that
+  reaches a `Renderer`.
+- **The same WASM everywhere** (2026-11-04): web and PWA first, then a webview shell on desktop and mobile.
+- **Quoll drives the tools** (2026-11-04), through a `quoll` command: Vite becomes an internal detail. Replaces a
+  development driven by Vite and a release driven by CMake.
+- **Compiled libraries** (2026-11-04), in one mode rather than the two of `.ipp` files, for applications that stay
+  reliable over time: see [step 1](#step-1-compiled-libraries-maintainer-merges).
+- OpenAPI (2026-11-04) is an optional, later output of the REST DSL, no longer the contract of the UI.
+- JSON: [Glaze](https://github.com/stephenberry/glaze) (2026-11-03), header-only, fetched by CPM with a pinned version.
+  Its aggregate reflection also serves the REST DSL (see [REST DSL](#rest-dsl-contract-server-client)).
+- REST DSL (2026-11-03, see [REST DSL](#rest-dsl-contract-server-client)): one `endpoint<"name", method, "/path", parts...>`
+  alias per operation, nested `api<>`, `with<>`, overload set services, `call` / `try_call` / `scope` clients, one typed
+  response per status, `query_params<Struct>`, Glaze's aggregate reflection instead of macros, a client over
+  `http::HttpTransport`, routes in the sans-IO router. A contract stands alone: clients of third-party APIs need no Quoll
+  server.
+- Prior art: the `claude/project-thread-*` branches of the Puffin repo (earlier `async`, `webkit`, `rest`) were removed
+  from Puffin's `master` for quality reasons. Ideas only: never port code from them, rewrite to the rules.
 - Type erasure: non-intrusive function-pointer tables, `xxx_ref` + `any_xxx` (see the rules).
 - The HTTP client is in scope. Burl (CppAlliance) is not an option: it is tied to Corosio for sockets / TLS.
-- HTTP layer: **own stack on llhttp** (option B of [HTTP layer](#http-layer)), decided on 2026-11-02. llhttp is
-  fetched by CPM and compiled; `quoll::async` follows Capy's design without depending on it.
+- HTTP layer: **own stack on llhttp** (option B of [HTTP layer](#http-layer)), decided on 2026-11-02. llhttp is fetched
+  by CPM and compiled; `quoll::async` follows Capy's design without depending on it.
 - WASM is a first-class target: the core never requires threads or blocking waits.
-- The API contract is **[OpenAPI](https://spec.openapis.org/oas/v3.1.0) 3.1**, generated from the DSL. The TS side
-  is a stock [`openapi-fetch`](https://openapi-ts.dev/openapi-fetch/) client typed by
-  [`openapi-typescript`](https://openapi-ts.dev/) (TanStack Query through `openapi-react-query`). Decided on
-  2026-11-02, replacing tRPC: no TS-only wire protocol to follow across major versions, no type-only stub router,
-  the server stays plain REST usable from any language, and the bridge carries ordinary HTTP requests. See
-  [TypeScript client](#typescript-client-openapi).
-- Main UI direction: **hybrid web UI** (see [UI](#ui-hybrid-web-model)).
-- REST DSL (2026-11-03, see [REST DSL](#rest-dsl-contract-server-client)): the shape of Puffin's earlier `rest`
-  module (one `endpoint<"name", method, "/path", parts...>` alias per operation, nested `api<>`, `with<>`, overload
-  set services, `call` / `try_call` / `scope` clients), rewritten to the rules with: one typed response per status,
-  `query_params<Struct>`, Glaze's aggregate reflection instead of macros, a client over `http::HttpTransport`, routes
-  in the sans-IO router. A contract stands alone: clients of third-party APIs need no Quoll server. Decided: this
-  shape and these adjustments. The prototype settled `reply` / `result` and braced arguments (2026-11-03, see the
-  section).
-- Web build (2026-11-02, see [Web integration and build chain](#web-integration-and-build-chain)): **React + Vite**
-  for the reference sample and the scaffolding template, while Quoll's npm side stays framework-agnostic; **SPA /
-  static builds only** (no SSR Node server); `openapi.json` is **generated, never committed**.
-- Program entry point (2026-11-03): application code names no adapter. `main()` creates the build's runtime
-  (`quoll::runtime`, the adapter chosen with `QUOLL_RUNTIME`, asio natively), spawns the program's main coroutine on it
-  (`co_spawn(runtime.get_executor(), task, quoll::async::detached, runtime.get_stop_token())`, the token stopped by
-  Ctrl-C) and runs it; servers, clients and their connections live in that coroutine. Executors carry the services of
-  their loop (`executor.query<io::network_ref>()`), so `io::connect` / `io::listen`, `server::listen(router, port)` and
-  `rest::client<api>{"http://host:port"}` need no executor, connector or acceptor handed to them.
-- Time (2026-11-04): a timer is one more service of the executor (`executor.query<async::timer_ref>()`), a
-  `steady_timer` natively and `setTimeout` in the browser. Applications call `async::sleep_for(duration)` and
-  `async::with_timeout(duration, task)`. A timeout stops the task and awaits its end: nothing it refers to is left
-  behind, so a task only ends early if it observes its stop token. Its `operation_canceled` then becomes `timed_out`; a
-  task that finishes anyway still gives its result. The server and the client have timeouts by default (server: idle
-  60 s, read and write 30 s; client: connect 30 s, response 60 s), which zero disables. They do not apply on an executor
-  without a timer.
-- TLS (2026-11-04): one more service of the executor (`io::tls_network_ref`), through `asio::ssl` and OpenSSL. `https://`
-  checks the server against the system's authorities and its name by default; `.tls = {.ca_file = ...}` trusts a private
-  authority, `.tls = {.verify_peer = false}` turns the check off. `listen` takes `.tls = {.certificate_file = ...,
-  .private_key_file = ...}`. OpenSSL is detected when configuring (`QUOLL_TLS`: `AUTO`, `ON`, `OFF`): without it, what
-  needs TLS throws at run time, saying so. A server's handshake takes place on the connection's first read, so that a
-  slow peer holds nobody back and the idle timeout covers it. In a browser, `fetch` does it all.
-- UI in C++ (2026-11-04), to be proven by a prototype before it replaces React in this plan: `quoll::ui`, compiled to WASM,
-  styled with Tailwind. Elements with pipes and class strings (`button("Add") | tw("btn") | on_click(...)`), components as
-  aggregates holding `state<T>` members rather than functions with hooks, a view that runs again and a diff that reaches a
-  `Renderer`. Hot reload in three levels: CSS through Vite, `tw("...")` and `text("...")` literals patched without
-  compiling, and a rebuilt module with its states restored. See
-  [Usable server and client](#usable-server-and-client-current-step).
 
 ## Architecture
 
@@ -81,15 +228,16 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
 ```mermaid
 flowchart TB
   subgraph app["Application"]
-    ui["Web UI (TS)<br/>+ openapi-fetch client"]
-    handlers["C++ API handlers<br/>(business logic)"]
+    page["UI in C++<br/>(quoll::ui, WASM)"]
+    handlers["API handlers<br/>(business logic)"]
+    cli["Command-line programs"]
   end
 
-  subgraph quoll["Quoll (header-only, sans-IO)"]
-    rest["quoll::rest<br/>typed API DSL, codecs, OpenAPI generation"]
-    bridge["quoll::bridge<br/>HTTP requests as messages"]
-    server["quoll::server<br/>HTTP/1.1 connections, middlewares, static files"]
-    client["quoll::client<br/>pool, keep-alive, redirects, retry, auth, timeouts"]
+  subgraph quoll["Quoll (sans-IO)"]
+    ui["quoll::ui<br/>elements, state, diff, Renderer"]
+    rest["quoll::rest<br/>typed API DSL, codecs"]
+    server["quoll::server<br/>HTTP/1.1 connections"]
+    client["quoll::client<br/>keep-alive, timeouts"]
     http["quoll::http<br/>messages, parser, serializer, router"]
     io["quoll::io<br/>byte streams, any_stream, memory stream"]
     async["quoll::async<br/>task, executor_ref, await_context, when_all, co_spawn"]
@@ -100,74 +248,80 @@ flowchart TB
     stream(["byte_stream"])
     connector(["connector"])
     transport(["http_transport"])
-    channel(["message_channel"])
+    renderer(["Renderer"])
   end
 
   subgraph adapters["Adapters"]
     pool["quoll::threads<br/>thread_pool"]
-    asio["quoll::asio<br/>executor, tcp_stream, connector (+ssl)"]
-    emscripten["quoll::emscripten<br/>event loop executor, fetch_transport (+postMessage)"]
-    shell["webview shell<br/>desktop / iOS / Android"]
-    memory["memory (tests)"]
+    asio["quoll::asio<br/>executor, tcp_stream, connector, TLS"]
+    emscripten["quoll::emscripten<br/>event loop executor, fetch_transport, dom_renderer"]
   end
 
-  ui --> bridge
+  page --> ui
+  page --> rest
   handlers --> rest
+  cli --> rest
   rest --> http
   rest --> client
-  bridge --> http
   server --> http
   client --> http
+  ui --> async
   http --> io
   io --> async
-  bridge --> async
 
   io -.-> stream
   client -.-> connector
   client -.-> transport
-  bridge -.-> channel
+  ui -.-> renderer
   async -.-> executor
 
-  executor -.-> pool & asio & emscripten & shell
-  stream -.-> asio & memory
-  connector -.-> asio & memory
+  executor -.-> pool & asio & emscripten
+  stream -.-> asio
+  connector -.-> asio
   transport -.-> emscripten
-  channel -.-> emscripten & shell & memory
+  renderer -.-> emscripten
 ```
 
 | Concept | Meaning | Implemented by |
 |---|---|---|
-| `executor` | where / when a coroutine resumes; `post(work_item &)` links an intrusive node, no allocation | thread pool, asio, browser event loop, shell main thread |
+| `executor` | where / when a coroutine resumes; `post(work_item &)` links an intrusive node, no allocation | thread pool, asio, browser event loop |
 | `byte_stream` | `read_some` / `write_some` on raw bytes (`any_stream`, no allocation per operation) | asio sockets, memory |
 | `connector` | `(host, port, tls) -> task<any_stream>` | asio (+ssl), memory |
 | `http_transport` | `request -> task<response>`, for platforms that do HTTP themselves | `quoll::client` over a connector, browser `fetch` |
-| `message_channel` | send / receive HTTP requests and responses between UI and core | `postMessage` (Worker), webview IPC, HTTP, memory |
+| `Renderer` | what the diff of a view changes: nodes, classes, attributes, listeners | the DOM, memory in tests |
 
-The router lives in `quoll::http` and does no I/O: it maps a method and a path template to a handler
-`request -> task<response>`. `quoll::rest` registers the DSL routes in it; `quoll::server` feeds it the requests read
-from connections, `quoll::bridge` the requests received as messages. The PWA Worker has no `quoll::server` (no
-sockets): there the bridge drives the router alone.
+The router lives in `quoll::http` and does no I/O: it maps a method and a path template to a handler `request ->
+task<response>`. `quoll::rest` registers the DSL routes in it, and `quoll::server` feeds it the requests read from
+connections.
 
-Design references taken from Boost.Capy: `await_context` propagated through `await_suspend(h, env)`,
-`executor_ref`, zero-allocation `any_stream`.
+Design references taken from Boost.Capy: `await_context` propagated through `await_suspend(h, env)`, `executor_ref`,
+zero-allocation `any_stream`.
 
-### One API definition, many outputs
+Program entry point (2026-11-03): application code names no adapter. `main()` creates the build's runtime
+(`quoll::runtime`, the adapter chosen with `QUOLL_RUNTIME`, asio natively), spawns the program's main coroutine on it
+(`co_spawn(runtime.get_executor(), task, quoll::async::detached, runtime.get_stop_token())`, the token stopped by
+Ctrl-C) and runs it; servers, clients and their connections live in that coroutine. Executors carry the services of
+their loop (`executor.query<io::network_ref>()`), so `io::connect` / `io::listen`, `server::listen(router, port)` and
+`rest::client<api>{"http://host:port"}` need no executor, connector or acceptor handed to them.
 
-The REST DSL is the contract between the UI and the core, and between processes. Everything else is generated from
-it.
+Time (2026-11-04): a timer is one more service of the executor (`executor.query<async::timer_ref>()`), a `steady_timer`
+natively and `setTimeout` in the browser. Applications call `async::sleep_for(duration)` and
+`async::with_timeout(duration, task)`. A timeout stops the task and awaits its end: nothing it refers to is left behind,
+so a task only ends early if it observes its stop token. Its `operation_canceled` then becomes `timed_out`; a task that
+finishes anyway still gives its result. The server and the client have timeouts by default (server: idle 60 s, read and
+write 30 s; client: connect 30 s, response 60 s), which zero disables. They do not apply on an executor without a timer.
 
-```mermaid
-flowchart LR
-  dsl["API definition<br/>(quoll::rest DSL, C++)"]
-  dsl --> routes["Routes<br/>quoll::http router"]
-  dsl --> cppclient["C++ client<br/>quoll::client / http_transport"]
-  dsl --> spec["OpenAPI 3.1 document<br/>(generated)"]
-  spec --> ts["TS types (openapi-typescript)<br/>for openapi-fetch"]
-  routes --> srv["quoll::server<br/>requests from connections"]
-  routes --> dispatch["quoll::bridge<br/>requests from messages"]
-```
+TLS (2026-11-04): one more service of the executor (`io::tls_network_ref`), through `asio::ssl` and OpenSSL. `https://`
+checks the server against the system's authorities and its name by default; `.tls = {.ca_file = ...}` trusts a private
+authority, `.tls = {.verify_peer = false}` turns the check off. `listen` takes `.tls = {.certificate_file = ...,
+.private_key_file = ...}`. OpenSSL is detected when configuring (`QUOLL_TLS`: `AUTO`, `ON`, `OFF`): without it, what
+needs TLS throws at run time, saying so. A server's handshake takes place on the connection's first read, so that a slow
+peer holds nobody back and the idle timeout covers it. In a browser, `fetch` does it all.
 
 ### REST DSL: contract, server, client
+
+What this section says of OpenAPI (operation ids, security schemes, JSON Schemas) describes the optional output of
+[step 5](#step-5-rest-from-a-command-line-program), which does not exist yet: it binds nothing else.
 
 An API description is a **contract**: C++ types, with no I/O and no server or client code. A server implements a
 contract and a client consumes one, but neither needs the other. Describing a third-party API (a payment provider, a
@@ -242,8 +396,7 @@ using v1 = rest::api<"/api/v1", auth::api, rest::with<rest::security<rest::beare
 
 Arguments are the same on both sides: the path parameters (prefixes first), then the parts in order, then the parts
 inherited from `with<>`. The endpoint computes their types: `call` and the service take exactly those, not deduced
-`Args&&...`, so that a braced list (`{.limit = 20}` for a `query_params<Struct>`) converts to its parameter. The
-prototype checks this.
+`Args&&...`, so that a braced list (`{.limit = 20}` for a `query_params<Struct>`) converts to its parameter.
 
 **Serving it.** A service is an overload set, one `operator()(Endpoint, args...)` per endpoint, with no base class.
 A missing service, or one with the wrong arguments, is a compile error.
@@ -267,16 +420,15 @@ rest::mount<bank::v1>(router, bank::auth_service{}, bank::users_service{}, bank:
 ```
 
 - A service returns the type of the first `returns`, or `rest::reply<E>`, which holds any declared response with its
-  status: built from a value whose type only one response has, or from `rest::respond<Status>(value)` when several
-  share it. An undeclared status, or the wrong type for a status, does not compile. Only the endpoint's own responses:
-  those inherited from `with<>` are the server's (credentials, errors).
+  status: built from a value whose type only one response has, or from `rest::respond<Status>(value)` when several share
+  it. An undeclared status, or the wrong type for a status, does not compile. Only the endpoint's own responses: those
+  inherited from `with<>` are the server's (credentials, errors).
 - Errors without a declared response:
   - 400 for an invalid argument or body, 415 for a wrong `Content-Type`, 401 for missing or rejected credentials.
   - `throw rest::http_error(status, detail)` answers that status as `application/problem+json`.
   - Any other exception answers 500 without detail.
-- `mount` registers the routes in the sans-IO `quoll::http` router, which both `quoll::server` (connections) and
-  `quoll::bridge` (messages) feed. Middlewares (logs, metrics, auth beyond the schemes) wrap the router, so every
-  mode runs them.
+- `mount` registers the routes in the sans-IO `quoll::http` router, which `quoll::server` feeds. Middlewares (logs,
+  metrics, auth beyond the schemes) wrap the router.
 
 **Calling it.** A client takes the contract and an `http::HttpTransport`: `fetch_transport` in the browser, a Worker
 or Node, and the `quoll::client` transport over a connector natively. The base URL belongs to the transport.
@@ -310,11 +462,10 @@ would choose:
 
 - JSON names that are not C++ names (`created_at`, `htmlUrl`, reserved words), through a per-type renaming trait.
 - Unknown fields are ignored. An enum may declare an enumerator for the values it does not know.
-- Error bodies of any shape, one type per status (`returns<github_error, status::not_found>`), not only
-  `problem+json`.
+- Error bodies of any shape, one type per status (`returns<github_error, status::not_found>`), not only `problem+json`.
 - Bodies other than JSON through codecs: text, form, bytes.
-- Later: a tool generating the contract header from an existing OpenAPI document, the reverse of
-  `quoll_add_openapi`. The DSL stays able to express what such documents commonly hold.
+- Later: a tool generating the contract header from an existing OpenAPI document. The DSL stays able to express what
+  such documents commonly hold.
 
 **Types, JSON and schemas.** Bodies are plain aggregates, read and written by
 [Glaze](https://github.com/stephenberry/glaze). Its aggregate reflection gives their fields with no macro and no
@@ -333,286 +484,51 @@ of `components/schemas`.
   `components/schemas` as is: no `required` list, named types inlined instead of `$ref`, 64-bit integers as a
   `minimum` / `maximum` range instead of `format: int64`.
 
-## UI: hybrid web model
+### UI DSL
 
-The UI is a web app (HTML / CSS / TS). Text, IME, selection and accessibility come from the DOM. The typed
-`openapi-fetch` client exposes the same API in every mode; only the **`fetch` function** it is given changes.
+`quoll::ui` is written in C++ and compiled to WASM, in the same language as the rest of an application. The DOM gives
+text, IME, selection and accessibility; Tailwind gives the styles.
 
-### Deployment modes
+```cpp
+struct counter {
+  state<int> count;
 
-#### 1. Native server + web app (no WASM)
+  element view() {
+    using namespace quoll::ui;
 
-The classic mode: a native Quoll server serves the web app assets and the API. Any browser on any device is a client;
-native C++ programs can call the same API.
+    return div({
+               text("Count: " + std::to_string(*count)) | tw("text-lg"),
+               button("Add") | tw("btn btn-primary") | on_click([this] { count = *count + 1; }),
+           }) |
+           tw("flex items-center gap-2");
+  }
+};
 
-```mermaid
-flowchart LR
-  subgraph browser["Browser (any device)"]
-    ui1["Web UI"] --> ts1["typed client<br/>(openapi-fetch)"]
-  end
-  subgraph host["Server (native)"]
-    srv["quoll::server"] --> static["static files<br/>(web app)"]
-    srv --> h1["API handlers"]
-    h1 --> c1["quoll::client<br/>(outgoing calls)"]
-  end
-  cpp["Native C++ client"]
-  ts1 -- "HTTP(S) / fetch" --> srv
-  cpp -- "HTTP(S)" --> srv
-  c1 -- "HTTP(S)" --> ext["Other services"]
+int main() { quoll::emscripten::mount<counter>(); }
 ```
 
-#### 2. Standalone PWA (core in WASM)
+A state changing runs the view again; the diff reaches a `Renderer`, the DOM in a page. Handlers are plain functions or
+tasks, and call a REST API through a `rest::client` over `fetch_transport`.
 
-No server needed: the core runs in a Web Worker (keeps the UI thread free, works single-threaded). Installable,
-offline-capable. The core can only be a client: outgoing calls go through `fetch`.
+### Development tools
 
-Installing the UI as a PWA (manifest + service worker caching it) works in every mode; what sets this mode apart is
-that the **logic** runs in the browser. It is for applications that must work without a server: no infrastructure,
-local data (IndexedDB / OPFS) that never leaves the device, full offline use, client-side computing with the same C++
-code. A UI that only calls a server is mode 1, installed as a PWA. The WASM build of the core is kept in any case: it
-is cheap, it enforces the WASM constraints of the core, and it also serves a future GPU-drawn UI in the browser.
+Hot reload has three levels, from the cheapest:
 
-```mermaid
-flowchart LR
-  subgraph browser["Browser / installed PWA"]
-    ui2["Web UI"] --> ts2["typed client<br/>(openapi-fetch)"]
-    ts2 -- "postMessage" --> worker
-    subgraph worker["Web Worker"]
-      d2["quoll::bridge dispatcher"] --> h2["API handlers<br/>(C++ → WASM)"]
-    end
-    sw["Service worker<br/>(offline cache)"]
-  end
-  h2 -- "fetch" --> ext2["Remote servers"]
-```
+1. CSS, through Vite and Tailwind's plugin, which reads the C++ for class names.
+2. A literal of `tw()`, `text()` or a tag, sent to the running program with no compilation, keeping its state.
+3. Anything else: a rebuild, then the page reloads. A compilation error shows in Vite's overlay. Restoring the states is
+   [step 7](#step-7-the-ui-dsl-complete).
 
-#### 3. Native app (webview shell + native core)
-
-For capabilities the browser refuses: listening sockets, full file system, background work, threads. The shell is a
-thin native window hosting a webview (desktop: a C++ webview library; mobile: a small Swift / Kotlin host).
-
-```mermaid
-flowchart LR
-  subgraph app3["Native app"]
-    subgraph wv["Webview"]
-      ui3["Web UI"] --> ts3["typed client<br/>(openapi-fetch)"]
-    end
-    subgraph core3["Native core"]
-      d3["quoll::bridge dispatcher"] --> h3["API handlers"]
-      h3 --> c3["quoll::client"]
-      h3 -.-> s3["quoll::server<br/>(optional, LAN / local)"]
-    end
-    ts3 -- "webview IPC" --> d3
-  end
-  c3 -- "HTTP(S)" --> ext3["Remote servers"]
-```
-
-#### 4. Combined: PWA + server
-
-The PWA runs local logic in WASM (offline, instant) and syncs with a native Quoll server when online.
-
-```mermaid
-flowchart LR
-  subgraph b4["Browser / PWA"]
-    ui4["Web UI"] --> ts4["typed client<br/>(openapi-fetch)"]
-    ts4 -- "postMessage" --> w4["Worker: local handlers (WASM)"]
-  end
-  subgraph s4["Server (native)"]
-    srv4["quoll::server"] --> h4["API handlers"]
-  end
-  ts4 -- "HTTP (online)" --> srv4
-  w4 -- "fetch (sync)" --> srv4
-```
-
-### Same call, three transports
-
-The client code and the C++ handler are identical; only the `fetch` given to the client and the
-`message_channel` differ. In every mode the request reaches the same router.
-
-```mermaid
-sequenceDiagram
-  participant UI as Web UI
-  participant TS as openapi-fetch (generated types)
-  participant CH as fetch / message_channel
-  participant R as Router (quoll::http), fed by quoll::server or quoll::bridge
-  participant H as C++ handler
-
-  UI->>TS: client.GET("/accounts/{id}", { params: { path: { id: 42 } } })
-  TS->>CH: HTTP request (method, path, headers, body)
-  Note over CH: Server mode: browser fetch (HTTP)<br/>PWA: fetch over postMessage to the Worker<br/>Native app: fetch over webview IPC
-  CH->>R: request
-  R->>H: decoded, typed arguments
-  H-->>R: task<Account>
-  R-->>CH: HTTP response (status, JSON body)
-  CH-->>TS: Response
-  TS-->>UI: { data: Account } or { error }
-```
-
-### TypeScript client: OpenAPI
-
-The DSL generates an OpenAPI 3.1 document; `openapi-typescript` turns it into a `.d.ts` at build time, and a stock
-`openapi-fetch` client is typed by it. Nothing generated ships at runtime except the tiny client.
-
-```mermaid
-flowchart LR
-  dsl["API definition<br/>(quoll::rest DSL)"]
-  dsl --> spec["openapi.json"]
-  dsl --> routes["Routes, quoll::http router<br/>(C++ handlers)"]
-  spec -- "openapi-typescript" --> types["api.d.ts<br/>(paths, components)"]
-  types -- "import type { paths }" --> cl["openapi-fetch<br/>+ openapi-react-query"]
-  cl -- "plain REST<br/>GET /api/accounts/42" --> routes
-```
-
-```ts
-// api.d.ts is generated by openapi-typescript from the document the DSL produced: do not edit
-import createClient from 'openapi-fetch';
-import type { paths } from './api';
-
-// transportFetch: the browser fetch, or a fetch over postMessage / webview IPC (see below)
-const client = createClient<paths>({ baseUrl: '/api', fetch: transportFetch });
-
-const { data, error } = await client.GET('/accounts/{id}', { params: { path: { id: 42 } } });
-```
-
-**Server side.** Plain REST on `quoll::server`: the DSL routes are the paths of the document, bodies are JSON, and
-errors are `application/problem+json` (RFC 9457) responses declared in the document, so `error` is typed too. The
-document is served by the application (e.g. `/api/openapi.json`) and written at build time for the TS build.
-
-**Other modes.** The `fetch` given to the client serializes the `Request` (method, URL, headers, body) over the
-`message_channel`; `quoll::bridge` hands it to the router, the one `quoll::server` feeds in server mode, and sends
-the response back. The
-UI code does not change between modes, and there is no protocol of our own: the bridge carries HTTP messages.
-Streamed bodies (Server-Sent Events, large downloads) cross the bridge as a head message followed by body chunk
-messages, which the TS side exposes as the `ReadableStream` of the `Response`: the bridge `fetch` must support it
-before SSE does, in every mode. The first prototype only needs complete bodies.
-
-**Consequences for the DSL.** Every route declares its method, path template, path / query / header parameters,
-body, and response type per status code (see [REST DSL](#rest-dsl-contract-server-client)); named C++ types become
-`components/schemas`. The C++ → JSON Schema mapping must be defined: `std::optional` → not required, `std::variant` →
-`oneOf` with a discriminator, enums, maps, and 64-bit integers (beyond 2^53, JSON numbers lose precision in JS: string
-format or documented limit).
-
-**What tRPC gave and this does not.** Automatic request batching (add a batch endpoint if a real need shows up) and
-subscriptions (Server-Sent Events, see below). Operation names come
-from paths instead of nested router keys. End-to-end typing is kept: `tsc` checks parameters, bodies and responses
-against the generated types, and the C++ side decodes and validates every input through the DSL codecs, as the
-`.input(...)` validators did with tRPC.
-
-**Server-Sent Events.** The replacement for subscriptions, not in the first prototype. A DSL route kind returns
-a stream of typed events; the route is documented as a `text/event-stream` response whose event payload has a JSON
-Schema (OpenAPI 3.1 has no first-class SSE, so the event type travels through that schema). The TS side reads it
-with a streamed `fetch` (not `EventSource`, which takes neither a custom `fetch` nor headers) through a small typed
-helper, so it works in every mode once the bridge streams bodies. Open: the exact shape of that helper.
-
-**Risks.** Generator corner cases (`oneOf` / discriminators, recursive types) and the extra generation step in the
-TS build (`openapi-typescript` is a dev dependency). Pin versions, and type-check a sample UI against the generated
-types in CI.
-
-### Web integration and build chain
-
-Two toolchains build an application: CMake for the C++ core, npm / Vite for the UI. Their contract is a set of
-files, so any web framework fits as long as it builds a static SPA.
-
-```mermaid
-flowchart LR
-  subgraph cpp["C++ (CMake)"]
-    def["api.hpp<br/>API definition (DSL)"]
-    gen["quoll_add_openapi<br/>generator (host, or node under Emscripten)"]
-    core["core.js + core.wasm<br/>(Emscripten, PWA)"]
-    app["native binary<br/>quoll::server or webview shell"]
-  end
-  subgraph web["UI (npm / Vite)"]
-    plugin["quoll/vite plugin"]
-    types["api.d.ts<br/>(openapi-typescript)"]
-    ui["React UI<br/>openapi-fetch + quoll/fetch"]
-    dist["dist/"]
-  end
-  def --> gen --> spec["openapi.json"]
-  spec --> plugin --> types --> ui
-  def --> core
-  def --> app
-  core --> plugin
-  ui --> dist
-  dist -- "copied or embedded<br/>(quoll_add_web_ui)" --> app
-```
-
-**The contract: files.**
-
-1. `openapi.json`, produced by a CMake target from the application's API definition. Generated at every build,
-   never committed: building the UI needs the C++ side.
-2. `api.d.ts`, produced from it by `openapi-typescript` (gitignored).
-3. For the PWA: the Emscripten output `core.js` + `core.wasm` (ES module, worker environment), loaded in a Worker.
-4. The UI `dist/`: served by `quoll::server` from a directory, or embedded in the binary (single-binary server,
-   native shell).
-
-**Who drives.** Development is Vite-driven: `npm run dev` gives HMR, regenerates the types and proxies the API to the
-native server. Release is CMake-driven: `cmake --build` runs the generator, then `npm run build`, then copies or
-embeds `dist/` into the binary. Same artifacts, two entry points.
-
-**C++ side.** App-facing CMake helpers in a new `cmake/QuollApp.cmake`, shipped with the package config (separate
-from `QuollHelpers.cmake`, which only builds Quoll itself):
-
-- `quoll_add_openapi(TARGET <name> API_HEADER <header> API <symbol> OUTPUT <file>)` generates a tiny `main` that
-  prints `quoll::rest::openapi(<symbol>)`, builds it and runs it. The API **definition** therefore lives in a header
-  of its own, apart from the handler implementations. In an Emscripten build the generator runs under node through
-  `CMAKE_CROSSCOMPILING_EMULATOR`: no host toolchain needed.
-- `quoll_add_web_ui(TARGET <app> UI_DIR <dir> [EMBED])` runs `npm ci` and `npm run build` after the generator, then
-  copies `dist/` next to the binary or, with `EMBED`, generates an application source holding the files, served by
-  `quoll::server` or the shell. That source belongs to the application: Quoll stays header-only.
-
-**npm package `quoll`.** Framework-agnostic (no React dependency), with subpath exports:
-
-- `quoll/fetch`: the transport `fetch` functions given to `openapi-fetch`, over `postMessage` (Worker) and webview
-  IPC; server mode uses the browser `fetch`. Complete bodies first; streamed bodies (and SSE) once the bridge
-  streams them.
-- `quoll/worker`: bootstrap that loads `core.js` in the Worker and wires `postMessage` to `quoll::bridge`.
-- `quoll/vite`: Vite plugin. Runs the generator target and `openapi-typescript` at start and when `openapi.json`
-  changes, proxies `/api` to the native server in development, serves and emits `core.js` + `core.wasm` in PWA mode,
-  and adds the COOP / COEP headers only when the core uses threads.
-- The deployment mode is chosen at build time (Vite mode / environment): one UI codebase.
-
-**Frameworks.** React, the reference: `openapi-react-query` on top of the client. Vue, Svelte, Solid, Angular: their
-TanStack Query adapter fed by the same `openapi-fetch` client, no Quoll package per framework. Meta-frameworks only
-in static / SPA mode (Next.js `output: 'export'`, SvelteKit `adapter-static`, Nuxt `ssr: false`): an SSR Node server
-cannot run in the PWA or the native shell. Offline caching of the `.wasm` is the application's choice
-(`vite-plugin-pwa` in the sample).
-
-**Native shell.** The webview loads the embedded UI through a custom URL scheme served by the router, and the IPC
-`fetch` goes to `quoll::bridge`.
-
-### Mode capabilities
-
-| | Server + web app | PWA (WASM) | Native app (shell) |
-|---|---|---|---|
-| Install | none (URL) | from browser | store / installer |
-| Offline | no | yes (service worker) | yes |
-| Core runs | on the server | in a Web Worker | in the app process |
-| Listen / serve | **yes** | no | yes (LAN / local) |
-| Outgoing HTTP | `quoll::client` | `fetch` only | `quoll::client` |
-| Threads | yes | optional (needs COOP / COEP) | yes |
-| Multi-user | yes | no | no |
-
-### Known limits
-
-- Two languages: C++ core, TS UI.
-- Webview engines differ: WebKit (iOS, macOS, Linux), Chromium (WebView2 on Windows, Android WebView). Test on each.
-- iOS PWAs are restricted (storage eviction, background work): status to check.
-- Bridge cost: every call is serialized. Large payloads need a binary encoding or shared buffers, not JSON.
-
-### Long-term alternative: GPU-drawn UI in C++
-
-Kept for later, not planned: a "modern Qt" assembled from SDL3 (platform, IME, lifecycle), WebGPU (Dawn natively,
-browser API on the web), Skia or ThorVG + HarfBuzz (2D + text), Yoga (layout), AccessKit (accessibility), with
-`quoll::async` driving the frame loop and reactive signals instead of moc. In the browser it would run on the same
-WASM build of the core as mode 2. The hard, multi-year parts are text, IME and accessibility on mobile and web,
-which the hybrid web model gets for free.
+For now this is a plugin of the sample `samples/ui_notes`, driven by Vite; [step
+8](#step-8-the-quoll-command-driving-vite-maintainer-merges-the-first-pull-request) turns it around.
 
 ## WASM constraints
 
-- **No sockets in the browser.** Outgoing HTTP uses the `http_transport` concept implemented with `fetch`; there is
-  no server in the browser (WASI later).
-- **Threads are optional.** The core (`async`, `http`, `rest`, `bridge`) must not require `std::thread`,
-  `std::jthread` or blocking waits; threads only live in the thread pool adapter (`quoll::threads`). Never
-  `sync_wait` on the browser main thread.
+- **No sockets in the browser.** Outgoing HTTP uses the `http_transport` concept implemented with `fetch`; there is no
+  server in the browser (WASI later).
+- **Threads are optional.** The core (`async`, `http`, `rest`, `ui`) must not require `std::thread`, `std::jthread` or
+  blocking waits; threads only live in the thread pool adapter (`quoll::threads`). Never `sync_wait` on the browser main
+  thread.
 - **Exceptions**: build with `-fwasm-exceptions`; keep hot paths on error codes / `results`.
 - Every module builds under Emscripten in CI and runs its tests there (headless Node runner), except the thread pool
   tests: the CI build has no pthreads.
@@ -631,119 +547,22 @@ Decision: **B** (2026-11-02).
 
 ## Open questions
 
-Every point the plan leaves open, gathered here; the linked sections give the context.
+Those not settled by a step of the roadmap:
 
-- C++ → JSON Schema mapping details, 64-bit integers in particular ([TypeScript client](#typescript-client-openapi)).
-- `scope<Api>(prefix arguments...)` on the client, and interceptors around `send`
-  ([REST DSL](#rest-dsl-contract-server-client)).
-- The runtime in a browser, where the event loop already runs: no `run()` there; tasks start with `co_spawn` on the
-  event loop, and the Worker is driven by the bridge. The default `rest::client` transport there would be `fetch`.
+- The runtime in a browser, where the event loop already runs: no `run()` there, and tasks start with `co_spawn` on the
+  event loop. The default `rest::client` transport there would be `fetch`.
 - A default `main()` provided by Quoll, creating the runtime and running an application coroutine, once the shape of
   that coroutine (arguments, exit code) is settled.
-- `quoll::client` (see [Usable server and client](#usable-server-and-client-current-step)): a limit of connections per
-  transport (requests now open a connection when none is idle), redirects. Idle connections are only found closed when a request uses them: closing them after an idle
-  time needs the timer, and letting a POST
-  reuse one needs a stream that tells a closed peer before writing (a read kept pending on idle connections). The
-  request body is copied into the serialized message; writing the head and the body as two buffers avoids it.
-- A generator from an existing OpenAPI document to a contract header, for third-party APIs
-  ([REST DSL](#rest-dsl-contract-server-client)).
-- Shape of the typed SSE helper on the TS side, and streamed bodies over the bridge
-  ([TypeScript client](#typescript-client-openapi)).
-- A batch endpoint, only if a real need shows up ([TypeScript client](#typescript-client-openapi)).
-- Webview library for the desktop shell, and the mobile hosts (Swift / Kotlin)
-  ([Web integration](#web-integration-and-build-chain)).
-- Embedding format of `dist/`: generated byte arrays, compression, `#embed` once compilers have it
-  ([Web integration](#web-integration-and-build-chain)).
-- iOS PWA restrictions: storage eviction, background work ([Known limits](#known-limits)).
-
-## Usable server and client (current step)
-
-The prototype below is paused (2026-11-04) until `quoll::server` and `quoll::client` are fully usable. One pull request
-per topic, in this order:
-
-1. Timer and timeouts (done): `async::sleep_for` and `async::with_timeout`; idle, read and write timeouts on the server,
-   connect and response timeouts on the client, set by default.
-2. TLS and `https` (done): through `asio::ssl` and OpenSSL.
-3. Server robustness: graceful shutdown (requests under way finish, within a time limit), a connection limit, and the
-   timer of the connections on a thread pool, which `serve` can hand them from its own loop. A reverse proxy is assumed
-   in front (decided 2026-11-04), which takes care of the rest; see below for going without one.
-4. Missing features: server middlewares and static files; client redirects, connection limit, path prefix in the base
-   URL. Streaming large bodies stays out unless asked.
-
-Before topic 3, a prototype of the UI in C++ (`samples/ui_notes`), one pull request per step, all done: `quoll::ui` without
-a browser, the DOM renderer, then Vite, Tailwind and the first two levels of hot reload. Measured on it: 49 KB of gzipped
-WASM with the REST client, and 25 KB for a counter alone, against about 45 KB for React and ReactDOM; a literal shows in
-some milliseconds without compiling, keeping the state; anything else takes about 4 s, and reloads the page. Left: restoring
-the states at that third level, nested stateful components, and whether this replaces React in this plan.
-
-Left over from the first topic, to settle along the way:
-
-- If a benchmark shows it matters: a TLS client builds its context per connection, and resumes no session.
-- With the static files (topic 4): the server's read and write timeouts cover a message as a whole, which is strong
-  against slow peers but also ends a legitimate transfer on a slow link (8 MiB in 30 s is about 2.2 Mbit/s). Static
-  files and streamed bodies will need a limit on progress instead, or a minimum rate.
-- If a benchmark shows it matters: each bounded phase allocates coroutine frames and an asio timer, about three times per
-  request on the server. A timer per connection avoids it.
-- If it proves confusing: a client's `response_timeout` applies per attempt, so a connect and two attempts can add up to
-  more than one setting suggests. A deadline over the whole `send` would bound them together.
-- If Quoll is ever exposed without a reverse proxy: `Expect: 100-continue`, which needs the parser to stop after the
-  header (a client now sends its body after its own delay); a lingering close after an error response, so that the client
-  reads it rather than a reset; TLS's closing message when a connection ends. The last two need a half-close in
-  `ByteStream`.
-- Housekeeping: ccache for the Emscripten job, now the slowest once the cache is warm (it wraps its compiler); the
-  leftover MSVC branch of `quoll_warnings`, as only GCC and Clang are supported.
-
-Reliability, in the manner of Rust, not started. C++ has no borrow checker, but types and tools give a good part of what
-it guarantees. One pull request per point:
-
-1. `clang-tidy` in CI, on Quoll's own headers, with its findings as errors. `bugprone-use-after-move` refuses part of what
-   Rust refuses after a move, within one function; `cppcoreguidelines-avoid-capturing-lambda-coroutines` a coroutine
-   lambda whose captures die with it.
-2. The standard library's checks on the test builds: `_GLIBCXX_ASSERTIONS`, and `_LIBCPP_HARDENING_MODE` for libc++, so
-   for WASM. A checked access out of bounds stops rather than corrupts. A pointer and a count stay unchecked.
-3. `QUOLL_LIFETIMEBOUND` (`[[clang::lifetimebound]]`) on the functions returning views, and
-   `[[clang::coro_return_type, clang::coro_lifetimebound]]` on `async::task`, with `-Werror=dangling` on the Clang job:
-   Clang refuses some dangling references. Local and partial, at no run-time cost. The macro only hides an attribute from
-   GCC, so the coding rules have to allow it.
-4. `synchronized<T>`, a mutex holding its data, where a mutex sits next to what it protects (`connection_pool`,
-   `task_group`): the lock cannot be forgotten. It takes a function rather than handing out a guard, and refuses a function
-   returning something to await, as a lock held across a `co_await` would be unlocked from another thread. Clang's
-   `-Wthread-safety` may do this at compile time, with no new type: compare them first.
-5. Fuzzing: the sanitizers only see what the tests run, and a reverse proxy in front stops malformed HTTP but lets valid
-   requests through, with whatever their bodies, parameters and headers hold. Fuzz what those reach, under ASan and UBSan:
-   `serve_connection` over a memory stream, the router, and the REST decoding (path and query parameters, JSON bodies
-   through Glaze). A client parses what any server sends, with no proxy in front: fuzz its exchange over a memory stream
-   and the decoding of REST responses too.
-
-What stays out of reach: the lifetimes of coroutines remain mostly documented rules ("`router` outlives the task", when
-the task outlives the line it was made on), a use after move across functions or through a member goes unseen, and a lambda
-can still capture by reference what dies before it.
-
-## Prototype (next step)
-
-Goal: validate the design with code. Success criteria:
-
-1. A client GET, end to end, with llhttp + own serializer over a `byte_stream`.
-2. Parser edge cases: `HEAD` responses, `1xx` / `100-continue`, close-delimited bodies, chunked with trailers.
-3. An asio `connector` producing a type-erased stream.
-4. The HTTP core compiles with Emscripten; a `fetch`-based `http_transport` runs the same call in Node.
-5. One API defined with the DSL, its generated OpenAPI document and TS types, called with `openapi-fetch` from the
-   same React + Vite sample (`samples/`) in three modes: native server (browser `fetch`), PWA (Quoll in a Worker,
-   `fetch` over `postMessage`), native webview shell (`fetch` over IPC). Typed errors and type checking (`tsc` fails
-   on a wrong parameter or body) must work, and the document validates against the OpenAPI 3.1 schema.
-6. A client of a third-party API described only by its contract (no Quoll server in the program, renamed JSON
-   fields, error bodies that are not `problem+json`), called through `fetch_transport` in Node and through the
-   native transport, with `call`, `try_call` and credentials.
-7. The build chain of the sample works both ways in CI: `npm run dev` with `quoll/vite` (development path) and
-   `cmake --build` with `quoll_add_openapi` / `quoll_add_web_ui` (release path).
+- If OpenAPI comes back: the C++ → JSON Schema mapping, 64-bit integers in particular.
+- A batch endpoint, only if a real need shows up.
 
 ## Environment
 
-- Scaffolding: once the prototype holds, a `web-quoll` template in cpp-init (`../cpp-init`: React + Vite + CMake
-  presets), following its `templates/cli-puffin`.
+- Scaffolding: `quoll new` in [step 8](#step-8-the-quoll-command-driving-vite-maintainer-merges-the-first-pull-request),
+  rather than a template in cpp-init.
 - Dev container (`.devcontainer/`): Ubuntu 24.04, GCC 13, Clang 19, CMake / Ninja / ccache, OpenSSL, Emscripten SDK
   (`EMSDK_VERSION`, default `latest`), Node.js (`NODE_MAJOR`, default 24).
 - Agent machine: no local toolchain. Docker goes through the docker-in-docker daemon `DOCKER_HOST=tcp://orca-dind:2375`
   (the local socket is not accessible). The image builds there (`docker build -t quoll-dev .devcontainer`), but the
-  daemon does not see `/home/orca`: bind mounts are empty, so the sources are streamed in with `tar` and
-  `devcontainer up` does not work as is.
+  daemon does not see `/home/orca`: bind mounts are empty, so the sources are streamed in with `tar` and `devcontainer
+  up` does not work as is.
