@@ -38,7 +38,6 @@
 #define QUOLL_REST_DETAIL_CLIENT_RESPONSE_HPP
 
 #include <quoll/async/task.hpp>
-#include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/rest/call_error.hpp>
@@ -46,8 +45,6 @@
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/response_value.hpp>
 #include <quoll/rest/detail/type_list.hpp>
-#include <quoll/rest/json_codec.hpp>
-#include <quoll/rest/problem.hpp>
 #include <quoll/rest/reply.hpp>
 #include <quoll/rest/unexpected_response.hpp>
 
@@ -141,23 +138,9 @@ template <class Route>
 }
 
 // The detail of a failed call: the problem's when the server sent one, else why the response is unexpected.
-[[nodiscard]] inline std::string failure_detail(unexpected_response const &failure) {
-  auto const content_type = failure.response.fields.find("Content-Type");
+[[nodiscard]] std::string failure_detail(unexpected_response const &failure);
 
-  if (content_type && http::detail::iequals(media_type(*content_type), problem_content_type)) {
-    if (auto const decoded = lenient_json_codec{}.decode<problem>(failure.response.body); decoded && decoded->detail) {
-      return *decoded->detail;
-    }
-  }
-
-  return failure.reason;
-}
-
-[[noreturn]] inline void fail(unexpected_response failure) {
-  auto detail = failure_detail(failure);
-
-  throw call_error{std::move(failure), detail};
-}
+[[noreturn]] void fail(unexpected_response failure);
 
 template <class Route>
 async::task<call_result<typename Route::endpoint>> receive(async::task<http::response> sending) {

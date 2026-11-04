@@ -186,7 +186,7 @@ namespace {
 // thread pool).
 class work_token {
 public:
-  work_token(runtime::state &shared) : state_(&shared), guard_(shared.context.get_executor()) {}
+  explicit work_token(runtime::state &shared) : state_(&shared), guard_(shared.context.get_executor()) {}
 
   work_token(work_token const &) = delete;
   work_token(work_token &&) = delete;

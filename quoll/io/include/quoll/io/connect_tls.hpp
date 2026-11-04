@@ -37,17 +37,12 @@
 #ifndef QUOLL_IO_CONNECT_TLS_HPP
 #define QUOLL_IO_CONNECT_TLS_HPP
 
-#include <quoll/async/current_executor.hpp>
-#include <quoll/async/detail/require_service.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_stream.hpp>
-#include <quoll/io/detail/tls_service.hpp>
-#include <quoll/io/tls_network_ref.hpp>
 #include <quoll/io/tls_options.hpp>
 
 #include <cstdint>
 #include <string>
-#include <utility>
 
 namespace quoll::io {
 
@@ -58,13 +53,8 @@ namespace quoll::io {
  * Fails like a Connector, a server that does not pass the checks of `options` included; throws std::logic_error if the
  * executor offers no TLS network.
  */
-[[nodiscard]] inline async::task<any_stream> connect_tls(std::string host, std::uint16_t port,
-                                                         tls_client_options options = {}) {
-  auto const network = async::detail::require_service<tls_network_ref>(
-      co_await async::current_executor(), "quoll::io::connect_tls", detail::tls_service_name);
-
-  co_return co_await network.connect_tls(std::move(host), port, options);
-}
+[[nodiscard]] async::task<any_stream> connect_tls(std::string host, std::uint16_t port,
+                                                  tls_client_options options = {});
 
 } // namespace quoll::io
 

@@ -59,6 +59,8 @@ First, as all later code is then written for it. Decided on 2026-11-04, for appl
   program's headers.
 - `quoll::server` and `quoll::client`: compiled once, as what they do goes through `io::any_stream`, behind thin templates over
   the stream, listener, executor or connector.
+- `quoll::threads`, `quoll::emscripten`, `quoll::io` and `quoll::rest`: what is not a template, but for `io::memory_stream`, a
+  stream for tests. `quoll::async` stays headers: it is templates and functions of some lines.
 - `quoll::asio`: its runtime is compiled once, so that a program using `quoll::runtime` does not compile asio. Its streams and
   acceptors stay in headers, for a program mixing them with asio code, which then provides asio.
 

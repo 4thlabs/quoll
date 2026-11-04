@@ -1,4 +1,11 @@
-quoll_declare_module(NAME io DEPS quoll::async)
+quoll_declare_module(
+  NAME io
+  SOURCES
+    src/error.cpp
+    src/network.cpp
+  DEPS
+    quoll::async
+)
 
 quoll_declare_tests(
   SOURCES

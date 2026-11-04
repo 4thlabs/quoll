@@ -40,14 +40,11 @@
 #include <quoll/async/executor.hpp>
 #include <quoll/async/work_item.hpp>
 
-#include <algorithm>
 #include <atomic>
-#include <cassert>
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
-#include <stdexcept>
 #include <stop_token>
 #include <thread>
 #include <vector>
@@ -97,127 +94,29 @@ public:
 
   /** @brief Starts one worker per hardware thread, or a single one when that
    * number is unknown. */
-  thread_pool() : thread_pool(std::max(1U, std::thread::hardware_concurrency())) {}
+  thread_pool();
 
   /**
    * @brief Starts `threads` workers.
    * @throws std::invalid_argument if `threads` is 0; std::system_error if a
    * thread cannot be started.
    */
-  explicit thread_pool(std::size_t threads) {
-    if (threads == 0) {
-      throw std::invalid_argument{"quoll::threads::thread_pool needs at least one thread"};
-    }
-
-    workers_.reserve(threads);
-
-    try {
-      for (std::size_t index = 0; index < threads; ++index) {
-        workers_.emplace_back([this](std::stop_token const &token) { work(token); });
-      }
-    } catch (...) {
-      // The workers already started would otherwise wait forever, and their
-      // destructors join them.
-      stop();
-      throw;
-    }
-  }
+  explicit thread_pool(std::size_t threads);
 
   thread_pool(thread_pool const &) = delete;
   thread_pool(thread_pool &&) = delete;
   thread_pool &operator=(thread_pool const &) = delete;
   thread_pool &operator=(thread_pool &&) = delete;
 
-  ~thread_pool() {
-    stop();
-
-    for (auto &worker : workers_) {
-      assert(worker.get_id() != std::this_thread::get_id() && "thread_pool destroyed by one of its workers");
-      worker.join();
-    }
-
-    assert(incoming_.load() == nullptr && ready_ == nullptr && "thread_pool posted to after its destruction started");
-  }
+  ~thread_pool();
 
   [[nodiscard]] executor get_executor() noexcept { return executor{*this}; }
 
 private:
-  void push(async::work_item &item) noexcept {
-    item.next = incoming_.load();
-
-    // A failed exchange reloads the current head into item.next: retry on top of it.
-    while (!incoming_.compare_exchange_weak(item.next, &item)) {
-    }
-
-    // A worker that found no work waits for the epoch it saw to change.
-    epoch_.fetch_add(1);
-    epoch_.notify_one();
-  }
-
-  // The next coroutine to resume, or a null handle when nothing is queued.
-  [[nodiscard]] std::coroutine_handle<> pop() {
-    std::scoped_lock const lock{mutex_};
-
-    if (ready_ == nullptr) {
-      ready_ = reverse(incoming_.exchange(nullptr));
-    }
-
-    if (ready_ == nullptr) {
-      return {};
-    }
-
-    auto *const item = ready_;
-
-    ready_ = item->next;
-
-    // Read before resuming: the item may live in the frame the coroutine
-    // destroys.
-    return item->handle;
-  }
-
-  // The stack holds the most recent post first: reversed, it gives the posting
-  // order back.
-  [[nodiscard]] static async::work_item *reverse(async::work_item *stack) noexcept {
-    async::work_item *queue = nullptr;
-
-    while (stack != nullptr) {
-      auto *const item = stack;
-
-      stack = item->next;
-      item->next = queue;
-      queue = item;
-    }
-
-    return queue;
-  }
-
-  void work(std::stop_token const &token) {
-    for (;;) {
-      // Read before looking for work: a post after this point changes the
-      // epoch, so wait() does not miss it.
-      auto const seen = epoch_.load();
-
-      if (auto const handle = pop()) {
-        handle.resume();
-        continue;
-      }
-
-      if (token.stop_requested()) {
-        return;
-      }
-
-      epoch_.wait(seen);
-    }
-  }
-
-  void stop() noexcept {
-    for (auto &worker : workers_) {
-      worker.request_stop();
-    }
-
-    epoch_.fetch_add(1);
-    epoch_.notify_all();
-  }
+  void push(async::work_item &item) noexcept;
+  [[nodiscard]] std::coroutine_handle<> pop();
+  void work(std::stop_token const &token);
+  void stop() noexcept;
 
   std::atomic<async::work_item *> incoming_{nullptr};
   std::atomic<std::uint32_t> epoch_{0};

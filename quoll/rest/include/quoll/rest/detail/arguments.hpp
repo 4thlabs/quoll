@@ -55,7 +55,6 @@
 #include <cstddef>
 #include <expected>
 #include <optional>
-#include <ranges>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -141,23 +140,11 @@ template <class T>
   }
 }
 
-[[nodiscard]] inline std::vector<std::string_view> header_texts(http::fields const &fields, std::string_view name) {
-  std::vector<std::string_view> texts;
-
-  for (auto const &entry : fields) {
-    if (http::detail::iequals(entry.name, name)) {
-      texts.push_back(entry.value);
-    }
-  }
-
-  return texts;
-}
+[[nodiscard]] std::vector<std::string_view> header_texts(http::fields const &fields, std::string_view name);
 
 // The media type of a Content-Type value, without its parameters: "application/json; charset=utf-8" gives
 // "application/json".
-[[nodiscard]] inline std::string_view media_type(std::string_view content_type) noexcept {
-  return http::detail::trim(content_type.substr(0, content_type.find(';')));
-}
+[[nodiscard]] std::string_view media_type(std::string_view content_type) noexcept;
 
 // A path parameter of the route's template, by index.
 template <fixed_string Path, std::size_t Index>
@@ -219,21 +206,7 @@ template <class Struct>
 
 // The elements of a list header: its field lines, each split at commas, as RFC 9110 lets a sender or a proxy combine
 // repeated fields into one; empty elements are skipped.
-[[nodiscard]] inline std::vector<std::string_view> list_elements(std::vector<std::string_view> const &lines) {
-  std::vector<std::string_view> elements;
-
-  for (auto const line : lines) {
-    for (auto const element : std::views::split(line, ',')) {
-      auto const text = http::detail::trim(std::string_view{element.begin(), element.end()});
-
-      if (!text.empty()) {
-        elements.push_back(text);
-      }
-    }
-  }
-
-  return elements;
-}
+[[nodiscard]] std::vector<std::string_view> list_elements(std::vector<std::string_view> const &lines);
 
 template <fixed_string Name, class T>
 [[nodiscard]] std::expected<T, argument_error> decode_source(std::type_identity<header<Name, T>>,
@@ -290,9 +263,7 @@ struct source_value<path_source<Path, Index>> {
 };
 
 // A route without arguments.
-[[nodiscard]] inline std::expected<std::tuple<>, argument_error> decode_all(type_list<>, request_input const &) {
-  return std::tuple<>{};
-}
+[[nodiscard]] std::expected<std::tuple<>, argument_error> decode_all(type_list<>, request_input const &);
 
 // Decodes every source in order, stopping at the first error.
 template <class First, class... Sources>
