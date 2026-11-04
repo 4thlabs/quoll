@@ -44,8 +44,8 @@
 
 #include <quoll/ui.hpp>
 
-#include <algorithm>
 #include <cstdint>
+#include <exception>
 #include <string>
 #include <vector>
 
@@ -58,19 +58,48 @@ using quoll::async::task;
 struct notes_page {
   state<std::vector<notes::note>> items;
   state<std::string> draft;
+  state<std::string> problem;
 
-  task<> mounted() { items = co_await notes_client::list(); }
+  task<> mounted() {
+    try {
+      items = co_await notes_client::list();
+    } catch (std::exception const &failure) {
+      problem = std::string{failure.what()};
+    }
+  }
 
   task<> add() {
-    auto const created = co_await notes_client::create(*draft);
+    if (draft->empty()) {
+      co_return;
+    }
 
-    items.update([&created](auto &all) { all.push_back(created); });
+    // Out of the input as it leaves: what is typed meanwhile is the next note, and a second click sends nothing.
+    auto const sent = *draft;
+
     draft.set({});
+
+    try {
+      auto const created = co_await notes_client::create(sent);
+
+      items.update([&created](auto &all) { all.push_back(created); });
+      problem.set({});
+    } catch (std::exception const &failure) {
+      problem = std::string{failure.what()};
+
+      if (draft->empty()) {
+        draft = sent;
+      }
+    }
   }
 
   task<> remove(std::int64_t id) {
-    co_await notes_client::remove(id);
-    items.update([id](auto &all) { std::erase_if(all, [id](auto const &item) { return item.id == id; }); });
+    try {
+      co_await notes_client::remove(id);
+      items.update([id](auto &all) { std::erase_if(all, [id](auto const &item) { return item.id == id; }); });
+      problem.set({});
+    } catch (std::exception const &failure) {
+      problem = std::string{failure.what()};
+    }
   }
 
   element note_row(notes::note const &item) {
@@ -90,6 +119,8 @@ struct notes_page {
                    button("Add") | tw("btn btn-primary") | attribute("id", "add") |
                        on_click([this]() -> task<> { co_await add(); }),
                }) | tw("flex gap-2"),
+               when(!problem->empty(),
+                    [this] { return p(*problem) | tw("alert alert-error") | attribute("role", "alert"); }),
                ul({list(items, [this](notes::note const &item) { return note_row(item); })}) |
                    tw("flex flex-col gap-2"),
            }) |

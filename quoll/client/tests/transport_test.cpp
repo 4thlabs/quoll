@@ -428,7 +428,10 @@ TEST_CASE("client::transport: the Host field names the server, and its port unle
   auto request = make_request(verb::get, "/hello");
 
   request.fields.add("Host", "virtual.example.com");
-  REQUIRE(roundtrip({std::move(request)}).responses.front().fields.find("X-Host") == "virtual.example.com");
+
+  auto const with_host = roundtrip({std::move(request)});
+
+  REQUIRE(with_host.responses.front().fields.find("X-Host") == "virtual.example.com");
 }
 
 TEST_CASE("client::transport: a connection that closes is not reused", "[client]") {
@@ -441,12 +444,18 @@ TEST_CASE("client::transport: a connection that closes is not reused", "[client]
   auto closing = make_request(verb::get, "/hello");
 
   closing.fields.add("Connection", "close");
-  REQUIRE(roundtrip({std::move(closing), make_request(verb::get, "/hello")}).connections == 2);
+
+  auto const after_closing = roundtrip({std::move(closing), make_request(verb::get, "/hello")});
+
+  REQUIRE(after_closing.connections == 2);
 
   auto old = make_request(verb::get, "/hello");
 
   old.version = http::version::http_1_0;
-  REQUIRE(roundtrip({std::move(old), make_request(verb::get, "/hello")}).connections == 2);
+
+  auto const after_old = roundtrip({std::move(old), make_request(verb::get, "/hello")});
+
+  REQUIRE(after_old.connections == 2);
 
   auto const no_idle = roundtrip({make_request(verb::get, "/hello"), make_request(verb::get, "/hello")}, {},
                                  {.limits = {}, .max_idle_connections = 0});
