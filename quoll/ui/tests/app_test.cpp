@@ -84,6 +84,18 @@ struct form_page {
   element view() { return input() | bind(draft) | attribute("placeholder", "note"); }
 };
 
+// An input bound or not, depending on a state.
+struct optional_binding {
+  state<bool> bound{true};
+  state<std::string> draft;
+
+  element view() {
+    auto field = input();
+
+    return *bound ? std::move(field) | bind(draft) : std::move(field);
+  }
+};
+
 struct notes_page {
   state<std::vector<std::string>> notes;
   state<std::string> status{std::string{"loading"}};
@@ -422,4 +434,43 @@ TEST_CASE("ui::app: an event for a node that is gone is ignored", "[ui]") {
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE(*instance.component().count == 0);
+}
+
+TEST_CASE("ui::app: an input no longer bound holds nothing", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<optional_binding> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> {
+    instance.component().draft = std::string{"kept"};
+    co_await settle();
+
+    instance.component().bound = false;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(shown.html() == R"(<input value=""></input>)");
+}
+
+TEST_CASE("ui::app: nothing runs after stop()", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<counter> instance{time.get_executor(), shown};
+
+  auto const stop_then_click = [&]() -> task<int> {
+    instance.start();
+
+    auto const add = shown.find("button");
+
+    co_await instance.stop();
+
+    // Nothing waits for these any more: they must start nothing that could outlive the app.
+    instance.dispatch(add, "click");
+    instance.start();
+    co_await settle();
+    co_return *instance.component().count;
+  };
+
+  REQUIRE(quoll::test::run(time, stop_then_click()) == 0);
 }
