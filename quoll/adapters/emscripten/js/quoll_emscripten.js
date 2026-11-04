@@ -168,6 +168,26 @@ addToLibrary({
     nodes.get(parent).insertBefore(nodes.get(child), before === 0 ? null : nodes.get(before));
   },
 
+  quoll_emscripten_ui_close__deps: ['$quollUi'],
+  quoll_emscripten_ui_close: (instance) => {
+    const ui = quollUi.instances[instance];
+
+    for (const [key, listener] of ui.listeners) {
+      const separator = key.indexOf(':');
+
+      ui.nodes.get(Number(key.slice(0, separator))).removeEventListener(key.slice(separator + 1), listener);
+    }
+
+    for (const [id, node] of ui.nodes) {
+      // 0 is the page's own element, which it was given to show in.
+      if (id !== 0) {
+        node.remove();
+      }
+    }
+
+    delete quollUi.instances[instance];
+  },
+
   quoll_emscripten_ui_remove__deps: ['$quollUi'],
   quoll_emscripten_ui_remove: (instance, id) => {
     const ui = quollUi.instances[instance];

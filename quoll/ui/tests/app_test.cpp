@@ -170,6 +170,18 @@ struct stopping_handler {
   }
 };
 
+// A first view asking for another render, then failing.
+struct changing_then_failing {
+  state<int> count;
+  int views = 0;
+
+  element view() {
+    ++views;
+    count = 1;
+    throw std::runtime_error{"not yet"};
+  }
+};
+
 // An input bound or not, depending on a state.
 struct optional_binding {
   state<bool> bound{true};
@@ -578,6 +590,28 @@ TEST_CASE("ui::app: stop() from one of its handlers fails rather than wait for i
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::logic_error);
+}
+
+TEST_CASE("ui::app: a start that fails stops the app, and what it left pending shows nothing", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<changing_then_failing> instance{time.get_executor(), shown};
+  bool failed = false;
+
+  auto const start_then_stop = [&]() -> task<int> {
+    try {
+      instance.start();
+    } catch (std::runtime_error const &) {
+      failed = true;
+    }
+
+    co_await settle();
+    co_await instance.stop();
+    co_return instance.component().views;
+  };
+
+  REQUIRE(quoll::test::run(time, start_then_stop()) == 1);
+  REQUIRE(failed);
 }
 
 TEST_CASE("ui::app: another tag makes another node", "[ui]") {

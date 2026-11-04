@@ -139,10 +139,17 @@ public:
       return;
     }
 
-    render();
+    try {
+      render();
 
-    if constexpr (MountedComponent<C>) {
-      spawn(component_.mounted());
+      if constexpr (MountedComponent<C>) {
+        spawn(component_.mounted());
+      }
+    } catch (...) {
+      // What the view left pending, or the mounted() it spawned, must show nothing more. stop() still waits for them.
+      stopped_ = true;
+      stop_.request_stop();
+      throw;
     }
   }
 

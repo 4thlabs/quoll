@@ -103,6 +103,39 @@ struct list_page {
   }
 };
 
+// mounted() fails once the first view is in the page, its listeners with it.
+struct failing_after_view {
+  static inline bool fail = true;
+
+  state<int> count;
+
+  element view() {
+    return button("Add " + std::to_string(*count)) | on_click([this] { count = *count + 1; });
+  }
+
+  quoll::async::task<> mounted() {
+    if (fail) {
+      throw std::runtime_error{"not yet"};
+    }
+
+    return nothing();
+  }
+
+  static quoll::async::task<> nothing() { co_return; }
+};
+
+// The first view asks for another render, then fails: that render is pending on the event loop.
+struct changing_then_failing {
+  state<int> count;
+  static inline int views = 0;
+
+  element view() {
+    ++views;
+    count = 1;
+    throw std::runtime_error{"not yet"};
+  }
+};
+
 struct failing_at_first {
   static inline bool fail = true;
 
@@ -157,6 +190,31 @@ TEST_CASE("dom_renderer: nothing matching the selector is an error", "[emscripte
   quoll_test_dom_reset();
 
   REQUIRE_THROWS_AS(quoll::emscripten::dom_renderer{"#missing"}, std::invalid_argument);
+}
+
+TEST_CASE("mount: a failed start leaves nothing in the page, and can be tried again", "[emscripten][ui]") {
+  quoll_test_dom_reset();
+
+  REQUIRE_THROWS_AS(quoll::emscripten::mount<failing_after_view>(), std::runtime_error);
+  // At once: a retry in the same tick shows one interface.
+  REQUIRE(page().empty());
+
+  failing_after_view::fail = false;
+  quoll::emscripten::mount<failing_after_view>();
+  REQUIRE(page() == "<button>Add 0</button>");
+
+  settle();
+  REQUIRE(page() == "<button>Add 0</button>");
+}
+
+TEST_CASE("mount: a render pending when the first view fails does not outlive the app", "[emscripten][ui]") {
+  quoll_test_dom_reset();
+
+  REQUIRE_THROWS_AS(quoll::emscripten::mount<changing_then_failing>(), std::runtime_error);
+  settle();
+
+  REQUIRE(page().empty());
+  REQUIRE(changing_then_failing::views == 1);
 }
 
 TEST_CASE("mount: a failed first view can be tried again, a second mount cannot", "[emscripten][ui]") {

@@ -37,18 +37,31 @@
 #ifndef QUOLL_EMSCRIPTEN_MOUNT_HPP
 #define QUOLL_EMSCRIPTEN_MOUNT_HPP
 
+#include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detached.hpp>
+#include <quoll/async/task.hpp>
 #include <quoll/emscripten/dom_renderer.hpp>
 #include <quoll/emscripten/executor.hpp>
 #include <quoll/ui/app.hpp>
 #include <quoll/ui/component.hpp>
 #include <quoll/ui/node_id.hpp>
 
-#include <optional>
+#include <memory>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
 
 namespace quoll::emscripten {
+
+namespace detail {
+
+// What is left of a start that failed: nothing shows any more, and its tasks need it until they end.
+template <class App>
+[[nodiscard]] async::task<> discard(std::unique_ptr<App> failed) {
+  co_await failed->stop();
+}
+
+} // namespace detail
 
 /**
  * @brief Shows a component in the page, in the element found by `selector`, for as long as the page lives: what the
@@ -62,31 +75,32 @@ namespace quoll::emscripten {
  *
  * @throws std::invalid_argument when nothing matches `selector`.
  * @throws std::logic_error when this component is already mounted: one app per component type.
+ * @throws what the first view or mounted() throws: the page is left as it was, and a later mount can try again.
  */
 template <ui::Component C>
 C &mount(std::string_view selector = "#app", ui::app_options options = {}) {
   using app_type = ui::app<C, dom_renderer>;
 
   // For as long as the page: a page has no end to wait for.
-  static std::optional<app_type> instance;
+  static std::unique_ptr<app_type> instance;
 
   if (instance) {
     throw std::logic_error{"quoll::emscripten::mount: this component is already mounted"};
   }
 
-  instance.emplace(executor{}, dom_renderer{selector}, std::move(options));
+  instance = std::make_unique<app_type>(executor{}, dom_renderer{selector}, std::move(options));
 
   auto const dispatch = [](void *owner, ui::node_id id, char const *name, char const *value) {
     static_cast<app_type *>(owner)->dispatch(id, name, value);
   };
 
-  instance->renderer().on_event(dispatch, &*instance);
+  instance->renderer().on_event(dispatch, instance.get());
 
   try {
     instance->start();
   } catch (...) {
-    // Its first view failed: nothing is running, and a later mount can try again.
-    instance.reset();
+    instance->renderer().close();
+    async::co_spawn(executor{}, detail::discard(std::move(instance)), async::detached);
     throw;
   }
 

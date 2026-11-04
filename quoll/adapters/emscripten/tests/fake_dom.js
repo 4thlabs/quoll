@@ -97,8 +97,10 @@ addToLibrary({
         this.listeners.set(name, listener);
       }
 
-      removeEventListener(name) {
-        this.listeners.delete(name);
+      removeEventListener(name, listener) {
+        if (this.listeners.get(name) === listener) {
+          this.listeners.delete(name);
+        }
       }
 
       text() {

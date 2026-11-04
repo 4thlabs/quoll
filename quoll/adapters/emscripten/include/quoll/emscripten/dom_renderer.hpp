@@ -114,6 +114,9 @@ public:
 
   void remove(ui::node_id id) { detail::quoll_emscripten_ui_remove(instance_, id); }
 
+  /** @brief Takes everything it showed out of the page, and its listeners. Nothing can be called afterwards. */
+  void close() { detail::quoll_emscripten_ui_close(instance_); }
+
 private:
   int instance_;
 };
