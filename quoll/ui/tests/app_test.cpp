@@ -48,6 +48,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -82,6 +83,56 @@ struct form_page {
   state<std::string> draft;
 
   element view() { return input() | bind(draft) | attribute("placeholder", "note"); }
+};
+
+// Handlers borrowing what the event gave them, and reading it once they have waited.
+struct borrowing_handlers {
+  std::string viewed;
+  std::string referred;
+
+  element view() {
+    return input() |
+           on("input",
+              [this](std::string_view value) -> task<> {
+                co_await quoll::async::sleep_for(1s);
+                viewed = value;
+              }) |
+           on("change", [this](std::string const &value) -> task<> {
+             co_await quoll::async::sleep_for(1s);
+             referred = value;
+           });
+  }
+};
+
+// A handler whose task returns something.
+struct returning_handler {
+  bool ran = false;
+
+  element view() {
+    return button("Run") | on_click([this]() -> task<int> {
+             co_await quoll::async::sleep_for(1s);
+             ran = true;
+             co_return 1;
+           });
+  }
+};
+
+// Handlers added directly to the element, without on().
+struct direct_handlers {
+  state<int> renders;
+  std::shared_ptr<int> value = std::make_shared<int>(7);
+  int seen = 0;
+
+  element view() {
+    return button(std::to_string(*renders)) | decorator([this](element &target) {
+             target.events.push_back({"click", [this, held = value](std::string) -> task<> {
+                                        co_await quoll::async::sleep_for(1h);
+                                        seen = *held;
+                                      }});
+             target.events.push_back(
+                 {"focus", [](std::string) -> task<> { throw std::runtime_error{"before any task"}; }});
+           });
+  }
 };
 
 // An input bound or not, depending on a state.
@@ -297,6 +348,87 @@ TEST_CASE("ui::app: bind() keeps an input and a state the same", "[ui]") {
   REQUIRE(first == R"(<input placeholder="note" value=""></input>)");
   REQUIRE(typed == R"(<input placeholder="note" value="typed"></input>)");
   REQUIRE(shown.html() == R"(<input placeholder="note" value="reset"></input>)");
+}
+
+TEST_CASE("ui::app: a handler can borrow the value of its event until its task ends", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<borrowing_handlers> instance{time.get_executor(), shown};
+  std::string const typed = "long enough not to fit in the string itself";
+
+  auto const act = [&]() -> task<> {
+    instance.dispatch(shown.find("input"), "input", typed);
+    instance.dispatch(shown.find("input"), "change", typed);
+    co_await quoll::async::sleep_for(2s);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(instance.component().viewed == typed);
+  REQUIRE(instance.component().referred == typed);
+}
+
+TEST_CASE("ui::app: a handler returning a task of something runs too", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<returning_handler> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> {
+    instance.dispatch(shown.find("button"), "click");
+    co_await quoll::async::sleep_for(2s);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(instance.component().ran);
+}
+
+TEST_CASE("ui::app: a handler added without on() stays alive until its task ends", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<direct_handlers> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> {
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+
+    // Another view replaces the element, and the handler that was on it.
+    instance.component().renders = 1;
+    co_await settle();
+    co_await quoll::async::sleep_for(2h);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(instance.component().seen == 7);
+}
+
+TEST_CASE("ui::app: what a handler throws before its task goes to on_error", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  std::exception_ptr failure;
+  test_app<direct_handlers> instance{
+      time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }}};
+
+  auto const act = [&]() -> task<> {
+    instance.dispatch(shown.find("button"), "focus");
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::runtime_error);
+}
+
+TEST_CASE("ui::app: an event not started when stop() comes does not run", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<counter> instance{time.get_executor(), shown};
+
+  auto const click_then_stop = [&]() -> task<int> {
+    instance.start();
+    instance.dispatch(shown.find("button"), "click");
+    co_await instance.stop();
+    co_return *instance.component().count;
+  };
+
+  REQUIRE(quoll::test::run(time, click_then_stop()) == 0);
 }
 
 TEST_CASE("ui::app: keyed children keep their nodes when they move", "[ui]") {

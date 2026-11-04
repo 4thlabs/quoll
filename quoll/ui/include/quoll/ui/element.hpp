@@ -49,7 +49,10 @@
 
 namespace quoll::ui {
 
-/** @brief What an event runs: given the value of the node, for an event that has one. */
+/**
+ * @brief What an event runs: given the value of the node, for an event that has one. on() makes one from a function; a
+ * coroutine written directly as one takes a `std::string`, as a reference dies with this call.
+ */
 using event_handler = std::function<async::task<>(std::string value)>;
 
 /** @brief An event of an element, and what it runs. */
