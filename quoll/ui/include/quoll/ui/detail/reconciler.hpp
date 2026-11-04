@@ -175,8 +175,9 @@ private:
 
     patch_attributes(before, after);
 
-    if (after.value && before.value != after.value) {
-      renderer_->set_value(after.id, *after.value);
+    // An input no longer bound holds nothing rather than what it was last given.
+    if (before.value != after.value) {
+      renderer_->set_value(after.id, after.value.value_or(std::string{}));
     }
 
     patch_events(before, after);

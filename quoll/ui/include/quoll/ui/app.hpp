@@ -131,8 +131,12 @@ public:
 
   ~app() = default;
 
-  /** @brief Shows the component for the first time, and starts its mounted(). */
+  /** @brief Shows the component for the first time, and starts its mounted(). Nothing, once stopped. */
   void start() {
+    if (stopped_) {
+      return;
+    }
+
     render();
 
     if constexpr (MountedComponent<C>) {
@@ -142,10 +146,11 @@ public:
 
   /**
    * @brief Reports an event of a node: runs what the element showing it has for `name`. An event for a node that is
-   * gone by now is ignored, as it may have been sent just before.
+   * gone by now is ignored, as it may have been sent just before, and so is one coming after stop(): nothing would wait
+   * for its task.
    */
   void dispatch(node_id id, std::string_view name, std::string value = {}) {
-    auto const *const target = find(shown_, id);
+    auto const *const target = stopped_ ? nullptr : find(shown_, id);
 
     if (target == nullptr) {
       return;
