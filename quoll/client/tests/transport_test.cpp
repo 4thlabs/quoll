@@ -667,6 +667,8 @@ TEST_CASE("client::transport: a request timing out on a kept connection is not s
   virtual_time time;
   slow_network network{.time = &time, .response_delay = 1s};
 
+  std::error_code error;
+
   auto const requests = [&]() -> task<int> {
     client::transport const transport{slow_connector{network}, "server", 80, {.response_timeout = 2s}};
 
@@ -676,7 +678,7 @@ TEST_CASE("client::transport: a request timing out on a kept connection is not s
     try {
       (void)co_await transport.send(get_root());
     } catch (std::system_error const &failure) {
-      REQUIRE(failure.code() == std::errc::timed_out);
+      error = failure.code();
     }
 
     auto const after_timeout = network.connections;
@@ -687,6 +689,7 @@ TEST_CASE("client::transport: a request timing out on a kept connection is not s
   };
 
   REQUIRE(quoll::test::run(time, requests()) == 1);
+  REQUIRE(error == std::errc::timed_out);
   REQUIRE(network.connections == 2);
 }
 
