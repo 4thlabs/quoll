@@ -81,6 +81,10 @@ namespace quoll::client {
  * once, on a new connection, and the other idle connections, older, are closed too. The other requests (POST,
  * PATCH...), which the server may have received, open a new connection, kept afterwards for the next requests.
  *
+ * Over TLS, a server closing without TLS's closing message is `std::errc::connection_reset`. It changes nothing for a
+ * response whose length is known, nor for a kept connection, but it fails a response delimited by the end of the
+ * stream: anyone on the way could have cut it, and it would look complete.
+ *
  * Interim 1xx responses are skipped, up to 8 of them, but for a 101 switch of protocol, which is returned as the
  * response. Redirects are not followed: a 3xx response is a result like the others.
  *
