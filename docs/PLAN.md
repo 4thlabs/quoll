@@ -37,8 +37,7 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
   2026-11-02, replacing tRPC: no TS-only wire protocol to follow across major versions, no type-only stub router,
   the server stays plain REST usable from any language, and the bridge carries ordinary HTTP requests. See
   [TypeScript client](#typescript-client-openapi).
-- Main UI direction: **hybrid web UI** (see [UI](#ui-hybrid-web-model)). Qt is no longer a target: no Qt adapter in
-  the plan.
+- Main UI direction: **hybrid web UI** (see [UI](#ui-hybrid-web-model)).
 - REST DSL (2026-11-03, see [REST DSL](#rest-dsl-contract-server-client)): the shape of Puffin's earlier `rest`
   module (one `endpoint<"name", method, "/path", parts...>` alias per operation, nested `api<>`, `with<>`, overload
   set services, `call` / `try_call` / `scope` clients), rewritten to the rules with: one typed response per status,
