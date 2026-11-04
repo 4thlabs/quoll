@@ -56,7 +56,7 @@ const replaceable = new Set([
 ]);
 
 // Splits C++ into its code, with comments gone and strings blanked, and its string literals: where they are, and whether
-// hot reload can replace them. Two sources with the same code differ only in comments and literals.
+// hot reload can replace them. Two sources with the same code differ only in comments, spaces and literals.
 export function scan(source) {
   let code = '';
   const literals = [];
@@ -140,7 +140,8 @@ export function scan(source) {
     }
   }
 
-  return { code, literals };
+  // Spaces do not matter either: moving code around or adding a comment compiles to the same program.
+  return { code: code.replace(/\s+/g, ' ').trim(), literals };
 }
 
 // What differs between what was compiled and the source now: literals to replace, or null when it takes a rebuild.
