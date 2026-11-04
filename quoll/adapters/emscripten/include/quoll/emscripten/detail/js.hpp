@@ -38,6 +38,7 @@
 #define QUOLL_EMSCRIPTEN_DETAIL_JS_HPP
 
 #include <cstddef>
+#include <cstdint>
 
 // Functions of the JavaScript library js/quoll_emscripten.js (see there), imported by the WebAssembly module.
 namespace quoll::emscripten::detail {
@@ -45,6 +46,25 @@ namespace quoll::emscripten::detail {
 extern "C" {
 
 void quoll_emscripten_post(void (*resume)(void *item), void *item);
+
+// The DOM of an interface. Texts are UTF-8, with their size. `create` returns the instance the others take, or 0 when
+// no element matches `selector`.
+int quoll_emscripten_ui_create(char const *selector);
+void quoll_emscripten_ui_on_event(int instance,
+                                  void (*function)(void *owner, std::uint32_t id, char const *name, char const *value),
+                                  void *owner);
+void quoll_emscripten_ui_create_element(int instance, std::uint32_t id, char const *tag, std::size_t size);
+void quoll_emscripten_ui_create_text(int instance, std::uint32_t id, char const *content, std::size_t size);
+void quoll_emscripten_ui_set_text(int instance, std::uint32_t id, char const *content, std::size_t size);
+void quoll_emscripten_ui_set_class(int instance, std::uint32_t id, char const *classes, std::size_t size);
+void quoll_emscripten_ui_set_attribute(int instance, std::uint32_t id, char const *name, std::size_t name_size,
+                                       char const *value, std::size_t value_size);
+void quoll_emscripten_ui_remove_attribute(int instance, std::uint32_t id, char const *name, std::size_t size);
+void quoll_emscripten_ui_set_value(int instance, std::uint32_t id, char const *value, std::size_t size);
+void quoll_emscripten_ui_listen(int instance, std::uint32_t id, char const *name, std::size_t size);
+void quoll_emscripten_ui_unlisten(int instance, std::uint32_t id, char const *name, std::size_t size);
+void quoll_emscripten_ui_insert(int instance, std::uint32_t parent, std::uint32_t child, std::uint32_t before);
+void quoll_emscripten_ui_remove(int instance, std::uint32_t id);
 
 // `complete` always runs, from the event loop, with `elapsed` false once cancelled.
 int quoll_emscripten_timer_start(double milliseconds, void (*complete)(void *operation, int elapsed), void *operation);

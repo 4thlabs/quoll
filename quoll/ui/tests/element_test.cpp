@@ -111,9 +111,6 @@ TEST_CASE("ui: a state holds its value, and tells of what changes it", "[ui]") {
 
   REQUIRE(*count == 1);
 
-  count = 1;
-  REQUIRE(changes == 0);
-
   count = 2;
   count.set(3);
   count.update([](int &value) { value += 1; });

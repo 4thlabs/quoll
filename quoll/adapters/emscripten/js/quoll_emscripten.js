@@ -56,6 +56,129 @@ addToLibrary({
     });
   },
 
+  // The interfaces of the page, by instance: their nodes by id (0 is the element they are mounted in), the listeners of
+  // those nodes, and what events call.
+  $quollUi: {
+    next: 1,
+    instances: {},
+  },
+
+  quoll_emscripten_ui_create__deps: ['$quollUi', '$UTF8ToString'],
+  quoll_emscripten_ui_create: (selector) => {
+    const root = document.querySelector(UTF8ToString(selector));
+
+    if (!root) {
+      return 0;
+    }
+
+    const instance = quollUi.next++;
+
+    quollUi.instances[instance] = { nodes: new Map([[0, root]]), listeners: new Map(), dispatch: 0, owner: 0 };
+    return instance;
+  },
+
+  quoll_emscripten_ui_on_event__deps: ['$quollUi'],
+  quoll_emscripten_ui_on_event: (instance, dispatch, owner) => {
+    quollUi.instances[instance].dispatch = dispatch;
+    quollUi.instances[instance].owner = owner;
+  },
+
+  quoll_emscripten_ui_create_element__deps: ['$quollUi', '$UTF8ToString'],
+  quoll_emscripten_ui_create_element: (instance, id, tag, size) => {
+    quollUi.instances[instance].nodes.set(id, document.createElement(UTF8ToString(tag, size)));
+  },
+
+  quoll_emscripten_ui_create_text__deps: ['$quollUi', '$UTF8ToString'],
+  quoll_emscripten_ui_create_text: (instance, id, content, size) => {
+    quollUi.instances[instance].nodes.set(id, document.createTextNode(UTF8ToString(content, size)));
+  },
+
+  quoll_emscripten_ui_set_text__deps: ['$quollUi', '$UTF8ToString'],
+  quoll_emscripten_ui_set_text: (instance, id, content, size) => {
+    quollUi.instances[instance].nodes.get(id).data = UTF8ToString(content, size);
+  },
+
+  quoll_emscripten_ui_set_class__deps: ['$quollUi', '$UTF8ToString'],
+  quoll_emscripten_ui_set_class: (instance, id, classes, size) => {
+    quollUi.instances[instance].nodes.get(id).className = UTF8ToString(classes, size);
+  },
+
+  quoll_emscripten_ui_set_attribute__deps: ['$quollUi', '$UTF8ToString'],
+  quoll_emscripten_ui_set_attribute: (instance, id, name, nameSize, value, valueSize) => {
+    quollUi.instances[instance].nodes.get(id).setAttribute(UTF8ToString(name, nameSize), UTF8ToString(value, valueSize));
+  },
+
+  quoll_emscripten_ui_remove_attribute__deps: ['$quollUi', '$UTF8ToString'],
+  quoll_emscripten_ui_remove_attribute: (instance, id, name, size) => {
+    quollUi.instances[instance].nodes.get(id).removeAttribute(UTF8ToString(name, size));
+  },
+
+  // Left alone when it holds the value already: writing it would move the cursor of someone typing.
+  quoll_emscripten_ui_set_value__deps: ['$quollUi', '$UTF8ToString'],
+  quoll_emscripten_ui_set_value: (instance, id, value, size) => {
+    const node = quollUi.instances[instance].nodes.get(id);
+    const text = UTF8ToString(value, size);
+
+    if (node.value !== text) {
+      node.value = text;
+    }
+  },
+
+  quoll_emscripten_ui_listen__deps: ['$quollUi', '$UTF8ToString', '$stringToNewUTF8', '$callUserCallback', 'free'],
+  quoll_emscripten_ui_listen: (instance, id, name, size) => {
+    const ui = quollUi.instances[instance];
+    const eventName = UTF8ToString(name, size);
+
+    const listener = (event) => {
+      // A form does not leave the page: an interface handles its submission.
+      if (eventName === 'submit') {
+        event.preventDefault();
+      }
+
+      callUserCallback(() => {
+        const namePointer = stringToNewUTF8(eventName);
+        const valuePointer = stringToNewUTF8(String(event.target?.value ?? ''));
+
+        {{{ makeDynCall('vpipp', 'ui.dispatch') }}}(ui.owner, id, namePointer, valuePointer);
+        _free(namePointer);
+        _free(valuePointer);
+      });
+    };
+
+    ui.nodes.get(id).addEventListener(eventName, listener);
+    ui.listeners.set(`${id}:${eventName}`, listener);
+  },
+
+  quoll_emscripten_ui_unlisten__deps: ['$quollUi', '$UTF8ToString'],
+  quoll_emscripten_ui_unlisten: (instance, id, name, size) => {
+    const ui = quollUi.instances[instance];
+    const eventName = UTF8ToString(name, size);
+
+    ui.nodes.get(id).removeEventListener(eventName, ui.listeners.get(`${id}:${eventName}`));
+    ui.listeners.delete(`${id}:${eventName}`);
+  },
+
+  quoll_emscripten_ui_insert__deps: ['$quollUi'],
+  quoll_emscripten_ui_insert: (instance, parent, child, before) => {
+    const { nodes } = quollUi.instances[instance];
+
+    nodes.get(parent).insertBefore(nodes.get(child), before === 0 ? null : nodes.get(before));
+  },
+
+  quoll_emscripten_ui_remove__deps: ['$quollUi'],
+  quoll_emscripten_ui_remove: (instance, id) => {
+    const ui = quollUi.instances[instance];
+
+    ui.nodes.get(id).remove();
+    ui.nodes.delete(id);
+
+    for (const key of ui.listeners.keys()) {
+      if (key.startsWith(`${id}:`)) {
+        ui.listeners.delete(key);
+      }
+    }
+  },
+
   // Timers started and not settled yet, by id: the setTimeout handle and how to settle.
   $quollTimers: {
     next: 1,
