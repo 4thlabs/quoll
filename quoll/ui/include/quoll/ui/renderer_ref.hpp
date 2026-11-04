@@ -37,11 +37,13 @@
 #ifndef QUOLL_UI_RENDERER_REF_HPP
 #define QUOLL_UI_RENDERER_REF_HPP
 
+#include <quoll/async/detail/type_id.hpp>
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/renderer.hpp>
 
 #include <concepts>
 #include <string_view>
+#include <type_traits>
 
 namespace quoll::ui {
 
@@ -57,8 +59,14 @@ class renderer_ref {
 public:
   // The exclusion comes first: it stops Renderer<renderer_ref> from checking this constructor against itself.
   template <class R>
-    requires(!std::same_as<R, renderer_ref> && Renderer<R>)
+    requires(!std::same_as<R, renderer_ref> && !std::is_const_v<R> && Renderer<R>)
   explicit renderer_ref(R &renderer) noexcept : renderer_(&renderer), vtable_(&vtable_for<R>) {}
+
+  /** @brief The referenced renderer, if it is an `R`. */
+  template <class R>
+  [[nodiscard]] R *target() const noexcept {
+    return vtable_->type == async::detail::type_id_of<R>() ? static_cast<R *>(renderer_) : nullptr;
+  }
 
   void create_element(node_id id, std::string_view tag) const { vtable_->create_element(renderer_, id, tag); }
 
@@ -88,6 +96,7 @@ public:
 
 private:
   struct vtable {
+    async::detail::type_id type;
     void (*create_element)(void *, node_id, std::string_view);
     void (*create_text)(void *, node_id, std::string_view);
     void (*set_text)(void *, node_id, std::string_view);
@@ -103,6 +112,7 @@ private:
 
   template <class R>
   static constexpr vtable vtable_for{
+      async::detail::type_id_of<R>(),
       [](void *r, node_id id, std::string_view tag) { static_cast<R *>(r)->create_element(id, tag); },
       [](void *r, node_id id, std::string_view content) { static_cast<R *>(r)->create_text(id, content); },
       [](void *r, node_id id, std::string_view content) { static_cast<R *>(r)->set_text(id, content); },

@@ -2,6 +2,7 @@ quoll_declare_module(
   NAME ui
   SOURCES
     src/app_core.cpp
+    src/element.cpp
     src/hot.cpp
     src/reconciler.cpp
   DEPS

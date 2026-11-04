@@ -146,6 +146,8 @@ The DSL and a runtime, with no UI.
   namespace scope in a header.
 - Base components, styled with Tailwind.
 - In the sample: adding a note during the first load can hide it until a reload.
+- Two siblings with the same key: only caught by an `assert`, on the render after, which a real error should replace. A state
+  changed on an app never started leaves a render pending, which nothing waits for.
 - A trial on a real screen of an application, chosen with the maintainer at the start of this step.
 
 *Done when:* that screen runs with the base components, with what it lacks listed.

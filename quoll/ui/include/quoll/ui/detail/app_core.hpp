@@ -54,6 +54,8 @@
 namespace quoll::ui::detail {
 
 // What an app does, whatever its component and its renderer: nothing here is a template, so it is compiled once.
+//
+// Thread safety: none. Its functions and the tasks it runs are on one executor, one thing at a time.
 class app_core {
 public:
   using view_function = element (*)(void *component);
@@ -78,6 +80,9 @@ public:
   // A start that failed: what the view left pending, or the mounted() it spawned, must show nothing more. stop() still
   // waits for them.
   void abandon() noexcept;
+
+  // What the view showed, and so the handlers it holds, which may refer to the component: gone before the component.
+  void forget_view() noexcept;
 
   static void state_changed(void *self);
 

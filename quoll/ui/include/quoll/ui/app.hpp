@@ -124,6 +124,8 @@ public:
 #if defined(QUOLL_UI_HOT)
     detail::hot_unsubscribe(&core_);
 #endif
+
+    core_.forget_view();
   }
 
   /** @brief Shows the component for the first time, and starts its mounted(). Nothing, once stopped. */

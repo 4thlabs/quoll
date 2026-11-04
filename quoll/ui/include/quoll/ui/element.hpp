@@ -100,28 +100,9 @@ struct child {
   mutable element held;
 };
 
-inline void append_child(std::vector<element> &children, element &&value) {
-  if (value.type != element::kind::fragment) {
-    children.push_back(std::move(value));
-    return;
-  }
+void append_child(std::vector<element> &children, element &&value);
 
-  for (auto &nested : value.children) {
-    append_child(children, std::move(nested));
-  }
-}
-
-[[nodiscard]] inline std::vector<element> to_children(std::initializer_list<child> values) {
-  std::vector<element> children;
-
-  children.reserve(values.size());
-
-  for (auto const &value : values) {
-    append_child(children, std::move(value.held));
-  }
-
-  return children;
-}
+[[nodiscard]] std::vector<element> to_children(std::initializer_list<child> values);
 
 } // namespace detail
 
