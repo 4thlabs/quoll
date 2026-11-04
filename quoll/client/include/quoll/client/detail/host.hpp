@@ -169,9 +169,10 @@ namespace quoll::client::detail {
   return compressed ? groups < 8 : groups == 8;
 }
 
-// The Host field naming `host` on `port`: an IPv6 address in brackets, the port unless it is HTTP's default.
+// The Host field naming `host` on `port`: an IPv6 address in brackets, the port unless it is the scheme's default.
 // Throws std::invalid_argument for a host that is neither a name, an IPv4 nor an IPv6 address.
-[[nodiscard]] inline std::string host_field(std::string_view host, std::uint16_t port) {
+[[nodiscard]] inline std::string host_field(std::string_view host, std::uint16_t port,
+                                            std::uint16_t default_port = 80) {
   auto const ipv6 = host.contains(':');
 
   if (ipv6 ? !valid_ipv6(host) : !valid_host_name(host)) {
@@ -180,7 +181,7 @@ namespace quoll::client::detail {
 
   auto field = ipv6 ? "[" + std::string{host} + "]" : std::string{host};
 
-  if (port != 80) {
+  if (port != default_port) {
     field += ':' + std::to_string(port);
   }
 

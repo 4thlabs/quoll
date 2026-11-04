@@ -63,14 +63,14 @@ namespace quoll::server {
 /** @brief How serve() accepts its connections and serves each one. */
 struct serve_options {
   /** @brief The options of each connection (see serve_connection). */
-  connection_options connection;
+  connection_options connection{};
 
   /**
    * @brief Called with the exception that ended a connection (a stream exception, `std::bad_alloc`...), on the
    * executor; must not throw. Handler failures are not among them: they answer 500 (see connection_options). Empty:
    * the failure only ends the connection.
    */
-  std::function<void(std::exception_ptr)> on_connection_error;
+  std::function<void(std::exception_ptr)> on_connection_error{};
 
   /**
    * @brief Decides what an accept failure does, other than `operation_canceled`: true accepts again, false rethrows
@@ -78,7 +78,7 @@ struct serve_options {
    * Empty: a failure of one connection only (`connection_aborted`, `connection_reset`) is skipped, any other is
    * rethrown.
    */
-  std::function<async::task<bool>(std::error_code)> on_accept_error;
+  std::function<async::task<bool>(std::error_code)> on_accept_error{};
 };
 
 namespace detail {

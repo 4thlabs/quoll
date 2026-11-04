@@ -46,10 +46,11 @@
 
 namespace quoll::client::detail {
 
-// The server an `http://host[:port]` URL names. The host is checked by host_field().
+// The server an `http[s]://host[:port]` URL names. The host is checked by host_field().
 struct origin {
   std::string host;
   std::uint16_t port = 80;
+  bool secure = false;
 };
 
 [[noreturn]] inline void invalid_url(std::string_view why) {
@@ -79,21 +80,19 @@ struct origin {
   return static_cast<std::uint16_t>(value);
 }
 
-// `http://host[:port]`, optionally followed by `/`; an IPv6 address in brackets (`http://[::1]:8080`). No TLS and no
-// path prefix yet: `https` and a path are refused rather than ignored.
+// `http[s]://host[:port]`, optionally followed by `/`; an IPv6 address in brackets (`http://[::1]:8080`). No path
+// prefix yet: a path is refused rather than ignored.
 [[nodiscard]] inline origin parse_url(std::string_view url) {
   constexpr std::string_view http = "http://";
   constexpr std::string_view https = "https://";
 
-  if (url.size() >= https.size() && http::detail::iequals(url.substr(0, https.size()), https)) {
-    invalid_url("https is not supported yet");
+  auto const secure = url.size() >= https.size() && http::detail::iequals(url.substr(0, https.size()), https);
+
+  if (!secure && (url.size() < http.size() || !http::detail::iequals(url.substr(0, http.size()), http))) {
+    invalid_url("the URL is not http[s]://host[:port]");
   }
 
-  if (url.size() < http.size() || !http::detail::iequals(url.substr(0, http.size()), http)) {
-    invalid_url("the URL is not http://host[:port]");
-  }
-
-  auto authority = url.substr(http.size());
+  auto authority = url.substr(secure ? https.size() : http.size());
 
   if (authority.find_first_of("?#") != std::string_view::npos) {
     invalid_url("a query or a fragment is not part of a server's URL");
@@ -114,6 +113,9 @@ struct origin {
   }
 
   origin result;
+
+  result.port = secure ? 443 : 80;
+  result.secure = secure;
 
   if (authority.starts_with('[')) {
     auto const closing = authority.find(']');

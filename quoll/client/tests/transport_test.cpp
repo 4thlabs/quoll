@@ -34,7 +34,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/any_executor.hpp>
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/current_executor.hpp>
 #include <quoll/async/detached.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/sleep_for.hpp>
@@ -56,6 +58,8 @@
 #include <quoll/io/connector.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/memory_stream.hpp>
+#include <quoll/io/tls_connector.hpp>
+#include <quoll/io/tls_options.hpp>
 #include <quoll/io/write.hpp>
 #include <quoll/server/serve_connection.hpp>
 #include <quoll/test/overloaded.hpp>
@@ -245,6 +249,72 @@ outcome roundtrip(std::vector<http::request> requests, origin to = {}, client::t
       [router](io::memory_stream stream) { return quoll::server::serve_connection(std::move(stream), *router); },
       std::move(requests), std::move(to), options);
 }
+
+// Reads a request and answers 200: what it found goes in `host_field`.
+task<> answer_once(io::memory_stream stream, std::string &host_field) {
+  std::string buffer;
+  http::request_parser parser;
+
+  if (co_await http::read(stream, buffer, parser)) {
+    co_return;
+  }
+
+  host_field = std::string{parser.release().fields.find("Host").value_or("")};
+
+  std::string const response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+
+  (void)co_await io::write(stream, std::as_bytes(std::span{response}));
+}
+
+// What a tls_recording_connector was asked.
+struct tls_record {
+  bool secure = false;
+  std::string destination;
+  std::string ca_file;
+  std::string host_field;
+};
+
+// Keeps what a transport asked of it, and serves its connections in memory.
+struct tls_recording_connector {
+  // Static: a transport default-constructs the connector of a URL.
+  static inline tls_record log;
+
+  [[nodiscard]] task<io::any_stream> connect(std::string host, std::uint16_t port) const {
+    log.secure = false;
+    log.destination = host + ':' + std::to_string(port);
+    co_return co_await open();
+  }
+
+  [[nodiscard]] task<io::any_stream> connect_tls(std::string host, std::uint16_t port,
+                                                 io::tls_client_options const &options) const {
+    log.secure = true;
+    log.destination = host + ':' + std::to_string(port);
+    log.ca_file = options.ca_file;
+    co_return co_await open();
+  }
+
+private:
+  [[nodiscard]] static task<io::any_stream> open() {
+    auto [client_end, server_end] = io::make_memory_stream_pair();
+    async::any_executor const executor{co_await async::current_executor()};
+
+    co_spawn(executor, answer_once(std::move(server_end), log.host_field), async::detached);
+    co_return io::any_stream{std::move(client_end)};
+  }
+};
+
+static_assert(io::TlsConnector<tls_recording_connector>);
+
+// Connects in plain only.
+struct plain_connector {
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    throw std::logic_error{"not expected"};
+    co_return io::any_stream{io::make_memory_stream_pair().first};
+  }
+};
+
+static_assert(io::Connector<plain_connector>);
+static_assert(!io::TlsConnector<plain_connector>);
 
 using namespace std::chrono_literals;
 
@@ -608,9 +678,22 @@ TEST_CASE("client::transport: built from an http URL", "[client]") {
   REQUIRE(ipv6.host == "::1");
   REQUIRE(ipv6.port == 8080);
   REQUIRE(parse_url("http://[2001:db8::1]").port == 80);
+  REQUIRE_FALSE(plain.secure);
+
+  auto const secure = parse_url("https://example.com");
+
+  REQUIRE(secure.host == "example.com");
+  REQUIRE(secure.port == 443);
+  REQUIRE(secure.secure);
+
+  auto const secure_with_port = parse_url("HTTPS://[::1]:8443/");
+
+  REQUIRE(secure_with_port.host == "::1");
+  REQUIRE(secure_with_port.port == 8443);
+  REQUIRE(secure_with_port.secure);
 
   for (std::string_view const url :
-       {"https://example.com", "ftp://example.com", "example.com", "http://", "http://example.com/api",
+       {"https://", "https://example.com/api", "ftp://example.com", "example.com", "http://", "http://example.com/api",
         "http://example.com:0", "http://example.com:65536", "http://example.com:", "http://example.com:8o",
         "http://[::1", "http://[::1]8080", "http://[example.com]", "http://[192.0.2.1]:80", "http://user@example.com",
         "http://exa mple.com", "http://example.com?x=1", "http://example.com:8080#top"}) {
@@ -618,6 +701,47 @@ TEST_CASE("client::transport: built from an http URL", "[client]") {
   }
 
   REQUIRE_NOTHROW(client::transport<>{"http://127.0.0.1:8080"});
+  REQUIRE_NOTHROW(client::transport<>{"https://127.0.0.1:8443"});
+}
+
+TEST_CASE("client::transport: an https URL goes through connect_tls, with the options", "[client][tls]") {
+  auto const send = [](std::string url, client::transport_options options) {
+    tls_recording_connector::log = {};
+
+    auto const call = [&]() -> task<int> {
+      client::transport<tls_recording_connector> const transport{url, options};
+
+      co_return static_cast<int>((co_await transport.send(make_request(verb::get, "/"))).status);
+    };
+
+    return quoll::test::run(call());
+  };
+
+  client::transport_options options;
+
+  options.tls.ca_file = "authority.pem";
+
+  REQUIRE(send("https://example.com", options) == 200);
+  REQUIRE(tls_recording_connector::log.secure);
+  REQUIRE(tls_recording_connector::log.destination == "example.com:443");
+  REQUIRE(tls_recording_connector::log.ca_file == "authority.pem");
+  REQUIRE(tls_recording_connector::log.host_field == "example.com");
+
+  REQUIRE(send("https://example.com:80", {}) == 200);
+  REQUIRE(tls_recording_connector::log.host_field == "example.com:80");
+
+  REQUIRE(send("http://example.com", {}) == 200);
+  REQUIRE_FALSE(tls_recording_connector::log.secure);
+  REQUIRE(tls_recording_connector::log.destination == "example.com:80");
+  REQUIRE(tls_recording_connector::log.host_field == "example.com");
+
+  REQUIRE(send("http://example.com:443", {}) == 200);
+  REQUIRE(tls_recording_connector::log.host_field == "example.com:443");
+}
+
+TEST_CASE("client::transport: an https URL needs a connector that opens TLS connections", "[client][tls]") {
+  REQUIRE_THROWS_AS(client::transport<plain_connector>{"https://example.com"}, std::invalid_argument);
+  REQUIRE_NOTHROW(client::transport<plain_connector>{"http://example.com"});
 }
 
 TEST_CASE("client::transport: the default connector needs an executor offering a network", "[client]") {

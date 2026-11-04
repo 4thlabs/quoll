@@ -9,6 +9,12 @@ if(NOT quoll_FIND_COMPONENTS OR "threads" IN_LIST quoll_FIND_COMPONENTS OR "asio
   find_dependency(Threads)
 endif()
 
+# quoll::asio (and quoll::runtime, through it) links OpenSSL when Quoll was configured with it (QUOLL_TLS).
+if(@QUOLL_PACKAGE_NEEDS_OPENSSL@ AND (NOT quoll_FIND_COMPONENTS OR "asio" IN_LIST quoll_FIND_COMPONENTS
+   OR "runtime" IN_LIST quoll_FIND_COMPONENTS))
+  find_dependency(OpenSSL)
+endif()
+
 # quoll::rest links glaze::glaze: the application defines it before (CPM, add_subdirectory), or it is found here. Only
 # required when rest is asked for by name; otherwise looked for quietly, and needed only by a target linking rest.
 if(NOT TARGET glaze::glaze)

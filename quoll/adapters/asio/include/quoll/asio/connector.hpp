@@ -38,9 +38,12 @@
 #define QUOLL_ASIO_CONNECTOR_HPP
 
 #include <quoll/asio/detail/connect.hpp>
+#include <quoll/asio/detail/tls_connect.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/connector.hpp>
+#include <quoll/io/tls_connector.hpp>
+#include <quoll/io/tls_options.hpp>
 
 #include <asio/any_io_executor.hpp>
 
@@ -71,11 +74,22 @@ public:
     return detail::connect(executor_, std::move(host), port);
   }
 
+#if defined(QUOLL_ASIO_TLS)
+  /** @brief Connects to `host` (a name or an address) on `port` over TLS, checking it as `options` says. */
+  [[nodiscard]] async::task<io::any_stream> connect_tls(std::string host, std::uint16_t port,
+                                                        io::tls_client_options const &options) const {
+    return detail::connect_tls(executor_, std::move(host), port, options);
+  }
+#endif
+
 private:
   ::asio::any_io_executor executor_;
 };
 
 static_assert(io::Connector<connector>);
+#if defined(QUOLL_ASIO_TLS)
+static_assert(io::TlsConnector<connector>);
+#endif
 
 } // namespace quoll::asio
 

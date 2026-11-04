@@ -40,6 +40,8 @@
 #include <quoll/async/task.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/io/listen.hpp>
+#include <quoll/io/listen_tls.hpp>
+#include <quoll/io/tls_options.hpp>
 #include <quoll/server/serve.hpp>
 
 #include <cstdint>
@@ -52,15 +54,17 @@ namespace quoll::server {
 struct listen_options {
   /** @brief The IP address to listen on: loopback by default, `0.0.0.0` or `::` for every interface. */
   std::string address = std::string{io::default_listen_address};
-  serve_options serve;
+  /** @brief A certificate and its key make it an HTTPS server; without them, it speaks plain HTTP. */
+  io::tls_server_options tls{};
+  serve_options serve{};
 };
 
 /**
  * @brief Listens on `port` and serves `router` there, until a stop request: the server of a program.
  *
  * Listens through the network of the executor the task runs on (io::listen), a runtime's: spawned with the runtime's
- * stop token, it stops on Ctrl-C. Throws std::system_error when the address cannot be bound, and fails like serve()
- * otherwise. `router` outlives the task, which completes once its connections have ended.
+ * stop token, it stops on Ctrl-C. Throws std::system_error when the address cannot be bound or the certificate loaded,
+ * and fails like serve() otherwise. `router` outlives the task, which completes once its connections have ended.
  *
  * @code
  * quoll::async::task<> serve_notes(std::uint16_t port) {
@@ -70,9 +74,18 @@ struct listen_options {
  *   co_await quoll::server::listen(router, port);
  * }
  * @endcode
+ *
+ * Over TLS:
+ *
+ * @code
+ * co_await quoll::server::listen(router, 8443, {.tls = {.certificate_file = "cert.pem", .private_key_file =
+ * "key.pem"}});
+ * @endcode
  */
 [[nodiscard]] inline async::task<> listen(http::router const &router, std::uint16_t port, listen_options options = {}) {
-  auto listener = co_await io::listen(port, std::move(options.address));
+  auto listener = options.tls.enabled()
+                      ? co_await io::listen_tls(port, std::move(options.tls), std::move(options.address))
+                      : co_await io::listen(port, std::move(options.address));
 
   co_await serve(listener, router, std::move(options.serve));
 }

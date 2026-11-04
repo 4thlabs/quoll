@@ -61,7 +61,7 @@ struct acceptor_state {
   std::shared_ptr<cancellation> cancel;
 };
 
-inline async::task<io::any_stream> accept(acceptor_state &state) {
+inline async::task<::asio::ip::tcp::socket> accept_socket(acceptor_state &state) {
   // Accepted into a socket of its own: the operation's values are default constructible, a socket is not.
   ::asio::ip::tcp::socket socket{state.acceptor.get_executor()};
 
@@ -72,7 +72,11 @@ inline async::task<io::any_stream> accept(acceptor_state &state) {
     throw std::system_error{to_io_error(error), "quoll::asio::acceptor: cannot accept"};
   }
 
-  co_return io::any_stream{tcp_stream{std::move(socket)}};
+  co_return socket;
+}
+
+inline async::task<io::any_stream> accept(acceptor_state &state) {
+  co_return io::any_stream{tcp_stream{co_await accept_socket(state)}};
 }
 
 } // namespace quoll::asio::detail

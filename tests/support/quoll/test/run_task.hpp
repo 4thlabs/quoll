@@ -34,63 +34,56 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_ASIO_DETAIL_TCP_STATE_HPP
-#define QUOLL_ASIO_DETAIL_TCP_STATE_HPP
+#ifndef QUOLL_TEST_RUN_TASK_HPP
+#define QUOLL_TEST_RUN_TASK_HPP
 
-#include <quoll/asio/detail/cancellation.hpp>
+#include <quoll/asio/runtime.hpp>
+#include <quoll/async/co_spawn.hpp>
+#include <quoll/async/task.hpp>
+#include <quoll/test/overloaded.hpp>
 
-#include <asio/any_io_executor.hpp>
-#include <asio/buffer.hpp>
+#include <asio/io_context.hpp>
+#include <asio/ip/address_v4.hpp>
 #include <asio/ip/tcp.hpp>
 
-#include <cstddef>
-#include <memory>
-#include <span>
+#include <cstdint>
+#include <exception>
+#include <optional>
 #include <utility>
 
-namespace quoll::asio::detail {
+namespace quoll::test {
 
-// The cancellation of each direction, allocated together.
-struct tcp_cancellations {
-  explicit tcp_cancellations(::asio::any_io_executor const &executor) noexcept : read(executor), write(executor) {}
+/** @brief Runs `work` as a program would, on a runtime stopped by Ctrl-C, and hands over its outcome. */
+template <class T>
+T run_task(async::task<T> work) {
+  asio::runtime runtime;
+  std::optional<T> value;
+  std::exception_ptr failure;
 
-  cancellation read;
-  cancellation write;
-};
+  co_spawn(runtime.get_executor(), std::move(work),
+           overloaded{[&](T result) { value = std::move(result); },
+                      [&](std::exception_ptr error) { failure = std::move(error); }},
+           runtime.get_stop_token());
+  runtime.run();
 
-// What a tcp_stream keeps at a stable address: the socket, and the cancellation of each direction.
-struct tcp_state {
-  explicit tcp_state(::asio::ip::tcp::socket &&connected)
-      : socket(std::move(connected)), cancellations(std::make_shared<tcp_cancellations>(socket.get_executor())),
-        read(cancellations, &cancellations->read), write(cancellations, &cancellations->write) {}
-
-  ::asio::ip::tcp::socket socket;
-  std::shared_ptr<tcp_cancellations> cancellations;
-  // Share the ownership of `cancellations`.
-  std::shared_ptr<cancellation> read;
-  std::shared_ptr<cancellation> write;
-};
-
-struct read_some_initiation {
-  ::asio::ip::tcp::socket *socket;
-  std::span<std::byte> buffer;
-
-  template <class Handler>
-  void operator()(Handler &&handler) const {
-    socket->async_read_some(::asio::buffer(buffer.data(), buffer.size()), std::forward<Handler>(handler));
+  if (failure) {
+    std::rethrow_exception(failure);
   }
-};
 
-struct write_some_initiation {
-  ::asio::ip::tcp::socket *socket;
-  std::span<std::byte const> data;
+  return std::move(value.value());
+}
 
-  template <class Handler>
-  void operator()(Handler &&handler) const {
-    socket->async_write_some(::asio::buffer(data.data(), data.size()), std::forward<Handler>(handler));
-  }
-};
+/**
+ * @brief A port free on the loopback interface, as the system picks it: bound, read, released. Another process could
+ * take it before the test uses it; on a test machine's loopback, that is unlikely enough.
+ */
+[[nodiscard]] inline std::uint16_t free_port() {
+  ::asio::io_context context;
+  ::asio::ip::tcp::acceptor const acceptor{context, ::asio::ip::tcp::endpoint{::asio::ip::address_v4::loopback(), 0}};
 
-} // namespace quoll::asio::detail
+  return acceptor.local_endpoint().port();
+}
 
-#endif // QUOLL_ASIO_DETAIL_TCP_STATE_HPP
+} // namespace quoll::test
+
+#endif // QUOLL_TEST_RUN_TASK_HPP

@@ -39,7 +39,9 @@
 
 #include <quoll/asio/acceptor.hpp>
 #include <quoll/asio/detail/connect.hpp>
+#include <quoll/asio/detail/tls_connect.hpp>
 #include <quoll/asio/detail/wait.hpp>
+#include <quoll/asio/tls_acceptor.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/offers_service.hpp>
 #include <quoll/async/service.hpp>
@@ -51,6 +53,9 @@
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/network.hpp>
 #include <quoll/io/network_ref.hpp>
+#include <quoll/io/tls_network.hpp>
+#include <quoll/io/tls_network_ref.hpp>
+#include <quoll/io/tls_options.hpp>
 
 #include <asio/any_io_executor.hpp>
 #include <asio/execution/outstanding_work.hpp>
@@ -68,6 +73,17 @@
 
 namespace quoll::asio {
 
+namespace detail {
+
+// What the executors of an I/O loop offer; TLS only with OpenSSL.
+#if defined(QUOLL_ASIO_TLS)
+using loop_services = async::service_list<io::network_ref, async::timer_ref, io::tls_network_ref>;
+#else
+using loop_services = async::service_list<io::network_ref, async::timer_ref>;
+#endif
+
+} // namespace detail
+
 /**
  * @brief Executor resuming coroutines on an asio executor: an io_context, a strand, any_io_executor.
  *
@@ -77,7 +93,8 @@ namespace quoll::asio {
  *
  * It is also the network of its execution context (io::Network), and offers itself as such (io::network_ref):
  * io::connect() and io::listen() open TCP connections and listening sockets there, for the tasks it runs. Likewise, it
- * is the timer of its execution context (async::Timer), for async::sleep_for() and async::with_timeout().
+ * is the timer of its execution context (async::Timer), for async::sleep_for() and async::with_timeout(), and, when
+ * built with OpenSSL (see QUOLL_TLS), its TLS network (io::TlsNetwork), for io::connect_tls() and io::listen_tls().
  *
  * Thread safety: post() may be called from any thread, as asio's post can.
  */
@@ -85,7 +102,7 @@ template <class AsioExecutor = ::asio::any_io_executor>
   requires std::copy_constructible<AsioExecutor> && std::equality_comparable<AsioExecutor>
 class executor {
 public:
-  using services = async::service_list<io::network_ref, async::timer_ref>;
+  using services = detail::loop_services;
 
   explicit executor(AsioExecutor inner) noexcept(std::is_nothrow_move_constructible_v<AsioExecutor>)
       : inner_(std::move(inner)) {}
@@ -115,6 +132,27 @@ public:
   /** @brief This executor, as the timer of its execution context: valid while it lives (see async::timer_ref). */
   [[nodiscard]] async::timer_ref query(async::service_tag<async::timer_ref>) const { return async::timer_ref{*this}; }
 
+#if defined(QUOLL_ASIO_TLS)
+  /** @brief Opens a TLS connection to `host` (a name or an address) on `port`, on the execution context. */
+  [[nodiscard]] async::task<io::any_stream> connect_tls(std::string host, std::uint16_t port,
+                                                        io::tls_client_options const &options) const {
+    return detail::connect_tls(io_executor(), std::move(host), port, options);
+  }
+
+  /** @brief Listens for TLS connections on `address` and `port` (0 for any free port), on the execution context. */
+  [[nodiscard]] io::any_listener listen_tls(std::string address, std::uint16_t port,
+                                            io::tls_server_options const &options) const {
+    ::asio::ip::tcp::endpoint const endpoint{::asio::ip::make_address(address), port};
+
+    return io::any_listener{tls_acceptor{::asio::ip::tcp::acceptor{io_executor(), endpoint}, options}};
+  }
+
+  /** @brief This executor, as the TLS network of its execution context: valid while it lives. */
+  [[nodiscard]] io::tls_network_ref query(async::service_tag<io::tls_network_ref>) const {
+    return io::tls_network_ref{*this};
+  }
+#endif
+
   [[nodiscard]] bool operator==(executor const &) const noexcept = default;
 
 private:
@@ -139,6 +177,10 @@ static_assert(io::Network<executor<>>);
 static_assert(async::Timer<executor<>>);
 static_assert(async::OffersService<executor<>, io::network_ref>);
 static_assert(async::OffersService<executor<>, async::timer_ref>);
+#if defined(QUOLL_ASIO_TLS)
+static_assert(io::TlsNetwork<executor<>>);
+static_assert(async::OffersService<executor<>, io::tls_network_ref>);
+#endif
 
 } // namespace quoll::asio
 

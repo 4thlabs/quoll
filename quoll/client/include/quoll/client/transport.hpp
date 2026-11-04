@@ -49,8 +49,10 @@
 #include <quoll/http/response.hpp>
 #include <quoll/http/serializer.hpp>
 #include <quoll/http/version.hpp>
+#include <quoll/io/any_stream.hpp>
 #include <quoll/io/connector.hpp>
 #include <quoll/io/network_connector.hpp>
+#include <quoll/io/tls_connector.hpp>
 
 #include <cassert>
 #include <concepts>
@@ -108,15 +110,17 @@ public:
       : state_(std::make_shared<state>(std::move(connector), std::move(host), port, options)) {}
 
   /**
-   * @brief A transport to the server of `url`, `http://host[:port]` (an IPv6 address in brackets), connecting with a
+   * @brief A transport to the server of `url`, `http[s]://host[:port]` (an IPv6 address in brackets), connecting with a
    * default-constructed connector: by default through the network of the executor that sends (io::network_connector),
-   * as quoll::runtime provides it.
+   * as quoll::runtime provides it. `https` checks the server as `options.tls` says: by default, against the system's
+   * authorities.
    *
    * @code
-   * quoll::client::transport<> transport{"http://127.0.0.1:8080"};
+   * quoll::client::transport<> transport{"https://api.example.com"};
    * @endcode
    *
-   * @throws std::invalid_argument for another URL: `https` and a path prefix are not supported yet.
+   * @throws std::invalid_argument for another URL (a path prefix is not supported yet), and for `https` with a
+   * connector that is no io::TlsConnector.
    */
   explicit transport(std::string_view url, transport_options options = {})
     requires std::default_initializable<Connector>
@@ -146,12 +150,19 @@ public:
 
 private:
   transport(Connector connector, detail::origin server, transport_options options)
-      : transport(std::move(connector), std::move(server.host), server.port, options) {}
+      : state_(std::make_shared<state>(std::move(connector), std::move(server.host), server.port, options,
+                                       server.secure)) {
+    if (server.secure && !io::TlsConnector<Connector>) {
+      throw std::invalid_argument{"quoll::client::transport: this connector cannot open https connections"};
+    }
+  }
 
   struct state {
-    state(Connector connector_, std::string host_, std::uint16_t port_, transport_options const &options_)
+    state(Connector connector_, std::string host_, std::uint16_t port_, transport_options const &options_,
+          bool secure_ = false)
         : connector(std::move(connector_)), host(std::move(host_)), port(port_),
-          host_field(detail::host_field(host, port)), options(options_), pool(options_.max_idle_connections) {}
+          host_field(detail::host_field(host, port, secure_ ? 443 : 80)), options(options_),
+          pool(options_.max_idle_connections), secure(secure_) {}
 
     Connector connector;
     std::string host;
@@ -159,7 +170,18 @@ private:
     std::string host_field;
     transport_options options;
     detail::connection_pool pool;
+    bool secure;
   };
+
+  [[nodiscard]] static async::task<io::any_stream> open(state const &shared) {
+    if constexpr (io::TlsConnector<Connector>) {
+      if (shared.secure) {
+        return shared.connector.connect_tls(shared.host, shared.port, shared.options.tls);
+      }
+    }
+
+    return shared.connector.connect(shared.host, shared.port);
+  }
 
   // Static: the task holds the shared state, not the transport.
   static async::task<http::response> send_prepared(std::shared_ptr<state> shared, detail::prepared_request request) {
@@ -178,8 +200,7 @@ private:
       }
     }
 
-    auto connection = co_await async::detail::with_optional_timeout(
-        shared->options.connect_timeout, shared->connector.connect(shared->host, shared->port));
+    auto connection = co_await async::detail::with_optional_timeout(shared->options.connect_timeout, open(*shared));
     auto response = co_await async::detail::with_optional_timeout(
         shared->options.response_timeout,
         detail::exchange(shared->pool, shared->options.limits, std::move(connection), request, false));

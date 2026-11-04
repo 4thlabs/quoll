@@ -108,7 +108,8 @@ struct resolve_initiation {
   }
 };
 
-inline async::task<io::any_stream> connect(::asio::any_io_executor executor, std::string host, std::uint16_t port) {
+inline async::task<::asio::ip::tcp::socket> connect_socket(::asio::any_io_executor executor, std::string host,
+                                                           std::uint16_t port) {
   auto const cancel = std::make_shared<cancellation>(executor);
   ::asio::ip::tcp::resolver resolver{executor};
   auto const service = std::to_string(port);
@@ -130,7 +131,11 @@ inline async::task<io::any_stream> connect(::asio::any_io_executor executor, std
                             "quoll::asio::connector: cannot connect to " + host + ":" + service};
   }
 
-  co_return io::any_stream{tcp_stream{std::move(socket)}};
+  co_return socket;
+}
+
+inline async::task<io::any_stream> connect(::asio::any_io_executor executor, std::string host, std::uint16_t port) {
+  co_return io::any_stream{tcp_stream{co_await connect_socket(std::move(executor), std::move(host), port)}};
 }
 
 } // namespace quoll::asio::detail

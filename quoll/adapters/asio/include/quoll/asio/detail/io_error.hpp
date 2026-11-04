@@ -41,6 +41,10 @@
 
 #include <asio/error.hpp>
 
+#if defined(QUOLL_ASIO_TLS)
+#include <asio/ssl/error.hpp>
+#endif
+
 #include <system_error>
 
 namespace quoll::asio::detail {
@@ -54,6 +58,14 @@ namespace quoll::asio::detail {
   if (error == ::asio::error::operation_aborted) {
     return std::make_error_code(std::errc::operation_canceled);
   }
+
+#if defined(QUOLL_ASIO_TLS)
+  // The connection ended without TLS's own closing message: the data may have been cut by anyone, so it is no regular
+  // end of the stream.
+  if (error == ::asio::ssl::error::stream_truncated) {
+    return std::make_error_code(std::errc::connection_reset);
+  }
+#endif
 
   return error;
 }

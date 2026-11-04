@@ -68,6 +68,7 @@
 #include <quoll/server/serve.hpp>
 #include <quoll/test/check.hpp>
 #include <quoll/test/overloaded.hpp>
+#include <quoll/test/run_task.hpp>
 #include <quoll/threads/thread_pool.hpp>
 
 #include <asio/buffer.hpp>
@@ -345,13 +346,7 @@ task<accounts_calls> call_accounts(accounts_client client, std::stop_source &sou
   co_return calls;
 }
 
-// A port free on the loopback interface, as the system picks it: bound, read, released. Another process could take
-// it before the test uses it; on a test machine's loopback, that is unlikely enough.
-std::uint16_t free_port() {
-  ::asio::io_context context;
-
-  return port_of(listen(context));
-}
+using quoll::test::free_port;
 
 // A connection through the network of the runtime's executor, to a socket listening there: the bytes sent arrive.
 task<std::string> loop_through_network() {
@@ -513,25 +508,7 @@ task<int> leave_work_running(int &yields) {
   co_return 7;
 }
 
-// Runs `work` as a program would, on a runtime stopped by Ctrl-C, and hands over its outcome.
-template <class T>
-T run_task(task<T> work) {
-  quoll::asio::runtime runtime;
-  std::optional<T> value;
-  std::exception_ptr failure;
-
-  co_spawn(runtime.get_executor(), std::move(work),
-           overloaded{[&](T result) { value = std::move(result); },
-                      [&](std::exception_ptr error) { failure = std::move(error); }},
-           runtime.get_stop_token());
-  runtime.run();
-
-  if (failure) {
-    std::rethrow_exception(failure);
-  }
-
-  return std::move(value.value());
-}
+using quoll::test::run_task;
 
 task<int> answer() { co_return 42; }
 
