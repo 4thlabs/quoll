@@ -43,7 +43,6 @@
 #include <quoll/rest.hpp>
 #include <quoll/ui.hpp>
 
-#include <algorithm>
 #include <exception>
 #include <string>
 #include <vector>
@@ -60,18 +59,46 @@ struct notes_page {
   state<std::string> problem;
   quoll::rest::client<notes::api, quoll::emscripten::fetch_transport> api{quoll::emscripten::fetch_transport{""}};
 
-  task<> mounted() { items = co_await api.call<notes::list>({}); }
+  task<> mounted() {
+    try {
+      items = co_await api.call<notes::list>({});
+    } catch (std::exception const &failure) {
+      problem = std::string{failure.what()};
+    }
+  }
 
   task<> add() {
-    auto const created = co_await api.call<notes::create>({.text = *draft});
+    if (draft->empty()) {
+      co_return;
+    }
 
-    items.update([&created](auto &all) { all.push_back(created); });
+    // Out of the input as it leaves: what is typed meanwhile is the next note, and a second click sends nothing.
+    auto const sent = *draft;
+
     draft.set({});
+
+    try {
+      auto const created = co_await api.call<notes::create>({.text = sent});
+
+      items.update([&created](auto &all) { all.push_back(created); });
+      problem.set({});
+    } catch (std::exception const &failure) {
+      problem = std::string{failure.what()};
+
+      if (draft->empty()) {
+        draft = sent;
+      }
+    }
   }
 
   task<> remove(std::int64_t id) {
-    co_await api.call<notes::remove>(id);
-    items.update([id](auto &all) { std::erase_if(all, [id](auto const &item) { return item.id == id; }); });
+    try {
+      co_await api.call<notes::remove>(id);
+      items.update([id](auto &all) { std::erase_if(all, [id](auto const &item) { return item.id == id; }); });
+      problem.set({});
+    } catch (std::exception const &failure) {
+      problem = std::string{failure.what()};
+    }
   }
 
   element note_row(notes::note const &item) {
