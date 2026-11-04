@@ -39,18 +39,13 @@ about 1.2 s.
 
 Small, process only.
 
-- See Codex review a push on a pull request opened after the setting, or post `@codex review` from the workflow. So far
-  it has only reviewed on request.
-- Settle the merge method: a branch holding a merge that resolved a conflict cannot rebase, so `--rebase` fails on it.
-- Reword "P1 at least" in the [review rules](../AGENTS.md#code-review-rules), which makes every small point a P1.
 - A `macos-latest` CI job (Apple Clang, libc++): nothing native has ever run on the maintainer's Mac. Not required until
   it passes, so that it blocks nobody meanwhile. What it finds says whether Apple Clang becomes a supported compiler, for
   the maintainer to settle.
 - Maintainer: delete the secret `CLAUDE_CODE_OAUTH_TOKEN`, and decide on the `quoll-ui-demo` container. The branch `ui-ipp`
   stays, for step 1.
 
-*Done when:* the loop runs with no manual request, and the Mac job runs in CI, either passing and required or with what
-breaks listed.
+*Done when:* the Mac job runs in CI, either passing and required or with what breaks listed.
 
 ### Step 1: compiled libraries *(maintainer merges)*
 
