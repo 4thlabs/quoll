@@ -37,7 +37,6 @@
 #ifndef QUOLL_SERVER_DETAIL_CONNECTION_HPP
 #define QUOLL_SERVER_DETAIL_CONNECTION_HPP
 
-#include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/detail/router_responses.hpp>
@@ -63,57 +62,95 @@
 
 namespace quoll::server::detail {
 
+// How reading a request ended.
+struct request_read {
+  std::error_code error;
+  // The request did not arrive in time. Told apart from `error`: a stream reports std::errc::timed_out too, for a peer
+  // that has vanished, and that one gets no answer.
+  bool expired = false;
+};
+
 // The status answering a request that could not be read, if it deserves one: a peer that closed in the middle of a
 // message, or a broken stream, gets nothing.
-[[nodiscard]] inline std::optional<http::status> read_error_status(std::error_code error) noexcept {
-  if (error == http::error::header_too_large) {
+[[nodiscard]] inline std::optional<http::status> read_error_status(request_read const &read) noexcept {
+  if (read.expired) {
+    return http::status::request_timeout;
+  }
+
+  if (read.error == http::error::header_too_large) {
     return http::status::request_header_fields_too_large;
   }
 
-  if (error == http::error::body_too_large) {
+  if (read.error == http::error::body_too_large) {
     return http::status::content_too_large;
   }
 
-  if (error == http::error::unsupported_method) {
+  if (read.error == http::error::unsupported_method) {
     return http::status::not_implemented;
   }
 
-  if (error == http::error::bad_message) {
+  if (read.error == http::error::bad_message) {
     return http::status::bad_request;
-  }
-
-  if (error == std::errc::timed_out) {
-    return http::status::request_timeout;
   }
 
   return std::nullopt;
 }
 
-// Waits for the first bytes of a request, in `buffer`. False when the connection ends instead, whatever the reason: it
-// was idle, so nothing is owed to the peer.
+// Drops what comes before a request and is no part of it: the empty lines a server ignores (RFC 9112, 2.2), which some
+// clients send after a body.
+inline void skip_empty_lines(std::string &buffer) { buffer.erase(0, buffer.find_first_not_of("\r\n")); }
+
+// Waits for a request to start, in `buffer`. False when the connection ends instead, whatever the reason: it was idle,
+// so nothing is owed to the peer.
 template <io::ByteStream Stream>
 async::task<bool> wait_for_request(Stream &stream, std::string &buffer) {
   std::array<char, 4096> chunk;
-  auto const received = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
 
-  buffer.append(chunk.data(), received.transferred);
-  co_return !received.error;
+  while (buffer.empty()) {
+    auto const received = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+    if (received.error) {
+      co_return false;
+    }
+
+    buffer.append(chunk.data(), received.transferred);
+    skip_empty_lines(buffer);
+  }
+
+  co_return true;
 }
 
-// http::read() of a request, up to the timeout. It reports a stop as a value, which with_timeout() leaves alone: a
-// cancellation that the connection's own stop token did not ask for is the timeout's.
+// http::read(), its cancellation thrown: with_timeout() only tells its own from another when it is.
 template <io::ByteStream Stream>
-async::task<std::error_code> read_request(Stream &stream, std::string &buffer, http::request_parser &parser,
-                                          connection_options const &options) {
-  auto const stop_token = co_await async::current_stop_token();
-  auto const error =
-      co_await async::detail::with_optional_timeout(options.read_timeout, http::read(stream, buffer, parser));
+async::task<std::error_code> read_or_throw_canceled(Stream &stream, std::string &buffer, http::request_parser &parser) {
+  auto const error = co_await http::read(stream, buffer, parser);
 
-  if (error == std::errc::operation_canceled && !stop_token.stop_requested()) {
-    co_return std::make_error_code(std::errc::timed_out);
+  if (error == std::errc::operation_canceled) {
+    throw std::system_error{error};
   }
 
   co_return error;
+}
+
+// http::read() of a request, up to the timeout. Streams report their errors as values: thrown, timed_out can only be
+// the timeout's.
+template <io::ByteStream Stream>
+async::task<request_read> read_request(Stream &stream, std::string &buffer, http::request_parser &parser,
+                                       connection_options const &options) {
+  try {
+    co_return request_read{co_await async::detail::with_optional_timeout(
+        options.read_timeout, read_or_throw_canceled(stream, buffer, parser))};
+  } catch (std::system_error const &thrown) {
+    if (thrown.code() == std::errc::timed_out) {
+      co_return request_read{thrown.code(), true};
+    }
+
+    if (thrown.code() == std::errc::operation_canceled) {
+      co_return request_read{thrown.code()};
+    }
+
+    throw;
+  }
 }
 
 // The router's response, or 500 if its handler threw, reported to the application's callback if it gave one.

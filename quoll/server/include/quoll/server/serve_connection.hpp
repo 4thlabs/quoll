@@ -80,14 +80,16 @@ async::task<> serve_connection(Stream stream, http::router const &router, connec
   http::request_parser parser{options.limits};
 
   for (;;) {
+    detail::skip_empty_lines(buffer);
+
     // A pipelined request has already started.
     if (buffer.empty() && !co_await async::detail::with_optional_timeout(options.idle_timeout,
                                                                          detail::wait_for_request(stream, buffer))) {
       co_return;
     }
 
-    if (auto const error = co_await detail::read_request(stream, buffer, parser, options)) {
-      if (auto const answer = detail::read_error_status(error)) {
+    if (auto const read = co_await detail::read_request(stream, buffer, parser, options); read.error) {
+      if (auto const answer = detail::read_error_status(read)) {
         auto rejected = http::detail::status_response(*answer);
 
         detail::prepare(rejected, false, false);
