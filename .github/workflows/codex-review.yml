@@ -52,6 +52,9 @@ jobs:
           if grep --quiet --fixed-strings --line-regexp "$head completed" <<< "$reviews"; then
             state=success
             description="Codex has reviewed this commit"
+          elif grep --quiet "^$head " <<< "$reviews"; then
+            state=pending
+            description="Codex is reviewing this commit"
           else
             state=pending
             description="Waiting for Codex: comment @codex review"
