@@ -97,7 +97,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 - Header-only, C++23 minimum (GCC ≥ 13, Clang ≥ 19). CMake, dependencies via CPM.
 - WASM is a first-class target: core modules never require threads or blocking waits.
-- No Qt. Adapters: thread pool (`quoll::threads`), asio (`quoll::asio`), Emscripten (`quoll::emscripten`: event
+- Adapters: thread pool (`quoll::threads`), asio (`quoll::asio`), Emscripten (`quoll::emscripten`: event
   loop, `fetch`; planned: `postMessage`); planned: webview shell, memory (tests).
 
 ## Related projects
