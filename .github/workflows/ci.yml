@@ -206,6 +206,9 @@ jobs:
       - name: Configure
         run: emcmake cmake -B build-wasm -DCMAKE_BUILD_TYPE=Debug
 
+      - name: Ask ccache for details
+        run: echo "CCACHE_DEBUG=1" >> "$GITHUB_ENV"
+
       - name: Build
         run: cmake --build build-wasm --parallel "$(nproc)"
 
@@ -214,6 +217,13 @@ jobs:
 
       - name: Show how ccache did
         run: ccache --show-stats
+
+      - name: Keep what ccache hashed
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ccache-inputs-${{ github.run_attempt }}
+          path: build-wasm/**/*.ccache-input-text
 
   format:
     name: clang-format
