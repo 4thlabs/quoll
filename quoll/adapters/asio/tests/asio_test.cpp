@@ -42,8 +42,10 @@
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detached.hpp>
+#include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/async/with_timeout.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/client/transport.hpp>
 #include <quoll/http/parser.hpp>
@@ -79,6 +81,7 @@
 #include <signal.h>
 
 #include <array>
+#include <chrono>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
@@ -363,6 +366,47 @@ task<std::string> loop_through_network() {
 
   check(read.error);
   co_return std::string{received.data(), read.transferred};
+}
+
+// The time a sleep of `duration` takes.
+task<std::chrono::nanoseconds> measure_sleep(std::chrono::nanoseconds duration) {
+  auto const start = std::chrono::steady_clock::now();
+
+  co_await quoll::async::sleep_for(duration);
+  co_return std::chrono::steady_clock::now() - start;
+}
+
+// Reads from a connected peer that never sends, up to the timeout.
+task<std::error_code> read_from_silent_peer(std::chrono::nanoseconds timeout) {
+  auto listener = co_await io::listen(0);
+  auto const port = listener.local_port().value();
+  auto [accepted, connected] = co_await quoll::async::when_all(listener.accept(), io::connect("127.0.0.1", port));
+
+  auto const read = [](io::any_stream &stream) -> task<std::size_t> {
+    std::array<char, 16> received{};
+    auto const result = co_await stream.read_some(std::as_writable_bytes(std::span{received}));
+
+    check(result.error);
+    co_return result.transferred;
+  };
+
+  try {
+    static_cast<void>(co_await quoll::async::with_timeout(timeout, read(accepted)));
+  } catch (std::system_error const &error) {
+    co_return error.code();
+  }
+
+  co_return std::error_code{};
+}
+
+task<std::error_code> sleep_error(std::chrono::nanoseconds duration) {
+  try {
+    co_await quoll::async::sleep_for(duration);
+  } catch (std::system_error const &error) {
+    co_return error.code();
+  }
+
+  co_return std::error_code{};
 }
 
 // REST calls with a client built from a URL, then Ctrl-C, which the runtime turns into a stop request.
@@ -819,6 +863,39 @@ TEST_CASE("asio::runtime runs until the work its tasks started has ended", "[asi
 
 TEST_CASE("asio::runtime offers its loop's network to its tasks", "[asio][runtime]") {
   REQUIRE(run_task(loop_through_network()) == "ping");
+}
+
+TEST_CASE("asio::runtime offers its loop's timer to its tasks", "[asio][runtime][timer]") {
+  using namespace std::chrono_literals;
+
+  REQUIRE(run_task(measure_sleep(20ms)) >= 20ms);
+}
+
+TEST_CASE("asio: with_timeout stops a read from a silent peer", "[asio][runtime][timer]") {
+  using namespace std::chrono_literals;
+
+  REQUIRE(run_task(read_from_silent_peer(20ms)) == std::errc::timed_out);
+}
+
+TEST_CASE("asio: a stop request from another thread ends a sleep", "[asio][timer]") {
+  using namespace std::chrono_literals;
+
+  ::asio::io_context context;
+  quoll::asio::executor const executor{context.get_executor()};
+  std::stop_source source;
+  std::optional<std::error_code> error;
+
+  co_spawn(executor, sleep_error(1h),
+           overloaded{[&](std::error_code result) { error = result; }, [](std::exception_ptr) {}}, source.get_token());
+
+  std::jthread const stopper{[&source] {
+    std::this_thread::sleep_for(10ms);
+    source.request_stop();
+  }};
+
+  context.run();
+
+  REQUIRE(error == std::errc::operation_canceled);
 }
 
 TEST_CASE("asio: a REST client from a URL calls server::listen, until Ctrl-C", "[asio][runtime][rest][client]") {

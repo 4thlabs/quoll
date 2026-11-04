@@ -41,6 +41,7 @@
 #include <quoll/asio/executor.hpp>
 #include <quoll/async/offers_service.hpp>
 #include <quoll/async/service.hpp>
+#include <quoll/async/timer_ref.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/io/network_ref.hpp>
 
@@ -104,8 +105,9 @@ struct runtime_state {
  * }
  * @endcode
  *
- * Its executor offers the loop's network (io::network_ref), so that io::connect(), io::listen() and
- * what is built on them (quoll::server::listen, quoll::client::transport, a REST client) need nothing handed to them.
+ * Its executor offers the loop's network (io::network_ref) and timer (async::timer_ref), so that io::connect(),
+ * io::listen(), async::sleep_for() and what is built on them (quoll::server::listen, quoll::client::transport, a REST
+ * client) need nothing handed to them.
  * What does I/O on the loop (a server, a client and its kept connections) lives in the tasks, created and destroyed by
  * them: the program's main coroutine rather than main().
  *
@@ -121,10 +123,10 @@ struct runtime_state {
  */
 class runtime {
 public:
-  /** @brief The executor of the runtime: posts to its loop, and offers its network. */
+  /** @brief The executor of the runtime: posts to its loop, and offers its network and its timer. */
   class executor {
   public:
-    using services = async::service_list<io::network_ref>;
+    using services = async::service_list<io::network_ref, async::timer_ref>;
 
     executor(executor const &other) noexcept : inner_(other.inner_), state_(other.state_) { ++state_->executors; }
 
@@ -159,6 +161,11 @@ public:
 
     /** @brief The network of the runtime's loop: its asio executor (see io::network_ref), as long-lived as this. */
     [[nodiscard]] io::network_ref query(async::service_tag<io::network_ref>) const { return io::network_ref{inner_}; }
+
+    /** @brief The timer of the runtime's loop: its asio executor (see async::timer_ref), as long-lived as this. */
+    [[nodiscard]] async::timer_ref query(async::service_tag<async::timer_ref>) const {
+      return async::timer_ref{inner_};
+    }
 
     [[nodiscard]] bool operator==(executor const &other) const noexcept { return inner_ == other.inner_; }
 
@@ -233,6 +240,7 @@ private:
 
 static_assert(async::Executor<runtime::executor>);
 static_assert(async::OffersService<runtime::executor, io::network_ref>);
+static_assert(async::OffersService<runtime::executor, async::timer_ref>);
 
 } // namespace quoll::asio
 

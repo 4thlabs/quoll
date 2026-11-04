@@ -38,9 +38,10 @@
 #define QUOLL_IO_LISTEN_HPP
 
 #include <quoll/async/current_executor.hpp>
+#include <quoll/async/detail/require_service.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_listener.hpp>
-#include <quoll/io/detail/current_network.hpp>
+#include <quoll/io/network_ref.hpp>
 
 #include <cstdint>
 #include <string>
@@ -60,7 +61,8 @@ inline constexpr std::string_view default_listen_address = "127.0.0.1";
  */
 [[nodiscard]] inline async::task<any_listener> listen(std::uint16_t port,
                                                       std::string address = std::string{default_listen_address}) {
-  auto const network = detail::current_network(co_await async::current_executor(), "quoll::io::listen");
+  auto const network =
+      async::detail::require_service<network_ref>(co_await async::current_executor(), "quoll::io::listen", "network");
 
   co_return network.listen(std::move(address), port);
 }
