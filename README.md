@@ -1,12 +1,9 @@
 # Quoll
 
-Header-only C++23 framework for cross-platform applications: a sans-IO async runtime, HTTP client and server, and a
-typed REST DSL that generates an [OpenAPI](https://www.openapis.org/) contract, so the TypeScript side is a stock,
-fully typed [`openapi-fetch`](https://openapi-ts.dev/openapi-fetch/) client. Write the UI once with web technologies
-and deploy the same application as a native server + web app, a standalone PWA (core in WASM) or a native webview
-shell.
+A C++23 web framework aimed at performance and ease of use: a sans-IO async runtime, an HTTP client and server, a typed
+REST DSL usable from any program, and a UI DSL compiled to WASM for web, desktop and mobile, styled with Tailwind.
 
-**Status: exploration.** Nothing is usable yet; see [`docs/PLAN.md`](docs/PLAN.md) for the design.
+**Status: exploration.** See [`docs/PLAN.md`](docs/PLAN.md) for the target and the roadmap.
 
 ## License
 

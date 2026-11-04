@@ -3,12 +3,12 @@
 Guidance for AI coding agents working in this repository.
 
 **Before writing or reviewing code, read [`docs/CODING_RULES.md`](docs/CODING_RULES.md)** — the C++ rules every
-change must follow. Target architecture, deployment modes and open decisions are in [`docs/PLAN.md`](docs/PLAN.md):
-read it first, it is the source of truth for the design.
+change must follow. The target, the roadmap and open decisions are in [`docs/PLAN.md`](docs/PLAN.md): read it first, it is the
+source of truth for the design and the order of the work.
 
-Quoll is a public, header-only C++23 framework for cross-platform applications: sans-IO async runtime, HTTP client and
-server, and a typed REST DSL exposed to a web UI through a generated OpenAPI contract. The same application runs as a
-native server + web app, a standalone PWA (core in WASM), or a native webview shell. Namespace `quoll::`.
+Quoll is a public C++23 web framework aimed at performance and ease of use: a sans-IO async runtime, an HTTP client and server,
+a typed REST DSL usable from any program, and a UI DSL compiled to WASM for web, desktop and mobile, styled with Tailwind. It is
+header-only until step 1 of the roadmap. Namespace `quoll::`.
 
 The maintainer communicates in French; code, comments, docs and commit messages stay in English.
 
@@ -35,10 +35,8 @@ a timer, `fetch_transport`, `dom_renderer` and `mount`; Emscripten only, its Jav
 and
 `quoll::runtime` (`<quoll/runtime.hpp>`: `quoll::runtime`, the runtime of the adapter chosen with `QUOLL_RUNTIME`, asio
 natively; none under Emscripten). A client GET runs end to end over a memory stream, over TCP through the asio
-connector, and over `fetch` in Node (prototype criteria 1 to 4); a `rest::client` built from a URL calls
-`server::listen` over TCP on a `quoll::runtime`. The prototype described in `docs/PLAN.md` (OpenAPI, the React sample)
-is paused while the server and the client become fully usable: see "Usable server and client" there. Do not settle its open questions or write the module design into this file before the prototype
-validates them.
+connector, and over `fetch` in Node; a `rest::client` built from a URL calls `server::listen` over TCP on a `quoll::runtime`.
+**The roadmap in `docs/PLAN.md` says what comes next, and which step is current.** Do not write the module design into this file.
 
 ## Build & test
 
@@ -97,10 +95,11 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 ## Hard constraints
 
-- Header-only, C++23 minimum (GCC ≥ 13, Clang ≥ 19). CMake, dependencies via CPM.
+- Header-only until step 1 of the roadmap, then compiled libraries. C++23 minimum (GCC ≥ 13, Clang ≥ 19). CMake, dependencies
+  via CPM.
 - WASM is a first-class target: core modules never require threads or blocking waits.
-- Adapters: thread pool (`quoll::threads`), asio (`quoll::asio`), Emscripten (`quoll::emscripten`: event
-  loop, `fetch`; planned: `postMessage`); planned: webview shell, memory (tests).
+- Adapters: thread pool (`quoll::threads`), asio (`quoll::asio`), Emscripten (`quoll::emscripten`: event loop, `fetch`, the
+  DOM); planned: a webview shell.
 
 ## Related projects
 
