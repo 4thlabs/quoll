@@ -172,7 +172,8 @@ public:
     }
   }
 
-  /** @brief Asks the running handlers to stop, and completes once they have ended. Nothing shows afterwards. */
+  /** @brief Asks the running handlers to stop, and completes once they have ended. Nothing shows afterwards. Await it
+   * once. */
   [[nodiscard]] async::task<> stop() {
     stopped_ = true;
     stop_.request_stop();
