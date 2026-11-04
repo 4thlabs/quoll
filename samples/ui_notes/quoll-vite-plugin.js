@@ -86,7 +86,8 @@ export function scan(source) {
       // A raw string is code here: changing it needs a rebuild.
       const open = source.indexOf('(', index);
       const closing = `)${source.slice(index + 2, open)}"`;
-      const end = source.indexOf(closing, open) + closing.length;
+      const found = source.indexOf(closing, open);
+      const end = found < 0 ? source.length : found + closing.length;
       const text = source.slice(index, end);
 
       code += text;
@@ -118,11 +119,16 @@ export function scan(source) {
       });
       code += '""';
       index = end + 1;
+    } else if (character === "'" && /[0-9a-fA-F]/.test(source[index - 1] ?? '') && /[0-9a-fA-F]/.test(source[index + 1] ?? '')) {
+      // A digit separator: 1'000'000.
+      code += character;
+      ++index;
     } else if (character === "'") {
       const end = source.indexOf("'", index + (source[index + 1] === '\\' ? 3 : 2));
+      const stop = end < 0 ? source.length : end + 1;
 
-      code += source.slice(index, end + 1);
-      index = end + 1;
+      code += source.slice(index, stop);
+      index = stop;
     } else {
       if (character === '\n') {
         ++line;
@@ -168,6 +174,8 @@ function run(command, args, cwd) {
 
     child.stdout.on('data', (data) => (output += data));
     child.stderr.on('data', (data) => (output += data));
+    // A tool that is not there reaches the same overlay as a failed build.
+    child.on('error', (error) => done({ code: -1, output: `${command}: ${error.message}` }));
     child.on('close', (code) => done({ code, output }));
   });
 }
@@ -233,7 +241,8 @@ export function quoll({ target, sources, buildDir = 'build' }) {
       };
 
       server.middlewares.use((request, response, next) => {
-        const extension = { [`/${target}.js`]: '.js', [`/${target}.wasm`]: '.wasm' }[request.url];
+        const path = request.url.split('?')[0];
+        const extension = { [`/${target}.js`]: '.js', [`/${target}.wasm`]: '.wasm' }[path];
 
         if (!extension) {
           next();
@@ -241,7 +250,13 @@ export function quoll({ target, sources, buildDir = 'build' }) {
         }
 
         response.setHeader('Content-Type', extension === '.wasm' ? 'application/wasm' : 'text/javascript');
-        createReadStream(artifact(dir, extension)).pipe(response);
+        // The linker replaces these during a rebuild: the page asks again once it reloads.
+        createReadStream(artifact(dir, extension))
+          .on('error', () => {
+            response.statusCode = 404;
+            response.end();
+          })
+          .pipe(response);
       });
 
       // One build at a time: a change during a build gets one more, which sees it.
