@@ -94,7 +94,8 @@ template <class... Args>
 
   auto validators = [&] {
     if constexpr (layout::validator_count == 1) {
-      return std::get<layout::validator_position>(std::move(all));
+      return std::forward<std::tuple_element_t<layout::validator_position, decltype(all)>>(
+          std::get<layout::validator_position>(all));
     } else {
       return validator_set<>{};
     }
@@ -103,8 +104,10 @@ template <class... Args>
   return [&]<std::size_t... Index>(std::index_sequence<Index...>) {
     using state = mounted<decltype(validators), std::tuple_element_t<layout::service_positions[Index], decayed>...>;
 
-    return std::make_shared<state>(std::move(validators),
-                                   std::tuple{std::get<layout::service_positions[Index]>(std::move(all))...});
+    return std::make_shared<state>(
+        std::move(validators),
+        std::tuple{std::forward<std::tuple_element_t<layout::service_positions[Index], decltype(all)>>(
+            std::get<layout::service_positions[Index]>(all))...});
   }(std::make_index_sequence<layout::service_count>{});
 }
 

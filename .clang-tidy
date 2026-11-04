@@ -1,0 +1,12 @@
+# Only what stops a real bug and raises no noise, as errors: what Rust's compiler refuses, as far as a tool can tell. Run
+# by the clang-19 job of CI, on the native build: the Emscripten adapter is not analysed. A data member moved, then read
+# after a co_await, goes unseen.
+Checks: >-
+  -*,
+  bugprone-use-after-move,
+  bugprone-dangling-handle,
+  clang-analyzer-cplusplus.Move,
+  clang-analyzer-cplusplus.NewDelete
+WarningsAsErrors: '*'
+# Quoll's headers hold the library: not those of the dependencies, also under a directory named quoll in CI.
+HeaderFilterRegex: '/quoll/(adapters/)?[a-z_]+/(include|tests)/|/tests/support/|/samples/'
