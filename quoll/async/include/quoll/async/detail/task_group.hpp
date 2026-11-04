@@ -34,8 +34,8 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_SERVER_DETAIL_CONNECTION_GROUP_HPP
-#define QUOLL_SERVER_DETAIL_CONNECTION_GROUP_HPP
+#ifndef QUOLL_ASYNC_DETAIL_TASK_GROUP_HPP
+#define QUOLL_ASYNC_DETAIL_TASK_GROUP_HPP
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
@@ -48,21 +48,21 @@
 #include <optional>
 #include <utility>
 
-namespace quoll::server::detail {
+namespace quoll::async::detail {
 
-// The connections a serve() spawned, counted, so that serve() completes only once they have all ended: the router and
-// the listener then need to outlive serve() only. Thread safety: started() and ended() may be called from any thread
-// (the connections may run on a thread pool).
-class connection_group {
+// Tasks spawned by one owner, counted, so that the owner completes only once they have all ended: what they refer to
+// then needs to outlive the owner only. Thread safety: started() and ended() may be called from any thread (the tasks
+// may run on a thread pool).
+class task_group {
 public:
-  // Waits until no connection is left; resumes the awaiter on its executor.
+  // Waits until no task is left; resumes the awaiter on its executor.
   class [[nodiscard]] join_awaitable {
   public:
-    explicit join_awaitable(connection_group &group) noexcept : group_(&group) {}
+    explicit join_awaitable(task_group &group) noexcept : group_(&group) {}
 
     [[nodiscard]] bool await_ready() const noexcept { return false; }
 
-    [[nodiscard]] bool await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
+    [[nodiscard]] bool await_suspend(std::coroutine_handle<> handle, await_context const &context) {
       std::lock_guard const lock{group_->mutex_};
 
       if (group_->live_ == 0) {
@@ -78,8 +78,8 @@ public:
     void await_resume() const noexcept {}
 
   private:
-    connection_group *group_;
-    async::work_item item_{};
+    task_group *group_;
+    work_item item_{};
   };
 
   void started() {
@@ -91,8 +91,8 @@ public:
   // The last connection resumes serve(), if it waits. Called from a completion handler: noexcept, as a post that fails
   // there would leave serve() suspended forever.
   void ended() noexcept {
-    async::work_item *waiter = nullptr;
-    std::optional<async::executor_ref> executor;
+    work_item *waiter = nullptr;
+    std::optional<executor_ref> executor;
 
     {
       std::lock_guard const lock{mutex_};
@@ -113,13 +113,13 @@ public:
 private:
   std::mutex mutex_;
   std::size_t live_ = 0;
-  async::work_item *waiter_ = nullptr;
+  work_item *waiter_ = nullptr;
   // The executor of serve(), valid while it waits.
-  std::optional<async::executor_ref> executor_;
+  std::optional<executor_ref> executor_;
 };
 
-static_assert(async::ContextAwaitable<connection_group::join_awaitable>);
+static_assert(async::ContextAwaitable<task_group::join_awaitable>);
 
-} // namespace quoll::server::detail
+} // namespace quoll::async::detail
 
-#endif // QUOLL_SERVER_DETAIL_CONNECTION_GROUP_HPP
+#endif // QUOLL_ASYNC_DETAIL_TASK_GROUP_HPP
