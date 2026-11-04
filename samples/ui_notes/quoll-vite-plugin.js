@@ -43,7 +43,7 @@
 // 3. Anything else: a rebuild, then the page reloads. A compilation error shows in Vite's overlay.
 
 import { spawn } from 'node:child_process';
-import { createReadStream, existsSync, readFileSync } from 'node:fs';
+import { createReadStream, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -55,10 +55,48 @@ const replaceable = new Set([
   'nav', 'ol', 'p', 'section', 'span', 'ul',
 ]);
 
-// Splits C++ into its code, with comments gone and strings blanked, and its string literals: where they are, and whether
-// hot reload can replace them. Two sources with the same code differ only in comments, spaces and literals.
+// Only a call to Quoll's function: not `other.text("x")`, `other::text("x")` or the declaration `std::string text("x")`.
+function callsQuoll(before) {
+  if (/(\.|->)\s*$/.test(before)) {
+    return false;
+  }
+
+  const qualifier = /([A-Za-z_][A-Za-z_0-9]*)\s*::\s*$/.exec(before);
+
+  if (qualifier) {
+    return qualifier[1] === 'ui';
+  }
+
+  const word = /([A-Za-z_][A-Za-z_0-9]*)\s+$/.exec(before);
+
+  return !word || ['return', 'co_return', 'co_yield', 'co_await', 'case', 'else'].includes(word[1]);
+}
+
+// Spaces do not matter, as moving code around compiles to the same program. The end of a directive's line does.
+function withoutSpaces(code) {
+  return code
+    .split('\n')
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter((line) => line !== '')
+    .map((line) => (line.startsWith('#') ? `\n${line}\n` : line))
+    .join(' ');
+}
+
+// What a literal holds, or null for what JSON does not read the way C++ does, which then takes a rebuild.
+function decoded(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+// Splits C++ into its code, with comments gone and strings blanked, its raw strings, and its string literals: where they
+// are, and whether hot reload can replace them. Two sources with the same code and raw strings differ only in comments,
+// spaces and literals.
 export function scan(source) {
   let code = '';
+  const raws = [];
   const literals = [];
   let line = 1;
   let lineStart = 0;
@@ -88,9 +126,9 @@ export function scan(source) {
       const closing = `)${source.slice(index + 2, open)}"`;
       const found = source.indexOf(closing, open);
       const end = found < 0 ? source.length : found + closing.length;
-      const text = source.slice(index, end);
 
-      code += text;
+      raws.push(source.slice(index, end));
+      code += 'R""';
 
       for (let at = index; at < end; ++at) {
         if (source[at] === '\n') {
@@ -110,12 +148,14 @@ export function scan(source) {
       const call = /([A-Za-z_][A-Za-z_0-9]*)\s*\(\s*$/.exec(code);
       const after = /^\s*([),])/.exec(source.slice(end + 1));
       const name = call?.[1];
+      const isCall = call !== null && callsQuoll(code.slice(0, call.index));
 
       literals.push({
         raw: source.slice(index, end + 1),
         line,
-        column: index - lineStart + 1,
-        replaceable: replaceable.has(name) && after?.[1] === ')' && !code.endsWith('include '),
+        // In bytes, as the compiler counts: an accent earlier on the line counts for two.
+        column: Buffer.byteLength(source.slice(lineStart, index)) + 1,
+        replaceable: isCall && replaceable.has(name) && after?.[1] === ')' && !code.endsWith('include '),
       });
       code += '""';
       index = end + 1;
@@ -140,13 +180,19 @@ export function scan(source) {
     }
   }
 
-  // Spaces do not matter either: moving code around or adding a comment compiles to the same program.
-  return { code: code.replace(/\s+/g, ' ').trim(), literals };
+  return { code: withoutSpaces(code), raws, literals };
 }
 
-// What differs between what was compiled and the source now: literals to replace, or null when it takes a rebuild.
-export function literalChanges(compiled, current) {
-  if (compiled.code !== current.code || compiled.literals.length !== current.literals.length) {
+// What to send for the source now, given what was compiled and what the page was already sent: literals to replace, or
+// null when it takes a rebuild.
+export function literalChanges(compiled, current, sent = new Map()) {
+  if (
+    !compiled ||
+    !current ||
+    compiled.code !== current.code ||
+    compiled.raws.join('\0') !== current.raws.join('\0') ||
+    compiled.literals.length !== current.literals.length
+  ) {
     return null;
   }
 
@@ -155,13 +201,22 @@ export function literalChanges(compiled, current) {
   for (const [index, literal] of compiled.literals.entries()) {
     const now = current.literals[index];
 
-    if (literal.raw !== now.raw) {
-      if (!literal.replaceable || !now.replaceable) {
+    if (literal.raw !== now.raw && (!literal.replaceable || !now.replaceable)) {
+      return null;
+    }
+
+    // Where it was compiled: other literals changing on that line do not move it, for the program. Against what the page
+    // shows, so that going back to the compiled text is sent too.
+    const place = `${literal.line}:${literal.column}`;
+
+    if ((sent.get(place)?.raw ?? literal.raw) !== now.raw) {
+      const value = decoded(now.raw);
+
+      if (value === null) {
         return null;
       }
 
-      // Where it was compiled: other literals changing on that line do not move it, for the program.
-      changes.push({ line: literal.line, column: literal.column, value: JSON.parse(now.raw) });
+      changes.push({ line: literal.line, column: literal.column, raw: now.raw, value });
     }
   }
 
@@ -191,15 +246,19 @@ export function firstError(output) {
 
 export function quoll({ target, sources, buildDir = 'build' }) {
   const base = process.cwd();
+  const configured = new Set();
   let config;
 
   const build = async (dir, options) => {
-    if (!existsSync(join(dir, 'CMakeCache.txt'))) {
-      const configured = await run('emcmake', ['cmake', '-S', root, '-B', dir, '-DQUOLL_BUILD_TESTS=OFF', ...options], base);
+    // Once per start: a directory left by a failed configuration, or configured with other options, gets it right.
+    if (!configured.has(dir)) {
+      const result = await run('emcmake', ['cmake', '-S', root, '-B', dir, '-DQUOLL_BUILD_TESTS=OFF', ...options], base);
 
-      if (configured.code !== 0) {
-        return configured;
+      if (result.code !== 0) {
+        return result;
       }
+
+      configured.add(dir);
     }
 
     return run('cmake', ['--build', dir, '--target', target], base);
@@ -219,24 +278,38 @@ export function quoll({ target, sources, buildDir = 'build' }) {
       const dir = resolve(base, buildDir);
       const watched = sources.map((source) => resolve(base, source));
       const compiled = new Map();
+      // What each file's page was sent since it was compiled, by place: a page reloading is sent it again.
+      const sent = new Map();
+      let failed = false;
 
-      const remember = () => {
-        for (const file of watched) {
-          compiled.set(file, scan(readFileSync(file, 'utf8')));
+      // A file gone for a moment, during a save or a change of branch, takes a rebuild, which says what is wrong.
+      const read = (file) => {
+        try {
+          return scan(readFileSync(file, 'utf8'));
+        } catch {
+          return null;
         }
       };
 
       const rebuild = async () => {
         const started = Date.now();
+        // Before the build: a save during it then differs from this, and is not taken for what was compiled.
+        const sources = watched.map((file) => [file, read(file)]);
         const built = await build(dir, ['-DCMAKE_BUILD_TYPE=Debug', '-DQUOLL_UI_HOT=ON']);
 
-        if (built.code !== 0) {
+        failed = built.code !== 0;
+
+        if (failed) {
           server.config.logger.error(built.output);
           server.ws.send({ type: 'error', err: { message: firstError(built.output), stack: '' } });
           return false;
         }
 
-        remember();
+        for (const [file, source] of sources) {
+          compiled.set(file, source);
+          sent.set(file, new Map());
+        }
+
         server.config.logger.info(`quoll: built in ${Date.now() - started} ms`);
         return true;
       };
@@ -289,10 +362,12 @@ export function quoll({ target, sources, buildDir = 'build' }) {
           return;
         }
 
-        const changes = building ? null : literalChanges(compiled.get(file), scan(readFileSync(file, 'utf8')));
+        // After a failed build, whatever the source says now: the overlay goes when the page reloads.
+        const changes = building || failed ? null : literalChanges(compiled.get(file), read(file), sent.get(file));
 
         if (changes) {
           for (const change of changes) {
+            sent.get(file).set(`${change.line}:${change.column}`, change);
             server.ws.send({ type: 'custom', event: 'quoll:literal', data: { file, ...change } });
           }
 
@@ -300,6 +375,15 @@ export function quoll({ target, sources, buildDir = 'build' }) {
         }
 
         await rebuildAndReload();
+      });
+
+      // A program starting again holds what was compiled, not what its page was sent.
+      server.ws.on('quoll:ready', (_, client) => {
+        for (const [file, changes] of sent) {
+          for (const change of changes.values()) {
+            client.send('quoll:literal', { file, ...change });
+          }
+        }
       });
 
       if (!(await rebuild())) {

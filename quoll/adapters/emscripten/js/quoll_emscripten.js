@@ -195,6 +195,9 @@ addToLibrary({
         _free(valuePointer);
       });
     };
+
+    // A page reloading asks again for what it was sent, now that the program can take it.
+    globalThis.quollHotReady?.();
   },
 
   // Timers started and not settled yet, by id: the setTimeout handle and how to settle.

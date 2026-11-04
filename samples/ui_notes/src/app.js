@@ -44,6 +44,7 @@ program.src = '/quoll_ui_notes.js';
 document.body.append(program);
 
 if (import.meta.hot) {
+  globalThis.quollHotReady = () => import.meta.hot.send('quoll:ready');
   import.meta.hot.on('quoll:literal', ({ file, line, column, value }) => {
     globalThis.quollHotReplace?.(file, line, column, value);
   });
