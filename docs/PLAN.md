@@ -22,7 +22,7 @@ before much is built on it. Points marked "To settle" and the [open questions](#
 decide. Steps marked *(maintainer merges)* are big architecture changes. Figures given as "today" were measured when this
 roadmap was written.
 
-**Current step: 0.**
+**Current step: 1.** Step 0 only waits for the maintainer.
 
 ### Done
 
@@ -53,7 +53,8 @@ First, as all later code is then written for it. Decided on 2026-11-04, for appl
   types stay in headers.
 - In order: the rules and `quoll::ui`, starting from the `app_core` / `renderer_ref` split on the branch `ui-ipp`; then
   `http`; then `server` and `client`; then the adapters, hiding asio and OpenSSL from application headers if that holds.
-- The global state of hot reload (`hot()`) moves to a source file, which settles the review point left open on #39.
+- `quoll::ui`: the app, the diff and hot reload's global state are compiled once, which settles the review point left open
+  on #39. What builds elements stays in headers: it returns decorators, or changes with `QUOLL_UI_HOT`.
 
 *Done when:* application code is unchanged (a `main.cpp` and headers), and each pull request gives before and after
 figures for a full build, a page rebuild (about 1 s today) and the size of the WASM (51 KB gzipped today).

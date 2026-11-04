@@ -39,199 +39,28 @@
 
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/node_id.hpp>
-#include <quoll/ui/renderer.hpp>
+#include <quoll/ui/renderer_ref.hpp>
 
-#include <algorithm>
-#include <cassert>
-#include <cstddef>
-#include <limits>
-#include <optional>
-#include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace quoll::ui::detail {
 
 // Turns what is shown into what should be, with few operations, and gives each new element its node.
-template <Renderer R>
 class reconciler {
 public:
-  reconciler(R &renderer, node_id &last_id) noexcept : renderer_(&renderer), last_id_(&last_id) {}
+  reconciler(renderer_ref renderer, node_id &last_id) noexcept : renderer_(renderer), last_id_(&last_id) {}
 
   // Keeps the nodes of the children that have the same key (their position, without one) and the same tag.
-  void children(node_id parent, std::vector<element> &before, std::vector<element> &after) {
-    auto const by_key = index_by_key(before);
-    std::vector<std::optional<std::size_t>> kept(after.size());
-    std::vector<bool> reused(before.size(), false);
-
-    for (std::size_t index = 0; index < after.size(); ++index) {
-      auto const found = by_key.find(key_of(after[index], index));
-
-      if (found != by_key.end() && same_node(before[found->second], after[index])) {
-        kept[index] = found->second;
-        reused[found->second] = true;
-      }
-    }
-
-    for (std::size_t index = 0; index < before.size(); ++index) {
-      if (!reused[index]) {
-        remove(before[index]);
-      }
-    }
-
-    // From the end: each child goes before the next one, which is already in place. A kept child stays where it is if
-    // it was already before all those that stayed.
-    auto next = no_node;
-    auto limit = std::numeric_limits<std::size_t>::max();
-
-    for (auto index = after.size(); index-- > 0;) {
-      auto &child = after[index];
-
-      if (kept[index]) {
-        patch(before[*kept[index]], child);
-
-        if (*kept[index] < limit) {
-          limit = *kept[index];
-        } else {
-          renderer_->insert(parent, child.id, next);
-        }
-      } else {
-        create(child);
-        renderer_->insert(parent, child.id, next);
-      }
-
-      next = child.id;
-    }
-  }
+  void children(node_id parent, std::vector<element> &before, std::vector<element> &after);
 
 private:
-  [[nodiscard]] static std::string key_of(element const &value, std::size_t position) {
-    // A key from the application is text: it does not start with this character.
-    return value.key.empty() ? std::string(1, '\0') + std::to_string(position) : value.key;
-  }
+  void create(element &value);
+  void patch(element &before, element &after);
+  void patch_attributes(element const &before, element const &after);
+  void patch_events(element const &before, element const &after);
+  void remove(element const &value);
 
-  [[nodiscard]] static std::unordered_map<std::string, std::size_t> index_by_key(std::vector<element> const &values) {
-    std::unordered_map<std::string, std::size_t> by_key;
-
-    for (std::size_t index = 0; index < values.size(); ++index) {
-      [[maybe_unused]] auto const inserted = by_key.emplace(key_of(values[index], index), index).second;
-
-      assert(inserted && "quoll::ui: two siblings have the same key");
-    }
-
-    return by_key;
-  }
-
-  [[nodiscard]] static bool same_node(element const &before, element const &after) noexcept {
-    return before.type == after.type && before.tag == after.tag;
-  }
-
-  void create(element &value) {
-    value.id = ++*last_id_;
-
-    if (value.type == element::kind::text) {
-      renderer_->create_text(value.id, value.content);
-      return;
-    }
-
-    renderer_->create_element(value.id, value.tag);
-
-    if (!value.classes.empty()) {
-      renderer_->set_class(value.id, value.classes);
-    }
-
-    for (auto const &[name, content] : value.attributes) {
-      renderer_->set_attribute(value.id, name, content);
-    }
-
-    if (value.value) {
-      renderer_->set_value(value.id, *value.value);
-    }
-
-    for (auto const &binding : value.events) {
-      if (first_of_its_name(value.events, binding)) {
-        renderer_->listen(value.id, binding.name);
-      }
-    }
-
-    for (auto &child : value.children) {
-      create(child);
-      renderer_->insert(value.id, child.id, no_node);
-    }
-  }
-
-  void patch(element &before, element &after) {
-    after.id = before.id;
-
-    if (after.type == element::kind::text) {
-      if (before.content != after.content) {
-        renderer_->set_text(after.id, after.content);
-      }
-
-      return;
-    }
-
-    if (before.classes != after.classes) {
-      renderer_->set_class(after.id, after.classes);
-    }
-
-    patch_attributes(before, after);
-
-    // An input no longer bound holds nothing rather than what it was last given.
-    if (before.value != after.value) {
-      renderer_->set_value(after.id, after.value.value_or(std::string{}));
-    }
-
-    patch_events(before, after);
-    children(after.id, before.children, after.children);
-  }
-
-  void patch_attributes(element const &before, element const &after) {
-    for (auto const &[name, content] : before.attributes) {
-      if (!after.attributes.contains(name)) {
-        renderer_->remove_attribute(after.id, name);
-      }
-    }
-
-    for (auto const &[name, content] : after.attributes) {
-      auto const previous = before.attributes.find(name);
-
-      if (previous == before.attributes.end() || previous->second != content) {
-        renderer_->set_attribute(after.id, name, content);
-      }
-    }
-  }
-
-  // An element may run several functions on one event: a renderer listens to it once, or each would run several times.
-  [[nodiscard]] static bool first_of_its_name(std::vector<event_binding> const &events, event_binding const &binding) {
-    return &*std::ranges::find(events, binding.name, &event_binding::name) == &binding;
-  }
-
-  void patch_events(element const &before, element const &after) {
-    for (auto const &binding : before.events) {
-      if (first_of_its_name(before.events, binding) &&
-          !std::ranges::contains(after.events, binding.name, &event_binding::name)) {
-        renderer_->unlisten(after.id, binding.name);
-      }
-    }
-
-    for (auto const &binding : after.events) {
-      if (first_of_its_name(after.events, binding) &&
-          !std::ranges::contains(before.events, binding.name, &event_binding::name)) {
-        renderer_->listen(after.id, binding.name);
-      }
-    }
-  }
-
-  void remove(element const &value) {
-    for (auto const &child : value.children) {
-      remove(child);
-    }
-
-    renderer_->remove(value.id);
-  }
-
-  R *renderer_;
+  renderer_ref renderer_;
   node_id *last_id_;
 };
 

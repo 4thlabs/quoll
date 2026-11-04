@@ -10,5 +10,5 @@ add_executable(quoll_ui_notes main.cpp)
 target_link_libraries(quoll_ui_notes PRIVATE quoll_ui_notes_client quoll::emscripten quoll::ui)
 target_link_options(quoll_ui_notes PRIVATE -sALLOW_MEMORY_GROWTH)
 
-# Quoll, precompiled, as parsing it takes most of the rest: it stays header-only, and this is the build's own business.
+# Quoll, precompiled, as parsing it takes most of the rest: it stays a header, and this is the build's own business.
 target_precompile_headers(quoll_ui_notes PRIVATE <quoll/emscripten/mount.hpp> <quoll/ui.hpp> <string> <vector>)

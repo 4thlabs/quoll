@@ -24,16 +24,16 @@ if(NOT TARGET quoll_warnings)
 endif()
 
 #
-# Declare a header-only module from its CMakeLists.txt (quoll/<module>/, or quoll/adapters/<module>/ for an adapter):
+# Declare a module from its CMakeLists.txt (quoll/<module>/, or quoll/adapters/<module>/ for an adapter):
 #
-#   quoll_declare_module(NAME <module> [DEPS <targets>...])
+#   quoll_declare_module(NAME <module> [SOURCES <files>...] [DEPS <targets>...])
 #
-# Creates the INTERFACE target quoll_<module> with alias quoll::<module>, publishing every header under the include/
-# directory next to that CMakeLists.txt. With QUOLL_BUILD_TESTS and QUOLL_HEADER_CHECKS, each header is also compiled
+# Creates the target quoll_<module> with alias quoll::<module>, a static library or, without SOURCES, an INTERFACE one,
+# publishing every header under the include/ directory next to that CMakeLists.txt. With QUOLL_BUILD_TESTS and QUOLL_HEADER_CHECKS, each header is also compiled
 # alone in its own translation unit, which enforces the self-contained header rule.
 #
 function(quoll_declare_module)
-  cmake_parse_arguments(PARSE_ARGV 0 QUOLL_MODULE "" "NAME" "DEPS")
+  cmake_parse_arguments(PARSE_ARGV 0 QUOLL_MODULE "" "NAME" "SOURCES;DEPS")
 
   if(NOT QUOLL_MODULE_NAME)
     message(FATAL_ERROR "quoll_declare_module: NAME is required")
@@ -44,13 +44,33 @@ function(quoll_declare_module)
 
   file(GLOB_RECURSE headers CONFIGURE_DEPENDS "${include_dir}/*.hpp")
 
-  add_library(${target} INTERFACE)
+  # With sources, a library compiled once. Without, nothing but headers, which is all a module of templates is.
+  if(QUOLL_MODULE_SOURCES)
+    set(scope PUBLIC)
+    add_library(${target} STATIC ${QUOLL_MODULE_SOURCES})
+    # An application may link it into a shared library.
+    set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    # A throw crosses this library and the program: both need the same exception model.
+    if(EMSCRIPTEN)
+      target_compile_options(${target} PUBLIC -fwasm-exceptions)
+      target_link_options(${target} PUBLIC -fwasm-exceptions)
+    endif()
+
+    if(PROJECT_IS_TOP_LEVEL)
+      target_link_libraries(${target} PRIVATE $<BUILD_INTERFACE:quoll_warnings>)
+    endif()
+  else()
+    set(scope INTERFACE)
+    add_library(${target} INTERFACE)
+  endif()
+
   add_library(quoll::${QUOLL_MODULE_NAME} ALIAS ${target})
   set_target_properties(${target} PROPERTIES EXPORT_NAME ${QUOLL_MODULE_NAME})
 
-  target_sources(${target} INTERFACE FILE_SET HEADERS BASE_DIRS "${include_dir}" FILES ${headers})
-  target_compile_features(${target} INTERFACE cxx_std_23)
-  target_link_libraries(${target} INTERFACE ${QUOLL_MODULE_DEPS})
+  target_sources(${target} ${scope} FILE_SET HEADERS BASE_DIRS "${include_dir}" FILES ${headers})
+  target_compile_features(${target} ${scope} cxx_std_23)
+  target_link_libraries(${target} ${scope} ${QUOLL_MODULE_DEPS})
 
   set_property(GLOBAL APPEND PROPERTY QUOLL_MODULES ${QUOLL_MODULE_NAME})
 
@@ -209,7 +229,6 @@ function(quoll_install)
   write_basic_package_version_file(
     "${PROJECT_BINARY_DIR}/quoll-config-version.cmake"
     COMPATIBILITY SameMinorVersion
-    ARCH_INDEPENDENT
   )
 
   install(
