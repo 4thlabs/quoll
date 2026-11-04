@@ -17,9 +17,13 @@ if(NOT TARGET quoll_warnings)
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>
     $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive->
   )
-  # libstdc++ checks what it can at run time, such as an index out of bounds or an empty optional read: the test stops
-  # rather than reading what it should not. It changes no ABI, so that what is built without it still links.
-  target_compile_definitions(quoll_warnings INTERFACE _GLIBCXX_ASSERTIONS)
+  # The standard library checks what it can at run time, such as an index out of bounds or an empty optional read: the
+  # test run stops rather than reading what it should not. Each library has its own switch, and neither changes the ABI,
+  # so that what is built without them still links.
+  target_compile_definitions(quoll_warnings INTERFACE
+    _GLIBCXX_ASSERTIONS
+    _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST
+  )
 endif()
 
 #
