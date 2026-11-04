@@ -631,10 +631,6 @@ Every point the plan leaves open, gathered here; the linked sections give the co
 - C++ → JSON Schema mapping details, 64-bit integers in particular ([TypeScript client](#typescript-client-openapi)).
 - `scope<Api>(prefix arguments...)` on the client, and interceptors around `send`
   ([REST DSL](#rest-dsl-contract-server-client)).
-- Server robustness (see [Usable server and client](#usable-server-and-client-current-step)): a connection limit; a
-  lingering close after an error response (so that the client
-  reads it rather than a reset) needs a half-close in `ByteStream`; `Expect: 100-continue` needs the parser to stop after
-  the header; a graceful shutdown lets in-flight requests finish, where a stop request now cancels them.
 - The runtime in a browser, where the event loop already runs: no `run()` there; tasks start with `co_spawn` on the
   event loop, and the Worker is driven by the bridge. The default `rest::client` transport there would be `fetch`.
 - A default `main()` provided by Quoll, creating the runtime and running an application coroutine, once the shape of
@@ -663,24 +659,26 @@ per topic, in this order:
 1. Timer and timeouts (done): `async::sleep_for` and `async::with_timeout`; idle, read and write timeouts on the server,
    connect and response timeouts on the client, set by default.
 2. TLS and `https` (done): through `asio::ssl` and OpenSSL.
-3. Server robustness: graceful shutdown, connection limit, `Expect: 100-continue`, lingering close after an error.
+3. Server robustness: graceful shutdown (requests under way finish, within a time limit), a connection limit, and the
+   timer of the connections on a thread pool, which `serve` can hand them from its own loop. A reverse proxy is assumed
+   in front (decided 2026-11-04), which takes care of the rest; see below for going without one.
 4. Missing features: server middlewares and static files; client redirects, connection limit, path prefix in the base
    URL. Streaming large bodies stays out unless asked.
 
 Left over from the first topic, to settle along the way:
 
-- With the server robustness (topic 3): a TLS connection closes without TLS's closing message, which needs the same
-  half-close in `ByteStream` as a lingering close.
 - If a benchmark shows it matters: a TLS client builds its context per connection, and resumes no session.
 - With the static files (topic 4): the server's read and write timeouts cover a message as a whole, which is strong
   against slow peers but also ends a legitimate transfer on a slow link (8 MiB in 30 s is about 2.2 Mbit/s). Static
   files and streamed bodies will need a limit on progress instead, or a minimum rate.
-- With the server robustness (topic 3): connections running on an executor without a timer (`serve` on a thread pool)
-  have no timeouts. `serve` could hand them the timer of its own loop.
 - If a benchmark shows it matters: each bounded phase allocates coroutine frames and an asio timer, about three times per
   request on the server. A timer per connection avoids it.
 - If it proves confusing: a client's `response_timeout` applies per attempt, so a connect and two attempts can add up to
   more than one setting suggests. A deadline over the whole `send` would bound them together.
+- If Quoll is ever exposed without a reverse proxy: `Expect: 100-continue`, which needs the parser to stop after the
+  header (a client now sends its body after its own delay); a lingering close after an error response, so that the client
+  reads it rather than a reset; TLS's closing message when a connection ends. The last two need a half-close in
+  `ByteStream`.
 - Housekeeping: ccache for the Emscripten job, now the slowest once the cache is warm (it wraps its compiler); the
   leftover MSVC branch of `quoll_warnings`, as only GCC and Clang are supported.
 
