@@ -25,8 +25,8 @@ endif()
 #   quoll_declare_module(NAME <module> [DEPS <targets>...])
 #
 # Creates the INTERFACE target quoll_<module> with alias quoll::<module>, publishing every header under the include/
-# directory next to that CMakeLists.txt. With QUOLL_BUILD_TESTS, each header is also compiled alone in its own
-# translation unit, which enforces the self-contained header rule.
+# directory next to that CMakeLists.txt. With QUOLL_BUILD_TESTS and QUOLL_HEADER_CHECKS, each header is also compiled
+# alone in its own translation unit, which enforces the self-contained header rule.
 #
 function(quoll_declare_module)
   cmake_parse_arguments(PARSE_ARGV 0 QUOLL_MODULE "" "NAME" "DEPS")
@@ -54,7 +54,7 @@ function(quoll_declare_module)
     install(TARGETS ${target} EXPORT quoll-targets FILE_SET HEADERS)
   endif()
 
-  if(QUOLL_BUILD_TESTS AND headers)
+  if(QUOLL_BUILD_TESTS AND QUOLL_HEADER_CHECKS AND headers)
     quoll_detail_add_header_check(${target} "${include_dir}" ${headers})
   endif()
 endfunction()
@@ -105,12 +105,14 @@ function(quoll_declare_compile_fail_tests)
 endfunction()
 
 #
-# Create the targets and the ctests of the sources declared with quoll_declare_compile_fail_tests. Called once from
-# tests/CMakeLists.txt, after enable_testing(). Each source is an object library left out of the default build; its
-# ctest builds it.
+# Create the ctests of the sources declared with quoll_declare_compile_fail_tests. Called once from
+# tests/CMakeLists.txt, after enable_testing(). Each ctest runs the compiler itself: nothing is added to the build, and
+# they run side by side, where concurrent builds of one tree would contend for its lock.
 #
 function(quoll_compile_fail_tests)
   get_property(sources GLOBAL PROPERTY QUOLL_COMPILE_FAIL_SOURCES)
+  separate_arguments(flags NATIVE_COMMAND "${CMAKE_CXX_FLAGS}")
+  list(APPEND flags ${CMAKE_CXX23_STANDARD_COMPILE_OPTION})
 
   foreach(path IN LISTS sources)
     get_property(deps GLOBAL PROPERTY "QUOLL_COMPILE_FAIL_DEPS:${path}")
@@ -123,18 +125,17 @@ function(quoll_compile_fail_tests)
 
     get_filename_component(name "${path}" NAME_WE)
 
-    set(target "quoll_compile_fail_${name}")
+    set(includes "")
 
-    add_library(${target} OBJECT EXCLUDE_FROM_ALL "${path}")
-    target_link_libraries(${target} PRIVATE ${deps})
+    foreach(dep IN LISTS deps)
+      list(APPEND includes "$<TARGET_PROPERTY:${dep},INTERFACE_INCLUDE_DIRECTORIES>")
+    endforeach()
 
     add_test(
       NAME compile_fail.${name}
-      COMMAND ${CMAKE_COMMAND} -DQUOLL_BUILD_DIR=${PROJECT_BINARY_DIR} -DQUOLL_TARGET=${target} -DQUOLL_CONFIG=$<CONFIG>
-              -DQUOLL_SOURCE=${path} -P ${QUOLL_CMAKE_DIR}/QuollCompileFail.cmake
+      COMMAND ${CMAKE_COMMAND} "-DQUOLL_COMPILER=${CMAKE_CXX_COMPILER}" "-DQUOLL_FLAGS=${flags}"
+              "-DQUOLL_INCLUDES=${includes}" "-DQUOLL_SOURCE=${path}" -P ${QUOLL_CMAKE_DIR}/QuollCompileFail.cmake
     )
-    # Serial: concurrent builds of the same tree would contend for its lock.
-    set_tests_properties(compile_fail.${name} PROPERTIES RUN_SERIAL TRUE)
   endforeach()
 endfunction()
 

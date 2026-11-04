@@ -39,12 +39,13 @@ validates them.
 ## Build & test
 
 Requires CMake ≥ 3.23. Tests and install rules are ON by default when Quoll is the top-level project
-(`QUOLL_BUILD_TESTS`, `QUOLL_INSTALL`).
+(`QUOLL_BUILD_TESTS`, `QUOLL_INSTALL`). The tests run in a second, the time goes to compiling: filter them while working,
+and leave the header checks to CI with `-DQUOLL_HEADER_CHECKS=OFF`.
 
 ```bash
 cmake -B build
 cmake --build build -j
-ctest --test-dir build                # "quoll" (every test case), compile_fail.<case>, and the samples' tests
+ctest --test-dir build -j8            # "quoll" (every test case), compile_fail.<case>, and the samples' tests
 ./build/tests/quoll_tests "[tag]"     # Catch2 filters
 emcmake cmake -B build-wasm && cmake --build build-wasm -j && ctest --test-dir build-wasm   # runs under node
 ```
@@ -76,13 +77,13 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   test file.
 - What must not compile (the compile-time checks of an API, `static_assert` messages included) is tested too: one source
   per case under `tests/compile_fail/`, starting with `// expect: <message>`, declared with
-  `quoll_declare_compile_fail_tests(SOURCES ... DEPS ...)`. Each becomes a ctest `compile_fail.<case>` that builds it
-  and passes only when the build fails with that message, taken literally (native builds only).
+  `quoll_declare_compile_fail_tests(SOURCES ... DEPS ...)`. Each becomes a ctest `compile_fail.<case>` that compiles it
+  and passes only when the compilation fails with that message, taken literally (native builds only).
 - `samples/<sample>/`: small programs using Quoll, built when `QUOLL_BUILD_SAMPLES` is ON (default when top-level;
   native only). `samples/notes`: a REST contract, its server and its client over TCP; with tests ON, the ctest
   `notes_round_trip` runs them against each other.
 - With tests ON, every header is also compiled alone in its own translation unit (`quoll_<module>_header_check`),
-  so a header that is not self-contained breaks the build.
+  so a header that is not self-contained breaks the build (`QUOLL_HEADER_CHECKS`, ON by default).
 - Dependencies come from CPM (`cmake/CPM.cmake`, always included: modules need it, not only tests). Under
   Emscripten the root sets `-fwasm-exceptions` before any dependency is added.
 - Under Emscripten the test executable is linked with JSPI and run by `node --experimental-wasm-jspi`: a test waits
@@ -106,5 +107,6 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). CI (`.github/workflows/ci.yml`): GCC 13, Clang 19
 and Emscripten build + tests, GCC 13 with TSan and with ASan / UBSan, and a clang-format check, on every PR and push to
-`main`. Claude reviews every PR (`claude-review.yml`, rules from this file and `docs/`). Formatting: `clang-format -i
+`main`; the header checks run on GCC 13 and Emscripten, the `compile_fail` ctests on GCC 13 and Clang 19, and the native
+jobs keep their compilations in ccache. Claude reviews every PR (`claude-review.yml`, rules from this file and `docs/`). Formatting: `clang-format -i
 <file>` with the repo `.clang-format`; format only the files you touch.
