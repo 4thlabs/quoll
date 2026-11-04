@@ -316,8 +316,9 @@ TEST_CASE("any_stream: a small stream is held in place, a big one on the heap", 
   REQUIRE(moved_small.target<small_stream>() != nullptr);
   REQUIRE(moved_small.target<small_stream>() != small_address);
   REQUIRE(moved_big.target<big_stream>() == big_address);
-  REQUIRE(small.target<small_stream>() == nullptr);
-  REQUIRE(big.target<big_stream>() == nullptr);
+  // What a moved-from stream holds is the point here.
+  REQUIRE(small.target<small_stream>() == nullptr); // NOLINT(bugprone-use-after-move)
+  REQUIRE(big.target<big_stream>() == nullptr);     // NOLINT(bugprone-use-after-move)
   REQUIRE(run(read_and_write(moved_small, 1)) == 0U);
   REQUIRE(run(read_and_write(moved_big, 1)) == 0U);
 }
