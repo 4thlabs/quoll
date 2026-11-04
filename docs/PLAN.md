@@ -42,7 +42,6 @@ Small, process only.
 - A `macos-latest` CI job (Apple Clang, libc++): nothing native has ever run on the maintainer's Mac. Not required until
   it passes, so that it blocks nobody meanwhile. What it finds says whether Apple Clang becomes a supported compiler, for
   the maintainer to settle.
-- Housekeeping: ccache for the Emscripten job, the leftover MSVC branch of `quoll_warnings`.
 - Maintainer: delete the secret `CLAUDE_CODE_OAUTH_TOKEN`, and decide on the `quoll-ui-demo` container. The branch `ui-ipp`
   stays, for step 1.
 
