@@ -111,7 +111,8 @@ endfunction()
 #
 function(quoll_compile_fail_tests)
   get_property(sources GLOBAL PROPERTY QUOLL_COMPILE_FAIL_SOURCES)
-  separate_arguments(flags NATIVE_COMMAND "${CMAKE_CXX_FLAGS}")
+  # A compiler given with arguments (CXX="clang++ --gcc-install-dir=...") leaves them in CMAKE_CXX_COMPILER_ARG1.
+  separate_arguments(flags NATIVE_COMMAND "${CMAKE_CXX_COMPILER_ARG1} ${CMAKE_CXX_FLAGS}")
   list(APPEND flags -std=c++23)
 
   foreach(path IN LISTS sources)
@@ -126,15 +127,18 @@ function(quoll_compile_fail_tests)
     get_filename_component(name "${path}" NAME_WE)
 
     set(includes "")
+    set(definitions "")
 
     foreach(dep IN LISTS deps)
       list(APPEND includes "$<TARGET_PROPERTY:${dep},INTERFACE_INCLUDE_DIRECTORIES>")
+      list(APPEND definitions "$<TARGET_PROPERTY:${dep},INTERFACE_COMPILE_DEFINITIONS>")
     endforeach()
 
     add_test(
       NAME compile_fail.${name}
       COMMAND ${CMAKE_COMMAND} "-DQUOLL_COMPILER=${CMAKE_CXX_COMPILER}" "-DQUOLL_FLAGS=${flags}"
-              "-DQUOLL_INCLUDES=${includes}" "-DQUOLL_SOURCE=${path}" -P ${QUOLL_CMAKE_DIR}/QuollCompileFail.cmake
+              "-DQUOLL_INCLUDES=${includes}" "-DQUOLL_DEFINITIONS=${definitions}" "-DQUOLL_SOURCE=${path}"
+              -P ${QUOLL_CMAKE_DIR}/QuollCompileFail.cmake
     )
   endforeach()
 endfunction()
@@ -170,6 +174,8 @@ function(quoll_main_tests)
   endif()
 
   add_test(NAME quoll COMMAND quoll_tests)
+  # Not next to the other tests using ports: one of them relies on a port just freed staying unused.
+  set_tests_properties(quoll PROPERTIES RESOURCE_LOCK quoll_ports)
 endfunction()
 
 #

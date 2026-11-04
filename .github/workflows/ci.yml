@@ -31,7 +31,7 @@ jobs:
           # The runner's default libstdc++ is GCC 14's: with Clang 19, its C++23 tuple-like comparisons break
           # Catch2's expression decomposition (REQUIRE on a tuple or an optional of one). Clang uses GCC 13's
           # libstdc++, as the dev container does: the header checks, which depend on what a library's headers include,
-          # would only repeat GCC's. Emscripten runs them on its libc++.
+          # would mostly repeat GCC's. Emscripten runs them on its libc++, for the modules it builds.
           - name: clang-19
             cxx: clang++-19
             cxxflags: --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/13
@@ -47,18 +47,15 @@ jobs:
           path: .cpm-cache
           key: cpm-${{ hashFiles('**/CMakeLists.txt', 'cmake/**') }}
 
-      - name: Update the package lists
-        run: sudo apt-get update
+      - name: Set up ccache
+        uses: ./.github/actions/ccache
+        with:
+          job: ${{ matrix.compiler.name }}
 
       # Clang 19, the oldest Clang Quoll supports, is not preinstalled on the runner.
       - name: Install Clang
         if: startsWith(matrix.compiler.name, 'clang')
         run: sudo apt-get install -y --no-install-recommends clang-19
-
-      - name: Set up ccache
-        uses: ./.github/actions/ccache
-        with:
-          job: ${{ matrix.compiler.name }}
 
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DQUOLL_HEADER_CHECKS=${{ matrix.compiler.header-checks }}
@@ -95,9 +92,6 @@ jobs:
       # The runner's address space randomization is too wide for the sanitizer runtimes of GCC 13.
       - name: Reduce address space randomization
         run: sudo sysctl vm.mmap_rnd_bits=28
-
-      - name: Update the package lists
-        run: sudo apt-get update
 
       - name: Set up ccache
         uses: ./.github/actions/ccache

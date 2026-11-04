@@ -1,5 +1,7 @@
 name: ccache
-description: Installs ccache and restores its cache, kept per job. Configure with the launcher variables to use it.
+description: >-
+  Updates the package lists, installs ccache and restores its cache, kept per job. CMake then finds it through the
+  launcher variables of the environment.
 
 inputs:
   job:
@@ -11,7 +13,7 @@ runs:
   steps:
     - name: Install ccache
       shell: bash
-      run: sudo apt-get install -y --no-install-recommends ccache
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ccache
 
     - name: Cache compilations
       uses: actions/cache@v4
@@ -24,7 +26,6 @@ runs:
       shell: bash
       run: |
         ccache --set-config=max_size=500M
-        ccache --zero-stats
         {
           echo "CMAKE_C_COMPILER_LAUNCHER=ccache"
           echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
