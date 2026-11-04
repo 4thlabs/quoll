@@ -44,6 +44,7 @@
 #include <quoll/ui/node_id.hpp>
 
 #include <optional>
+#include <stdexcept>
 #include <string_view>
 #include <utility>
 
@@ -57,9 +58,10 @@ namespace quoll::emscripten {
  * int main() { quoll::emscripten::mount<notes_page>("#app"); }
  * @endcode
  *
- * Returning from main() leaves the event loop running, and the app with it. One app per component type.
+ * Returning from main() leaves the event loop running, and the app with it.
  *
  * @throws std::invalid_argument when nothing matches `selector`.
+ * @throws std::logic_error when this component is already mounted: one app per component type.
  */
 template <ui::Component C>
 C &mount(std::string_view selector = "#app", ui::app_options options = {}) {
@@ -67,6 +69,10 @@ C &mount(std::string_view selector = "#app", ui::app_options options = {}) {
 
   // For as long as the page: a page has no end to wait for.
   static std::optional<app_type> instance;
+
+  if (instance) {
+    throw std::logic_error{"quoll::emscripten::mount: this component is already mounted"};
+  }
 
   instance.emplace(executor{}, dom_renderer{selector}, std::move(options));
 

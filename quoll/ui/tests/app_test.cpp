@@ -36,6 +36,7 @@
 
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/work_item.hpp>
 #include <quoll/test/memory_renderer.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
@@ -169,6 +170,22 @@ struct failing_handler {
              throw std::runtime_error{"boom"};
            });
   }
+};
+
+// An executor that can be made to fail.
+struct failing_executor {
+  virtual_time::executor inner;
+  bool *fail;
+
+  void post(quoll::async::work_item &item) const {
+    if (*fail) {
+      throw std::runtime_error{"no more"};
+    }
+
+    inner.post(item);
+  }
+
+  [[nodiscard]] bool operator==(failing_executor const &) const noexcept = default;
 };
 
 // Starts `the_app`, runs `act`, then stops it: all of it within one run of the clock.
@@ -473,4 +490,30 @@ TEST_CASE("ui::app: nothing runs after stop()", "[ui]") {
   };
 
   REQUIRE(quoll::test::run(time, stop_then_click()) == 0);
+}
+
+TEST_CASE("ui::app: a view that could not be scheduled is tried again at the next change", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  bool fail = false;
+  test_app<counter> instance{failing_executor{time.get_executor(), &fail}, shown};
+  bool thrown = false;
+
+  auto const act = [&]() -> task<> {
+    fail = true;
+
+    try {
+      instance.component().count = 1;
+    } catch (std::runtime_error const &) {
+      thrown = true;
+    }
+
+    fail = false;
+    instance.component().count = 2;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(thrown);
+  REQUIRE(shown.html() == R"(<div class="flex">count: 2<button>Add</button></div>)");
 }

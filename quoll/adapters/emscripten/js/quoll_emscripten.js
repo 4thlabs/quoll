@@ -139,9 +139,12 @@ addToLibrary({
         const namePointer = stringToNewUTF8(eventName);
         const valuePointer = stringToNewUTF8(String(event.target?.value ?? ''));
 
-        {{{ makeDynCall('vpipp', 'ui.dispatch') }}}(ui.owner, id, namePointer, valuePointer);
-        _free(namePointer);
-        _free(valuePointer);
+        try {
+          {{{ makeDynCall('vpipp', 'ui.dispatch') }}}(ui.owner, id, namePointer, valuePointer);
+        } finally {
+          _free(namePointer);
+          _free(valuePointer);
+        }
       });
     };
 
