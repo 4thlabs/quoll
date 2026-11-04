@@ -37,6 +37,7 @@
 #ifndef QUOLL_CLIENT_TRANSPORT_HPP
 #define QUOLL_CLIENT_TRANSPORT_HPP
 
+#include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/client/detail/connection_pool.hpp>
 #include <quoll/client/detail/exchange.hpp>
@@ -85,7 +86,8 @@ namespace quoll::client {
  * throws std::system_error from the task, with the stream's error (`std::errc::connection_reset`...), the parser's
  * (`http::error::partial_message`, `http::error::body_too_large`, `http::error::bad_message` past 8 interim
  * responses...) or `io::error::end_of_stream`. A stop request on the awaiter's context abandons the request, with
- * `std::errc::operation_canceled`, and closes its connection. There is no timeout yet.
+ * `std::errc::operation_canceled`, and closes its connection; a timeout does the same, with `std::errc::timed_out` (see
+ * transport_options).
  *
  * Copies share their connections. The task copies what it needs: the transport does not have to outlive it.
  *
@@ -94,6 +96,8 @@ namespace quoll::client {
 template <io::Connector Connector = io::network_connector>
 class transport {
 public:
+  using options_type = transport_options;
+
   /**
    * @brief A transport to `host` (a name, or an address; IPv6 without brackets) on `port`.
    *
@@ -161,8 +165,9 @@ private:
   static async::task<http::response> send_prepared(std::shared_ptr<state> shared, detail::prepared_request request) {
     if (detail::idempotent(request.method)) {
       if (auto idle = shared->pool.take()) {
-        auto response =
-            co_await detail::exchange(shared->pool, shared->options.limits, std::move(*idle), request, true);
+        auto response = co_await async::detail::with_optional_timeout(
+            shared->options.response_timeout,
+            detail::exchange(shared->pool, shared->options.limits, std::move(*idle), request, true));
 
         if (response) {
           co_return std::move(*response);
@@ -173,9 +178,11 @@ private:
       }
     }
 
-    auto connection = co_await shared->connector.connect(shared->host, shared->port);
-    auto response =
-        co_await detail::exchange(shared->pool, shared->options.limits, std::move(connection), request, false);
+    auto connection = co_await async::detail::with_optional_timeout(
+        shared->options.connect_timeout, shared->connector.connect(shared->host, shared->port));
+    auto response = co_await async::detail::with_optional_timeout(
+        shared->options.response_timeout,
+        detail::exchange(shared->pool, shared->options.limits, std::move(connection), request, false));
 
     // Without retry_if_closed, exchange() produces a response or throws.
     assert(response && "client::detail::exchange() without retry_if_closed produced no response");

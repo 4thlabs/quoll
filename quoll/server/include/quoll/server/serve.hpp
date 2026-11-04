@@ -74,9 +74,9 @@ struct serve_options {
 
   /**
    * @brief Decides what an accept failure does, other than `operation_canceled`: true accepts again, false rethrows
-   * the failure. A task, so that it may wait first (a back-off on `too_many_files_open`, with the application's
-   * timer). Empty: a failure of one connection only (`connection_aborted`, `connection_reset`) is skipped, any other
-   * is rethrown.
+   * the failure. A task, so that it may wait first (a back-off on `too_many_files_open`, with async::sleep_for).
+   * Empty: a failure of one connection only (`connection_aborted`, `connection_reset`) is skipped, any other is
+   * rethrown.
    */
   std::function<async::task<bool>(std::error_code)> on_accept_error;
 };

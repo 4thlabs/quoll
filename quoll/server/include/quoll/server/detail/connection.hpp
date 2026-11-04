@@ -37,9 +37,13 @@
 #ifndef QUOLL_SERVER_DETAIL_CONNECTION_HPP
 #define QUOLL_SERVER_DETAIL_CONNECTION_HPP
 
+#include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/detail/router_responses.hpp>
 #include <quoll/http/error.hpp>
+#include <quoll/http/parser.hpp>
+#include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/router.hpp>
@@ -48,8 +52,10 @@
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/server/connection_options.hpp>
 
+#include <array>
 #include <exception>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -76,7 +82,38 @@ namespace quoll::server::detail {
     return http::status::bad_request;
   }
 
+  if (error == std::errc::timed_out) {
+    return http::status::request_timeout;
+  }
+
   return std::nullopt;
+}
+
+// Waits for the first bytes of a request, in `buffer`. False when the connection ends instead, whatever the reason: it
+// was idle, so nothing is owed to the peer.
+template <io::ByteStream Stream>
+async::task<bool> wait_for_request(Stream &stream, std::string &buffer) {
+  std::array<char, 4096> chunk;
+  auto const received = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+  buffer.append(chunk.data(), received.transferred);
+  co_return !received.error;
+}
+
+// http::read() of a request, up to the timeout. It reports a stop as a value, which with_timeout() leaves alone: a
+// cancellation that the connection's own stop token did not ask for is the timeout's.
+template <io::ByteStream Stream>
+async::task<std::error_code> read_request(Stream &stream, std::string &buffer, http::request_parser &parser,
+                                          connection_options const &options) {
+  auto const stop_token = co_await async::current_stop_token();
+  auto const error =
+      co_await async::detail::with_optional_timeout(options.read_timeout, http::read(stream, buffer, parser));
+
+  if (error == std::errc::operation_canceled && !stop_token.stop_requested()) {
+    co_return std::make_error_code(std::errc::timed_out);
+  }
+
+  co_return error;
 }
 
 // The router's response, or 500 if its handler threw, reported to the application's callback if it gave one.
@@ -129,6 +166,14 @@ async::task<std::error_code> write_response(Stream &stream, http::response const
   }
 
   co_return co_await std::move(*sending);
+}
+
+// write_response(), up to the timeout: past it, the error is the stream's cancellation.
+template <io::ByteStream Stream>
+async::task<std::error_code> send_response(Stream &stream, http::response const &response, bool keep_alive,
+                                           connection_options const &options) {
+  co_return co_await async::detail::with_optional_timeout(options.write_timeout,
+                                                          write_response(stream, response, keep_alive));
 }
 
 } // namespace quoll::server::detail

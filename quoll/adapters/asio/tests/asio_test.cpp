@@ -42,6 +42,7 @@
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detached.hpp>
+#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
@@ -407,6 +408,56 @@ task<std::error_code> sleep_error(std::chrono::nanoseconds duration) {
   }
 
   co_return std::error_code{};
+}
+
+// A client of a REST server that accepts and never answers, whose timeout is the one given to its URL.
+task<std::error_code> call_silent_server(std::chrono::nanoseconds timeout) {
+  auto listener = co_await io::listen(0);
+  quoll::rest::client<asio_test::accounts::api> accounts{
+      "http://127.0.0.1:" + std::to_string(listener.local_port().value()), {.response_timeout = timeout}};
+
+  auto const call = [&]() -> task<std::error_code> {
+    try {
+      (void)co_await accounts.call<asio_test::accounts::get>(42);
+    } catch (std::system_error const &error) {
+      co_return error.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  auto [accepted, error] = co_await quoll::async::when_all(listener.accept(), call());
+
+  co_return error;
+}
+
+// A peer connected to a server whose connections are idle for `timeout` at most: the server's closing ends its read.
+task<std::error_code> idle_on_server(std::chrono::nanoseconds timeout) {
+  http::router const router;
+  auto listener = co_await io::listen(0);
+  auto const port = listener.local_port().value();
+  std::stop_source stop;
+  quoll::server::serve_options options;
+
+  options.connection.idle_timeout = timeout;
+
+  auto const peer = [&]() -> task<std::error_code> {
+    auto connection = co_await io::connect("127.0.0.1", port);
+    std::array<char, 16> received{};
+    auto const read = co_await connection.read_some(std::as_writable_bytes(std::span{received}));
+
+    stop.request_stop();
+    co_return read.error;
+  };
+
+  auto const serving = [&]() -> task<> {
+    co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router, std::move(options)),
+                                                    stop.get_token()};
+  };
+
+  auto [served, error] = co_await quoll::async::when_all(serving(), peer());
+
+  co_return error;
 }
 
 // REST calls with a client built from a URL, then Ctrl-C, which the runtime turns into a stop request.
@@ -875,6 +926,18 @@ TEST_CASE("asio: with_timeout stops a read from a silent peer", "[asio][runtime]
   using namespace std::chrono_literals;
 
   REQUIRE(run_task(read_from_silent_peer(20ms)) == std::errc::timed_out);
+}
+
+TEST_CASE("asio: a REST client from a URL with a response timeout stops waiting", "[asio][runtime][rest][timer]") {
+  using namespace std::chrono_literals;
+
+  REQUIRE(run_task(call_silent_server(20ms)) == std::errc::timed_out);
+}
+
+TEST_CASE("asio: a server closes a connection idle for too long", "[asio][runtime][server][timer]") {
+  using namespace std::chrono_literals;
+
+  REQUIRE(run_task(idle_on_server(20ms)) == io::error::end_of_stream);
 }
 
 TEST_CASE("asio: a stop request from another thread ends a sleep", "[asio][timer]") {

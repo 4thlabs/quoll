@@ -59,7 +59,9 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
   `steady_timer` natively and `setTimeout` in the browser. Applications call `async::sleep_for(duration)` and
   `async::with_timeout(duration, task)`. A timeout stops the task and awaits its end: nothing it refers to is left
   behind, so a task only ends early if it observes its stop token. Its `operation_canceled` then becomes `timed_out`; a
-  task that finishes anyway still gives its result.
+  task that finishes anyway still gives its result. The server and the client have timeouts by default (server: idle
+  60 s, read and write 30 s; client: connect 30 s, response 60 s), which zero disables. They do not apply on an executor
+  without a timer.
 
 ## Architecture
 
@@ -623,16 +625,16 @@ Every point the plan leaves open, gathered here; the linked sections give the co
 - C++ → JSON Schema mapping details, 64-bit integers in particular ([TypeScript client](#typescript-client-openapi)).
 - `scope<Api>(prefix arguments...)` on the client, and interceptors around `send`
   ([REST DSL](#rest-dsl-contract-server-client)).
-- Server robustness (see [Usable server and client](#usable-server-and-client-current-step)): read and idle timeouts
-  and a connection limit (against slow or idle peers); a lingering close after an error response (so that the client
+- Server robustness (see [Usable server and client](#usable-server-and-client-current-step)): a connection limit; a
+  lingering close after an error response (so that the client
   reads it rather than a reset) needs a half-close in `ByteStream`; `Expect: 100-continue` needs the parser to stop after
   the header; a graceful shutdown lets in-flight requests finish, where a stop request now cancels them.
 - The runtime in a browser, where the event loop already runs: no `run()` there; tasks start with `co_spawn` on the
   event loop, and the Worker is driven by the bridge. The default `rest::client` transport there would be `fetch`.
 - A default `main()` provided by Quoll, creating the runtime and running an application coroutine, once the shape of
   that coroutine (arguments, exit code) is settled.
-- `quoll::client` (see [Usable server and client](#usable-server-and-client-current-step)): connect and response
-  timeouts, a limit of connections per transport (requests now open a connection when none is idle), redirects, TLS
+- `quoll::client` (see [Usable server and client](#usable-server-and-client-current-step)): a limit of connections per
+  transport (requests now open a connection when none is idle), redirects, TLS
   through the connector. Idle connections are only found closed when a request uses them: closing them after an idle
   time needs the timer, and letting a POST
   reuse one needs a stream that tells a closed peer before writing (a read kept pending on idle connections). The
@@ -653,8 +655,8 @@ Every point the plan leaves open, gathered here; the linked sections give the co
 The prototype below is paused (2026-11-04) until `quoll::server` and `quoll::client` are fully usable. One pull request
 per topic, in this order:
 
-1. Timer and timeouts: `async::sleep_for` and `async::with_timeout` (done), then read and idle timeouts on the server,
-   connect and response timeouts on the client.
+1. Timer and timeouts (done): `async::sleep_for` and `async::with_timeout`; idle, read and write timeouts on the server,
+   connect and response timeouts on the client, set by default.
 2. TLS and `https`: connector and acceptor through `asio::ssl` (OpenSSL); the client refuses `https://` today.
 3. Server robustness: graceful shutdown, connection limit, `Expect: 100-continue`, lingering close after an error.
 4. Missing features: server middlewares and static files; client redirects, connection limit, path prefix in the base

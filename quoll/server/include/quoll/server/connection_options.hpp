@@ -39,15 +39,34 @@
 
 #include <quoll/http/parser.hpp>
 
+#include <chrono>
 #include <exception>
 #include <functional>
 
 namespace quoll::server {
 
-/** @brief How serve_connection() reads requests and reports what its handlers throw. */
+/**
+ * @brief How serve_connection() reads requests and reports what its handlers throw.
+ *
+ * The timeouts protect a server from peers that are slow or gone. Zero disables one. They need the timer of the
+ * connection's executor, as quoll::runtime provides it: on an executor without one (a thread pool), they do not apply.
+ * The time a handler takes is not limited: it is the application's to bound, with async::with_timeout.
+ */
 struct connection_options {
   /** @brief What a request may hold: beyond, it answers 431 (header) or 413 (body). */
   http::parse_limits limits;
+
+  /** @brief How long a connection waits for a request to start. Past it, the connection closes without a word. */
+  std::chrono::nanoseconds idle_timeout = std::chrono::seconds{60};
+
+  /**
+   * @brief How long a request may take to arrive once it has started, as a whole: a peer sending a byte now and then
+   * gets no more. Past it, it answers 408 and the connection closes.
+   */
+  std::chrono::nanoseconds read_timeout = std::chrono::seconds{30};
+
+  /** @brief How long a response may take to leave, as a whole. Past it, the connection closes. */
+  std::chrono::nanoseconds write_timeout = std::chrono::seconds{30};
 
   /**
    * @brief Called with what a handler threw, which the client receives as a 500; on the connection's executor, must

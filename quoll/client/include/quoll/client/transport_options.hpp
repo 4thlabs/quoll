@@ -39,11 +39,18 @@
 
 #include <quoll/http/parser.hpp>
 
+#include <chrono>
 #include <cstddef>
 
 namespace quoll::client {
 
-/** @brief Settings of a client::transport. */
+/**
+ * @brief Settings of a client::transport.
+ *
+ * The timeouts end the request with std::system_error (std::errc::timed_out). Zero disables one. They need the timer of
+ * the executor that sends, as quoll::runtime provides it: on an executor without one (a thread pool), they do not
+ * apply.
+ */
 struct transport_options {
   /** @brief Size limits of the responses, against servers sending unbounded ones. */
   http::parse_limits limits;
@@ -52,6 +59,14 @@ struct transport_options {
    * connection after its response.
    */
   std::size_t max_idle_connections = 8;
+  /** @brief How long opening a connection may take, name resolution included. */
+  std::chrono::nanoseconds connect_timeout = std::chrono::seconds{30};
+  /**
+   * @brief How long a request may take once on a connection, from sending it to reading the end of its response: a
+   * connection found closed and tried again counts anew. Its connection is then closed; the request is not tried again,
+   * as the server may be working on it.
+   */
+  std::chrono::nanoseconds response_timeout = std::chrono::seconds{60};
 };
 
 } // namespace quoll::client
