@@ -39,9 +39,11 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/ui/element.hpp>
+#include <quoll/ui/event_function.hpp>
 #include <quoll/ui/state.hpp>
 
 #include <concepts>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -113,51 +115,57 @@ template <std::integral T>
   return decorator([name = std::to_string(number)](element &target) { target.key = name; });
 }
 
-/** @brief Sets an attribute of the element. */
+/**
+ * @brief Sets an attribute of the element: set again, it takes the last value. `class` and `value` have their own ways,
+ * tw() and bind(), and are not to be set here.
+ */
 [[nodiscard]] inline auto attribute(std::string_view name, std::string_view value) {
   return decorator([name = std::string{name}, value = std::string{value}](element &target) {
-    target.attributes.emplace_back(name, value);
+    target.attributes.insert_or_assign(name, value);
   });
 }
 
 namespace detail {
 
-[[nodiscard]] inline async::task<> no_work() { co_return; }
-
-// What an event runs, from what the application gave: with the node's value or without, a task or a plain function. A
-// task is returned for the caller to await while it holds a copy of this handler: a coroutine lambda keeps its captures
-// in the lambda.
-template <class F>
+// What an event runs, from what the application gave: with the node's value or without, awaited or plain. The value
+// lives in this frame, so that a task may borrow it. The caller holds a copy of this handler meanwhile: a coroutine
+// lambda keeps its captures in the lambda.
+template <EventFunction F>
 [[nodiscard]] event_handler to_handler(F function) {
   return [function = std::move(function)](std::string value) mutable -> async::task<> {
-    if constexpr (std::invocable<F &, std::string>) {
-      if constexpr (std::same_as<std::invoke_result_t<F &, std::string>, async::task<>>) {
-        return function(std::move(value));
+    auto const call = [&]() -> decltype(auto) {
+      if constexpr (std::invocable<F &, std::string>) {
+        return std::invoke(function, std::move(value));
       } else {
-        function(std::move(value));
-        return no_work();
+        return std::invoke(function);
       }
+    };
+
+    if constexpr (std::is_void_v<decltype(call())>) {
+      call();
     } else {
-      if constexpr (std::same_as<std::invoke_result_t<F &>, async::task<>>) {
-        return function();
-      } else {
-        function();
-        return no_work();
-      }
+      co_await call();
     }
+
+    co_return;
   };
 }
 
 } // namespace detail
 
 /**
- * @brief Runs `function` on the event `name` of the element: a plain function or one returning a `task<>`, given the
- * node's value or nothing.
+ * @brief Runs `function` on the event `name` of the element, given the node's value or nothing. It returns nothing, or
+ * a task or anything else to await, whose result is dropped.
  *
- * It stays alive until its task ends, even if the element is gone by then. What it captures by reference has to as
- * well: capture `this`, which lives as long as the app, whose stop() waits for the tasks.
+ * Each event runs its own copy of `function`, alive until its task ends, even if the element is gone by then: what it
+ * changes in itself is lost for the next event, and belongs in the component. What it captures by reference has to stay
+ * alive as well: capture `this`, which lives as long as the app, whose stop() waits for the tasks. An event not started
+ * when stop() is called does not run.
+ *
+ * A `std::string_view` or a `std::string const &` borrows the value until that task ends. Take a `std::string` to keep
+ * it longer. A task must not take a reference to any other type made from the string: that one dies with the call.
  */
-template <class F>
+template <EventFunction F>
 [[nodiscard]] auto on(std::string_view name, F function) {
   return decorator([name = std::string{name}, handler = detail::to_handler(std::move(function))](element &target) {
     target.events.push_back({name, handler});
@@ -165,13 +173,13 @@ template <class F>
 }
 
 /** @brief on("click"). */
-template <class F>
+template <EventFunction F>
 [[nodiscard]] auto on_click(F function) {
   return on("click", std::move(function));
 }
 
 /** @brief on("input"), given what the input holds now. */
-template <class F>
+template <EventFunction F>
 [[nodiscard]] auto on_input(F function) {
   return on("input", std::move(function));
 }

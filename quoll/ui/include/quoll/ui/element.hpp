@@ -42,6 +42,7 @@
 
 #include <functional>
 #include <initializer_list>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -49,7 +50,10 @@
 
 namespace quoll::ui {
 
-/** @brief What an event runs: given the value of the node, for an event that has one. */
+/**
+ * @brief What an event runs: given the value of the node, for an event that has one. on() makes one from a function; a
+ * coroutine written directly as one takes a `std::string`, as a reference dies with this call.
+ */
 using event_handler = std::function<async::task<>(std::string value)>;
 
 /** @brief An event of an element, and what it runs. */
@@ -78,7 +82,7 @@ struct element {
   std::string key{};
   // The value of an input.
   std::optional<std::string> value{};
-  std::vector<std::pair<std::string, std::string>> attributes{};
+  std::map<std::string, std::string> attributes{};
   std::vector<event_binding> events{};
   std::vector<element> children{};
   // Given when the element is shown.
