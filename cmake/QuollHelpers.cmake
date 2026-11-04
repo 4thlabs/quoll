@@ -26,14 +26,14 @@ endif()
 #
 # Declare a module from its CMakeLists.txt (quoll/<module>/, or quoll/adapters/<module>/ for an adapter):
 #
-#   quoll_declare_module(NAME <module> [SOURCES <files>...] [DEPS <targets>...])
+#   quoll_declare_module(NAME <module> [SOURCES <files>...] [DEPS <targets>...] [PRIVATE_DEPS <targets>...])
 #
 # Creates the target quoll_<module> with alias quoll::<module>, a static library or, without SOURCES, an INTERFACE one,
 # publishing every header under the include/ directory next to that CMakeLists.txt. With QUOLL_BUILD_TESTS and QUOLL_HEADER_CHECKS, each header is also compiled
 # alone in its own translation unit, which enforces the self-contained header rule.
 #
 function(quoll_declare_module)
-  cmake_parse_arguments(PARSE_ARGV 0 QUOLL_MODULE "" "NAME" "SOURCES;DEPS")
+  cmake_parse_arguments(PARSE_ARGV 0 QUOLL_MODULE "" "NAME" "SOURCES;DEPS;PRIVATE_DEPS")
 
   if(NOT QUOLL_MODULE_NAME)
     message(FATAL_ERROR "quoll_declare_module: NAME is required")
@@ -71,6 +71,11 @@ function(quoll_declare_module)
   target_sources(${target} ${scope} FILE_SET HEADERS BASE_DIRS "${include_dir}" FILES ${headers})
   target_compile_features(${target} ${scope} cxx_std_23)
   target_link_libraries(${target} ${scope} ${QUOLL_MODULE_DEPS})
+
+  # What its sources use and its headers do not show: an application does not see it, but links it.
+  if(QUOLL_MODULE_PRIVATE_DEPS)
+    target_link_libraries(${target} PRIVATE ${QUOLL_MODULE_PRIVATE_DEPS})
+  endif()
 
   set_property(GLOBAL APPEND PROPERTY QUOLL_MODULES ${QUOLL_MODULE_NAME})
 

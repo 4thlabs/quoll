@@ -34,23 +34,51 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_HTTP_DETAIL_SERIALIZE_FRAMING_HPP
-#define QUOLL_HTTP_DETAIL_SERIALIZE_FRAMING_HPP
+#include <quoll/http/serializer.hpp>
 
 #include <quoll/http/detail/ascii.hpp>
-#include <quoll/http/detail/serialize_fields.hpp>
-#include <quoll/http/fields.hpp>
+#include <quoll/http/detail/check.hpp>
 
 #include <array>
 #include <charconv>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <stdexcept>
-#include <string>
-#include <string_view>
 #include <system_error>
 
-namespace quoll::http::detail {
+namespace quoll::http {
+
+namespace detail {
+
+void check_target(std::string_view target) {
+  if (target.empty() || target.find(' ') != std::string_view::npos || has_line_break(target)) {
+    throw std::invalid_argument{"quoll::http: invalid request target"};
+  }
+}
+
+void check_field(field const &entry) {
+  if (!is_token(entry.name) || has_line_break(entry.value)) {
+    throw std::invalid_argument{"quoll::http: invalid field " + entry.name};
+  }
+}
+
+} // namespace detail
+
+namespace {
+
+using namespace detail;
+
+void serialize_fields(fields const &entries, std::string &out) {
+  for (auto const &entry : entries) {
+    check_field(entry);
+
+    out += entry.name;
+    out += ": ";
+    out += entry.value;
+    out += "\r\n";
+  }
+}
 
 // What the start line allows: the body framing rules of RFC 9110 / 9112 for this message.
 struct framing_rules {
@@ -66,11 +94,11 @@ struct framing_rules {
   bool length_without_body = false;
 };
 
-inline void reject(char const *what) { throw std::invalid_argument{std::string{"quoll::http: "} + what}; }
+void reject(char const *what) { throw std::invalid_argument{std::string{"quoll::http: "} + what}; }
 
 // Transfer-Encoding fields form one list (RFC 9110, 5.3): true when its last coding is chunked, nothing when there is
 // no Transfer-Encoding at all.
-[[nodiscard]] inline std::optional<bool> last_coding_is_chunked(fields const &entries) {
+[[nodiscard]] std::optional<bool> last_coding_is_chunked(fields const &entries) {
   std::optional<bool> chunked;
 
   for (auto const &entry : entries) {
@@ -89,7 +117,7 @@ inline void reject(char const *what) { throw std::invalid_argument{std::string{"
 }
 
 // The value of the Content-Length fields, nothing when there is none.
-[[nodiscard]] inline std::optional<std::size_t> declared_length(fields const &entries) {
+[[nodiscard]] std::optional<std::size_t> declared_length(fields const &entries) {
   std::optional<std::size_t> length;
 
   for (auto const &entry : entries) {
@@ -115,7 +143,7 @@ inline void reject(char const *what) { throw std::invalid_argument{std::string{"
   return length;
 }
 
-inline void append_hex(std::size_t value, std::string &out) {
+void append_hex(std::size_t value, std::string &out) {
   std::array<char, 2 * sizeof(std::size_t)> digits{};
   auto const [end, error] = std::to_chars(digits.data(), digits.data() + digits.size(), value, 16);
 
@@ -125,8 +153,8 @@ inline void append_hex(std::size_t value, std::string &out) {
 
 // Fields, then the body framed by Content-Length or by chunked coding with the trailers. Every framing the peer
 // could read differently from what is sent is rejected: it would desync the connection, or smuggle a request.
-inline void serialize_framing(fields const &entries, std::string const &body, fields const &trailers,
-                              framing_rules const &rules, std::string &out) {
+void serialize_framing(fields const &entries, std::string const &body, fields const &trailers,
+                       framing_rules const &rules, std::string &out) {
   auto const chunked = last_coding_is_chunked(entries);
   auto const length = declared_length(entries);
 
@@ -182,6 +210,72 @@ inline void serialize_framing(fields const &entries, std::string const &body, fi
   out += body;
 }
 
-} // namespace quoll::http::detail
+} // namespace
 
-#endif // QUOLL_HTTP_DETAIL_SERIALIZE_FRAMING_HPP
+void serialize(request const &message, std::string &out) {
+  check_target(message.target);
+
+  out += to_string(message.method);
+  out += ' ';
+  out += message.target;
+  out += ' ';
+  out += to_string(message.version);
+  out += "\r\n";
+
+  auto const method_has_body =
+      message.method == verb::post || message.method == verb::put || message.method == verb::patch;
+
+  framing_rules rules;
+
+  rules.add_length = !message.body.empty() || method_has_body;
+  rules.chunked_allowed = message.version != version::http_1_0;
+  serialize_framing(message.fields, message.body, message.trailers, rules, out);
+}
+
+void serialize(response const &message, std::string &out) {
+  auto const code = static_cast<std::uint16_t>(message.status);
+
+  if (code < 100 || code > 999) {
+    throw std::invalid_argument{"quoll::http: invalid status code"};
+  }
+
+  if (has_line_break(message.reason)) {
+    throw std::invalid_argument{"quoll::http: invalid reason phrase"};
+  }
+
+  out += to_string(message.version);
+  out += ' ';
+  out += std::to_string(code);
+  out += ' ';
+  out += message.reason.empty() ? reason_phrase(message.status) : std::string_view{message.reason};
+  out += "\r\n";
+
+  // RFC 9110: 1xx, 204 and 304 responses never have a body.
+  auto const has_body = !is_informational(message.status) && message.status != status::no_content &&
+                        message.status != status::not_modified;
+
+  framing_rules rules;
+
+  rules.body_allowed = has_body;
+  rules.length_allowed = !is_informational(message.status) && message.status != status::no_content;
+  rules.add_length = has_body;
+  rules.chunked_allowed = message.version != version::http_1_0;
+  rules.length_without_body = true;
+  serialize_framing(message.fields, message.body, message.trailers, rules, out);
+}
+
+std::string serialize(request const &message) {
+  std::string out;
+
+  serialize(message, out);
+  return out;
+}
+
+std::string serialize(response const &message) {
+  std::string out;
+
+  serialize(message, out);
+  return out;
+}
+
+} // namespace quoll::http

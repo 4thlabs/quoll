@@ -37,29 +37,18 @@
 #ifndef QUOLL_HTTP_DETAIL_CHECK_HPP
 #define QUOLL_HTTP_DETAIL_CHECK_HPP
 
-#include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/fields.hpp>
 
-#include <stdexcept>
 #include <string_view>
 
 namespace quoll::http::detail {
 
-// What http::serialize() rejects in a request target and in a field, shared with the transports that hand messages
-// to another HTTP stack (fetch): a space or a line break would end the start line early, a name that is not a token or
-// a value with a line break would split into other fields.
+// What http::serialize() rejects in a request target and in a field, shared with the transports that hand a message to
+// another HTTP stack (fetch): a space or a line break would end the start line early, a name that is not a token, and a
+// value with a line break would split into other fields.
 
-inline void check_target(std::string_view target) {
-  if (target.empty() || target.find(' ') != std::string_view::npos || has_line_break(target)) {
-    throw std::invalid_argument{"quoll::http: invalid request target"};
-  }
-}
-
-inline void check_field(field const &entry) {
-  if (!is_token(entry.name) || has_line_break(entry.value)) {
-    throw std::invalid_argument{"quoll::http: invalid field " + entry.name};
-  }
-}
+void check_target(std::string_view target);
+void check_field(field const &entry);
 
 } // namespace quoll::http::detail
 

@@ -34,37 +34,37 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_HTTP_DETAIL_ROUTER_RESPONSES_HPP
-#define QUOLL_HTTP_DETAIL_ROUTER_RESPONSES_HPP
+#include <quoll/http/fields.hpp>
 
-#include <quoll/http/response.hpp>
-#include <quoll/http/status.hpp>
-#include <quoll/http/verb.hpp>
+#include <quoll/http/detail/ascii.hpp>
 
+#include <algorithm>
 #include <string>
-#include <vector>
+#include <utility>
 
-namespace quoll::http::detail {
+namespace quoll::http {
 
-[[nodiscard]] inline response status_response(status code) {
-  response message;
+void fields::set(std::string_view name, std::string_view value) {
+  // Either may view a field of this list, which erase() moves or destroys.
+  field entry{std::string{name}, std::string{value}};
 
-  message.status = code;
-  return message;
+  erase(entry.name);
+  add(std::move(entry));
 }
 
-// The value of `Allow`: "GET, DELETE".
-[[nodiscard]] inline std::string join_methods(std::vector<verb> const &methods) {
-  std::string joined;
+fields::size_type fields::erase(std::string_view name) noexcept {
+  return std::erase_if(fields_, [name](field const &entry) { return detail::iequals(entry.name, name); });
+}
 
-  for (auto const method : methods) {
-    joined += joined.empty() ? "" : ", ";
-    joined += to_string(method);
+std::optional<std::string_view> fields::find(std::string_view name) const noexcept {
+  auto const found =
+      std::ranges::find_if(fields_, [name](field const &entry) { return detail::iequals(entry.name, name); });
+
+  if (found == fields_.end()) {
+    return std::nullopt;
   }
 
-  return joined;
+  return std::string_view{found->value};
 }
 
-} // namespace quoll::http::detail
-
-#endif // QUOLL_HTTP_DETAIL_ROUTER_RESPONSES_HPP
+} // namespace quoll::http

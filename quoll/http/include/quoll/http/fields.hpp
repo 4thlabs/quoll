@@ -37,9 +37,6 @@
 #ifndef QUOLL_HTTP_FIELDS_HPP
 #define QUOLL_HTTP_FIELDS_HPP
 
-#include <quoll/http/detail/ascii.hpp>
-
-#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -79,27 +76,13 @@ public:
   void add(field entry) { fields_.push_back(std::move(entry)); }
 
   /** @brief Replaces every field named `name` by a single one. */
-  void set(std::string_view name, std::string_view value) {
-    erase(name);
-    add(name, value);
-  }
+  void set(std::string_view name, std::string_view value);
 
   /** @brief Removes every field named `name`. @return The number removed. */
-  size_type erase(std::string_view name) noexcept {
-    return std::erase_if(fields_, [name](field const &entry) { return detail::iequals(entry.name, name); });
-  }
+  size_type erase(std::string_view name) noexcept;
 
   /** @brief The value of the first field named `name`. */
-  [[nodiscard]] std::optional<std::string_view> find(std::string_view name) const noexcept {
-    auto const found =
-        std::ranges::find_if(fields_, [name](field const &entry) { return detail::iequals(entry.name, name); });
-
-    if (found == fields_.end()) {
-      return std::nullopt;
-    }
-
-    return std::string_view{found->value};
-  }
+  [[nodiscard]] std::optional<std::string_view> find(std::string_view name) const noexcept;
 
   [[nodiscard]] bool contains(std::string_view name) const noexcept { return find(name).has_value(); }
 

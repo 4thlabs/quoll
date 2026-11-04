@@ -38,20 +38,13 @@
 #define QUOLL_HTTP_ROUTER_HPP
 
 #include <quoll/async/task.hpp>
-#include <quoll/http/detail/route_pattern.hpp>
-#include <quoll/http/detail/router_responses.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
-#include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
 
-#include <algorithm>
 #include <functional>
-#include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 namespace quoll::http {
@@ -93,115 +86,28 @@ public:
   // copyable.
   using handler = std::function<async::task<response>(request, route_match)>;
 
+  router();
+  router(router const &);
+  router(router &&) noexcept;
+  router &operator=(router const &);
+  router &operator=(router &&) noexcept;
+  ~router();
+
   /**
    * @brief Routes `method` requests on `path` to `target`, under `name`.
    * @throws std::invalid_argument for an invalid template, an empty handler, or a route this method already has with
    * the same shape (`/users/{id}` and `/users/{uid}`).
    */
-  void add(verb method, std::string_view path, std::string name, handler target) {
-    if (!target) {
-      throw std::invalid_argument{"quoll::http::router: empty handler"};
-    }
-
-    auto segments = detail::compile_route(path);
-
-    for (auto const &route : routes_) {
-      if (route.method == method && detail::same_shape(route.segments, segments)) {
-        throw std::invalid_argument{"quoll::http::router: " + route.name + " already routes this method and path"};
-      }
-    }
-
-    routes_.push_back(entry{method, std::move(segments), std::move(name), std::move(target)});
-  }
+  void add(verb method, std::string_view path, std::string name, handler target);
 
   /**
    * @brief The response of the route `message` matches, from its handler, or the 404 / 405 / 400 above. Anything the
    * handler throws, even before it returns its task, comes out of the task.
    */
-  [[nodiscard]] async::task<response> dispatch(request message) const {
-    auto const target = detail::split_target(message.target);
-    auto const segments = target ? detail::decode_segments(target->path) : std::nullopt;
-
-    if (!segments) {
-      co_return detail::status_response(status::bad_request);
-    }
-
-    entry const *chosen = nullptr;
-    entry const *get_route = nullptr;
-    std::vector<verb> allowed;
-
-    for (auto const &route : routes_) {
-      if (!detail::matches(route.segments, *segments)) {
-        continue;
-      }
-
-      if (route.method == message.method) {
-        chosen = more_specific(chosen, route);
-        continue;
-      }
-
-      if (route.method == verb::get) {
-        get_route = more_specific(get_route, route);
-      }
-
-      allow(allowed, route.method);
-    }
-
-    // HEAD is served by the GET route, as RFC 9110 asks of a general-purpose server.
-    if (chosen == nullptr && message.method == verb::head) {
-      chosen = get_route;
-    }
-
-    if (chosen != nullptr) {
-      route_match match{chosen->name, detail::extract_params(chosen->segments, *segments), std::string{target->query}};
-
-      co_return co_await chosen->target(std::move(message), std::move(match));
-    }
-
-    if (!allowed.empty()) {
-      auto rejected = detail::status_response(status::method_not_allowed);
-
-      rejected.fields.add("Allow", detail::join_methods(allowed));
-      co_return rejected;
-    }
-
-    co_return detail::status_response(status::not_found);
-  }
+  [[nodiscard]] async::task<response> dispatch(request message) const;
 
 private:
-  struct entry {
-    verb method;
-    std::vector<detail::route_segment> segments;
-    std::string name;
-    handler target;
-  };
-
-  // The more specific of two matching routes, segment by segment; the first added on a tie.
-  [[nodiscard]] static entry const *more_specific(entry const *current, entry const &candidate) {
-    auto const kind = &detail::route_segment::kind;
-
-    if (current == nullptr ||
-        std::ranges::lexicographical_compare(current->segments, candidate.segments, {}, kind, kind)) {
-      return &candidate;
-    }
-
-    return current;
-  }
-
-  // Adds `method` to the methods of `Allow`, and HEAD with GET.
-  static void allow(std::vector<verb> &allowed, verb method) {
-    auto const add_once = [&allowed](verb each) {
-      if (std::ranges::find(allowed, each) == allowed.end()) {
-        allowed.push_back(each);
-      }
-    };
-
-    add_once(method);
-
-    if (method == verb::get) {
-      add_once(verb::head);
-    }
-  }
+  struct entry;
 
   std::vector<entry> routes_;
 };

@@ -40,20 +40,14 @@
 #include <quoll/http/error.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
-#include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
-#include <quoll/http/version.hpp>
 
-#include <quoll/third_party/llhttp.h>
-
-#include <cassert>
 #include <concepts>
 #include <cstddef>
+#include <memory>
 #include <span>
-#include <string>
 #include <string_view>
 #include <system_error>
-#include <utility>
 
 namespace quoll::http {
 
@@ -84,6 +78,9 @@ struct parse_result {
  * Responses: interim 1xx responses are messages of their own (release and keep feeding for the final one), and a
  * response to HEAD needs set_request_method(verb::head) first, as its Content-Length does not announce a body.
  *
+ * Holds its state apart, so that a program does not see the parser behind it. Moving one keeps its progress; a
+ * moved-from one can only be assigned to or destroyed.
+ *
  * Thread safety: none.
  */
 template <class Message>
@@ -94,140 +91,44 @@ class parser {
 public:
   using message_type = Message;
 
-  explicit parser(parse_limits limits = {}) noexcept : limits_(limits) {
-    llhttp_init(&state_, is_request ? HTTP_REQUEST : HTTP_RESPONSE, &settings());
-    state_.data = this;
-  }
+  explicit parser(parse_limits limits = {});
 
   parser(parser const &) = delete;
   parser &operator=(parser const &) = delete;
-
-  // llhttp keeps no pointer into the parser between two calls, except `data`, re-pointed here.
-  parser(parser &&other) noexcept
-      : state_(other.state_), limits_(other.limits_), message_(std::move(other.message_)),
-        field_name_(std::move(other.field_name_)), field_value_(std::move(other.field_value_)),
-        header_size_(other.header_size_), field_count_(other.field_count_), error_(other.error_),
-        reason_(other.reason_), request_method_(other.request_method_), done_(other.done_),
-        keep_alive_(other.keep_alive_), upgrade_(other.upgrade_), in_message_(other.in_message_),
-        in_trailers_(other.in_trailers_) {
-    state_.data = this;
-  }
-
-  parser &operator=(parser &&other) noexcept {
-    if (this != &other) {
-      state_ = other.state_;
-      state_.data = this;
-      limits_ = other.limits_;
-      message_ = std::move(other.message_);
-      field_name_ = std::move(other.field_name_);
-      field_value_ = std::move(other.field_value_);
-      header_size_ = other.header_size_;
-      field_count_ = other.field_count_;
-      error_ = other.error_;
-      reason_ = other.reason_;
-      request_method_ = other.request_method_;
-      done_ = other.done_;
-      keep_alive_ = other.keep_alive_;
-      upgrade_ = other.upgrade_;
-      in_message_ = other.in_message_;
-      in_trailers_ = other.in_trailers_;
-    }
-
-    return *this;
-  }
-
-  ~parser() = default;
+  parser(parser &&other) noexcept;
+  parser &operator=(parser &&other) noexcept;
+  ~parser();
 
   /** @brief Parses `data` up to the end of the current message. Does nothing once done() or after an error. */
-  [[nodiscard]] parse_result feed(std::span<char const> data) {
-    if (done_ || error_) {
-      return {0, error_};
-    }
-
-    auto const code = llhttp_execute(&state_, data.data(), data.size());
-
-    switch (code) {
-    case HPE_OK:
-      return {data.size(), {}};
-    case HPE_PAUSED: {
-      // Paused by on_message_complete: the message ends here.
-      auto const consumed = offset(data);
-
-      llhttp_resume(&state_);
-      return {consumed, {}};
-    }
-    case HPE_PAUSED_UPGRADE:
-      // Only reached after the upgrade message was released (on_message_complete pauses first): what follows
-      // belongs to the upgraded protocol. Leave it unconsumed.
-      error_ = error::upgraded;
-      return {offset(data), error_};
-    default:
-      if (!error_) {
-        error_ = error::bad_message;
-      }
-
-      return {offset(data), error_};
-    }
-  }
+  [[nodiscard]] parse_result feed(std::span<char const> data);
 
   /**
    * @brief The peer closed the stream: ends a body delimited by it, or reports a truncated message. Without an
    * error, the parser is then ready for a new stream.
    */
-  [[nodiscard]] std::error_code finish() {
-    if (done_ || error_) {
-      return error_;
-    }
-
-    // The stream may end between two messages. llhttp would disagree right after one: paused in
-    // on_message_complete, it has not yet recorded that ending there is safe.
-    if (!in_message_) {
-      llhttp_reset(&state_);
-      return {};
-    }
-
-    auto const code = llhttp_finish(&state_);
-
-    // HPE_PAUSED: on_message_complete ended the message with the stream. Either way the stream is over and llhttp
-    // would ignore anything fed next: start afresh, ready for a new connection.
-    if (code == HPE_OK || code == HPE_PAUSED) {
-      llhttp_reset(&state_);
-      return {};
-    }
-
-    error_ = code == HPE_INVALID_EOF_STATE ? error::partial_message : error::bad_message;
-    return error_;
-  }
+  [[nodiscard]] std::error_code finish();
 
   /**
    * @brief Responses only: the method of the request answered, so that a response to HEAD has no body and a 2xx
    * response to CONNECT switches protocol.
    */
   void set_request_method(verb method) noexcept
-    requires(!is_request)
-  {
-    request_method_ = method;
-  }
+    requires(!is_request);
 
   /** @brief A complete message is waiting for release(). */
-  [[nodiscard]] bool done() const noexcept { return done_; }
+  [[nodiscard]] bool done() const noexcept;
 
   /** @brief When done(): whether the connection may carry another message. */
-  [[nodiscard]] bool keep_alive() const noexcept { return keep_alive_; }
+  [[nodiscard]] bool keep_alive() const noexcept;
 
   /**
    * @brief When done(): the connection switches protocol (101, CONNECT); its next bytes are not HTTP/1.x, and
    * feeding them after release() reports `error::upgraded`.
    */
-  [[nodiscard]] bool upgrade() const noexcept { return upgrade_; }
+  [[nodiscard]] bool upgrade() const noexcept;
 
   /** @brief Why the input was rejected, for diagnostics. */
-  [[nodiscard]] std::string_view error_reason() const noexcept {
-    // llhttp replaces the reason given by some callbacks with a generic one: ours wins.
-    auto const *const reason = reason_ != nullptr ? reason_ : llhttp_get_error_reason(&state_);
-
-    return reason != nullptr ? std::string_view{reason} : std::string_view{};
-  }
+  [[nodiscard]] std::string_view error_reason() const noexcept;
 
   /**
    * @brief Takes the parsed message and gets ready for the next one. Precondition: done().
@@ -235,240 +136,16 @@ public:
    * keep_alive() and upgrade() are reset; for responses, the request method set by set_request_method() is
    * forgotten after a final (non-1xx) response.
    */
-  [[nodiscard]] Message release() {
-    assert(done_ && "parser::release() without a complete message");
-
-    auto message = std::exchange(message_, Message{});
-
-    done_ = false;
-    keep_alive_ = false;
-    upgrade_ = false;
-
-    // The request method holds until its final response: an interim 1xx answers the same request.
-    if constexpr (!is_request) {
-      if (!is_informational(message.status)) {
-        request_method_ = verb::get;
-      }
-    }
-
-    return message;
-  }
+  [[nodiscard]] Message release();
 
 private:
-  [[nodiscard]] std::size_t offset(std::span<char const> data) const noexcept {
-    auto const *const position = llhttp_get_error_pos(&state_);
+  struct impl;
 
-    if (data.empty() || position == nullptr) {
-      return 0;
-    }
-
-    return static_cast<std::size_t>(position - data.data());
-  }
-
-  [[nodiscard]] static parser &self(llhttp_t *state) noexcept { return *static_cast<parser *>(state->data); }
-
-  // Records why parsing stops; returns the code that stops llhttp.
-  [[nodiscard]] int fail(llhttp_t *state, error reason, char const *text) noexcept {
-    error_ = reason;
-    reason_ = text;
-    llhttp_set_error_reason(state, text);
-    return HPE_USER;
-  }
-
-  // Returns 0, or the code that stops llhttp.
-  [[nodiscard]] int count_header(llhttp_t *state, std::size_t length) noexcept {
-    header_size_ += length;
-
-    if (header_size_ > limits_.max_header_size) {
-      return fail(state, error::header_too_large, "header too large");
-    }
-
-    return 0;
-  }
-
-  // The callbacks are noexcept: an exception cannot cross llhttp's C frames (running out of memory terminates).
-
-  static int on_message_begin(llhttp_t *state) noexcept {
-    auto &self_ = self(state);
-
-    // release() has already reset the message, but for the target.
-    if constexpr (is_request) {
-      // llhttp appends the target in pieces: start from empty, not from the default "/".
-      self_.message_.target.clear();
-    }
-
-    self_.field_name_.clear();
-    self_.field_value_.clear();
-    self_.header_size_ = 0;
-    self_.field_count_ = 0;
-    self_.in_message_ = true;
-    self_.in_trailers_ = false;
-    return 0;
-  }
-
-  static int on_url(llhttp_t *state, char const *at, std::size_t length) noexcept {
-    auto &self_ = self(state);
-
-    if (auto const code = self_.count_header(state, length); code != 0) {
-      return code;
-    }
-
-    self_.message_.target.append(at, length);
-    return 0;
-  }
-
-  static int on_status(llhttp_t *state, char const *at, std::size_t length) noexcept {
-    auto &self_ = self(state);
-
-    if (auto const code = self_.count_header(state, length); code != 0) {
-      return code;
-    }
-
-    self_.message_.reason.append(at, length);
-    return 0;
-  }
-
-  static int on_header_field(llhttp_t *state, char const *at, std::size_t length) noexcept {
-    auto &self_ = self(state);
-
-    if (auto const code = self_.count_header(state, length); code != 0) {
-      return code;
-    }
-
-    self_.field_name_.append(at, length);
-    return 0;
-  }
-
-  static int on_header_value(llhttp_t *state, char const *at, std::size_t length) noexcept {
-    auto &self_ = self(state);
-
-    if (auto const code = self_.count_header(state, length); code != 0) {
-      return code;
-    }
-
-    self_.field_value_.append(at, length);
-    return 0;
-  }
-
-  // Called once per field, even when the value is empty. Counts the separators the data callbacks do not see
-  // (": " and CRLF), and the field itself.
-  static int on_header_value_complete(llhttp_t *state) noexcept {
-    auto &self_ = self(state);
-
-    if (auto const code = self_.count_header(state, 4); code != 0) {
-      return code;
-    }
-
-    if (++self_.field_count_ > self_.limits_.max_field_count) {
-      return self_.fail(state, error::header_too_large, "too many fields");
-    }
-
-    auto &target = self_.in_trailers_ ? self_.message_.trailers : self_.message_.fields;
-
-    target.add(field{std::exchange(self_.field_name_, {}), std::exchange(self_.field_value_, {})});
-    return 0;
-  }
-
-  // 1 tells llhttp the message has no body, 2 that it has none and the connection switches protocol.
-  static int on_headers_complete(llhttp_t *state) noexcept {
-    auto &self_ = self(state);
-
-    self_.in_trailers_ = true;
-
-    if (llhttp_get_http_major(state) != 1) {
-      return self_.fail(state, error::bad_message, "unsupported HTTP version");
-    }
-
-    self_.message_.version = llhttp_get_http_minor(state) == 0 ? version::http_1_0 : version::http_1_1;
-
-    if constexpr (is_request) {
-      auto const method = parse_verb(llhttp_method_name(static_cast<llhttp_method_t>(llhttp_get_method(state))));
-
-      if (!method) {
-        // on_headers_complete cannot return HPE_USER: -1 stops parsing, error_ tells why.
-        static_cast<void>(self_.fail(state, error::unsupported_method, "unsupported method"));
-        return -1;
-      }
-
-      self_.message_.method = *method;
-      return 0;
-    } else {
-      auto const code = llhttp_get_status_code(state);
-
-      self_.message_.status = static_cast<status>(code);
-
-      // A 2xx answer to CONNECT turns the connection into a tunnel.
-      if (self_.request_method_ == verb::connect && code >= 200 && code < 300) {
-        return 2;
-      }
-
-      return self_.request_method_ == verb::head ? 1 : 0;
-    }
-  }
-
-  static int on_body(llhttp_t *state, char const *at, std::size_t length) noexcept {
-    auto &self_ = self(state);
-
-    if (self_.message_.body.size() + length > self_.limits_.max_body_size) {
-      return self_.fail(state, error::body_too_large, "body too large");
-    }
-
-    self_.message_.body.append(at, length);
-    return 0;
-  }
-
-  // Pausing makes llhttp_execute() return at the end of the message.
-  static int on_message_complete(llhttp_t *state) noexcept {
-    auto &self_ = self(state);
-
-    self_.done_ = true;
-    self_.in_message_ = false;
-    self_.keep_alive_ = llhttp_should_keep_alive(state) != 0;
-    self_.upgrade_ = llhttp_get_upgrade(state) != 0;
-    return HPE_PAUSED;
-  }
-
-  [[nodiscard]] static constexpr llhttp_settings_t make_settings() noexcept {
-    llhttp_settings_t settings{};
-
-    settings.on_message_begin = &on_message_begin;
-    settings.on_header_field = &on_header_field;
-    settings.on_header_value = &on_header_value;
-    settings.on_header_value_complete = &on_header_value_complete;
-    settings.on_headers_complete = &on_headers_complete;
-    settings.on_body = &on_body;
-    settings.on_message_complete = &on_message_complete;
-
-    if constexpr (is_request) {
-      settings.on_url = &on_url;
-    } else {
-      settings.on_status = &on_status;
-    }
-
-    return settings;
-  }
-
-  [[nodiscard]] static llhttp_settings_t const &settings() noexcept {
-    static constexpr llhttp_settings_t value = make_settings();
-    return value;
-  }
-
-  llhttp_t state_{};
-  parse_limits limits_;
-  Message message_;
-  std::string field_name_;
-  std::string field_value_;
-  std::size_t header_size_ = 0;
-  std::size_t field_count_ = 0;
-  std::error_code error_;
-  char const *reason_ = nullptr;
-  verb request_method_ = verb::get;
-  bool done_ = false;
-  bool keep_alive_ = false;
-  bool upgrade_ = false;
-  bool in_message_ = false;
-  bool in_trailers_ = false;
+  std::unique_ptr<impl> impl_;
 };
+
+extern template class parser<request>;
+extern template class parser<response>;
 
 using request_parser = parser<request>;
 using response_parser = parser<response>;

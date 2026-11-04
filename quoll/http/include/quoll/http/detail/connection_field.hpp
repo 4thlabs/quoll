@@ -37,30 +37,12 @@
 #ifndef QUOLL_HTTP_DETAIL_CONNECTION_FIELD_HPP
 #define QUOLL_HTTP_DETAIL_CONNECTION_FIELD_HPP
 
-#include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/fields.hpp>
-
-#include <ranges>
-#include <string_view>
 
 namespace quoll::http::detail {
 
 // Whether a message says the connection closes after it: a `close` token in a Connection field.
-[[nodiscard]] inline bool closes_connection(fields const &message_fields) {
-  for (auto const &entry : message_fields) {
-    if (!iequals(entry.name, "Connection")) {
-      continue;
-    }
-
-    for (auto const token : std::views::split(std::string_view{entry.value}, ',')) {
-      if (iequals(trim(std::string_view{token.begin(), token.end()}), "close")) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
+[[nodiscard]] bool closes_connection(fields const &message_fields);
 
 } // namespace quoll::http::detail
 

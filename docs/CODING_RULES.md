@@ -19,7 +19,8 @@ guidelines and the C++ Core Guidelines.
   header: a change in an application then has less to compile. Only what a header needs may stay inline: a function forwarding
   to another, one returning a lambda, or one a `QUOLL_` switch changes in the application's sources. Modules move to this one at a time (see `PLAN.md`), and one with no source yet has
   only headers.
-- Templates over what the application provides stay in headers. No explicit instantiation / `extern template`.
+- Templates over what the application provides stay in headers. Only a template whose arguments the library closes, such as
+  `http::parser` over a request or a response, may be instantiated explicitly in a source, with `extern template`.
 - A source file keeps what only it uses in an unnamed namespace, and may hold the program-wide state a header may not.
 - Third-party C/C++ dependencies (e.g. llhttp) may be compiled targets fetched by CPM.
 - Macros only for include guards and `QUOLL_`-prefixed configuration switches.

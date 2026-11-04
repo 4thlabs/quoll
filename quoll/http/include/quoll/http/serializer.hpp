@@ -37,19 +37,10 @@
 #ifndef QUOLL_HTTP_SERIALIZER_HPP
 #define QUOLL_HTTP_SERIALIZER_HPP
 
-#include <quoll/http/detail/ascii.hpp>
-#include <quoll/http/detail/check.hpp>
-#include <quoll/http/detail/serialize_framing.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
-#include <quoll/http/status.hpp>
-#include <quoll/http/verb.hpp>
-#include <quoll/http/version.hpp>
 
-#include <cstdint>
-#include <stdexcept>
 #include <string>
-#include <string_view>
 
 namespace quoll::http {
 
@@ -69,74 +60,16 @@ namespace quoll::http {
  * with another value or does not match the body, `Content-Length` with `Transfer-Encoding`, a last transfer coding
  * other than chunked, chunked coding in HTTP/1.0, trailers without chunked coding.
  */
-inline void serialize(request const &message, std::string &out) {
-  detail::check_target(message.target);
-
-  out += to_string(message.method);
-  out += ' ';
-  out += message.target;
-  out += ' ';
-  out += to_string(message.version);
-  out += "\r\n";
-
-  auto const method_has_body =
-      message.method == verb::post || message.method == verb::put || message.method == verb::patch;
-
-  detail::framing_rules rules;
-
-  rules.add_length = !message.body.empty() || method_has_body;
-  rules.chunked_allowed = message.version != version::http_1_0;
-  detail::serialize_framing(message.fields, message.body, message.trailers, rules, out);
-}
+void serialize(request const &message, std::string &out);
 
 /** @copydoc serialize(request const &, std::string &) */
-inline void serialize(response const &message, std::string &out) {
-  auto const code = static_cast<std::uint16_t>(message.status);
-
-  if (code < 100 || code > 999) {
-    throw std::invalid_argument{"quoll::http: invalid status code"};
-  }
-
-  if (detail::has_line_break(message.reason)) {
-    throw std::invalid_argument{"quoll::http: invalid reason phrase"};
-  }
-
-  out += to_string(message.version);
-  out += ' ';
-  out += std::to_string(code);
-  out += ' ';
-  out += message.reason.empty() ? reason_phrase(message.status) : std::string_view{message.reason};
-  out += "\r\n";
-
-  // RFC 9110: 1xx, 204 and 304 responses never have a body.
-  auto const has_body = !is_informational(message.status) && message.status != status::no_content &&
-                        message.status != status::not_modified;
-
-  detail::framing_rules rules;
-
-  rules.body_allowed = has_body;
-  rules.length_allowed = !is_informational(message.status) && message.status != status::no_content;
-  rules.add_length = has_body;
-  rules.chunked_allowed = message.version != version::http_1_0;
-  rules.length_without_body = true;
-  detail::serialize_framing(message.fields, message.body, message.trailers, rules, out);
-}
+void serialize(response const &message, std::string &out);
 
 /** @brief `message` as sent on the wire. @copydetails serialize(request const &, std::string &) */
-[[nodiscard]] inline std::string serialize(request const &message) {
-  std::string out;
-
-  serialize(message, out);
-  return out;
-}
+[[nodiscard]] std::string serialize(request const &message);
 
 /** @brief `message` as sent on the wire. @copydetails serialize(request const &, std::string &) */
-[[nodiscard]] inline std::string serialize(response const &message) {
-  std::string out;
-
-  serialize(message, out);
-  return out;
-}
+[[nodiscard]] std::string serialize(response const &message);
 
 } // namespace quoll::http
 

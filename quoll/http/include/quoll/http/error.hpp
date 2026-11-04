@@ -37,7 +37,6 @@
 #ifndef QUOLL_HTTP_ERROR_HPP
 #define QUOLL_HTTP_ERROR_HPP
 
-#include <string>
 #include <system_error>
 #include <type_traits>
 
@@ -59,39 +58,8 @@ enum class error {
   upgraded,
 };
 
-namespace detail {
-
-// std::error_category is polymorphic by design: the virtual functions here are the standard's, not Quoll's.
-class http_error_category final : public std::error_category {
-public:
-  [[nodiscard]] char const *name() const noexcept override { return "quoll.http"; }
-
-  [[nodiscard]] std::string message(int value) const override {
-    switch (static_cast<error>(value)) {
-    case error::bad_message:
-      return "malformed HTTP message";
-    case error::header_too_large:
-      return "HTTP header too large";
-    case error::body_too_large:
-      return "HTTP body too large";
-    case error::unsupported_method:
-      return "unsupported HTTP method";
-    case error::partial_message:
-      return "HTTP message truncated by the end of the stream";
-    case error::upgraded:
-      return "HTTP connection switched to another protocol";
-    }
-    return "unknown quoll.http error";
-  }
-};
-
-} // namespace detail
-
 /** @brief The category of http::error codes. */
-[[nodiscard]] inline std::error_category const &http_category() noexcept {
-  static detail::http_error_category const category;
-  return category;
-}
+[[nodiscard]] std::error_category const &http_category() noexcept;
 
 [[nodiscard]] inline std::error_code make_error_code(error value) noexcept {
   return {static_cast<int>(value), http_category()};

@@ -34,27 +34,16 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_HTTP_DETAIL_SERIALIZE_FIELDS_HPP
-#define QUOLL_HTTP_DETAIL_SERIALIZE_FIELDS_HPP
+#ifndef QUOLL_HTTP_DETAIL_STATUS_RESPONSE_HPP
+#define QUOLL_HTTP_DETAIL_STATUS_RESPONSE_HPP
 
-#include <quoll/http/detail/check.hpp>
-#include <quoll/http/fields.hpp>
-
-#include <string>
+#include <quoll/http/response.hpp>
+#include <quoll/http/status.hpp>
 
 namespace quoll::http::detail {
 
-inline void serialize_fields(fields const &entries, std::string &out) {
-  for (auto const &entry : entries) {
-    check_field(entry);
-
-    out += entry.name;
-    out += ": ";
-    out += entry.value;
-    out += "\r\n";
-  }
-}
+[[nodiscard]] response status_response(status code);
 
 } // namespace quoll::http::detail
 
-#endif // QUOLL_HTTP_DETAIL_SERIALIZE_FIELDS_HPP
+#endif // QUOLL_HTTP_DETAIL_STATUS_RESPONSE_HPP

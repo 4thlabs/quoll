@@ -39,7 +39,7 @@
 
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/task.hpp>
-#include <quoll/http/detail/router_responses.hpp>
+#include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
