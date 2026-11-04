@@ -119,7 +119,8 @@ the files you touch.
 `main` is protected: everything goes through a PR, with every CI job and the status `Codex` green, up to date with
 `main` and its threads resolved, with no bypass for admins.
 
-Codex reviews the PRs (the ChatGPT Codex Connector, set up in Codex's settings, following the rules below).
+Codex reviews the PRs (the ChatGPT Codex Connector, set up in Codex's settings, following the rules below). Comment
+`@codex review` once the PR is open and after each later push: its automatic trigger is not relied on.
 `codex-review.yml` sets the status `Codex` once it has finished reviewing the last commit.
 
 Claude Code may merge the PRs it opened, giving the commit it checked
@@ -127,14 +128,16 @@ Claude Code may merge the PRs it opened, giving the commit it checked
 `/code-review high` runs before every push, except a clean merge of `main`, and its valid findings are fixed first. The
 PR says what that review found and why any finding was not taken. A PR merges once every required check is green on its
 last commit, Codex raises nothing new on it, and its threads are answered, with the fixing commit or the reason a point
-is not taken, then resolved. If Codex does not review a commit, comment `@codex review` once; if it still does not, the
-maintainer decides. The maintainer merges a big architecture change, even with every check green: a new module, a change
-to a hard constraint above, a redesign of how modules fit together. In doubt, it counts as one.
+is not taken, then resolved. If Codex has not completed a review of the last commit 30 minutes after a request, the
+maintainer decides. If GitHub refuses `--rebase`, use `--squash` with the same commit, and a `--body` summing up the PR,
+as the default lists every commit. The maintainer merges a big architecture change, even with every check green: a new
+module, a change to a hard constraint above, a redesign of how modules fit together, and any change to this rule. In
+doubt, it counts as one.
 
 ## Code Review Rules
 
-Read `docs/CODING_RULES.md` and `docs/PLAN.md` first: their rules and decisions are part of what you check. Flag each of
-these as P1 at least, in this order:
+Read `docs/CODING_RULES.md` and `docs/PLAN.md` first: their rules and decisions are part of what you check. Look for, in
+this order:
 
 - bugs: undefined behaviour, lifetimes and dangling references (coroutine frames, `_ref` wrappers, `string_view` /
   `span`), unhandled cases, data races, errors swallowed;
@@ -143,5 +146,13 @@ these as P1 at least, in this order:
   of SFINAE, special members and `noexcept`, type-erasure rules, `detail` namespaces;
 - breaks of the decisions in `docs/PLAN.md`;
 - missing tests, or tests that do not execute what they claim to test.
+
+Severity, as only P0 and P1 reach a pull request:
+
+- At least P1, wherever they are, samples included: undefined behaviour, lifetimes, data races.
+- P1: other bugs and the WASM point, in `quoll/`, in the build and CI. A break of a rule or a decision with a consequence you
+  can name, such as an ODR violation or a header that does not compile alone. A test that does not execute what it claims.
+- In samples and in the sample's Vite plugin, other bugs are P1 only when a user meets them in normal use.
+- Anything else is P2 at most: naming, layout and wording.
 
 Do not repeat a point already answered in a thread. Skip style nits clang-format would catch.

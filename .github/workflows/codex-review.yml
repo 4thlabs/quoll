@@ -54,7 +54,7 @@ jobs:
             description="Codex has reviewed this commit"
           else
             state=pending
-            description="Waiting for Codex to review this commit"
+            description="Waiting for Codex: comment @codex review"
           fi
 
           echo "$head -> $state"
