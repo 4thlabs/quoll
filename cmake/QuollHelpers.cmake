@@ -13,10 +13,7 @@ set_property(GLOBAL PROPERTY QUOLL_COMPILE_FAIL_SOURCES "")
 # Warnings and checks for Quoll's own translation units (tests, header checks). Never exported to users.
 if(NOT TARGET quoll_warnings)
   add_library(quoll_warnings INTERFACE)
-  target_compile_options(quoll_warnings INTERFACE
-    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>
-    $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive->
-  )
+  target_compile_options(quoll_warnings INTERFACE -Wall -Wextra -Wpedantic)
   # The standard library checks what it can at run time, such as an index out of bounds or an empty optional read: the
   # test run stops rather than reading what it should not. Each library has its own switch, and neither changes the ABI,
   # so that what is built without them still links.

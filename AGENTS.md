@@ -112,11 +112,11 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). CI (`.github/workflows/ci.yml`): GCC 13, Clang 19
 and Emscripten build + tests, GCC 13 with TSan and with ASan / UBSan, and a clang-format check, on every PR and push to
-`main`; the header checks run on GCC 13 and Emscripten, the `compile_fail` ctests on GCC 13 and Clang 19, `clang-tidy`
+`main`, and an advisory job on macOS with Apple Clang; the header checks run on GCC 13, Emscripten and macOS, the `compile_fail` ctests on GCC 13 and Clang 19, `clang-tidy`
 (`.clang-tidy`) on Clang 19, and the native jobs keep their compilations in ccache. Formatting: `clang-format -i <file>` with the repo `.clang-format`; format only
 the files you touch.
 
-`main` is protected: everything goes through a PR, with every CI job and the status `Codex` green, up to date with
+`main` is protected: everything goes through a PR, with every required CI job and the status `Codex` green, up to date with
 `main` and its threads resolved, with no bypass for admins.
 
 Codex reviews the PRs (the ChatGPT Codex Connector, set up in Codex's settings, following the rules below).
