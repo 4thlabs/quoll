@@ -112,7 +112,7 @@ endfunction()
 function(quoll_compile_fail_tests)
   get_property(sources GLOBAL PROPERTY QUOLL_COMPILE_FAIL_SOURCES)
   separate_arguments(flags NATIVE_COMMAND "${CMAKE_CXX_FLAGS}")
-  list(APPEND flags ${CMAKE_CXX23_STANDARD_COMPILE_OPTION})
+  list(APPEND flags -std=c++23)
 
   foreach(path IN LISTS sources)
     get_property(deps GLOBAL PROPERTY "QUOLL_COMPILE_FAIL_DEPS:${path}")
