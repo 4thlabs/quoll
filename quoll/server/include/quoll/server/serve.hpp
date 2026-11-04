@@ -38,23 +38,15 @@
 #define QUOLL_SERVER_SERVE_HPP
 
 #include <quoll/async/any_executor.hpp>
-#include <quoll/async/co_spawn.hpp>
-#include <quoll/async/current_executor.hpp>
-#include <quoll/async/current_stop_token.hpp>
-#include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/listener.hpp>
 #include <quoll/server/connection_options.hpp>
-#include <quoll/server/serve_connection.hpp>
 
 #include <exception>
 #include <functional>
-#include <memory>
-#include <optional>
-#include <stop_token>
 #include <system_error>
 #include <utility>
 
@@ -83,36 +75,21 @@ struct serve_options {
 
 namespace detail {
 
-[[nodiscard]] inline bool one_connection_failure(std::error_code error) noexcept {
-  return error == std::errc::connection_aborted || error == std::errc::connection_reset;
-}
+// A listener, whichever it is. Non-owning: the listener outlives the task.
+struct listener_ref {
+  void *listener;
+  async::task<io::any_stream> (*accept)(void *listener);
 
-// What the connections of a serve() share: its options, and the count serve() waits on before it completes.
-struct shared_options {
-  serve_options options;
-  async::detail::task_group connections;
+  template <io::Listener Listener>
+  explicit listener_ref(Listener &target) noexcept
+      : listener(&target),
+        accept([](void *erased) -> async::task<io::any_stream> { return static_cast<Listener *>(erased)->accept(); }) {}
 };
 
-// The outcome of a connection spawned by serve(): it ends by itself, and a failure only ends it, reported to the
-// application's callback if it gave one.
-struct connection_outcome {
-  std::shared_ptr<shared_options> shared;
-
-  void operator()() const noexcept { shared->connections.ended(); }
-
-  void operator()(std::exception_ptr failure) const noexcept {
-    if (shared->options.on_connection_error) {
-      shared->options.on_connection_error(std::move(failure));
-    }
-
-    shared->connections.ended();
-  }
-};
-
-template <class Stream>
-async::task<> serve_shared(Stream stream, http::router const &router, std::shared_ptr<shared_options> shared) {
-  co_await serve_connection(std::move(stream), router, shared->options.connection);
-}
+[[nodiscard]] async::task<> serve_accepting(async::any_executor executor, listener_ref listener,
+                                            http::router const &router, serve_options options);
+[[nodiscard]] async::task<> serve_accepting_here(listener_ref listener, http::router const &router,
+                                                 serve_options options);
 
 } // namespace detail
 
@@ -134,70 +111,8 @@ async::task<> serve_shared(Stream stream, http::router const &router, std::share
  */
 template <async::Executor Executor, io::Listener Listener>
 async::task<> serve(Executor executor, Listener &listener, http::router const &router, serve_options options = {}) {
-  auto const stop_token = co_await async::current_stop_token();
-  auto const shared = std::make_shared<detail::shared_options>(std::move(options));
-  auto const &accept_error = shared->options.on_accept_error;
-  // The connections stop with serve(): on its stop request, and when its accept loop ends for another reason.
-  std::stop_source connections_stop;
-  std::stop_callback const forward_stop{stop_token, [&connections_stop] { connections_stop.request_stop(); }};
-  std::exception_ptr ending;
-
-  while (!stop_token.stop_requested()) {
-    std::optional<io::any_stream> stream;
-    std::exception_ptr failure;
-    std::error_code error;
-
-    try {
-      stream.emplace(co_await listener.accept());
-    } catch (std::system_error const &thrown) {
-      failure = std::current_exception();
-      error = thrown.code();
-    } catch (...) {
-      ending = std::current_exception();
-      break;
-    }
-
-    if (!stream) {
-      if (error == std::errc::operation_canceled) {
-        break;
-      }
-
-      auto again = false;
-
-      try {
-        again = accept_error ? co_await accept_error(error) : detail::one_connection_failure(error);
-      } catch (...) {
-        ending = std::current_exception();
-        break;
-      }
-
-      if (!again) {
-        ending = failure;
-        break;
-      }
-
-      continue;
-    }
-
-    shared->connections.started();
-
-    try {
-      async::co_spawn(executor, detail::serve_shared(std::move(*stream), router, shared),
-                      detail::connection_outcome{shared}, connections_stop.get_token());
-    } catch (...) {
-      // Not spawned: stop the others, wait for them, then fail.
-      shared->connections.ended();
-      ending = std::current_exception();
-      break;
-    }
-  }
-
-  connections_stop.request_stop();
-  co_await shared->connections.join();
-
-  if (ending) {
-    std::rethrow_exception(ending);
-  }
+  return detail::serve_accepting(async::any_executor{std::move(executor)}, detail::listener_ref{listener}, router,
+                                 std::move(options));
 }
 
 /**
@@ -209,10 +124,7 @@ async::task<> serve(Executor executor, Listener &listener, http::router const &r
  */
 template <io::Listener Listener>
 async::task<> serve(Listener &listener, http::router const &router, serve_options options = {}) {
-  // A copy, held by each connection: their frames end after serve() resumes.
-  async::any_executor executor{co_await async::current_executor()};
-
-  co_await serve(std::move(executor), listener, router, std::move(options));
+  return detail::serve_accepting_here(detail::listener_ref{listener}, router, std::move(options));
 }
 
 } // namespace quoll::server

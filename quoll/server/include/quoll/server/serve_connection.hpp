@@ -37,18 +37,13 @@
 #ifndef QUOLL_SERVER_SERVE_CONNECTION_HPP
 #define QUOLL_SERVER_SERVE_CONNECTION_HPP
 
-#include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/task.hpp>
-#include <quoll/http/detail/connection_field.hpp>
-#include <quoll/http/detail/status_response.hpp>
-#include <quoll/http/parser.hpp>
 #include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
+#include <quoll/io/any_stream.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/server/connection_options.hpp>
-#include <quoll/server/detail/connection.hpp>
 
-#include <string>
+#include <concepts>
 #include <utility>
 
 namespace quoll::server {
@@ -74,51 +69,23 @@ namespace quoll::server {
  *
  * Owns `stream`; `router` and `options` outlive the task.
  */
-template <io::ByteStream Stream>
-async::task<> serve_connection(Stream stream, http::router const &router, connection_options const &options) {
-  std::string buffer;
-  http::request_parser parser{options.limits};
-
-  for (;;) {
-    detail::skip_empty_lines(buffer);
-
-    // A pipelined request has already started.
-    if (buffer.empty() && !co_await async::detail::with_optional_timeout(options.idle_timeout,
-                                                                         detail::wait_for_request(stream, buffer))) {
-      co_return;
-    }
-
-    if (auto const read = co_await detail::read_request(stream, buffer, parser, options); read.error) {
-      if (auto const answer = detail::read_error_status(read)) {
-        auto rejected = http::detail::status_response(*answer);
-
-        detail::prepare(rejected, false, false);
-        (void)co_await detail::send_response(stream, rejected, false, options);
-      }
-
-      co_return;
-    }
-
-    auto keep_alive = parser.keep_alive() && !parser.upgrade();
-    auto request = parser.release();
-    auto const head = request.method == http::verb::head;
-    auto response = co_await detail::respond(router, std::move(request), options);
-
-    keep_alive = keep_alive && !http::detail::closes_connection(response.fields);
-    detail::prepare(response, head, keep_alive);
-
-    if (co_await detail::send_response(stream, response, keep_alive, options) || !keep_alive) {
-      co_return;
-    }
-  }
-}
+async::task<> serve_connection(io::any_stream stream, http::router const &router, connection_options const &options);
 
 /** @brief serve_connection() with the default options. */
-template <io::ByteStream Stream>
-async::task<> serve_connection(Stream stream, http::router const &router) {
-  static connection_options const defaults;
+async::task<> serve_connection(io::any_stream stream, http::router const &router);
 
-  return serve_connection(std::move(stream), router, defaults);
+/** @brief serve_connection() on a stream an io::any_stream can hold. */
+template <io::ByteStream Stream>
+  requires std::constructible_from<io::any_stream, Stream>
+async::task<> serve_connection(Stream stream, http::router const &router, connection_options const &options) {
+  return serve_connection(io::any_stream{std::move(stream)}, router, options);
+}
+
+/** @brief serve_connection() on a stream an io::any_stream can hold, with the default options. */
+template <io::ByteStream Stream>
+  requires std::constructible_from<io::any_stream, Stream>
+async::task<> serve_connection(Stream stream, http::router const &router) {
+  return serve_connection(io::any_stream{std::move(stream)}, router);
 }
 
 } // namespace quoll::server

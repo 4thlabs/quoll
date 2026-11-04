@@ -40,13 +40,11 @@
 #include <quoll/async/task.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/io/listen.hpp>
-#include <quoll/io/listen_tls.hpp>
 #include <quoll/io/tls_options.hpp>
 #include <quoll/server/serve.hpp>
 
 #include <cstdint>
 #include <string>
-#include <utility>
 
 namespace quoll::server {
 
@@ -82,13 +80,7 @@ struct listen_options {
  * "key.pem"}});
  * @endcode
  */
-[[nodiscard]] inline async::task<> listen(http::router const &router, std::uint16_t port, listen_options options = {}) {
-  auto listener = options.tls.enabled()
-                      ? co_await io::listen_tls(port, std::move(options.tls), std::move(options.address))
-                      : co_await io::listen(port, std::move(options.address));
-
-  co_await serve(listener, router, std::move(options.serve));
-}
+[[nodiscard]] async::task<> listen(http::router const &router, std::uint16_t port, listen_options options = {});
 
 } // namespace quoll::server
 

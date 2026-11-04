@@ -34,22 +34,19 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_SERVER_DETAIL_CONNECTION_HPP
-#define QUOLL_SERVER_DETAIL_CONNECTION_HPP
+#include <quoll/server/serve_connection.hpp>
 
 #include <quoll/async/detail/optional_timeout.hpp>
-#include <quoll/async/task.hpp>
+#include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
-#include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
+#include <quoll/http/verb.hpp>
 #include <quoll/http/write.hpp>
-#include <quoll/io/byte_stream.hpp>
-#include <quoll/server/connection_options.hpp>
 
 #include <array>
 #include <exception>
@@ -60,7 +57,9 @@
 #include <system_error>
 #include <utility>
 
-namespace quoll::server::detail {
+namespace quoll::server {
+
+namespace {
 
 // How reading a request ended.
 struct request_read {
@@ -72,7 +71,7 @@ struct request_read {
 
 // The status answering a request that could not be read, if it deserves one: a peer that closed in the middle of a
 // message, or a broken stream, gets nothing.
-[[nodiscard]] inline std::optional<http::status> read_error_status(request_read const &read) noexcept {
+[[nodiscard]] std::optional<http::status> read_error_status(request_read const &read) noexcept {
   if (read.expired) {
     return http::status::request_timeout;
   }
@@ -98,12 +97,11 @@ struct request_read {
 
 // Drops what comes before a request and is no part of it: the empty lines a server ignores (RFC 9112, 2.2), which some
 // clients send after a body.
-inline void skip_empty_lines(std::string &buffer) { buffer.erase(0, buffer.find_first_not_of("\r\n")); }
+void skip_empty_lines(std::string &buffer) { buffer.erase(0, buffer.find_first_not_of("\r\n")); }
 
 // Waits for a request to start, in `buffer`. False when the connection ends instead, whatever the reason: it was idle,
 // so nothing is owed to the peer.
-template <io::ByteStream Stream>
-async::task<bool> wait_for_request(Stream &stream, std::string &buffer) {
+async::task<bool> wait_for_request(io::any_stream &stream, std::string &buffer) {
   std::array<char, 4096> chunk;
 
   while (buffer.empty()) {
@@ -121,8 +119,8 @@ async::task<bool> wait_for_request(Stream &stream, std::string &buffer) {
 }
 
 // http::read(), its cancellation thrown: with_timeout() only tells its own from another when it is.
-template <io::ByteStream Stream>
-async::task<std::error_code> read_or_throw_canceled(Stream &stream, std::string &buffer, http::request_parser &parser) {
+async::task<std::error_code> read_or_throw_canceled(io::any_stream &stream, std::string &buffer,
+                                                    http::request_parser &parser) {
   auto const error = co_await http::read(stream, buffer, parser);
 
   if (error == std::errc::operation_canceled) {
@@ -134,8 +132,7 @@ async::task<std::error_code> read_or_throw_canceled(Stream &stream, std::string 
 
 // http::read() of a request, up to the timeout. Streams report their errors as values: thrown, timed_out can only be
 // the timeout's.
-template <io::ByteStream Stream>
-async::task<request_read> read_request(Stream &stream, std::string &buffer, http::request_parser &parser,
+async::task<request_read> read_request(io::any_stream &stream, std::string &buffer, http::request_parser &parser,
                                        connection_options const &options) {
   try {
     co_return request_read{co_await async::detail::with_optional_timeout(
@@ -154,8 +151,8 @@ async::task<request_read> read_request(Stream &stream, std::string &buffer, http
 }
 
 // The router's response, or 500 if its handler threw, reported to the application's callback if it gave one.
-inline async::task<http::response> respond(http::router const &router, http::request request,
-                                           connection_options const &options) {
+async::task<http::response> respond(http::router const &router, http::request request,
+                                    connection_options const &options) {
   try {
     co_return co_await router.dispatch(std::move(request));
   } catch (...) {
@@ -170,7 +167,7 @@ inline async::task<http::response> respond(http::router const &router, http::req
 // Ready to write. A response to HEAD has no body: it announces the length of the one it does not carry, with
 // Content-Length rather than chunked coding, whose terminating chunk would be read as the next response. The last
 // response of a connection says so.
-inline void prepare(http::response &response, bool head, bool keep_alive) {
+void prepare(http::response &response, bool head, bool keep_alive) {
   if (head) {
     if (response.fields.contains("Transfer-Encoding")) {
       response.fields.erase("Transfer-Encoding");
@@ -189,8 +186,7 @@ inline void prepare(http::response &response, bool head, bool keep_alive) {
 }
 
 // Writes the response, or a 500 in its place if it cannot be serialized (a handler built an invalid one).
-template <io::ByteStream Stream>
-async::task<std::error_code> write_response(Stream &stream, http::response const &response, bool keep_alive) {
+async::task<std::error_code> write_response(io::any_stream &stream, http::response const &response, bool keep_alive) {
   std::optional<async::task<std::error_code>> sending;
 
   try {
@@ -206,13 +202,56 @@ async::task<std::error_code> write_response(Stream &stream, http::response const
 }
 
 // write_response(), up to the timeout: past it, the error is the stream's cancellation.
-template <io::ByteStream Stream>
-async::task<std::error_code> send_response(Stream &stream, http::response const &response, bool keep_alive,
+async::task<std::error_code> send_response(io::any_stream &stream, http::response const &response, bool keep_alive,
                                            connection_options const &options) {
   co_return co_await async::detail::with_optional_timeout(options.write_timeout,
                                                           write_response(stream, response, keep_alive));
 }
 
-} // namespace quoll::server::detail
+} // namespace
 
-#endif // QUOLL_SERVER_DETAIL_CONNECTION_HPP
+async::task<> serve_connection(io::any_stream stream, http::router const &router, connection_options const &options) {
+  std::string buffer;
+  http::request_parser parser{options.limits};
+
+  for (;;) {
+    skip_empty_lines(buffer);
+
+    // A pipelined request has already started.
+    if (buffer.empty() &&
+        !co_await async::detail::with_optional_timeout(options.idle_timeout, wait_for_request(stream, buffer))) {
+      co_return;
+    }
+
+    if (auto const read = co_await read_request(stream, buffer, parser, options); read.error) {
+      if (auto const answer = read_error_status(read)) {
+        auto rejected = http::detail::status_response(*answer);
+
+        prepare(rejected, false, false);
+        (void)co_await send_response(stream, rejected, false, options);
+      }
+
+      co_return;
+    }
+
+    auto keep_alive = parser.keep_alive() && !parser.upgrade();
+    auto request = parser.release();
+    auto const head = request.method == http::verb::head;
+    auto response = co_await respond(router, std::move(request), options);
+
+    keep_alive = keep_alive && !http::detail::closes_connection(response.fields);
+    prepare(response, head, keep_alive);
+
+    if (co_await send_response(stream, response, keep_alive, options) || !keep_alive) {
+      co_return;
+    }
+  }
+}
+
+async::task<> serve_connection(io::any_stream stream, http::router const &router) {
+  static connection_options const defaults;
+
+  return serve_connection(std::move(stream), router, defaults);
+}
+
+} // namespace quoll::server

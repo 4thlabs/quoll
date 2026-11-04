@@ -37,24 +37,17 @@
 #ifndef QUOLL_CLIENT_TRANSPORT_HPP
 #define QUOLL_CLIENT_TRANSPORT_HPP
 
-#include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/task.hpp>
-#include <quoll/client/detail/connection_pool.hpp>
-#include <quoll/client/detail/exchange.hpp>
-#include <quoll/client/detail/host.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/client/transport_options.hpp>
-#include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
-#include <quoll/http/serializer.hpp>
-#include <quoll/http/version.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/connector.hpp>
 #include <quoll/io/network_connector.hpp>
 #include <quoll/io/tls_connector.hpp>
+#include <quoll/io/tls_options.hpp>
 
-#include <cassert>
 #include <concepts>
 #include <cstdint>
 #include <memory>
@@ -64,6 +57,26 @@
 #include <utility>
 
 namespace quoll::client {
+
+namespace detail {
+
+// What a transport does, whatever its connector: compiled once.
+class transport_core;
+
+// A connector, whichever it is: the core owns it through this.
+struct connector_handle {
+  std::shared_ptr<void const> connector;
+  async::task<io::any_stream> (*open)(void const *connector, std::string const &host, std::uint16_t port, bool secure,
+                                      io::tls_client_options const &tls);
+};
+
+[[nodiscard]] std::shared_ptr<transport_core> make_transport_core(connector_handle connector, std::string host,
+                                                                  std::uint16_t port, bool secure,
+                                                                  transport_options const &options);
+
+[[nodiscard]] async::task<http::response> send(std::shared_ptr<transport_core> const &core, http::request request);
+
+} // namespace detail
 
 /**
  * @brief HttpTransport speaking HTTP/1.1 to one server, over the byte streams of a connector: by default the network
@@ -111,7 +124,7 @@ public:
    * an IPv6 address: one with a port (`localhost:8080`), brackets, a zone index, spaces...
    */
   transport(Connector connector, std::string host, std::uint16_t port, transport_options options = {})
-      : state_(std::make_shared<state>(std::move(connector), std::move(host), port, options)) {}
+      : core_(make_core(std::move(connector), std::move(host), port, false, options)) {}
 
   /**
    * @brief A transport to the server of `url`, `http[s]://host[:port]` (an IPv6 address in brackets), connecting with a
@@ -137,84 +150,39 @@ public:
    * for what http::serialize() rejects.
    */
   [[nodiscard]] async::task<http::response> send(http::request request) const {
-    if (!request.target.starts_with('/')) {
-      throw std::invalid_argument{"quoll::client::transport: the target is not in origin form"};
-    }
-
-    if (!request.fields.contains("Host")) {
-      request.fields.add("Host", state_->host_field);
-    }
-
-    auto const keep_alive = request.version == http::version::http_1_1 &&
-                            !http::detail::closes_connection(request.fields) &&
-                            state_->options.max_idle_connections > 0;
-
-    return send_prepared(state_, detail::prepared_request{http::serialize(request), request.method, keep_alive});
+    return detail::send(core_, std::move(request));
   }
 
 private:
   transport(Connector connector, detail::origin server, transport_options options)
-      : state_(std::make_shared<state>(std::move(connector), std::move(server.host), server.port, options,
-                                       server.secure)) {
+      : core_(make_core(std::move(connector), std::move(server.host), server.port, server.secure, options)) {
     if (server.secure && !io::TlsConnector<Connector>) {
       throw std::invalid_argument{"quoll::client::transport: this connector cannot open https connections"};
     }
   }
 
-  struct state {
-    state(Connector connector_, std::string host_, std::uint16_t port_, transport_options const &options_,
-          bool secure_ = false)
-        : connector(std::move(connector_)), host(std::move(host_)), port(port_),
-          host_field(detail::host_field(host, port, secure_ ? 443 : 80)), options(options_),
-          pool(options_.max_idle_connections), secure(secure_) {}
+  // The only part that knows the connector.
+  [[nodiscard]] static std::shared_ptr<detail::transport_core>
+  make_core(Connector connector, std::string host, std::uint16_t port, bool secure, transport_options const &options) {
+    detail::connector_handle handle{
+        std::make_shared<Connector const>(std::move(connector)),
+        [](void const *erased, std::string const &to, std::uint16_t on, [[maybe_unused]] bool use_tls,
+           [[maybe_unused]] io::tls_client_options const &tls) -> async::task<io::any_stream> {
+          auto const &target = *static_cast<Connector const *>(erased);
 
-    Connector connector;
-    std::string host;
-    std::uint16_t port;
-    std::string host_field;
-    transport_options options;
-    detail::connection_pool pool;
-    bool secure;
-  };
+          if constexpr (io::TlsConnector<Connector>) {
+            if (use_tls) {
+              return target.connect_tls(to, on, tls);
+            }
+          }
 
-  [[nodiscard]] static async::task<io::any_stream> open(state const &shared) {
-    if constexpr (io::TlsConnector<Connector>) {
-      if (shared.secure) {
-        return shared.connector.connect_tls(shared.host, shared.port, shared.options.tls);
-      }
-    }
+          return target.connect(to, on);
+        }};
 
-    return shared.connector.connect(shared.host, shared.port);
+    return detail::make_transport_core(std::move(handle), std::move(host), port, secure, options);
   }
 
-  // Static: the task holds the shared state, not the transport.
-  static async::task<http::response> send_prepared(std::shared_ptr<state> shared, detail::prepared_request request) {
-    if (detail::idempotent(request.method)) {
-      if (auto idle = shared->pool.take()) {
-        auto response = co_await async::detail::with_optional_timeout(
-            shared->options.response_timeout,
-            detail::exchange(shared->pool, shared->options.limits, std::move(*idle), request, true));
-
-        if (response) {
-          co_return std::move(*response);
-        }
-
-        // Closed by the server after some idle time: the connections idle for longer are likely closed as well.
-        shared->pool.clear();
-      }
-    }
-
-    auto connection = co_await async::detail::with_optional_timeout(shared->options.connect_timeout, open(*shared));
-    auto response = co_await async::detail::with_optional_timeout(
-        shared->options.response_timeout,
-        detail::exchange(shared->pool, shared->options.limits, std::move(connection), request, false));
-
-    // Without retry_if_closed, exchange() produces a response or throws.
-    assert(response && "client::detail::exchange() without retry_if_closed produced no response");
-    co_return std::move(*response);
-  }
-
-  std::shared_ptr<state> state_;
+  std::shared_ptr<detail::transport_core> core_;
 };
 
 } // namespace quoll::client
