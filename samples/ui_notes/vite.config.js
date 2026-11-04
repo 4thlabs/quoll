@@ -47,7 +47,6 @@ export default defineConfig({
       target: 'quoll_ui_notes',
       sources: [
         'main.cpp',
-        'notes_page.cpp',
         'notes_page.hpp',
         'notes_client.cpp',
         'notes_client.hpp',

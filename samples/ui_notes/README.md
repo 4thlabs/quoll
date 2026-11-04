@@ -25,7 +25,7 @@ In the dev container, or with Emscripten, Node and a C++23 compiler at hand, `sa
 
 ## Try hot reload
 
-Add a note, start typing another one, and change `notes_page.cpp` in your editor:
+Add a note, start typing another one, and change `notes_page.hpp` in your editor:
 
 | Change | What happens | The note you are typing |
 |---|---|---|
@@ -33,7 +33,7 @@ Add a note, start typing another one, and change `notes_page.cpp` in your editor
 | `tw("btn btn-primary")` to `tw("btn btn-secondary")` | shows at once | stays |
 | `tw("text-4xl font-bold")` to `tw("text-4xl font-bold text-rose-500")`, a class not used yet | Tailwind generates it, and it shows at once | stays |
 | A comment, or spaces | nothing | stays |
-| Anything else, such as adding a `state` | a rebuild of less than a second, then the page reloads | **lost** |
+| Anything else, such as adding a `state` | a rebuild of about 1 s, then the page reloads | **lost** |
 | `int x = oops;` | the compiler's first error, over the page | |
 
 ## The API
@@ -82,21 +82,15 @@ ends.
 
 ## Keep rebuilds short
 
-The sample is split so that a change in what shows compiles little:
+A page can live in a header, with no source of its own. Two things keep its rebuilds short:
 
-| Source | Holds | Compiles again when |
-|---|---|---|
-| `notes_page.cpp` | what shows, and what it does | it changes: all the time |
-| `main.cpp` | `mount`, which instantiates `app<C, R>` | the struct changes |
-| `notes_client.cpp` | the calls, with REST and JSON | a call changes |
+- **Quoll, precompiled:** `target_precompile_headers` in `CMakeLists.txt`. Quoll stays header-only: this only tells the
+  compiler to parse it once.
+- **REST and JSON in a source apart:** `notes_client.cpp`, which compiles only when a call changes. It relays the contract
+  by hand for now; it could be generated from it.
 
-`CMakeLists.txt` also precompiles the headers `notes_page.cpp` needs.
-
-Measured from a save to the end of the build, for a change in the page, on one machine with 8 cores:
-
-| Everything in one source | + REST apart, and precompiled headers | + `main` apart |
-|---|---|---|
-| 3.9 s | 1.05 s | **0.74 s** |
+Measured from a save to the end of the build, for a change in the page, on one machine with 8 cores: 3.9 s with everything
+in one source and nothing precompiled, about 1 s as it is here.
 
 ## Build for production
 

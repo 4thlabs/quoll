@@ -34,12 +34,11 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The notes of samples/notes in a browser. What it shows is in notes_page.cpp, and its calls to the server in
-// notes_client.cpp: this source mounts it, and rarely changes.
+// The notes of samples/notes in a browser. What it shows is in notes_page.hpp, and its calls to the server in
+// notes_client.cpp, so that a change in the page does not compile REST and JSON again.
 
 #include "notes_page.hpp"
 
 #include <quoll/emscripten/mount.hpp>
-#include <quoll/ui/app.hpp>
 
-int main() { quoll::emscripten::mount<notes_page>(); }
+int main() { quoll::emscripten::mount<notes_ui::notes_page>(); }

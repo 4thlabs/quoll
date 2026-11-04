@@ -34,31 +34,69 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The page of the notes, as main.cpp sees it. What it shows is in notes_page.cpp, so that changing it does not compile
-// again what mounts it.
+// The page of the notes: what it shows and what it does, in a header. The source that changes all the time.
 
 #ifndef QUOLL_SAMPLES_UI_NOTES_PAGE_HPP
 #define QUOLL_SAMPLES_UI_NOTES_PAGE_HPP
 
 #include "note.hpp"
+#include "notes_client.hpp"
 
-#include <quoll/async/task.hpp>
-#include <quoll/ui/element.hpp>
-#include <quoll/ui/state.hpp>
+#include <quoll/ui.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
 
-struct notes_page {
-  quoll::ui::state<std::vector<notes::note>> items;
-  quoll::ui::state<std::string> draft;
+namespace notes_ui {
 
-  quoll::async::task<> mounted();
-  quoll::async::task<> add();
-  quoll::async::task<> remove(std::int64_t id);
-  quoll::ui::element note_row(notes::note const &item);
-  quoll::ui::element view();
+using namespace quoll::ui;
+
+using quoll::async::task;
+
+struct notes_page {
+  state<std::vector<notes::note>> items;
+  state<std::string> draft;
+
+  task<> mounted() { items = co_await notes_client::list(); }
+
+  task<> add() {
+    auto const created = co_await notes_client::create(*draft);
+
+    items.update([&created](auto &all) { all.push_back(created); });
+    draft.set({});
+  }
+
+  task<> remove(std::int64_t id) {
+    co_await notes_client::remove(id);
+    items.update([id](auto &all) { std::erase_if(all, [id](auto const &item) { return item.id == id; }); });
+  }
+
+  element note_row(notes::note const &item) {
+    return li({
+               span(item.text) | tw("flex-1"),
+               button("Delete") | tw("btn btn-ghost btn-sm") |
+                   on_click([this, id = item.id]() -> task<> { co_await remove(id); }),
+           }) |
+           tw("flex items-center gap-2 rounded-box bg-base-100 px-4 py-2 shadow-sm") | key(item.id);
+  }
+
+  element view() {
+    return main_({
+               h1("Notes") | tw("text-4xl font-bold"),
+               div({
+                   input() | bind(draft) | tw("input input-bordered flex-1") | attribute("placeholder", "A new note"),
+                   button("Add") | tw("btn btn-primary") | attribute("id", "add") |
+                       on_click([this]() -> task<> { co_await add(); }),
+               }) | tw("flex gap-2"),
+               ul({list(items, [this](notes::note const &item) { return note_row(item); })}) |
+                   tw("flex flex-col gap-2"),
+           }) |
+           tw("mx-auto flex max-w-xl flex-col gap-6 p-8");
+  }
 };
+
+} // namespace notes_ui
 
 #endif // QUOLL_SAMPLES_UI_NOTES_PAGE_HPP

@@ -6,10 +6,9 @@ add_library(quoll_ui_notes_client OBJECT notes_client.cpp)
 target_include_directories(quoll_ui_notes_client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../notes)
 target_link_libraries(quoll_ui_notes_client PUBLIC quoll::emscripten quoll::rest)
 
-add_executable(quoll_ui_notes main.cpp notes_page.cpp)
+add_executable(quoll_ui_notes main.cpp)
 target_link_libraries(quoll_ui_notes PRIVATE quoll_ui_notes_client quoll::emscripten quoll::ui)
 target_link_options(quoll_ui_notes PRIVATE -sALLOW_MEMORY_GROWTH)
 
-# What takes most of the rest: parsing the same headers, for each change.
-target_precompile_headers(quoll_ui_notes PRIVATE <quoll/ui/decorators.hpp> <quoll/ui/element.hpp> <quoll/ui/state.hpp>
-                          <quoll/ui/tags.hpp> <string> <vector>)
+# Quoll, precompiled, as parsing it takes most of the rest: it stays header-only, and this is the build's own business.
+target_precompile_headers(quoll_ui_notes PRIVATE <quoll/emscripten/mount.hpp> <quoll/ui.hpp> <string> <vector>)
