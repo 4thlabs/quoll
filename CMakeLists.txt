@@ -11,6 +11,7 @@ if(PROJECT_IS_TOP_LEVEL)
 endif()
 
 option(QUOLL_BUILD_TESTS "Build the Quoll tests" ${PROJECT_IS_TOP_LEVEL})
+option(QUOLL_HEADER_CHECKS "With the tests, compile every header alone" ON)
 option(QUOLL_INSTALL "Generate the Quoll install rules" ${PROJECT_IS_TOP_LEVEL})
 option(QUOLL_BUILD_SAMPLES "Build the Quoll samples" ${PROJECT_IS_TOP_LEVEL})
 

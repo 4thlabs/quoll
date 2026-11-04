@@ -27,11 +27,15 @@ jobs:
       fail-fast: false
       matrix:
         compiler:
-          - { name: gcc-13, cxx: g++-13 }
+          - { name: gcc-13, cxx: g++-13, header-checks: ON }
           # The runner's default libstdc++ is GCC 14's: with Clang 19, its C++23 tuple-like comparisons break
           # Catch2's expression decomposition (REQUIRE on a tuple or an optional of one). Clang uses GCC 13's
-          # libstdc++, as the dev container does.
-          - { name: clang-19, cxx: clang++-19, cxxflags: --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/13 }
+          # libstdc++, as the dev container does: the header checks, which depend on what a library's headers include,
+          # would only repeat GCC's. Emscripten runs them on its libc++.
+          - name: clang-19
+            cxx: clang++-19
+            cxxflags: --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/13
+            header-checks: OFF
 
     steps:
       - name: Checkout repository
@@ -43,22 +47,30 @@ jobs:
           path: .cpm-cache
           key: cpm-${{ hashFiles('**/CMakeLists.txt', 'cmake/**') }}
 
+      - name: Update the package lists
+        run: sudo apt-get update
+
       # Clang 19, the oldest Clang Quoll supports, is not preinstalled on the runner.
       - name: Install Clang
         if: startsWith(matrix.compiler.name, 'clang')
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends clang-19
+        run: sudo apt-get install -y --no-install-recommends clang-19
+
+      - name: Set up ccache
+        uses: ./.github/actions/ccache
+        with:
+          job: ${{ matrix.compiler.name }}
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DQUOLL_HEADER_CHECKS=${{ matrix.compiler.header-checks }}
         env:
           CXX: ${{ matrix.compiler.cxx }}
           CXXFLAGS: ${{ matrix.compiler.cxxflags }}
 
       - name: Build
-        run: cmake --build build -j
+        run: cmake --build build --parallel "$(nproc)"
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --parallel "$(nproc)"
 
   sanitizers:
     name: gcc-13 ${{ matrix.sanitizer.name }}
@@ -84,20 +96,29 @@ jobs:
       - name: Reduce address space randomization
         run: sudo sysctl vm.mmap_rnd_bits=28
 
+      - name: Update the package lists
+        run: sudo apt-get update
+
+      - name: Set up ccache
+        uses: ./.github/actions/ccache
+        with:
+          job: ${{ matrix.sanitizer.name }}
+
+      # What only the compiler checks is checked without the sanitizers: no header checks, no compile_fail ctests.
       - name: Configure
         # The C flags too: llhttp is C.
         run: >-
-          cmake -B build -DCMAKE_BUILD_TYPE=Debug
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug -DQUOLL_HEADER_CHECKS=OFF
           "-DCMAKE_C_FLAGS=${{ matrix.sanitizer.flags }} -fno-omit-frame-pointer"
           "-DCMAKE_CXX_FLAGS=${{ matrix.sanitizer.flags }} -fno-omit-frame-pointer"
         env:
           CXX: g++-13
 
       - name: Build
-        run: cmake --build build -j
+        run: cmake --build build --parallel "$(nproc)"
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --parallel "$(nproc)" --exclude-regex "^compile_fail"
 
   wasm:
     name: emscripten
@@ -123,7 +144,7 @@ jobs:
         run: emcmake cmake -B build-wasm -DCMAKE_BUILD_TYPE=Debug
 
       - name: Build
-        run: cmake --build build-wasm -j
+        run: cmake --build build-wasm --parallel "$(nproc)"
 
       - name: Test
         run: ctest --test-dir build-wasm --output-on-failure
