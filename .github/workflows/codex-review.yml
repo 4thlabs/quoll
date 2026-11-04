@@ -1,0 +1,63 @@
+name: Codex review
+
+# Sets the status `Codex`, required on main: green once Codex has finished reviewing the last commit of a pull request.
+#
+# Codex says so in a comment it edits in place. Anyone can comment on a public repository: only its own comments count.
+#
+# pull_request_target runs this file as it is on main, as a branch could otherwise change what it says about itself, and
+# gives forks the token to set the status. That is safe here because nothing from a pull request is checked out or run.
+on:
+  pull_request_target:
+    branches:
+      - main
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  pull-requests: read
+  statuses: write
+
+jobs:
+  status:
+    name: Read Codex's status
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
+    # The last run reads the latest comment, so it may safely be the only one left waiting. On the job rather than the
+    # workflow, as the run of a comment from anyone else would take that place, and then do nothing.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+    steps:
+      - name: Set the status of the last commit
+        run: |
+          head=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
+
+          # A failure here fails the job and leaves the status as it was. Codex could keep several comments: any counts.
+          reviews=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" --jq '
+            .[]
+            | select(.user.login == "chatgpt-codex-connector[bot]" and .user.type == "Bot")
+            | .body
+            | capture("codex-review-state:v1 (?<state>\\{.*\\}) -->")?
+            | .state
+            | fromjson
+            | .code_review
+            | "\(.commit_sha) \(.status)"')
+
+          if grep --quiet --fixed-strings --line-regexp "$head completed" <<< "$reviews"; then
+            state=success
+            description="Codex has reviewed this commit"
+          else
+            state=pending
+            description="Waiting for Codex to review this commit"
+          fi
+
+          echo "$head -> $state"
+
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$head" \
+            -f state="$state" -f context=Codex -f description="$description" --silent
