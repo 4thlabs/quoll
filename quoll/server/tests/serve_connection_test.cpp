@@ -233,7 +233,7 @@ std::string session(virtual_time &time, connection_options const &options, MakeP
 }
 
 // A peer that stays until it ends by itself: its end closes after `delay`.
-task<std::string> leave_after(io::memory_stream client, std::chrono::nanoseconds delay) {
+task<std::string> leave_after(io::memory_stream, std::chrono::nanoseconds delay) {
   co_await quoll::async::sleep_for(delay);
   co_return std::string{};
 }

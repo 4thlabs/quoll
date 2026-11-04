@@ -27,10 +27,40 @@ endif()
 
 quoll_declare_module(NAME asio DEPS quoll::io Threads::Threads $<BUILD_INTERFACE:${quoll_asio_dependency}>)
 
+# TLS needs OpenSSL. AUTO uses it when it is there: without it, https:// and a server's certificate fail at run time,
+# saying so. ON makes it required; OFF goes without.
+set(QUOLL_TLS AUTO CACHE STRING "TLS through OpenSSL: AUTO uses it when found, ON requires it, OFF goes without")
+set_property(CACHE QUOLL_TLS PROPERTY STRINGS AUTO ON OFF)
+
+if(QUOLL_TLS STREQUAL "ON")
+  find_package(OpenSSL REQUIRED)
+elseif(QUOLL_TLS STREQUAL "AUTO")
+  find_package(OpenSSL QUIET)
+endif()
+
+if(OpenSSL_FOUND AND NOT QUOLL_TLS STREQUAL "OFF")
+  message(STATUS "Quoll: TLS through OpenSSL ${OPENSSL_VERSION}")
+  target_link_libraries(quoll_asio INTERFACE OpenSSL::SSL OpenSSL::Crypto)
+  target_compile_definitions(quoll_asio INTERFACE QUOLL_ASIO_TLS)
+  # For the package's quoll-config.cmake: its users need OpenSSL too.
+  set(QUOLL_PACKAGE_NEEDS_OPENSSL ON CACHE INTERNAL "")
+else()
+  message(STATUS "Quoll: no TLS: https:// and a server's certificate fail at run time")
+  set(QUOLL_PACKAGE_NEEDS_OPENSSL OFF CACHE INTERNAL "")
+endif()
+
+# The certificates of the TLS tests.
+add_library(quoll_asio_test_tls INTERFACE)
+target_compile_definitions(quoll_asio_test_tls INTERFACE
+  "QUOLL_TEST_TLS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/tls\""
+)
+
 quoll_declare_tests(
   SOURCES
     tests/asio_test.cpp
+    tests/tls_test.cpp
   DEPS
+    quoll_asio_test_tls
     quoll::asio
     quoll::client
     quoll::http

@@ -62,6 +62,12 @@ and any combination of them (e.g. an offline-capable PWA that syncs with a Quoll
   task that finishes anyway still gives its result. The server and the client have timeouts by default (server: idle
   60 s, read and write 30 s; client: connect 30 s, response 60 s), which zero disables. They do not apply on an executor
   without a timer.
+- TLS (2026-11-04): one more service of the executor (`io::tls_network_ref`), through `asio::ssl` and OpenSSL. `https://`
+  checks the server against the system's authorities and its name by default; `.tls = {.ca_file = ...}` trusts a private
+  authority, `.tls = {.verify_peer = false}` turns the check off. `listen` takes `.tls = {.certificate_file = ...,
+  .private_key_file = ...}`. OpenSSL is detected when configuring (`QUOLL_TLS`: `AUTO`, `ON`, `OFF`): without it, what
+  needs TLS throws at run time, saying so. A server's handshake takes place on the connection's first read, so that a
+  slow peer holds nobody back and the idle timeout covers it. In a browser, `fetch` does it all.
 
 ## Architecture
 
@@ -634,8 +640,7 @@ Every point the plan leaves open, gathered here; the linked sections give the co
 - A default `main()` provided by Quoll, creating the runtime and running an application coroutine, once the shape of
   that coroutine (arguments, exit code) is settled.
 - `quoll::client` (see [Usable server and client](#usable-server-and-client-current-step)): a limit of connections per
-  transport (requests now open a connection when none is idle), redirects, TLS
-  through the connector. Idle connections are only found closed when a request uses them: closing them after an idle
+  transport (requests now open a connection when none is idle), redirects. Idle connections are only found closed when a request uses them: closing them after an idle
   time needs the timer, and letting a POST
   reuse one needs a stream that tells a closed peer before writing (a read kept pending on idle connections). The
   request body is copied into the serialized message; writing the head and the body as two buffers avoids it.
@@ -657,13 +662,16 @@ per topic, in this order:
 
 1. Timer and timeouts (done): `async::sleep_for` and `async::with_timeout`; idle, read and write timeouts on the server,
    connect and response timeouts on the client, set by default.
-2. TLS and `https`: connector and acceptor through `asio::ssl` (OpenSSL); the client refuses `https://` today.
+2. TLS and `https` (done): through `asio::ssl` and OpenSSL.
 3. Server robustness: graceful shutdown, connection limit, `Expect: 100-continue`, lingering close after an error.
 4. Missing features: server middlewares and static files; client redirects, connection limit, path prefix in the base
    URL. Streaming large bodies stays out unless asked.
 
 Left over from the first topic, to settle along the way:
 
+- With the server robustness (topic 3): a TLS connection closes without TLS's closing message, which needs the same
+  half-close in `ByteStream` as a lingering close.
+- If a benchmark shows it matters: a TLS client builds its context per connection, and resumes no session.
 - With the static files (topic 4): the server's read and write timeouts cover a message as a whole, which is strong
   against slow peers but also ends a legitimate transfer on a slow link (8 MiB in 30 s is about 2.2 Mbit/s). Static
   files and streamed bodies will need a limit on progress instead, or a minimum rate.

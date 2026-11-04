@@ -38,6 +38,7 @@
 #define QUOLL_CLIENT_TRANSPORT_OPTIONS_HPP
 
 #include <quoll/http/parser.hpp>
+#include <quoll/io/tls_options.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -53,7 +54,7 @@ namespace quoll::client {
  */
 struct transport_options {
   /** @brief Size limits of the responses, against servers sending unbounded ones. */
-  http::parse_limits limits;
+  http::parse_limits limits{};
   /**
    * @brief Connections kept open once their response is read, for the next requests (keep-alive); 0 closes each
    * connection after its response.
@@ -67,6 +68,8 @@ struct transport_options {
    * as the server may be working on it.
    */
   std::chrono::nanoseconds response_timeout = std::chrono::seconds{60};
+  /** @brief How the servers of `https://` URLs are checked: by default, against the system's authorities. */
+  io::tls_client_options tls{};
 };
 
 } // namespace quoll::client

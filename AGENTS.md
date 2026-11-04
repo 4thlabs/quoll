@@ -19,16 +19,17 @@ current_executor and current_stop_token, executor services, co_spawn and its `de
 `Timer` and `timer_ref`, `sleep_for`, `with_timeout`),
 `quoll::io` (`ByteStream`, `Connector`, `Listener`, `BoundListener` and `Network` concepts, `any_stream` /
 `any_listener` type erasure, `io::network_ref` with `io::connect` / `io::listen` through the executor's network,
-`io::network_connector`, in-memory stream pair, `io::write`), `quoll::http` (messages, llhttp parser, serializer,
+`io::network_connector`, TLS options with `TlsNetwork`, `tls_network_ref`, `TlsConnector`, `io::connect_tls` and
+`io::listen_tls`, in-memory stream pair, `io::write`), `quoll::http` (messages, llhttp parser, serializer,
 `http::read` / `http::write` over a byte stream, `HttpTransport` concept, sans-IO `router`, `local_transport` to a
 router of the same program; llhttp is compiled and exported as `quoll::llhttp`), `quoll::server` (`serve_connection`
 serves a router on a byte stream, `serve` accepts connections from a `Listener`, `listen(router, port)`),
-`quoll::client` (`transport`, an `HttpTransport` over a `Connector` with keep-alive connections, built from an `http://`
-URL), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `client::transport` by default, and the
+`quoll::client` (`transport`, an `HttpTransport` over a `Connector` with keep-alive connections, built from an
+`http[s]://` URL), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `client::transport` by default, and the
 contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates; and the codecs: `json_codec` on
 Glaze, `text_codec`, `param_traits`), the adapters `quoll::threads` (thread pool executor; its tests do not run under
-WASM), `quoll::asio` (asio executor offering the network and a timer, `tcp_stream`, TCP connector and acceptor, `runtime`;
-native only, the application provides standalone asio) and `quoll::emscripten` (JavaScript event loop executor offering
+WASM), `quoll::asio` (asio executor offering the network, a timer and TLS, `tcp_stream`, `tls_stream`, connector and acceptors,
+`runtime`; native only, the application provides standalone asio, TLS needs OpenSSL) and `quoll::emscripten` (JavaScript event loop executor offering
 a timer, `fetch_transport`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`),
 and
 `quoll::runtime` (`<quoll/runtime.hpp>`: `quoll::runtime`, the runtime of the adapter chosen with `QUOLL_RUNTIME`, asio
@@ -42,7 +43,8 @@ validates them.
 
 Requires CMake ≥ 3.23. Tests and install rules are ON by default when Quoll is the top-level project
 (`QUOLL_BUILD_TESTS`, `QUOLL_INSTALL`). The tests run in a second, the time goes to compiling: filter them while working,
-and leave the header checks to CI with `-DQUOLL_HEADER_CHECKS=OFF`.
+and leave the header checks to CI with `-DQUOLL_HEADER_CHECKS=OFF`. `QUOLL_TLS` (`AUTO`, `ON`, `OFF`) says whether TLS
+goes through OpenSSL.
 
 ```bash
 cmake -B build

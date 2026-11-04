@@ -44,6 +44,7 @@
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/io/network_ref.hpp>
+#include <quoll/io/tls_network_ref.hpp>
 
 #include <asio/execution/outstanding_work.hpp>
 #include <asio/io_context.hpp>
@@ -123,10 +124,11 @@ struct runtime_state {
  */
 class runtime {
 public:
-  /** @brief The executor of the runtime: posts to its loop, and offers its network and its timer. */
+  /** @brief The executor of the runtime: posts to its loop, and offers its network, its timer and, with OpenSSL, TLS.
+   */
   class executor {
   public:
-    using services = async::service_list<io::network_ref, async::timer_ref>;
+    using services = detail::loop_services;
 
     executor(executor const &other) noexcept : inner_(other.inner_), state_(other.state_) { ++state_->executors; }
 
@@ -166,6 +168,13 @@ public:
     [[nodiscard]] async::timer_ref query(async::service_tag<async::timer_ref>) const {
       return async::timer_ref{inner_};
     }
+
+#if defined(QUOLL_ASIO_TLS)
+    /** @brief The TLS network of the runtime's loop: its asio executor, as long-lived as this. */
+    [[nodiscard]] io::tls_network_ref query(async::service_tag<io::tls_network_ref>) const {
+      return io::tls_network_ref{inner_};
+    }
+#endif
 
     [[nodiscard]] bool operator==(executor const &other) const noexcept { return inner_ == other.inner_; }
 
@@ -241,6 +250,9 @@ private:
 static_assert(async::Executor<runtime::executor>);
 static_assert(async::OffersService<runtime::executor, io::network_ref>);
 static_assert(async::OffersService<runtime::executor, async::timer_ref>);
+#if defined(QUOLL_ASIO_TLS)
+static_assert(async::OffersService<runtime::executor, io::tls_network_ref>);
+#endif
 
 } // namespace quoll::asio
 

@@ -37,22 +37,12 @@
 #ifndef QUOLL_ASIO_TCP_STREAM_HPP
 #define QUOLL_ASIO_TCP_STREAM_HPP
 
-#include <quoll/asio/detail/io_error.hpp>
-#include <quoll/asio/detail/operation.hpp>
-#include <quoll/asio/detail/tcp_state.hpp>
-#include <quoll/async/await_context.hpp>
+#include <quoll/asio/detail/basic_stream.hpp>
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/io/byte_stream.hpp>
-#include <quoll/io/io_result.hpp>
 
 #include <asio/ip/tcp.hpp>
 
-#include <cassert>
-#include <coroutine>
-#include <cstddef>
-#include <memory>
-#include <span>
-#include <system_error>
 #include <utility>
 
 namespace quoll::asio {
@@ -70,91 +60,13 @@ namespace quoll::asio {
  * Destroying it is not, nor destroying its io_context: the waiting coroutine would never resume, and a later stop
  * request would post to a dead executor. Thread safety: none, like the socket.
  */
-class tcp_stream {
+class tcp_stream : public detail::basic_stream<::asio::ip::tcp::socket> {
 public:
-  /** @brief Awaitable returned by read_some(). */
-  class [[nodiscard]] read_awaitable {
-  public:
-    [[nodiscard]] bool await_ready() const noexcept { return operation_.await_ready(); }
-
-    [[nodiscard]] bool await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
-      return operation_.await_suspend(handle, context);
-    }
-
-    // Bytes read along with an error are reported alone: the socket reports the error again on the next read.
-    [[nodiscard]] io::io_result await_resume() {
-      auto const [error, transferred] = operation_.await_resume();
-
-      if (transferred > 0) {
-        return {{}, transferred};
-      }
-
-      return {detail::to_io_error(error), 0};
-    }
-
-  private:
-    friend class tcp_stream;
-
-    using operation = detail::operation<detail::read_some_initiation, std::size_t>;
-
-    explicit read_awaitable(operation &&wrapped) noexcept : operation_(std::move(wrapped)) {}
-
-    operation operation_;
-  };
-
-  /** @brief Awaitable returned by write_some(). */
-  class [[nodiscard]] write_awaitable {
-  public:
-    [[nodiscard]] bool await_ready() const noexcept { return operation_.await_ready(); }
-
-    [[nodiscard]] bool await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
-      return operation_.await_suspend(handle, context);
-    }
-
-    [[nodiscard]] io::io_result await_resume() {
-      auto const [error, transferred] = operation_.await_resume();
-
-      return {detail::to_io_error(error), transferred};
-    }
-
-  private:
-    friend class tcp_stream;
-
-    using operation = detail::operation<detail::write_some_initiation, std::size_t>;
-
-    explicit write_awaitable(operation &&wrapped) noexcept : operation_(std::move(wrapped)) {}
-
-    operation operation_;
-  };
-
   /** @brief Takes a connected socket over. */
-  explicit tcp_stream(::asio::ip::tcp::socket socket)
-      : state_(std::make_unique<detail::tcp_state>(std::move(socket))) {}
-
-  /** @brief Reads what the peer sent, waiting for some if nothing arrived yet. */
-  [[nodiscard]] read_awaitable read_some(std::span<std::byte> buffer) {
-    auto &state = checked_state();
-
-    return read_awaitable{{detail::read_some_initiation{&state.socket, buffer}, state.read}};
-  }
-
-  /** @brief Sends some of `data`. */
-  [[nodiscard]] write_awaitable write_some(std::span<std::byte const> data) {
-    auto &state = checked_state();
-
-    return write_awaitable{{detail::write_some_initiation{&state.socket, data}, state.write}};
-  }
+  explicit tcp_stream(::asio::ip::tcp::socket socket) : basic_stream(std::move(socket)) {}
 
   /** @brief The socket, for its options, shutdown() and close(). */
-  [[nodiscard]] ::asio::ip::tcp::socket &socket() noexcept { return checked_state().socket; }
-
-private:
-  [[nodiscard]] detail::tcp_state &checked_state() const noexcept {
-    assert(state_ && "tcp_stream used after being moved from");
-    return *state_;
-  }
-
-  std::unique_ptr<detail::tcp_state> state_;
+  [[nodiscard]] ::asio::ip::tcp::socket &socket() noexcept { return checked_state().stream; }
 };
 
 static_assert(async::ContextAwaitable<tcp_stream::read_awaitable>);

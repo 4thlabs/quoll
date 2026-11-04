@@ -54,7 +54,7 @@ namespace quoll::server {
  */
 struct connection_options {
   /** @brief What a request may hold: beyond, it answers 431 (header) or 413 (body). */
-  http::parse_limits limits;
+  http::parse_limits limits{};
 
   /** @brief How long a connection waits for a request to start. Past it, the connection closes without a word. */
   std::chrono::nanoseconds idle_timeout = std::chrono::seconds{60};
@@ -72,7 +72,7 @@ struct connection_options {
    * @brief Called with what a handler threw, which the client receives as a 500; on the connection's executor, must
    * not throw. Empty: the 500 is all that is left of it.
    */
-  std::function<void(std::exception_ptr)> on_handler_error;
+  std::function<void(std::exception_ptr)> on_handler_error{};
 };
 
 } // namespace quoll::server

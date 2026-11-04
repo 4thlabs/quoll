@@ -42,5 +42,7 @@
 #include <quoll/asio/executor.hpp>
 #include <quoll/asio/runtime.hpp>
 #include <quoll/asio/tcp_stream.hpp>
+#include <quoll/asio/tls_acceptor.hpp>
+#include <quoll/asio/tls_stream.hpp>
 
 #endif // QUOLL_ASIO_HPP
