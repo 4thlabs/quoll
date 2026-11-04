@@ -386,7 +386,10 @@ export function quoll({ target, sources, buildDir = 'build' }) {
         }
       });
 
-      if (!(await rebuild())) {
+      // In the same queue: a save during this one waits for it, even if it fails.
+      await rebuildAndReload();
+
+      if (failed) {
         throw new Error('quoll: the first build failed');
       }
     },
