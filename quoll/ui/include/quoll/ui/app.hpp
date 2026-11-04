@@ -56,6 +56,7 @@
 #include <cstdio>
 #include <exception>
 #include <functional>
+#include <stdexcept>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -164,8 +165,15 @@ public:
     }
   }
 
-  /** @brief Asks the running handlers to stop, and completes once they have ended. Nothing shows afterwards. */
+  /**
+   * @brief Asks the running handlers to stop, and completes once they have ended. Nothing shows afterwards. One at a
+   * time. Throws `std::logic_error` from one of the app's own tasks, which would wait for itself.
+   */
   [[nodiscard]] async::task<> stop() {
+    if (co_await async::current_stop_token() == stop_.get_token()) {
+      throw std::logic_error{"quoll::ui::app: stop() awaited from one of its own tasks"};
+    }
+
     stopped_ = true;
     stop_.request_stop();
     co_await tasks_.join();

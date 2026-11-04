@@ -45,6 +45,7 @@
 
 #include <chrono>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -132,6 +133,39 @@ struct direct_handlers {
              target.events.push_back(
                  {"focus", [](std::string) -> task<> { throw std::runtime_error{"before any task"}; }});
            });
+  }
+};
+
+// An attribute set twice when a state says so.
+struct overriding_attribute {
+  state<bool> overridden;
+
+  element view() {
+    auto field = input() | attribute("placeholder", "default");
+
+    return *overridden ? std::move(field) | attribute("placeholder", "custom") : std::move(field);
+  }
+};
+
+// Two functions on one event of a node, the second depending on a state.
+struct two_on_one_event {
+  state<std::string> draft;
+  state<bool> watched{true};
+  int seen = 0;
+
+  element view() {
+    auto field = input() | bind(draft);
+
+    return *watched ? std::move(field) | on_input([this](std::string const &) { ++seen; }) : std::move(field);
+  }
+};
+
+// A handler stopping the app it runs in.
+struct stopping_handler {
+  std::function<task<>()> *stop = nullptr;
+
+  element view() {
+    return button("Stop") | on_click([this]() -> task<> { co_await (*stop)(); });
   }
 };
 
@@ -465,6 +499,68 @@ TEST_CASE("ui::app: keyed children keep their nodes when they move", "[ui]") {
                                             "<ul><li>2</li><li>3</li><li>4</li></ul>", "<ul></ul>"});
   REQUIRE(operations.at(0) == 1); // Only 3 moves.
   REQUIRE(two_before == two_after);
+}
+
+TEST_CASE("ui::app: an attribute set twice takes its last value, and loses it with the second", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<overriding_attribute> instance{time.get_executor(), shown};
+  std::string overridden;
+
+  auto const act = [&]() -> task<> {
+    instance.component().overridden = true;
+    co_await settle();
+    overridden = shown.html();
+
+    instance.component().overridden = false;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(overridden == R"(<input placeholder="custom"></input>)");
+  REQUIRE(shown.html() == R"(<input placeholder="default"></input>)");
+}
+
+TEST_CASE("ui::app: two functions on one event listen once and each run once", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<two_on_one_event> instance{time.get_executor(), shown};
+  std::vector<std::string> first;
+
+  auto const act = [&]() -> task<> {
+    first = shown.events(shown.find("input"));
+
+    instance.dispatch(shown.find("input"), "input", "typed");
+    co_await settle();
+
+    instance.component().watched = false;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(first == std::vector<std::string>{"input"});
+  REQUIRE(instance.component().seen == 1);
+  REQUIRE(*instance.component().draft == "typed");
+  REQUIRE(shown.events(shown.find("input")) == std::vector<std::string>{"input"});
+}
+
+TEST_CASE("ui::app: stop() from one of its handlers fails rather than wait for itself", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  std::exception_ptr failure;
+  test_app<stopping_handler> instance{
+      time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }}};
+  std::function<task<>()> stop = [&] { return instance.stop(); };
+
+  instance.component().stop = &stop;
+
+  auto const act = [&]() -> task<> {
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::logic_error);
 }
 
 TEST_CASE("ui::app: another tag makes another node", "[ui]") {

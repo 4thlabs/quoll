@@ -149,7 +149,9 @@ private:
     }
 
     for (auto const &binding : value.events) {
-      renderer_->listen(value.id, binding.name);
+      if (first_of_its_name(value.events, binding)) {
+        renderer_->listen(value.id, binding.name);
+      }
     }
 
     for (auto &child : value.children) {
@@ -186,27 +188,36 @@ private:
 
   void patch_attributes(element const &before, element const &after) {
     for (auto const &[name, content] : before.attributes) {
-      if (!std::ranges::contains(after.attributes, name, [](auto const &entry) { return entry.first; })) {
+      if (!after.attributes.contains(name)) {
         renderer_->remove_attribute(after.id, name);
       }
     }
 
-    for (auto const &entry : after.attributes) {
-      if (!std::ranges::contains(before.attributes, entry)) {
-        renderer_->set_attribute(after.id, entry.first, entry.second);
+    for (auto const &[name, content] : after.attributes) {
+      auto const previous = before.attributes.find(name);
+
+      if (previous == before.attributes.end() || previous->second != content) {
+        renderer_->set_attribute(after.id, name, content);
       }
     }
   }
 
+  // An element may run several functions on one event: a renderer listens to it once, or each would run several times.
+  [[nodiscard]] static bool first_of_its_name(std::vector<event_binding> const &events, event_binding const &binding) {
+    return &*std::ranges::find(events, binding.name, &event_binding::name) == &binding;
+  }
+
   void patch_events(element const &before, element const &after) {
     for (auto const &binding : before.events) {
-      if (!std::ranges::contains(after.events, binding.name, &event_binding::name)) {
+      if (first_of_its_name(before.events, binding) &&
+          !std::ranges::contains(after.events, binding.name, &event_binding::name)) {
         renderer_->unlisten(after.id, binding.name);
       }
     }
 
     for (auto const &binding : after.events) {
-      if (!std::ranges::contains(before.events, binding.name, &event_binding::name)) {
+      if (first_of_its_name(after.events, binding) &&
+          !std::ranges::contains(before.events, binding.name, &event_binding::name)) {
         renderer_->listen(after.id, binding.name);
       }
     }
