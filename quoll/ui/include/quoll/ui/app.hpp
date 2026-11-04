@@ -209,7 +209,14 @@ private:
     }
 
     owner.render_pending_ = true;
-    owner.spawn(owner.render_later());
+
+    try {
+      owner.spawn(owner.render_later());
+    } catch (...) {
+      // Not spawned: the next change has to try again.
+      owner.render_pending_ = false;
+      throw;
+    }
   }
 
   void render() {

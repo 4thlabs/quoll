@@ -56,8 +56,8 @@ struct state_link {
  * @brief A value of a component that the interface depends on: changing it shows again, once, what the component views.
  *
  * A member of a component, linked to its app when it is mounted. Changed through set(), `=` or update(), since a change
- * through a reference would go unnoticed. T needs no `==`: a change that shows nothing new costs a view, and no operation
- * on the renderer.
+ * through a reference would go unnoticed. T needs no `==`: a change that shows nothing new costs a view, and no
+ * operation on the renderer.
  *
  * Thread safety: none. Used from the app's executor, which runs one thing at a time.
  */
@@ -76,15 +76,9 @@ public:
 
   state(state &&other) noexcept : value_(std::move(other.value_)) {}
 
-  state &operator=(state const &other) {
-    set(other.value_);
-    return *this;
-  }
-
-  state &operator=(state &&other) {
-    set(std::move(other.value_));
-    return *this;
-  }
+  // Not from another state: it changes through set(), `=` from a value or update(), which tell of it.
+  state &operator=(state const &) = delete;
+  state &operator=(state &&) = delete;
 
   ~state() = default;
 
