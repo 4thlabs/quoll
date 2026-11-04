@@ -238,3 +238,14 @@ TEST_CASE("local_transport: a HEAD response has no body, as a connection writes 
   REQUIRE(answer.status == http::status::ok);
   REQUIRE(answer.body.empty());
 }
+
+TEST_CASE("router: a dot segment behind an encoded slash reaches no handler", "[http][router]") {
+  auto const router = make_router();
+
+  REQUIRE(dispatch(router, verb::get, "/users/..%2F..%2Fetc%2Fpasswd").status == http::status::bad_request);
+  REQUIRE(dispatch(router, verb::get, "/users/a%2F..%2Fb").status == http::status::bad_request);
+  REQUIRE(dispatch(router, verb::get, "/users/..%5Cwindows").status == http::status::bad_request);
+  REQUIRE(dispatch(router, verb::get, "/users/.%2Fa").status == http::status::bad_request);
+  // Dots that are not a whole component stay.
+  REQUIRE(dispatch(router, verb::get, "/users/a..b%2Fc.d").body == "users.get\na..b/c.d\n?");
+}

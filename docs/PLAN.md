@@ -55,6 +55,8 @@ First, as all later code is then written for it. Decided on 2026-11-04, for appl
   `http`; then `server` and `client`; then the adapters, hiding asio and OpenSSL from application headers if that holds.
 - `quoll::ui`: the app, the diff and hot reload's global state are compiled once, which settles the review point left open
   on #39. What builds elements stays in headers: it returns decorators, or changes with `QUOLL_UI_HOT`.
+- `quoll::http`: the parser, the router, the serializer and percent-encoding are compiled once, and llhttp no longer shows in a
+  program's headers.
 
 *Done when:* application code is unchanged (a `main.cpp` and headers), and each pull request gives before and after
 figures for a full build, a page rebuild (about 1 s today) and the size of the WASM (51 KB gzipped today).
@@ -81,6 +83,7 @@ error response and TLS's closing message join this step; the last two need a hal
 - Fuzzing in CI, under ASan and UBSan: `serve_connection` over a memory stream, the router, the REST decoding (path and
   query parameters, JSON bodies through Glaze). A client parses what any server sends, so its exchange and the decoding
   of REST responses too.
+- `http::serialize` appending to a buffer leaves part of a rejected message in it: validate first, or restore its size.
 - Features: server middlewares and static files; client redirects, a connection limit per transport, a path prefix in
   the base URL. A client's `response_timeout` applies per attempt, so a deadline over the whole `send` if that proves
   confusing.
@@ -111,6 +114,7 @@ Only what the harness shows. Candidates:
   per connection avoids it.
 - A client copies the request body into the serialized message: write the head and the body as two buffers.
 - A TLS client builds its context per connection, and resumes no session.
+- A client builds a parser per request, which now allocates: one per connection avoids it.
 - Idle connections are only found closed when a request uses them: closing them after an idle time, and letting a POST
   reuse one, which needs a stream that tells a closed peer before writing.
 

@@ -28,7 +28,22 @@ if(QUOLL_INSTALL)
   install(TARGETS quoll_llhttp EXPORT quoll-targets FILE_SET HEADERS)
 endif()
 
-quoll_declare_module(NAME http DEPS quoll::io quoll::llhttp)
+quoll_declare_module(
+  NAME http
+  SOURCES
+    src/connection_field.cpp
+    src/error.cpp
+    src/fields.cpp
+    src/local_transport.cpp
+    src/parser.cpp
+    src/percent.cpp
+    src/router.cpp
+    src/serializer.cpp
+  DEPS
+    quoll::io
+  PRIVATE_DEPS
+    quoll::llhttp
+)
 
 quoll_declare_tests(
   SOURCES

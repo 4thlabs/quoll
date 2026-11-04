@@ -34,12 +34,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_HTTP_DETAIL_ROUTE_PATTERN_HPP
-#define QUOLL_HTTP_DETAIL_ROUTE_PATTERN_HPP
+#include <quoll/http/router.hpp>
 
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/percent.hpp>
 #include <quoll/http/detail/route_template.hpp>
+#include <quoll/http/detail/status_response.hpp>
+#include <quoll/http/status.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -50,7 +51,22 @@
 #include <utility>
 #include <vector>
 
-namespace quoll::http::detail {
+namespace quoll::http {
+
+namespace detail {
+
+response status_response(status code) {
+  response message;
+
+  message.status = code;
+  return message;
+}
+
+} // namespace detail
+
+namespace {
+
+using namespace detail;
 
 // A segment of a route, as the router matches it: literals are percent-decoded, like the request segments.
 struct route_segment {
@@ -58,7 +74,7 @@ struct route_segment {
   std::string literal;
 };
 
-[[nodiscard]] inline std::string_view describe(template_error error) noexcept {
+[[nodiscard]] std::string_view describe(template_error error) noexcept {
   switch (error) {
   case template_error::none:
     break;
@@ -82,7 +98,7 @@ struct route_segment {
 }
 
 // The segments of a route template, for the router. @throws std::invalid_argument for an invalid one.
-[[nodiscard]] inline std::vector<route_segment> compile_route(std::string_view path) {
+[[nodiscard]] std::vector<route_segment> compile_route(std::string_view path) {
   auto const parsed = parse_template(path);
 
   if (path.empty() || parsed.error != template_error::none) {
@@ -103,8 +119,7 @@ struct route_segment {
 
 // Whether two routes have the same shape: the same literals and parameters in the same places, whatever the
 // parameter names. Two such routes for one method could never be told apart.
-[[nodiscard]] inline bool same_shape(std::vector<route_segment> const &first,
-                                     std::vector<route_segment> const &second) {
+[[nodiscard]] bool same_shape(std::vector<route_segment> const &first, std::vector<route_segment> const &second) {
   return std::ranges::equal(first, second, [](route_segment const &left, route_segment const &right) {
     return left.kind == right.kind && left.literal == right.literal;
   });
@@ -118,7 +133,7 @@ struct target_parts {
 
 // The path and query of a request target: origin-form (`/path?query`), or absolute-form (`http://host/path?query`)
 // without its scheme and authority, where an empty path is "/". Nothing for another form (`*`).
-[[nodiscard]] inline std::optional<target_parts> split_target(std::string_view target) noexcept {
+[[nodiscard]] std::optional<target_parts> split_target(std::string_view target) noexcept {
   auto rest = target;
 
   if (!target.starts_with('/')) {
@@ -141,9 +156,28 @@ struct target_parts {
   return target_parts{path.empty() ? std::string_view{"/"} : path, query};
 }
 
+// Whether a decoded segment is a dot segment, or holds one behind an encoded slash (`..%2Fetc`, `a%5C..`), which a
+// handler joining it to a directory would follow.
+[[nodiscard]] bool holds_dot_segment(std::string_view segment) noexcept {
+  while (true) {
+    auto const separator = segment.find_first_of("/\\");
+    auto const part = segment.substr(0, separator);
+
+    if (part == "." || part == "..") {
+      return true;
+    }
+
+    if (separator == std::string_view::npos) {
+      return false;
+    }
+
+    segment.remove_prefix(separator + 1);
+  }
+}
+
 // The percent-decoded segments of a path, or nothing for an invalid escape, a NUL (`%00`, which C APIs would cut at)
 // or a dot segment (`.`, `..`): the router does not resolve them, and a handler must not see one.
-[[nodiscard]] inline std::optional<std::vector<std::string>> decode_segments(std::string_view path) {
+[[nodiscard]] std::optional<std::vector<std::string>> decode_segments(std::string_view path) {
   std::vector<std::string> segments;
   std::size_t start = 1;
 
@@ -152,7 +186,7 @@ struct target_parts {
     auto decoded =
         percent_decode(path.substr(start, slash == std::string_view::npos ? std::string_view::npos : slash - start));
 
-    if (!decoded || decoded->contains('\0') || *decoded == "." || *decoded == "..") {
+    if (!decoded || decoded->contains('\0') || holds_dot_segment(*decoded)) {
       return std::nullopt;
     }
 
@@ -167,7 +201,7 @@ struct target_parts {
 }
 
 // Whether `route` matches the decoded `segments` of a request path.
-[[nodiscard]] inline bool matches(std::vector<route_segment> const &route, std::vector<std::string> const &segments) {
+[[nodiscard]] bool matches(std::vector<route_segment> const &route, std::vector<std::string> const &segments) {
   for (std::size_t index = 0; index < route.size(); ++index) {
     if (index >= segments.size()) {
       return false;
@@ -198,8 +232,8 @@ struct target_parts {
 }
 
 // The parameters of a route that matches the segments.
-[[nodiscard]] inline std::vector<std::string> extract_params(std::vector<route_segment> const &route,
-                                                             std::vector<std::string> const &segments) {
+[[nodiscard]] std::vector<std::string> extract_params(std::vector<route_segment> const &route,
+                                                      std::vector<std::string> const &segments) {
   std::vector<std::string> params;
 
   for (std::size_t index = 0; index < route.size(); ++index) {
@@ -220,6 +254,126 @@ struct target_parts {
   return params;
 }
 
-} // namespace quoll::http::detail
+// The value of `Allow`: "GET, DELETE".
+[[nodiscard]] std::string join_methods(std::vector<verb> const &methods) {
+  std::string joined;
 
-#endif // QUOLL_HTTP_DETAIL_ROUTE_PATTERN_HPP
+  for (auto const method : methods) {
+    joined += joined.empty() ? "" : ", ";
+    joined += to_string(method);
+  }
+
+  return joined;
+}
+
+// The more specific of two matching routes, segment by segment; the first added on a tie.
+template <class Entry>
+[[nodiscard]] Entry const *more_specific(Entry const *current, Entry const &candidate) {
+  auto const kind = &route_segment::kind;
+
+  if (current == nullptr ||
+      std::ranges::lexicographical_compare(current->segments, candidate.segments, {}, kind, kind)) {
+    return &candidate;
+  }
+
+  return current;
+}
+
+// Adds `method` to the methods of `Allow`, and HEAD with GET.
+void allow(std::vector<verb> &allowed, verb method) {
+  auto const add_once = [&allowed](verb each) {
+    if (std::ranges::find(allowed, each) == allowed.end()) {
+      allowed.push_back(each);
+    }
+  };
+
+  add_once(method);
+
+  if (method == verb::get) {
+    add_once(verb::head);
+  }
+}
+
+} // namespace
+
+struct router::entry {
+  verb method;
+  std::vector<route_segment> segments;
+  std::string name;
+  handler target;
+};
+
+router::router() = default;
+router::router(router const &) = default;
+router::router(router &&) noexcept = default;
+router &router::operator=(router const &) = default;
+router &router::operator=(router &&) noexcept = default;
+router::~router() = default;
+
+void router::add(verb method, std::string_view path, std::string name, handler target) {
+  if (!target) {
+    throw std::invalid_argument{"quoll::http::router: empty handler"};
+  }
+
+  auto segments = compile_route(path);
+
+  for (auto const &route : routes_) {
+    if (route.method == method && same_shape(route.segments, segments)) {
+      throw std::invalid_argument{"quoll::http::router: " + route.name + " already routes this method and path"};
+    }
+  }
+
+  routes_.push_back(entry{method, std::move(segments), std::move(name), std::move(target)});
+}
+
+async::task<response> router::dispatch(request message) const {
+  auto const target = split_target(message.target);
+  auto const segments = target ? decode_segments(target->path) : std::nullopt;
+
+  if (!segments) {
+    co_return status_response(status::bad_request);
+  }
+
+  entry const *chosen = nullptr;
+  entry const *get_route = nullptr;
+  std::vector<verb> allowed;
+
+  for (auto const &route : routes_) {
+    if (!matches(route.segments, *segments)) {
+      continue;
+    }
+
+    if (route.method == message.method) {
+      chosen = more_specific(chosen, route);
+      continue;
+    }
+
+    if (route.method == verb::get) {
+      get_route = more_specific(get_route, route);
+    }
+
+    allow(allowed, route.method);
+  }
+
+  // HEAD is served by the GET route, as RFC 9110 asks of a general-purpose server.
+  if (chosen == nullptr && message.method == verb::head) {
+    chosen = get_route;
+  }
+
+  if (chosen != nullptr) {
+    route_match match{chosen->name, extract_params(chosen->segments, *segments), std::string{target->query}};
+
+    co_return co_await chosen->target(std::move(message), std::move(match));
+  }
+
+  if (!allowed.empty()) {
+    auto rejected = status_response(status::method_not_allowed);
+
+    rejected.fields.add("Allow", join_methods(allowed));
+    co_return rejected;
+  }
+
+  co_return status_response(status::not_found);
+}
+
+} // namespace quoll::http

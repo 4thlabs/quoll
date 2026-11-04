@@ -37,9 +37,6 @@
 #ifndef QUOLL_HTTP_DETAIL_PERCENT_HPP
 #define QUOLL_HTTP_DETAIL_PERCENT_HPP
 
-#include <quoll/http/detail/ascii.hpp>
-
-#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -47,36 +44,7 @@
 namespace quoll::http::detail {
 
 // Decodes the %XX escapes of a URL component. Nothing for a '%' not followed by two hex digits.
-[[nodiscard]] inline std::optional<std::string> percent_decode(std::string_view text) {
-  std::string decoded;
-
-  decoded.reserve(text.size());
-
-  for (std::size_t index = 0; index < text.size(); ++index) {
-    auto const character = text[index];
-
-    if (character != '%') {
-      decoded += character;
-      continue;
-    }
-
-    if (text.size() - index < 3) {
-      return std::nullopt;
-    }
-
-    auto const high = hex_value(text[index + 1]);
-    auto const low = hex_value(text[index + 2]);
-
-    if (high < 0 || low < 0) {
-      return std::nullopt;
-    }
-
-    decoded += static_cast<char>(high * 16 + low);
-    index += 2;
-  }
-
-  return decoded;
-}
+[[nodiscard]] std::optional<std::string> percent_decode(std::string_view text);
 
 // Characters a URL component never needs to escape (RFC 3986 "unreserved").
 [[nodiscard]] constexpr bool is_unreserved(char character) noexcept {
@@ -87,27 +55,7 @@ namespace quoll::http::detail {
 
 // Escapes every character of `text` but the unreserved ones and those of `keep` (such as '/' for the rest of a path)
 // as %XX.
-[[nodiscard]] inline std::string percent_encode(std::string_view text, std::string_view keep = {}) {
-  constexpr std::string_view digits = "0123456789ABCDEF";
-  std::string encoded;
-
-  encoded.reserve(text.size());
-
-  for (auto const character : text) {
-    if (is_unreserved(character) || keep.find(character) != std::string_view::npos) {
-      encoded += character;
-      continue;
-    }
-
-    auto const byte = static_cast<unsigned char>(character);
-
-    encoded += '%';
-    encoded += digits[byte >> 4U];
-    encoded += digits[byte & 0x0FU];
-  }
-
-  return encoded;
-}
+[[nodiscard]] std::string percent_encode(std::string_view text, std::string_view keep = {});
 
 } // namespace quoll::http::detail
 

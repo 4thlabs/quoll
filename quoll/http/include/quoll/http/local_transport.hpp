@@ -42,7 +42,6 @@
 #include <quoll/http/response.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/transport.hpp>
-#include <quoll/http/verb.hpp>
 
 #include <functional>
 #include <utility>
@@ -64,16 +63,7 @@ public:
 
 private:
   // Static: the task holds the router reference, not the transport.
-  static async::task<response> send_to(std::reference_wrapper<router const> target, request message) {
-    auto const head = message.method == verb::head;
-    auto answer = co_await target.get().dispatch(std::move(message));
-
-    if (head) {
-      answer.body.clear();
-    }
-
-    co_return answer;
-  }
+  static async::task<response> send_to(std::reference_wrapper<router const> target, request message);
 
   std::reference_wrapper<router const> router_;
 };

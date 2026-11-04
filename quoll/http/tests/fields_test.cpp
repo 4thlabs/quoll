@@ -102,3 +102,16 @@ TEST_CASE("erase removes every field of a name", "[http][fields]") {
   REQUIRE(fields.size() == 1);
   REQUIRE(fields.erase("Via") == 0);
 }
+
+TEST_CASE("http::fields: set takes a value viewing a field of the list", "[http]") {
+  http::fields entries;
+
+  entries.add("Copied", "a value long enough not to fit in the string itself");
+  entries.add("Other", "x");
+
+  auto const source = *entries.find("Copied");
+
+  entries.set("Copied", source);
+  REQUIRE(*entries.find("Copied") == "a value long enough not to fit in the string itself");
+  REQUIRE(entries.size() == 2);
+}
