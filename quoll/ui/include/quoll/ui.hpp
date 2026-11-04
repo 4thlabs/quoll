@@ -41,6 +41,7 @@
 #include <quoll/ui/component.hpp>
 #include <quoll/ui/decorators.hpp>
 #include <quoll/ui/element.hpp>
+#include <quoll/ui/event_function.hpp>
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/renderer.hpp>
 #include <quoll/ui/state.hpp>
