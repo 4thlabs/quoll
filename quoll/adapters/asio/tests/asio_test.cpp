@@ -78,11 +78,14 @@
 #include <asio/ip/address_v4.hpp>
 #include <asio/ip/tcp.hpp>
 
+#include <asio/post.hpp>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <signal.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstddef>
@@ -952,4 +955,48 @@ TEST_CASE("asio: a REST client from a URL calls server::listen, until Ctrl-C", "
   REQUIRE(calls.found.owner == "Ada");
   REQUIRE(calls.missing == "no account 7");
   REQUIRE(calls.opened.owner == "Grace");
+}
+
+TEST_CASE("asio::runtime: an executor taken again after the last one went runs its task", "[asio]") {
+  quoll::asio::runtime runtime;
+  bool ran = false;
+
+  { auto const gone = runtime.get_executor(); }
+
+  auto const run_it = [&ran]() -> task<> {
+    ran = true;
+    co_return;
+  };
+
+  quoll::async::co_spawn(runtime.get_executor(), run_it(), quoll::async::detached);
+  runtime.run();
+
+  REQUIRE(ran);
+}
+
+TEST_CASE("asio::runtime: an executor on another thread holds run(), and its end lets it go", "[asio]") {
+  quoll::asio::runtime runtime;
+
+  auto held = runtime.get_executor();
+  std::atomic<bool> dropped{false};
+  std::jthread other{[held = std::move(held), &dropped]() mutable {
+    std::this_thread::sleep_for(std::chrono::milliseconds{20});
+    dropped = true;
+
+    auto const last = std::move(held);
+  }};
+
+  runtime.run();
+
+  REQUIRE(dropped);
+}
+
+TEST_CASE("asio::runtime: its io_context is asio's", "[asio]") {
+  quoll::asio::runtime runtime;
+  bool ran = false;
+
+  ::asio::post(runtime.context(), [&ran] { ran = true; });
+  runtime.run();
+
+  REQUIRE(ran);
 }

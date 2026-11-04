@@ -39,6 +39,7 @@
 
 #include <quoll/asio/acceptor.hpp>
 #include <quoll/asio/detail/connect.hpp>
+#include <quoll/asio/detail/loop_services.hpp>
 #include <quoll/asio/detail/tls_connect.hpp>
 #include <quoll/asio/detail/wait.hpp>
 #include <quoll/asio/tls_acceptor.hpp>
@@ -72,17 +73,6 @@
 #include <utility>
 
 namespace quoll::asio {
-
-namespace detail {
-
-// What the executors of an I/O loop offer; TLS only with OpenSSL.
-#if defined(QUOLL_ASIO_TLS)
-using loop_services = async::service_list<io::network_ref, async::timer_ref, io::tls_network_ref>;
-#else
-using loop_services = async::service_list<io::network_ref, async::timer_ref>;
-#endif
-
-} // namespace detail
 
 /**
  * @brief Executor resuming coroutines on an asio executor: an io_context, a strand, any_io_executor.

@@ -59,6 +59,8 @@ First, as all later code is then written for it. Decided on 2026-11-04, for appl
   program's headers.
 - `quoll::server` and `quoll::client`: compiled once, as what they do goes through `io::any_stream`, behind thin templates over
   the stream, listener, executor or connector.
+- `quoll::asio`: its runtime is compiled once, so that a program using `quoll::runtime` does not compile asio. Its streams and
+  acceptors stay in headers, for a program mixing them with asio code, which then provides asio.
 
 *Done when:* application code is unchanged (a `main.cpp` and headers), and each pull request gives before and after
 figures for a full build, a page rebuild (about 1 s today) and the size of the WASM (51 KB gzipped today).
