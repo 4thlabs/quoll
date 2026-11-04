@@ -34,23 +34,28 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_ASIO_DETAIL_STOP_SIGNALS_HPP
-#define QUOLL_ASIO_DETAIL_STOP_SIGNALS_HPP
+#include <quoll/asio/runtime.hpp>
 
+#include <quoll/asio/executor.hpp>
+
+#include <asio/executor_work_guard.hpp>
 #include <asio/io_context.hpp>
+#include <asio/post.hpp>
 #include <asio/signal_set.hpp>
-
-#if !defined(_WIN32)
-#include <signal.h>
-#endif
 
 #include <array>
 #include <csignal>
 #include <cstddef>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <signal.h>
 #include <stop_token>
 #include <system_error>
 
-namespace quoll::asio::detail {
+namespace quoll::asio {
+
+namespace {
 
 // The action of a signal, saved and given back. POSIX keeps the whole sigaction (flags, mask); Windows has signal()
 // only, which can read the handler only by setting another for an instant.
@@ -156,6 +161,110 @@ private:
   bool released_ = false;
 };
 
-} // namespace quoll::asio::detail
+} // namespace
 
-#endif // QUOLL_ASIO_DETAIL_STOP_SIGNALS_HPP
+struct runtime::state {
+  ::asio::io_context context{1};
+  // What the runtime's services refer to: as long-lived as the runtime. Tasks hold executors, not this.
+  asio::executor<::asio::io_context::executor_type> loop{context.get_executor()};
+  std::stop_source stop;
+  std::optional<stop_signals> signals;
+  std::mutex work_mutex;
+  std::weak_ptr<void> work;
+
+  // Whether no executor of the runtime is alive: its tasks have ended.
+  [[nodiscard]] bool idle() {
+    std::lock_guard const lock{work_mutex};
+
+    return work.expired();
+  }
+};
+
+namespace {
+
+// Keeps the loop running while an executor of the runtime is alive, even while its task waits for work elsewhere (a
+// thread pool).
+class work_token {
+public:
+  work_token(runtime::state &shared) : state_(&shared), guard_(shared.context.get_executor()) {}
+
+  work_token(work_token const &) = delete;
+  work_token(work_token &&) = delete;
+  work_token &operator=(work_token const &) = delete;
+  work_token &operator=(work_token &&) = delete;
+
+  // The last executor is gone: the signals no longer have a task to stop, and would keep the loop running. Posted while
+  // the guard still holds the loop, which then runs this before it ends, and before the runtime can go.
+  ~work_token() {
+    ::asio::post(state_->context, [shared = state_] {
+      if (shared->idle() && shared->signals) {
+        shared->signals->release();
+      }
+    });
+  }
+
+private:
+  runtime::state *state_;
+  ::asio::executor_work_guard<::asio::io_context::executor_type> guard_;
+};
+
+} // namespace
+
+void runtime::executor::post(async::work_item &item) const { state_->loop.post(item); }
+
+io::network_ref runtime::executor::query(async::service_tag<io::network_ref>) const {
+  return io::network_ref{state_->loop};
+}
+
+async::timer_ref runtime::executor::query(async::service_tag<async::timer_ref>) const {
+  return async::timer_ref{state_->loop};
+}
+
+#if defined(QUOLL_ASIO_TLS)
+io::tls_network_ref runtime::executor::query(async::service_tag<io::tls_network_ref>) const {
+  return io::tls_network_ref{state_->loop};
+}
+#endif
+
+runtime::runtime() : state_(std::make_unique<state>()) {}
+
+runtime::~runtime() = default;
+
+runtime::executor runtime::get_executor() {
+  std::lock_guard const lock{state_->work_mutex};
+  auto work = state_->work.lock();
+
+  if (!work) {
+    work = std::make_shared<work_token>(*state_);
+    state_->work = work;
+  }
+
+  return executor{*state_, std::move(work)};
+}
+
+std::stop_token runtime::get_stop_token() {
+  if (state_->stop.stop_requested()) {
+    state_->stop = std::stop_source{};
+  }
+
+  if (!state_->signals || state_->signals->released()) {
+    state_->signals.reset();
+    state_->signals.emplace(state_->context, state_->stop);
+  }
+
+  return state_->stop.get_token();
+}
+
+void runtime::run() {
+  // Signals with no task to stop would keep the loop running.
+  if (state_->idle() && state_->signals) {
+    state_->signals->release();
+  }
+
+  state_->context.restart();
+  state_->context.run();
+}
+
+::asio::io_context &runtime::context() noexcept { return state_->context; }
+
+} // namespace quoll::asio
