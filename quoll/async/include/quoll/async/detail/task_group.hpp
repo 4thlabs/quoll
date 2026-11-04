@@ -51,8 +51,9 @@
 namespace quoll::async::detail {
 
 // Tasks spawned by one owner, counted, so that the owner completes only once they have all ended: what they refer to
-// then needs to outlive the owner only. Thread safety: started() and ended() may be called from any thread (the tasks
-// may run on a thread pool).
+// then needs to outlive the owner only. One owner awaits join(), once its last task has started: a second one would
+// take its place. Thread safety: started() and ended() may be called from any thread (the tasks may run on a thread
+// pool).
 class task_group {
 public:
   // Waits until no task is left; resumes the awaiter on its executor.
