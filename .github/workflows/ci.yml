@@ -55,10 +55,12 @@ jobs:
       # Clang 19, the oldest Clang Quoll supports, is not preinstalled on the runner.
       - name: Install Clang
         if: startsWith(matrix.compiler.name, 'clang')
-        run: sudo apt-get install -y --no-install-recommends clang-19
+        run: sudo apt-get install -y --no-install-recommends clang-19 clang-tidy-19
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DQUOLL_HEADER_CHECKS=${{ matrix.compiler.header-checks }} -DQUOLL_TLS=ON
+        run: >-
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug -DQUOLL_HEADER_CHECKS=${{ matrix.compiler.header-checks }} -DQUOLL_TLS=ON
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
         env:
           CXX: ${{ matrix.compiler.cxx }}
           CXXFLAGS: ${{ matrix.compiler.cxxflags }}
@@ -68,6 +70,14 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure --parallel "$(nproc)"
+
+      # Quoll's own sources only: the rules are in .clang-tidy.
+      - name: clang-tidy
+        if: startsWith(matrix.compiler.name, 'clang')
+        run: >-
+          run-clang-tidy-19 -p build -quiet -j "$(nproc)"
+          -header-filter "$PWD/(quoll|samples|tests)/.*"
+          "$PWD/(quoll|samples)/.*\.cpp$"
 
       # Without OpenSSL, which applications may lack: the tests say what https:// then does.
       - name: Test without TLS

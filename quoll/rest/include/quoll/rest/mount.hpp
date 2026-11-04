@@ -104,6 +104,8 @@ template <class... Args>
     using state = mounted<decltype(validators), std::tuple_element_t<layout::service_positions[Index], decayed>...>;
 
     return std::make_shared<state>(std::move(validators),
+                                   // Each position is another element of the tuple: none is moved twice.
+                                   // NOLINTNEXTLINE(bugprone-use-after-move)
                                    std::tuple{std::get<layout::service_positions[Index]>(std::move(all))...});
   }(std::make_index_sequence<layout::service_count>{});
 }

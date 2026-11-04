@@ -1,0 +1,9 @@
+# Only what stops a real bug and raises no noise, as errors: what Rust's compiler refuses, as far as a tool can tell. Run
+# by the clang-19 job of CI.
+Checks: >-
+  -*,
+  bugprone-use-after-move,
+  bugprone-dangling-handle,
+  clang-analyzer-cplusplus.Move,
+  clang-analyzer-cplusplus.NewDelete
+WarningsAsErrors: '*'
