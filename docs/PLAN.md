@@ -629,11 +629,6 @@ Every point the plan leaves open, gathered here; the linked sections give the co
   lingering close after an error response (so that the client
   reads it rather than a reset) needs a half-close in `ByteStream`; `Expect: 100-continue` needs the parser to stop after
   the header; a graceful shutdown lets in-flight requests finish, where a stop request now cancels them.
-- The server's read and write timeouts cover a message as a whole, which is strong against slow peers but also ends a
-  legitimate transfer on a slow link (8 MiB in 30 s is about 2.2 Mbit/s). Static files and streamed bodies will need a
-  limit on progress instead, or a minimum rate.
-- Connections running on an executor without a timer (`serve` on a thread pool) have no timeouts. `serve` could hand
-  them the timer of its own loop.
 - The runtime in a browser, where the event loop already runs: no `run()` there; tasks start with `co_spawn` on the
   event loop, and the Worker is driven by the bridge. The default `rest::client` transport there would be `fetch`.
 - A default `main()` provided by Quoll, creating the runtime and running an application coroutine, once the shape of
@@ -666,6 +661,20 @@ per topic, in this order:
 3. Server robustness: graceful shutdown, connection limit, `Expect: 100-continue`, lingering close after an error.
 4. Missing features: server middlewares and static files; client redirects, connection limit, path prefix in the base
    URL. Streaming large bodies stays out unless asked.
+
+Left over from the first topic, to settle along the way:
+
+- With the static files (topic 4): the server's read and write timeouts cover a message as a whole, which is strong
+  against slow peers but also ends a legitimate transfer on a slow link (8 MiB in 30 s is about 2.2 Mbit/s). Static
+  files and streamed bodies will need a limit on progress instead, or a minimum rate.
+- With the server robustness (topic 3): connections running on an executor without a timer (`serve` on a thread pool)
+  have no timeouts. `serve` could hand them the timer of its own loop.
+- If a benchmark shows it matters: each bounded phase allocates coroutine frames and an asio timer, about three times per
+  request on the server. A timer per connection avoids it.
+- If it proves confusing: a client's `response_timeout` applies per attempt, so a connect and two attempts can add up to
+  more than one setting suggests. A deadline over the whole `send` would bound them together.
+- Housekeeping: ccache for the Emscripten job, now the slowest once the cache is warm (it wraps its compiler); the
+  leftover MSVC branch of `quoll_warnings`, as only GCC and Clang are supported.
 
 ## Prototype (next step)
 
