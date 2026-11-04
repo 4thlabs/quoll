@@ -1,9 +1,9 @@
 # Quoll coding rules
 
-Quoll is a **modern C++ header-only library, C++23 minimum** (GCC ≥ 13, Clang ≥ 19, Apple Clang ≥ 21). Rules follow the Boost library
+Quoll is a **modern C++ library, C++23 minimum** (GCC ≥ 13, Clang ≥ 19, Apple Clang ≥ 21). Rules follow the Boost library
 guidelines and the C++ Core Guidelines.
 
-## Header-only rules
+## Headers and libraries
 
 - Every header is self-contained (compiles when included alone) and includes what it uses, nothing more. Prefer
   `<iosfwd>` / forward declarations to heavy includes; no `<iostream>` in library headers.
@@ -15,8 +15,13 @@ guidelines and the C++ Core Guidelines.
 - Implementation details live in `quoll::<module>::detail` (files under `include/quoll/<module>/detail/`). A user
   never has to name anything in `detail`.
 - Public API: one header per component plus an umbrella `include/quoll/<module>.hpp`.
-- No `.cpp`, no explicit instantiation / `extern template`. Third-party C/C++ dependencies (e.g. llhttp) may be
-  compiled targets fetched by CPM; Quoll's own code stays header-only.
+- What is not a template goes in the `src/*.cpp` of its module, compiled once in its library, rather than `inline` in a
+  header: a change in an application then has less to compile. Only what a header needs may stay inline: a function forwarding
+  to another, one returning a lambda, or one a `QUOLL_` switch changes in the application's sources. Modules move to this one at a time (see `PLAN.md`), and one with no source yet has
+  only headers.
+- Templates over what the application provides stay in headers. No explicit instantiation / `extern template`.
+- A source file keeps what only it uses in an unnamed namespace, and may hold the program-wide state a header may not.
+- Third-party C/C++ dependencies (e.g. llhttp) may be compiled targets fetched by CPM.
 - Macros only for include guards and `QUOLL_`-prefixed configuration switches.
 
 ## Layout & naming (Boost style)

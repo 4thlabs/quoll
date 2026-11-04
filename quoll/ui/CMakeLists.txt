@@ -1,4 +1,14 @@
-quoll_declare_module(NAME ui DEPS quoll::async $<BUILD_INTERFACE:${quoll_glaze_dependency}> $<INSTALL_INTERFACE:glaze::glaze>)
+quoll_declare_module(
+  NAME ui
+  SOURCES
+    src/app_core.cpp
+    src/hot.cpp
+    src/reconciler.cpp
+  DEPS
+    quoll::async
+    $<BUILD_INTERFACE:${quoll_glaze_dependency}>
+    $<INSTALL_INTERFACE:glaze::glaze>
+)
 
 # For development, with its server: a text or a class list changed in the source shows without compiling.
 option(QUOLL_UI_HOT "quoll::ui: literals can be replaced while the program runs, for hot reload" OFF)

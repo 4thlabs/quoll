@@ -8,7 +8,7 @@ source of truth for the design and the order of the work.
 
 Quoll is a public C++23 web framework aimed at performance and ease of use: a sans-IO async runtime, an HTTP client and server,
 a typed REST DSL usable from any program, and a UI DSL compiled to WASM for web, desktop and mobile, styled with Tailwind. It is
-header-only until step 1 of the roadmap. Namespace `quoll::`.
+moving from headers to compiled libraries (step 1 of the roadmap). Namespace `quoll::`.
 
 The maintainer communicates in French; code, comments, docs and commit messages stay in English.
 
@@ -59,14 +59,14 @@ run-clang-tidy-19 -p build -quiet "$PWD/(quoll|samples)/.*\.cpp$"   # needs a Cl
 Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 - Each module is a directory `quoll/<module>/` with `include/quoll/<module>/...` headers, an optional umbrella
-  `include/quoll/<module>.hpp`, `tests/`, and a `CMakeLists.txt`:
+  `include/quoll/<module>.hpp`, `src/` once it has code compiled once, `tests/`, and a `CMakeLists.txt`:
 
   ```cmake
-  quoll_declare_module(NAME http DEPS quoll::async)
+  quoll_declare_module(NAME http SOURCES src/parser.cpp DEPS quoll::async)
   quoll_declare_tests(SOURCES tests/parser_test.cpp DEPS quoll::http)
   ```
 
-  This creates the `INTERFACE` target `quoll_<module>`, alias `quoll::<module>`, exported as `quoll::<module>`
+  This creates the target `quoll_<module>`, a static library, or `INTERFACE` without `SOURCES`, alias `quoll::<module>`, exported as `quoll::<module>`
   by `find_package(quoll)`. Modules are added in dependency order in the root `CMakeLists.txt`.
 - Adapters (thread pool, asio, later Emscripten, webview...) are modules like the others, grouped under
   `quoll/adapters/<adapter>/` (added by `quoll/adapters/CMakeLists.txt`) rather than at the root. Only the directory
@@ -95,7 +95,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 ## Hard constraints
 
-- Header-only until step 1 of the roadmap, then compiled libraries. C++23 minimum (GCC ≥ 13, Clang ≥ 19, Apple Clang ≥ 21). CMake, dependencies
+- Compiled libraries, one module at a time, the others header-only until then (step 1 of the roadmap). C++23 minimum (GCC ≥ 13, Clang ≥ 19, Apple Clang ≥ 21). CMake, dependencies
   via CPM.
 - WASM is a first-class target: core modules never require threads or blocking waits.
 - Adapters: thread pool (`quoll::threads`), asio (`quoll::asio`), Emscripten (`quoll::emscripten`: event loop, `fetch`, the
@@ -151,7 +151,7 @@ diff, report only what the diff causes or exposes. Look for, in this order:
 - bugs: undefined behaviour, lifetimes and dangling references (coroutine frames, `_ref` wrappers, `string_view` /
   `span`), unhandled cases, data races, errors swallowed;
 - WASM: anything in a core module that requires threads or blocking waits;
-- breaks of `docs/CODING_RULES.md`: header-only and ODR rules, self-contained headers, naming and layout, concepts instead
+- breaks of `docs/CODING_RULES.md`: ODR rules, self-contained headers, naming and layout, concepts instead
   of SFINAE, special members and `noexcept`, type-erasure rules, `detail` namespaces;
 - breaks of the decisions in `docs/PLAN.md`;
 - missing tests, or tests that do not execute what they claim to test.

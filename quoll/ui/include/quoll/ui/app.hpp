@@ -38,44 +38,27 @@
 #define QUOLL_UI_APP_HPP
 
 #include <quoll/async/any_executor.hpp>
-#include <quoll/async/co_spawn.hpp>
-#include <quoll/async/current_stop_token.hpp>
-#include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/ui/app_options.hpp>
 #include <quoll/ui/component.hpp>
+#include <quoll/ui/detail/app_core.hpp>
 #include <quoll/ui/detail/hot.hpp>
-#include <quoll/ui/detail/reconciler.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/renderer.hpp>
+#include <quoll/ui/renderer_ref.hpp>
 #include <quoll/ui/state.hpp>
 
 #include <glaze/reflection/to_tuple.hpp>
 
 #include <cstddef>
-#include <cstdio>
-#include <exception>
-#include <functional>
-#include <stdexcept>
-#include <stop_token>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <type_traits>
 #include <utility>
-#include <vector>
 
 namespace quoll::ui {
-
-/** @brief What an app does with what its handlers throw. */
-struct app_options {
-  /**
-   * @brief Called with what a handler threw, other than `operation_canceled`, on the executor; must not throw. Empty:
-   * its message goes to the standard error, which is the console in a browser.
-   */
-  std::function<void(std::exception_ptr)> on_error{};
-};
 
 namespace detail {
 
@@ -123,11 +106,12 @@ class app {
 public:
   template <async::Executor E>
   app(E executor, R renderer, app_options options = {})
-      : executor_(std::move(executor)), renderer_(std::move(renderer)), options_(std::move(options)) {
-    detail::link_states(component_, {this, &app::state_changed});
+      : renderer_(std::move(renderer)), core_(async::any_executor{std::move(executor)}, renderer_ref{renderer_},
+                                              &view_of, &component_, std::move(options)) {
+    detail::link_states(component_, {&core_, &detail::app_core::state_changed});
 
 #if defined(QUOLL_UI_HOT)
-    detail::hot_subscribe(this, &app::state_changed);
+    detail::hot_subscribe(&core_, &detail::app_core::state_changed);
 #endif
   }
 
@@ -138,26 +122,24 @@ public:
 
   ~app() {
 #if defined(QUOLL_UI_HOT)
-    detail::hot_unsubscribe(this);
+    detail::hot_unsubscribe(&core_);
 #endif
   }
 
   /** @brief Shows the component for the first time, and starts its mounted(). Nothing, once stopped. */
   void start() {
-    if (stopped_) {
+    if (core_.stopped()) {
       return;
     }
 
     try {
-      render();
+      core_.render();
 
       if constexpr (MountedComponent<C>) {
-        spawn(component_.mounted());
+        core_.spawn(component_.mounted());
       }
     } catch (...) {
-      // What the view left pending, or the mounted() it spawned, must show nothing more. stop() still waits for them.
-      stopped_ = true;
-      stop_.request_stop();
+      core_.abandon();
       throw;
     }
   }
@@ -168,32 +150,14 @@ public:
    * for its task.
    */
   void dispatch(node_id id, std::string_view name, std::string value = {}) {
-    auto const *const target = stopped_ ? nullptr : find(shown_, id);
-
-    if (target == nullptr) {
-      return;
-    }
-
-    for (auto const &binding : target->events) {
-      if (binding.name == name) {
-        spawn(run_handler(binding.handler, value));
-      }
-    }
+    core_.dispatch(id, name, std::move(value));
   }
 
   /**
    * @brief Asks the running handlers to stop, and completes once they have ended. Nothing shows afterwards. One at a
    * time. Throws `std::logic_error` from one of the app's own tasks, which would wait for itself.
    */
-  [[nodiscard]] async::task<> stop() {
-    if (co_await async::current_stop_token() == stop_.get_token()) {
-      throw std::logic_error{"quoll::ui::app: stop() awaited from one of its own tasks"};
-    }
-
-    stopped_ = true;
-    stop_.request_stop();
-    co_await tasks_.join();
-  }
+  [[nodiscard]] async::task<> stop() { return core_.stop(); }
 
   /** @brief The component. */
   [[nodiscard]] C &component() noexcept { return component_; }
@@ -202,124 +166,12 @@ public:
   [[nodiscard]] R &renderer() noexcept { return renderer_; }
 
 private:
-  // Holds a copy of the handler until its task ends: the element it came from may be gone by then. Calling it here
-  // sends what it throws to on_error. stop() may have come before this starts, and nothing starts after it.
-  [[nodiscard]] static async::task<> run_handler(event_handler handler, std::string value) {
-    auto const stop = co_await async::current_stop_token();
+  static element view_of(void *component) { return static_cast<C *>(component)->view(); }
 
-    if (stop.stop_requested()) {
-      co_return;
-    }
-
-    co_await handler(std::move(value));
-  }
-
-  [[nodiscard]] async::task<> render_later() {
-    render_pending_ = false;
-
-    if (!stopped_) {
-      render();
-    }
-
-    co_return;
-  }
-
-  static void state_changed(void *self) {
-    auto &owner = *static_cast<app *>(self);
-
-    if (owner.render_pending_ || owner.stopped_) {
-      return;
-    }
-
-    owner.render_pending_ = true;
-
-    try {
-      owner.spawn(owner.render_later());
-    } catch (...) {
-      // Not spawned: the next change has to try again.
-      owner.render_pending_ = false;
-      throw;
-    }
-  }
-
-  void render() {
-    std::vector<element> next;
-
-    detail::append_child(next, component_.view());
-    detail::reconciler<R>{renderer_, last_id_}.children(no_node, shown_, next);
-    shown_ = std::move(next);
-  }
-
-  [[nodiscard]] static element const *find(std::vector<element> const &elements, node_id id) noexcept {
-    for (auto const &value : elements) {
-      if (value.id == id) {
-        return &value;
-      }
-
-      if (auto const *const nested = find(value.children, id)) {
-        return nested;
-      }
-    }
-
-    return nullptr;
-  }
-
-  struct outcome {
-    app *self;
-
-    void operator()() const noexcept { self->tasks_.ended(); }
-
-    void operator()(std::exception_ptr failure) const noexcept {
-      self->failed(std::move(failure));
-      self->tasks_.ended();
-    }
-  };
-
-  void failed(std::exception_ptr failure) const noexcept {
-    try {
-      std::rethrow_exception(failure);
-    } catch (std::system_error const &error) {
-      if (error.code() == std::errc::operation_canceled) {
-        return;
-      }
-    } catch (...) { // NOLINT(bugprone-empty-catch): reported below, whatever it is.
-    }
-
-    if (options_.on_error) {
-      options_.on_error(std::move(failure));
-      return;
-    }
-
-    try {
-      std::rethrow_exception(failure);
-    } catch (std::exception const &error) {
-      std::fprintf(stderr, "quoll::ui: a handler failed: %s\n", error.what());
-    } catch (...) {
-      std::fputs("quoll::ui: a handler failed\n", stderr);
-    }
-  }
-
-  void spawn(async::task<> work) {
-    tasks_.started();
-
-    try {
-      async::co_spawn(executor_, std::move(work), outcome{this}, stop_.get_token());
-    } catch (...) {
-      tasks_.ended();
-      throw;
-    }
-  }
-
-  async::any_executor executor_;
+  // The core outlives the component, whose states call it, even from the destructor of a member.
   R renderer_;
-  app_options options_;
-  std::stop_source stop_;
-  async::detail::task_group tasks_;
+  detail::app_core core_;
   C component_{};
-  std::vector<element> shown_;
-  node_id last_id_ = no_node;
-  bool render_pending_ = false;
-  bool stopped_ = false;
 };
 
 } // namespace quoll::ui

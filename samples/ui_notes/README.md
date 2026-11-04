@@ -84,7 +84,7 @@ ends.
 
 A page can live in a header, with no source of its own. Two things keep its rebuilds short:
 
-- **Quoll, precompiled:** `target_precompile_headers` in `CMakeLists.txt`. Quoll stays header-only: this only tells the
+- **Quoll, precompiled:** `target_precompile_headers` in `CMakeLists.txt`. This only tells the
   compiler to parse it once.
 - **REST and JSON in a source apart:** `notes_client.cpp`, which compiles only when a call changes. It relays the contract
   by hand for now; it could be generated from it.
