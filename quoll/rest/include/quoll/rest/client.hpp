@@ -106,6 +106,18 @@ public:
     requires std::constructible_from<Transport, std::string>
       : transport_(without_trailing_slash(std::move(base_url))) {}
 
+  /**
+   * @brief A client of the server at `base_url`, as above, with the options of its transport, if it has any.
+   *
+   * @code
+   * quoll::rest::client<bank::v1> bank{"http://127.0.0.1:8080", {.response_timeout = 5s}};
+   * @endcode
+   */
+  template <class T = Transport>
+  client(std::string base_url, typename T::options_type options)
+    requires std::constructible_from<T, std::string, typename T::options_type>
+      : transport_(without_trailing_slash(std::move(base_url)), std::move(options)) {}
+
   /** @brief The credential sent, from now on, to the endpoints that require `Scheme`. */
   template <class Scheme>
   void credentials(std::string value) {

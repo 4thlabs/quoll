@@ -35,7 +35,9 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detached.hpp>
 #include <quoll/async/run_loop.hpp>
+#include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
@@ -58,15 +60,18 @@
 #include <quoll/server/serve_connection.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/test/run.hpp>
+#include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <functional>
 #include <span>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -239,6 +244,84 @@ outcome roundtrip(std::vector<http::request> requests, origin to = {}, client::t
   return roundtrip(
       [router](io::memory_stream stream) { return quoll::server::serve_connection(std::move(stream), *router); },
       std::move(requests), std::move(to), options);
+}
+
+using namespace std::chrono_literals;
+
+using quoll::test::virtual_time;
+
+// A network on a virtual clock: connecting takes `connect_delay`, and each connection answers its requests, for as long
+// as it lasts, after `response_delay`, as it is when the request arrives.
+struct slow_network {
+  virtual_time *time;
+  std::chrono::nanoseconds connect_delay = 0s;
+  std::chrono::nanoseconds response_delay = 0s;
+  int connections = 0;
+};
+
+task<> answer_slowly(io::memory_stream stream, slow_network &network) {
+  std::string buffer;
+
+  for (;;) {
+    http::request_parser parser;
+
+    if (co_await http::read(stream, buffer, parser)) {
+      co_return;
+    }
+
+    co_await async::sleep_for(network.response_delay);
+
+    std::string const response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+
+    if ((co_await io::write(stream, std::as_bytes(std::span{response}))).error) {
+      co_return;
+    }
+  }
+}
+
+class slow_connector {
+public:
+  explicit slow_connector(slow_network &network) noexcept : network_(&network) {}
+
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    auto *const network = network_;
+
+    co_await async::sleep_for(network->connect_delay);
+
+    auto [client_end, server_end] = io::make_memory_stream_pair();
+
+    ++network->connections;
+    co_spawn(network->time->get_executor(), answer_slowly(std::move(server_end), *network), async::detached);
+    co_return io::any_stream{std::move(client_end)};
+  }
+
+private:
+  slow_network *network_;
+};
+
+static_assert(io::Connector<slow_connector>);
+
+http::request get_root() {
+  http::request request;
+
+  request.target = "/";
+  return request;
+}
+
+// The error `count` requests end with, one after the other on one transport: none if they all succeed. The transport,
+// and its idle connections, are gone when the task ends.
+task<std::error_code> send_gets(slow_network &network, client::transport_options options, int count = 1) {
+  client::transport const transport{slow_connector{network}, "server", 80, options};
+
+  try {
+    for (auto sent = 0; sent < count; ++sent) {
+      (void)co_await transport.send(get_root());
+    }
+  } catch (std::system_error const &failure) {
+    co_return failure.code();
+  }
+
+  co_return std::error_code{};
 }
 
 } // namespace
@@ -541,4 +624,103 @@ TEST_CASE("client::transport: the default connector needs an executor offering a
   client::transport<> const transport{"http://127.0.0.1:8080"};
 
   REQUIRE_THROWS_AS(quoll::test::run(transport.send(make_request(verb::get, "/"))), std::logic_error);
+}
+
+TEST_CASE("client::transport: a connection that takes too long fails with timed_out", "[client][timer]") {
+  virtual_time time;
+  slow_network network{.time = &time, .connect_delay = 1h};
+
+  REQUIRE(quoll::test::run(time, send_gets(network, {.connect_timeout = 2s})) == std::errc::timed_out);
+  REQUIRE(time.now() == 2s);
+  REQUIRE(network.connections == 0);
+}
+
+TEST_CASE("client::transport: a response that takes too long fails with timed_out", "[client][timer]") {
+  virtual_time time;
+  slow_network network{.time = &time, .response_delay = 1h};
+  std::chrono::nanoseconds failed_at{};
+
+  auto const send = [&]() -> task<std::error_code> {
+    auto const error = co_await send_gets(network, {.response_timeout = 3s});
+
+    failed_at = time.now();
+    co_return error;
+  };
+
+  REQUIRE(quoll::test::run(time, send()) == std::errc::timed_out);
+  REQUIRE(failed_at == 3s);
+  REQUIRE(network.connections == 1);
+}
+
+TEST_CASE("client::transport: requests that end in time succeed, on one connection", "[client][timer]") {
+  virtual_time time;
+  slow_network network{.time = &time, .connect_delay = 1s, .response_delay = 1s};
+
+  REQUIRE(quoll::test::run(time, send_gets(network, {.connect_timeout = 2s, .response_timeout = 2s}, 3)) ==
+          std::error_code{});
+  REQUIRE(time.now() == 4s);
+  REQUIRE(network.connections == 1);
+}
+
+TEST_CASE("client::transport: a request timing out on a kept connection is not sent again, nor the connection reused",
+          "[client][timer]") {
+  virtual_time time;
+  slow_network network{.time = &time, .response_delay = 1s};
+
+  auto const requests = [&]() -> task<int> {
+    client::transport const transport{slow_connector{network}, "server", 80, {.response_timeout = 2s}};
+
+    (void)co_await transport.send(get_root());
+    network.response_delay = 1h;
+
+    try {
+      (void)co_await transport.send(get_root());
+    } catch (std::system_error const &failure) {
+      REQUIRE(failure.code() == std::errc::timed_out);
+    }
+
+    auto const after_timeout = network.connections;
+
+    network.response_delay = 1s;
+    (void)co_await transport.send(get_root());
+    co_return after_timeout;
+  };
+
+  REQUIRE(quoll::test::run(time, requests()) == 1);
+  REQUIRE(network.connections == 2);
+}
+
+TEST_CASE("client::transport: the default timeouts apply", "[client][timer]") {
+  virtual_time connecting;
+  virtual_time responding;
+  slow_network never_connects{.time = &connecting, .connect_delay = 1h};
+  slow_network never_answers{.time = &responding, .response_delay = 1h};
+
+  REQUIRE(quoll::test::run(connecting, send_gets(never_connects, {})) == std::errc::timed_out);
+  REQUIRE(connecting.now() == 30s);
+  REQUIRE(quoll::test::run(responding, send_gets(never_answers, {})) == std::errc::timed_out);
+}
+
+TEST_CASE("client::transport: a timeout of zero does not apply", "[client][timer]") {
+  virtual_time time;
+  slow_network network{.time = &time, .connect_delay = 1h, .response_delay = 1h};
+
+  REQUIRE(quoll::test::run(time, send_gets(network, {.connect_timeout = 0s, .response_timeout = 0s})) ==
+          std::error_code{});
+  REQUIRE(time.now() == 2h);
+}
+
+TEST_CASE("client::transport: a stop request is no timeout", "[client][timer]") {
+  virtual_time time;
+  slow_network network{.time = &time, .response_delay = 1h};
+  std::stop_source source;
+
+  auto const stop_soon = [&]() -> task<> {
+    co_await async::sleep_for(1s);
+    source.request_stop();
+  };
+
+  auto const outcome = quoll::test::run(time, async::when_all(send_gets(network, {}), stop_soon()), source.get_token());
+
+  REQUIRE(std::get<0>(outcome.value()) == std::errc::operation_canceled);
 }
