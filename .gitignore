@@ -1,5 +1,7 @@
 /build/
 /build-*/
+/fuzz-corpus/
+/fuzz-findings/
 .vscode/
 .DS_Store
 node_modules/

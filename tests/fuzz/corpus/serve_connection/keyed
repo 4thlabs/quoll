@@ -1,0 +1,8 @@
+@GET /notes/keyed HTTP/1.1
+Host: x
+X-Api-Key: k
+
+GET /notes/bearer HTTP/1.1
+Host: x
+Authorization: Bearer t
+

@@ -1,0 +1,90 @@
+name: Fuzz
+
+# Too long for every pull request, and a chance find has nothing to do with the change it would fail. A pull request
+# touching the targets runs them briefly, as nothing else builds them.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tests/fuzz/**"
+      - ".github/workflows/fuzz.yml"
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its previous run; the nightly runs go to the end.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CPM_SOURCE_CACHE: ${{ github.workspace }}/.cpm-cache
+
+jobs:
+  fuzz:
+    name: fuzz
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Cache CPM sources
+        uses: actions/cache@v4
+        with:
+          path: .cpm-cache
+          key: cpm-fuzz-${{ hashFiles('**/CMakeLists.txt', 'cmake/**') }}
+
+      - name: Set up ccache
+        uses: ./.github/actions/ccache
+        with:
+          job: fuzz
+
+      - name: Install Clang and libFuzzer
+        # llvm-19 for its symbolizer: a crash's stack is what a log is read for.
+        run: sudo apt-get install -y --no-install-recommends clang-19 libclang-rt-19-dev llvm-19
+
+      - name: Configure
+        run: >-
+          cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DQUOLL_FUZZ=ON -DQUOLL_BUILD_TESTS=OFF
+          -DQUOLL_BUILD_SAMPLES=OFF -DQUOLL_TLS=OFF
+        env:
+          CC: clang-19
+          CXX: clang++-19
+          # GCC 13's libstdc++, as in the clang-19 job of ci.yml and for the same reason.
+          CXXFLAGS: --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/13
+
+      - name: Build
+        run: cmake --build build --target quoll_fuzzers --parallel "$(nproc)"
+
+      # What earlier runs found goes on from there: a run starting from the seeds alone would find the same things again.
+      - name: Restore the corpus of the last run
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzz-corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: fuzz-corpus-
+
+      - name: Fuzz
+        run: tests/fuzz/run.sh build ${{ github.event_name == 'pull_request' && 60 || 300 }} fuzz-findings fuzz-corpus
+        env:
+          ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer-19
+          UBSAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer-19
+          UBSAN_OPTIONS: print_stacktrace=1
+
+      - name: Save the corpus
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz-corpus
+          key: fuzz-corpus-${{ github.run_id }}
+
+      - name: Keep what crashed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-findings
+          path: fuzz-findings
+          if-no-files-found: ignore

@@ -100,7 +100,11 @@ using one = endpoint<"files.one", verb::get, "/one/{name}", query<"q", std::opti
                      header<"X-Tags", std::vector<std::string>>, returns<std::string, status::ok, text_codec>>;
 using rest_of = endpoint<"files.rest", verb::get, "/rest/{rest:path}", returns<std::string, status::ok, text_codec>>;
 
-using api = rest::api<"/files", one, rest_of>;
+// Required parameters of a type that is no class.
+using paged = endpoint<"files.paged", verb::get, "/paged", query<"page", std::int64_t>, query<"all", bool>,
+                       header<"X-Limit", std::int64_t>, returns<std::string, status::ok, text_codec>>;
+
+using api = rest::api<"/files", one, rest_of, paged>;
 } // namespace files
 
 namespace keys {
@@ -143,6 +147,10 @@ struct users_service {
 };
 
 struct files_service {
+  std::string operator()(files::paged, std::int64_t page, bool all, std::int64_t limit) const {
+    return std::to_string(page) + (all ? " all " : " some ") + std::to_string(limit);
+  }
+
   std::string operator()(files::one, std::string name, std::optional<std::string> query,
                          std::vector<std::string> tags) const {
     std::string echoed = name + "|" + query.value_or("-");
@@ -228,6 +236,14 @@ TEST_CASE("client: braced arguments fill query_params, encoded and decoded", "[r
 
   REQUIRE(listed.front().name == "2|A da&=|a|b+c");
   REQUIRE(run(client.call<users::list>({})).front().name == "-|-");
+}
+
+TEST_CASE("client: required parameters of a scalar type reach the server", "[rest][client]") {
+  auto const router = make_router();
+  auto const client = make_client(router);
+
+  REQUIRE(run(client.call<files::paged>(3, true, 20)) == "3 all 20");
+  REQUIRE(run(client.call<files::paged>(-1, false, 0)) == "-1 some 0");
 }
 
 TEST_CASE("client: path parameters, query and headers are escaped", "[rest][client]") {

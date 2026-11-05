@@ -84,9 +84,11 @@ error response and TLS's closing message join this step; the last two need a hal
     this at compile time, with no new type: compare them first.
   - `cppcoreguidelines-avoid-capturing-lambda-coroutines` in `clang-tidy`, if it can be kept quiet: coroutine lambdas
     with captures are a pattern here, kept alive by the app.
-- Fuzzing in CI, under ASan and UBSan: `serve_connection` over a memory stream, the router, the REST decoding (path and
-  query parameters, JSON bodies through Glaze). A client parses what any server sends, so its exchange and the decoding
-  of REST responses too.
+- Fuzzing in CI, under ASan and UBSan, is done (`tests/fuzz`, five minutes per target every night, keeping its corpus): the
+  HTTP parsers, `serve_connection`, the router, the REST decoding, the client's exchange and the decoding of REST responses.
+  Its stream never suspends, writes short or fails a write: a stream that does would reach the timeouts and cancellation.
+- A 2xx answer to CONNECT goes out with framing, and a body if it has one, which a client reads as the tunnel: `prepare()` in
+  `serve_connection` handles HEAD, not this. To settle with the tunnels of step 6.
 - `http::serialize` appending to a buffer leaves part of a rejected message in it: validate first, or restore its size.
 - Features: server middlewares and static files; client redirects, a connection limit per transport, a path prefix in
   the base URL. A client's `response_timeout` applies per attempt, so a deadline over the whole `send` if that proves

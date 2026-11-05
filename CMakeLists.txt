@@ -24,6 +24,20 @@ if(EMSCRIPTEN)
   add_link_options(-fwasm-exceptions)
 endif()
 
+# Fuzz targets (tests/fuzz), with Clang: everything is instrumented, so that libFuzzer sees Quoll's branches and its dependencies'.
+option(QUOLL_FUZZ "Build the fuzz targets, with Clang's libFuzzer under ASan and UBSan" OFF)
+
+if(QUOLL_FUZZ)
+  if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" OR NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR EMSCRIPTEN)
+    message(FATAL_ERROR "QUOLL_FUZZ needs Clang as the C and C++ compiler, for libFuzzer")
+  endif()
+
+  # With the library's assertions on, whatever the build type: a broken invariant is what a fuzzer looks for.
+  add_compile_options(-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+                      -UNDEBUG -D_GLIBCXX_ASSERTIONS)
+  add_link_options(-fsanitize=address,undefined)
+endif()
+
 include(cmake/QuollHelpers.cmake)
 include(cmake/CPM.cmake)
 
@@ -50,6 +64,10 @@ endif()
 
 if(QUOLL_BUILD_TESTS)
   add_subdirectory(tests)
+endif()
+
+if(QUOLL_FUZZ)
+  add_subdirectory(tests/fuzz)
 endif()
 
 if(QUOLL_INSTALL)

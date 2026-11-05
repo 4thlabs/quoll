@@ -100,6 +100,28 @@ TEST_CASE("A request body gets a Content-Length", "[http][serializer]") {
   }
 }
 
+TEST_CASE("A CONNECT has no body, as what follows its head is the tunnel", "[http][serializer]") {
+  http::request request;
+
+  request.method = http::verb::connect;
+  request.target = "example.org:443";
+  request.fields.add("Host", "example.org:443");
+
+  REQUIRE(http::serialize(request) == "CONNECT example.org:443 HTTP/1.1\r\nHost: example.org:443\r\n\r\n");
+
+  SECTION("with chunked coding, whose terminator would go down the tunnel") {
+    request.fields.add("Transfer-Encoding", "chunked");
+
+    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+  }
+
+  SECTION("with a body") {
+    request.body = "abc";
+
+    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+  }
+}
+
 TEST_CASE("A response gets its reason phrase and framing", "[http][serializer]") {
   SECTION("200 with a body") {
     http::response response;
@@ -187,6 +209,23 @@ TEST_CASE("A chunked response carries its trailers", "[http][serializer]") {
 }
 
 TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
+  SECTION("a tab in Transfer-Encoding, which parsers do not read alike") {
+    http::response response;
+
+    response.fields.add("Transfer-Encoding", "chunked\t");
+
+    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+  }
+
+  SECTION("a tab in Content-Length, which parsers do not read alike") {
+    http::response response;
+
+    response.body = "hello";
+    response.fields.add("Content-Length", "5\t");
+
+    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+  }
+
   SECTION("header injection through a value") {
     http::request request;
 
