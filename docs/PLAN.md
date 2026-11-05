@@ -66,9 +66,9 @@ which nothing checks either.
 
 ### Step 2: client and server, security and completeness
 
-**To settle at its start:** this plan has assumed a reverse proxy in front, and security is now part of the target. If
-Quoll may be exposed directly, `Expect: 100-continue` (the parser stopping after the header), a lingering close after an
-error response and TLS's closing message join this step; the last two need a half-close in `ByteStream`.
+Quoll may be exposed directly, without a reverse proxy (decided on 2026-11-05): `Expect: 100-continue` (the parser stopping
+after the header), a lingering close after an error response and TLS's closing message join this step; the last two need a
+half-close in `ByteStream`.
 
 - Limits and shutdown: graceful shutdown, a connection limit and a wait when out of file descriptors are done
   (`serve_options`), and limits on headers and bodies were there (`http::parse_limits`). Left: the timer of the connections
@@ -159,6 +159,7 @@ The DSL and a runtime, with no UI.
 - In the sample: adding a note during the first load can hide it until a reload.
 - Two siblings with the same key: only caught by an `assert`, on the render after, which a real error should replace. A state
   changed on an app never started leaves a render pending, which nothing waits for.
+- Hydration, then pages sent by a server: see [UI DSL](#ui-dsl). `to_html` is there; a `value` on a `select` selects nothing yet.
 - A trial on a real screen of an application, chosen with the maintainer at the start of this step.
 
 *Done when:* that screen runs with the base components, with what it lacks listed.
@@ -172,7 +173,7 @@ avoids a binary per platform. The commands are shown to the maintainer first.
 quoll new my_app
 cd my_app
 quoll dev      # build, watch, Vite, hot reload
-quoll build    # dist/
+quoll build    # dist/, with the pages that can be written ahead of time as HTML
 ```
 
 - The plugin leaves the sample, with its scanner tested in CI. Vite and Tailwind's setup become internal, and an
@@ -209,6 +210,11 @@ them.
 - **The same WASM everywhere** (2026-11-04): web and PWA first, then a webview shell on desktop and mobile.
 - **Quoll drives the tools** (2026-11-04), through a `quoll` command: Vite becomes an internal detail. Replaces a
   development driven by Vite and a release driven by CMake.
+- **Quoll may be exposed directly** (2026-11-05), without a reverse proxy: "on sait jamais". What this asks of the server is in
+  step 2.
+- **The UI DSL has several outputs** (2026-11-05), as it only knows a `Renderer`: the DOM through WASM, and HTML, for pages
+  generated ahead of time or sent by a server, which also settles the search engines. `to_html` came ahead of step 7, for
+  the framework's site to be written with it.
 - **Compiled libraries** (2026-11-04), in one mode rather than the two of `.ipp` files, for applications that stay
   reliable over time: see [step 1](#step-1-compiled-libraries-done).
 - OpenAPI (2026-11-04) is an optional, later output of the REST DSL, no longer the contract of the UI.
@@ -515,6 +521,11 @@ int main() { quoll::emscripten::mount<counter>(); }
 
 A state changing runs the view again; the diff reaches a `Renderer`, the DOM in a page. Handlers are plain functions or
 tasks, and call a REST API through a `rest::client` over `fetch_transport`.
+
+`to_html(view)` writes the same interface as HTML, natively as under WASM: a page generated ahead of time, or sent by a
+server, without WASM. Making such a page live is hydration: the WASM adopts the nodes it finds rather than creating them,
+which needs the states written into the page and a mode of `dom_renderer` that adopts. A view rendered by a server cannot
+wait for data while it renders, so how a page gets its data comes first.
 
 ### Development tools
 

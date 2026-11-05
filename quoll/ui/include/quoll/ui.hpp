@@ -48,5 +48,6 @@
 #include <quoll/ui/renderer_ref.hpp>
 #include <quoll/ui/state.hpp>
 #include <quoll/ui/tags.hpp>
+#include <quoll/ui/to_html.hpp>
 
 #endif // QUOLL_UI_HPP

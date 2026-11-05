@@ -26,7 +26,7 @@ serves a router on a byte stream, `serve` accepts connections from a `Listener`,
 `quoll::client` (`transport`, an `HttpTransport` over a `Connector` with keep-alive connections, built from an
 `http[s]://` URL), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `client::transport` by default, and the
 contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates; and the codecs: `json_codec` on
-Glaze, `text_codec`, `param_traits`), `quoll::ui` (a prototype: elements, decorators, `state`, `app` and the `Renderer`
+Glaze, `text_codec`, `param_traits`), `quoll::ui` (a prototype: elements, decorators, `state`, `to_html`, `app` and the `Renderer`
 concept), the adapters `quoll::threads` (thread pool executor; its tests do not run under
 WASM), `quoll::asio` (asio executor offering the network, a timer and TLS, `tcp_stream`, `tls_stream`, connector and acceptors,
 `runtime`; native only, its runtime hides asio from a program, its streams and acceptors need standalone asio, TLS needs OpenSSL) and `quoll::emscripten` (JavaScript event loop executor offering

@@ -5,6 +5,7 @@ quoll_declare_module(
     src/element.cpp
     src/hot.cpp
     src/reconciler.cpp
+    src/to_html.cpp
   DEPS
     quoll::async
     $<BUILD_INTERFACE:${quoll_glaze_dependency}>
@@ -22,6 +23,7 @@ quoll_declare_tests(
   SOURCES
     tests/app_test.cpp
     tests/element_test.cpp
+    tests/to_html_test.cpp
   DEPS
     quoll::ui
 )
