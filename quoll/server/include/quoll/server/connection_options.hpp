@@ -63,7 +63,8 @@ struct connection_options {
   /**
    * @brief How long a request may take to arrive once it has started, as a whole: a peer sending a byte now and then
    * gets no more. Past it, it answers 408 and the connection closes. It starts again once `100 Continue` has left, as
-   * the client waits for that.
+   * the client waits for that. A body read in pieces (http::body_reader) has it per piece: a transfer takes as long as
+   * it keeps coming, so that only a route that asks for it lets a slow peer stay.
    */
   std::chrono::nanoseconds read_timeout = std::chrono::seconds{30};
 

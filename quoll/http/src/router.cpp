@@ -301,6 +301,7 @@ struct router::entry {
   std::vector<route_segment> segments;
   std::string name;
   handler target;
+  bool body_in_pieces;
 };
 
 router::router() = default;
@@ -311,6 +312,10 @@ router &router::operator=(router &&) noexcept = default;
 router::~router() = default;
 
 void router::add(verb method, std::string_view path, std::string name, handler target) {
+  add_route(method, path, std::move(name), std::move(target), false);
+}
+
+void router::add_route(verb method, std::string_view path, std::string name, handler target, bool body_in_pieces) {
   if (!target) {
     throw std::invalid_argument{"quoll::http::router: empty handler"};
   }
@@ -328,7 +333,7 @@ void router::add(verb method, std::string_view path, std::string name, handler t
     }
   }
 
-  routes_.push_back(entry{method, std::move(segments), std::move(name), std::move(target)});
+  routes_.push_back(entry{method, std::move(segments), std::move(name), std::move(target), body_in_pieces});
 }
 
 namespace detail {
@@ -339,6 +344,7 @@ struct resolved_route {
   bool valid = false;
   // The route that answers, null if none does: then, the methods of the routes on that path, if there are any.
   router::handler const *target = nullptr;
+  bool body_in_pieces = false;
   std::vector<verb> allowed{};
   route_match match{};
 };
@@ -448,14 +454,26 @@ detail::resolved_route router::resolve(request const &message) const {
 
   if (chosen != nullptr) {
     resolved.target = &chosen->target;
-    resolved.match = route_match{chosen->name, extract_params(chosen->segments, *segments), std::string{target->query}};
+    resolved.body_in_pieces = chosen->body_in_pieces;
+    resolved.match =
+        route_match{chosen->name, extract_params(chosen->segments, *segments), std::string{target->query}, {}};
   }
 
   return resolved;
 }
 
-async::task<response> router::dispatch(request message) const {
+bool router::reads_body_in_pieces(request const &head) const {
+  // Resolving allocates, and dispatch() does it again: only for what may be such a route.
+  auto const may_be = std::ranges::any_of(
+      routes_, [&head](entry const &route) { return route.body_in_pieces && route.method == head.method; });
+
+  return may_be && resolve(head).body_in_pieces;
+}
+
+async::task<response> router::dispatch(request message, body_reader reader) const {
   auto resolved = resolve(message);
+
+  resolved.match.reader = reader;
 
   // Nothing else reads what routing found, and a middleware may call next again: only here can it be moved.
   if (middlewares_.empty() && resolved.target != nullptr) {

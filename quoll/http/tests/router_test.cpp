@@ -886,3 +886,108 @@ TEST_CASE("router: the name of such a route is what a middleware counts by", "[h
   REQUIRE(dispatch(router, verb::get, "/things/7").body == "7");
   REQUIRE(route == "/things/{id}");
 }
+
+TEST_CASE("router: a handler taking a body_reader reads the body of a request already whole", "[http][router]") {
+  http::router router;
+
+  router.post("/up/{name}",
+              [](http::request request, std::string name, http::body_reader body) -> task<http::response> {
+                http::response response;
+
+                response.body = name + ":" + std::to_string(request.body.size()) + ":";
+
+                while (auto const piece = co_await body.read()) {
+                  response.body += *piece;
+                }
+
+                REQUIRE_FALSE(co_await body.read());
+                co_return response;
+              });
+  router.post("/whole", [](http::request request) {
+    http::response response;
+
+    response.body = std::move(request.body);
+    return response;
+  });
+
+  http::request message;
+
+  message.method = http::verb::post;
+  message.target = "/up/a";
+  message.body = "a body long enough to be out of a small string";
+
+  REQUIRE(router.reads_body_in_pieces(message));
+  REQUIRE(quoll::test::run(router.dispatch(message))->body == "a:0:" + message.body);
+
+  message.target = "/whole";
+  REQUIRE_FALSE(router.reads_body_in_pieces(message));
+  message.target = "/nowhere";
+  REQUIRE_FALSE(router.reads_body_in_pieces(message));
+
+  http::body_reader const nothing;
+
+  REQUIRE_FALSE(nothing);
+
+  auto const read_nothing = [&]() -> task<bool> { co_return (co_await nothing.read()).has_value(); };
+
+  REQUIRE_FALSE(*quoll::test::run(read_nothing()));
+}
+
+TEST_CASE("router: a request that cannot be for such a route does not look", "[http][router]") {
+  http::router router;
+
+  router.get("/a", [](http::request) { return http::response{}; });
+
+  http::request message;
+
+  // Not even a target it could read.
+  message.target = "*";
+  REQUIRE_FALSE(router.reads_body_in_pieces(message));
+
+  // Nor for another method than such a route's.
+  router.post("/b", [](http::body_reader) { return http::response{}; });
+  message.target = "/b";
+  REQUIRE_FALSE(router.reads_body_in_pieces(message));
+  message.method = http::verb::post;
+  REQUIRE(router.reads_body_in_pieces(message));
+}
+
+TEST_CASE("router: what dispatch() is given to read the body reaches the handler, not the request", "[http][router]") {
+  struct one_piece {
+    bool read_once = false;
+
+    [[nodiscard]] task<std::optional<std::string_view>> read() {
+      if (std::exchange(read_once, true)) {
+        co_return std::nullopt;
+      }
+
+      co_return std::string_view{"from the stream"};
+    }
+  };
+
+  http::router router;
+
+  router.post("/up", [](http::request request, http::body_reader body) -> task<http::response> {
+    http::response response;
+
+    response.body = request.body + "|";
+
+    while (auto const piece = co_await body.read()) {
+      response.body += *piece;
+    }
+
+    co_return response;
+  });
+  router.use([](http::request request, http::next const &next) { return next(std::move(request)); });
+
+  http::request message;
+
+  message.method = http::verb::post;
+  message.target = "/up";
+
+  one_piece source;
+
+  auto const answered = quoll::test::run(router.dispatch(std::move(message), http::body_reader{source}));
+
+  REQUIRE(answered->body == "|from the stream");
+}

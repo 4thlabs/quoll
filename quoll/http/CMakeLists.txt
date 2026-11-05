@@ -31,6 +31,7 @@ endif()
 quoll_declare_module(
   NAME http
   SOURCES
+    src/body_reader.cpp
     src/connection_field.cpp
     src/error.cpp
     src/fields.cpp
@@ -60,6 +61,8 @@ quoll_declare_tests(
 # What a route's path and its handler must agree on, with what the compiler says.
 quoll_declare_compile_fail_tests(
   SOURCES
+    tests/compile_fail/router_body_reader_not_last.cpp
+    tests/compile_fail/router_two_body_readers.cpp
     tests/compile_fail/router_too_few_parameters.cpp
     tests/compile_fail/router_unknown_type.cpp
     tests/compile_fail/router_too_many_parameters.cpp

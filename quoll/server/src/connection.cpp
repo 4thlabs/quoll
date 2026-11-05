@@ -42,6 +42,7 @@
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/with_timeout.hpp>
+#include <quoll/http/body_reader.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/detail/status_response.hpp>
@@ -206,7 +207,8 @@ async::task<request_read> within_read_timeout(async::task<std::error_code> readi
 }
 
 // A request, or its head alone when `100 Continue` is owed before the rest: its client waits for that before its body.
-// Nothing is owed if the body has come already, or if there is none.
+// Nothing is owed if the body has come already, or if there is none. A body in pieces stays where it is: its handler
+// reads it, and asking for it is what `100 Continue` then says.
 async::task<std::error_code> read_up_to_continue(io::any_stream &stream, std::string &buffer,
                                                  http::request_parser &parser, bool &continue_owed) {
   if (auto const error = co_await http::read_head(stream, buffer, parser)) {
@@ -228,6 +230,10 @@ async::task<std::error_code> read_up_to_continue(io::any_stream &stream, std::st
     co_return std::error_code{};
   }
 
+  if (parser.body_streamed()) {
+    co_return std::error_code{};
+  }
+
   co_return co_await http::read(stream, buffer, parser);
 }
 
@@ -239,13 +245,12 @@ async::task<std::error_code> write_continue(io::any_stream &stream) {
 
 // A whole request, under one read timeout, as a slow peer must not get more by sending its head slowly too. Only
 // `100 Continue` starts it again, as the time after it is the client's first to send its body. Leaving is under the
-// write timeout, like any response.
+// write timeout, like any response. A body in pieces is left to its handler, with `continue_owed` for it.
 async::task<request_read> read_whole_request(io::any_stream &stream, std::string &buffer, http::request_parser &parser,
-                                             connection_options const &options) {
-  bool continue_owed = false;
+                                             connection_options const &options, bool &continue_owed) {
   auto const first = co_await within_read_timeout(read_up_to_continue(stream, buffer, parser, continue_owed), options);
 
-  if (first.error || !continue_owed) {
+  if (first.error || !continue_owed || parser.body_streamed()) {
     co_return first;
   }
 
@@ -256,12 +261,96 @@ async::task<request_read> read_whole_request(io::any_stream &stream, std::string
   co_return co_await within_read_timeout(http::read(stream, buffer, parser), options);
 }
 
+// What a handler taking an http::body_reader reads through, one read timeout per piece: a transfer takes as long as it
+// keeps coming. It remembers what stopped it, which says how the request is answered, whatever the handler made of it.
+class streamed_body {
+public:
+  streamed_body(io::any_stream &stream, std::string &buffer, http::request_parser &parser,
+                connection_options const &options, bool continue_owed) noexcept
+      : stream_(&stream), buffer_(&buffer), parser_(&parser), options_(&options), continue_owed_(continue_owed) {}
+
+  [[nodiscard]] async::task<std::optional<std::string_view>> read() {
+    if (failure_) {
+      throw std::system_error{failure_->error, "quoll::server: cannot read the body"};
+    }
+
+    if (ended_) {
+      co_return std::nullopt;
+    }
+
+    if (continue_owed_) {
+      continue_owed_ = false;
+      co_await send_continue();
+    }
+
+    auto const read = co_await within_read_timeout(http::read_body(*stream_, *buffer_, *parser_, piece_), *options_);
+
+    if (read.error == std::errc::operation_canceled) {
+      // Whoever cancels it, as a handler's own timeout does, says what happens next: the body is not at fault.
+      throw std::system_error{read.error, "quoll::server: reading the body was stopped"};
+    }
+
+    if (read.error) {
+      failure_ = read;
+
+      // What came before it is the handler's: the failure is for the next read.
+      if (piece_.empty()) {
+        throw std::system_error{read.error, "quoll::server: cannot read the body"};
+      }
+
+      co_return std::string_view{piece_};
+    }
+
+    if (piece_.empty()) {
+      ended_ = true;
+      co_return std::nullopt;
+    }
+
+    co_return std::string_view{piece_};
+  }
+
+  [[nodiscard]] std::optional<request_read> const &failure() const noexcept { return failure_; }
+
+private:
+  async::task<> send_continue() {
+    std::error_code sent;
+
+    try {
+      sent = co_await async::detail::with_optional_timeout(options_->write_timeout, write_continue(*stream_));
+    } catch (std::system_error const &thrown) {
+      sent = thrown.code();
+    }
+
+    if (sent) {
+      failure_ = request_read{sent};
+      throw std::system_error{sent, "quoll::server: cannot ask for the body"};
+    }
+  }
+
+  io::any_stream *stream_;
+  std::string *buffer_;
+  http::request_parser *parser_;
+  connection_options const *options_;
+  std::string piece_;
+  std::optional<request_read> failure_;
+  bool continue_owed_;
+  bool ended_ = false;
+};
+
 // The router's response, or 500 if a handler or a middleware threw, reported to the application's callback if it gave
 // one.
 async::task<http::response> respond(http::router const &router, http::request request,
-                                    connection_options const &options) {
+                                    connection_options const &options, streamed_body *body) {
   try {
-    co_return co_await router.dispatch(std::move(request));
+    co_return co_await router.dispatch(std::move(request),
+                                       body != nullptr ? http::body_reader{*body} : http::body_reader{});
+  } catch (std::system_error const &thrown) {
+    // A body that could not be read is no failure of the handler's, which only let it through.
+    auto const of_the_body = body != nullptr && body->failure() && thrown.code() == body->failure()->error;
+
+    if (options.on_handler_error && !of_the_body) {
+      options.on_handler_error(std::current_exception());
+    }
   } catch (...) {
     if (options.on_handler_error) {
       options.on_handler_error(std::current_exception());
@@ -353,6 +442,23 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
   std::stop_callback const on_stop{co_await async::current_stop_token(), stop_waiting};
   std::stop_callback const on_drain{options.drain, stop_waiting};
 
+  parser.set_body_streaming([&router](http::request const &head) { return router.reads_body_in_pieces(head); });
+
+  // A request that cannot be read: answered if it deserves it, and the connection ends.
+  auto const refuse = [&](request_read const &read) -> async::task<connection_end> {
+    auto const answer = read_error_status(read);
+
+    if (!answer) {
+      co_return connection_end::nothing_owed;
+    }
+
+    auto rejected = http::detail::status_response(*answer);
+
+    prepare(rejected, false, false);
+    co_return co_await send_response(stream, rejected, false, options) ? connection_end::nothing_owed
+                                                                       : connection_end::linger;
+  };
+
   for (;;) {
     skip_empty_lines(buffer);
 
@@ -367,24 +473,43 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
       }
     }
 
-    if (auto const read = co_await read_whole_request(stream, buffer, parser, options); read.error) {
-      auto const answer = read_error_status(read);
+    bool continue_owed = false;
 
-      if (!answer) {
-        co_return connection_end::nothing_owed;
-      }
-
-      auto rejected = http::detail::status_response(*answer);
-
-      prepare(rejected, false, false);
-      co_return co_await send_response(stream, rejected, false, options) ? connection_end::nothing_owed
-                                                                         : connection_end::linger;
+    if (auto const read = co_await read_whole_request(stream, buffer, parser, options, continue_owed); read.error) {
+      co_return co_await refuse(read);
     }
 
-    auto keep_alive = parser.keep_alive() && !parser.upgrade();
-    auto request = parser.release();
+    std::optional<streamed_body> body;
+    auto keep_alive = false;
+    http::request request;
+
+    if (parser.body_streamed()) {
+      // The parser goes on with the body: the handler gets a copy of the head.
+      request = parser.head();
+      request.body.clear();
+      // What comes with the head or after it alike: no trailers.
+      request.trailers.clear();
+      body.emplace(stream, buffer, parser, options, continue_owed);
+    } else {
+      keep_alive = parser.keep_alive() && !parser.upgrade();
+      request = parser.release();
+    }
+
     auto const head = request.method == http::verb::head;
-    auto response = co_await respond(router, std::move(request), options);
+    auto response = co_await respond(router, std::move(request), options, body ? &*body : nullptr);
+
+    if (body) {
+      if (body->failure()) {
+        co_return co_await refuse(*body->failure());
+      }
+
+      // What it left unread, or could not tell apart from the next request, ends the connection.
+      keep_alive = parser.done() && parser.keep_alive() && !parser.upgrade();
+
+      if (keep_alive) {
+        static_cast<void>(parser.release());
+      }
+    }
 
     keep_alive = keep_alive && !http::detail::closes_connection(response.fields) && !options.drain.stop_requested();
     prepare(response, head, keep_alive);

@@ -37,7 +37,9 @@
 #ifndef QUOLL_HTTP_DETAIL_TYPED_ROUTE_HPP
 #define QUOLL_HTTP_DETAIL_TYPED_ROUTE_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/http/body_reader.hpp>
 #include <quoll/http/detail/number.hpp>
 #include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/detail/status_response.hpp>
@@ -124,6 +126,31 @@ struct signature_of<R (*)(A...) noexcept> : signature<R, A...> {};
 template <class F>
 concept HasSignature = requires { typename signature_of<F>::arguments; };
 
+template <class T>
+inline constexpr bool is_body_reader = std::same_as<std::remove_cvref_t<T>, body_reader>;
+
+template <class Tuple>
+inline constexpr std::size_t body_readers_in = 0;
+
+template <class... Arguments>
+inline constexpr std::size_t body_readers_in<std::tuple<Arguments...>> =
+    (std::size_t{is_body_reader<Arguments>} + ... + 0);
+
+// A handler taking an http::body_reader: its route reads the request as it goes.
+template <class F>
+inline constexpr bool reads_body_in_pieces = body_readers_in<typename signature_of<F>::arguments> != 0;
+
+// The body of a request already whole, as one piece: what a handler reads when nothing streams it to it.
+class whole_body {
+public:
+  explicit whole_body(std::string_view body QUOLL_LIFETIMEBOUND) noexcept : body_(body) {}
+
+  [[nodiscard]] async::task<std::optional<std::string_view>> read();
+
+private:
+  std::string_view body_;
+};
+
 template <class Tuple>
 struct takes_request : std::false_type {};
 
@@ -172,7 +199,7 @@ private:
   [[nodiscard]] static consteval std::size_t count() {
     using arguments = typename signature_of<F>::arguments;
 
-    return std::tuple_size_v<arguments> - (takes_request<arguments>::value ? 1 : 0);
+    return std::tuple_size_v<arguments> - (takes_request<arguments>::value ? 1 : 0) - body_readers_in<arguments>;
   }
 
   std::string_view text_;
@@ -184,12 +211,28 @@ inline constexpr bool is_response_result = std::same_as<R, response> || std::sam
 // No request among the parameters of a handler.
 struct no_request {};
 
+// What a parameter of a handler is: read from `match`, or what reads the body.
+template <class T, std::size_t Index>
+[[nodiscard]] std::optional<T> read_parameter(route_match &match, body_reader reader) {
+  if constexpr (std::same_as<T, body_reader>) {
+    return reader;
+  } else {
+    return read_path_parameter<T>(match.params.at(Index));
+  }
+}
+
 // Calls `target` with its parameters read from `match`. Everything it is given lives in this frame until its task has
 // ended, so that references and views are fine in a handler, a coroutine too.
 template <class Result, class F, class Request, class... Parameters, std::size_t... Index>
 async::task<response> call_typed(F &target, request message, route_match match, std::index_sequence<Index...>) {
+  // Nothing streams it to it, when a router is called directly: what it reads is the body, which `message` no longer
+  // holds.
+  auto const body = (is_body_reader<Parameters> || ...) ? std::exchange(message.body, {}) : std::string{};
+  whole_body whole{body};
+  auto const reader = match.reader ? match.reader : body_reader{whole};
+
   std::tuple<std::optional<std::remove_cvref_t<Parameters>>...> values{
-      read_path_parameter<std::remove_cvref_t<Parameters>>(match.params.at(Index))...};
+      read_parameter<std::remove_cvref_t<Parameters>, Index>(match, reader)...};
 
   if (!(std::get<Index>(values).has_value() && ...)) {
     co_return status_response(status::bad_request);
@@ -210,12 +253,22 @@ async::task<response> call_typed(F &target, request message, route_match match, 
   }
 }
 
+template <class... Parameters>
+[[nodiscard]] consteval bool body_reader_comes_last() {
+  auto left = sizeof...(Parameters);
+
+  // Once one is found, nothing may follow it.
+  return (((left--, !is_body_reader<Parameters>) || left == 0) && ...);
+}
+
 template <class Result, class F, class Request, class... Parameters>
 [[nodiscard]] auto typed_handler_for(F target) {
   static_assert(is_response_result<Result>,
                 "quoll::http::router: a handler returns http::response or task<http::response>");
-  static_assert((PathParameter<std::remove_cvref_t<Parameters>> && ...),
+  static_assert(((PathParameter<std::remove_cvref_t<Parameters>> || is_body_reader<Parameters>) && ...),
                 "quoll::http::router: a path parameter is a std::string, a std::string_view, a number or a bool");
+  static_assert(body_reader_comes_last<Parameters...>(),
+                "quoll::http::router: a handler takes one http::body_reader, last");
 
   return [target = std::move(target)](request message, route_match match) mutable -> async::task<response> {
     return call_typed<Result, F, Request, Parameters...>(target, std::move(message), std::move(match),

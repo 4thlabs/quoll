@@ -37,6 +37,8 @@
 #ifndef QUOLL_HTTP_ROUTE_MATCH_HPP
 #define QUOLL_HTTP_ROUTE_MATCH_HPP
 
+#include <quoll/http/body_reader.hpp>
+
 #include <string>
 #include <string_view>
 #include <vector>
@@ -51,6 +53,8 @@ struct route_match {
   std::vector<std::string> params;
   /** @brief The query string, after `?` and still encoded; empty without one. */
   std::string query;
+  /** @brief What reads the body, when what serves the request left it unread: see router::reads_body_in_pieces(). */
+  body_reader reader{};
 };
 
 } // namespace quoll::http

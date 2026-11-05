@@ -120,7 +120,8 @@ public:
    *
    * A parameter that cannot be read as its type answers 400. The route is named after `path`, as next::route() says.
    * The handler says the types: the only one a path says is `{name:path}`, for the rest of it. The query is in
-   * `request.target`, or in the route_match of add().
+   * `request.target`, or in the route_match of add(). A last parameter of type http::body_reader reads the body of the
+   * request in pieces, rather than `request.body`: see body_reader.
    */
   template <class F>
   void get(detail::checked_path<std::type_identity_t<F>> path, F target) {
@@ -188,7 +189,13 @@ public:
    * @brief The response of the route `message` matches, from its handler, or the 404 / 405 / 400 above, through the
    * middlewares. Anything a handler or a middleware throws, even before it returns its task, comes out of the task.
    */
-  [[nodiscard]] async::task<response> dispatch(request message) const QUOLL_LIFETIMEBOUND;
+  [[nodiscard]] async::task<response> dispatch(request message, body_reader reader = {}) const QUOLL_LIFETIMEBOUND;
+
+  /**
+   * @brief Whether the route of a request with this head reads its body in pieces, so that what serves it leaves the
+   * body unread, and gives dispatch() what reads it. A request of another method pays nothing for this.
+   */
+  [[nodiscard]] bool reads_body_in_pieces(request const &head) const;
 
 private:
   friend class next;
@@ -197,8 +204,11 @@ private:
 
   template <class F>
   void add_typed(verb method, std::string_view path, F target) {
-    add(method, path, std::string{path}, detail::typed_handler(std::move(target)));
+    add_route(method, path, std::string{path}, detail::typed_handler(std::move(target)),
+              detail::reads_body_in_pieces<F>);
   }
+
+  void add_route(verb method, std::string_view path, std::string name, handler target, bool body_in_pieces);
 
   // What routing finds for a request, without running anything.
   [[nodiscard]] detail::resolved_route resolve(request const &message) const;
