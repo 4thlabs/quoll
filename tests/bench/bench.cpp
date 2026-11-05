@@ -203,12 +203,15 @@ http::router make_router() {
       size += piece->size();
     }
 
-    response.body = std::to_string(size);
+    // A body cut short must not pass for a cheap request.
+    response.status = size == megabyte().size() ? http::status::ok : http::status::bad_request;
     co_return response;
   });
   router.get("/out-pieces", [](http::request) {
     http::response response;
 
+    // Announced: a body cut short is one the client's parser refuses.
+    response.fields.add("Content-Length", std::to_string(megabyte().size()));
     response.body_writer = [](http::body_stream out) -> task<> {
       for (auto index = 0; index < 256; ++index) {
         co_await out.write(std::string_view{megabyte()}.substr(0, 4096));
@@ -551,7 +554,7 @@ constexpr budget budgets[] = {
     {"GET, one connection each", 48.0},
     {"POST 1 MiB, echoed", 63.0},
     {"POST 1 MiB, read in pieces", 821.0},
-    {"GET 1 MiB, written in pieces", 807.0},
+    {"GET 1 MiB, written in pieces", 800.0},
     {"REST GET, JSON", 37.0},
     {"REST POST, JSON", 64.0},
 };

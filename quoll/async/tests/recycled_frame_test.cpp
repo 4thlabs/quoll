@@ -115,6 +115,7 @@ TEST_CASE("recycled frames: every size is served from what holds it", "[async]")
 }
 
 TEST_CASE("recycled frames: past what a thread keeps, frames go back to the system", "[async]") {
+  auto const of_another_size = frames_kept(1024);
   std::vector<void *> many;
 
   for (auto index = 0; index < 1000; ++index) {
@@ -126,8 +127,38 @@ TEST_CASE("recycled frames: past what a thread keeps, frames go back to the syst
   }
 
   REQUIRE(frames_kept(256) == (frames_are_recycled() ? 64U : 0U));
-  // Of another size, nothing has changed: each has its own bound.
-  REQUIRE(frames_kept(257) <= 64U);
+  // Each has its own bound.
+  REQUIRE(frames_kept(1024) == of_another_size);
+}
+
+TEST_CASE("recycled frames: the frame of a coroutine comes from them, and goes back", "[async]") {
+  if (!frames_are_recycled()) {
+    SUCCEED("every frame goes back to the system here");
+    return;
+  }
+
+  auto const kept = [] {
+    std::size_t all = 0;
+
+    for (std::size_t size = 64; size <= 8192; size *= 2) {
+      all += frames_kept(size);
+    }
+
+    return all;
+  };
+
+  // Past the first run, what it needs is there, and it comes back as it was.
+  REQUIRE(quoll::test::run(add(1, 2)) == 3);
+
+  auto const before = kept();
+
+  REQUIRE(quoll::test::run(add(1, 2)) == 3);
+  REQUIRE(kept() == before);
+
+  // Taken from them while it runs: fewer are kept than when it has ended.
+  auto const while_running = [&]() -> task<std::size_t> { co_return kept(); };
+
+  REQUIRE(*quoll::test::run(while_running()) < before);
 }
 
 // The frames of a promise are recycled: what bench_allocations would only show at night.

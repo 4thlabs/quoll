@@ -213,6 +213,8 @@ changes only what the harness shows. Candidates:
 
 - Performance comes last (2026-11-05): the maintainer needs what comes before it first. An earlier step may still take a
   candidate that it reworks anyway, as streaming does with the timers.
+- Coroutine frames are recycled per thread (2026-11-05), ahead of the performance step, at the maintainer's request: a body in
+  pieces took 16 allocations per piece, against the type-erasure rule, and what fixes it is this rather than the wrappers.
 - Name: **Quoll**, a new public library (namespace `quoll::`). Puffin keeps its existing utility modules (events, ioc,
   maths, imdb...). Repository: GitHub `4thlabs/quoll`.
 - **C++23** minimum (GCC ≥ 13, Clang ≥ 19, Apple Clang ≥ 21 since 2026-11-04, the maintainer's;

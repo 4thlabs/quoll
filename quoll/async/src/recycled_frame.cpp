@@ -43,13 +43,26 @@
 #include <new>
 #include <utility>
 
-#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) || defined(__SANITIZE_HWADDRESS__)
+// ASan keeps them recycled, with what is free poisoned, so that it checks this code and still sees a use after an end.
+// The others that follow memory cannot be told what is free: they see each frame come and go.
+#if defined(__SANITIZE_ADDRESS__)
+#define QUOLL_ASYNC_POISON_FRAMES
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define QUOLL_ASYNC_POISON_FRAMES
+#endif
+#endif
+
+#if defined(__SANITIZE_THREAD__) || defined(__SANITIZE_HWADDRESS__)
 #define QUOLL_ASYNC_NO_FRAME_RECYCLING
 #elif defined(__has_feature)
-#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || __has_feature(memory_sanitizer) ||          \
-    __has_feature(hwaddress_sanitizer)
+#if __has_feature(thread_sanitizer) || __has_feature(memory_sanitizer) || __has_feature(hwaddress_sanitizer)
 #define QUOLL_ASYNC_NO_FRAME_RECYCLING
 #endif
+#endif
+
+#if defined(QUOLL_ASYNC_POISON_FRAMES)
+#include <sanitizer/asan_interface.h>
 #endif
 
 namespace quoll::async::detail {
@@ -93,6 +106,25 @@ struct free_frame {
   free_frame *next;
 };
 
+// What is not its own to touch.
+void poison(void *memory, std::size_t size) noexcept {
+#if defined(QUOLL_ASYNC_POISON_FRAMES)
+  ASAN_POISON_MEMORY_REGION(memory, size);
+#else
+  static_cast<void>(memory);
+  static_cast<void>(size);
+#endif
+}
+
+void unpoison(void *memory, std::size_t size) noexcept {
+#if defined(QUOLL_ASYNC_POISON_FRAMES)
+  ASAN_UNPOISON_MEMORY_REGION(memory, size);
+#else
+  static_cast<void>(memory);
+  static_cast<void>(size);
+#endif
+}
+
 // Set once this thread's frames are gone: a frame freed by what ends after them goes back to the system.
 constinit thread_local bool frames_gone = false;
 
@@ -109,6 +141,7 @@ public:
 
     for (auto *frame : free_) {
       while (frame != nullptr) {
+        unpoison(frame, sizeof(free_frame));
         ::operator delete(std::exchange(frame, frame->next));
       }
     }
@@ -118,6 +151,7 @@ public:
     auto *const frame = free_[index];
 
     if (frame != nullptr) {
+      unpoison(frame, sizeof(free_frame));
       free_[index] = frame->next;
       --kept_[index];
     }
@@ -130,7 +164,9 @@ public:
       return false;
     }
 
+    unpoison(memory, sizeof(free_frame));
     free_[index] = ::new (memory) free_frame{free_[index]};
+    poison(memory, smallest_size << index);
     ++kept_[index];
     return true;
   }
@@ -152,15 +188,18 @@ void *allocate_frame(std::size_t size) {
   }
 
   auto const index = size_index(size);
-
-  if (!frames_gone) {
-    if (auto *const frame = frames.take(index)) {
-      return frame;
-    }
-  }
+  auto const whole = rounded_size(size);
+  auto *frame = frames_gone ? nullptr : frames.take(index);
 
   // Its whole size, for whichever frame of that size takes it next.
-  return ::operator new(rounded_size(size));
+  if (frame == nullptr) {
+    frame = ::operator new(whole);
+  }
+
+  // No more than it asks is its own: ASan sees what goes past it, within the size it was rounded up to.
+  unpoison(frame, size);
+  poison(static_cast<char *>(frame) + size, whole - size);
+  return frame;
 }
 
 void deallocate_frame(void *frame, std::size_t size) noexcept {

@@ -11,7 +11,7 @@ build-bench/tests/bench/quoll_bench allocations      # the second
 build-bench/tests/bench/quoll_bench serve 8080       # the routes alone, for the third
 ```
 
-Measured on commit `d9c3b0f` with coroutine frames recycled, in a Docker container of an Intel Core i5-14400 (16 threads), Linux 6.18, GCC 13.3, on a machine
+Measured on `d9c3b0f` with the pull request recycling coroutine frames on top, in a Docker container of an Intel Core i5-14400 (16 threads), Linux 6.18, GCC 13.3, on a machine
 that also runs other things: each figure is the median of three runs, and a rate moves by some 10 % from one to the next.
 
 ## Over loopback TCP
@@ -55,7 +55,7 @@ also writes the first table in its summary. Of the pull requests, only one touch
 | GET, one connection each | 48 |
 | POST 1 MiB, echoed | 63 |
 | POST 1 MiB, read in pieces | 821 |
-| GET 1 MiB, written in pieces | 807 |
+| GET 1 MiB, written in pieces | 800 |
 | REST GET, JSON | 37 |
 | REST POST, JSON | 64 |
 

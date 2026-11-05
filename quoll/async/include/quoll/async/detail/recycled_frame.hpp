@@ -46,9 +46,9 @@ namespace quoll::async::detail {
 [[nodiscard]] void *allocate_frame(std::size_t size);
 void deallocate_frame(void *frame, std::size_t size) noexcept;
 
-// False when the library is built under a sanitizer, for it to see each frame come and go: what uses one after its end
-// would go unseen in a frame that lives on. An application under one, against a library built without, and Valgrind, do
-// not see them.
+// False under TSan, MSan and HWASan, for them to see each frame come and go: what uses one after its end would go
+// unseen in a frame that lives on. ASan keeps them recycled, as what is free is poisoned. Valgrind, and an application
+// under a sanitizer against a library built without, do not see them.
 [[nodiscard]] bool frames_are_recycled() noexcept;
 
 // How many frames of what this size rounds up to this thread keeps, for a test of its bound.
