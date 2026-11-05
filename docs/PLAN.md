@@ -22,7 +22,7 @@ before much is built on it. Points marked "To settle" and the [open questions](#
 decide. Steps marked *(maintainer merges)* are big architecture changes. Figures given as "today" were measured when this
 roadmap was written.
 
-**Current step: 1.** Step 0 only waits for the maintainer.
+**Current step: 2.** Step 0 only waits for the maintainer.
 
 ### Done
 
@@ -30,9 +30,9 @@ roadmap was written.
 over TCP, over `fetch`, and through OpenSSL). A first `quoll::ui` with its DOM renderer, Tailwind through Vite, and two
 levels of hot reload, in the sample `ui_notes`. In CI: `clang-tidy`, the standard library's checks, Apple Clang on macOS, Codex's review and a protected `main`.
 
-Measured on `ui_notes`: 51 KB of gzipped WASM with the REST client, against about 45 KB for React and ReactDOM alone; a
-literal shows in about 31 ms, keeping the state; any other change in a page builds in about 1 s and reloads the page in
-about 1.2 s.
+Compiled libraries (step 1): a program compiles neither llhttp nor asio. A page rebuilds in 0.81 s and a native server in 3.9 s,
+for 52 KB of gzipped WASM with the REST client, against about 45 KB for React and ReactDOM alone. A literal shows in about 31 ms,
+keeping the state.
 
 ### Step 0: finish the setup
 
@@ -45,27 +45,16 @@ The branch `ui-ipp` stays, for step 1.
 
 *Done when:* both are done.
 
-### Step 1: compiled libraries *(maintainer merges)*
+### Step 1: compiled libraries *(done)*
 
-First, as all later code is then written for it. Decided on 2026-11-04, for applications that stay reliable over time.
+`src/*.cpp` and one mode, like Capy and Corosio, rather than the two modes of `.ipp` files. Templates over application types
+stay in headers, with `quoll::async`, templates and functions of some lines, and `io::memory_stream`, a stream for tests. An
+installed Quoll runs a program with no asio available.
 
-- `src/*.cpp` and one mode, like Capy and Corosio, rather than the two modes of `.ipp` files. Templates over application
-  types stay in headers.
-- In order: the rules and `quoll::ui`, starting from the `app_core` / `renderer_ref` split on the branch `ui-ipp`; then
-  `http`; then `server` and `client`; then the adapters, hiding asio and OpenSSL from application headers if that holds.
-- `quoll::ui`: the app, the diff and hot reload's global state are compiled once, which settles the review point left open
-  on #39. What builds elements stays in headers: it returns decorators, or changes with `QUOLL_UI_HOT`.
-- `quoll::http`: the parser, the router, the serializer and percent-encoding are compiled once, and llhttp no longer shows in a
-  program's headers.
-- `quoll::server` and `quoll::client`: compiled once, as what they do goes through `io::any_stream`, behind thin templates over
-  the stream, listener, executor or connector.
-- `quoll::threads`, `quoll::emscripten`, `quoll::io` and `quoll::rest`: what is not a template, but for `io::memory_stream`, a
-  stream for tests. `quoll::async` stays headers: it is templates and functions of some lines.
-- `quoll::asio`: its runtime is compiled once, so that a program using `quoll::runtime` does not compile asio. Its streams and
-  acceptors stay in headers, for a program mixing them with asio code, which then provides asio.
-
-*Done when:* application code is unchanged (a `main.cpp` and headers), and each pull request gives before and after
-figures for a full build, a page rebuild (about 1 s today) and the size of the WASM (51 KB gzipped today).
+Figures, from the first PR of this step to the last, without ccache: a page rebuilds in 0.81 s rather than 1.15 s, a native
+server in 3.9 s rather than 13.7 s. The cost: a native binary 19 % larger, for step 4. Two things follow from compiling once. An
+`assert` in a library follows its build type, not the application's. A program using `tcp_stream` or `runtime::context()`
+compiles asio too, in the same version as the library.
 
 ### Step 2: client and server, security and completeness
 
@@ -199,7 +188,7 @@ them.
 
 - Name: **Quoll**, a new public library (namespace `quoll::`). Puffin keeps its existing utility modules (events, ioc,
   maths, imdb...). Repository: GitHub `4thlabs/quoll`.
-- Header-only until [step 1](#step-1-compiled-libraries-maintainer-merges), **C++23** minimum (GCC ≥ 13, Clang ≥ 19, Apple Clang ≥ 21 since 2026-11-04, the maintainer's;
+- **C++23** minimum (GCC ≥ 13, Clang ≥ 19, Apple Clang ≥ 21 since 2026-11-04, the maintainer's;
   C++20 until 2026-11-03, raised for Glaze), rules in [`CODING_RULES.md`](CODING_RULES.md). Third-party C/C++
   dependencies may be compiled targets fetched by CPM.
 - The UI is a **C++ DSL compiled to WASM** (2026-11-04), which replaces the React, TypeScript client and `quoll::bridge`
@@ -210,7 +199,7 @@ them.
 - **Quoll drives the tools** (2026-11-04), through a `quoll` command: Vite becomes an internal detail. Replaces a
   development driven by Vite and a release driven by CMake.
 - **Compiled libraries** (2026-11-04), in one mode rather than the two of `.ipp` files, for applications that stay
-  reliable over time: see [step 1](#step-1-compiled-libraries-maintainer-merges).
+  reliable over time: see [step 1](#step-1-compiled-libraries-done).
 - OpenAPI (2026-11-04) is an optional, later output of the REST DSL, no longer the contract of the UI.
 - JSON: [Glaze](https://github.com/stephenberry/glaze) (2026-11-03), header-only, fetched by CPM with a pinned version.
   Its aggregate reflection also serves the REST DSL (see [REST DSL](#rest-dsl-contract-server-client)).

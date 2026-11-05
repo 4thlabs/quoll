@@ -7,8 +7,7 @@ change must follow. The target, the roadmap and open decisions are in [`docs/PLA
 source of truth for the design and the order of the work.
 
 Quoll is a public C++23 web framework aimed at performance and ease of use: a sans-IO async runtime, an HTTP client and server,
-a typed REST DSL usable from any program, and a UI DSL compiled to WASM for web, desktop and mobile, styled with Tailwind. It is
-moving from headers to compiled libraries (step 1 of the roadmap). Namespace `quoll::`.
+a typed REST DSL usable from any program, and a UI DSL compiled to WASM for web, desktop and mobile, styled with Tailwind. Namespace `quoll::`.
 
 The maintainer communicates in French; code, comments, docs and commit messages stay in English.
 
@@ -95,7 +94,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 ## Hard constraints
 
-- Compiled libraries, one module at a time, the others header-only until then (step 1 of the roadmap). C++23 minimum (GCC ≥ 13, Clang ≥ 19, Apple Clang ≥ 21). CMake, dependencies
+- Compiled libraries, with templates over what an application provides in headers. C++23 minimum (GCC ≥ 13, Clang ≥ 19, Apple Clang ≥ 21). CMake, dependencies
   via CPM.
 - WASM is a first-class target: core modules never require threads or blocking waits.
 - Adapters: thread pool (`quoll::threads`), asio (`quoll::asio`), Emscripten (`quoll::emscripten`: event loop, `fetch`, the
