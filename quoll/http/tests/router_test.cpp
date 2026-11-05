@@ -980,10 +980,12 @@ TEST_CASE("router: what dispatch() is given to read the body reaches the handler
   });
   router.use([](http::request request, http::next const &next) { return next(std::move(request)); });
 
+  // What serves a request leaves its body unread: what it may hold is not what the handler reads.
   http::request message;
 
   message.method = http::verb::post;
   message.target = "/up";
+  message.body = "from the request";
 
   one_piece source;
 
@@ -1055,4 +1057,51 @@ TEST_CASE("body_reader: target() recovers what it reads through", "[http][router
   REQUIRE(reader.target<first_source>() == &source);
   REQUIRE(reader.target<second_source>() == nullptr);
   REQUIRE(nothing.target<first_source>() == nullptr);
+}
+
+TEST_CASE("router: a route reading in pieces sees no trailers, with or without a stream", "[http][router]") {
+  http::router router;
+
+  router.post("/up", [](http::request request, http::body_reader) {
+    http::response response;
+
+    response.body = std::to_string(request.trailers.size());
+    return response;
+  });
+
+  http::request message;
+
+  message.method = http::verb::post;
+  message.target = "/up";
+  message.trailers.add("X-Sum", "1");
+
+  auto const answered = quoll::test::run(router.dispatch(std::move(message)));
+
+  REQUIRE(answered->body == "0");
+}
+
+TEST_CASE("router: a route reading whole gets nothing to read in pieces", "[http][router]") {
+  struct nothing_to_read {
+    [[nodiscard]] task<std::optional<std::string_view>> read() { co_return std::nullopt; }
+  };
+
+  http::router router;
+
+  router.add(verb::post, "/whole", "whole", [](http::request request, http::route_match match) -> task<http::response> {
+    http::response response;
+
+    response.body = request.body + (match.reader ? "|a reader" : "|no reader");
+    co_return response;
+  });
+
+  http::request message;
+
+  message.method = http::verb::post;
+  message.target = "/whole";
+  message.body = "from the request";
+
+  nothing_to_read source;
+  auto const answered = quoll::test::run(router.dispatch(std::move(message), http::body_reader{source}));
+
+  REQUIRE(answered->body == "from the request|no reader");
 }

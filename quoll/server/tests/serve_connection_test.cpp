@@ -1585,7 +1585,11 @@ TEST_CASE("serve_connection: a stop during the reading of a body is no failure o
     (void)co_await io::write(stream, std::as_bytes(std::span{sent}));
     co_await quoll::async::sleep_for(1s);
     stopping.request_stop();
-    co_return true;
+
+    // Nothing comes: not a 500 for a handler that let the stop through.
+    std::array<std::byte, 64> received{};
+
+    co_return (co_await stream.read_some(received)).transferred == 0;
   };
 
   auto const serving = [&](io::memory_stream stream) -> task<bool> {
@@ -1598,5 +1602,6 @@ TEST_CASE("serve_connection: a stop during the reading of a body is no failure o
       quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peer(std::move(client))));
 
   REQUIRE(outcome);
+  REQUIRE(std::get<1>(*outcome));
   REQUIRE(failures == 0);
 }

@@ -334,6 +334,7 @@ void router::add_route(verb method, std::string_view path, std::string name, han
   }
 
   routes_.push_back(entry{method, std::move(segments), std::move(name), std::move(target), body_in_pieces});
+  any_body_in_pieces_ = any_body_in_pieces_ || body_in_pieces;
 }
 
 namespace {
@@ -483,6 +484,10 @@ detail::resolved_route router::resolve(request const &message) const {
 }
 
 bool router::reads_body_in_pieces(request const &head) const {
+  if (!any_body_in_pieces_) {
+    return false;
+  }
+
   // Resolving allocates, and dispatch() does it again: only for what may be such a route.
   auto const may_be = std::ranges::any_of(routes_, [&head](entry const &route) {
     // A HEAD request may go to the GET route.
@@ -496,12 +501,17 @@ bool router::reads_body_in_pieces(request const &head) const {
 async::task<response> router::dispatch(request message, body_reader reader) const {
   auto resolved = resolve(message);
 
-  // With nothing reading it from a stream, a request's body already whole is one piece: here rather than in the route,
-  // so that a middleware calling next again finds what is left of it, as it does with a stream.
-  auto const body = resolved.body_in_pieces && !reader ? std::exchange(message.body, {}) : std::string{};
+  // Only for a route reading in pieces: its request has neither body nor trailers, as on a connection, where they come
+  // after the handler has started. With nothing reading it from a stream, a body already whole is one piece: here
+  // rather than in the route, so that a middleware calling next again finds what is left of it, as it does with a
+  // stream.
+  auto const body = resolved.body_in_pieces ? std::exchange(message.body, {}) : std::string{};
   whole_body whole{body};
 
-  resolved.match.reader = reader || !resolved.body_in_pieces ? reader : body_reader{whole};
+  if (resolved.body_in_pieces) {
+    message.trailers.clear();
+    resolved.match.reader = reader ? reader : body_reader{whole};
+  }
 
   // Nothing else reads what routing found, and a middleware may call next again: only here can it be moved.
   if (middlewares_.empty() && resolved.target != nullptr) {

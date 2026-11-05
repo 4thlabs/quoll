@@ -486,9 +486,6 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
     if (parser.body_streamed()) {
       // The parser goes on with the body: the handler gets a copy of the head.
       request = parser.head();
-      request.body.clear();
-      // What comes with the head or after it alike: no trailers.
-      request.trailers.clear();
       body.emplace(stream, buffer, parser, options, continue_owed);
     } else {
       keep_alive = parser.keep_alive() && !parser.upgrade();
@@ -499,6 +496,11 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
     auto response = co_await respond(router, std::move(request), options, body ? &*body : nullptr);
 
     if (body) {
+      // Stopped while it read: nothing is owed, not even the 500 of a handler that let it through.
+      if ((co_await async::current_stop_token()).stop_requested()) {
+        co_return connection_end::nothing_owed;
+      }
+
       if (body->failure()) {
         co_return co_await refuse(*body->failure());
       }

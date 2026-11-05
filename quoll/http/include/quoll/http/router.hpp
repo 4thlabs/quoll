@@ -218,6 +218,7 @@ private:
 
   std::vector<entry> routes_;
   std::vector<middleware> middlewares_;
+  bool any_body_in_pieces_ = false;
 };
 
 } // namespace quoll::http

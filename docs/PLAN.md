@@ -199,6 +199,8 @@ changes only what the harness shows. Candidates:
 - A client copies the request body into the serialized message: write the head and the body as two buffers.
 - A TLS client builds its context per connection, and resumes no session.
 - A client builds a parser per request, which now allocates: one per connection avoids it.
+- `http::body_reader` returns a task per piece, where the type-erasure rules ask for no allocation per operation, and what reads
+  behind it allocates more. Left for this step: with the frames per piece of a read timeout, it has to be measured as a whole.
 - The size of a native binary, 19 % larger since step 1, as static libraries link whole objects: `--gc-sections`, link-time
   optimization.
 - Idle connections are only found closed when a request uses them: closing them after an idle time, and letting a POST

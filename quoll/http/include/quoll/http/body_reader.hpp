@@ -44,6 +44,7 @@
 #include <concepts>
 #include <optional>
 #include <string_view>
+#include <type_traits>
 
 namespace quoll::http {
 
@@ -72,9 +73,11 @@ namespace detail {
  * leaves unread closes the connection after its response.
  *
  * read() gives a view, valid up to the next read(), and nothing at the end of the body, as often as it is asked. What
- * prevents reading throws std::system_error, as a body cut short or too large (http::error), or a stream that failed:
- * left to run through the handler, it answers as a request refused as it is read would. Failing once, read() goes on
- * failing, but for a cancellation, as a handler's own timeout is: reading may go on after it.
+ * prevents reading throws std::system_error, as a body cut short or too large (http::error), or a stream that failed.
+ * The request is then answered as one refused as it is read would be, whatever the handler made of it, as it could not
+ * know what the connection can still carry. Failing once, read() goes on failing, but for a cancellation of the read,
+ * as a handler's own timeout is: reading may go on after it, and the handler's response stands. Stopping during `100
+ * Continue` is a failure, as what did not leave whole leaves a stream nothing more can be written to.
  *
  * Copied freely, it refers to what reads the body, valid until the handler's task ends. A default-constructed one has
  * nothing to read. One read() at a time, and a body is read once: a middleware calling `next` again finds what is left
@@ -89,7 +92,7 @@ public:
 
   /** @brief Reads through `source`, whose `read()` is what body_reader::read() says. `source` outlives this. */
   template <class Source>
-    requires(!std::same_as<Source, body_reader>) && requires(Source &source) {
+    requires(!std::same_as<Source, body_reader> && !std::is_const_v<Source>) && requires(Source &source) {
       { source.read() } -> std::same_as<async::task<std::optional<std::string_view>>>;
     }
   explicit body_reader(Source &source QUOLL_LIFETIMEBOUND) noexcept
