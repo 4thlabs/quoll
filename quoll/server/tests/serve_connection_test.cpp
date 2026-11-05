@@ -324,9 +324,15 @@ TEST_CASE("serve_connection: requests get their responses, on a connection kept 
 
 namespace {
 
-// A client that sends its head, waits for what the server answers to it, then sends its body: all it received.
-task<std::vector<http::status>> send_body_after_answer(io::memory_stream client, std::string head, std::string body) {
+// What such a client received: each status in turn, and the body of the last response.
+struct answers {
   std::vector<http::status> statuses;
+  std::string body;
+};
+
+// A client that sends its head, waits for what the server answers to it, then sends its body.
+task<answers> send_body_after_answer(io::memory_stream client, std::string head, std::string body) {
+  answers received;
   std::string buffer;
 
   (void)co_await io::write(client, std::as_bytes(std::span{head}));
@@ -335,87 +341,84 @@ task<std::vector<http::status>> send_body_after_answer(io::memory_stream client,
     http::response_parser parser;
 
     if (co_await http::read(client, buffer, parser)) {
-      co_return statuses;
+      co_return received;
     }
 
-    auto const response = parser.release();
+    auto response = parser.release();
 
-    statuses.push_back(response.status);
+    received.statuses.push_back(response.status);
 
     if (response.status != http::status::continue_) {
-      co_return statuses;
+      received.body = std::move(response.body);
+      co_return received;
     }
 
     (void)co_await io::write(client, std::as_bytes(std::span{body}));
   }
 }
 
+// What a server answers such a client.
+answers answers_to(std::string head, std::string body, connection_options const &options = {}) {
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  auto outcome = quoll::test::run(
+      quoll::async::when_all(quoll::server::serve_connection(std::move(server), router, options),
+                             send_body_after_answer(std::move(client), std::move(head), std::move(body))));
+
+  return std::move(std::get<1>(outcome.value()));
+}
+
 } // namespace
 
 TEST_CASE("serve_connection: Expect: 100-continue gets its answer, then the body", "[server]") {
-  auto const router = make_router();
-  auto [client, server] = io::make_memory_stream_pair();
+  std::vector const asked_then_answered{http::status::continue_, http::status::ok};
 
   SECTION("as the client waits for it") {
-    auto outcome = quoll::test::run(quoll::async::when_all(
-        quoll::server::serve_connection(std::move(server), router),
-        send_body_after_answer(std::move(client),
-                               "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-Continue\r\n\r\n",
-                               "ping")));
+    auto const got =
+        answers_to("POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-Continue\r\n\r\n", "ping");
 
-    REQUIRE(std::get<1>(outcome.value()) == std::vector{http::status::continue_, http::status::ok});
+    REQUIRE(got.statuses == asked_then_answered);
+    REQUIRE(got.body == "ping");
   }
 
   SECTION("not asked for: nothing comes before the response") {
-    auto outcome = quoll::test::run(quoll::async::when_all(
-        quoll::server::serve_connection(std::move(server), router),
-        send_body_after_answer(std::move(client), "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nping",
-                               {})));
+    auto const got = answers_to("POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nping", {});
 
-    REQUIRE(std::get<1>(outcome.value()) == std::vector{http::status::ok});
+    REQUIRE(got.statuses == std::vector{http::status::ok});
+    REQUIRE(got.body == "ping");
   }
 
   SECTION("part of the body came with the head") {
-    auto outcome = quoll::test::run(quoll::async::when_all(
-        quoll::server::serve_connection(std::move(server), router),
-        send_body_after_answer(std::move(client),
-                               "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\npi",
-                               "ng")));
+    auto const got =
+        answers_to("POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\npi", "ng");
 
-    REQUIRE(std::get<1>(outcome.value()) == std::vector{http::status::continue_, http::status::ok});
+    REQUIRE(got.statuses == asked_then_answered);
+    REQUIRE(got.body == "ping");
   }
 
   SECTION("with a chunked body") {
-    auto outcome = quoll::test::run(quoll::async::when_all(
-        quoll::server::serve_connection(std::move(server), router),
-        send_body_after_answer(
-            std::move(client),
-            "POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n",
-            "4\r\nping\r\n0\r\n\r\n")));
+    auto const got =
+        answers_to("POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n",
+                   "4\r\nping\r\n0\r\n\r\n");
 
-    REQUIRE(std::get<1>(outcome.value()) == std::vector{http::status::continue_, http::status::ok});
+    REQUIRE(got.statuses == asked_then_answered);
+    REQUIRE(got.body == "ping");
   }
 
   SECTION("as a list, which may name it twice") {
-    auto outcome = quoll::test::run(quoll::async::when_all(
-        quoll::server::serve_connection(std::move(server), router),
-        send_body_after_answer(
-            std::move(client),
-            "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue, 100-continue,\r\n\r\n",
-            "ping")));
+    auto const got = answers_to(
+        "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue, 100-continue,\r\n\r\n", "ping");
 
-    REQUIRE(std::get<1>(outcome.value()) == std::vector{http::status::continue_, http::status::ok});
+    REQUIRE(got.statuses == asked_then_answered);
+    REQUIRE(got.body == "ping");
   }
 
   SECTION("refused for its size: the final answer comes instead") {
     connection_options const small{.limits = {.max_body_size = 2}, .on_handler_error = {}};
-    auto outcome = quoll::test::run(quoll::async::when_all(
-        quoll::server::serve_connection(std::move(server), router, small),
-        send_body_after_answer(std::move(client),
-                               "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n",
-                               "ping")));
+    auto const got = answers_to("POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n",
+                                "ping", small);
 
-    REQUIRE(std::get<1>(outcome.value()) == std::vector{http::status::content_too_large});
+    REQUIRE(got.statuses == std::vector{http::status::content_too_large});
   }
 }
 
