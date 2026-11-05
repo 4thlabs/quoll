@@ -66,9 +66,10 @@ which nothing checks either.
 
 ### Step 2: client and server, security and completeness
 
-Quoll may be exposed directly, without a reverse proxy (decided on 2026-11-05): `Expect: 100-continue` (the parser stopping
-after the header), a lingering close after an error response and TLS's closing message join this step; the last two need a
-half-close in `ByteStream`.
+Quoll may be exposed directly, without a reverse proxy (decided on 2026-11-05). `Expect: 100-continue` is done, with a body
+too large refused at its head. Left: a lingering close after an error response, without which a client still sending gets a
+reset rather than its 413, and TLS's closing message, which both need a half-close in `ByteStream`. `100 Continue` is sent
+without asking the router, so that a request to a route that does not exist still sends its body: to look at with streaming.
 
 - Limits and shutdown: graceful shutdown, a connection limit and a wait when out of file descriptors are done
   (`serve_options`), and limits on headers and bodies were there (`http::parse_limits`). Left: the timer of the connections

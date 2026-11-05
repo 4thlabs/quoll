@@ -118,6 +118,12 @@ public:
   /** @brief A complete message is waiting for release(). */
   [[nodiscard]] bool done() const noexcept;
 
+  /** @brief The start line and fields of the current message are parsed: head() holds them. Reset by release(). */
+  [[nodiscard]] bool head_complete() const noexcept;
+
+  /** @brief The message so far: its start line and fields, once head_complete(), and what has come of its body. */
+  [[nodiscard]] Message const &head() const noexcept;
+
   /** @brief When done(): whether the connection may carry another message. */
   [[nodiscard]] bool keep_alive() const noexcept;
 

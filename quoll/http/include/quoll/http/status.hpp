@@ -70,6 +70,7 @@ enum class status : std::uint16_t {
   conflict = 409,
   content_too_large = 413,
   unsupported_media_type = 415,
+  expectation_failed = 417,
   unprocessable_content = 422,
   too_many_requests = 429,
   request_header_fields_too_large = 431,
@@ -125,6 +126,8 @@ enum class status : std::uint16_t {
     return "Content Too Large";
   case status::unsupported_media_type:
     return "Unsupported Media Type";
+  case status::expectation_failed:
+    return "Expectation Failed";
   case status::unprocessable_content:
     return "Unprocessable Content";
   case status::too_many_requests:

@@ -373,3 +373,26 @@ TEST_CASE("http over a stream: writing to a peer that is gone fails", "[http][st
   REQUIRE(error);
   REQUIRE(*error == std::errc::broken_pipe);
 }
+
+TEST_CASE("http::read_head stops at the head, and read goes on with the body", "[http][stream]") {
+  auto [client, server] = io::make_memory_stream_pair();
+  std::string buffer;
+  http::request_parser parser;
+  std::string const head = "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\n";
+  std::string const body = "ping";
+
+  auto const steps = [&]() -> task<std::string> {
+    check((co_await io::write(client, std::as_bytes(std::span{head}))).error);
+    check(co_await http::read_head(server, buffer, parser));
+    REQUIRE(parser.head_complete());
+    REQUIRE_FALSE(parser.done());
+    REQUIRE(parser.head().target == "/a");
+
+    check((co_await io::write(client, std::as_bytes(std::span{body}))).error);
+    check(co_await http::read(server, buffer, parser));
+    REQUIRE(parser.done());
+    co_return parser.release().body;
+  };
+
+  REQUIRE(quoll::test::run(steps()) == "ping");
+}

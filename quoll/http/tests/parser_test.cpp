@@ -416,3 +416,45 @@ TEST_CASE("A parser can be moved between messages", "[http][parser]") {
   REQUIRE(moved.done());
   REQUIRE(moved.release().body == "hello");
 }
+
+TEST_CASE("Parser: the head of a message is there before its body", "[http][parser]") {
+  http::request_parser parser;
+  std::string_view const input = "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\npi";
+
+  REQUIRE_FALSE(parser.head_complete());
+  REQUIRE_FALSE(parser.feed(bytes(input.substr(0, 20))).error);
+  REQUIRE_FALSE(parser.head_complete());
+  REQUIRE_FALSE(parser.feed(bytes(input.substr(20))).error);
+  REQUIRE(parser.head_complete());
+  REQUIRE_FALSE(parser.done());
+  REQUIRE(parser.head().target == "/a");
+  REQUIRE(parser.head().fields.find("Host") == "x");
+  REQUIRE_FALSE(parser.feed(bytes(std::string_view{"ng"})).error);
+  REQUIRE(parser.done());
+  REQUIRE(parser.release().body == "ping");
+  REQUIRE_FALSE(parser.head_complete());
+}
+
+TEST_CASE("Parser: a request announcing too large a body is refused at its head", "[http][parser]") {
+  http::parse_limits limits;
+
+  limits.max_body_size = 3;
+
+  http::request_parser parser{limits};
+
+  REQUIRE(parser.feed(bytes(std::string_view{"POST /a HTTP/1.1\r\nContent-Length: 4\r\n\r\n"})).error ==
+          http::error::body_too_large);
+}
+
+TEST_CASE("Parser: a response to HEAD may announce more than the limit, as nothing comes", "[http][parser]") {
+  http::parse_limits limits;
+
+  limits.max_body_size = 3;
+
+  http::response_parser parser{limits};
+
+  parser.set_request_method(http::verb::head);
+
+  REQUIRE_FALSE(parser.feed(bytes(std::string_view{"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n"})).error);
+  REQUIRE(parser.done());
+}

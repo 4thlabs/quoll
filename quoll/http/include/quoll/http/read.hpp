@@ -45,6 +45,7 @@
 
 #include <array>
 #include <cassert>
+#include <concepts>
 #include <cstddef>
 #include <span>
 #include <string>
@@ -52,21 +53,12 @@
 
 namespace quoll::http {
 
-/**
- * @brief Reads one message from `stream` into `message_parser`; release() it from there once read.
- *
- * `buffer` holds the bytes read but not parsed yet, and belongs to the connection: after a message it may hold the
- * start of the next one (pipelining), or the first bytes of an upgraded protocol.
- *
- * Completes with no error once the parser is done(), including for a body delimited by the end of the stream; with
- * `io::error::end_of_stream` when the peer closed the stream before a new message started; otherwise with the
- * parser's error (`http::error`) or the stream's. `stream`, `buffer` and `message_parser` must outlive the task.
- * Precondition: the parser holds no complete message.
- */
-template <io::ByteStream Stream, class Message>
-[[nodiscard]] async::task<std::error_code> read(Stream &stream, std::string &buffer, parser<Message> &message_parser) {
-  assert(!message_parser.done() && "http::read() with a message not released yet");
+namespace detail {
 
+// Reads until `reached()`. Awaited by what follows, whose documentation says how it ends.
+template <io::ByteStream Stream, class Message, std::predicate Reached>
+[[nodiscard]] async::task<std::error_code> read_until(Stream &stream, std::string &buffer,
+                                                      parser<Message> &message_parser, Reached reached) {
   // In the coroutine frame rather than in `buffer`: an exception or a destroyed task leaves `buffer` untouched.
   std::array<char, 4096> chunk;
 
@@ -80,7 +72,7 @@ template <io::ByteStream Stream, class Message>
         co_return parsed.error;
       }
 
-      if (message_parser.done()) {
+      if (reached()) {
         co_return std::error_code{};
       }
     }
@@ -103,6 +95,39 @@ template <io::ByteStream Stream, class Message>
       co_return received.error;
     }
   }
+}
+
+} // namespace detail
+
+/**
+ * @brief Reads one message from `stream` into `message_parser`; release() it from there once read.
+ *
+ * `buffer` holds the bytes read but not parsed yet, and belongs to the connection: after a message it may hold the
+ * start of the next one (pipelining), or the first bytes of an upgraded protocol.
+ *
+ * Completes with no error once the parser is done(), including for a body delimited by the end of the stream;
+ * `io::error::end_of_stream` when the peer closed the stream before a new message started; otherwise with the
+ * parser's error (`http::error`) or the stream's. `stream`, `buffer` and `message_parser` must outlive the task.
+ * Precondition: the parser holds no complete message.
+ */
+template <io::ByteStream Stream, class Message>
+[[nodiscard]] async::task<std::error_code> read(Stream &stream, std::string &buffer, parser<Message> &message_parser) {
+  assert(!message_parser.done() && "http::read() with a message not released yet");
+
+  return detail::read_until(stream, buffer, message_parser, [&message_parser] { return message_parser.done(); });
+}
+
+/**
+ * @brief Like read(), up to the end of the message's head: parser::head_complete(), and perhaps done() if the rest came
+ * with it. read() then goes on with the body.
+ */
+template <io::ByteStream Stream, class Message>
+[[nodiscard]] async::task<std::error_code> read_head(Stream &stream, std::string &buffer,
+                                                     parser<Message> &message_parser) {
+  assert(!message_parser.done() && "http::read_head() with a message not released yet");
+
+  return detail::read_until(stream, buffer, message_parser,
+                            [&message_parser] { return message_parser.head_complete(); });
 }
 
 } // namespace quoll::http

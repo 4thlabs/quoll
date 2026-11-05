@@ -62,11 +62,12 @@ struct connection_options {
 
   /**
    * @brief How long a request may take to arrive once it has started, as a whole: a peer sending a byte now and then
-   * gets no more. Past it, it answers 408 and the connection closes.
+   * gets no more. Past it, it answers 408 and the connection closes. It starts again once `100 Continue` has left, as
+   * the client waits for that.
    */
   std::chrono::nanoseconds read_timeout = std::chrono::seconds{30};
 
-  /** @brief How long a response may take to leave, as a whole. Past it, the connection closes. */
+  /** @brief How long a response or a `100 Continue` may take to leave, as a whole. Past it, the connection closes. */
   std::chrono::nanoseconds write_timeout = std::chrono::seconds{30};
 
   /**

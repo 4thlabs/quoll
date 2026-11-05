@@ -136,6 +136,7 @@ struct parser<Message>::impl {
     auto message = std::exchange(message_, Message{});
 
     done_ = false;
+    head_complete_ = false;
     keep_alive_ = false;
     upgrade_ = false;
 
@@ -291,11 +292,20 @@ struct parser<Message>::impl {
       }
 
       self_.message_.method = *method;
+
+      // Refused now, rather than once that much has arrived: a client waiting for `100 Continue` sends nothing more.
+      if ((state->flags & F_CONTENT_LENGTH) != 0 && state->content_length > self_.limits_.max_body_size) {
+        static_cast<void>(self_.fail(state, error::body_too_large, "body too large"));
+        return -1;
+      }
+
+      self_.head_complete_ = true;
       return 0;
     } else {
       auto const code = llhttp_get_status_code(state);
 
       self_.message_.status = static_cast<status>(code);
+      self_.head_complete_ = true;
 
       // A 2xx answer to CONNECT turns the connection into a tunnel.
       if (self_.request_method_ == verb::connect && code >= 200 && code < 300) {
@@ -366,6 +376,7 @@ struct parser<Message>::impl {
   bool done_ = false;
   bool keep_alive_ = false;
   bool upgrade_ = false;
+  bool head_complete_ = false;
   bool in_message_ = false;
   bool in_trailers_ = false;
 };
@@ -416,6 +427,18 @@ template <class Message>
   requires std::same_as<Message, request> || std::same_as<Message, response>
 bool parser<Message>::keep_alive() const noexcept {
   return impl_->keep_alive_;
+}
+
+template <class Message>
+  requires std::same_as<Message, request> || std::same_as<Message, response>
+bool parser<Message>::head_complete() const noexcept {
+  return impl_->head_complete_;
+}
+
+template <class Message>
+  requires std::same_as<Message, request> || std::same_as<Message, response>
+Message const &parser<Message>::head() const noexcept {
+  return impl_->message_;
 }
 
 template <class Message>
