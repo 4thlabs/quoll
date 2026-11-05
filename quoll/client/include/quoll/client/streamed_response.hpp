@@ -105,7 +105,8 @@ struct streamed_response {
   http::version version = http::version::http_1_1;
   http::fields fields{};
   response_body body{};
-  /** @brief Fields that came after a chunked body, once `body` has come to its end. */
+  /** @brief Fields that came after a chunked body, once `body` has come to its end; null on a response default-built or
+   * moved from. */
   std::shared_ptr<http::fields const> trailers{};
 };
 

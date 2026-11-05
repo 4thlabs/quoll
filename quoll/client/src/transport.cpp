@@ -434,7 +434,7 @@ async::task<http::response> send_following(std::shared_ptr<transport_core> share
 class response_stream {
 public:
   explicit response_stream(std::shared_ptr<transport_core> shared)
-      : shared_(std::move(shared)), parser_(shared_->options.limits), trailers_(std::make_shared<http::fields>()) {}
+      : shared_(std::move(shared)), trailers_(std::make_shared<http::fields>()) {}
 
   [[nodiscard]] held_place &place() noexcept { return place_; }
 
@@ -456,13 +456,13 @@ public:
 
     // Afresh for each attempt: the one before may have left anything in it.
     buffer_.clear();
-    parser_ = http::response_parser{shared_->options.limits};
-    parser_.set_request_method(request.method);
+    parser_.emplace(shared_->options.limits);
+    parser_->set_request_method(request.method);
     // An interim response is read whole: only the final one is the caller's to read.
-    parser_.set_body_streaming([](http::response const &head) { return !http::is_informational(head.status); });
+    parser_->set_body_streaming([](http::response const &head) { return !http::is_informational(head.status); });
 
     for (;;) {
-      if (auto const error = co_await http::read_head(connection, buffer_, parser_)) {
+      if (auto const error = co_await http::read_head(connection, buffer_, *parser_)) {
         if (retry_if_closed && interim == 0 && closed_meanwhile(error)) {
           co_return false;
         }
@@ -470,21 +470,26 @@ public:
         throw std::system_error{error, "quoll::client: cannot read the response"};
       }
 
-      auto const status = parser_.head().status;
+      auto const status = parser_->head().status;
 
-      if (http::is_informational(status) && !parser_.upgrade()) {
-        if (++interim > max_interim_responses) {
-          throw std::system_error{http::error::bad_message, "quoll::client: too many interim responses"};
-        }
+      if (http::is_informational(status) && !parser_->upgrade()) {
+        // Counted once whole, as send() does, for what closes before its end to be tried again as well.
+        if (!parser_->done()) {
+          if (auto const error = co_await http::read(connection, buffer_, *parser_)) {
+            if (retry_if_closed && interim == 0 && closed_meanwhile(error)) {
+              co_return false;
+            }
 
-        if (!parser_.done()) {
-          if (auto const error = co_await http::read(connection, buffer_, parser_)) {
             throw std::system_error{error, "quoll::client: cannot read the response"};
           }
         }
 
+        if (++interim > max_interim_responses) {
+          throw std::system_error{http::error::bad_message, "quoll::client: too many interim responses"};
+        }
+
         // The request method holds until the final one.
-        static_cast<void>(parser_.release());
+        static_cast<void>(parser_->release());
         continue;
       }
 
@@ -501,17 +506,17 @@ public:
   // What the caller gets of the head: the rest of the message stays for read(). A message with nothing more to come
   // gives its connection back at once, as nothing will read it to its end.
   [[nodiscard]] streamed_response head(std::shared_ptr<response_stream> const &self) {
-    auto const &message = parser_.head();
+    auto const &message = parser_->head();
     streamed_response response{
         message.status, message.reason, message.version, message.fields, response_body{http::body_reader{*this}, self},
         trailers_};
 
     // Nothing more is due: its connection and its place go now, whether the caller reads what came or not.
-    if (parser_.done()) {
-      parser_.take_body(piece_);
+    if (parser_->done()) {
+      parser_->take_body(piece_);
       held_piece_ = !piece_.empty();
       finish();
-    } else if (auto const failure = parser_.failure(); failure && message.body.empty()) {
+    } else if (auto const failure = parser_->failure(); failure && message.body.empty()) {
       fail(failure);
     }
 
@@ -535,29 +540,23 @@ public:
     // What a read cut short leaves is no new piece.
     piece_.clear();
 
-    std::error_code failed;
-
     try {
       co_await async::detail::with_optional_timeout(shared_->options.response_timeout, read_piece());
     } catch (std::system_error const &thrown) {
-      failed = thrown.code();
+      // A cancellation too: a stream does not take it up again, and over TLS its session is gone.
+      fail(thrown.code());
+      throw;
     } catch (...) {
       // What it had read may be lost: nothing can follow it.
       fail(std::make_error_code(std::errc::io_error));
       throw;
     }
 
-    // A cancellation too: a stream does not take it up again, and over TLS its session is gone.
-    if (failed) {
-      fail(failed);
-      throw std::system_error{failed, "quoll::client: cannot read the response"};
-    }
-
     // At once, even with a last piece to hand over: its connection and its place are done with, for as long as the
     // caller is at work on that piece. What it leaves alone is the piece.
-    if (parser_.done()) {
+    if (parser_->done()) {
       finish();
-    } else if (auto const failure = parser_.failure()) {
+    } else if (auto const failure = parser_->failure()) {
       // Past this piece: the connection can carry nothing more, and the next read says so.
       fail(failure);
     }
@@ -572,37 +571,45 @@ public:
 private:
   // Thrown rather than returned: a read a timeout cancelled is then that timeout's timed_out.
   [[nodiscard]] async::task<> read_piece() {
-    if (auto const error = co_await http::read_body(*connection_, buffer_, parser_, piece_)) {
+    if (auto const error = co_await http::read_body(*connection_, buffer_, *parser_, piece_)) {
       throw std::system_error{error, "quoll::client: cannot read the response"};
     }
   }
 
-  // It goes now rather than with what holds this: the place is for others, and the server has no more to send.
   void fail(std::error_code why) noexcept {
     failure_ = why;
-    connection_.reset();
-    place_.release();
+    let_go();
   }
 
   void finish() {
     ended_ = true;
 
-    auto const keep_alive = parser_.keep_alive();
-    auto const upgrade = parser_.upgrade();
+    auto const keep_alive = parser_->keep_alive();
+    auto const upgrade = parser_->upgrade();
 
-    *trailers_ = parser_.release().trailers;
+    *trailers_ = parser_->release().trailers;
 
     // Bytes past the response would be read as the next one: a connection carrying them is not reused.
     if (request_keeps_alive_ && keep_alive && !upgrade && buffer_.empty()) {
       shared_->pool.give_back(std::move(*connection_));
     }
 
+    let_go();
+  }
+
+  // Now rather than with what holds this, for as long as the caller keeps it: the place is for others, the server has
+  // no more to send, and what is left to read needs neither the transport nor the parser.
+  void let_go() noexcept {
     connection_.reset();
     place_.release();
+    parser_.reset();
+    buffer_ = std::string{};
+    shared_.reset();
   }
 
   std::shared_ptr<transport_core> shared_;
-  http::response_parser parser_;
+  // One per attempt, from start().
+  std::optional<http::response_parser> parser_;
   std::shared_ptr<http::fields> trailers_;
   // Before the connection: it closes first, and only then is its place another's.
   held_place place_;

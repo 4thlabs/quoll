@@ -59,6 +59,7 @@
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/connector.hpp>
 #include <quoll/io/error.hpp>
+#include <quoll/io/io_result.hpp>
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/io/tls_connector.hpp>
 #include <quoll/io/tls_options.hpp>
@@ -78,6 +79,8 @@
 #include <cstdint>
 #include <exception>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <stop_token>
@@ -1706,13 +1709,20 @@ TEST_CASE("client::transport: a response read in pieces, past what memory would 
   REQUIRE(got.largest <= 8192);
 }
 
-TEST_CASE("client::transport: stream() gives the head before the body, and bodies of every size", "[client]") {
+TEST_CASE("client::transport: stream() takes bodies of every size", "[client]") {
   auto const router = make_streaming_router();
 
   SECTION("a whole body") {
     auto const got = stream_from(serving(router), "/hello");
 
     REQUIRE(got.body == "hello");
+  }
+
+  SECTION("a body up to the end of the stream") {
+    auto const got = stream_from(answering({"HTTP/1.1 200 OK\r\n\r\nping"}), "/");
+
+    REQUIRE(!got.error);
+    REQUIRE(got.body == "ping");
   }
 
   SECTION("no body") {
@@ -1778,7 +1788,12 @@ TEST_CASE("client::transport: a stream given up on closes its connection", "[cli
   memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
 
   auto const reading = [&]() -> task<std::string> {
-    client::transport const transport{memory_connector{server}, "example.com", 80};
+    client::transport_options options;
+
+    // What it held must come back, or what follows waits for ever.
+    options.max_connections = 1;
+
+    client::transport const transport{memory_connector{server}, "example.com", 80, options};
 
     {
       auto response = co_await transport.stream(make_request(verb::get, "/pieces"));
@@ -1815,7 +1830,7 @@ TEST_CASE("client::transport: a body in pieces fails as send() would", "[client]
   SECTION("no response at all") {
     auto const got = stream_from(answering({}), "/");
 
-    REQUIRE(got.error);
+    REQUIRE(got.error == io::error::end_of_stream);
   }
 }
 
@@ -2364,4 +2379,196 @@ TEST_CASE("client::transport: what is at fault after a good piece frees its plac
   };
 
   REQUIRE(quoll::test::run(loop, reading()) == "ping|hi");
+}
+
+TEST_CASE("client::transport: stream() completes with the head, before its body has come", "[client]") {
+  auto may_send_the_rest = false;
+
+  auto const serve = [&](io::memory_stream stream) -> task<> {
+    std::string buffer;
+    http::request_parser parser;
+
+    if (co_await http::read(stream, buffer, parser)) {
+      co_return;
+    }
+
+    std::string_view const head = "HTTP/1.1 201 Made\r\nX-Head: yes\r\nContent-Length: 4\r\n\r\n";
+    std::string_view const rest = "ping";
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{head}));
+
+    while (!may_send_the_rest) {
+      co_await async::yield();
+    }
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{rest}));
+  };
+
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serve, 0, {}, {}};
+  client::streamed_response seen;
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport const transport{memory_connector{server}, "example.com", 80};
+
+    seen = co_await transport.stream(make_request(verb::get, "/"));
+    may_send_the_rest = true;
+
+    std::string body;
+
+    while (auto const piece = co_await seen.body.read()) {
+      body += *piece;
+    }
+
+    co_return body;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "ping");
+  REQUIRE(seen.status == http::status::created);
+  REQUIRE(seen.reason == "Made");
+  REQUIRE(seen.version == http::version::http_1_1);
+  REQUIRE(seen.fields.find("X-Head") == "yes");
+}
+
+TEST_CASE("client::transport: copies of a body read as one, and one moved from has nothing to read", "[client]") {
+  auto const router = make_streaming_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport const transport{memory_connector{server}, "example.com", 80};
+    auto response = co_await transport.stream(make_request(verb::get, "/hello"));
+    auto const copy = response.body;
+    auto const moved = std::move(response.body);
+    std::string seen;
+
+    if (co_await response.body.read()) { // NOLINT(bugprone-use-after-move)
+      seen += "moved from|";
+    }
+
+    seen += *(co_await copy.read());
+    seen += co_await moved.read() ? "|more" : "|end";
+    co_return seen;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "hello|end");
+}
+
+namespace {
+
+// What closes reads as a reset, as on a socket its peer cut.
+class resetting_stream {
+public:
+  explicit resetting_stream(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
+
+  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte> buffer) {
+    auto read = co_await inner_.read_some(buffer);
+
+    if (read.error == io::error::end_of_stream) {
+      read.error = std::make_error_code(std::errc::connection_reset);
+    }
+
+    co_return read;
+  }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
+    co_return co_await inner_.write_some(data);
+  }
+
+private:
+  io::memory_stream inner_;
+};
+
+class resetting_connector {
+public:
+  explicit resetting_connector(memory_server &server) noexcept : inner_(server) {}
+
+  [[nodiscard]] task<io::any_stream> connect(std::string host, std::uint16_t port) const {
+    auto made = co_await inner_.connect(std::move(host), port);
+
+    co_return io::any_stream{resetting_stream{std::move(*made.target<io::memory_stream>())}};
+  }
+
+private:
+  memory_connector inner_;
+};
+
+// A connector with something to see its end by.
+class watched_connector {
+public:
+  watched_connector(memory_server &server, std::shared_ptr<int> watched) noexcept
+      : inner_(server), watched_(std::move(watched)) {}
+
+  [[nodiscard]] task<io::any_stream> connect(std::string host, std::uint16_t port) const {
+    return inner_.connect(std::move(host), port);
+  }
+
+private:
+  memory_connector inner_;
+  std::shared_ptr<int> watched_;
+};
+
+} // namespace
+
+TEST_CASE("client::transport: stream() tries again what closes during the body of a first interim response",
+          "[client]") {
+  auto connections = 0;
+
+  auto const serve = [&](io::memory_stream stream) {
+    ++connections;
+
+    return connections == 1 ? answer(std::move(stream),
+                                     {"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi",
+                                      "HTTP/1.1 150 Odd\r\nContent-Length: 4\r\n\r\n"},
+                                     false)
+                            : answer(std::move(stream), {"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nagain"}, false);
+  };
+
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serve, 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport const transport{resetting_connector{server}, "example.com", 80};
+
+    static_cast<void>(co_await transport.send(make_request(verb::get, "/")));
+
+    auto response = co_await transport.stream(make_request(verb::get, "/"));
+    auto const piece = co_await response.body.read();
+
+    co_return std::string{*piece};
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "again");
+  REQUIRE(connections == 2);
+}
+
+TEST_CASE("client::transport: a response kept past its end does not keep its transport", "[client]") {
+  auto const router = make_streaming_router();
+  auto const cut_short = GENERATE(false, true);
+  auto const serve = cut_short ? answering({"HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nping"}) : serving(router);
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serve, 0, {}, {}};
+
+  auto watched = std::make_shared<int>(0);
+  std::weak_ptr<int> const seen = watched;
+
+  auto const reading = [&]() -> task<bool> {
+    std::optional<client::streamed_response> kept;
+
+    {
+      client::transport const transport{watched_connector{server, std::move(watched)}, "example.com", 80};
+
+      kept = co_await transport.stream(make_request(verb::get, "/pieces"));
+
+      try {
+        while (co_await kept->body.read()) {
+        }
+      } catch (std::system_error const &) {
+      }
+    }
+
+    co_return seen.expired();
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()));
 }
