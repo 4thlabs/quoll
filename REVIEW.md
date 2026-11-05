@@ -15,7 +15,7 @@ bugs often sit where changed code meets the rest; outside the diff, report only 
 - breaks of the decisions in `docs/PLAN.md`;
 - missing tests, or tests that do not execute what they claim to test.
 
-Only P0 and P1 reach a pull request, so that a finding goes out as P1 at least, whatever it is: naming, layout and wording too.
-The label is no filter here. Say in its first words what it really is: a bug, a broken rule, a missing test, or a detail.
+In GitHub, Codex only flags P0 and P1. A finding goes out as P1 at least, whatever it is, naming, layout and wording too, and
+starts by saying what it really is: `bug:`, `broken rule:`, `missing test:` or `detail:`. The label is no filter here.
 
 Do not repeat a point already answered in a thread. Skip style nits clang-format would catch.

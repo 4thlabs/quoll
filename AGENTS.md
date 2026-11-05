@@ -136,13 +136,14 @@ gh pr merge N -R 4thlabs/quoll --squash --delete-branch --match-head-commit <sha
 ```
 
 The PR says what that review found and why any finding was not taken. A PR merges once every required check is green on
-its last commit, Codex has finished on it, and all it found there is answered, with the fixing commit or the reason a point is
-not taken, its threads then resolved.
+its last commit, Codex has finished on it, and all it found on the PR is answered, with the fixing commit or the reason a point
+is not taken, its threads then resolved.
 
-What a review finds is fixed if valid: a bug, a break of a rule or a decision with a consequence you can name, a missing test.
-A detail may be let go, for a stated reason and with no new push: naming, layout and wording with no consequence, and in samples
-and the sample's Vite plugin a bug that normal use does not meet. A finding that is wrong says why. When it is unclear which of
-these a point is, for one saying it is a bug in particular, the maintainer decides.
+What a review finds is fixed if valid: a bug, a break of a rule or a decision, a missing test, or one that does not execute what
+it claims. A detail may be let go for a stated reason, and needs no new push: naming, layout and wording with no consequence, and
+in samples and the sample's Vite plugin a bug that normal use does not meet, but for undefined behaviour, lifetimes and data
+races, which are always fixed. A finding that is wrong says why. When it is unclear which of these a point is, for one saying it
+is a bug in particular, the maintainer decides.
 
 If Codex has not completed a review of the last commit 30 minutes after a request,
 request it once more; 30 minutes later, the maintainer decides, who alone can lift the protection.
