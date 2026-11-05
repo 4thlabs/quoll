@@ -70,7 +70,7 @@ guidelines and the C++ Core Guidelines.
 - Static polymorphism (templates + concepts) by default; type erasure (see below) when runtime polymorphism is
   required. No `virtual` in value types.
 - Use the standard library: `std::optional`, `std::expected`, `std::variant`, `std::invoke`, `std::ranges`.
-- Concurrency: document the thread-safety of each class; prefer `std::jthread` + `std::stop_token`; a destructor never
+- Concurrency: a mutex and what it protects are one `async::detail::synchronized<T>`. Document the thread-safety of each class; prefer `std::jthread` + `std::stop_token`; a destructor never
   leaves a joinable thread behind. The core modules never require threads (WASM, see `PLAN.md`).
 - Errors: exceptions derived from standard exception types for failures the caller cannot anticipate;
   `std::optional` (or an error-code return) when failure is an expected outcome (e.g. parsing user input).

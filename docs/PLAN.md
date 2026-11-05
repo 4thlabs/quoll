@@ -81,12 +81,12 @@ still sends its body: to look at with streaming. A client closes its TLS connect
     takes by reference lives in a frame of the router until its task ends, so that a reference is no longer a trap. Dropped,
     as measured: `[[clang::coro_return_type, clang::coro_lifetimebound]]` on `async::task`, as it refuses any function
     returning a task that is no coroutine, which `std::function` and `std::invoke` are, and they cannot be annotated.
-  - `synchronized<T>`, a mutex holding its data, where a mutex sits next to what it protects (`connection_pool`,
-    `task_group`). It takes a function rather than handing out a guard, and refuses a function returning something to
-    await, as a lock held across a `co_await` would be unlocked from another thread. Clang's `-Wthread-safety` may do
-    this at compile time, with no new type: compare them first.
-  - `cppcoreguidelines-avoid-capturing-lambda-coroutines` in `clang-tidy`, if it can be kept quiet: coroutine lambdas
-    with captures are a pattern here, kept alive by the app.
+  - Done: `async::detail::synchronized<T>`, a mutex holding its data, in `connection_pool`, `task_group`, `thread_pool` and the
+    asio `runtime`. It takes a function rather than handing out a guard, and refuses one returning a reference or something to
+    await. Clang's `-Wthread-safety` was compared and dropped, as measured: it needs a mutex of our own, annotated, as
+    libstdc++'s `std::mutex` is not, it warns on correct code without it, and only Clang checks it.
+  - Dropped, as measured: `cppcoreguidelines-avoid-capturing-lambda-coroutines` in `clang-tidy`. Of its 90 findings, 89 are in
+    tests, kept alive by their own frames, and the other, `ui::detail::to_handler`, is documented and kept alive by its caller.
 - Fuzzing in CI, under ASan and UBSan, is done (`tests/fuzz`, five minutes per target every night, keeping its corpus): the
   HTTP parsers, `serve_connection`, the router, the REST decoding, the client's exchange and the decoding of REST responses.
   Its stream never suspends, writes short or fails a write: a stream that does would reach the timeouts and cancellation.

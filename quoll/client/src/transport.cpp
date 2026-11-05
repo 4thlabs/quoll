@@ -37,6 +37,7 @@
 #include <quoll/client/transport.hpp>
 
 #include <quoll/async/detail/optional_timeout.hpp>
+#include <quoll/async/detail/synchronized.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/error.hpp>
@@ -52,7 +53,6 @@
 #include <cassert>
 #include <cstddef>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -74,41 +74,34 @@ public:
 
   // The connection used last, the least likely to have been closed by the server for being idle.
   [[nodiscard]] std::optional<io::any_stream> take() {
-    std::lock_guard const lock{mutex_};
+    return idle_.with([](std::vector<io::any_stream> &idle) -> std::optional<io::any_stream> {
+      if (idle.empty()) {
+        return std::nullopt;
+      }
 
-    if (idle_.empty()) {
-      return std::nullopt;
-    }
+      auto connection = std::move(idle.back());
 
-    auto connection = std::move(idle_.back());
-
-    idle_.pop_back();
-    return connection;
+      idle.pop_back();
+      return connection;
+    });
   }
 
   // Keeps `connection` for a next request, or closes it if the pool is full.
   void give_back(io::any_stream connection) {
-    std::lock_guard const lock{mutex_};
-
-    if (idle_.size() < capacity_) {
-      idle_.push_back(std::move(connection));
-    }
+    idle_.with([&](std::vector<io::any_stream> &idle) {
+      if (idle.size() < capacity_) {
+        idle.push_back(std::move(connection));
+      }
+    });
   }
 
-  // Closes the idle connections.
+  // Closes the idle connections, past the lock.
   void clear() {
-    std::vector<io::any_stream> closed;
-
-    {
-      std::lock_guard const lock{mutex_};
-
-      closed.swap(idle_);
-    }
+    auto const closed = idle_.with([](std::vector<io::any_stream> &idle) { return std::exchange(idle, {}); });
   }
 
 private:
-  std::mutex mutex_;
-  std::vector<io::any_stream> idle_;
+  async::detail::synchronized<std::vector<io::any_stream>> idle_;
   std::size_t capacity_;
 };
 
