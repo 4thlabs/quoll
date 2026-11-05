@@ -62,6 +62,8 @@ void deallocate_frame(void *frame, std::size_t) noexcept { ::operator delete(fra
 
 bool frames_are_recycled() noexcept { return false; }
 
+std::size_t frames_kept(std::size_t) noexcept { return 0; }
+
 #else
 
 namespace {
@@ -133,6 +135,8 @@ public:
     return true;
   }
 
+  [[nodiscard]] std::size_t kept(std::size_t index) const noexcept { return kept_[index]; }
+
 private:
   std::array<free_frame *, size_count> free_{};
   std::array<std::size_t, size_count> kept_{};
@@ -166,6 +170,10 @@ void deallocate_frame(void *frame, std::size_t size) noexcept {
 }
 
 bool frames_are_recycled() noexcept { return true; }
+
+std::size_t frames_kept(std::size_t size) noexcept {
+  return size > largest_size || frames_gone ? 0 : frames.kept(size_index(size));
+}
 
 #endif
 

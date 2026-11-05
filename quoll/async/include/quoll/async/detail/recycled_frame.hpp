@@ -51,6 +51,9 @@ void deallocate_frame(void *frame, std::size_t size) noexcept;
 // not see them.
 [[nodiscard]] bool frames_are_recycled() noexcept;
 
+// How many frames of what this size rounds up to this thread keeps, for a test of its bound.
+[[nodiscard]] std::size_t frames_kept(std::size_t size) noexcept;
+
 // What the promise of a coroutine derives from for its frame to be recycled.
 class recycled_frame {
 public:

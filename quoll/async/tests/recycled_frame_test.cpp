@@ -44,7 +44,6 @@
 
 #include <concepts>
 #include <cstddef>
-#include <set>
 #include <thread>
 #include <vector>
 
@@ -54,6 +53,7 @@ using quoll::async::task;
 using quoll::async::detail::allocate_frame;
 using quoll::async::detail::deallocate_frame;
 using quoll::async::detail::frames_are_recycled;
+using quoll::async::detail::frames_kept;
 using quoll::async::detail::recycled_frame;
 
 task<int> add(int left, int right) { co_return left + right; }
@@ -121,40 +121,13 @@ TEST_CASE("recycled frames: past what a thread keeps, frames go back to the syst
     many.push_back(allocate_frame(256));
   }
 
-  std::set<void *> const freed(many.begin(), many.end());
-
   for (auto *const frame : many) {
     deallocate_frame(frame, 256);
   }
 
-  many.clear();
-
-  // At most what it kept comes from there: the system may give some of the others back too, but not one in a row from a
-  // list of a thousand, as would come of a thread that kept them all.
-  auto const kept = allocate_frame(256);
-
-  many.push_back(kept);
-
-  for (auto index = 1; index < 1000; ++index) {
-    many.push_back(allocate_frame(256));
-  }
-
-  if (frames_are_recycled()) {
-    REQUIRE(freed.contains(kept));
-
-    // Those it kept are the last it freed, in reverse: what follows them is another story.
-    auto in_a_row = std::size_t{1};
-
-    while (in_a_row < many.size() && freed.contains(many[in_a_row]) && many[in_a_row] < many[in_a_row - 1]) {
-      ++in_a_row;
-    }
-
-    REQUIRE(in_a_row <= 64);
-  }
-
-  for (auto *const frame : many) {
-    deallocate_frame(frame, 256);
-  }
+  REQUIRE(frames_kept(256) == (frames_are_recycled() ? 64U : 0U));
+  // Of another size, nothing has changed: each has its own bound.
+  REQUIRE(frames_kept(257) <= 64U);
 }
 
 // The frames of a promise are recycled: what bench_allocations would only show at night.
