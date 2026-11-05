@@ -45,6 +45,8 @@
 #include <quoll/io/listener.hpp>
 #include <quoll/server/connection_options.hpp>
 
+#include <chrono>
+#include <cstddef>
 #include <exception>
 #include <functional>
 #include <system_error>
@@ -58,6 +60,18 @@ struct serve_options {
   connection_options connection{};
 
   /**
+   * @brief How many connections are served at once. Past it, a new connection is accepted and closed at once, without a
+   * word, which keeps the accept queue moving. Zero: no limit, up to what the system allows.
+   */
+  std::size_t max_connections = 10'000;
+
+  /**
+   * @brief How long the requests under way may take to finish once serve() is asked to stop. Past it, they are stopped.
+   * Zero stops them at once, as does an executor without a timer, which cannot bound the wait.
+   */
+  std::chrono::nanoseconds shutdown_timeout = std::chrono::seconds{30};
+
+  /**
    * @brief Called with the exception that ended a connection (a stream exception, `std::bad_alloc`...), on the
    * executor; must not throw. Handler failures are not among them: they answer 500 (see connection_options). Empty:
    * the failure only ends the connection.
@@ -67,8 +81,9 @@ struct serve_options {
   /**
    * @brief Decides what an accept failure does, other than `operation_canceled`: true accepts again, false rethrows
    * the failure. A task, so that it may wait first (a back-off on `too_many_files_open`, with async::sleep_for).
-   * Empty: a failure of one connection only (`connection_aborted`, `connection_reset`) is skipped, any other is
-   * rethrown.
+   * Empty: a failure of one connection only (`connection_aborted`, `connection_reset`) is skipped, running out of
+   * something (file descriptors, memory) is retried after 100 ms if the executor has a timer, for as long as it lasts
+   * and without a word, and any other is rethrown. Set this to be told.
    */
   std::function<async::task<bool>(std::error_code)> on_accept_error{};
 };
@@ -97,17 +112,18 @@ struct listener_ref {
  * @brief Accepts the connections of `listener` and serves each one with `router`, concurrently, on `executor`.
  *
  * Each connection runs serve_connection() as a task of its own, spawned on `executor` (a thread pool or a strand,
- * for instance, while the accept loop stays on its I/O loop) with a stop token that stops with serve(). A stop
- * request is immediate, not graceful: it ends the accept loop and cancels whatever the connections have pending, a
- * read, a handler's operations, a write.
+ * for instance, while the accept loop stays on its I/O loop). A stop request is graceful: it ends the accept loop,
+ * closes the idle connections, and lets the requests under way finish, within `options.shutdown_timeout`, past which
+ * they are stopped.
  *
  * Accepting stops with `std::errc::operation_canceled`: a stop request, or the application closing its listener.
- * Another accept failure goes to `options.on_accept_error`, or by default is skipped when it concerns one connection
- * only and rethrown otherwise; a rethrow ends the accept loop, not the connections already served.
+ * Another accept failure goes to `options.on_accept_error`. By default it is skipped when it concerns one connection
+ * only, retried after 100 ms when the system ran out of something (file descriptors, memory) and it has a timer to wait
+ * with, and rethrown otherwise; a rethrow ends the accept loop, not the connections already served.
  *
  * However the accept loop ends (a stop request, a closed listener, a failure, an exception from
- * `options.on_accept_error`), the connections it spawned are asked to stop, and the task completes once they have
- * ended, then rethrows the failure if there was one: `listener` and `router` need to outlive the task only.
+ * `options.on_accept_error`), the connections it spawned end as above, and the task completes once they have ended,
+ * then rethrows the failure if there was one: `listener` and `router` need to outlive the task only.
  */
 template <async::Executor Executor, io::Listener Listener>
 async::task<> serve(Executor executor, Listener &listener, http::router const &router, serve_options options = {}) {

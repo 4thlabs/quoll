@@ -52,8 +52,8 @@ namespace quoll::async::detail {
 
 // Tasks spawned by one owner, counted, so that the owner completes only once they have all ended: what they refer to
 // then needs to outlive the owner only. One owner awaits join(), once its last task has started: a second one would
-// take its place. Thread safety: started() and ended() may be called from any thread (the tasks may run on a thread
-// pool).
+// take its place. Thread safety: started(), ended() and live() may be called from any thread (the tasks may run on a
+// thread pool).
 class task_group {
 public:
   // Waits until no task is left; resumes the awaiter on its executor.
@@ -111,8 +111,15 @@ public:
 
   [[nodiscard]] join_awaitable join() noexcept { return join_awaitable{*this}; }
 
+  // How many tasks run now, which others may change as soon as this returns.
+  [[nodiscard]] std::size_t live() const {
+    std::lock_guard const lock{mutex_};
+
+    return live_;
+  }
+
 private:
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   std::size_t live_ = 0;
   work_item *waiter_ = nullptr;
   // The executor of serve(), valid while it waits.

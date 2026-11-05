@@ -37,6 +37,7 @@
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/run_loop.hpp>
+#include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
@@ -56,9 +57,11 @@
 #include <quoll/server/serve.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/test/run.hpp>
+#include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <coroutine>
 #include <cstddef>
 #include <deque>
@@ -269,7 +272,293 @@ auto store(std::optional<T> &into) {
   return overloaded{[&into](T value) { into = std::move(value); }, [](std::exception_ptr) {}};
 }
 
+// A route taking `duration`, as a handler that waits for something does.
+http::router slow_router(std::chrono::nanoseconds duration) {
+  http::router router;
+
+  router.add(verb::get, "/slow", "slow", [duration](http::request, http::route_match) -> task<http::response> {
+    co_await quoll::async::sleep_for(duration);
+
+    http::response response;
+
+    response.body = "done";
+    co_return response;
+  });
+  return router;
+}
+
+task<> stop_after(std::chrono::nanoseconds duration, std::stop_source &source) {
+  co_await quoll::async::sleep_for(duration);
+  source.request_stop();
+}
+
+// One GET, kept on the connection afterwards: the response, or nothing if the connection ended first.
+task<std::optional<http::response>> ask(io::memory_stream &client) {
+  http::request request;
+  std::string buffer;
+  http::response_parser parser;
+
+  request.target = "/slow";
+  request.fields.add("Host", "x");
+  (void)co_await http::write(client, request);
+
+  if (co_await http::read(client, buffer, parser)) {
+    co_return std::nullopt;
+  }
+
+  co_return parser.release();
+}
+
+auto ignored() {
+  return overloaded{[] {}, [](std::exception_ptr) {}};
+}
+
+auto ignored_body() {
+  return overloaded{[](std::string) {}, [](std::exception_ptr) {}};
+}
+
+// Hands over its connections 500 ms apart, then waits for a stop request.
+struct later_listener {
+  std::deque<io::any_stream> streams;
+
+  task<io::any_stream> accept() {
+    if (streams.empty()) {
+      co_await wait_for_stop{};
+      throw std::system_error{std::make_error_code(std::errc::operation_canceled), "later_listener"};
+    }
+
+    using namespace std::chrono_literals;
+
+    co_await quoll::async::sleep_for(500ms);
+
+    auto stream = std::move(streams.front());
+
+    streams.pop_front();
+    co_return stream;
+  }
+};
+
+static_assert(io::Listener<later_listener>);
+
 } // namespace
+
+TEST_CASE("serve: a stop request lets the request under way finish, and closes its connection", "[server]") {
+  using namespace std::chrono_literals;
+
+  auto const router = slow_router(1s);
+  quoll::test::virtual_time time;
+  auto [client, server] = io::make_memory_stream_pair();
+  canned_listener listener;
+  std::stop_source source;
+  std::optional<std::optional<http::response>> answer;
+  bool served = false;
+
+  listener.streams.emplace_back(std::move(server));
+  quoll::async::co_spawn(time.get_executor(), quoll::server::serve(listener, router),
+                         overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(time.get_executor(), ask(client), store(answer));
+  quoll::async::co_spawn(time.get_executor(), stop_after(100ms, source), ignored());
+  time.run();
+
+  REQUIRE(served);
+  REQUIRE(answer.value().value().body == "done");
+  REQUIRE(answer.value().value().fields.find("Connection") == "close");
+  REQUIRE(time.now() == 1s);
+  REQUIRE(quoll::test::run(read_once(client)).value().error == io::error::end_of_stream);
+}
+
+TEST_CASE("serve: a stop request closes an idle connection at once", "[server]") {
+  using namespace std::chrono_literals;
+
+  auto const router = slow_router(1s);
+  quoll::test::virtual_time time;
+  auto [client, server] = io::make_memory_stream_pair();
+  canned_listener listener;
+  std::stop_source source;
+  bool served = false;
+
+  listener.streams.emplace_back(std::move(server));
+  quoll::async::co_spawn(time.get_executor(), quoll::server::serve(listener, router),
+                         overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(time.get_executor(), stop_after(100ms, source), ignored());
+  time.run();
+
+  REQUIRE(served);
+  REQUIRE(time.now() == 100ms);
+  REQUIRE(quoll::test::run(read_once(client)).value().error == io::error::end_of_stream);
+}
+
+TEST_CASE("serve: past shutdown_timeout, the requests under way are stopped", "[server]") {
+  using namespace std::chrono_literals;
+
+  auto const router = slow_router(1h);
+  quoll::test::virtual_time time;
+  auto [client, server] = io::make_memory_stream_pair();
+  canned_listener listener;
+  std::stop_source source;
+  std::optional<std::optional<http::response>> answer;
+  bool served = false;
+
+  listener.streams.emplace_back(std::move(server));
+  quoll::async::co_spawn(time.get_executor(), quoll::server::serve(listener, router, {.shutdown_timeout = 5s}),
+                         overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(time.get_executor(), ask(client), store(answer));
+  quoll::async::co_spawn(time.get_executor(), stop_after(100ms, source), ignored());
+  time.run();
+
+  REQUIRE(served);
+  REQUIRE(time.now() == 5100ms);
+}
+
+TEST_CASE("serve: without a shutdown_timeout, a stop request stops the requests under way at once", "[server]") {
+  using namespace std::chrono_literals;
+
+  auto const router = slow_router(1h);
+  quoll::test::virtual_time time;
+  auto [client, server] = io::make_memory_stream_pair();
+  canned_listener listener;
+  std::stop_source source;
+  std::optional<std::optional<http::response>> answer;
+  bool served = false;
+
+  listener.streams.emplace_back(std::move(server));
+  quoll::async::co_spawn(time.get_executor(), quoll::server::serve(listener, router, {.shutdown_timeout = 0s}),
+                         overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(time.get_executor(), ask(client), store(answer));
+  quoll::async::co_spawn(time.get_executor(), stop_after(100ms, source), ignored());
+  time.run();
+
+  REQUIRE(served);
+  REQUIRE(time.now() == 100ms);
+}
+
+TEST_CASE("serve: past max_connections, a new connection is closed, and the others stay", "[server]") {
+  using namespace std::chrono_literals;
+
+  auto const router = slow_router(1s);
+  quoll::test::virtual_time time;
+  auto [kept_client, kept_server] = io::make_memory_stream_pair();
+  auto [refused_client, refused_server] = io::make_memory_stream_pair();
+  canned_listener listener;
+  std::stop_source source;
+  std::optional<std::optional<http::response>> kept;
+  std::optional<std::optional<http::response>> refused;
+
+  listener.streams.emplace_back(std::move(kept_server));
+  listener.streams.emplace_back(std::move(refused_server));
+  quoll::async::co_spawn(time.get_executor(), quoll::server::serve(listener, router, {.max_connections = 1}), ignored(),
+                         source.get_token());
+  quoll::async::co_spawn(time.get_executor(), ask(kept_client), store(kept));
+  quoll::async::co_spawn(time.get_executor(), ask(refused_client), store(refused));
+  quoll::async::co_spawn(time.get_executor(), stop_after(2s, source), ignored());
+  time.run();
+
+  REQUIRE(kept.value().value().body == "done");
+  REQUIRE_FALSE(refused.value().has_value());
+}
+
+TEST_CASE("serve: running out of file descriptors waits, then accepts again", "[server]") {
+  using namespace std::chrono_literals;
+
+  auto const router = slow_router(1s);
+  quoll::test::virtual_time time;
+  auto [client, server] = io::make_memory_stream_pair();
+  canned_listener listener;
+  std::stop_source source;
+  std::optional<std::optional<http::response>> answer;
+  std::chrono::nanoseconds answered_at{};
+
+  listener.failures.emplace_back(std::make_error_code(std::errc::too_many_files_open));
+  listener.streams.emplace_back(std::move(server));
+  quoll::async::co_spawn(time.get_executor(), quoll::server::serve(listener, router), ignored(), source.get_token());
+  quoll::async::co_spawn(time.get_executor(), ask(client),
+                         overloaded{[&](std::optional<http::response> value) {
+                                      answer = std::move(value);
+                                      answered_at = time.now();
+                                    },
+                                    [](std::exception_ptr) {}});
+  quoll::async::co_spawn(time.get_executor(), stop_after(2s, source), ignored());
+  time.run();
+
+  REQUIRE(answer.value().value().body == "done");
+  // The handler's second, after the wait.
+  REQUIRE(answered_at == 1100ms);
+}
+
+TEST_CASE("serve: without a limit, every connection is served", "[server]") {
+  using namespace std::chrono_literals;
+
+  auto const router = slow_router(1s);
+  quoll::test::virtual_time time;
+  auto [first_client, first_server] = io::make_memory_stream_pair();
+  auto [second_client, second_server] = io::make_memory_stream_pair();
+  canned_listener listener;
+  std::stop_source source;
+  std::optional<std::optional<http::response>> first;
+  std::optional<std::optional<http::response>> second;
+
+  listener.streams.emplace_back(std::move(first_server));
+  listener.streams.emplace_back(std::move(second_server));
+  quoll::async::co_spawn(time.get_executor(), quoll::server::serve(listener, router, {.max_connections = 0}), ignored(),
+                         source.get_token());
+  quoll::async::co_spawn(time.get_executor(), ask(first_client), store(first));
+  quoll::async::co_spawn(time.get_executor(), ask(second_client), store(second));
+  quoll::async::co_spawn(time.get_executor(), stop_after(2s, source), ignored());
+  time.run();
+
+  REQUIRE(first.value().value().body == "done");
+  REQUIRE(second.value().value().body == "done");
+}
+
+TEST_CASE("serve: a connection that ends frees its place under the limit", "[server]") {
+  using namespace std::chrono_literals;
+
+  auto const router = make_router();
+  quoll::test::virtual_time time;
+  auto [first_client, first_server] = io::make_memory_stream_pair();
+  auto [second_client, second_server] = io::make_memory_stream_pair();
+  later_listener listener;
+  std::stop_source source;
+  std::optional<std::string> second;
+  bool first_done = false;
+  bool second_done = false;
+
+  listener.streams.emplace_back(std::move(first_server));
+  listener.streams.emplace_back(std::move(second_server));
+  quoll::async::co_spawn(time.get_executor(), quoll::server::serve(listener, router, {.max_connections = 1}), ignored(),
+                         source.get_token());
+  // The first client closes its end, once answered, which ends its connection; the second comes after.
+  quoll::async::co_spawn(time.get_executor(), get(std::move(first_client), "/one", first_done), ignored_body());
+  quoll::async::co_spawn(time.get_executor(), get(std::move(second_client), "/two", second_done), store(second));
+  quoll::async::co_spawn(time.get_executor(), stop_after(2s, source), ignored());
+  time.run();
+
+  REQUIRE(first_done);
+  REQUIRE(second == "two");
+}
+
+TEST_CASE("serve: an accept failure ends the loop, and lets the request under way finish first", "[server]") {
+  using namespace std::chrono_literals;
+
+  auto const router = slow_router(1s);
+  quoll::test::virtual_time time;
+  auto [client, server] = io::make_memory_stream_pair();
+  one_then_broken listener;
+  std::optional<std::optional<http::response>> answer;
+  std::exception_ptr failure;
+
+  listener.stream.emplace(std::move(server));
+  listener.failure =
+      std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::permission_denied), "broken"});
+  quoll::async::co_spawn(time.get_executor(), quoll::server::serve(listener, router),
+                         overloaded{[] {}, [&](std::exception_ptr thrown) { failure = std::move(thrown); }});
+  quoll::async::co_spawn(time.get_executor(), ask(client), store(answer));
+  time.run();
+
+  REQUIRE(answer.value().value().body == "done");
+  REQUIRE(time.now() == 1s);
+  REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::system_error);
+}
 
 TEST_CASE("serve: connections are served concurrently", "[server]") {
   auto const router = make_router();

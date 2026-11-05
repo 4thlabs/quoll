@@ -36,7 +36,9 @@
 
 #include <quoll/server/serve_connection.hpp>
 
+#include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
+#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/error.hpp>
@@ -53,6 +55,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -214,12 +217,20 @@ async::task<> serve_connection(io::any_stream stream, http::router const &router
   std::string buffer;
   http::request_parser parser{options.limits};
 
+  // What ends the wait for a request: the task's stop request, or a request to drain.
+  std::stop_source idle_stop;
+  auto const stop_waiting = [&idle_stop] { idle_stop.request_stop(); };
+  std::stop_callback const on_stop{co_await async::current_stop_token(), stop_waiting};
+  std::stop_callback const on_drain{options.drain, stop_waiting};
+
   for (;;) {
     skip_empty_lines(buffer);
 
     // A pipelined request has already started.
     if (buffer.empty() &&
-        !co_await async::detail::with_optional_timeout(options.idle_timeout, wait_for_request(stream, buffer))) {
+        !co_await async::detail::stop_scope<bool>{
+            async::detail::with_optional_timeout(options.idle_timeout, wait_for_request(stream, buffer)),
+            idle_stop.get_token()}) {
       co_return;
     }
 
@@ -239,7 +250,7 @@ async::task<> serve_connection(io::any_stream stream, http::router const &router
     auto const head = request.method == http::verb::head;
     auto response = co_await respond(router, std::move(request), options);
 
-    keep_alive = keep_alive && !http::detail::closes_connection(response.fields);
+    keep_alive = keep_alive && !http::detail::closes_connection(response.fields) && !options.drain.stop_requested();
     prepare(response, head, keep_alive);
 
     if (co_await send_response(stream, response, keep_alive, options) || !keep_alive) {

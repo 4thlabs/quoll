@@ -176,6 +176,10 @@ task<T> with_server(io::tls_server_options certificate, std::function<task<T>(st
   auto const router = make_router();
   auto listener = co_await io::listen_tls(0, std::move(certificate));
   auto const url = "https://127.0.0.1:" + std::to_string(listener.local_port().value());
+
+  // Some handlers hang on purpose, and these tests do not wait for them.
+  options.shutdown_timeout = std::chrono::nanoseconds::zero();
+
   int ignored = 0;
   counting_listener counted{&listener, accepted != nullptr ? accepted : &ignored};
   std::stop_source stop;
