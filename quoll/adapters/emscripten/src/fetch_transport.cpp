@@ -179,10 +179,12 @@ struct aborter {
                            "quoll::emscripten::fetch_transport: " + url + ": " + message};
 }
 
-// What a fetch_operation gives: its response and, when its body is to be read in pieces, what reads it.
+// What a fetch_operation gives: its response and, when its body is to be read in pieces, what reads it and the URL its
+// failures name.
 struct fetched {
   http::response response;
   fetch_entry entry;
+  std::string url;
 };
 
 // A fetch() awaited by a coroutine. The completion, run by the event loop, reads the response out of JavaScript and
@@ -241,7 +243,7 @@ public:
       throw fetch_failure(outcome_, url_, failure_);
     }
 
-    return fetched{std::move(response_), std::move(entry_)};
+    return fetched{std::move(response_), std::move(entry_), std::move(url_)};
   }
 
 private:
@@ -446,8 +448,8 @@ private:
 // `fields`: the request's fields, packed by pack_fields().
 [[nodiscard]] async::task<client::streamed_response> fetch_in_pieces(std::string url, std::string fields,
                                                                      http::request request) {
-  auto result = co_await fetch_operation{url, std::move(fields), request, true};
-  auto stream = std::make_shared<fetch_stream>(std::move(result.entry), std::move(url));
+  auto result = co_await fetch_operation{std::move(url), std::move(fields), request, true};
+  auto stream = std::make_shared<fetch_stream>(std::move(result.entry), std::move(result.url));
   auto &response = result.response;
 
   co_return client::streamed_response{response.status,

@@ -380,12 +380,19 @@ addToLibrary({
   quoll_emscripten_fetch_status__deps: ['$quollFetches'],
   quoll_emscripten_fetch_status: (id) => quollFetches.entries[id].status,
 
-  // Part 0: status text (bytes), or failure message (UTF-8); 1: header fields, "name:value\n" each (bytes); 2: body.
+  // Part 0: status text (bytes), or failure message (UTF-8); 1: header fields, "name:value\n" each (bytes); 2: the whole
+  // body, or the piece a read has just given.
   quoll_emscripten_fetch_size__deps: ['$quollFetches'],
   quoll_emscripten_fetch_size: (id, part) => quollFetches.entries[id].parts[part].length,
 
   quoll_emscripten_fetch_copy__deps: ['$quollFetches'],
-  quoll_emscripten_fetch_copy: (id, part, out) => HEAPU8.set(quollFetches.entries[id].parts[part], out),
+  // Handed over: JavaScript does not hold a piece as well for as long as the caller works on it.
+  quoll_emscripten_fetch_copy: (id, part, out) => {
+    const { parts } = quollFetches.entries[id];
+
+    HEAPU8.set(parts[part], out);
+    parts[part] = new Uint8Array();
+  },
 
   quoll_emscripten_fetch_release__deps: ['$quollFetches'],
   quoll_emscripten_fetch_release: (id) => {

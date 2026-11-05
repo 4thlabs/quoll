@@ -85,7 +85,8 @@ namespace quoll::emscripten {
  * same, and the fetch is aborted and released. Past the end of the body, or with none to read (HEAD, 204), it is
  * released at once. The last copy of `body` to go before the end aborts the fetch and releases it, which is how to give
  * up on a body; a body moved from has nothing to read. `trailers` is not null and stays empty, as fetch does not expose
- * them, and `limits.max_streamed_body_size` has no equal here, as a fetch_transport has no limits.
+ * them. `limits.max_streamed_body_size` and the read timeout per piece have no equal here, as a fetch_transport has no
+ * limits: a server gone quiet leaves a read waiting, unless async::with_timeout is put around it.
  *
  * The tasks copy what they need: the transport does not have to outlive them. Thread safety: use it, the bodies it
  * gives included, and request stop, from the thread running the event loop.

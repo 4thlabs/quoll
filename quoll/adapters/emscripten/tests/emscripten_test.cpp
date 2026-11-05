@@ -88,6 +88,7 @@ void quoll_test_server_end();
 void quoll_test_server_cut();
 int quoll_test_server_closed();
 int quoll_test_fetch_entries();
+int quoll_test_fetch_held_bytes();
 }
 
 namespace {
@@ -542,6 +543,8 @@ TEST_CASE("fetch_transport: stream completes before the body, and hands it over 
 
   server_writes("first");
   REQUIRE(run(next_piece(response.body)) == "first");
+  // Copied, and no longer held in JavaScript as well.
+  REQUIRE(quoll_test_fetch_held_bytes() == 0);
 
   server_writes("second");
   REQUIRE(run(next_piece(response.body)) == "second");

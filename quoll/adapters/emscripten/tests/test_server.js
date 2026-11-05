@@ -133,6 +133,11 @@ addToLibrary({
   quoll_test_fetch_entries__deps: ['$quollFetches'],
   quoll_test_fetch_entries: () => Object.keys(quollFetches.entries).length,
 
+  // The bytes of a body, or of a piece, its entries still hold in JavaScript.
+  quoll_test_fetch_held_bytes__deps: ['$quollFetches'],
+  quoll_test_fetch_held_bytes: () =>
+    Object.values(quollFetches.entries).reduce((held, entry) => held + (entry.parts[2]?.length ?? 0), 0),
+
   quoll_test_server_stop__deps: ['$quollTestServer'],
   quoll_test_server_stop: () => {
     quollTestServer.server.closeAllConnections();
