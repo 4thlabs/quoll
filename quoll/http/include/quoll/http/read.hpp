@@ -116,6 +116,8 @@ template <io::ByteStream Stream, class Message>
                                                 std::string &buffer QUOLL_LIFETIMEBOUND,
                                                 parser<Message> &message_parser QUOLL_LIFETIMEBOUND) {
   assert(!message_parser.done() && "http::read() with a message not released yet");
+  assert(!(message_parser.head_complete() && message_parser.body_streamed()) &&
+         "http::read() of a body in pieces, which read_body() takes");
 
   return detail::read_until(stream, buffer, message_parser, [&message_parser] { return message_parser.done(); });
 }
@@ -132,6 +134,34 @@ template <io::ByteStream Stream, class Message>
 
   return detail::read_until(stream, buffer, message_parser,
                             [&message_parser] { return message_parser.head_complete(); });
+}
+
+/**
+ * @brief Reads the next piece of a body in pieces (see parser::set_body_streaming()) into `piece`, replacing what it
+ * held.
+ *
+ * Completes with no error once there is a piece, or once the parser is done(), with what is left of the body, perhaps
+ * nothing: release() then hands over the message, with its trailers and no body. Fails like read(), with what the same
+ * read of the stream brought before the failure still in `piece`. Memory holds what one read of the stream brings,
+ * whatever the size of the body. `stream`, `buffer`, `message_parser` and `piece` must outlive the task. Precondition:
+ * parser::head_complete(), as read_head() gets it, and parser::body_streamed().
+ */
+template <io::ByteStream Stream, class Message>
+[[nodiscard]] async::task<std::error_code>
+read_body(Stream &stream QUOLL_LIFETIMEBOUND, std::string &buffer QUOLL_LIFETIMEBOUND,
+          parser<Message> &message_parser QUOLL_LIFETIMEBOUND, std::string &piece QUOLL_LIFETIMEBOUND) {
+  assert(message_parser.head_complete() && message_parser.body_streamed() &&
+         "http::read_body() for a message whose body does not come in pieces");
+
+  auto const has_news = [&message_parser] { return message_parser.done() || !message_parser.head().body.empty(); };
+  std::error_code error;
+
+  if (!has_news()) {
+    error = co_await detail::read_until(stream, buffer, message_parser, has_news);
+  }
+
+  message_parser.take_body(piece);
+  co_return error;
 }
 
 } // namespace quoll::http

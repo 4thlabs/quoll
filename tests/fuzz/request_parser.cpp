@@ -68,5 +68,6 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
   http::request_parser parser{quoll::fuzz::low_limits};
 
   quoll::fuzz::feed_in_pieces(parser, input, piece, check_round_trip);
+  quoll::fuzz::check_body_in_pieces<http::request_parser>(input, piece, [](auto &) {});
   return 0;
 }

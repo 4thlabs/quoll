@@ -64,7 +64,8 @@
 namespace quoll::fuzz {
 
 // libFuzzer's inputs stay under 4 KB: with the default limits, what a parser does past them would never run.
-inline constexpr http::parse_limits low_limits{.max_header_size = 1024, .max_field_count = 16, .max_body_size = 1024};
+inline constexpr http::parse_limits low_limits{
+    .max_header_size = 1024, .max_field_count = 16, .max_body_size = 1024, .max_streamed_body_size = 2048};
 
 // What must hold whatever the input: a libFuzzer crash, reported with the input that broke it.
 inline void require(bool condition) {
@@ -115,6 +116,61 @@ void feed_in_pieces(Parser &parser, std::string_view input, std::size_t piece, O
   if (!parser.finish() && parser.done()) {
     on_message(parser.release());
   }
+}
+
+// A body in pieces is the body of the same bytes read whole, when the limits let both through. `prepare` readies a
+// parser.
+template <class Parser, class Prepare>
+void check_body_in_pieces(std::string_view input, std::size_t piece, Prepare prepare) {
+  Parser whole{low_limits};
+  Parser streamed{low_limits};
+  std::string held;
+  std::string taken;
+  auto left = input;
+
+  prepare(whole);
+  prepare(streamed);
+  streamed.set_body_streaming([](auto const &) { return true; });
+
+  while (!left.empty() && !streamed.done()) {
+    auto const fed = left.substr(0, piece);
+    auto const result = streamed.feed(std::span{fed.data(), fed.size()});
+
+    streamed.take_body(held);
+    taken += held;
+    left.remove_prefix(result.consumed);
+
+    if (result.error || result.consumed == 0) {
+      break;
+    }
+  }
+
+  if (!streamed.done() && streamed.finish()) {
+    return;
+  }
+
+  streamed.take_body(held);
+  taken += held;
+
+  auto const all = input.substr(0, input.size() - left.size());
+  auto const result = whole.feed(std::span{all.data(), all.size()});
+
+  if (!result.error && !whole.done()) {
+    static_cast<void>(whole.finish());
+  }
+
+  if (whole.done() && streamed.done()) {
+    require(whole.release().body == taken);
+  }
+
+  if (!streamed.done()) {
+    return;
+  }
+
+  // What the first message counted goes with it: the rest of the input is another one, read as they all are.
+  static_cast<void>(streamed.release());
+  require(!streamed.body_streamed());
+  feed_in_pieces(streamed, left, piece, [](auto const &) {});
 }
 
 // A message as bytes, nothing when the serializer refuses it: a parser lets through more than it may send.

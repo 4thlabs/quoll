@@ -57,6 +57,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <exception>
 #include <optional>
@@ -421,4 +422,213 @@ TEST_CASE("http::write owns what it sends: its message may be a temporary, kept 
   };
 
   REQUIRE(run(steps()) == body);
+}
+
+namespace {
+
+// Reads a body in pieces, and what most any of them held.
+struct read_in_pieces {
+  std::string body;
+  std::size_t largest = 0;
+  std::error_code error;
+};
+
+template <class Message>
+task<read_in_pieces> read_body_from(io::memory_stream &stream, http::parser<Message> &parser) {
+  read_in_pieces out;
+  std::string buffer;
+  std::string piece;
+
+  if (auto const error = co_await http::read_head(stream, buffer, parser)) {
+    out.error = error;
+    co_return out;
+  }
+
+  for (;;) {
+    if (auto const error = co_await http::read_body(stream, buffer, parser, piece)) {
+      out.error = error;
+      co_return out;
+    }
+
+    out.body += piece;
+    out.largest = std::max(out.largest, piece.size());
+
+    if (parser.done() && piece.empty()) {
+      co_return out;
+    }
+  }
+}
+
+task<> send_then_close(io::memory_stream stream, std::string wire, std::size_t size) {
+  for (std::size_t sent = 0; sent < wire.size(); sent += size) {
+    auto const part = std::string_view{wire}.substr(sent, size);
+
+    if ((co_await io::write(stream, bytes(part))).error) {
+      co_return;
+    }
+
+    co_await quoll::async::yield();
+  }
+}
+
+} // namespace
+
+TEST_CASE("http over a stream: a body far past any limit of a whole one, a piece at a time", "[http][stream]") {
+  auto [client, server] = io::make_memory_stream_pair();
+  std::string const body(std::size_t{1024} * 1024, 'x');
+  http::response_parser parser{{.max_body_size = 16}};
+
+  parser.set_body_streaming([](http::response const &) { return true; });
+
+  auto const wire = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+  auto const result = run(quoll::async::when_all(read_body_from(client, parser),
+                                                 send_then_close(std::move(server), wire, std::size_t{64} * 1024)));
+
+  REQUIRE(result);
+
+  auto const &out = std::get<0>(*result);
+
+  REQUIRE(!out.error);
+  REQUIRE(out.body == body);
+  // What a read of the stream brings, rather than the body.
+  REQUIRE(out.largest <= 4096);
+  REQUIRE(parser.done());
+  REQUIRE(parser.release().body.empty());
+}
+
+TEST_CASE("http over a stream: a body in pieces cut short is an error, and what came before is not lost",
+          "[http][stream]") {
+  auto [client, server] = io::make_memory_stream_pair();
+  http::response_parser parser;
+
+  parser.set_body_streaming([](http::response const &) { return true; });
+
+  auto const result = run(quoll::async::when_all(
+      read_body_from(client, parser),
+      send_then_close(std::move(server), "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nhello", 5)));
+
+  REQUIRE(result);
+
+  auto const &out = std::get<0>(*result);
+
+  REQUIRE(out.error == http::error::partial_message);
+  REQUIRE(out.body == "hello");
+}
+
+TEST_CASE("http over a stream: a body in pieces ended by the stream is whole", "[http][stream]") {
+  auto [client, server] = io::make_memory_stream_pair();
+  http::response_parser parser;
+
+  parser.set_body_streaming([](http::response const &) { return true; });
+
+  auto const result = run(quoll::async::when_all(
+      read_body_from(client, parser), send_then_close(std::move(server), "HTTP/1.1 200 OK\r\n\r\nhello", 4)));
+
+  REQUIRE(result);
+  REQUIRE(!std::get<0>(*result).error);
+  REQUIRE(std::get<0>(*result).body == "hello");
+}
+
+TEST_CASE("http over a stream: what a read brought before a failure is in the piece", "[http][stream]") {
+  auto [client, server] = io::make_memory_stream_pair();
+  http::request_parser parser;
+
+  parser.set_body_streaming([](http::request const &) { return true; });
+
+  // In one read: a chunk, then what is no chunk.
+  auto const wire = std::string{"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n"};
+
+  auto const reading = [&]() -> task<read_in_pieces> {
+    std::string buffer;
+    std::string piece{"from before"};
+    read_in_pieces out;
+
+    check((co_await io::write(server, bytes(wire))).error);
+    check(co_await http::read_head(client, buffer, parser));
+    check((co_await io::write(server, bytes("5\r\nhello\r\nZZ\r\n"))).error);
+    out.error = co_await http::read_body(client, buffer, parser, piece);
+    out.body = piece;
+    co_return out;
+  };
+
+  auto const out = run(reading());
+
+  REQUIRE(out);
+  REQUIRE(out->error == http::error::bad_message);
+  REQUIRE(out->body == "hello");
+}
+
+TEST_CASE("http over a stream: a body in pieces fails like read()", "[http][stream]") {
+  SECTION("past its limit") {
+    auto [client, server] = io::make_memory_stream_pair();
+    http::request_parser parser{{.max_streamed_body_size = 4}};
+
+    parser.set_body_streaming([](http::request const &) { return true; });
+
+    auto const result = run(quoll::async::when_all(
+        read_body_from(client, parser),
+        send_then_close(std::move(server),
+                        "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n", 8)));
+
+    REQUIRE(result);
+    REQUIRE(std::get<0>(*result).error == http::error::body_too_large);
+  }
+
+  SECTION("when the stream ends before it does") {
+    http::response_parser parser;
+
+    parser.set_body_streaming([](http::response const &) { return true; });
+
+    auto [client, server] = io::make_memory_stream_pair();
+
+    auto const reading = [&]() -> task<std::error_code> {
+      std::string buffer{"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nhello"};
+      std::string piece;
+
+      check(co_await http::read_head(client, buffer, parser));
+      check(co_await http::read_body(client, buffer, parser, piece));
+      REQUIRE(piece == "hello");
+
+      { auto gone = std::move(server); }
+
+      co_return co_await http::read_body(client, buffer, parser, piece);
+    };
+
+    auto const error = run(reading());
+
+    REQUIRE(error);
+    REQUIRE(*error == http::error::partial_message);
+  }
+}
+
+TEST_CASE("http over a stream: a message whose body came with its head, and the next one after it", "[http][stream]") {
+  auto [client, server] = io::make_memory_stream_pair();
+  http::request_parser parser;
+
+  parser.set_body_streaming([](http::request const &head) { return head.target == "/in-pieces"; });
+
+  auto const reading = [&]() -> task<std::vector<std::string>> {
+    std::string buffer;
+    std::string piece;
+    std::vector<std::string> seen;
+
+    check((co_await io::write(
+               server, bytes("POST /in-pieces HTTP/1.1\r\nContent-Length: 2\r\n\r\nhiGET /next HTTP/1.1\r\n\r\n")))
+              .error);
+    check(co_await http::read_head(client, buffer, parser));
+    REQUIRE(parser.done());
+    check(co_await http::read_body(client, buffer, parser, piece));
+    seen.push_back(piece);
+    seen.push_back(parser.release().target);
+
+    // The bytes past the body stay for the next message.
+    check(co_await http::read(client, buffer, parser));
+    seen.push_back(parser.release().target);
+    co_return seen;
+  };
+
+  auto const seen = run(reading());
+
+  REQUIRE(seen);
+  REQUIRE(*seen == std::vector<std::string>{"hi", "/in-pieces", "/next"});
 }
