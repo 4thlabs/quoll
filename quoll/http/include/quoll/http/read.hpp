@@ -69,13 +69,18 @@ template <io::ByteStream Stream, class Message, std::predicate Reached>
 
       buffer.erase(0, parsed.consumed);
 
-      if (parsed.error) {
-        co_return parsed.error;
-      }
-
+      // Reached first: how the bytes were cut must not change what comes of them, as what was reached is good, and a
+      // failure past it is for what reads on.
       if (reached()) {
         co_return std::error_code{};
       }
+
+      if (parsed.error) {
+        co_return parsed.error;
+      }
+    } else if (auto const failure = message_parser.failure()) {
+      // It stopped with no bytes left to feed: nothing that comes can change that.
+      co_return failure;
     }
 
     auto const received = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));

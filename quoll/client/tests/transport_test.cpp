@@ -2157,3 +2157,13 @@ TEST_CASE("client::transport: a body that failed leaves its place to others", "[
 
   REQUIRE(quoll::test::run(loop, reading()) == "hi");
 }
+
+TEST_CASE("client::transport: what comes of a body does not depend on how it was cut", "[client]") {
+  // A head, what is good of a body, and what is not, in one read of the stream.
+  auto const got =
+      stream_from(answering({"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nping\r\nZ\r\n"}), "/");
+
+  REQUIRE(got.status == http::status::ok);
+  REQUIRE(got.body == "ping");
+  REQUIRE(got.error == http::error::bad_message);
+}

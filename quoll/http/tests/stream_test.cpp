@@ -548,14 +548,20 @@ TEST_CASE("http over a stream: what a read brought before a failure is in the pi
     check((co_await io::write(server, bytes("5\r\nhello\r\nZZ\r\n"))).error);
     out.error = co_await http::read_body(client, buffer, parser, piece);
     out.body = piece;
+
+    // What it brought first, and then, with nothing more to read, what stopped it.
+    if (!out.error) {
+      out.error = co_await http::read_body(client, buffer, parser, piece);
+    }
+
     co_return out;
   };
 
   auto const out = run(reading());
 
   REQUIRE(out);
-  REQUIRE(out->error == http::error::bad_message);
   REQUIRE(out->body == "hello");
+  REQUIRE(out->error == http::error::bad_message);
 }
 
 TEST_CASE("http over a stream: a body in pieces fails like read()", "[http][stream]") {
@@ -652,4 +658,25 @@ TEST_CASE("http over a stream: read() stops at the head of a body in pieces", "[
   };
 
   REQUIRE(run(reading()) == "abcd");
+}
+
+TEST_CASE("http over a stream: a failure past a head comes after it, however the bytes were cut", "[http][stream]") {
+  auto [client, server] = io::make_memory_stream_pair();
+  http::response_parser parser;
+
+  parser.set_body_streaming([](http::response const &) { return true; });
+
+  auto const reading = [&]() -> task<read_in_pieces> {
+    std::string_view const sent = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nZ\r\n";
+
+    check((co_await io::write(server, bytes(sent))).error);
+
+    co_return co_await read_body_from(client, parser);
+  };
+
+  // The head is read, and what fails is the body, without waiting for another read: nothing would come.
+  auto const out = run(reading());
+
+  REQUIRE(out);
+  REQUIRE(out->error == http::error::bad_message);
 }
