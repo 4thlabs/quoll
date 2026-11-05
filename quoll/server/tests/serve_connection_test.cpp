@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
@@ -48,6 +49,7 @@
 #include <quoll/http/serializer.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
+#include <quoll/http/write.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/half_closable_stream.hpp>
@@ -184,6 +186,14 @@ http::router make_router() {
       throw std::runtime_error{"cannot open what it writes"};
       co_return;
     };
+    return response;
+  });
+  router.get("/empty-with-length", writing("8", {}));
+  router.get("/http-1-0-response", [](http::request) {
+    http::response response;
+
+    response.version = http::version::http_1_0;
+    response.body_writer = [](http::body_stream out) -> task<> { co_await out.write("ping"); };
     return response;
   });
   router.get("/with-trailers", [](http::request) {
@@ -1916,7 +1926,222 @@ TEST_CASE("serve_connection: a response in pieces has a write timeout per piece"
 
 TEST_CASE("serve_connection: a body_writer sent through http::write is refused", "[server]") {
   http::response response;
+  auto [client, server] = io::make_memory_stream_pair();
 
   response.body_writer = [](http::body_stream) -> task<> { co_return; };
-  REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+  REQUIRE_THROWS_AS(http::write(server, response), std::invalid_argument);
+}
+
+TEST_CASE("serve_connection: 100 Continue does not follow a response that has started", "[server]") {
+  http::router router;
+
+  router.post("/preamble-first", [](http::body_reader body) {
+    http::response response;
+
+    response.body_writer = [body](http::body_stream out) -> task<> {
+      co_await out.write("pre:");
+
+      while (auto const piece = co_await body.read()) {
+        co_await out.write(*piece);
+      }
+    };
+    return response;
+  });
+
+  auto [client, server] = io::make_memory_stream_pair();
+  auto const outcome = quoll::test::run(quoll::async::when_all(
+      quoll::server::serve_connection(std::move(server), router),
+      send_in_two(std::move(client),
+                  "POST /preamble-first HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n",
+                  "ping")));
+
+  REQUIRE(outcome);
+
+  auto const &response = std::get<1>(*outcome);
+
+  // What the client reads first is the final response, and its body reads whole.
+  REQUIRE(response.status == http::status::ok);
+  REQUIRE(response.body == "pre:ping");
+}
+
+TEST_CASE("serve_connection: a writer that writes nothing of its length answers 500", "[server]") {
+  auto failures = 0;
+  connection_options options;
+
+  options.on_handler_error = [&](std::exception_ptr const &) { ++failures; };
+
+  auto const got = serve("GET /empty-with-length HTTP/1.1\r\nHost: x\r\n\r\n", {verb::get}, false, options);
+
+  REQUIRE(got.responses.at(0).status == http::status::internal_server_error);
+  REQUIRE(failures == 1);
+}
+
+TEST_CASE("serve_connection: a writer finding the request at fault before it starts answers as a refusal", "[server]") {
+  http::router router;
+
+  router.post("/echo-in-pieces", [](http::body_reader body) {
+    http::response response;
+
+    response.body_writer = [body](http::body_stream out) -> task<> {
+      while (auto const piece = co_await body.read()) {
+        co_await out.write(*piece);
+      }
+    };
+    return response;
+  });
+
+  auto failures = 0;
+  connection_options options;
+
+  options.on_handler_error = [&](std::exception_ptr const &) { ++failures; };
+
+  auto [client, server] = io::make_memory_stream_pair();
+  auto const outcome = quoll::test::run(quoll::async::when_all(
+      quoll::server::serve_connection(std::move(server), router, options),
+      send_in_two(std::move(client), "POST /echo-in-pieces HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
+                  "ZZ\r\n")));
+
+  REQUIRE(outcome);
+  REQUIRE(std::get<1>(*outcome).status == http::status::bad_request);
+  REQUIRE(failures == 0);
+}
+
+TEST_CASE("serve_connection: a writer's own HTTP/1.0 response has no chunks either", "[server]") {
+  auto const got = serve("GET /http-1-0-response HTTP/1.1\r\nHost: x\r\n\r\n", {verb::get});
+
+  REQUIRE(got.responses.at(0).status == http::status::ok);
+  REQUIRE(got.responses.at(0).body == "ping");
+  REQUIRE_FALSE(got.responses.at(0).fields.contains("Transfer-Encoding"));
+}
+
+TEST_CASE("serve_connection: a writer making nothing of a failed request does not make it a success", "[server]") {
+  http::router router;
+
+  // Swallows what it read and what stopped it, and returns.
+  router.post("/swallowing", [](http::body_reader body) {
+    http::response response;
+
+    response.body_writer = [body](http::body_stream) -> task<> {
+      try {
+        while (co_await body.read()) {
+        }
+      } catch (std::system_error const &) {
+      }
+    };
+    return response;
+  });
+
+  auto [client, server] = io::make_memory_stream_pair();
+  auto const outcome = quoll::test::run(quoll::async::when_all(
+      quoll::server::serve_connection(std::move(server), router),
+      send_in_two(std::move(client), "POST /swallowing HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
+                  "ZZ\r\n")));
+
+  REQUIRE(outcome);
+  REQUIRE(std::get<1>(*outcome).status == http::status::bad_request);
+}
+
+TEST_CASE("serve_connection: a writer that a stop ends early has no whole body to end", "[server][timer]") {
+  virtual_time time;
+  http::router router;
+
+  // Keeps an eye on the stop token, and returns well before its end.
+  router.get("/polite", [](http::request) {
+    http::response response;
+
+    response.body_writer = [](http::body_stream out) -> task<> {
+      co_await out.write("tick");
+
+      auto const stop_token = co_await quoll::async::current_stop_token();
+
+      while (!stop_token.stop_requested()) {
+        try {
+          co_await quoll::async::sleep_for(1s);
+        } catch (std::system_error const &) {
+        }
+      }
+    };
+    return response;
+  });
+
+  auto failures = 0;
+  std::stop_source stopping;
+  connection_options options;
+
+  options.on_handler_error = [&](std::exception_ptr const &) { ++failures; };
+
+  auto [client, server] = io::make_memory_stream_pair();
+
+  auto const serving = [&](io::memory_stream stream) -> task<bool> {
+    co_await quoll::async::detail::stop_scope<void>{quoll::server::serve_connection(std::move(stream), router, options),
+                                                    stopping.get_token()};
+    co_return true;
+  };
+
+  auto const peer = [&](io::memory_stream stream) -> task<std::string> {
+    std::string const sent = "GET /polite HTTP/1.1\r\nHost: x\r\n\r\n";
+    std::string received;
+    std::array<char, 1024> chunk{};
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{sent}));
+    co_await quoll::async::sleep_for(3s);
+    stopping.request_stop();
+
+    for (;;) {
+      auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+      if (read.error) {
+        co_return received;
+      }
+
+      received.append(chunk.data(), read.transferred);
+    }
+  };
+
+  auto const outcome =
+      quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peer(std::move(client))));
+
+  REQUIRE(outcome);
+  // No last chunk: a body cut short.
+  REQUIRE_FALSE(std::get<1>(*outcome).contains("0\r\n\r\n"));
+  REQUIRE(failures == 0);
+}
+
+TEST_CASE("serve_connection: an empty piece sends the head at once", "[server][timer]") {
+  virtual_time time;
+  http::router router;
+
+  router.get("/announced", [](http::request) {
+    http::response response;
+
+    response.body_writer = [](http::body_stream out) -> task<> {
+      co_await out.write("");
+      co_await quoll::async::sleep_for(10s);
+      co_await out.write("late");
+    };
+    return response;
+  });
+
+  auto [client, server] = io::make_memory_stream_pair();
+  std::chrono::nanoseconds head_at{};
+
+  auto const peer = [&](io::memory_stream stream) -> task<std::string> {
+    std::string const sent = "GET /announced HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+    std::string buffer;
+    http::response_parser parser;
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{sent}));
+    (void)co_await http::read_head(stream, buffer, parser);
+    head_at = time.now();
+    (void)co_await http::read(stream, buffer, parser);
+    co_return parser.release().body;
+  };
+
+  auto const outcome =
+      quoll::test::run(time, quoll::async::when_all(quoll::server::serve_connection(std::move(server), router),
+                                                    peer(std::move(client))));
+
+  REQUIRE(outcome);
+  REQUIRE(head_at == 0s);
+  REQUIRE(std::get<1>(*outcome) == "late");
 }

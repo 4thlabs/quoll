@@ -64,15 +64,16 @@ public:
   /** @brief Writes through `sink`, whose `write(std::string_view)` is what body_stream::write() says. `sink` outlives
    * this. */
   template <class Sink>
-    requires(!std::same_as<Sink, body_stream> && !std::is_const_v<Sink>) && requires(Sink &sink, std::string_view piece) {
-      { sink.write(piece) } -> std::same_as<async::task<>>;
-    }
+    requires(!std::same_as<Sink, body_stream> && !std::is_const_v<Sink>) &&
+                requires(Sink &sink, std::string_view piece) {
+                  { sink.write(piece) } -> std::same_as<async::task<>>;
+                }
   explicit body_stream(Sink &sink QUOLL_LIFETIMEBOUND) noexcept
       : sink_(&sink),
         write_([](void *erased, std::string_view piece) { return static_cast<Sink *>(erased)->write(piece); }),
         type_(async::detail::type_id_of<Sink>()) {}
 
-  /** @brief Writes `piece`, which stays valid until the task ends. */
+  /** @brief Writes `piece`, which stays valid until the task ends. An empty one sends the head, if it has not left. */
   [[nodiscard]] async::task<> write(std::string_view piece QUOLL_LIFETIMEBOUND) const { return write_(sink_, piece); }
 
   /** @brief What it writes through if it is exactly a `Sink`, otherwise `nullptr`. */
@@ -106,8 +107,17 @@ private:
  *
  * With a `Content-Length` in the fields, exactly that many bytes are expected: more throws, less cuts the connection,
  * so that its peer sees a body cut short. Without one, the body goes in chunks, or to HTTP/1.0 up to the end of the
- * connection. What the writer throws after the start of a body cuts the connection the same way, as a peer must not
- * take what came for all of it. What it captures lives until its task ends. Not called for a response to HEAD.
+ * connection, which its peer cannot tell from a cut. What the writer throws after the start of a body cuts the
+ * connection the same way, as a peer must not take what came for all of it, and before it, answers 500. Not called for
+ * a response to HEAD.
+ *
+ * The head leaves with the first piece; an empty piece sends it at once, for a stream to announce itself before its
+ * first data.
+ *
+ * It runs after its handler has ended: what it captures by value lives until its task ends, and a `std::string_view` of
+ * a path parameter, or a reference to the request, does not. An http::body_reader does, on a connection or through
+ * local_transport. With `Expect: 100-continue`, it writes and reads in turn, as `100 Continue` and a piece must not
+ * leave at once.
  */
 using body_writer = std::function<async::task<>(body_stream)>;
 

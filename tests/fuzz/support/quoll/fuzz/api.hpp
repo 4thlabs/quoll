@@ -157,12 +157,12 @@ struct service {
                      rest::validators([](rest::credential<rest::bearer_auth> const &) { return true; },
                                       [](rest::credential<rest::api_key<"X-Api-Key">> const &) { return true; },
                                       [](rest::credential<rest::api_key_query<"key">> const &) { return true; }));
-    // A response in pieces, of a length the path says, right or wrong, or in chunks.
-    router.get("/out-pieces/{length}", [](std::string length) {
+    // A response in pieces, of a length it keeps to, or in chunks. A wrong length answers 500, which is no bug.
+    router.get("/out-pieces/{framing}", [](std::string_view framing) {
       http::response response;
 
-      if (length != "chunked") {
-        response.fields.add("Content-Length", length);
+      if (framing == "sized") {
+        response.fields.add("Content-Length", "9");
       }
 
       response.body_writer = [](http::body_stream out) -> async::task<> {

@@ -92,9 +92,9 @@ struct connection_options {
   std::stop_token drain{};
 
   /**
-   * @brief Called with what a handler, a middleware or a body_writer threw, or for a writer short of its `Content-Length`; on
-   * the connection's executor, must not throw. The client receives a 500 while nothing of the response has left, and
-   * otherwise a body cut short. Empty: that is all that is left of it.
+   * @brief Called with what a handler, a middleware or a body_writer threw, or for a writer short of its
+   * `Content-Length`; on the connection's executor, must not throw. The client receives a 500 while nothing of the
+   * response has left, and otherwise a body cut short. Empty: that is all that is left of it.
    */
   std::function<void(std::exception_ptr)> on_handler_error{};
 };
