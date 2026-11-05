@@ -235,6 +235,9 @@ http::router make_router() {
       response.status = http::status::gateway_timeout;
     }
 
+    // That ended the reading: a stream does not take it up again.
+    REQUIRE_THROWS_AS(co_await body.read(), std::system_error);
+
     co_return response;
   });
   router.add(verb::get, "/invalid", "invalid", [](http::request, http::route_match) -> task<http::response> {
@@ -2151,4 +2154,19 @@ TEST_CASE("serve_connection: a framing refused at the end of its head reaches no
   auto const got = serve("POST /refuse HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\n\r\n", {verb::post}, true);
 
   REQUIRE(got.responses.at(0).status == http::status::bad_request);
+}
+
+TEST_CASE("serve_connection: what is at fault after a good piece is refused, if the handler reads no more",
+          "[server]") {
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+
+  // It reads a piece, and answers: the rest of what came with that piece is no HTTP.
+  auto const outcome = quoll::test::run(quoll::async::when_all(
+      quoll::server::serve_connection(std::move(server), router),
+      send_in_two(std::move(client), "POST /first HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
+                  "4\r\nping\r\nZ\r\n")));
+
+  REQUIRE(outcome);
+  REQUIRE(std::get<1>(*outcome).status == http::status::bad_request);
 }

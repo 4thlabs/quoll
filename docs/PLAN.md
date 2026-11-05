@@ -211,6 +211,8 @@ changes only what the harness shows. Candidates:
 
 ## Decided
 
+- Under WASM, `-mtail-call` (2026-11-05), with `-fwasm-exceptions`: a coroutine resuming another otherwise grows the stack, and
+  a long loop of tasks that never suspend overflows it. It asks for Chrome 112, Firefox 121 or Safari 18.2.
 - Performance comes last (2026-11-05): the maintainer needs what comes before it first. An earlier step may still take a
   candidate that it reworks anyway, as streaming does with the timers.
 - Name: **Quoll**, a new public library (namespace `quoll::`). Puffin keeps its existing utility modules (events, ioc,

@@ -315,6 +315,11 @@ public:
       throw body_not_read{read.error, "quoll::server: cannot read the body"};
     }
 
+    // What came with this piece is at fault, whether the handler reads again or not: this request gets no other answer.
+    if (auto const failure = parser_->failure()) {
+      failure_ = request_read{failure};
+    }
+
     if (piece_.empty()) {
       co_return std::nullopt;
     }

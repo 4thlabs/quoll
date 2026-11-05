@@ -124,7 +124,7 @@ struct connector_handle {
  *
  * Copies share their connections. The task copies what it needs: the transport does not have to outlive it.
  *
- * Thread safety: send() may be called from any thread, concurrently, if the connector allows it.
+ * Thread safety: send() and stream() may be called from any thread, concurrently, if the connector allows it.
  */
 template <io::Connector Connector = io::network_connector>
 class transport {

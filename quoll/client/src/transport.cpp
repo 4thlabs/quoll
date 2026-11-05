@@ -539,12 +539,17 @@ public:
       throw std::system_error{failed, "quoll::client: cannot read the response"};
     }
 
-    if (!piece_.empty()) {
-      co_return std::string_view{piece_};
+    // At once, even with a last piece to hand over: its connection and its place are done with, for as long as the
+    // caller is at work on that piece. What it leaves alone is the piece.
+    if (parser_.done()) {
+      finish();
     }
 
-    finish();
-    co_return std::nullopt;
+    if (piece_.empty()) {
+      co_return std::nullopt;
+    }
+
+    co_return std::string_view{piece_};
   }
 
 private:

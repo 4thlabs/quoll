@@ -88,7 +88,8 @@ private:
  * The request is then answered as one refused as it is read would be, whatever the handler made of it, as it could not
  * know what the connection can still carry. Failing once, read() goes on failing. A cancellation of
  * the read, as a handler's own timeout is, ends the reading too, as a stream does not take it up again, and the
- * handler's response then stands.
+ * handler's response then stands, but over TLS, whose session a cancelled read leaves unusable: the connection then
+ * ends unanswered.
  *
  * Copied freely, it refers to what reads the body, valid until the response has left: a body_writer may read it, as an
  * echo or a proxy does, if it came with http::local_transport or a connection, and not from a dispatch() of your own. A

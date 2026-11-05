@@ -37,6 +37,7 @@
 #ifndef QUOLL_CLIENT_STREAMED_RESPONSE_HPP
 #define QUOLL_CLIENT_STREAMED_RESPONSE_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/body_reader.hpp>
 #include <quoll/http/fields.hpp>
@@ -54,6 +55,8 @@ namespace quoll::client {
 /**
  * @brief The body of a streamed_response, a piece at a time. Copies share what reads it, the connection among them, so
  * that it may be taken out of its response, and the last to go closes the connection if it has not come to its end.
+ *
+ * Thread safety: none, as what reads it runs on one loop.
  */
 class response_body {
 public:
@@ -63,8 +66,13 @@ public:
   response_body(http::body_reader reader, std::shared_ptr<void> connection) noexcept
       : reader_(reader), connection_(std::move(connection)) {}
 
-  /** @brief The next piece, valid up to the next read(), or nothing at the end of the body: see http::body_reader. */
-  [[nodiscard]] async::task<std::optional<std::string_view>> read() const { return reader_.read(); }
+  /**
+   * @brief The next piece, valid up to the next read() and for as long as this, or nothing at the end of the body: see
+   * http::body_reader. A body moved from has nothing to read.
+   */
+  [[nodiscard]] async::task<std::optional<std::string_view>> read() const QUOLL_LIFETIMEBOUND {
+    return connection_ ? reader_.read() : http::body_reader{}.read();
+  }
 
 private:
   http::body_reader reader_;
