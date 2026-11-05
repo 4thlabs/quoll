@@ -60,7 +60,15 @@ struct transport_options {
    * connection after its response.
    */
   std::size_t max_idle_connections = 8;
-  /** @brief How long opening a connection may take, name resolution included. */
+  /**
+   * @brief How many connections are open at once, in use or idle; 0: no limit. Past it, a request waits for a request
+   * on a connection to end, and an idle connection is closed to make room for a new one. A stop request ends the wait,
+   * and so does `connect_timeout`, which then starts again to connect. Without a timeout or a timer, a server that does
+   * not answer holds up those that wait. The executors that send have to take a post() from another thread, as asio's
+   * and a thread pool's do, and a run_loop's does not.
+   */
+  std::size_t max_connections = 0;
+  /** @brief How long opening a connection may take, name resolution included, and waiting for `max_connections`. */
   std::chrono::nanoseconds connect_timeout = std::chrono::seconds{30};
   /**
    * @brief How long a request may take once on a connection, from sending it to reading the end of its response: a

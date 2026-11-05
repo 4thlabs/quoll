@@ -37,6 +37,7 @@
 #include <quoll/client/transport.hpp>
 
 #include <quoll/async/detail/optional_timeout.hpp>
+#include <quoll/async/detail/slots.hpp>
 #include <quoll/async/detail/synchronized.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/http/detail/connection_field.hpp>
@@ -52,6 +53,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <span>
@@ -92,6 +94,22 @@ public:
       if (idle.size() < capacity_) {
         idle.push_back(std::move(connection));
       }
+    });
+  }
+
+  // Closes the idle connections past `count`, the oldest first, past the lock.
+  void keep_at_most(std::size_t count) {
+    auto const closed = idle_.with([count](std::vector<io::any_stream> &idle) {
+      std::vector<io::any_stream> past_it;
+
+      if (idle.size() > count) {
+        auto const end = idle.begin() + static_cast<std::ptrdiff_t>(idle.size() - count);
+
+        past_it.assign(std::make_move_iterator(idle.begin()), std::make_move_iterator(end));
+        idle.erase(idle.begin(), end);
+      }
+
+      return past_it;
     });
   }
 
@@ -204,7 +222,11 @@ public:
                  std::string host_field_, std::string prefix_, transport_options const &options_)
       : connector(std::move(connector_)), host(std::move(host_)), port(port_), secure(secure_),
         host_field(std::move(host_field_)), prefix(std::move(prefix_)), options(options_),
-        pool(options_.max_idle_connections) {}
+        pool(options_.max_idle_connections) {
+    if (options_.max_connections > 0) {
+      places.emplace(options_.max_connections);
+    }
+  }
 
   [[nodiscard]] async::task<io::any_stream> open() const {
     return connector.open(connector.connector.get(), host, port, secure, options.tls);
@@ -218,12 +240,53 @@ public:
   std::string prefix;
   transport_options options;
   connection_pool pool;
+  // Requests on a connection at once, when options.max_connections limits them.
+  std::optional<async::detail::slots> places;
 };
 
 namespace {
 
+// A place held for as long as a request is on a connection.
+class held_place {
+public:
+  held_place() noexcept = default;
+
+  held_place(held_place const &) = delete;
+  held_place &operator=(held_place const &) = delete;
+  held_place(held_place &&) = delete;
+  held_place &operator=(held_place &&) = delete;
+
+  ~held_place() {
+    if (places_ != nullptr) {
+      places_->release();
+    }
+  }
+
+  // Owned from the moment it is given, whatever fails around the wait for it.
+  async::task<> take(async::detail::slots &places) {
+    co_await places.acquire();
+    places_ = &places;
+  }
+
+private:
+  async::detail::slots *places_ = nullptr;
+};
+
+// A new connection is about to open: what is idle past the limit makes room for it.
+void make_room(transport_core &shared) {
+  if (shared.places) {
+    shared.pool.keep_at_most(shared.places->available());
+  }
+}
+
 // The task holds the shared state, not the transport.
 async::task<http::response> send_prepared(std::shared_ptr<transport_core> shared, prepared_request request) {
+  held_place place;
+
+  if (shared->places) {
+    co_await async::detail::with_optional_timeout(shared->options.connect_timeout, place.take(*shared->places));
+  }
+
   if (idempotent(request.method)) {
     if (auto idle = shared->pool.take()) {
       auto response = co_await async::detail::with_optional_timeout(
@@ -238,6 +301,8 @@ async::task<http::response> send_prepared(std::shared_ptr<transport_core> shared
       shared->pool.clear();
     }
   }
+
+  make_room(*shared);
 
   auto connection = co_await async::detail::with_optional_timeout(shared->options.connect_timeout, shared->open());
   auto response = co_await async::detail::with_optional_timeout(

@@ -84,9 +84,9 @@ struct connector_handle {
  *
  * Each request goes to `host` on `port`, with a `Host` field naming them unless the request has one. Connections are
  * kept open once their response is read (keep-alive), up to `max_idle_connections`, and the next requests reuse them;
- * a request waits for no other, and opens a new connection when none is idle. A connection is not reused after a
- * request or a response that closes it (`Connection: close`, HTTP/1.0), a response delimited by the end of the stream,
- * a switch of protocol, or a stream error.
+ * a request waits for no other, unless transport_options::max_connections says so, and opens a new connection when none
+ * is idle. A connection is not reused after a request or a response that closes it (`Connection: close`, HTTP/1.0), a
+ * response delimited by the end of the stream, a switch of protocol, or a stream error.
  *
  * A server may close an idle connection at any time, which shows only once a request is sent on it. Only the requests
  * whose method is idempotent (GET, HEAD, PUT, DELETE, OPTIONS, TRACE) take an idle connection: when it turns out

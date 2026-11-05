@@ -35,6 +35,8 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detail/slots.hpp>
+#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
@@ -50,6 +52,8 @@
 #include <future>
 #include <memory>
 #include <stdexcept>
+#include <stop_token>
+#include <system_error>
 #include <thread>
 #include <tuple>
 #include <utility>
@@ -197,6 +201,65 @@ TEST_CASE("thread_pool destruction runs what is still queued", "[threads][thread
   }
 
   REQUIRE(completed.load() == 101);
+}
+
+TEST_CASE("slots: on many threads, one at a time holds a single place", "[threads][thread_pool]") {
+  thread_pool pool{4};
+  quoll::async::detail::slots places{1};
+  // Not atomic: TSan reports it if two ever hold the place together.
+  int count = 0;
+
+  auto const take_turns = [](quoll::async::detail::slots &slots, int &counted) -> task<int> {
+    for (int round = 0; round < 200; ++round) {
+      co_await slots.acquire();
+      ++counted;
+      co_await quoll::async::yield();
+      ++counted;
+      slots.release();
+    }
+
+    co_return 0;
+  };
+
+  std::vector<std::future<int>> running;
+
+  for (int worker = 0; worker < 4; ++worker) {
+    running.push_back(spawn(pool, take_turns(places, count)));
+  }
+
+  for (auto &future : running) {
+    REQUIRE(future.get() == 0);
+  }
+
+  REQUIRE(count == 4 * 200 * 2);
+  REQUIRE(places.available() == 1);
+}
+
+TEST_CASE("slots: a stop from another thread ends a wait, as it starts or later", "[threads][thread_pool]") {
+  thread_pool pool{4};
+
+  for (int round = 0; round < 200; ++round) {
+    quoll::async::detail::slots places{0};
+    std::stop_source stopping;
+
+    auto const waits = [](quoll::async::detail::slots &slots) -> task<int> {
+      co_await slots.acquire();
+      co_return 1;
+    };
+
+    auto const stopped = [&waits](quoll::async::detail::slots &slots, std::stop_token token) -> task<int> {
+      try {
+        co_return co_await quoll::async::detail::stop_scope<int>{waits(slots), std::move(token)};
+      } catch (std::system_error const &failure) {
+        co_return failure.code() == std::errc::operation_canceled ? 2 : 3;
+      }
+    };
+
+    auto future = spawn(pool, stopped(places, stopping.get_token()));
+
+    stopping.request_stop();
+    REQUIRE(future.get() == 2);
+  }
 }
 
 TEST_CASE("thread_pool needs at least one thread", "[threads][thread_pool]") {

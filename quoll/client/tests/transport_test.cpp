@@ -38,6 +38,7 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/detached.hpp>
+#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
@@ -67,6 +68,9 @@
 #include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+
+#include <algorithm>
 
 #include <chrono>
 #include <cstddef>
@@ -807,6 +811,183 @@ TEST_CASE("client::transport: a response that takes too long fails with timed_ou
   REQUIRE(quoll::test::run(time, send()) == std::errc::timed_out);
   REQUIRE(failed_at == 3s);
   REQUIRE(network.connections == 1);
+}
+
+namespace {
+
+// A memory_server with the router, counting what is open at once.
+struct counted_server {
+  explicit counted_server(async::run_loop::executor executor)
+      : server{executor,
+               [this](io::memory_stream stream) -> task<> {
+                 most_open = std::max(most_open, ++open);
+                 co_await quoll::server::serve_connection(std::move(stream), router);
+                 --open;
+               },
+               0,
+               {},
+               {}} {}
+
+  http::router router = make_router();
+  int open = 0;
+  int most_open = 0;
+  memory_server server;
+};
+
+client::transport_options at_most(std::size_t connections) {
+  client::transport_options options;
+
+  options.max_connections = connections;
+  return options;
+}
+
+} // namespace
+
+TEST_CASE("client::transport: past max_connections, a request waits for one to be free", "[client]") {
+  async::run_loop loop;
+  counted_server counted{loop.get_executor()};
+  auto const limit = GENERATE(std::size_t{1}, std::size_t{2});
+  auto const bodies =
+      quoll::test::run(loop, [](memory_server &target, std::size_t places) -> task<std::vector<std::string>> {
+        client::transport transport{memory_connector{target}, "example.com", 80, at_most(places)};
+        auto [first, second, third] = co_await async::when_all(transport.send(make_request(verb::get, "/hello")),
+                                                               transport.send(make_request(verb::get, "/hello")),
+                                                               transport.send(make_request(verb::get, "/hello")));
+
+        co_return std::vector<std::string>{first.body, second.body, third.body};
+      }(counted.server, limit));
+
+  REQUIRE(bodies == std::vector<std::string>{"hello", "hello", "hello"});
+  REQUIRE(static_cast<std::size_t>(counted.most_open) <= limit);
+  REQUIRE(static_cast<std::size_t>(counted.server.connections) <= limit);
+}
+
+TEST_CASE("client::transport: an idle connection makes room for a new one at the limit", "[client]") {
+  async::run_loop loop;
+  counted_server counted{loop.get_executor()};
+  auto const bodies = quoll::test::run(loop, [](memory_server &target) -> task<std::vector<std::string>> {
+    client::transport transport{memory_connector{target}, "example.com", 80, at_most(1)};
+    auto first = co_await transport.send(make_request(verb::get, "/hello"));
+    // A POST opens its own connection: the idle one goes first.
+    auto second = co_await transport.send(make_request(verb::post, "/echo", "ping"));
+
+    co_await async::yield();
+    co_return std::vector<std::string>{first.body, second.body};
+  }(counted.server));
+
+  REQUIRE(bodies == std::vector<std::string>{"hello", "ping"});
+  REQUIRE(counted.server.connections == 2);
+  REQUIRE(counted.most_open == 1);
+}
+
+TEST_CASE("client::transport: only what is idle past the limit makes room", "[client]") {
+  async::run_loop loop;
+  counted_server counted{loop.get_executor()};
+  auto const bodies = quoll::test::run(loop, [](memory_server &target) -> task<std::vector<std::string>> {
+    client::transport transport{memory_connector{target}, "example.com", 80, at_most(2)};
+    auto [first, second] = co_await async::when_all(transport.send(make_request(verb::get, "/hello")),
+                                                    transport.send(make_request(verb::get, "/hello")));
+    // Two idle, one more to open: one of them goes, and the other is reused after it.
+    auto third = co_await transport.send(make_request(verb::post, "/echo", "ping"));
+    auto fourth = co_await transport.send(make_request(verb::get, "/hello"));
+
+    co_await async::yield();
+    co_return std::vector<std::string>{first.body, second.body, third.body, fourth.body};
+  }(counted.server));
+
+  REQUIRE(bodies == std::vector<std::string>{"hello", "hello", "ping", "hello"});
+  REQUIRE(counted.server.connections == 3);
+  REQUIRE(counted.most_open == 2);
+}
+
+TEST_CASE("client::transport: waiting for a free connection is within connect_timeout", "[client][timer]") {
+  virtual_time time;
+  slow_network network{.time = &time, .response_delay = 1h};
+  std::chrono::nanoseconds failed_at{};
+
+  auto const send = [&]() -> task<std::error_code> {
+    client::transport_options options = at_most(1);
+
+    options.connect_timeout = 2s;
+    options.response_timeout = 10s;
+
+    client::transport<slow_connector> const transport{slow_connector{network}, "example.com", 80, options};
+
+    auto const failure_of = [&]() -> task<std::error_code> {
+      try {
+        static_cast<void>(co_await transport.send(make_request(verb::get, "/")));
+        co_return std::error_code{};
+      } catch (std::system_error const &failure) {
+        failed_at = std::min(failed_at == 0s ? time.now() : failed_at, time.now());
+        co_return failure.code();
+      }
+    };
+
+    auto [held, waited] = co_await async::when_all(failure_of(), failure_of());
+
+    co_return waited;
+  };
+
+  REQUIRE(quoll::test::run(time, send()) == std::errc::timed_out);
+  REQUIRE(failed_at == 2s);
+  REQUIRE(network.connections == 1);
+}
+
+TEST_CASE("client::transport: a request that fails gives its place back", "[client][timer]") {
+  virtual_time time;
+  slow_network network{.time = &time, .response_delay = 5s};
+
+  auto const send = [&]() -> task<std::string> {
+    client::transport_options options = at_most(1);
+
+    options.response_timeout = 1s;
+
+    client::transport<slow_connector> transport{slow_connector{network}, "example.com", 80, options};
+
+    REQUIRE_THROWS_AS(co_await transport.send(make_request(verb::get, "/")), std::system_error);
+
+    network.response_delay = 0s;
+    co_return (co_await transport.send(make_request(verb::get, "/"))).body;
+  };
+
+  REQUIRE(quoll::test::run(time, send()) == "ok");
+}
+
+TEST_CASE("client::transport: a stop ends a wait for a free connection, and the next request goes", "[client][timer]") {
+  virtual_time time;
+  slow_network network{.time = &time, .response_delay = 2s};
+
+  auto const send = [&]() -> task<std::string> {
+    client::transport<slow_connector> transport{slow_connector{network}, "example.com", 80, at_most(1)};
+    std::stop_source stopping;
+
+    auto const holds = [&]() -> task<std::string> {
+      co_return (co_await transport.send(make_request(verb::get, "/"))).body;
+    };
+
+    auto const waits = [&]() -> task<std::string> {
+      try {
+        static_cast<void>(co_await async::detail::stop_scope<http::response>{
+            transport.send(make_request(verb::get, "/")), stopping.get_token()});
+        co_return "answered";
+      } catch (std::system_error const &failure) {
+        co_return failure.code() == std::errc::operation_canceled ? "stopped" : "failed";
+      }
+    };
+
+    auto const stops = [&]() -> task<std::string> {
+      co_await async::sleep_for(1s);
+      stopping.request_stop();
+      co_return "";
+    };
+
+    auto [held, waited, stopped] = co_await async::when_all(holds(), waits(), stops());
+    auto next = co_await transport.send(make_request(verb::get, "/"));
+
+    co_return held + " " + waited + " " + next.body;
+  };
+
+  REQUIRE(quoll::test::run(time, send()) == "ok stopped ok");
 }
 
 TEST_CASE("client::transport: requests that end in time succeed, on one connection", "[client][timer]") {
