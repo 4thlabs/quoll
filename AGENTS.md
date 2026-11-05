@@ -90,7 +90,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   `quoll_tests`, its seeds in `corpus/<target>/`. An input that crashed one joins its seeds, with a test of the fix.
 - `tests/bench/`: `quoll_bench`, built with `QUOLL_BENCH`, measures requests per second, latency and allocations, its figures in
   `docs/BENCHMARKS.md`. `bench.yml` runs it every night, and on a PR touching it only, and checks the allocations per request against
-  the budgets in its source, which do not depend on the machine. A change that raises one says why.
+  the budgets in its source, GCC 13's, which do not depend on the machine. A change that raises one says why.
 - `samples/<sample>/`: small programs using Quoll, built when `QUOLL_BUILD_SAMPLES` is ON (default when top-level).
   `samples/notes` (native): a REST contract, its server and its client over TCP; with tests ON, the ctest
   `notes_round_trip` runs them against each other. `samples/ui_notes` (Emscripten): the same contract in a browser.

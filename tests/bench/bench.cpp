@@ -37,12 +37,13 @@
 // What Quoll costs, for docs/BENCHMARKS.md:
 //
 //   quoll_bench tcp [seconds]        requests per second, latency and allocations per request, over loopback TCP
-//   quoll_bench allocations [--check] allocations per request over a memory stream, the same on every machine
+//   quoll_bench allocations [--check] allocations per request over a memory stream, the same on every run
 //   quoll_bench serve <port>         the routes alone until Ctrl-C, for a load generator of another project
 //
 // Build it with -DCMAKE_BUILD_TYPE=Release -DQUOLL_BENCH=ON -DQUOLL_BUILD_TESTS=OFF.
 
 #include <quoll/async.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/client.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
@@ -56,6 +57,7 @@
 #include <quoll/io/listen.hpp>
 #include <quoll/io/listen_tls.hpp>
 #include <quoll/io/memory_stream.hpp>
+#include <quoll/io/tls_network_ref.hpp>
 #include <quoll/rest.hpp>
 #include <quoll/runtime.hpp>
 #include <quoll/server.hpp>
@@ -127,7 +129,21 @@ void operator delete(void *memory, std::align_val_t) noexcept { std::free(memory
 
 void operator delete(void *memory, std::size_t, std::align_val_t) noexcept { std::free(memory); }
 
+// Named: Glaze reads the names of its fields through something a type in an unnamed namespace cannot have with Clang.
+namespace quoll_bench {
+
+// A small resource, as a typical REST call carries one.
+struct card {
+  std::int64_t id = 0;
+  std::string name;
+  std::vector<std::string> tags;
+};
+
+} // namespace quoll_bench
+
 namespace {
+
+using quoll_bench::card;
 
 namespace async = quoll::async;
 namespace client = quoll::client;
@@ -143,13 +159,6 @@ template <class... Arguments>
 void print_line(std::format_string<Arguments...> format, Arguments &&...arguments) {
   std::cout << std::format(format, std::forward<Arguments>(arguments)...) << '\n';
 }
-
-// A small resource, as a typical REST call carries one.
-struct card {
-  std::int64_t id = 0;
-  std::string name;
-  std::vector<std::string> tags;
-};
 
 card make_card() { return {42, "Quoll", {"marsupial", "carnivore", "nocturnal"}}; }
 
@@ -235,13 +244,13 @@ private:
     auto listener = co_await io::listen(0);
     std::optional<io::any_listener> tls_listener;
 
-    try {
+    // Asked rather than caught: anything else that fails to set TLS up is a failure, and ends the program.
+    if ((co_await async::current_executor()).query<io::tls_network_ref>()) {
       tls_listener =
           co_await io::listen_tls(0, {.certificate_file = std::string{QUOLL_BENCH_TLS_DIR} + "/server.pem",
                                       .private_key_file = std::string{QUOLL_BENCH_TLS_DIR} + "/server-key.pem"});
-    } catch (std::logic_error const &failure) {
-      // A build without OpenSSL. A certificate it cannot load is a failure, and ends the program.
-      std::cerr << "no TLS: " << failure.what() << '\n';
+    } else {
+      std::cerr << "no TLS in this build\n";
     }
 
     secure_.set_value(tls_listener ? tls_listener->local_port().value() : std::uint16_t{0});
@@ -283,7 +292,6 @@ struct measure {
   std::uint64_t server_end = 0;
   std::uint64_t client_end = 0;
   std::size_t requests = 0;
-  std::size_t requests_at_end = 0;
   std::string failure{};
 
   void begin(steady_clock::time_point now) {
@@ -296,7 +304,6 @@ struct measure {
     ended = now;
     server_end = server_allocations.load(std::memory_order_relaxed);
     client_end = client_allocations.load(std::memory_order_relaxed);
-    requests_at_end = requests;
   }
 };
 
@@ -311,7 +318,7 @@ void check(card const &) noexcept {}
 
 // Sends one request after the other until the scenario ends, as `call` makes them.
 template <class Call>
-task<> send_in_turn(measure &measured, Call call) {
+task<> send_in_turn(measure &measured QUOLL_LIFETIMEBOUND, Call call) {
   try {
     for (;;) {
       auto const before = steady_clock::now();
@@ -348,7 +355,8 @@ task<> send_in_turn(measure &measured, Call call) {
 // What a client does lives on the loop: its transport and the connections it keeps end with the tasks, before the
 // runtime.
 template <class MakeCall>
-task<> start_tasks(quoll::runtime::executor executor, measure &measured, int tasks, MakeCall make_call) {
+task<> start_tasks(quoll::runtime::executor executor, measure &measured QUOLL_LIFETIMEBOUND, int tasks,
+                   MakeCall make_call) {
   auto const call = make_call();
 
   for (auto index = 0; index < tasks; ++index) {
@@ -380,7 +388,7 @@ bool run_scenario(std::string_view name, std::chrono::duration<double> seconds, 
     runtime.run();
   }
 
-  if (!measured.failure.empty() || !measured.began || !measured.ended || measured.requests_at_end == 0) {
+  if (!measured.failure.empty() || !measured.began || !measured.ended || measured.requests == 0) {
     print_line("| {} | failed: {} | | | | |", name, measured.failure.empty() ? "no request" : measured.failure);
     return false;
   }
@@ -389,7 +397,7 @@ bool run_scenario(std::string_view name, std::chrono::duration<double> seconds, 
 
   std::ranges::sort(kept);
 
-  auto const requests = static_cast<double>(measured.requests_at_end);
+  auto const requests = static_cast<double>(measured.requests);
   auto const percentile = [&](double fraction) {
     auto const at = std::min(kept.size() - 1, static_cast<std::size_t>(fraction * static_cast<double>(kept.size())));
 
@@ -495,7 +503,8 @@ struct budget {
   double at_most;
 };
 
-// As measured: lower them when a change does better, and say so when one has to raise them.
+// As measured with GCC 13 and its standard library, which any other allocates differently from: lower them when a
+// change does better, and say so when one has to raise them.
 constexpr budget budgets[] = {
     {"GET, one connection", 72.0}, {"GET, one connection each", 136.0}, {"POST 1 MiB, echoed", 144.0},
     {"REST GET, JSON", 89.0},      {"REST POST, JSON", 145.0},

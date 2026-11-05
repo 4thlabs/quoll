@@ -10,6 +10,8 @@ on:
   pull_request:
     paths:
       - "tests/bench/**"
+      - "tests/support/**"
+      - "cmake/QuollHelpers.cmake"
       - ".github/workflows/bench.yml"
 
 permissions:

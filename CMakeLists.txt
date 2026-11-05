@@ -28,12 +28,16 @@ endif()
 # cmake/QuollHelpers.cmake. The tests rely on those assertions.
 option(QUOLL_BENCH "Build the benchmark program, tests/bench" OFF)
 
+# Fuzz targets (tests/fuzz), with Clang: everything is instrumented, so that libFuzzer sees Quoll's branches and its dependencies'.
+option(QUOLL_FUZZ "Build the fuzz targets, with Clang's libFuzzer under ASan and UBSan" OFF)
+
 if(QUOLL_BENCH AND QUOLL_BUILD_TESTS)
   message(FATAL_ERROR "QUOLL_BENCH goes without the tests, which need the assertions it turns off: -DQUOLL_BUILD_TESTS=OFF")
 endif()
 
-# Fuzz targets (tests/fuzz), with Clang: everything is instrumented, so that libFuzzer sees Quoll's branches and its dependencies'.
-option(QUOLL_FUZZ "Build the fuzz targets, with Clang's libFuzzer under ASan and UBSan" OFF)
+if(QUOLL_BENCH AND QUOLL_FUZZ)
+  message(FATAL_ERROR "QUOLL_BENCH measures what an application gets, which QUOLL_FUZZ instruments")
+endif()
 
 if(QUOLL_FUZZ)
   if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" OR NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR EMSCRIPTEN)
