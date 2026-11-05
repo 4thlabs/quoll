@@ -83,6 +83,17 @@ struct is_optional : std::false_type {};
 template <class T>
 struct is_optional<std::optional<T>> : std::true_type {};
 
+// What a parameter's text decodes to: the value of an optional, the type itself otherwise.
+template <class T>
+struct optional_value {
+  using type = T;
+};
+
+template <class T>
+struct optional_value<std::optional<T>> {
+  using type = T;
+};
+
 template <class T>
 struct is_vector : std::false_type {};
 
@@ -128,9 +139,7 @@ template <class T>
       }
     }
 
-    using value_type = std::conditional_t<is_optional<T>::value, typename T::value_type, T>;
-
-    auto value = param_traits<value_type>::from_text(texts.front());
+    auto value = param_traits<typename optional_value<T>::type>::from_text(texts.front());
 
     if (!value) {
       return invalid();

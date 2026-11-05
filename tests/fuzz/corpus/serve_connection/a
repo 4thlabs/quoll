@@ -1,0 +1,6 @@
+GET /notes/?limit=2&tag=a&tag=b HTTP/1.1
+Host: x
+
+GET /notes/7 HTTP/1.1
+Host: x
+

@@ -82,7 +82,7 @@ void serialize_fields(fields const &entries, std::string &out) {
 
 // What the start line allows: the body framing rules of RFC 9110 / 9112 for this message.
 struct framing_rules {
-  // False for 1xx, 204 and 304 responses.
+  // False for 1xx, 204 and 304 responses, and for a CONNECT request.
   bool body_allowed = true;
   // False for 1xx and 204 responses.
   bool length_allowed = true;
@@ -106,6 +106,12 @@ void reject(char const *what) { throw std::invalid_argument{std::string{"quoll::
       continue;
     }
 
+    // Whitespace around a coding is allowed, but parsers do not agree on a tab: llhttp reads "chunked\t" as another
+    // coding.
+    if (entry.value.contains('\t')) {
+      reject("a tab in Transfer-Encoding");
+    }
+
     std::string_view const list = entry.value;
     auto const last =
         trim(list.substr(list.find_last_of(',') == std::string_view::npos ? 0 : list.find_last_of(',') + 1));
@@ -123,6 +129,10 @@ void reject(char const *what) { throw std::invalid_argument{std::string{"quoll::
   for (auto const &entry : entries) {
     if (!iequals(entry.name, "Content-Length")) {
       continue;
+    }
+
+    if (entry.value.contains('\t')) {
+      reject("a tab in Content-Length");
     }
 
     auto const text = trim(entry.value);
@@ -159,7 +169,7 @@ void serialize_framing(fields const &entries, std::string const &body, fields co
   auto const length = declared_length(entries);
 
   if (!rules.body_allowed && (!body.empty() || !trailers.empty() || chunked)) {
-    reject("this response cannot have a body");
+    reject("this message cannot have a body");
   }
 
   if (chunked && !*chunked) {
@@ -229,6 +239,8 @@ void serialize(request const &message, std::string &out) {
 
   rules.add_length = !message.body.empty() || method_has_body;
   rules.chunked_allowed = message.version != version::http_1_0;
+  // What follows the head of a CONNECT is the tunnel, as a parser reads it: a body would reach the far end.
+  rules.body_allowed = message.method != verb::connect;
   serialize_framing(message.fields, message.body, message.trailers, rules, out);
 }
 

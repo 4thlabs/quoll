@@ -1,0 +1,4 @@
+GET /notes/scale/1.5?flag=true HTTP/1.1
+Host: x
+X-Tags: a
+

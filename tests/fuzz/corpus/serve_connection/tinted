@@ -1,0 +1,4 @@
+@GET /notes/tinted?color=red&other=green HTTP/1.1
+Host: x
+X-Count: 42
+

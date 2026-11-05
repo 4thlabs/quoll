@@ -56,9 +56,10 @@ namespace quoll::http {
  *
  * @throws std::invalid_argument for a target with spaces or line breaks, a field name that is not a token, a value
  * or a reason phrase with a line break, a status code outside 100-999, a body, trailers or `Transfer-Encoding` on a
- * 1xx / 204 / 304 response, `Content-Length` on a 1xx / 204 response, a `Content-Length` that is invalid, repeated
- * with another value or does not match the body, `Content-Length` with `Transfer-Encoding`, a last transfer coding
- * other than chunked, chunked coding in HTTP/1.0, trailers without chunked coding.
+ * 1xx / 204 / 304 response or a CONNECT request, a tab in `Transfer-Encoding` or `Content-Length`, `Content-Length` on
+ * a 1xx / 204 response, a `Content-Length` that is invalid, repeated with another value or does not match the body,
+ * `Content-Length` with `Transfer-Encoding`, a last transfer coding other than chunked, chunked coding in HTTP/1.0,
+ * trailers without chunked coding.
  */
 void serialize(request const &message, std::string &out);
 

@@ -126,7 +126,11 @@ using list = endpoint<"cards.list", verb::get, "/", query<"status", std::optiona
 using tagged = endpoint<"cards.tagged", verb::get, "/tagged", header<"X-Tag", std::vector<std::string>>,
                         returns<std::vector<std::string>>>;
 
-using api = rest::api<"/users/{user_id:int64}/cards", list, tagged>;
+// Required parameters of a type that is no class.
+using paged = endpoint<"cards.paged", verb::get, "/paged", query<"page", std::int64_t>, query<"all", bool>,
+                       header<"X-Limit", std::int64_t>, returns<std::string, status::ok, text_codec>>;
+
+using api = rest::api<"/users/{user_id:int64}/cards", list, tagged, paged>;
 } // namespace cards
 
 namespace keys {
@@ -210,6 +214,10 @@ struct cards_service {
   }
 
   std::vector<std::string> operator()(cards::tagged, std::int64_t, std::vector<std::string> tags) const { return tags; }
+
+  std::string operator()(cards::paged, std::int64_t, std::int64_t page, bool all, std::int64_t limit) const {
+    return std::to_string(page) + (all ? " all " : " some ") + std::to_string(limit);
+  }
 };
 
 struct keys_service {
@@ -439,6 +447,25 @@ TEST_CASE("mount: a list header takes its values from every line, split at comma
 
   REQUIRE(tagged.status == http::status::ok);
   REQUIRE(json.decode<std::vector<std::string>>(tagged.body) == std::vector<std::string>{"a", "b", "c"});
+}
+
+TEST_CASE("mount: a required parameter of a scalar type is read, and missing or invalid is 400", "[rest][mount]") {
+  auto const router = make_router();
+  auto const paged = [&](std::string const &query, std::string const &limit) {
+    return send(router, verb::get, "/api/v1/users/5/cards/paged" + query,
+                {{"Authorization", "Bearer valid"}, {"X-Limit", limit}});
+  };
+  auto const found = paged("?page=3&all=true", "20");
+
+  REQUIRE(found.status == http::status::ok);
+  REQUIRE(found.body == "3 all 20");
+
+  REQUIRE(problem_of(paged("?all=true", "20")).detail == "missing query parameter page");
+  REQUIRE(problem_of(paged("?page=x&all=true", "20")).detail == "invalid query parameter page");
+  REQUIRE(problem_of(paged("?page=3&all=maybe", "20")).detail == "invalid query parameter all");
+  REQUIRE(problem_of(paged("?page=3&all=true", "many")).detail == "invalid header X-Limit");
+  REQUIRE(problem_of(send(router, verb::get, "/api/v1/users/5/cards/paged?page=3&all=true", bearer)).detail ==
+          "missing header X-Limit");
 }
 
 TEST_CASE("mount: a body without media type is 415, not missing", "[rest][mount]") {

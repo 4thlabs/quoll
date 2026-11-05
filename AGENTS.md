@@ -51,6 +51,8 @@ ctest --test-dir build -j"$(nproc)"   # "quoll" (every test case), compile_fail.
 ./build/tests/quoll_tests "[tag]"     # Catch2 filters
 emcmake cmake -B build-wasm && cmake --build build-wasm -j"$(nproc)" && ctest --test-dir build-wasm   # runs under node
 run-clang-tidy-19 -p build -quiet "$PWD/(quoll|samples)/.*\.cpp$"   # needs a Clang build; the same as CI
+CC=clang-19 CXX=clang++-19 cmake -B build-fuzz -DCMAKE_BUILD_TYPE=RelWithDebInfo -DQUOLL_FUZZ=ON -DQUOLL_BUILD_TESTS=OFF -DQUOLL_BUILD_SAMPLES=OFF \
+  && cmake --build build-fuzz --target quoll_fuzzers -j"$(nproc)" && tests/fuzz/run.sh build-fuzz 60   # libFuzzer, 60 s a target
 ```
 
 ## Layout
@@ -82,6 +84,8 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   per case under `tests/compile_fail/`, starting with `// expect: <message>`, declared with
   `quoll_declare_compile_fail_tests(SOURCES ... DEPS ...)`. Each becomes a ctest `compile_fail.<case>` that compiles it
   and passes only when the compilation fails with that message, taken literally (native builds only).
+- `tests/fuzz/`: one libFuzzer target per source, built with `QUOLL_FUZZ` (Clang, under ASan and UBSan) rather than in
+  `quoll_tests`, its seeds in `corpus/<target>/`. An input that crashed one joins its seeds, with a test of the fix.
 - `samples/<sample>/`: small programs using Quoll, built when `QUOLL_BUILD_SAMPLES` is ON (default when top-level).
   `samples/notes` (native): a REST contract, its server and its client over TCP; with tests ON, the ctest
   `notes_round_trip` runs them against each other. `samples/ui_notes` (Emscripten): the same contract in a browser.
@@ -111,7 +115,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). CI (`.github/workflows/ci.yml`): GCC 13, Clang 19
 and Emscripten build + tests, GCC 13 with TSan and with ASan / UBSan, and a clang-format check, on every PR and push to
-`main`, and Apple Clang on macOS; the header checks run on GCC 13, Emscripten and macOS, the `compile_fail` ctests on GCC 13 and Clang 19, `clang-tidy`
+`main`, and Apple Clang on macOS; fuzzing (`.github/workflows/fuzz.yml`) runs every night, and on a PR touching its targets; the header checks run on GCC 13, Emscripten and macOS, the `compile_fail` ctests on GCC 13 and Clang 19, `clang-tidy`
 (`.clang-tidy`) on Clang 19, and the jobs keep their compilations in ccache. Formatting: `clang-format -i <file>` with the repo `.clang-format`; format only
 the files you touch.
 

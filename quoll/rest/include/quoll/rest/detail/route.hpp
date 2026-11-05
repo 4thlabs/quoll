@@ -91,6 +91,8 @@ struct route {
   static_assert(count_bodies(parts{}) == 0 ||
                     (Endpoint::method != http::verb::get && Endpoint::method != http::verb::head),
                 "quoll::rest::with: a GET or HEAD endpoint gets a body<> (fetch rejects one)");
+  static_assert(count_bodies(parts{}) == 0 || Endpoint::method != http::verb::connect,
+                "quoll::rest::with: a CONNECT endpoint gets a body<> (what follows its head is the tunnel)");
   static_assert(distinct_statuses(parts{}), "quoll::rest::with: the endpoint gets two returns<> with the same status");
 
   // The arguments of a call and of the service: path parameters, then argument parts in order.
