@@ -103,5 +103,20 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
     }
   }
 
+  // The same bytes through stream(), read in pieces, to their end or up to what stops them.
+  auto const reading = [&]() -> quoll::async::task<bool> {
+    auto response = co_await transport.stream(quoll::http::request{});
+
+    while (co_await response.body.read()) {
+    }
+
+    co_return true;
+  };
+
+  try {
+    quoll::fuzz::require(quoll::test::run(time, reading()).has_value());
+  } catch (std::system_error const &) {
+  }
+
   return 0;
 }

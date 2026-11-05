@@ -37,6 +37,7 @@
 #ifndef QUOLL_CLIENT_HPP
 #define QUOLL_CLIENT_HPP
 
+#include <quoll/client/streamed_response.hpp>
 #include <quoll/client/transport.hpp>
 #include <quoll/client/transport_options.hpp>
 

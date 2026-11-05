@@ -79,7 +79,8 @@ struct transport_options {
   /**
    * @brief How long a request may take once on a connection, from sending it to reading the end of its response: a
    * connection found closed and tried again counts anew. Its connection is then closed; the request is not tried again,
-   * as the server may be working on it.
+   * as the server may be working on it. Through transport::stream(), it is up to the head, then per piece: a transfer
+   * takes as long as it keeps coming.
    */
   std::chrono::nanoseconds response_timeout = std::chrono::seconds{60};
   /** @brief How the servers of `https://` URLs are checked: by default, against the system's authorities. */
