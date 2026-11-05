@@ -71,8 +71,8 @@ struct connection_options {
 
   /**
    * @brief A stop request here ends the connection gently: an idle one at once, one with a request under way once its
-   * response has left, saying `Connection: close`. A stop request on the task cancels whatever is pending instead.
-   * serve() also drains its connections when it stops.
+   * response has left, saying `Connection: close` if the request came before the response started. A stop request on
+   * the task cancels whatever is pending instead. serve() sets it for its own shutdown, replacing what is given here.
    */
   std::stop_token drain{};
 

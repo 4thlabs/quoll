@@ -73,8 +73,9 @@ figures for a full build, a page rebuild (about 1 s today) and the size of the W
 Quoll may be exposed directly, `Expect: 100-continue` (the parser stopping after the header), a lingering close after an
 error response and TLS's closing message join this step; the last two need a half-close in `ByteStream`.
 
-- Limits and shutdown: graceful shutdown (requests under way finish, within a time limit), a connection limit, limits on
-  headers and bodies, the timer of the connections on a thread pool, which `serve` can hand them from its own loop.
+- Limits and shutdown: graceful shutdown, a connection limit and a wait when out of file descriptors are done
+  (`serve_options`), and limits on headers and bodies were there (`http::parse_limits`). Left: the timer of the connections
+  on a thread pool, which `serve` can hand them from its own loop.
 - Reliability, in the manner of Rust. C++ has no borrow checker, but types and tools give a good part of what it
   guarantees:
   - `QUOLL_LIFETIMEBOUND` (`[[clang::lifetimebound]]`) on the functions returning views, and `[[clang::coro_return_type,

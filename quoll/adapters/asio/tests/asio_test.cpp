@@ -1000,3 +1000,50 @@ TEST_CASE("asio::runtime: its io_context is asio's", "[asio]") {
 
   REQUIRE(ran);
 }
+
+TEST_CASE("asio: over TCP, a stop request lets the request under way finish", "[asio]") {
+  using namespace std::chrono_literals;
+
+  auto const exchange = []() -> task<quoll::http::response> {
+    quoll::http::router router;
+
+    router.add(quoll::http::verb::get, "/slow", "slow",
+               [](quoll::http::request, quoll::http::route_match) -> task<quoll::http::response> {
+                 co_await quoll::async::sleep_for(100ms);
+
+                 quoll::http::response response;
+
+                 response.body = "done";
+                 co_return response;
+               });
+
+    auto listener = co_await quoll::io::listen(0);
+    std::stop_source stop;
+
+    auto const serving = [&]() -> task<> {
+      co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router), stop.get_token()};
+    };
+
+    auto const stopping = [&]() -> task<> {
+      co_await quoll::async::sleep_for(20ms);
+      stop.request_stop();
+    };
+
+    auto const calling = [&]() -> task<quoll::http::response> {
+      quoll::client::transport<> const transport{"http://127.0.0.1:" + std::to_string(listener.local_port().value())};
+      quoll::http::request request;
+
+      request.target = "/slow";
+      co_return co_await transport.send(std::move(request));
+    };
+
+    auto [served, stopped, answer] = co_await quoll::async::when_all(serving(), stopping(), calling());
+
+    co_return std::move(answer);
+  };
+
+  auto const answer = run_task(exchange());
+
+  REQUIRE(answer.body == "done");
+  REQUIRE(answer.fields.find("Connection") == "close");
+}

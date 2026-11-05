@@ -133,14 +133,13 @@ async::task<> stop_past_deadline(async::timer_ref timer, std::chrono::nanosecond
   }
 }
 
-// The connections have been asked to drain: waits for them, up to the timeout, past which they are stopped.
+// The connections have been asked to drain: waits for them, up to the timeout, past which they are stopped. Without a
+// timeout, or a timer to bound it, it has nothing to do.
 async::task<> wind_down(shared_options &shared, std::stop_source &connections_stop) {
   auto const timeout = shared.options.shutdown_timeout;
   auto const timer = (co_await async::current_executor()).query<async::timer_ref>();
 
   if (timeout <= std::chrono::nanoseconds::zero() || !timer) {
-    connections_stop.request_stop();
-    co_await shared.connections.join();
     co_return;
   }
 
@@ -157,14 +156,12 @@ async::task<> serve_accepting(async::any_executor executor, listener_ref listene
   auto const stop_token = co_await async::current_stop_token();
   auto const shared = std::make_shared<shared_options>(std::move(options));
 
-  // What was given still drains them, without ending the accept loop.
-  auto const given_drain = std::exchange(shared->options.connection.drain, shared->drain.get_token());
+  shared->options.connection.drain = shared->drain.get_token();
 
   auto const &accept_error = shared->options.on_accept_error;
   std::stop_source connections_stop;
   auto const drain = [&shared] { shared->drain.request_stop(); };
   std::stop_callback const drain_on_stop{stop_token, drain};
-  std::stop_callback const drain_on_given{given_drain, drain};
   std::exception_ptr ending;
 
   while (!stop_token.stop_requested()) {

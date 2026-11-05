@@ -82,8 +82,8 @@ struct serve_options {
    * @brief Decides what an accept failure does, other than `operation_canceled`: true accepts again, false rethrows
    * the failure. A task, so that it may wait first (a back-off on `too_many_files_open`, with async::sleep_for).
    * Empty: a failure of one connection only (`connection_aborted`, `connection_reset`) is skipped, running out of
-   * something (file descriptors, memory) is retried after 100 ms if the executor has a timer, and any other is
-   * rethrown.
+   * something (file descriptors, memory) is retried after 100 ms if the executor has a timer, for as long as it lasts
+   * and without a word, and any other is rethrown. Set this to be told.
    */
   std::function<async::task<bool>(std::error_code)> on_accept_error{};
 };
