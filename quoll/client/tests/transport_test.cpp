@@ -2570,5 +2570,5 @@ TEST_CASE("client::transport: a response kept past its end does not keep its tra
     co_return seen.expired();
   };
 
-  REQUIRE(quoll::test::run(loop, reading()));
+  REQUIRE(quoll::test::run(loop, reading()) == true);
 }
