@@ -52,24 +52,26 @@ namespace quoll::http {
  * trailers. A `Content-Length` given in the fields must match the body; only a response with an empty body may
  * announce one it does not send (response to HEAD, 304).
  *
- * Every framing a peer could read differently from what is sent is rejected, as it would desync the connection:
+ * Every framing a peer could read differently from what is sent is rejected, as it would desync the connection. What
+ * is rejected leaves `out` as it was, whose content can still be sent; `out` must not be part of `message`.
  *
  * @throws std::invalid_argument for a target with spaces or line breaks, a field name that is not a token, a value
  * or a reason phrase with a line break, a status code outside 100-999, a body, trailers or `Transfer-Encoding` on a
  * 1xx / 204 / 304 response or a CONNECT request, a tab in `Transfer-Encoding` or `Content-Length`, `Content-Length` on
  * a 1xx / 204 response, a `Content-Length` that is invalid, repeated with another value or does not match the body,
  * `Content-Length` with `Transfer-Encoding`, a last transfer coding other than chunked, chunked coding in HTTP/1.0,
- * trailers without chunked coding.
+ * trailers without chunked coding, `Content-Length` or
+ * `Transfer-Encoding` in the trailers.
  */
 void serialize(request const &message, std::string &out);
 
 /** @copydoc serialize(request const &, std::string &) */
 void serialize(response const &message, std::string &out);
 
-/** @brief `message` as sent on the wire. @copydetails serialize(request const &, std::string &) */
+/** @brief `message` as sent on the wire. @throws std::invalid_argument as serialize(request const &, std::string &). */
 [[nodiscard]] std::string serialize(request const &message);
 
-/** @brief `message` as sent on the wire. @copydetails serialize(request const &, std::string &) */
+/** @brief `message` as sent on the wire. @throws std::invalid_argument as serialize(request const &, std::string &). */
 [[nodiscard]] std::string serialize(response const &message);
 
 } // namespace quoll::http

@@ -71,8 +71,6 @@ using namespace detail;
 
 void serialize_fields(fields const &entries, std::string &out) {
   for (auto const &entry : entries) {
-    check_field(entry);
-
     out += entry.name;
     out += ": ";
     out += entry.value;
@@ -161,10 +159,32 @@ void append_hex(std::size_t value, std::string &out) {
   out.append(digits.data(), end);
 }
 
-// Fields, then the body framed by Content-Length or by chunked coding with the trailers. Every framing the peer
-// could read differently from what is sent is rejected: it would desync the connection, or smuggle a request.
-void serialize_framing(fields const &entries, std::string const &body, fields const &trailers,
-                       framing_rules const &rules, std::string &out) {
+void check_fields(fields const &entries) {
+  for (auto const &entry : entries) {
+    check_field(entry);
+  }
+}
+
+// How a message that passed its checks goes out.
+struct framing {
+  bool chunked = false;
+  bool add_length = false;
+};
+
+// Every framing the peer could read differently from what is sent is rejected: it would desync the connection, or
+// smuggle a request. Nothing is written before this passes, so that what is refused leaves nothing behind.
+[[nodiscard]] framing check_framing(fields const &entries, std::string const &body, fields const &trailers,
+                                    framing_rules const &rules) {
+  check_fields(entries);
+  check_fields(trailers);
+
+  // RFC 9110, 6.5.1: a peer merging its trailers into the fields would read another framing.
+  for (auto const &entry : trailers) {
+    if (iequals(entry.name, "Content-Length") || iequals(entry.name, "Transfer-Encoding")) {
+      reject("framing in the trailers");
+    }
+  }
+
   auto const chunked = last_coding_is_chunked(entries);
   auto const length = declared_length(entries);
 
@@ -192,9 +212,15 @@ void serialize_framing(fields const &entries, std::string const &body, fields co
     reject("trailers need Transfer-Encoding: chunked");
   }
 
+  return {.chunked = chunked.has_value(), .add_length = rules.add_length && !length};
+}
+
+// Fields, then the body framed by Content-Length or by chunked coding with the trailers.
+void serialize_framing(fields const &entries, std::string const &body, fields const &trailers, framing const &checked,
+                       std::string &out) {
   serialize_fields(entries, out);
 
-  if (chunked) {
+  if (checked.chunked) {
     out += "\r\n";
 
     if (!body.empty()) {
@@ -210,7 +236,7 @@ void serialize_framing(fields const &entries, std::string const &body, fields co
     return;
   }
 
-  if (rules.add_length && !length) {
+  if (checked.add_length) {
     out += "Content-Length: ";
     out += std::to_string(body.size());
     out += "\r\n";
@@ -225,13 +251,6 @@ void serialize_framing(fields const &entries, std::string const &body, fields co
 void serialize(request const &message, std::string &out) {
   check_target(message.target);
 
-  out += to_string(message.method);
-  out += ' ';
-  out += message.target;
-  out += ' ';
-  out += to_string(message.version);
-  out += "\r\n";
-
   auto const method_has_body =
       message.method == verb::post || message.method == verb::put || message.method == verb::patch;
 
@@ -241,7 +260,16 @@ void serialize(request const &message, std::string &out) {
   rules.chunked_allowed = message.version != version::http_1_0;
   // What follows the head of a CONNECT is the tunnel, as a parser reads it: a body would reach the far end.
   rules.body_allowed = message.method != verb::connect;
-  serialize_framing(message.fields, message.body, message.trailers, rules, out);
+
+  auto const checked = check_framing(message.fields, message.body, message.trailers, rules);
+
+  out += to_string(message.method);
+  out += ' ';
+  out += message.target;
+  out += ' ';
+  out += to_string(message.version);
+  out += "\r\n";
+  serialize_framing(message.fields, message.body, message.trailers, checked, out);
 }
 
 void serialize(response const &message, std::string &out) {
@@ -255,13 +283,6 @@ void serialize(response const &message, std::string &out) {
     throw std::invalid_argument{"quoll::http: invalid reason phrase"};
   }
 
-  out += to_string(message.version);
-  out += ' ';
-  out += std::to_string(code);
-  out += ' ';
-  out += message.reason.empty() ? reason_phrase(message.status) : std::string_view{message.reason};
-  out += "\r\n";
-
   // RFC 9110: 1xx, 204 and 304 responses never have a body.
   auto const has_body = !is_informational(message.status) && message.status != status::no_content &&
                         message.status != status::not_modified;
@@ -273,7 +294,16 @@ void serialize(response const &message, std::string &out) {
   rules.add_length = has_body;
   rules.chunked_allowed = message.version != version::http_1_0;
   rules.length_without_body = true;
-  serialize_framing(message.fields, message.body, message.trailers, rules, out);
+
+  auto const checked = check_framing(message.fields, message.body, message.trailers, rules);
+
+  out += to_string(message.version);
+  out += ' ';
+  out += std::to_string(code);
+  out += ' ';
+  out += message.reason.empty() ? reason_phrase(message.status) : std::string_view{message.reason};
+  out += "\r\n";
+  serialize_framing(message.fields, message.body, message.trailers, checked, out);
 }
 
 std::string serialize(request const &message) {

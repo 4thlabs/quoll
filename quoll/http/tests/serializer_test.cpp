@@ -46,6 +46,16 @@ namespace {
 
 namespace http = quoll::http;
 
+// Rejected, and nothing of it is written.
+template <class Message>
+void require_rejected(Message const &message) {
+  std::string out = "already here";
+
+  REQUIRE_THROWS_AS(http::serialize(message, out), std::invalid_argument);
+  REQUIRE(out == "already here");
+  REQUIRE_THROWS_AS(http::serialize(message), std::invalid_argument);
+}
+
 } // namespace
 
 TEST_CASE("A GET request is serialized without framing", "[http][serializer]") {
@@ -100,6 +110,14 @@ TEST_CASE("A request body gets a Content-Length", "[http][serializer]") {
   }
 }
 
+TEST_CASE("Appending keeps what the buffer holds", "[http][serializer]") {
+  std::string out = "already here";
+
+  http::serialize(http::request{}, out);
+
+  REQUIRE(out.starts_with("already hereGET / HTTP/1.1\r\n"));
+}
+
 TEST_CASE("A CONNECT has no body, as what follows its head is the tunnel", "[http][serializer]") {
   http::request request;
 
@@ -112,13 +130,13 @@ TEST_CASE("A CONNECT has no body, as what follows its head is the tunnel", "[htt
   SECTION("with chunked coding, whose terminator would go down the tunnel") {
     request.fields.add("Transfer-Encoding", "chunked");
 
-    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+    require_rejected(request);
   }
 
   SECTION("with a body") {
     request.body = "abc";
 
-    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+    require_rejected(request);
   }
 }
 
@@ -214,7 +232,7 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
 
     response.fields.add("Transfer-Encoding", "chunked\t");
 
-    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+    require_rejected(response);
   }
 
   SECTION("a tab in Content-Length, which parsers do not read alike") {
@@ -223,7 +241,16 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
     response.body = "hello";
     response.fields.add("Content-Length", "5\t");
 
-    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+    require_rejected(response);
+  }
+
+  SECTION("framing in the trailers") {
+    http::response response;
+
+    response.fields.add("Transfer-Encoding", "chunked");
+    response.trailers.add("Content-Length", "5");
+
+    require_rejected(response);
   }
 
   SECTION("header injection through a value") {
@@ -231,7 +258,7 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
 
     request.fields.add("X-Name", "value\r\nInjected: yes");
 
-    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+    require_rejected(request);
   }
 
   SECTION("a field name that is not a token") {
@@ -239,7 +266,7 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
 
     request.fields.add("Bad Name", "value");
 
-    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+    require_rejected(request);
   }
 
   SECTION("a target with a space") {
@@ -247,7 +274,7 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
 
     request.target = "/a b";
 
-    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+    require_rejected(request);
   }
 
   SECTION("a body on a response that cannot have one") {
@@ -256,7 +283,7 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
     response.status = http::status::no_content;
     response.body = "unexpected";
 
-    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+    require_rejected(response);
   }
 
   SECTION("chunked coding on a 304") {
@@ -265,7 +292,7 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
     response.status = http::status::not_modified;
     response.fields.add("Transfer-Encoding", "chunked");
 
-    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+    require_rejected(response);
   }
 
   SECTION("Content-Length together with Transfer-Encoding") {
@@ -276,7 +303,7 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
     request.fields.add("Content-Length", "3");
     request.fields.add("Transfer-Encoding", "chunked");
 
-    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+    require_rejected(request);
   }
 
   SECTION("a Content-Length that does not match the body") {
@@ -286,7 +313,7 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
     request.body = "hello world";
     request.fields.add("Content-Length", "5");
 
-    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+    require_rejected(request);
   }
 
   SECTION("Content-Length fields that disagree") {
@@ -296,7 +323,7 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
     response.fields.add("Content-Length", "3");
     response.fields.add("Content-Length", "4");
 
-    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+    require_rejected(response);
   }
 
   SECTION("a last transfer coding other than chunked") {
@@ -307,7 +334,7 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
     request.fields.add("Transfer-Encoding", "chunked");
     request.fields.add("Transfer-Encoding", "gzip");
 
-    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+    require_rejected(request);
   }
 
   SECTION("a coding that only ends with chunked") {
@@ -317,7 +344,7 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
     request.body = "abc";
     request.fields.add("Transfer-Encoding", "x-chunked");
 
-    REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument);
+    require_rejected(request);
   }
 
   SECTION("chunked coding in HTTP/1.0") {
@@ -326,7 +353,7 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
     response.version = http::version::http_1_0;
     response.fields.add("Transfer-Encoding", "chunked");
 
-    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+    require_rejected(response);
   }
 
   SECTION("Content-Length on a 204") {
@@ -335,7 +362,7 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
     response.status = http::status::no_content;
     response.fields.add("Content-Length", "0");
 
-    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+    require_rejected(response);
   }
 
   SECTION("trailers without chunked coding") {
@@ -343,7 +370,7 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
 
     response.trailers.add("X-Checksum", "abc");
 
-    REQUIRE_THROWS_AS(http::serialize(response), std::invalid_argument);
+    require_rejected(response);
   }
 }
 
