@@ -632,3 +632,24 @@ TEST_CASE("http over a stream: a message whose body came with its head, and the 
   REQUIRE(seen);
   REQUIRE(*seen == std::vector<std::string>{"hi", "/in-pieces", "/next"});
 }
+
+TEST_CASE("http over a stream: read() stops at the head of a body in pieces", "[http][stream]") {
+  auto [client, server] = io::make_memory_stream_pair();
+  http::request_parser parser{{.max_body_size = 4}};
+
+  parser.set_body_streaming([](http::request const &) { return true; });
+
+  auto const reading = [&]() -> task<std::string> {
+    std::string buffer;
+    std::string piece;
+    std::string_view const sent = "POST / HTTP/1.1\r\nContent-Length: 8\r\n\r\nabcd";
+
+    check((co_await io::write(server, bytes(sent))).error);
+    check(co_await http::read(client, buffer, parser));
+    REQUIRE_FALSE(parser.done());
+    check(co_await http::read_body(client, buffer, parser, piece));
+    co_return piece;
+  };
+
+  REQUIRE(run(reading()) == "abcd");
+}

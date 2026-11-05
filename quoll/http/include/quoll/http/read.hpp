@@ -106,7 +106,8 @@ template <io::ByteStream Stream, class Message, std::predicate Reached>
  * `buffer` holds the bytes read but not parsed yet, and belongs to the connection: after a message it may hold the
  * start of the next one (pipelining), or the first bytes of an upgraded protocol.
  *
- * Completes with no error once the parser is done(), including for a body delimited by the end of the stream;
+ * Completes with no error once the parser is done(), including for a body delimited by the end of the stream, or at the
+ * end of the head of a message whose body comes in pieces, for read_body();
  * `io::error::end_of_stream` when the peer closed the stream before a new message started; otherwise with the
  * parser's error (`http::error`) or the stream's. `stream`, `buffer` and `message_parser` must outlive the task.
  * Precondition: the parser holds no complete message.
@@ -116,15 +117,16 @@ template <io::ByteStream Stream, class Message>
                                                 std::string &buffer QUOLL_LIFETIMEBOUND,
                                                 parser<Message> &message_parser QUOLL_LIFETIMEBOUND) {
   assert(!message_parser.done() && "http::read() with a message not released yet");
-  assert(!(message_parser.head_complete() && message_parser.body_streamed()) &&
-         "http::read() of a body in pieces, which read_body() takes");
 
-  return detail::read_until(stream, buffer, message_parser, [&message_parser] { return message_parser.done(); });
+  // Going on would hold in memory what the larger limit of a body in pieces lets through.
+  return detail::read_until(stream, buffer, message_parser, [&message_parser] {
+    return message_parser.done() || (message_parser.head_complete() && message_parser.body_streamed());
+  });
 }
 
 /**
  * @brief Like read(), up to the end of the message's head: parser::head_complete(), and perhaps done() if the rest came
- * with it. read() then goes on with the body.
+ * with it. read() or read_body() then goes on with the body.
  */
 template <io::ByteStream Stream, class Message>
 [[nodiscard]] async::task<std::error_code> read_head(Stream &stream QUOLL_LIFETIMEBOUND,

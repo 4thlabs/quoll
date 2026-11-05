@@ -42,6 +42,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
@@ -650,11 +651,53 @@ TEST_CASE("Parser: a response too large for its limit is refused at its head, un
     http::response_parser parser{{.max_body_size = 10}};
 
     parser.set_request_method(method);
-    return parser.feed(bytes(wire)).error;
+
+    auto const result = parser.feed(bytes(wire));
+
+    return std::pair{result.error, parser.done()};
   };
 
-  REQUIRE(read("HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n") == http::error::body_too_large);
-  REQUIRE(!read("HTTP/1.1 304 Not Modified\r\nContent-Length: 11\r\n\r\n"));
-  REQUIRE(!read("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"));
-  REQUIRE(!read("HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n", http::verb::head));
+  auto const refused = std::pair{std::error_code{http::error::body_too_large}, false};
+  auto const whole = std::pair{std::error_code{}, true};
+
+  REQUIRE(read("HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n") == refused);
+  REQUIRE(read("HTTP/1.1 199 Unknown\r\nContent-Length: 11\r\n\r\n") == refused);
+  REQUIRE(read("HTTP/1.1 304 Not Modified\r\nContent-Length: 11\r\n\r\n") == whole);
+  REQUIRE(read("HTTP/1.1 204 No Content\r\nContent-Length: 11\r\n\r\n") == whole);
+  REQUIRE(read("HTTP/1.1 103 Early Hints\r\nContent-Length: 11\r\n\r\n") == whole);
+  REQUIRE(read("HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n", http::verb::head) == whole);
+}
+
+TEST_CASE("Parser: a body read whole stays whole, whatever takes from it", "[http][parser]") {
+  http::request_parser parser;
+  std::string piece{"from before"};
+
+  REQUIRE(!parser.feed(bytes("POST / HTTP/1.1\r\nContent-Length: 2\r\n\r\nhi")).error);
+  parser.take_body(piece);
+  REQUIRE(piece.empty());
+  REQUIRE(parser.release().body == "hi");
+}
+
+TEST_CASE("Parser: the size of a body in pieces is counted past what a size_t holds, under WASM", "[http][parser]") {
+  // Only there can a test reach what a size_t counts, in the time of a test.
+  if constexpr (sizeof(std::size_t) == 4) {
+    constexpr std::uint64_t mebibyte = std::uint64_t{1024} * 1024;
+    constexpr auto pieces_allowed = 4097;
+
+    http::response_parser parser{{.max_streamed_body_size = pieces_allowed * mebibyte}};
+    std::string const piece(mebibyte, 'x');
+    std::string taken;
+
+    parser.set_body_streaming(always);
+    REQUIRE(!parser.feed(bytes("HTTP/1.1 200 OK\r\n\r\n")).error);
+
+    for (auto index = 0; index < pieces_allowed; ++index) {
+      REQUIRE(!parser.feed(bytes(piece)).error);
+      parser.take_body(taken);
+    }
+
+    REQUIRE(parser.feed(bytes(piece)).error == http::error::body_too_large);
+  } else {
+    SUCCEED("a size_t of this platform counts more than a test can send");
+  }
 }
