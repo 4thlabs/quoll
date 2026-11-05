@@ -246,6 +246,39 @@ TEST_CASE("client: required parameters of a scalar type reach the server", "[res
   REQUIRE(run(client.call<files::paged>(-1, false, 0)) == "-1 some 0");
 }
 
+TEST_CASE("client: a middleware of the router wraps REST routes, through a local transport too", "[rest][client]") {
+  auto router = make_router();
+  int passed = 0;
+
+  router.use([&passed](http::request message, http::next next) -> task<http::response> {
+    if (message.method == verb::post) {
+      http::response refused;
+
+      refused.status = status::forbidden;
+      co_return refused;
+    }
+
+    auto answer = co_await next(std::move(message));
+
+    ++passed;
+    co_return answer;
+  });
+
+  auto const client = make_client(router);
+
+  REQUIRE(run(client.call<users::list>({})).front().name == "-|-");
+  REQUIRE(passed == 1);
+
+  try {
+    static_cast<void>(run(client.call<users::create>({.name = "Ada"})));
+    FAIL("a refused call throws");
+  } catch (rest::call_error const &failure) {
+    REQUIRE(failure.status() == status::forbidden);
+  }
+
+  REQUIRE(passed == 1);
+}
+
 TEST_CASE("client: path parameters, query and headers are escaped", "[rest][client]") {
   auto const router = make_router();
   auto const client = make_client(router);

@@ -89,6 +89,10 @@ http::router const &routes() {
     router.add(http::verb::get, "/files/{name:path}", "rest", checked);
     router.add(http::verb::get, "/caf%C3%A9", "encoded", checked);
     router.add(http::verb::delete_, "/", "root", checked);
+    router.get("/typed/{id}/{ratio}/{flag}/{name}", [](std::int64_t, double, bool, std::string_view name) {
+      check_param(name);
+      return http::response{};
+    });
     return router;
   }();
 

@@ -34,53 +34,12 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_REST_DETAIL_NUMBER_HPP
-#define QUOLL_REST_DETAIL_NUMBER_HPP
+// expect: the_route_template_is_invalid
 
-#include <array>
-#include <charconv>
-#include <cmath>
-#include <concepts>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <system_error>
+// A brace that does not close.
 
-namespace quoll::rest::detail {
+#include <quoll/http/router.hpp>
 
-template <class T, class... Candidates>
-inline constexpr bool is_any_of = (std::same_as<T, Candidates> || ...);
-
-// The whole text must be the number: no sign for unsigned types, no leading `+`, no trailing characters. Floating
-// point values must be finite: from_chars also reads `nan` and `inf`, which no parameter means.
-template <class T>
-[[nodiscard]] std::optional<T> parse_number(std::string_view text) noexcept {
-  T value{};
-  auto const last = text.data() + text.size();
-  auto const [end, error] = std::from_chars(text.data(), last, value);
-
-  if (error != std::errc{} || end != last) {
-    return std::nullopt;
-  }
-
-  if constexpr (std::floating_point<T>) {
-    if (!std::isfinite(value)) {
-      return std::nullopt;
-    }
-  }
-
-  return value;
+void route(quoll::http::router &router) {
+  router.get("/a/{b", [](int) { return quoll::http::response{}; });
 }
-
-template <class T>
-[[nodiscard]] std::string format_number(T value) {
-  // Enough for any 64-bit integer, and for the shortest round-trip form of a double.
-  std::array<char, 32> buffer{};
-  auto const written = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
-
-  return {buffer.data(), written.ptr};
-}
-
-} // namespace quoll::rest::detail
-
-#endif // QUOLL_REST_DETAIL_NUMBER_HPP

@@ -91,7 +91,10 @@ still sends its body: to look at with streaming. A client closes its TLS connect
   Its stream never suspends, writes short or fails a write: a stream that does would reach the timeouts and cancellation.
 - A 2xx answer to CONNECT goes out with framing, and a body if it has one, which a client reads as the tunnel: `prepare()` in
   `serve_connection` handles HEAD, not this. To settle with the tunnels of step 6.
-- Features: server middlewares and static files; client redirects, a connection limit per transport, a path prefix in
+- A response whose `Content-Length` is more than its body goes out as it is, as the serializer cannot tell one that answers
+  HEAD: on a kept connection, its client waits, or reads the next response as that body. `serve_connection` knows the method.
+- Features: middlewares (`router::use`) and routes whose handler takes the path's parameters, checked at compile time
+  (`router::get`...), are done; static files; client redirects, a connection limit per transport, a path prefix in
   the base URL. A client's `response_timeout` applies per attempt, so a deadline over the whole `send` if that proves
   confusing.
 
@@ -441,8 +444,9 @@ rest::mount<bank::v1>(router, bank::auth_service{}, bank::users_service{}, bank:
   - 400 for an invalid argument or body, 415 for a wrong `Content-Type`, 401 for missing or rejected credentials.
   - `throw rest::http_error(status, detail)` answers that status as `application/problem+json`.
   - Any other exception answers 500 without detail.
-- `mount` registers the routes in the sans-IO `quoll::http` router, which `quoll::server` feeds. Middlewares (logs,
-  metrics, auth beyond the schemes) wrap the router.
+- `mount` registers the routes in the sans-IO `quoll::http` router, which `quoll::server` feeds. Middlewares (logs, metrics,
+  CORS, a rate limit, auth beyond the schemes) run around the chosen route with `router::use`, and read what routing found
+  from `next`.
 
 **Calling it.** A client takes the contract and an `http::HttpTransport`: `fetch_transport` in the browser, a Worker
 or Node, and the `quoll::client` transport over a connector natively. The base URL belongs to the transport.
@@ -565,6 +569,10 @@ For now this is a plugin of the sample `samples/ui_notes`, driven by Vite; [step
 Decision: **B** (2026-11-02).
 
 ## Open questions
+
+A choice on middlewares, kept for later by the maintainer (2026-11-05):
+
+- **A middleware for a path prefix**, `router.use("/api", ...)`: for now, it tests `next.path()`.
 
 Those not settled by a step of the roadmap:
 

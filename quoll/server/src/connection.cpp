@@ -256,7 +256,8 @@ async::task<request_read> read_whole_request(io::any_stream &stream, std::string
   co_return co_await within_read_timeout(http::read(stream, buffer, parser), options);
 }
 
-// The router's response, or 500 if its handler threw, reported to the application's callback if it gave one.
+// The router's response, or 500 if a handler or a middleware threw, reported to the application's callback if it gave
+// one.
 async::task<http::response> respond(http::router const &router, http::request request,
                                     connection_options const &options) {
   try {

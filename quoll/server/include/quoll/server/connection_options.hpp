@@ -51,7 +51,7 @@ namespace quoll::server {
  *
  * The timeouts protect a server from peers that are slow or gone. Zero disables one. They need the timer of the
  * connection's executor, as quoll::runtime provides it: on an executor without one (a thread pool), they do not apply.
- * The time a handler takes is not limited: it is the application's to bound, with async::with_timeout.
+ * The time a handler or a middleware takes is not limited: it is the application's to bound, with async::with_timeout.
  */
 struct connection_options {
   /** @brief What a request may hold: beyond, it answers 431 (header) or 413 (body). */
@@ -88,8 +88,8 @@ struct connection_options {
   std::stop_token drain{};
 
   /**
-   * @brief Called with what a handler threw, which the client receives as a 500; on the connection's executor, must
-   * not throw. Empty: the 500 is all that is left of it.
+   * @brief Called with what a handler or a middleware threw, which the client receives as a 500; on the connection's
+   * executor, must not throw. Empty: the 500 is all that is left of it.
    */
   std::function<void(std::exception_ptr)> on_handler_error{};
 };
