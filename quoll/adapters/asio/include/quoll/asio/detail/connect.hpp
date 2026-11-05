@@ -131,6 +131,10 @@ inline async::task<::asio::ip::tcp::socket> connect_socket(::asio::any_io_execut
                             "quoll::asio::connector: cannot connect to " + host + ":" + service};
   }
 
+  // As in accept.hpp, for a request in several writes.
+  std::error_code ignored;
+
+  socket.set_option(::asio::ip::tcp::no_delay{true}, ignored);
   co_return socket;
 }
 

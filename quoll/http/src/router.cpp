@@ -337,26 +337,6 @@ void router::add_route(verb method, std::string_view path, std::string name, han
   any_body_in_pieces_ = any_body_in_pieces_ || body_in_pieces;
 }
 
-namespace {
-
-class whole_body {
-public:
-  explicit whole_body(std::string_view body) noexcept : body_(body) {}
-
-  [[nodiscard]] async::task<std::optional<std::string_view>> read() {
-    if (body_.empty()) {
-      co_return std::nullopt;
-    }
-
-    co_return std::exchange(body_, std::string_view{});
-  }
-
-private:
-  std::string_view body_;
-};
-
-} // namespace
-
 namespace detail {
 
 struct resolved_route {
@@ -506,7 +486,7 @@ async::task<response> router::dispatch(request message, body_reader reader) cons
   // rather than in the route, so that a middleware calling next again finds what is left of it, as it does with a
   // stream.
   auto const body = resolved.body_in_pieces ? std::exchange(message.body, {}) : std::string{};
-  whole_body whole{body};
+  detail::whole_body whole{body};
 
   if (resolved.body_in_pieces) {
     message.trailers.clear();

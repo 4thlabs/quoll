@@ -37,6 +37,7 @@
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/with_timeout.hpp>
+#include <quoll/http/body_stream.hpp>
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
@@ -1104,4 +1105,80 @@ TEST_CASE("router: a route reading whole gets nothing to read in pieces", "[http
   auto const answered = quoll::test::run(router.dispatch(std::move(message), http::body_reader{source}));
 
   REQUIRE(answered->body == "from the request|no reader");
+}
+
+TEST_CASE("local_transport: a response written in pieces comes whole, and a HEAD does not run it", "[http][router]") {
+  auto runs = 0;
+  http::router router;
+
+  router.get("/pieces", [&runs](http::request) {
+    http::response response;
+
+    response.body_writer = [&runs](http::body_stream out) -> task<> {
+      ++runs;
+      co_await out.write("ping");
+      co_await out.write("pong");
+    };
+    return response;
+  });
+
+  http::local_transport const transport{router};
+  http::request message;
+
+  message.target = "/pieces";
+
+  auto const whole = quoll::test::run(transport.send(message));
+
+  REQUIRE(whole->body == "pingpong");
+  REQUIRE_FALSE(whole->body_writer);
+  REQUIRE(runs == 1);
+
+  message.method = http::verb::head;
+
+  auto const head = quoll::test::run(transport.send(message));
+
+  REQUIRE(head->body.empty());
+  REQUIRE(runs == 1);
+}
+
+TEST_CASE("body_stream: target() recovers what it writes through", "[http][router]") {
+  struct first_sink {
+    [[nodiscard]] task<> write(std::string_view) { co_return; }
+  };
+
+  struct second_sink {
+    [[nodiscard]] task<> write(std::string_view) { co_return; }
+  };
+
+  first_sink sink;
+  http::body_stream const stream{sink};
+
+  REQUIRE(stream.target<first_sink>() == &sink);
+  REQUIRE(stream.target<second_sink>() == nullptr);
+}
+
+TEST_CASE("local_transport: a writer reads the request as it writes the response", "[http][router]") {
+  http::router router;
+
+  router.post("/echo", [](http::body_reader body) {
+    http::response response;
+
+    response.body_writer = [body](http::body_stream out) -> task<> {
+      while (auto const piece = co_await body.read()) {
+        co_await out.write(*piece);
+      }
+    };
+    return response;
+  });
+
+  http::local_transport const transport{router};
+  http::request message;
+
+  message.method = http::verb::post;
+  message.target = "/echo";
+  message.body = "a body long enough to be out of a small string";
+
+  auto const answered = quoll::test::run(transport.send(message));
+
+  REQUIRE(answered->body == message.body);
 }

@@ -68,7 +68,10 @@ struct connection_options {
    */
   std::chrono::nanoseconds read_timeout = std::chrono::seconds{30};
 
-  /** @brief How long a response or a `100 Continue` may take to leave, as a whole. Past it, the connection closes. */
+  /**
+   * @brief How long a response or a `100 Continue` may take to leave, as a whole, and each piece of a response written
+   * in pieces (http::body_writer). Past it, the connection closes.
+   */
   std::chrono::nanoseconds write_timeout = std::chrono::seconds{30};
 
   /**
@@ -89,8 +92,9 @@ struct connection_options {
   std::stop_token drain{};
 
   /**
-   * @brief Called with what a handler or a middleware threw, which the client receives as a 500; on the connection's
-   * executor, must not throw. Empty: the 500 is all that is left of it.
+   * @brief Called with what a handler, a middleware or a body_writer threw, or for a writer short of its
+   * `Content-Length`; on the connection's executor, must not throw. The client receives a 500 while nothing of the
+   * response has left, and otherwise a body cut short. Empty: that is all that is left of it.
    */
   std::function<void(std::exception_ptr)> on_handler_error{};
 };

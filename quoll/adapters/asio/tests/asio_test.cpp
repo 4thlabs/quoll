@@ -567,6 +567,40 @@ TEST_CASE("asio: a client GET over TCP, end to end", "[asio][http]") {
   REQUIRE(response->body == "hello over TCP");
 }
 
+TEST_CASE("asio: a connection does not wait to fill a packet, on either side", "[asio]") {
+  ::asio::io_context context;
+  auto acceptor = listen(context);
+  auto const port = port_of(acceptor);
+  std::exception_ptr failure;
+  std::optional<bool> connected;
+  std::optional<bool> accepted;
+
+  auto const without_nagle = [](tcp::socket const &socket) {
+    tcp::no_delay option;
+
+    socket.get_option(option);
+    return option.value();
+  };
+
+  auto const connecting = [&]() -> task<bool> {
+    co_return without_nagle(co_await quoll::asio::detail::connect_socket(
+        ::asio::any_io_executor{context.get_executor()}, std::string{"127.0.0.1"}, port));
+  };
+
+  quoll::asio::detail::acceptor_state state{std::move(acceptor)};
+
+  auto const accepting = [&]() -> task<bool> {
+    co_return without_nagle(co_await quoll::asio::detail::accept_socket(state));
+  };
+
+  spawn(context, accepting(), accepted, failure);
+  spawn(context, connecting(), connected, failure);
+  run(context, failure);
+
+  REQUIRE(connected == true);
+  REQUIRE(accepted == true);
+}
+
 TEST_CASE("asio: connecting to a port nobody listens on fails", "[asio]") {
   ::asio::io_context context;
   std::uint16_t port = 0;

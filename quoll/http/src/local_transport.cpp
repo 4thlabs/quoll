@@ -36,15 +36,48 @@
 
 #include <quoll/http/local_transport.hpp>
 
+#include <quoll/http/body_stream.hpp>
 #include <quoll/http/verb.hpp>
 
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace quoll::http {
 
+namespace {
+
+// What a writer writes, for a caller of the same program that wants a response whole.
+class string_sink {
+public:
+  explicit string_sink(std::string &body) noexcept : body_(&body) {}
+
+  [[nodiscard]] async::task<> write(std::string_view piece) {
+    body_->append(piece);
+    co_return;
+  }
+
+private:
+  std::string *body_;
+};
+
+} // namespace
+
 async::task<response> local_transport::send_to(std::reference_wrapper<router const> target, request message) {
   auto const head = message.method == verb::head;
-  auto answer = co_await target.get().dispatch(std::move(message));
+
+  // Here rather than left to dispatch(): a writer may read it, and has to find it there.
+  auto const body = target.get().reads_body_in_pieces(message) ? std::exchange(message.body, {}) : std::string{};
+  detail::whole_body whole{body};
+  auto answer = co_await target.get().dispatch(std::move(message), body_reader{whole});
+
+  if (answer.body_writer && !head) {
+    string_sink sink{answer.body};
+
+    co_await answer.body_writer(body_stream{sink});
+  }
+
+  answer.body_writer = nullptr;
 
   if (head) {
     answer.body.clear();

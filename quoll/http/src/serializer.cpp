@@ -38,6 +38,7 @@
 
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/check.hpp>
+#include <quoll/http/detail/streamed_head.hpp>
 
 #include <array>
 #include <charconv>
@@ -272,7 +273,10 @@ void serialize(request const &message, std::string &out) {
   serialize_framing(message.fields, message.body, message.trailers, checked, out);
 }
 
-void serialize(response const &message, std::string &out) {
+namespace {
+
+// What serialize() and a streamed head ask of a response's start line, and what its status allows.
+[[nodiscard]] framing_rules response_rules(response const &message) {
   auto const code = static_cast<std::uint16_t>(message.status);
 
   if (code < 100 || code > 999) {
@@ -294,17 +298,73 @@ void serialize(response const &message, std::string &out) {
   rules.add_length = has_body;
   rules.chunked_allowed = message.version != version::http_1_0;
   rules.length_without_body = true;
+  return rules;
+}
 
-  auto const checked = check_framing(message.fields, message.body, message.trailers, rules);
-
+void append_start_line(response const &message, std::string &out) {
   out += to_string(message.version);
   out += ' ';
-  out += std::to_string(code);
+  out += std::to_string(static_cast<std::uint16_t>(message.status));
   out += ' ';
   out += message.reason.empty() ? reason_phrase(message.status) : std::string_view{message.reason};
   out += "\r\n";
+}
+
+} // namespace
+
+void serialize(response const &message, std::string &out) {
+  auto const rules = response_rules(message);
+
+  // Only what streams a response can write it.
+  if (message.body_writer) {
+    reject("a response with a body_writer goes in pieces");
+  }
+
+  auto const checked = check_framing(message.fields, message.body, message.trailers, rules);
+
+  append_start_line(message, out);
   serialize_framing(message.fields, message.body, message.trailers, checked, out);
 }
+
+namespace detail {
+
+streamed_framing serialize_streamed_head(response const &message, std::string &out) {
+  auto rules = response_rules(message);
+
+  if (!rules.body_allowed || !message.body.empty()) {
+    reject("a body_writer on a response that cannot have one, or with a body");
+  }
+
+  rules.add_length = false;
+
+  auto const checked = check_framing(message.fields, message.body, message.trailers, rules);
+  auto const length = declared_length(message.fields);
+
+  append_start_line(message, out);
+  serialize_fields(message.fields, out);
+  out += "\r\n";
+
+  return {.chunked = checked.chunked, .length = length ? std::optional<std::uint64_t>{*length} : std::nullopt};
+}
+
+void append_chunk(std::string_view piece, std::string &out) {
+  if (piece.empty()) {
+    return;
+  }
+
+  append_hex(piece.size(), out);
+  out += "\r\n";
+  out += piece;
+  out += "\r\n";
+}
+
+void append_last_chunk(fields const &trailers, std::string &out) {
+  out += "0\r\n";
+  serialize_fields(trailers, out);
+  out += "\r\n";
+}
+
+} // namespace detail
 
 std::string serialize(request const &message) {
   std::string out;

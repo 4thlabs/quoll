@@ -38,12 +38,21 @@
 
 #include <optional>
 #include <string_view>
+#include <utility>
 
 namespace quoll::http {
 
 namespace detail {
 
 async::task<std::optional<std::string_view>> no_body() { co_return std::nullopt; }
+
+async::task<std::optional<std::string_view>> whole_body::read() {
+  if (body_.empty()) {
+    co_return std::nullopt;
+  }
+
+  co_return std::exchange(body_, std::string_view{});
+}
 
 } // namespace detail
 

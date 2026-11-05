@@ -111,7 +111,7 @@ limits, the shutdown and the features are tested, and the reliability points are
   [`BENCHMARKS.md`](BENCHMARKS.md), as streaming touches the hot paths.
 - Streamed request and response bodies, on the server, the client and browser `fetch`. A handler takes an `http::body_reader`
   to read its request in pieces, a message's `body_writer` writes in pieces through an `http::body_stream`, and a client's
-  `transport.stream(request)` reads a response in pieces. Done: `http::parser` hands a body over in pieces, with `http::read_body`, and `http::body_reader`: a handler taking one asks for `100 Continue` by reading, and has a read timeout per piece.
+  `transport.stream(request)` reads a response in pieces. Done: `http::parser` hands a body over in pieces, with `http::read_body`, and `http::body_reader`: a handler taking one asks for `100 Continue` by reading, and has a read timeout per piece. And `response.body_writer`: chunked by default, with a write timeout per piece.
 - Static files, in streaming, from step 2: without it, a file has to fit in memory. Reading one blocks the loop, and Quoll has no
   asynchronous file I/O yet, which comes with them.
 - A limit on progress or a minimum rate, as the read and write timeouts now cover a message as a whole, which ends a
@@ -199,8 +199,9 @@ changes only what the harness shows. Candidates:
 - A client copies the request body into the serialized message: write the head and the body as two buffers.
 - A TLS client builds its context per connection, and resumes no session.
 - A client builds a parser per request, which now allocates: one per connection avoids it.
-- `http::body_reader` returns a task per piece, where the type-erasure rules ask for no allocation per operation, and what reads
-  behind it allocates more. Left for this step: with the frames per piece of a read timeout, it has to be measured as a whole.
+- `http::body_reader` and `http::body_stream` return a task per piece, where the type-erasure rules ask for no allocation per
+  operation, and what reads and writes behind them allocates more, as the timeouts do. Left for this step: they have to be
+  measured and changed as a whole, and it changes no handler, which only writes `co_await body.read()`.
 - The size of a native binary, 19 % larger since step 1, as static libraries link whole objects: `--gc-sections`, link-time
   optimization.
 - Idle connections are only found closed when a request uses them: closing them after an idle time, and letting a POST
