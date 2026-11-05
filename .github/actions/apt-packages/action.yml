@@ -1,0 +1,46 @@
+name: apt-packages
+description: >-
+  Installs Ubuntu packages from a cache of their files: it takes seconds, but in 5 runs of 60 a slow mirror made a download 9 to
+  15 minutes (36 MB at 41 kB/s), when every download of that run was slow, so that trying again would not help. The cache is
+  named after the files apt asks for, dependencies included, and saved right after the install: what a slow mirror took a long
+  time to give is not lost if the job fails. Needs the package lists, as the ccache action updates them.
+
+inputs:
+  packages:
+    description: The packages, separated by spaces.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Name the packages
+      id: named
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        files=$(apt-get install --print-uris -qq --no-install-recommends $PACKAGES | cut -d ' ' -f 2)
+        echo "hash=$(echo "$files" | sha256sum | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the packages
+      id: restored
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.cache/apt-packages
+        key: apt-packages-${{ steps.named.outputs.hash }}
+
+    - name: Install the packages
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        mkdir -p ~/.cache/apt-packages/partial
+        sudo apt-get install -y --no-install-recommends -o Dir::Cache::archives="$HOME/.cache/apt-packages" $PACKAGES
+        sudo chown -R "$USER" ~/.cache/apt-packages
+
+    - name: Save the packages
+      if: steps.restored.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.cache/apt-packages
+        key: apt-packages-${{ steps.named.outputs.hash }}
