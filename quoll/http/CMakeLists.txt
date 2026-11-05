@@ -56,3 +56,17 @@ quoll_declare_tests(
   DEPS
     quoll::http
 )
+
+# What a route's path and its handler must agree on, with what the compiler says.
+quoll_declare_compile_fail_tests(
+  SOURCES
+    tests/compile_fail/router_too_few_parameters.cpp
+    tests/compile_fail/router_unknown_type.cpp
+    tests/compile_fail/router_too_many_parameters.cpp
+    tests/compile_fail/router_invalid_template.cpp
+    tests/compile_fail/router_auto_parameter.cpp
+    tests/compile_fail/router_parameter_type.cpp
+    tests/compile_fail/router_handler_result.cpp
+  DEPS
+    quoll::http
+)

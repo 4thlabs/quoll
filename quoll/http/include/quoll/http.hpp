@@ -40,10 +40,12 @@
 #include <quoll/http/error.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/local_transport.hpp>
+#include <quoll/http/next.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
+#include <quoll/http/route_match.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/serializer.hpp>
 #include <quoll/http/status.hpp>

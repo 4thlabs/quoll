@@ -317,6 +317,11 @@ void router::add(verb method, std::string_view path, std::string name, handler t
 
   auto segments = compile_route(path);
 
+  // next::route() tells no route by an empty name.
+  if (name.empty()) {
+    throw std::invalid_argument{"quoll::http::router: empty route name"};
+  }
+
   for (auto const &route : routes_) {
     if (route.method == method && same_shape(route.segments, segments)) {
       throw std::invalid_argument{"quoll::http::router: " + route.name + " already routes this method and path"};
@@ -326,17 +331,98 @@ void router::add(verb method, std::string_view path, std::string name, handler t
   routes_.push_back(entry{method, std::move(segments), std::move(name), std::move(target)});
 }
 
-async::task<response> router::dispatch(request message) const {
+namespace detail {
+
+struct resolved_route {
+  // Empty for a target the router refuses.
+  std::string path{};
+  bool valid = false;
+  // The route that answers, null if none does: then, the methods of the routes on that path, if there are any.
+  router::handler const *target = nullptr;
+  std::vector<verb> allowed{};
+  route_match match{};
+};
+
+} // namespace detail
+
+namespace {
+
+// What the router says by itself, when no route answers.
+[[nodiscard]] response answer_without_route(detail::resolved_route const &resolved) {
+  if (!resolved.valid) {
+    return status_response(status::bad_request);
+  }
+
+  if (!resolved.allowed.empty()) {
+    auto rejected = status_response(status::method_not_allowed);
+
+    rejected.fields.add("Allow", join_methods(resolved.allowed));
+    return rejected;
+  }
+
+  return status_response(status::not_found);
+}
+
+// One path per list of segments: a slash in one stays encoded, or `/a%2Fb` would read as the other path `/a/b`, and so
+// does a percent sign, or `/a%252Fb` would read as that one.
+[[nodiscard]] std::string join_path(std::vector<std::string> const &segments) {
+  std::string path;
+
+  for (auto const &segment : segments) {
+    path += '/';
+
+    for (auto const character : segment) {
+      if (character == '/') {
+        path += "%2F";
+      } else if (character == '%') {
+        path += "%25";
+      } else {
+        path += character;
+      }
+    }
+  }
+
+  return path;
+}
+
+} // namespace
+
+async::task<response> next::operator()(request message) const {
+  return router_->run_from(*resolved_, position_, std::move(message));
+}
+
+std::string_view next::path() const noexcept { return resolved_->path; }
+
+std::string_view next::route() const noexcept { return resolved_->match.name; }
+
+std::span<std::string const> next::params() const noexcept { return resolved_->match.params; }
+
+void router::use(middleware wrapping) {
+  if (!wrapping) {
+    throw std::invalid_argument{"quoll::http::router: empty middleware"};
+  }
+
+  middlewares_.push_back(std::move(wrapping));
+}
+
+detail::resolved_route router::resolve(request const &message) const {
+  detail::resolved_route resolved;
   auto const target = split_target(message.target);
   auto const segments = target ? decode_segments(target->path) : std::nullopt;
 
   if (!segments) {
-    co_return status_response(status::bad_request);
+    return resolved;
+  }
+
+  resolved.valid = true;
+
+  // Only a middleware reads it.
+  if (!middlewares_.empty()) {
+    resolved.path = join_path(*segments);
   }
 
   entry const *chosen = nullptr;
   entry const *get_route = nullptr;
-  std::vector<verb> allowed;
 
   for (auto const &route : routes_) {
     if (!matches(route.segments, *segments)) {
@@ -352,7 +438,7 @@ async::task<response> router::dispatch(request message) const {
       get_route = more_specific(get_route, route);
     }
 
-    allow(allowed, route.method);
+    allow(resolved.allowed, route.method);
   }
 
   // HEAD is served by the GET route, as RFC 9110 asks of a general-purpose server.
@@ -361,19 +447,36 @@ async::task<response> router::dispatch(request message) const {
   }
 
   if (chosen != nullptr) {
-    route_match match{chosen->name, extract_params(chosen->segments, *segments), std::string{target->query}};
-
-    co_return co_await chosen->target(std::move(message), std::move(match));
+    resolved.target = &chosen->target;
+    resolved.match = route_match{chosen->name, extract_params(chosen->segments, *segments), std::string{target->query}};
   }
 
-  if (!allowed.empty()) {
-    auto rejected = status_response(status::method_not_allowed);
+  return resolved;
+}
 
-    rejected.fields.add("Allow", join_methods(allowed));
-    co_return rejected;
+async::task<response> router::dispatch(request message) const {
+  auto resolved = resolve(message);
+
+  // Nothing else reads what routing found, and a middleware may call next again: only here can it be moved.
+  if (middlewares_.empty() && resolved.target != nullptr) {
+    co_return co_await (*resolved.target)(std::move(message), std::move(resolved.match));
   }
 
-  co_return status_response(status::not_found);
+  co_return co_await run_from(resolved, 0, std::move(message));
+}
+
+// A coroutine: what a handler or a middleware throws before it returns its task comes out of this one.
+async::task<response> router::run_from(detail::resolved_route const &resolved, std::size_t position,
+                                       request message) const {
+  if (position < middlewares_.size()) {
+    co_return co_await middlewares_[position](std::move(message), next{*this, resolved, position + 1});
+  }
+
+  if (resolved.target == nullptr) {
+    co_return answer_without_route(resolved);
+  }
+
+  co_return co_await (*resolved.target)(std::move(message), resolved.match);
 }
 
 } // namespace quoll::http

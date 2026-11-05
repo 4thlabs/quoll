@@ -528,6 +528,77 @@ TEST_CASE("serve_connection: what Expect does in other cases", "[server]") {
   }
 }
 
+TEST_CASE("serve_connection: a middleware's response goes out, and what it throws answers 500", "[server]") {
+  auto router = make_router();
+
+  router.use([](http::request message, http::next next) -> task<http::response> {
+    if (message.target == "/broken") {
+      throw std::runtime_error{"middleware"};
+    }
+
+    auto answer = co_await next(std::move(message));
+
+    answer.fields.set("X-Frame-Options", "DENY");
+    co_return answer;
+  });
+
+  int reported = 0;
+  connection_options const options{.on_handler_error = [&reported](std::exception_ptr const &) { ++reported; }};
+  auto [client, server] = io::make_memory_stream_pair();
+  auto outcome = quoll::test::run(quoll::async::when_all(
+      quoll::server::serve_connection(std::move(server), router, options),
+      exchange(
+          std::move(client),
+          "GET /hello HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\nGET /broken HTTP/1.1\r\nHost: x\r\n\r\n",
+          {verb::get, verb::get}, false)));
+  auto const &responses = std::get<1>(outcome.value()).responses;
+
+  REQUIRE(responses.at(0).fields.find("X-Frame-Options") == "DENY");
+  REQUIRE(responses.at(1).status == http::status::internal_server_error);
+  // Built past the middlewares, so that this one added nothing, and reported.
+  REQUIRE_FALSE(responses.at(1).fields.contains("X-Frame-Options"));
+  REQUIRE(reported == 1);
+}
+
+TEST_CASE("serve_connection: a request refused as it is read reaches no middleware", "[server]") {
+  auto router = make_router();
+  int seen = 0;
+
+  router.use([&seen](http::request message, http::next next) -> task<http::response> {
+    ++seen;
+    co_return co_await next(std::move(message));
+  });
+
+  auto [client, server] = io::make_memory_stream_pair();
+  auto outcome =
+      quoll::test::run(quoll::async::when_all(quoll::server::serve_connection(std::move(server), router),
+                                              exchange(std::move(client), "NOT HTTP\r\n\r\n", {verb::get}, true)));
+
+  REQUIRE(std::get<1>(outcome.value()).responses.at(0).status == http::status::bad_request);
+  REQUIRE(seen == 0);
+}
+
+TEST_CASE("serve_connection: HEAD through a middleware still has no body", "[server]") {
+  auto router = make_router();
+
+  router.use([](http::request message, http::next next) -> task<http::response> {
+    auto answer = co_await next(std::move(message));
+
+    answer.fields.set("X-Seen", "yes");
+    co_return answer;
+  });
+
+  auto [client, server] = io::make_memory_stream_pair();
+  auto outcome = quoll::test::run(quoll::async::when_all(
+      quoll::server::serve_connection(std::move(server), router),
+      exchange(std::move(client), "HEAD /hello HTTP/1.1\r\nHost: x\r\n\r\n", {verb::head}, false)));
+  auto const &answer = std::get<1>(outcome.value()).responses.at(0);
+
+  REQUIRE(answer.fields.find("X-Seen") == "yes");
+  REQUIRE(answer.fields.find("Content-Length") == "5");
+  REQUIRE(answer.body.empty());
+}
+
 TEST_CASE("serve_connection: a request that does not keep the connection alive ends it", "[server]") {
   auto const closing = serve("GET /hello HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", {verb::get}, true);
 

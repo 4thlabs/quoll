@@ -37,7 +37,7 @@
 #ifndef QUOLL_REST_PARAM_TRAITS_HPP
 #define QUOLL_REST_PARAM_TRAITS_HPP
 
-#include <quoll/rest/detail/number.hpp>
+#include <quoll/http/detail/number.hpp>
 
 #include <glaze/core/reflect.hpp>
 #include <glaze/json/read.hpp>
@@ -67,12 +67,12 @@ struct param_traits;
  * character types that std::from_chars does not read.
  */
 template <std::integral T>
-  requires(!detail::is_any_of<T, bool, wchar_t, char8_t, char16_t, char32_t>)
+  requires(!http::detail::is_any_of<T, bool, wchar_t, char8_t, char16_t, char32_t>)
 struct param_traits<T> {
-  [[nodiscard]] static std::string to_text(T value) { return detail::format_number(value); }
+  [[nodiscard]] static std::string to_text(T value) { return http::detail::format_number(value); }
 
   [[nodiscard]] static std::optional<T> from_text(std::string_view text) noexcept {
-    return detail::parse_number<T>(text);
+    return http::detail::parse_number<T>(text);
   }
 };
 
@@ -80,10 +80,10 @@ struct param_traits<T> {
  */
 template <std::floating_point T>
 struct param_traits<T> {
-  [[nodiscard]] static std::string to_text(T value) { return detail::format_number(value); }
+  [[nodiscard]] static std::string to_text(T value) { return http::detail::format_number(value); }
 
   [[nodiscard]] static std::optional<T> from_text(std::string_view text) noexcept {
-    return detail::parse_number<T>(text);
+    return http::detail::parse_number<T>(text);
   }
 };
 
@@ -93,15 +93,7 @@ struct param_traits<bool> {
   [[nodiscard]] static std::string to_text(bool value) { return value ? "true" : "false"; }
 
   [[nodiscard]] static std::optional<bool> from_text(std::string_view text) noexcept {
-    if (text == "true") {
-      return true;
-    }
-
-    if (text == "false") {
-      return false;
-    }
-
-    return std::nullopt;
+    return http::detail::parse_bool(text);
   }
 };
 

@@ -63,8 +63,8 @@ namespace quoll::server {
  *   head announces it, an unknown method 501, an `Expect` field asking for anything but `100-continue` 417, and ends
  *   the connection.
  * - A request with `Expect: 100-continue` whose body has not come gets `100 Continue`, then the body is read.
- * - A handler that throws answers 500 (and is reported to `options.on_handler_error`), as does a response that cannot
- *   be serialized.
+ * - A handler or a middleware that throws answers 500 (and is reported to `options.on_handler_error`), as does a
+ * response that cannot be serialized.
  * - The response to HEAD carries no body: it announces the length of the one the GET route produced.
  *
  * Ending a connection stops sending first, with `stream.shutdown_send()`: a TLS peer gets its closing message. After
