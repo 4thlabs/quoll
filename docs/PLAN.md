@@ -89,7 +89,6 @@ error response and TLS's closing message join this step; the last two need a hal
   Its stream never suspends, writes short or fails a write: a stream that does would reach the timeouts and cancellation.
 - A 2xx answer to CONNECT goes out with framing, and a body if it has one, which a client reads as the tunnel: `prepare()` in
   `serve_connection` handles HEAD, not this. To settle with the tunnels of step 6.
-- `http::serialize` appending to a buffer leaves part of a rejected message in it: validate first, or restore its size.
 - Features: server middlewares and static files; client redirects, a connection limit per transport, a path prefix in
   the base URL. A client's `response_timeout` applies per attempt, so a deadline over the whole `send` if that proves
   confusing.
