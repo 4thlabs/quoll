@@ -37,6 +37,7 @@
 #ifndef QUOLL_HTTP_ROUTER_HPP
 #define QUOLL_HTTP_ROUTER_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/detail/typed_route.hpp>
 #include <quoll/http/next.hpp>
@@ -82,9 +83,10 @@ namespace quoll::http {
 class router {
 public:
   // std::function rather than std::move_only_function, which Emscripten's libc++ does not have yet: handlers are
-  // copyable.
-  using handler = std::function<async::task<response>(request, route_match)>;
-  using middleware = std::function<async::task<response>(request, next)>;
+  // copyable. By reference, to what the router keeps until the task ends: a handler or a middleware may take them by
+  // value or by reference, generic or not, in a coroutine too.
+  using handler = std::function<async::task<response>(request &&, route_match &&)>;
+  using middleware = std::function<async::task<response>(request &&, next const &)>;
 
   router();
   router(router const &);
@@ -94,7 +96,8 @@ public:
   ~router();
 
   /**
-   * @brief Routes `method` requests on `path` to `target`, under `name`.
+   * @brief Routes `method` requests on `path` to `target`, under `name`. It takes the request and a route_match, each
+   * by value, `const &` or `&&`: what it refers to lives until its task ends.
    * @throws std::invalid_argument for an invalid template, an empty name or handler, or a route this method already has
    * with the same shape (`/users/{id}` and `/users/{uid}`).
    */
@@ -174,7 +177,8 @@ public:
    * it changes has to stay valid: a body larger than its `Content-Length` answers 500, and a smaller one goes out as it
    * is, which only a response to HEAD may be.
    *
-   * A coroutine takes its parameters by value: `request const &` dangles once the call has returned.
+   * It takes the request by value, `const &` or `&&`, and `next` by value or `const &`: what it refers to lives until
+   * its task ends.
    *
    * @throws std::invalid_argument for an empty middleware.
    */
@@ -184,7 +188,7 @@ public:
    * @brief The response of the route `message` matches, from its handler, or the 404 / 405 / 400 above, through the
    * middlewares. Anything a handler or a middleware throws, even before it returns its task, comes out of the task.
    */
-  [[nodiscard]] async::task<response> dispatch(request message) const;
+  [[nodiscard]] async::task<response> dispatch(request message) const QUOLL_LIFETIMEBOUND;
 
 private:
   friend class next;

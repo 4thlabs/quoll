@@ -77,9 +77,10 @@ still sends its body: to look at with streaming. A client closes its TLS connect
   on a thread pool, which `serve` can hand them from its own loop.
 - Reliability, in the manner of Rust. C++ has no borrow checker, but types and tools give a good part of what it
   guarantees:
-  - `QUOLL_LIFETIMEBOUND` (`[[clang::lifetimebound]]`) on the functions returning views, and `[[clang::coro_return_type,
-    clang::coro_lifetimebound]]` on `async::task`, with `-Werror=dangling` on the Clang job: Clang refuses some dangling
-    references. The macro only hides an attribute from GCC, so the coding rules have to allow it.
+  - Done: `QUOLL_LIFETIMEBOUND` (`[[clang::lifetimebound]]`), with `-Werror=dangling` on Clang. What a handler or a middleware
+    takes by reference lives in a frame of the router until its task ends, so that a reference is no longer a trap. Dropped,
+    as measured: `[[clang::coro_return_type, clang::coro_lifetimebound]]` on `async::task`, as it refuses any function
+    returning a task that is no coroutine, which `std::function` and `std::invoke` are, and they cannot be annotated.
   - `synchronized<T>`, a mutex holding its data, where a mutex sits next to what it protects (`connection_pool`,
     `task_group`). It takes a function rather than handing out a guard, and refuses a function returning something to
     await, as a lock held across a `co_await` would be unlocked from another thread. Clang's `-Wthread-safety` may do

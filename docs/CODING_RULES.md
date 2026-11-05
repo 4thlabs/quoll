@@ -24,7 +24,9 @@ guidelines and the C++ Core Guidelines.
   `http::parser` over a request or a response, may be instantiated explicitly in a source, with `extern template`.
 - A source file keeps what only it uses in an unnamed namespace, and may hold the program-wide state a header may not.
 - Third-party C/C++ dependencies (e.g. llhttp) may be compiled targets fetched by CPM.
-- Macros only for include guards and `QUOLL_`-prefixed configuration switches.
+- Macros only for include guards, `QUOLL_`-prefixed configuration switches and `QUOLL_LIFETIMEBOUND`, which hides an attribute
+  from compilers without it. It goes on what a function returns a reference into: `*this`, or a parameter, the arguments of a
+  coroutine's task included.
 
 ## Layout & naming (Boost style)
 

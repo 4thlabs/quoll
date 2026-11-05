@@ -47,6 +47,7 @@
 #include <quoll/async/detached.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/executor_ref.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/offers_service.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/service.hpp>

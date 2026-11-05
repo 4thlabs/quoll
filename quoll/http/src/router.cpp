@@ -465,18 +465,23 @@ async::task<response> router::dispatch(request message) const {
   co_return co_await run_from(resolved, 0, std::move(message));
 }
 
-// A coroutine: what a handler or a middleware throws before it returns its task comes out of this one.
+// A coroutine: what a handler or a middleware throws before it returns its task comes out of this one, and what it is
+// given by reference lives in this frame until its task ends.
 async::task<response> router::run_from(detail::resolved_route const &resolved, std::size_t position,
                                        request message) const {
   if (position < middlewares_.size()) {
-    co_return co_await middlewares_[position](std::move(message), next{*this, resolved, position + 1});
+    next const following{*this, resolved, position + 1};
+
+    co_return co_await middlewares_[position](std::move(message), following);
   }
 
   if (resolved.target == nullptr) {
     co_return answer_without_route(resolved);
   }
 
-  co_return co_await (*resolved.target)(std::move(message), resolved.match);
+  auto match = resolved.match;
+
+  co_return co_await (*resolved.target)(std::move(message), std::move(match));
 }
 
 } // namespace quoll::http

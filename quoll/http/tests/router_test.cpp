@@ -49,6 +49,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <concepts>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -571,6 +572,79 @@ TEST_CASE("router: middlewares and handlers that wait keep what they were given"
 
   REQUIRE(answer.body == "7 user /users/7");
   REQUIRE(time.now() == 3s);
+}
+
+namespace {
+
+// A view it may keep, and return: it is valid until the middleware's task ends, whatever becomes of this copy of next.
+std::string_view path_of(http::next const next) { return next.path(); }
+
+} // namespace
+
+static_assert(!std::constructible_from<http::local_transport, http::router &&>);
+static_assert(std::constructible_from<http::local_transport, http::router &>);
+
+TEST_CASE("router: what a coroutine takes by reference lives until its task ends", "[http][router][timer]") {
+  using namespace std::chrono_literals;
+
+  quoll::test::virtual_time time;
+  http::router router;
+  std::string const long_text(100, 'x');
+  auto const wait = []() -> task<> { co_await quoll::async::sleep_for(1s); };
+
+  router.add(verb::get, "/{name}", "name",
+             [&wait](http::request const &message, http::route_match const &match) -> task<http::response> {
+               co_await wait();
+
+               http::response answer;
+
+               answer.body = message.target + " " + match.params.at(0);
+               co_return answer;
+             });
+
+  auto expected = "/" + long_text + " " + long_text;
+  auto waited = 1s;
+
+  SECTION("without a middleware") {}
+
+  SECTION("in a middleware") {
+    expected += " /" + long_text;
+    waited = 2s;
+    router.use([&wait](http::request const &message, http::next const &next) -> task<http::response> {
+      auto const path = path_of(next);
+
+      co_await wait();
+
+      auto answer = co_await next(http::request{message});
+
+      answer.body += " " + std::string{path};
+      co_return answer;
+    });
+  }
+
+  SECTION("in a generic one") {
+    expected += " /" + long_text;
+    waited = 2s;
+    router.use([&wait](auto &&message, auto const &next) -> task<http::response> {
+      auto const path = path_of(next);
+
+      co_await wait();
+
+      auto answer = co_await next(std::move(message));
+
+      answer.body += " " + std::string{path};
+      co_return answer;
+    });
+  }
+
+  http::request message;
+
+  message.target = "/" + long_text;
+
+  auto const answer = quoll::test::run(time, router.dispatch(std::move(message))).value();
+
+  REQUIRE(answer.body == expected);
+  REQUIRE(time.now() == waited);
 }
 
 TEST_CASE("local_transport: what a middleware throws comes out, and so does a stop", "[http][router]") {

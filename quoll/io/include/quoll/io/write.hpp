@@ -37,6 +37,7 @@
 #ifndef QUOLL_IO_WRITE_HPP
 #define QUOLL_IO_WRITE_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/io_result.hpp>
@@ -52,7 +53,8 @@ namespace quoll::io {
  * written before it. `stream` and `data` must outlive the returned task.
  */
 template <ByteStream Stream>
-[[nodiscard]] async::task<io_result> write(Stream &stream, std::span<std::byte const> data) {
+[[nodiscard]] async::task<io_result> write(Stream &stream QUOLL_LIFETIMEBOUND,
+                                           std::span<std::byte const> data QUOLL_LIFETIMEBOUND) {
   std::size_t written = 0;
 
   while (written < data.size()) {

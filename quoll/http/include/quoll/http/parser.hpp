@@ -37,6 +37,7 @@
 #ifndef QUOLL_HTTP_PARSER_HPP
 #define QUOLL_HTTP_PARSER_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
@@ -122,7 +123,7 @@ public:
   [[nodiscard]] bool head_complete() const noexcept;
 
   /** @brief The message so far: its start line and fields, once head_complete(), and what has come of its body. */
-  [[nodiscard]] Message const &head() const noexcept;
+  [[nodiscard]] Message const &head() const noexcept QUOLL_LIFETIMEBOUND;
 
   /** @brief When done(): whether the connection may carry another message. */
   [[nodiscard]] bool keep_alive() const noexcept;

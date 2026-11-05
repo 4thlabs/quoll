@@ -37,6 +37,8 @@
 #ifndef QUOLL_UI_STATE_HPP
 #define QUOLL_UI_STATE_HPP
 
+#include <quoll/async/lifetimebound.hpp>
+
 #include <concepts>
 #include <utility>
 
@@ -87,11 +89,11 @@ public:
     return *this;
   }
 
-  [[nodiscard]] T const &get() const noexcept { return value_; }
+  [[nodiscard]] T const &get() const noexcept QUOLL_LIFETIMEBOUND { return value_; }
 
-  [[nodiscard]] T const &operator*() const noexcept { return value_; }
+  [[nodiscard]] T const &operator*() const noexcept QUOLL_LIFETIMEBOUND { return value_; }
 
-  [[nodiscard]] T const *operator->() const noexcept { return &value_; }
+  [[nodiscard]] T const *operator->() const noexcept QUOLL_LIFETIMEBOUND { return &value_; }
 
   void set(T value) {
     value_ = std::move(value);

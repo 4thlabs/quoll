@@ -37,6 +37,8 @@
 #ifndef QUOLL_HTTP_FIELDS_HPP
 #define QUOLL_HTTP_FIELDS_HPP
 
+#include <quoll/async/lifetimebound.hpp>
+
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -82,15 +84,15 @@ public:
   size_type erase(std::string_view name) noexcept;
 
   /** @brief The value of the first field named `name`. */
-  [[nodiscard]] std::optional<std::string_view> find(std::string_view name) const noexcept;
+  [[nodiscard]] std::optional<std::string_view> find(std::string_view name) const noexcept QUOLL_LIFETIMEBOUND;
 
   [[nodiscard]] bool contains(std::string_view name) const noexcept { return find(name).has_value(); }
 
   void clear() noexcept { fields_.clear(); }
 
-  [[nodiscard]] const_iterator begin() const noexcept { return fields_.begin(); }
+  [[nodiscard]] const_iterator begin() const noexcept QUOLL_LIFETIMEBOUND { return fields_.begin(); }
 
-  [[nodiscard]] const_iterator end() const noexcept { return fields_.end(); }
+  [[nodiscard]] const_iterator end() const noexcept QUOLL_LIFETIMEBOUND { return fields_.end(); }
 
   [[nodiscard]] size_type size() const noexcept { return fields_.size(); }
 

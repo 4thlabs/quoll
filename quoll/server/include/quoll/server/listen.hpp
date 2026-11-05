@@ -37,6 +37,7 @@
 #ifndef QUOLL_SERVER_LISTEN_HPP
 #define QUOLL_SERVER_LISTEN_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/io/listen.hpp>
@@ -80,7 +81,8 @@ struct listen_options {
  * "key.pem"}});
  * @endcode
  */
-[[nodiscard]] async::task<> listen(http::router const &router, std::uint16_t port, listen_options options = {});
+[[nodiscard]] async::task<> listen(http::router const &router QUOLL_LIFETIMEBOUND, std::uint16_t port,
+                                   listen_options options = {});
 
 } // namespace quoll::server
 

@@ -37,6 +37,7 @@
 #ifndef QUOLL_HTTP_WRITE_HPP
 #define QUOLL_HTTP_WRITE_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/detail/write_wire.hpp>
 #include <quoll/http/request.hpp>
@@ -57,7 +58,7 @@ namespace quoll::http {
  */
 template <io::ByteStream Stream, class Message>
   requires std::same_as<Message, request> || std::same_as<Message, response>
-[[nodiscard]] async::task<std::error_code> write(Stream &stream, Message const &message) {
+[[nodiscard]] async::task<std::error_code> write(Stream &stream QUOLL_LIFETIMEBOUND, Message const &message) {
   return detail::write_wire(stream, serialize(message));
 }
 

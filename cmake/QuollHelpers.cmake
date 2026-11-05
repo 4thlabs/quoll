@@ -14,6 +14,8 @@ set_property(GLOBAL PROPERTY QUOLL_COMPILE_FAIL_SOURCES "")
 if(NOT TARGET quoll_warnings)
   add_library(quoll_warnings INTERFACE)
   target_compile_options(quoll_warnings INTERFACE -Wall -Wextra -Wpedantic)
+  # What QUOLL_LIFETIMEBOUND says: a reference kept past what it refers to is no warning to read later.
+  target_compile_options(quoll_warnings INTERFACE $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Werror=dangling>)
   # The standard library checks what it can at run time, such as an index out of bounds or an empty optional read: the
   # test run stops rather than reading what it should not. Each library has its own switch, and neither changes the ABI,
   # so that what is built without them still links.
