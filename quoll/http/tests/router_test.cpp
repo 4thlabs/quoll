@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/run_loop.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/with_timeout.hpp>
@@ -233,6 +234,53 @@ TEST_CASE("router: an invalid template throws", "[http][router]") {
   REQUIRE_THROWS_AS(router.add(verb::get, "/caf%zz", "x", echo), std::invalid_argument);
   REQUIRE_THROWS_AS(router.add(verb::get, "", "x", echo), std::invalid_argument);
   REQUIRE_THROWS_AS(router.add(verb::get, "/files/{rest:path}/meta", "x", echo), std::invalid_argument);
+}
+
+TEST_CASE("local_transport: a body_writer on a request is whole before its handler runs", "[http][router]") {
+  http::router router;
+
+  router.post("/echo", [](http::request message) {
+    http::response response;
+
+    response.body = message.body;
+    return response;
+  });
+
+  http::local_transport const transport{router};
+  quoll::async::run_loop loop;
+
+  auto const sending = [&]() -> task<std::string> {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.target = "/echo";
+    request.body_writer = [](http::body_stream out) -> task<> {
+      co_await out.write("one ");
+      co_await out.write("two");
+    };
+    co_return (co_await transport.send(std::move(request))).body;
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()) == "one two");
+
+  auto const both = [&]() -> task<bool> {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.target = "/echo";
+    request.body = "whole";
+    request.body_writer = [](http::body_stream) -> task<> { co_return; };
+
+    try {
+      static_cast<void>(co_await transport.send(std::move(request)));
+    } catch (std::invalid_argument const &) {
+      co_return true;
+    }
+
+    co_return false;
+  };
+
+  REQUIRE(quoll::test::run(loop, both()) == true);
 }
 
 TEST_CASE("local_transport: a HEAD response has no body, as a connection writes it", "[http][router]") {

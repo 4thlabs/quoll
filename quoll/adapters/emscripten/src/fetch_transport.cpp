@@ -43,6 +43,7 @@
 #include <quoll/emscripten/detail/js.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/check.hpp>
+#include <quoll/http/detail/streamed_head.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
@@ -241,6 +242,8 @@ static_assert(async::ContextAwaitable<fetch_operation>);
 
 // `fields`: the request's fields, packed by pack_fields().
 [[nodiscard]] async::task<http::response> fetch(std::string url, std::string fields, http::request request) {
+  // Whole before it leaves: a fetch sending in pieces needs HTTP/2, and browsers that do not all have it.
+  co_await http::detail::write_whole_body(request);
   co_return co_await fetch_operation{std::move(url), std::move(fields), request};
 }
 
@@ -254,6 +257,10 @@ async::task<http::response> fetch_transport::send(http::request request) const {
   }
 
   http::detail::check_target(request.target);
+
+  if (request.body_writer && !request.body.empty()) {
+    throw std::invalid_argument{"quoll::emscripten::fetch_transport: a request with a body_writer and a body"};
+  }
 
   auto url = base_url_ + request.target;
   auto fields = detail::pack_fields(request.fields);

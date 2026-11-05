@@ -167,8 +167,16 @@ public:
   /**
    * @brief Sends `request` and produces its response.
    *
+   * With a `request.body_writer`, its body goes in pieces, in chunks unless a `Content-Length` says how much comes, on
+   * a connection of its own: the writer runs once, so that nothing is sent again, and a 3xx response is a result,
+   * whatever `max_redirects` says. The response is read meanwhile. Once whole, it stops the writer through its stop
+   * token, and write() then throws, so that a server refusing a body has its answer heard; the task ends with the
+   * writer's. A server that closes makes write() throw too, and its answer is still the result, if it gave one. What
+   * else the writer throws cuts the connection and comes out of this task, as does a body short of its
+   * `Content-Length`. `response_timeout` applies to each piece, then to the response.
+   *
    * @throws std::invalid_argument here, before the task runs, for a target not in origin form (starting with `/`), and
-   * for what http::serialize() rejects.
+   * for what http::serialize() rejects, for a `body_writer` with a body too, or over HTTP/1.0 with no `Content-Length`.
    */
   [[nodiscard]] async::task<http::response> send(http::request request) const {
     return detail::send(core_, std::move(request));
@@ -179,6 +187,9 @@ public:
    * memory cannot or need not hold, up to `limits.max_streamed_body_size`. Connections and retries are as in send() up
    * to the head: from there, a connection that closes is a failure of `body.read()`, as what came is the caller's. A
    * 3xx response is a result, whatever `max_redirects` says, as its body is for the caller to read or drop.
+   *
+   * With a `request.body_writer`, as in send(), except that the head of the response stops the writer, as the caller
+   * reads on its own: a server has to read the whole of the request before it answers, for it all to leave.
    *
    * @throws std::invalid_argument here, as send() does.
    */

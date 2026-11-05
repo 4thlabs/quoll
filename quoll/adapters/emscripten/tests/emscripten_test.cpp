@@ -412,6 +412,29 @@ using api = quoll::rest::api<"", echo, missing>;
 
 } // namespace
 
+TEST_CASE("fetch_transport: a body_writer goes out whole", "[emscripten][http]") {
+  test_server const server;
+  fetch_transport const transport{server.url()};
+  http::request request;
+
+  request.method = http::verb::post;
+  request.target = "/status/200";
+  request.body_writer = [](http::body_stream out) -> quoll::async::task<> {
+    co_await out.write("one ");
+    co_await out.write("two");
+  };
+
+  REQUIRE(run(transport.send(std::move(request))).body == "one two");
+
+  http::request both;
+
+  both.method = http::verb::post;
+  both.target = "/status/200";
+  both.body = "whole";
+  both.body_writer = [](http::body_stream) -> quoll::async::task<> { co_return; };
+  REQUIRE_THROWS_AS(transport.send(std::move(both)), std::invalid_argument);
+}
+
 TEST_CASE("rest::client over fetch_transport calls an API that only has a contract", "[emscripten][rest]") {
   test_server const server;
   quoll::rest::client<node_server_api::api, fetch_transport> const client{fetch_transport{server.url()}};

@@ -46,6 +46,7 @@
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/client.hpp>
+#include <quoll/http/body_stream.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
@@ -73,6 +74,7 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
+#include <array>
 
 #include <chrono>
 #include <cstddef>
@@ -2674,5 +2676,550 @@ TEST_CASE("client::transport: what stops stream() before the head", "[client][ti
 
     REQUIRE(quoll::test::run(time, failure_of({.response_timeout = 0s}, in_time)) ==
             std::make_error_code(std::errc::timed_out));
+  }
+}
+
+namespace {
+
+// Pieces of `size` `count` times, counting its runs.
+http::body_writer pieces_of(std::size_t size, int count, int *runs = nullptr) {
+  return [size, count, runs](http::body_stream out) -> task<> {
+    std::string const piece(size, 'x');
+
+    if (runs != nullptr) {
+      ++*runs;
+    }
+
+    for (auto index = 0; index < count; ++index) {
+      co_await out.write(piece);
+    }
+  };
+}
+
+// Writes until something stops it, saying what did.
+http::body_writer writing_until_stopped(std::string &stopped_by) {
+  return [&stopped_by](http::body_stream out) -> task<> {
+    try {
+      for (;;) {
+        co_await out.write("x");
+        co_await async::yield();
+      }
+    } catch (std::system_error const &thrown) {
+      stopped_by = thrown.code() == std::errc::operation_canceled ? "a stop" : "a failed write";
+      throw;
+    }
+  };
+}
+
+http::request upload_of(http::body_writer writer, verb method = verb::post, std::string target = "/echo") {
+  auto request = make_request(method, std::move(target));
+
+  request.body_writer = std::move(writer);
+  return request;
+}
+
+http::router make_upload_router() {
+  http::router router;
+
+  router.post("/echo", [](http::request message) {
+    http::response response;
+
+    response.fields.add("X-Framing", message.fields.contains("Transfer-Encoding") ? "chunks" : "length");
+    response.fields.add("X-Trailer", message.trailers.find("X-Sum").value_or("none"));
+    response.body = std::to_string(message.body.size());
+    return response;
+  });
+  router.put("/echo", [](http::request message) {
+    http::response response;
+
+    response.body = std::to_string(message.body.size());
+    return response;
+  });
+  router.get("/hello", [](http::request) {
+    http::response response;
+
+    response.body = "hello";
+    return response;
+  });
+  return router;
+}
+
+// A server that answers from the head of a request, without reading the rest of it, and closes or not.
+std::function<task<>(io::memory_stream)> answering_at_the_head(std::string reply, bool then_close,
+                                                               std::string *received = nullptr) {
+  return [reply = std::move(reply), then_close, received](io::memory_stream stream) -> task<> {
+    std::string buffer;
+    http::request_parser parser;
+
+    if (co_await http::read_head(stream, buffer, parser)) {
+      co_return;
+    }
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{reply}));
+
+    if (then_close) {
+      co_return;
+    }
+
+    // What is still coming, for as long as it comes.
+    std::array<char, 4096> chunk{};
+
+    for (;;) {
+      auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+      if (read.error) {
+        co_return;
+      }
+
+      if (received != nullptr) {
+        received->append(chunk.data(), read.transferred);
+      }
+    }
+  };
+}
+
+} // namespace
+
+TEST_CASE("client::transport: send() sends a body_writer's body in pieces", "[client]") {
+  auto const router = make_upload_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  SECTION("in chunks, on a connection then kept") {
+    auto runs = 0;
+
+    auto const sending = [&]() -> task<std::string> {
+      client::transport const transport{memory_connector{server}, "example.com", 80};
+
+      auto const answer = co_await transport.send(upload_of(pieces_of(4096, 256, &runs)));
+      auto const hello = co_await transport.send(make_request(verb::get, "/hello"));
+
+      co_return answer.body + " " + std::string{answer.fields.find("X-Framing").value_or("")} + " " + hello.body;
+    };
+
+    REQUIRE(quoll::test::run(loop, sending()) == "1048576 chunks hello");
+    REQUIRE(runs == 1);
+    REQUIRE(server.connections == 1);
+  }
+
+  SECTION("with its trailers") {
+    auto request = upload_of(pieces_of(1, 3));
+
+    request.trailers.add("X-Sum", "7");
+
+    auto const sending = [&]() -> task<std::string> {
+      client::transport const transport{memory_connector{server}, "example.com", 80};
+
+      auto const answer = co_await transport.send(std::move(request));
+
+      co_return std::string{answer.fields.find("X-Trailer").value_or("")};
+    };
+
+    REQUIRE(quoll::test::run(loop, sending()) == "7");
+  }
+
+  SECTION("of the length it says") {
+    auto request = upload_of(pieces_of(2, 3));
+
+    request.fields.set("Content-Length", "6");
+
+    auto const sending = [&]() -> task<std::string> {
+      client::transport const transport{memory_connector{server}, "example.com", 80};
+
+      auto const answer = co_await transport.send(std::move(request));
+
+      co_return answer.body + " " + std::string{answer.fields.find("X-Framing").value_or("")};
+    };
+
+    REQUIRE(quoll::test::run(loop, sending()) == "6 length");
+  }
+
+  SECTION("nothing at all") {
+    auto const sending = [&]() -> task<std::string> {
+      client::transport const transport{memory_connector{server}, "example.com", 80};
+
+      co_return (co_await transport.send(upload_of(pieces_of(0, 0)))).body;
+    };
+
+    REQUIRE(quoll::test::run(loop, sending()) == "0");
+  }
+
+  SECTION("the head on its own, if the writer asks") {
+    auto const writer = [](http::body_stream out) -> task<> {
+      co_await out.write("");
+      co_await out.write("ab");
+    };
+    auto const sending = [&]() -> task<std::string> {
+      client::transport const transport{memory_connector{server}, "example.com", 80};
+
+      co_return (co_await transport.send(upload_of(writer))).body;
+    };
+
+    REQUIRE(quoll::test::run(loop, sending()) == "2");
+  }
+}
+
+TEST_CASE("client::transport: what a body_writer gets wrong comes out of send()", "[client]") {
+  auto const router = make_upload_router();
+  auto connections_after = 0;
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const failing = [&](http::request request) -> task<std::string> {
+    client::transport const transport{memory_connector{server}, "example.com", 80};
+    std::string seen;
+
+    try {
+      static_cast<void>(co_await transport.send(std::move(request)));
+      seen = "no failure";
+    } catch (std::length_error const &) {
+      seen = "length";
+    } catch (std::runtime_error const &thrown) {
+      seen = thrown.what();
+    }
+
+    // Its connection is gone, and no other is held up.
+    seen += " " + (co_await transport.send(make_request(verb::get, "/hello"))).body;
+    connections_after = server.connections;
+    co_return seen;
+  };
+
+  SECTION("more than its Content-Length") {
+    auto request = upload_of(pieces_of(4, 2));
+
+    request.fields.set("Content-Length", "6");
+    REQUIRE(quoll::test::run(loop, failing(std::move(request))) == "length hello");
+  }
+
+  SECTION("less than its Content-Length") {
+    auto request = upload_of(pieces_of(4, 1));
+
+    request.fields.set("Content-Length", "6");
+    REQUIRE(quoll::test::run(loop, failing(std::move(request))) == "length hello");
+  }
+
+  SECTION("what it throws") {
+    auto const throwing = [](http::body_stream out) -> task<> {
+      co_await out.write("ab");
+      throw std::runtime_error{"from the writer"};
+    };
+
+    REQUIRE(quoll::test::run(loop, failing(upload_of(throwing))) == "from the writer hello");
+  }
+
+  SECTION("what it throws before anything left") {
+    auto const throwing = [](http::body_stream) -> task<> {
+      throw std::runtime_error{"at once"};
+      co_return;
+    };
+
+    REQUIRE(quoll::test::run(loop, failing(upload_of(throwing))) == "at once hello");
+  }
+
+  REQUIRE(connections_after == 2);
+}
+
+TEST_CASE("client::transport: send() refuses a body_writer it could not send, before its task runs", "[client]") {
+  async::run_loop loop;
+  auto const router = make_upload_router();
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+  client::transport const transport{memory_connector{server}, "example.com", 80};
+  auto request = upload_of(pieces_of(1, 1));
+
+  SECTION("a body as well") { request.body = "whole"; }
+
+  SECTION("HTTP/1.0 without a length") { request.version = http::version::http_1_0; }
+
+  REQUIRE_THROWS_AS(transport.send(std::move(request)), std::invalid_argument);
+  REQUIRE(server.connections == 0);
+}
+
+TEST_CASE("client::transport: a body_writer runs once, on a connection of its own", "[client]") {
+  auto const whole = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi";
+  auto runs = 0;
+
+  SECTION("no idle one, for a PUT either") {
+    async::run_loop loop;
+    memory_server server{loop.get_executor(), answering({whole, whole}, true), 0, {}, {}};
+
+    auto const sending = [&]() -> task<std::string> {
+      client::transport const transport{memory_connector{server}, "example.com", 80};
+
+      static_cast<void>(co_await transport.send(make_request(verb::get, "/")));
+      co_return (co_await transport.send(upload_of(pieces_of(1, 1, &runs), verb::put, "/"))).body;
+    };
+
+    REQUIRE(quoll::test::run(loop, sending()) == "hi");
+    REQUIRE(server.connections == 2);
+  }
+
+  SECTION("not sent again when its connection closes") {
+    auto const got = [&] {
+      async::run_loop loop;
+      memory_server server{loop.get_executor(), answering({}), 0, {}, {}};
+
+      auto const sending = [&]() -> task<std::error_code> {
+        client::transport const transport{memory_connector{server}, "example.com", 80};
+
+        try {
+          static_cast<void>(co_await transport.send(upload_of(pieces_of(1, 1, &runs), verb::put, "/")));
+        } catch (std::system_error const &thrown) {
+          co_return thrown.code();
+        }
+
+        co_return std::error_code{};
+      };
+
+      auto const error = quoll::test::run(loop, sending());
+
+      REQUIRE(server.connections == 1);
+      return error;
+    }();
+
+    REQUIRE(got == io::error::end_of_stream);
+  }
+
+  REQUIRE(runs == 1);
+}
+
+TEST_CASE("client::transport: a 3xx to a body_writer is a result, whatever max_redirects says", "[client]") {
+  async::run_loop loop;
+  memory_server server{loop.get_executor(),
+                       answering({"HTTP/1.1 307 Again\r\nLocation: /other\r\nContent-Length: 0\r\n\r\n"}),
+                       0,
+                       {},
+                       {}};
+
+  auto const sending = [&]() -> task<http::status> {
+    client::transport const transport{memory_connector{server}, "example.com", 80, {.max_redirects = 2}};
+
+    co_return (co_await transport.send(upload_of(pieces_of(1, 1)))).status;
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()) == http::status::temporary_redirect);
+  REQUIRE(server.connections == 1);
+}
+
+TEST_CASE("client::transport: an answer before the end of a body_writer stops it", "[client]") {
+  auto const refused = std::string{"HTTP/1.1 413 Too Big\r\nContent-Length: 2\r\n\r\nno"};
+  std::string stopped_by;
+
+  auto const after = [&](auto serve, auto call) {
+    async::run_loop loop;
+    memory_server server{loop.get_executor(), serve, 0, {}, {}};
+
+    auto const sending = [&]() -> task<std::string> {
+      client::transport const transport{memory_connector{server}, "example.com", 80};
+
+      co_return co_await call(transport);
+    };
+
+    return quoll::test::run(loop, sending());
+  };
+
+  auto const by_send = [&](client::transport<memory_connector> const &transport) -> task<std::string> {
+    auto const answer = co_await transport.send(upload_of(writing_until_stopped(stopped_by)));
+
+    co_return std::to_string(static_cast<int>(answer.status)) + " " + answer.body;
+  };
+
+  SECTION("a server reading on: the answer stops it") {
+    auto const got = after(answering_at_the_head(refused, false), by_send);
+
+    REQUIRE(got == "413 no");
+    REQUIRE(stopped_by == "a stop");
+  }
+
+  SECTION("a server that went: the write that fails stops it, and its answer stands") {
+    auto const got = after(answering_at_the_head(refused, true), by_send);
+
+    REQUIRE(got == "413 no");
+    REQUIRE(stopped_by == "a failed write");
+  }
+
+  SECTION("a writer that takes no notice, then ends well") {
+    auto const carrying_on = [&stopped_by](http::body_stream out) -> task<> {
+      for (auto turn = 0; turn < 64; ++turn) {
+        try {
+          co_await out.write("x");
+        } catch (std::system_error const &) {
+          stopped_by = "taken no notice of";
+        }
+
+        co_await async::yield();
+      }
+    };
+
+    auto const by_send_too = [&](client::transport<memory_connector> const &transport) -> task<std::string> {
+      auto const body = (co_await transport.send(upload_of(carrying_on))).body;
+
+      // For the server to have read whatever left.
+      for (auto turn = 0; turn < 32; ++turn) {
+        co_await async::yield();
+      }
+
+      co_return body;
+    };
+
+    std::string received;
+    auto const got = after(answering_at_the_head(refused, false, &received), by_send_too);
+
+    REQUIRE(got == "no");
+    REQUIRE(stopped_by == "taken no notice of");
+    // A body that was cut must not read as whole.
+    REQUIRE(received.find("0\r\n\r\n") == std::string::npos);
+  }
+
+  SECTION("through stream(), at the head") {
+    auto const by_stream = [&](client::transport<memory_connector> const &transport) -> task<std::string> {
+      auto response = co_await transport.stream(upload_of(writing_until_stopped(stopped_by)));
+      std::string body;
+
+      while (auto const piece = co_await response.body.read()) {
+        body += *piece;
+      }
+
+      co_return std::to_string(static_cast<int>(response.status)) + " " + body;
+    };
+
+    auto const got = after(answering_at_the_head(refused, false), by_stream);
+
+    REQUIRE(got == "413 no");
+    REQUIRE(stopped_by == "a stop");
+  }
+}
+
+TEST_CASE("client::transport: what is cut short is not reused, and what left whole is", "[client]") {
+  auto const whole = std::string{"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi"};
+  std::string stopped_by;
+  async::run_loop loop;
+
+  SECTION("an answer before the end") {
+    auto const through_stream = GENERATE(false, true);
+    auto connections = 0;
+
+    auto const at_the_head = answering_at_the_head(whole, false);
+    auto const at_the_end = answering({whole});
+
+    auto const serve = [&](io::memory_stream stream) {
+      ++connections;
+
+      return connections == 1 ? at_the_head(std::move(stream)) : at_the_end(std::move(stream));
+    };
+
+    memory_server server{loop.get_executor(), serve, 0, {}, {}};
+
+    auto const sending = [&]() -> task<std::string> {
+      client::transport const transport{memory_connector{server}, "example.com", 80};
+      std::string first;
+
+      if (through_stream) {
+        auto response = co_await transport.stream(upload_of(writing_until_stopped(stopped_by)));
+
+        while (auto const piece = co_await response.body.read()) {
+          first += *piece;
+        }
+      } else {
+        first = (co_await transport.send(upload_of(writing_until_stopped(stopped_by)))).body;
+      }
+
+      co_return first + (co_await transport.send(make_request(verb::get, "/"))).body;
+    };
+
+    REQUIRE(quoll::test::run(loop, sending()) == "hihi");
+    REQUIRE(connections == 2);
+  }
+
+  SECTION("a stream that left whole keeps its connection, with its response read in pieces") {
+    auto const router = make_upload_router();
+    memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+    auto const sending = [&]() -> task<std::string> {
+      client::transport const transport{memory_connector{server}, "example.com", 80};
+      auto response = co_await transport.stream(upload_of(pieces_of(4096, 16)));
+      std::string body;
+
+      while (auto const piece = co_await response.body.read()) {
+        body += *piece;
+      }
+
+      co_return body + " " + (co_await transport.send(make_request(verb::get, "/hello"))).body;
+    };
+
+    REQUIRE(quoll::test::run(loop, sending()) == "65536 hello");
+    REQUIRE(server.connections == 1);
+  }
+}
+
+TEST_CASE("client::transport: the timeouts of a body_writer", "[client][timer]") {
+  virtual_time time;
+  http::router router;
+
+  router.post("/echo", [](http::request message) {
+    http::response response;
+
+    response.body = std::to_string(message.body.size());
+    return response;
+  });
+  router.post("/silent", [](http::request) -> task<http::response> {
+    co_await async::sleep_for(1h);
+    co_return http::response{};
+  });
+
+  auto const outcome_of = [&](http::request request, client::transport_options options,
+                              std::chrono::nanoseconds own_limit = {}) -> task<std::string> {
+    client::transport const transport{timed_connector{time, router}, "example.com", 80, options};
+    auto const started = time.now();
+
+    try {
+      auto sent = transport.send(std::move(request));
+
+      if (own_limit == std::chrono::nanoseconds{}) {
+        co_return (co_await std::move(sent)).body;
+      }
+
+      co_return (co_await async::with_timeout(own_limit, std::move(sent))).body;
+    } catch (std::system_error const &thrown) {
+      auto const taken = std::chrono::duration_cast<std::chrono::seconds>(time.now() - started);
+
+      co_return (thrown.code() == std::errc::timed_out ? "timed out at " : "another failure at ") +
+          std::to_string(taken.count());
+    }
+  };
+
+  SECTION("the writer takes its time: none of it counts") {
+    auto const writer = [](http::body_stream out) -> task<> {
+      for (auto index = 0; index < 3; ++index) {
+        co_await async::sleep_for(5s);
+        co_await out.write("part");
+      }
+    };
+
+    REQUIRE(quoll::test::run(time, outcome_of(upload_of(writer), {.response_timeout = 3s})) == "12");
+  }
+
+  SECTION("the response, from the end of the body") {
+    auto const writer = [](http::body_stream out) -> task<> {
+      co_await async::sleep_for(5s);
+      co_await out.write("part");
+    };
+
+    REQUIRE(quoll::test::run(time, outcome_of(upload_of(writer, verb::post, "/silent"), {.response_timeout = 3s})) ==
+            "timed out at 8");
+  }
+
+  SECTION("a stop request reaches the writer") {
+    std::string stopped_by;
+    auto const writer = [&stopped_by](http::body_stream) -> task<> {
+      try {
+        co_await async::sleep_for(1h);
+      } catch (std::system_error const &thrown) {
+        stopped_by = thrown.code() == std::errc::operation_canceled ? "a stop" : "something else";
+        throw;
+      }
+    };
+
+    REQUIRE(quoll::test::run(time, outcome_of(upload_of(writer), {.response_timeout = 0s}, 2s)) == "timed out at 2");
+    REQUIRE(stopped_by == "a stop");
   }
 }

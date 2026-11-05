@@ -53,7 +53,8 @@ namespace quoll::emscripten {
  * Each request goes to `base_url` followed by its target: `https://api.example.com` and `/accounts/42` fetch
  * `https://api.example.com/accounts/42`. An empty base URL keeps the target relative, to the page's origin in a
  * browser. The fields fetch manages itself (Host, Content-Length, Connection and the other hop-by-hop fields) are not
- * sent; the request's trailers neither.
+ * sent; the request's trailers neither. A `request.body_writer` runs to its end before the fetch, and what it wrote
+ * goes out whole: a fetch sending in pieces needs HTTP/2, and is not in every browser.
  *
  * The response has the status, status text, fields and complete body that fetch exposes. fetch decodes the body
  * (decompressed, de-chunked), so the fields describing the bytes on the wire (Content-Encoding, Content-Length,
