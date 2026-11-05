@@ -2145,3 +2145,10 @@ TEST_CASE("serve_connection: an empty piece sends the head at once", "[server][t
   REQUIRE(head_at == 0s);
   REQUIRE(std::get<1>(*outcome) == "late");
 }
+
+TEST_CASE("serve_connection: a framing refused at the end of its head reaches no handler", "[server]") {
+  // A last coding that is not chunked, on a request: what the parser refuses once the head is read.
+  auto const got = serve("POST /refuse HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\n\r\n", {verb::post}, true);
+
+  REQUIRE(got.responses.at(0).status == http::status::bad_request);
+}

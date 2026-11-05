@@ -148,10 +148,10 @@ template <io::ByteStream Stream, class Message>
  * held.
  *
  * Completes with no error once there is a piece, or once the parser is done(), with what is left of the body, perhaps
- * nothing: release() then hands over the message, with its trailers and no body. Fails like read(), with what the same
- * read of the stream brought before the failure still in `piece`. Memory holds what one read of the stream brings,
- * whatever the size of the body. `stream`, `buffer`, `message_parser` and `piece` must outlive the task. Precondition:
- * parser::head_complete(), as read_head() gets it, and parser::body_streamed().
+ * nothing: release() then hands over the message, with its trailers and no body. Fails like read(), once what came
+ * before the failure has been handed over. Memory holds what one read of the stream brings, whatever the size of the
+ * body. `stream`, `buffer`, `message_parser` and `piece` must outlive the task. Precondition: parser::head_complete(),
+ * as read_head() gets it, and parser::body_streamed().
  */
 template <io::ByteStream Stream, class Message>
 [[nodiscard]] async::task<std::error_code>

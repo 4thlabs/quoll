@@ -105,7 +105,12 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
 
   // The same bytes through stream(), read in pieces, to their end or up to what stops them.
   auto const reading = [&]() -> quoll::async::task<bool> {
-    auto response = co_await transport.stream(quoll::http::request{});
+    quoll::http::request request;
+
+    // As above: a POST takes no connection from the pool, a HEAD reads no body.
+    request.method = methods[(data[0] >> 2U) & 3U];
+
+    auto response = co_await transport.stream(std::move(request));
 
     while (co_await response.body.read()) {
     }

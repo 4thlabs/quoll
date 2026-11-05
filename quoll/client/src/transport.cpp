@@ -429,7 +429,8 @@ async::task<http::response> send_following(std::shared_ptr<transport_core> share
 }
 
 // A response being read in pieces, and its connection: what a streamed_response holds. It owns its place in
-// max_connections until the body has come to its end, or until it goes.
+// max_connections until the body has come to its end, or until it goes. Thread safety: none, on the loop of what reads
+// it; what it shares with its transport has its own.
 class response_stream {
 public:
   explicit response_stream(std::shared_ptr<transport_core> shared)
@@ -502,7 +503,8 @@ public:
   [[nodiscard]] streamed_response head(std::shared_ptr<response_stream> const &self) {
     auto const &message = parser_.head();
     streamed_response response{
-        message.status, message.reason, message.version, message.fields, http::body_reader{*this}, trailers_, self};
+        message.status, message.reason, message.version, message.fields, response_body{http::body_reader{*this}, self},
+        trailers_};
 
     if (parser_.done() && message.body.empty()) {
       finish();
@@ -531,18 +533,10 @@ public:
       failed = thrown.code();
     }
 
-    // Whoever cancelled it says what happens next: the body is not at fault, and reading may go on.
-    if (failed == std::errc::operation_canceled) {
-      throw std::system_error{failed, "quoll::client: reading the response was stopped"};
-    }
-
+    // A cancellation too: a stream does not take it up again, and over TLS its session is gone.
     if (failed) {
       fail(failed);
-
-      // What came before a failure is the caller's: the failure is for the next read.
-      if (piece_.empty()) {
-        throw std::system_error{failed, "quoll::client: cannot read the response"};
-      }
+      throw std::system_error{failed, "quoll::client: cannot read the response"};
     }
 
     if (!piece_.empty()) {

@@ -86,9 +86,9 @@ private:
  * read() gives a view, valid up to the next read(), and nothing at the end of the body, as often as it is asked. What
  * prevents reading throws std::system_error, as a body cut short or too large (http::error), or a stream that failed.
  * The request is then answered as one refused as it is read would be, whatever the handler made of it, as it could not
- * know what the connection can still carry. Failing once, read() goes on failing, but for a cancellation of the read,
- * as a handler's own timeout is: reading may go on after it, and the handler's response stands. Stopping during `100
- * Continue` is a failure, as what did not leave whole leaves a stream nothing more can be written to.
+ * know what the connection can still carry. Failing once, read() goes on failing. A cancellation of
+ * the read, as a handler's own timeout is, ends the reading too, as a stream does not take it up again, and the
+ * handler's response then stands.
  *
  * Copied freely, it refers to what reads the body, valid until the response has left: a body_writer may read it, as an
  * echo or a proxy does, if it came with http::local_transport or a connection, and not from a dispatch() of your own. A

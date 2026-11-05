@@ -2055,7 +2055,8 @@ TEST_CASE("client::transport: a response with nothing to read gives its connecti
   REQUIRE(server.connections == 1);
 }
 
-TEST_CASE("client::transport: reading goes on after a cancellation, and stops after a failure", "[client][timer]") {
+TEST_CASE("client::transport: a cancellation ends the reading, as a stream does not take it up again",
+          "[client][timer]") {
   virtual_time time;
 
   auto const reading = [&]() -> task<std::string> {
@@ -2102,14 +2103,17 @@ TEST_CASE("client::transport: reading goes on after a cancellation, and stops af
       seen += thrown.code() == std::errc::timed_out ? "|gave up" : "|another failure";
     }
 
-    while (auto const piece = co_await response.body.read()) {
-      seen += "|" + std::string{*piece};
+    try {
+      static_cast<void>(co_await response.body.read());
+      seen += "|read again";
+    } catch (std::system_error const &) {
+      seen += "|ended";
     }
 
     co_return seen;
   };
 
-  REQUIRE(quoll::test::run(time, reading()) == "first|gave up|second");
+  REQUIRE(quoll::test::run(time, reading()) == "first|gave up|ended");
 }
 
 TEST_CASE("client::transport: a body that failed leaves its place to others", "[client]") {
@@ -2159,11 +2163,54 @@ TEST_CASE("client::transport: a body that failed leaves its place to others", "[
 }
 
 TEST_CASE("client::transport: what comes of a body does not depend on how it was cut", "[client]") {
-  // A head, what is good of a body, and what is not, in one read of the stream.
-  auto const got =
-      stream_from(answering({"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nping\r\nZ\r\n"}), "/");
+  std::string const wire = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nping\r\nZ\r\n";
+  // In one read, past the head, and in the middle of the good chunk.
+  auto const cut = GENERATE_COPY(wire.size(), wire.find("4\r\n"), wire.find("ng\r\n"));
 
+  auto const serve = [&](io::memory_stream stream) -> task<> {
+    std::string buffer;
+    http::request_parser parser;
+
+    if (co_await http::read(stream, buffer, parser)) {
+      co_return;
+    }
+
+    auto const first = std::string_view{wire}.substr(0, cut);
+    auto const rest = std::string_view{wire}.substr(cut);
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{first}));
+
+    for (auto turn = 0; turn < 16; ++turn) {
+      co_await async::yield();
+    }
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{rest}));
+  };
+
+  auto const got = stream_from(serve, "/");
+
+  CAPTURE(cut);
   REQUIRE(got.status == http::status::ok);
   REQUIRE(got.body == "ping");
   REQUIRE(got.error == http::error::bad_message);
+}
+
+TEST_CASE("client::transport: a body taken out of its response keeps what reads it", "[client]") {
+  auto const router = make_streaming_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport const transport{memory_connector{server}, "example.com", 80};
+    auto const body = (co_await transport.stream(make_request(verb::get, "/hello"))).body;
+    std::string seen;
+
+    while (auto const piece = co_await body.read()) {
+      seen += *piece;
+    }
+
+    co_return seen;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "hello");
 }
