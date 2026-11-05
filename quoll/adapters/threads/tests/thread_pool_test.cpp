@@ -136,6 +136,22 @@ TEST_CASE("thread_pool resumes a spawned task on a worker thread", "[threads][th
   REQUIRE(id != std::this_thread::get_id());
 }
 
+TEST_CASE("co_spawn(this_executor) runs on a worker of the pool, past the coroutine that spawned it",
+          "[threads][thread_pool]") {
+  std::promise<std::thread::id> spawned;
+  thread_pool pool{2};
+
+  auto const parent = [&]() -> task<int> {
+    co_await quoll::async::co_spawn(quoll::async::this_executor, thread_id(),
+                                    overloaded{[&](std::thread::id id) { spawned.set_value(id); },
+                                               [&](std::exception_ptr const &error) { spawned.set_exception(error); }});
+    co_return 0;
+  };
+
+  REQUIRE(spawn(pool, parent()).get() == 0);
+  REQUIRE(spawned.get_future().get() != std::this_thread::get_id());
+}
+
 TEST_CASE("thread_pool hands the exception of a task to its handler", "[threads][thread_pool]") {
   thread_pool pool{2};
 
