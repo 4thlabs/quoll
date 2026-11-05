@@ -25,6 +25,8 @@ if(EMSCRIPTEN)
 endif()
 
 # Fuzz targets (tests/fuzz), with Clang: everything is instrumented, so that libFuzzer sees Quoll's branches and its dependencies'.
+# In Release, with the standard library's assertions off, as an application builds it: see cmake/QuollHelpers.cmake.
+option(QUOLL_BENCH "Build the benchmark program, tests/bench" OFF)
 option(QUOLL_FUZZ "Build the fuzz targets, with Clang's libFuzzer under ASan and UBSan" OFF)
 
 if(QUOLL_FUZZ)
@@ -68,6 +70,10 @@ endif()
 
 if(QUOLL_FUZZ)
   add_subdirectory(tests/fuzz)
+endif()
+
+if(QUOLL_BENCH)
+  add_subdirectory(tests/bench)
 endif()
 
 if(QUOLL_INSTALL)
