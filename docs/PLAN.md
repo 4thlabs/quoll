@@ -90,7 +90,7 @@ still sends its body: to look at with streaming. A client closes its TLS connect
   HTTP parsers, `serve_connection`, the router, the REST decoding, the client's exchange and the decoding of REST responses.
   Its stream never suspends, writes short or fails a write: a stream that does would reach the timeouts and cancellation.
 - A 2xx answer to CONNECT goes out with framing, and a body if it has one, which a client reads as the tunnel: `prepare()` in
-  `serve_connection` handles HEAD, not this. To settle with the tunnels of step 6.
+  `serve_connection` handles HEAD, not this. To settle with the tunnels of step 5.
 - A response whose `Content-Length` is more than its body goes out as it is, as the serializer cannot tell one that answers
   HEAD: on a kept connection, its client waits, or reads the next response as that body. `serve_connection` knows the method.
 - Features: middlewares (`router::use`) and routes whose handler takes the path's parameters, checked at compile time
@@ -117,23 +117,7 @@ limits, the shutdown and the features are tested, and the reliability points are
 
 *Done when:* a transfer far larger than memory runs in bounded memory, on both sides, with the figure measured.
 
-### Step 4: performance
-
-Only what the harness shows. Candidates:
-
-- Each bounded phase allocates coroutine frames and an asio timer, about three times per request on the server. A timer
-  per connection avoids it.
-- A client copies the request body into the serialized message: write the head and the body as two buffers.
-- A TLS client builds its context per connection, and resumes no session.
-- A client builds a parser per request, which now allocates: one per connection avoids it.
-- The size of a native binary, 19 % larger since step 1, as static libraries link whole objects: `--gc-sections`, link-time
-  optimization.
-- Idle connections are only found closed when a request uses them: closing them after an idle time, and letting a POST
-  reuse one, which needs a stream that tells a closed peer before writing.
-
-*Done when:* figures are published against the baseline, and each change is justified by a measure.
-
-### Step 5: REST from a command-line program
+### Step 4: REST from a command-line program
 
 The DSL and a runtime, with no UI.
 
@@ -147,7 +131,7 @@ The DSL and a runtime, with no UI.
 *Done when:* a real third-party API is called from a command-line program, natively and through `fetch_transport`, with
 `call`, `try_call` and credentials.
 
-### Step 6: SSE, then WebSocket
+### Step 5: SSE, then WebSocket
 
 - SSE first, as it rests on step 3: a DSL route kind returning typed events, a client, the browser. The browser reads a
   streamed `fetch` rather than `EventSource`, which takes no headers: an API with credentials could not use it.
@@ -155,7 +139,7 @@ The DSL and a runtime, with no UI.
 
 *Done when:* each runs end to end, natively and in the browser, with its frame parsing fuzzed.
 
-### Step 7: the UI DSL, complete
+### Step 6: the UI DSL, complete
 
 - Nested stateful components: a component is the root of an app for now.
 - Restoring the states after a rebuild, which the third level of hot reload still lacks.
@@ -170,7 +154,7 @@ The DSL and a runtime, with no UI.
 
 *Done when:* that screen runs with the base components, with what it lacks listed.
 
-### Step 8: the `quoll` command, driving Vite *(maintainer merges the first pull request)*
+### Step 7: the `quoll` command, driving Vite *(maintainer merges the first pull request)*
 
 **To settle at its start:** a native binary, or an npm package (`npx quoll`), as Node is needed for Vite anyway and it
 avoids a binary per platform. The commands are shown to the maintainer first.
@@ -192,7 +176,7 @@ quoll build    # dist/, with the pages that can be written ahead of time as HTML
 *Done when:* a new project reaches a running page with hot reload through these commands, and `samples/ui_notes` uses
 them.
 
-### Step 9: desktop and mobile *(maintainer merges)*
+### Step 8: desktop and mobile *(maintainer merges)*
 
 - A PWA first, then a webview shell on desktop, then on mobile, all loading the same WASM.
 - Native capabilities (files, sockets) through a small gateway, designed at this step. The webview library is to be
@@ -202,8 +186,27 @@ them.
 
 *Done when:* the sample runs on each target, with the differences between engines listed.
 
+### Step 9: performance
+
+Last, as what comes before it is needed first. It starts from a new baseline, as those steps change what is measured, and
+changes only what the harness shows. Candidates:
+
+- Each bounded phase allocates coroutine frames and an asio timer, about three times per request on the server. A timer
+  per connection avoids it.
+- A client copies the request body into the serialized message: write the head and the body as two buffers.
+- A TLS client builds its context per connection, and resumes no session.
+- A client builds a parser per request, which now allocates: one per connection avoids it.
+- The size of a native binary, 19 % larger since step 1, as static libraries link whole objects: `--gc-sections`, link-time
+  optimization.
+- Idle connections are only found closed when a request uses them: closing them after an idle time, and letting a POST
+  reuse one, which needs a stream that tells a closed peer before writing.
+
+*Done when:* figures are published against that baseline, and each change is justified by a measure.
+
 ## Decided
 
+- Performance comes last (2026-11-05): the maintainer needs what comes before it first. An earlier step may still take a
+  candidate that it reworks anyway, as streaming does with the timers.
 - Name: **Quoll**, a new public library (namespace `quoll::`). Puffin keeps its existing utility modules (events, ioc,
   maths, imdb...). Repository: GitHub `4thlabs/quoll`.
 - **C++23** minimum (GCC ≥ 13, Clang ≥ 19, Apple Clang ≥ 21 since 2026-11-04, the maintainer's;
@@ -219,7 +222,7 @@ them.
 - **Quoll may be exposed directly** (2026-11-05), without a reverse proxy: "on sait jamais". What this asks of the server is in
   step 2.
 - **The UI DSL has several outputs** (2026-11-05), as it only knows a `Renderer`: the DOM through WASM, and HTML, for pages
-  generated ahead of time or sent by a server, which also settles the search engines. `to_html` came ahead of step 7, for
+  generated ahead of time or sent by a server, which also settles the search engines. `to_html` came ahead of step 6, for
   the framework's site to be written with it.
 - **Compiled libraries** (2026-11-04), in one mode rather than the two of `.ipp` files, for applications that stay
   reliable over time: see [step 1](#step-1-compiled-libraries-done).
@@ -339,7 +342,7 @@ peer holds nobody back and the idle timeout covers it. In a browser, `fetch` doe
 ### REST DSL: contract, server, client
 
 What this section says of OpenAPI (operation ids, security schemes, JSON Schemas) describes the optional output of
-[step 5](#step-5-rest-from-a-command-line-program), which does not exist yet: it binds nothing else.
+[step 4](#step-4-rest-from-a-command-line-program), which does not exist yet: it binds nothing else.
 
 An API description is a **contract**: C++ types, with no I/O and no server or client code. A server implements a
 contract and a client consumes one, but neither needs the other. Describing a third-party API (a payment provider, a
@@ -541,10 +544,10 @@ Hot reload has three levels, from the cheapest:
 1. CSS, through Vite and Tailwind's plugin, which reads the C++ for class names.
 2. A literal of `tw()`, `text()` or a tag, sent to the running program with no compilation, keeping its state.
 3. Anything else: a rebuild, then the page reloads. A compilation error shows in Vite's overlay. Restoring the states is
-   [step 7](#step-7-the-ui-dsl-complete).
+   [step 6](#step-6-the-ui-dsl-complete).
 
 For now this is a plugin of the sample `samples/ui_notes`, driven by Vite; [step
-8](#step-8-the-quoll-command-driving-vite-maintainer-merges-the-first-pull-request) turns it around.
+7](#step-7-the-quoll-command-driving-vite-maintainer-merges-the-first-pull-request) turns it around.
 
 ## WASM constraints
 
@@ -591,7 +594,7 @@ Those not settled by a step of the roadmap:
 
 ## Environment
 
-- Scaffolding: `quoll new` in [step 8](#step-8-the-quoll-command-driving-vite-maintainer-merges-the-first-pull-request),
+- Scaffolding: `quoll new` in [step 7](#step-7-the-quoll-command-driving-vite-maintainer-merges-the-first-pull-request),
   rather than a template in cpp-init.
 - Dev container (`.devcontainer/`): Ubuntu 24.04, GCC 13, Clang 19, CMake / Ninja / ccache, OpenSSL, Emscripten SDK
   (`EMSDK_VERSION`, default `latest`), Node.js (`NODE_MAJOR`, default 24).
