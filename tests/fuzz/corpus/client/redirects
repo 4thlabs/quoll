@@ -1,0 +1,11 @@
+HTTP/1.1 302 Found
+Location: ../next?x#top
+Content-Length: 0
+
+HTTP/1.1 307 Temporary Redirect
+Location: http://fuzz.example/again
+Content-Length: 2
+
+okHTTP/1.1 200 OK
+Content-Length: 0
+

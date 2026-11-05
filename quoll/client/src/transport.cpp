@@ -39,9 +39,12 @@
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/detail/slots.hpp>
 #include <quoll/async/detail/synchronized.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/client/detail/url.hpp>
+#include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/error.hpp>
+#include <quoll/http/fields.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/serializer.hpp>
@@ -59,6 +62,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -314,6 +318,113 @@ async::task<http::response> send_prepared(std::shared_ptr<transport_core> shared
   co_return std::move(*response);
 }
 
+// The request as it goes on the wire. Throws std::invalid_argument for what http::serialize() rejects.
+[[nodiscard]] prepared_request prepare(transport_core const &shared, http::request const &request) {
+  auto const keep_alive = request.version == http::version::http_1_1 &&
+                          !http::detail::closes_connection(request.fields) && shared.options.max_idle_connections > 0;
+
+  return prepared_request{http::serialize(request), request.method, keep_alive};
+}
+
+// The statuses that ask for the same thing elsewhere: not 300, a choice for a person, nor 304, which has no elsewhere.
+[[nodiscard]] constexpr bool redirects(http::status status) noexcept {
+  switch (status) {
+  case http::status::moved_permanently:
+  case http::status::found:
+  case http::status::see_other:
+  case http::status::temporary_redirect:
+  case http::status::permanent_redirect:
+    return true;
+  default:
+    return false;
+  }
+}
+
+// What belongs to the first request alone, once the method changes: what describes its body, and its preconditions,
+// which the new resource need not meet.
+[[nodiscard]] constexpr bool only_for_the_first_method(std::string_view name) noexcept {
+  auto const starts_with = [name](std::string_view prefix) {
+    return name.size() >= prefix.size() && http::detail::iequals(name.substr(0, prefix.size()), prefix);
+  };
+
+  return starts_with("content-") || starts_with("if-") || http::detail::iequals(name, "range") ||
+         http::detail::iequals(name, "digest") || http::detail::iequals(name, "etag") ||
+         http::detail::iequals(name, "last-modified") || http::detail::iequals(name, "transfer-encoding") ||
+         http::detail::iequals(name, "trailer") || http::detail::iequals(name, "expect");
+}
+
+// What the request a redirect asks for sends in place of `request`: RFC 9110, 15.4, and what browsers do with a POST.
+void redirect_request(http::request &request, http::status status, std::string target) {
+  auto const historic = status == http::status::moved_permanently || status == http::status::found;
+  auto const becomes_get =
+      (status == http::status::see_other && request.method != http::verb::head && request.method != http::verb::get) ||
+      (historic && request.method == http::verb::post);
+
+  request.target = std::move(target);
+
+  if (!becomes_get) {
+    return;
+  }
+
+  http::fields kept;
+
+  for (auto const &entry : request.fields) {
+    if (!only_for_the_first_method(entry.name)) {
+      kept.add(entry);
+    }
+  }
+
+  request.method = http::verb::get;
+  request.fields = std::move(kept);
+  request.body.clear();
+  request.trailers.clear();
+}
+
+// The `Location` of a response, which takes one value: several that differ say nothing.
+[[nodiscard]] std::optional<std::string_view> location_of(http::fields const &fields QUOLL_LIFETIMEBOUND) {
+  std::optional<std::string_view> found;
+
+  for (auto const &entry : fields) {
+    if (!http::detail::iequals(entry.name, "location")) {
+      continue;
+    }
+
+    if (found && *found != entry.value) {
+      return std::nullopt;
+    }
+
+    found = entry.value;
+  }
+
+  return found;
+}
+
+// Sends `request`, already prepared as `prepared` and given its `Host` field, then the ones its redirects ask for.
+async::task<http::response> send_following(std::shared_ptr<transport_core> shared, http::request request,
+                                           prepared_request prepared) {
+  for (std::size_t followed = 0;; ++followed) {
+    auto response = co_await send_prepared(shared, std::move(prepared));
+    auto const location = location_of(response.fields);
+
+    if (!redirects(response.status) || !location) {
+      co_return response;
+    }
+
+    auto target = resolve_location(*location, *request.fields.find("Host"), shared->secure, request.target);
+
+    if (!target) {
+      co_return response;
+    }
+
+    if (followed == shared->options.max_redirects) {
+      throw std::system_error{http::error::too_many_redirects, "quoll::client: too many redirects"};
+    }
+
+    redirect_request(request, response.status, std::move(*target));
+    prepared = prepare(*shared, request);
+  }
+}
+
 } // namespace
 
 std::shared_ptr<transport_core> make_transport_core(connector_handle connector, std::string host, std::uint16_t port,
@@ -335,10 +446,13 @@ async::task<http::response> send(std::shared_ptr<transport_core> const &core, ht
     request.fields.add("Host", core->host_field);
   }
 
-  auto const keep_alive = request.version == http::version::http_1_1 &&
-                          !http::detail::closes_connection(request.fields) && core->options.max_idle_connections > 0;
+  auto prepared = prepare(*core, request);
 
-  return send_prepared(core, prepared_request{http::serialize(request), request.method, keep_alive});
+  if (core->options.max_redirects == 0) {
+    return send_prepared(core, std::move(prepared));
+  }
+
+  return send_following(core, std::move(request), std::move(prepared));
 }
 
 } // namespace quoll::client::detail
