@@ -37,6 +37,7 @@
 #ifndef QUOLL_ASYNC_CO_SPAWN_HPP
 #define QUOLL_ASYNC_CO_SPAWN_HPP
 
+#include <quoll/async/any_executor.hpp>
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/completion_handler.hpp>
 #include <quoll/async/detail/context_adapter.hpp>
@@ -45,6 +46,9 @@
 #include <quoll/async/executor_ref.hpp>
 #include <quoll/async/task.hpp>
 
+#include <cassert>
+#include <concepts>
+#include <coroutine>
 #include <exception>
 #include <functional>
 #include <optional>
@@ -101,6 +105,8 @@ detached spawn_root(E executor, task<T> work, Handler handler, std::stop_token s
  * std::terminate is called.
  *
  * `stop_token` becomes the stop token of the task's await_context (see current_stop_token()).
+ *
+ * An executor_ref is copied through any_executor, into what it references: the task may outlive it.
  */
 template <Executor E, class T, CompletionHandler<T> Handler>
 void co_spawn(E const &executor, task<T> work, Handler handler, std::stop_token stop_token = {}) {
@@ -108,11 +114,89 @@ void co_spawn(E const &executor, task<T> work, Handler handler, std::stop_token 
       !std::is_same_v<T, std::exception_ptr>,
       "quoll::async::co_spawn: a task of std::exception_ptr cannot be told apart from a failure by its handler");
 
-  auto root = detail::spawn_root(executor, std::move(work), std::move(handler), std::move(stop_token));
+  auto root = [&] {
+    if constexpr (std::same_as<E, executor_ref>) {
+      return detail::spawn_root(any_executor{executor}, std::move(work), std::move(handler), std::move(stop_token));
+    } else {
+      return detail::spawn_root(executor, std::move(work), std::move(handler), std::move(stop_token));
+    }
+  }();
 
   // If post throws, nothing has started: `root` destroys the frame, and the exception reaches the caller.
   executor.post(root.start_item());
   root.release();
+}
+
+/** @brief The type of async::this_executor. */
+struct this_executor_t {
+  explicit this_executor_t() = default;
+};
+
+/**
+ * @brief Tag of co_spawn() on the executor of the coroutine that awaits it.
+ *
+ * @code
+ * co_await quoll::async::co_spawn(quoll::async::this_executor, refresh(), quoll::async::detached);
+ * @endcode
+ */
+inline constexpr this_executor_t this_executor{};
+
+namespace detail {
+
+// Spawns once it knows the awaiter's executor, and never suspends.
+template <class T, class Handler>
+class [[nodiscard]] spawn_on_this_executor {
+public:
+  spawn_on_this_executor(task<T> work, Handler handler, std::stop_token stop_token)
+      : work_(std::move(work)), handler_(std::move(handler)), stop_token_(std::move(stop_token)) {}
+
+  [[nodiscard]] bool await_ready() const noexcept { return false; }
+
+  // If post throws, the exception reaches the awaiter, as with the other co_spawn().
+  [[nodiscard]] bool await_suspend(std::coroutine_handle<>, await_context const &context) {
+    assert(!spawned_ && "co_spawn(this_executor) awaited twice");
+    spawned_ = true;
+    ::quoll::async::co_spawn(context.executor, std::move(work_), std::move(handler_), std::move(stop_token_));
+    return false;
+  }
+
+  void await_resume() const noexcept {}
+
+private:
+  task<T> work_;
+  Handler handler_;
+  std::stop_token stop_token_;
+  bool spawned_ = false;
+};
+
+} // namespace detail
+
+/**
+ * @brief co_spawn() on the executor of the coroutine that awaits the result, copied so that the task may outlive it.
+ *
+ * Awaiting it does not suspend, and does not wait for the task, which starts from the executor and never inline: on one
+ * thread, once the coroutine lets it; on a thread pool, possibly at once, beside the coroutine. Nothing happens without
+ * the `co_await`: the task is destroyed unstarted, and its handler is not called. An awaitable is awaited once. The
+ * task does not take the stop token of the coroutine: pass `co_await current_stop_token()` for it to stop along with
+ * it.
+ */
+template <class T, CompletionHandler<T> Handler>
+[[nodiscard]] detail::spawn_on_this_executor<T, Handler> co_spawn(this_executor_t, task<T> work, Handler handler,
+                                                                  std::stop_token stop_token = {}) {
+  return {std::move(work), std::move(handler), std::move(stop_token)};
+}
+
+/**
+ * @brief co_spawn(this_executor, ...): the executor of the coroutine is what it runs on by default.
+ *
+ * @code
+ * co_await quoll::async::co_spawn(refresh(), quoll::async::detached);
+ * @endcode
+ */
+template <class T, CompletionHandler<T> Handler>
+[[nodiscard]] detail::spawn_on_this_executor<T, Handler> co_spawn(task<T> work, Handler handler,
+                                                                  std::stop_token stop_token = {}) {
+  return {std::move(work), std::move(handler), std::move(stop_token)};
 }
 
 } // namespace quoll::async

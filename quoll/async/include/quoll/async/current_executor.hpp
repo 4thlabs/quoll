@@ -69,8 +69,8 @@ static_assert(ContextAwaitable<executor_awaitable>);
 /**
  * @brief The executor of the awaiting coroutine's await_context: `co_await current_executor()`.
  *
- * A reference, valid while the chain of awaiting coroutines runs; keep an any_executor copy to spawn work that may
- * outlive it. Ask it for the services of the context it posts to with `query<S>()`.
+ * A reference, valid while the chain of awaiting coroutines runs; co_spawn() copies what it references, and code that
+ * keeps it holds an any_executor. Ask it for the services of the context it posts to with `query<S>()`.
  */
 [[nodiscard]] inline executor_awaitable current_executor() noexcept { return {}; }
 

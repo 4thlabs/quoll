@@ -14,7 +14,7 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 ## Status
 
 Exploration. Modules so far: `quoll::async` (task, executor_ref, any_executor, await_context with stop token,
-current_executor and current_stop_token, executor services, co_spawn and its `detached` handler, when_all, run_loop,
+current_executor and current_stop_token, executor services, co_spawn, on an executor or, in a coroutine, on `this_executor` by default, and its `detached` handler, when_all, run_loop,
 `Timer` and `timer_ref`, `sleep_for`, `with_timeout`),
 `quoll::io` (`ByteStream`, `HalfClosableStream`, `Connector`, `Listener`, `BoundListener` and `Network` concepts, `any_stream` /
 `any_listener` type erasure, `io::network_ref` with `io::connect` / `io::listen` through the executor's network,
