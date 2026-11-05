@@ -122,12 +122,12 @@ the files you touch.
 `main` is protected: everything goes through a PR, with every required CI job and the status `Codex` green, up to date with
 `main` and its threads resolved, with no bypass for admins.
 
-Codex reviews the PRs (the ChatGPT Codex Connector, set up in Codex's settings, following the rules below). Comment
+Codex reviews the PRs (the ChatGPT Codex Connector, set up in Codex's settings, following [`REVIEW.md`](REVIEW.md)). Comment
 `@codex review` once the PR is open and after each later push: its automatic trigger is not relied on.
 `codex-review.yml` sets the status `Codex` once it has finished reviewing the last commit.
 
 Claude Code may merge the PRs it opened, giving the commit it checked, on one condition: `/code-review high` runs before
-every push, except a clean merge of `main`, and its valid findings are fixed first.
+every push, except a clean merge of `main`, and its valid findings are fixed first, but for what the rule below lets go.
 
 ```bash
 gh pr merge N -R 4thlabs/quoll --rebase --delete-branch --match-head-commit <sha>
@@ -136,36 +136,22 @@ gh pr merge N -R 4thlabs/quoll --squash --delete-branch --match-head-commit <sha
 ```
 
 The PR says what that review found and why any finding was not taken. A PR merges once every required check is green on
-its last commit, Codex raises nothing new on it, and its threads are answered, with the fixing commit or the reason a
-point is not taken, then resolved. If Codex has not completed a review of the last commit 30 minutes after a request,
+its last commit, Codex has finished on it, and all it found there is answered, with the fixing commit or the reason a point is
+not taken, its threads then resolved.
+
+What a review finds is fixed if valid: a bug, a break of a rule or a decision with a consequence you can name, a missing test.
+A detail may be let go, for a stated reason and with no new push: naming, layout and wording with no consequence, and in samples
+and the sample's Vite plugin a bug that normal use does not meet. A finding that is wrong says why. When it is unclear which of
+these a point is, for one saying it is a bug in particular, the maintainer decides.
+
+If Codex has not completed a review of the last commit 30 minutes after a request,
 request it once more; 30 minutes later, the maintainer decides, who alone can lift the protection.
 
 The maintainer merges a big architecture change, even with every check green: a new module, a change to a hard constraint
-above, a redesign of how modules fit together, and any change to this rule, to the Code Review Rules or to
+above, a redesign of how modules fit together, and any change to this rule, to `REVIEW.md` or to
 `codex-review.yml`. In doubt, it counts as one.
 
 ## Code Review Rules
 
-Read `docs/CODING_RULES.md` and `docs/PLAN.md` first: their rules and decisions are part of what you check. Go through the
-whole diff and report every finding of P1 or above in one review: do not stop at the first ones, as each further round costs
-a push. Read the code the diff calls and what calls it, as bugs often sit where changed code meets the rest; outside the
-diff, report only what the diff causes or exposes. Look for, in this order:
-
-- bugs: undefined behaviour, lifetimes and dangling references (coroutine frames, `_ref` wrappers, `string_view` /
-  `span`), unhandled cases, data races, errors swallowed;
-- WASM: anything in a core module that requires threads or blocking waits;
-- breaks of `docs/CODING_RULES.md`: ODR rules, self-contained headers, naming and layout, concepts instead
-  of SFINAE, special members and `noexcept`, type-erasure rules, `detail` namespaces;
-- breaks of the decisions in `docs/PLAN.md`;
-- missing tests, or tests that do not execute what they claim to test.
-
-Severity, as only P0 and P1 reach a pull request:
-
-- At least P1, wherever they are, samples included: undefined behaviour, lifetimes, data races.
-- P1: other bugs and the WASM point, in `quoll/`, `tests/`, the build and CI. A break of a rule or a decision with a
-  consequence you can name, such as an ODR violation or a header that does not compile alone. A test that does not execute
-  what it claims, and a fix or a new behaviour without a test.
-- In samples and in the sample's Vite plugin, other bugs are P1 only when a user meets them in normal use.
-- Anything else is P2 at most: naming, layout and wording.
-
-Do not repeat a point already answered in a thread. Skip style nits clang-format would catch.
+Read [`REVIEW.md`](REVIEW.md) and follow it for every review: it holds these rules. In short, report everything you find, the
+small points too, as P1 at least, saying what each one really is.

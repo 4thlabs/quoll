@@ -6,3 +6,4 @@ The project instructions are shared with other agents and live in these files:
 
 @AGENTS.md
 @docs/CODING_RULES.md
+@REVIEW.md
