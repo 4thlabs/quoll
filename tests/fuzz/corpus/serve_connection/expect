@@ -1,0 +1,7 @@
+POST /notes/ HTTP/1.1
+Host: x
+Content-Type: application/json
+Content-Length: 13
+Expect: 100-continue
+
+{"text":"hi"}

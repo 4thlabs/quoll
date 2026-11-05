@@ -56,6 +56,8 @@ enum class error {
   partial_message,
   /** @brief The connection switched protocols (see parser::upgrade()): what follows is not HTTP/1.x. */
   upgraded,
+  /** @brief A request's `Expect` field asks for something other than `100-continue`: for a server to report. */
+  unsupported_expectation,
 };
 
 /** @brief The category of http::error codes. */

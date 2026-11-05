@@ -61,6 +61,8 @@ public:
       return "HTTP message truncated by the end of the stream";
     case error::upgraded:
       return "HTTP connection switched to another protocol";
+    case error::unsupported_expectation:
+      return "unsupported HTTP expectation";
     }
     return "unknown quoll.http error";
   }

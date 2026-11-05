@@ -39,6 +39,7 @@
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
+#include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/error.hpp>
@@ -48,15 +49,20 @@
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
+#include <quoll/http/version.hpp>
 #include <quoll/http/write.hpp>
+#include <quoll/io/any_stream.hpp>
+#include <quoll/io/write.hpp>
 
 #include <array>
 #include <exception>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -91,6 +97,10 @@ struct request_read {
     return http::status::not_implemented;
   }
 
+  if (read.error == http::error::unsupported_expectation) {
+    return http::status::expectation_failed;
+  }
+
   if (read.error == http::error::bad_message) {
     return http::status::bad_request;
   }
@@ -121,10 +131,43 @@ async::task<bool> wait_for_request(io::any_stream &stream, std::string &buffer) 
   co_return true;
 }
 
-// http::read(), its cancellation thrown: with_timeout() only tells its own from another when it is.
-async::task<std::error_code> read_or_throw_canceled(io::any_stream &stream, std::string &buffer,
-                                                    http::request_parser &parser) {
-  auto const error = co_await http::read(stream, buffer, parser);
+// What a request's `Expect` fields ask for: a list, of which only this one member exists. An HTTP/1.0 client cannot
+// wait for an interim response (RFC 9110, 10.1.1).
+enum class expectation { none, a_continue, unsupported };
+
+[[nodiscard]] expectation expectation_of(http::request const &head) noexcept {
+  auto found = expectation::none;
+
+  if (head.version == http::version::http_1_0) {
+    return found;
+  }
+
+  for (auto const &field : head.fields) {
+    if (!http::detail::iequals(field.name, "Expect")) {
+      continue;
+    }
+
+    for (auto const member : std::views::split(std::string_view{field.value}, ',')) {
+      auto const name = http::detail::trim(std::string_view{member.begin(), member.end()});
+
+      if (name.empty()) {
+        continue;
+      }
+
+      if (!http::detail::iequals(name, "100-continue")) {
+        return expectation::unsupported;
+      }
+
+      found = expectation::a_continue;
+    }
+  }
+
+  return found;
+}
+
+// A task reading, its cancellation thrown: with_timeout() only tells its own from another when it is.
+async::task<std::error_code> throw_canceled(async::task<std::error_code> reading) {
+  auto const error = co_await std::move(reading);
 
   if (error == std::errc::operation_canceled) {
     throw std::system_error{error};
@@ -133,13 +176,12 @@ async::task<std::error_code> read_or_throw_canceled(io::any_stream &stream, std:
   co_return error;
 }
 
-// http::read() of a request, up to the timeout. Streams report their errors as values: thrown, timed_out can only be
-// the timeout's.
-async::task<request_read> read_request(io::any_stream &stream, std::string &buffer, http::request_parser &parser,
-                                       connection_options const &options) {
+// A task reading, up to the read timeout. Streams report their errors as values: thrown, timed_out can only be the
+// timeout's.
+async::task<request_read> within_read_timeout(async::task<std::error_code> reading, connection_options const &options) {
   try {
-    co_return request_read{co_await async::detail::with_optional_timeout(
-        options.read_timeout, read_or_throw_canceled(stream, buffer, parser))};
+    co_return request_read{
+        co_await async::detail::with_optional_timeout(options.read_timeout, throw_canceled(std::move(reading)))};
   } catch (std::system_error const &thrown) {
     if (thrown.code() == std::errc::timed_out) {
       co_return request_read{thrown.code(), true};
@@ -151,6 +193,57 @@ async::task<request_read> read_request(io::any_stream &stream, std::string &buff
 
     throw;
   }
+}
+
+// A request, or its head alone when `100 Continue` is owed before the rest: its client waits for that before its body.
+// Nothing is owed if the body has come already, or if there is none.
+async::task<std::error_code> read_up_to_continue(io::any_stream &stream, std::string &buffer,
+                                                 http::request_parser &parser, bool &continue_owed) {
+  if (auto const error = co_await http::read_head(stream, buffer, parser)) {
+    co_return error;
+  }
+
+  auto const expected = expectation_of(parser.head());
+
+  if (expected == expectation::unsupported) {
+    co_return http::error::unsupported_expectation;
+  }
+
+  if (parser.done()) {
+    co_return std::error_code{};
+  }
+
+  if (expected == expectation::a_continue) {
+    continue_owed = true;
+    co_return std::error_code{};
+  }
+
+  co_return co_await http::read(stream, buffer, parser);
+}
+
+async::task<std::error_code> write_continue(io::any_stream &stream) {
+  static constexpr std::string_view interim = "HTTP/1.1 100 Continue\r\n\r\n";
+
+  co_return (co_await io::write(stream, std::as_bytes(std::span{interim}))).error;
+}
+
+// A whole request, under one read timeout, as a slow peer must not get more by sending its head slowly too. Only
+// `100 Continue` starts it again, as the time after it is the client's first to send its body. Leaving is under the
+// write timeout, like any response.
+async::task<request_read> read_whole_request(io::any_stream &stream, std::string &buffer, http::request_parser &parser,
+                                             connection_options const &options) {
+  bool continue_owed = false;
+  auto const first = co_await within_read_timeout(read_up_to_continue(stream, buffer, parser, continue_owed), options);
+
+  if (first.error || !continue_owed) {
+    co_return first;
+  }
+
+  if (auto const sent = co_await async::detail::with_optional_timeout(options.write_timeout, write_continue(stream))) {
+    co_return request_read{sent};
+  }
+
+  co_return co_await within_read_timeout(http::read(stream, buffer, parser), options);
 }
 
 // The router's response, or 500 if its handler threw, reported to the application's callback if it gave one.
@@ -234,7 +327,7 @@ async::task<> serve_connection(io::any_stream stream, http::router const &router
       co_return;
     }
 
-    if (auto const read = co_await read_request(stream, buffer, parser, options); read.error) {
+    if (auto const read = co_await read_whole_request(stream, buffer, parser, options); read.error) {
       if (auto const answer = read_error_status(read)) {
         auto rejected = http::detail::status_response(*answer);
 

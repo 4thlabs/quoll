@@ -290,11 +290,12 @@ private:
 static_assert(io::ByteStream<failing_reads>);
 
 // serve_connection() with a peer that sends `raw` and no longer reads: its time on the clock.
-std::chrono::nanoseconds time_until_stuck_writes_end(connection_options const &options) {
+std::chrono::nanoseconds
+time_until_stuck_writes_end(connection_options const &options,
+                            std::string const &raw = "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n") {
   virtual_time time;
   auto const router = make_router();
   auto [client, server] = io::make_memory_stream_pair();
-  std::string const raw = "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n";
 
   auto const answer = [&]() -> task<int> {
     (void)co_await io::write(client, std::as_bytes(std::span{raw}));
@@ -319,6 +320,146 @@ TEST_CASE("serve_connection: requests get their responses, on a connection kept 
   REQUIRE(result.responses[0].fields.find("Content-Length") == "5");
   REQUIRE_FALSE(result.responses[0].fields.contains("Connection"));
   REQUIRE(result.responses[1].body == "ping");
+}
+
+namespace {
+
+// A client that sends its head, waits for what the server answers to it, then sends its body: all it received.
+task<std::vector<http::status>> send_body_after_answer(io::memory_stream client, std::string head, std::string body) {
+  std::vector<http::status> statuses;
+  std::string buffer;
+
+  (void)co_await io::write(client, std::as_bytes(std::span{head}));
+
+  for (;;) {
+    http::response_parser parser;
+
+    if (co_await http::read(client, buffer, parser)) {
+      co_return statuses;
+    }
+
+    auto const response = parser.release();
+
+    statuses.push_back(response.status);
+
+    if (response.status != http::status::continue_) {
+      co_return statuses;
+    }
+
+    (void)co_await io::write(client, std::as_bytes(std::span{body}));
+  }
+}
+
+} // namespace
+
+TEST_CASE("serve_connection: Expect: 100-continue gets its answer, then the body", "[server]") {
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+
+  SECTION("as the client waits for it") {
+    auto outcome = quoll::test::run(quoll::async::when_all(
+        quoll::server::serve_connection(std::move(server), router),
+        send_body_after_answer(std::move(client),
+                               "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-Continue\r\n\r\n",
+                               "ping")));
+
+    REQUIRE(std::get<1>(outcome.value()) == std::vector{http::status::continue_, http::status::ok});
+  }
+
+  SECTION("not asked for: nothing comes before the response") {
+    auto outcome = quoll::test::run(quoll::async::when_all(
+        quoll::server::serve_connection(std::move(server), router),
+        send_body_after_answer(std::move(client), "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nping",
+                               {})));
+
+    REQUIRE(std::get<1>(outcome.value()) == std::vector{http::status::ok});
+  }
+
+  SECTION("part of the body came with the head") {
+    auto outcome = quoll::test::run(quoll::async::when_all(
+        quoll::server::serve_connection(std::move(server), router),
+        send_body_after_answer(std::move(client),
+                               "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\npi",
+                               "ng")));
+
+    REQUIRE(std::get<1>(outcome.value()) == std::vector{http::status::continue_, http::status::ok});
+  }
+
+  SECTION("with a chunked body") {
+    auto outcome = quoll::test::run(quoll::async::when_all(
+        quoll::server::serve_connection(std::move(server), router),
+        send_body_after_answer(
+            std::move(client),
+            "POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n",
+            "4\r\nping\r\n0\r\n\r\n")));
+
+    REQUIRE(std::get<1>(outcome.value()) == std::vector{http::status::continue_, http::status::ok});
+  }
+
+  SECTION("as a list, which may name it twice") {
+    auto outcome = quoll::test::run(quoll::async::when_all(
+        quoll::server::serve_connection(std::move(server), router),
+        send_body_after_answer(
+            std::move(client),
+            "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue, 100-continue,\r\n\r\n",
+            "ping")));
+
+    REQUIRE(std::get<1>(outcome.value()) == std::vector{http::status::continue_, http::status::ok});
+  }
+
+  SECTION("refused for its size: the final answer comes instead") {
+    connection_options const small{.limits = {.max_body_size = 2}, .on_handler_error = {}};
+    auto outcome = quoll::test::run(quoll::async::when_all(
+        quoll::server::serve_connection(std::move(server), router, small),
+        send_body_after_answer(std::move(client),
+                               "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n",
+                               "ping")));
+
+    REQUIRE(std::get<1>(outcome.value()) == std::vector{http::status::content_too_large});
+  }
+}
+
+TEST_CASE("serve_connection: what Expect does in other cases", "[server]") {
+  SECTION("the body came with the head: no need for it") {
+    auto const result =
+        serve("POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\nping", {verb::post});
+
+    REQUIRE(result.responses.front().status == http::status::ok);
+    REQUIRE(result.responses.front().body == "ping");
+  }
+
+  SECTION("no body: no need for it") {
+    auto const result = serve("GET /hello HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\n\r\n", {verb::get});
+
+    REQUIRE(result.responses.front().status == http::status::ok);
+  }
+
+  SECTION("anything else is refused, and ends the connection") {
+    auto const result = serve("GET /hello HTTP/1.1\r\nHost: x\r\nExpect: something\r\n\r\n", {verb::get}, true);
+
+    REQUIRE(result.responses.front().status == http::status::expectation_failed);
+    REQUIRE(result.responses.front().reason == "Expectation Failed");
+    REQUIRE(result.closed);
+  }
+
+  SECTION("one of two fields being anything else is enough") {
+    auto const result =
+        serve("GET /hello HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nExpect: else\r\n\r\n", {verb::get}, true);
+
+    REQUIRE(result.responses.front().status == http::status::expectation_failed);
+  }
+
+  SECTION("an empty field asks for nothing") {
+    auto const result = serve("GET /hello HTTP/1.1\r\nHost: x\r\nExpect:\r\n\r\n", {verb::get});
+
+    REQUIRE(result.responses.front().status == http::status::ok);
+  }
+
+  SECTION("HTTP/1.0 cannot have asked for it: ignored") {
+    auto const result = serve("GET /hello HTTP/1.0\r\nHost: x\r\nExpect: something\r\n\r\n", {verb::get});
+
+    REQUIRE(result.responses.front().status == http::status::ok);
+  }
 }
 
 TEST_CASE("serve_connection: a request that does not keep the connection alive ends it", "[server]") {
@@ -620,4 +761,71 @@ TEST_CASE("serve_connection: a stop request is no timeout", "[server][timer]") {
 
   REQUIRE(std::get<1>(outcome.value()).empty());
   REQUIRE(time.now() == 1s);
+}
+
+namespace {
+
+// A peer sending its pieces, one every two seconds, then reading what comes.
+task<std::string> pieces_two_seconds_apart(io::memory_stream client, std::vector<std::string> pieces) {
+  for (auto const &piece : pieces) {
+    (void)co_await io::write(client, std::as_bytes(std::span{piece}));
+    co_await quoll::async::sleep_for(2s);
+  }
+
+  co_return co_await read_until_closed(client);
+}
+
+// A request whose client waits for `100 Continue` before its body.
+std::string const expecting = "POST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n";
+
+} // namespace
+
+TEST_CASE("serve_connection: the read timeout covers a head and a body together", "[server][timer]") {
+  virtual_time time;
+
+  // The head ends at 2 s and the body at 4 s: each is in time, but not both.
+  auto const received = session(time, connection_options{.read_timeout = 3s}, [](auto client) {
+    return pieces_two_seconds_apart(std::move(client),
+                                    {"POST /echo HTTP/1.1\r\nHost: h\r\n", "Content-Length: 4\r\n\r\n", "ping"});
+  });
+
+  REQUIRE(received.starts_with("HTTP/1.1 408"));
+}
+
+TEST_CASE("serve_connection: only 100 Continue starts the read timeout again", "[server][timer]") {
+  virtual_time time;
+
+  // The same, but for what the client waits for: the body has its own time after the answer.
+  auto const received = session(time, connection_options{.read_timeout = 3s}, [](auto client) {
+    return pieces_two_seconds_apart(std::move(client), {"POST /echo HTTP/1.1\r\nHost: h\r\n",
+                                                        "Content-Length: 4\r\nExpect: 100-continue\r\n\r\n", "ping"});
+  });
+
+  REQUIRE(received.starts_with("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200"));
+}
+
+TEST_CASE("serve_connection: a body that never comes after 100 Continue gets a 408", "[server][timer]") {
+  virtual_time time;
+
+  auto const received = session(time, connection_options{.read_timeout = 3s},
+                                [](auto client) { return peer(std::move(client), expecting, {}, {}); });
+
+  REQUIRE(received.starts_with("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 408"));
+  REQUIRE(time.now() == 3s);
+}
+
+TEST_CASE("serve_connection: HTTP/1.0 waits for no 100 Continue", "[server][timer]") {
+  virtual_time time;
+
+  auto const received = session(time, connection_options{.read_timeout = 3s}, [](auto client) {
+    return peer(std::move(client),
+                "POST /echo HTTP/1.0\r\nHost: h\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n", 1s, "ping");
+  });
+
+  REQUIRE(received.starts_with("HTTP/1.1 200"));
+}
+
+TEST_CASE("serve_connection: a 100 Continue that does not leave is under the write timeout", "[server][timer]") {
+  // With no read timeout to end it.
+  REQUIRE(time_until_stuck_writes_end(connection_options{.read_timeout = 0s, .write_timeout = 4s}, expecting) == 4s);
 }

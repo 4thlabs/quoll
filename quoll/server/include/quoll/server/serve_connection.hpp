@@ -59,14 +59,16 @@ namespace quoll::server {
  * connection_options): a connection idle for too long, a request taking too long to arrive (408), a response taking too
  * long to leave.
  *
- * - A request that is not valid HTTP answers 400, one with too large a header 431, too large a body 413, an unknown
- *   method 501, and ends the connection.
+ * - A request that is not valid HTTP answers 400, one with too large a header 431, too large a body 413, as soon as its
+ *   head announces it, an unknown method 501, an `Expect` field asking for anything but `100-continue` 417, and ends
+ *   the connection.
+ * - A request with `Expect: 100-continue` whose body has not come gets `100 Continue`, then the body is read.
  * - A handler that throws answers 500 (and is reported to `options.on_handler_error`), as does a response that cannot
  *   be serialized.
  * - The response to HEAD carries no body: it announces the length of the one the GET route produced.
  *
- * Not yet: `Expect: 100-continue` (a client sends its body after its own delay), a lingering close after an error
- * response.
+ * Not yet: a lingering close after an error response, without which a client still sending may get a reset rather than
+ * its response.
  *
  * Owns `stream`; `router` and `options` outlive the task.
  */
