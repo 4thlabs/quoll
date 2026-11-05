@@ -44,6 +44,7 @@
 #include <cassert>
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -165,8 +166,12 @@ struct parser<Message>::impl {
 
   void decide_streaming() noexcept { body_streamed_ = decide_ && decide_(std::as_const(message_)); }
 
-  [[nodiscard]] std::size_t body_limit() const noexcept {
+  [[nodiscard]] std::uint64_t body_limit() const noexcept {
     return body_streamed_ ? limits_.max_streamed_body_size : limits_.max_body_size;
+  }
+
+  [[nodiscard]] bool announces_too_much(llhttp_t const *state) const noexcept {
+    return (state->flags & F_CONTENT_LENGTH) != 0 && state->content_length > body_limit();
   }
 
   // Records why parsing stops; returns the code that stops llhttp.
@@ -303,7 +308,7 @@ struct parser<Message>::impl {
       self_.decide_streaming();
 
       // Refused now, rather than once that much has arrived: a client waiting for `100 Continue` sends nothing more.
-      if ((state->flags & F_CONTENT_LENGTH) != 0 && state->content_length > self_.body_limit()) {
+      if (self_.announces_too_much(state)) {
         static_cast<void>(self_.fail(state, error::body_too_large, "body too large"));
         return -1;
       }
@@ -315,27 +320,26 @@ struct parser<Message>::impl {
 
       self_.message_.status = static_cast<status>(code);
       self_.decide_streaming();
+      self_.head_complete_ = true;
 
       // A 2xx answer to CONNECT turns the connection into a tunnel.
       if (self_.request_method_ == verb::connect && code >= 200 && code < 300) {
-        self_.head_complete_ = true;
         return 2;
       }
 
       if (self_.request_method_ == verb::head) {
-        self_.head_complete_ = true;
         return 1;
       }
 
-      // Refused now, rather than past a gigabyte handed over in pieces. These statuses announce what they do not carry.
-      auto const carries_body = code >= 200 && code != 204 && code != 304;
+      // Refused now, rather than past a gigabyte handed over in pieces. As llhttp reads them, these statuses announce
+      // what they do not carry.
+      auto const carries_body = code > 103 && code != 204 && code != 304;
 
-      if (carries_body && (state->flags & F_CONTENT_LENGTH) != 0 && state->content_length > self_.body_limit()) {
+      if (carries_body && self_.announces_too_much(state)) {
         static_cast<void>(self_.fail(state, error::body_too_large, "body too large"));
         return -1;
       }
 
-      self_.head_complete_ = true;
       return 0;
     }
   }
@@ -343,7 +347,8 @@ struct parser<Message>::impl {
   static int on_body(llhttp_t *state, char const *at, std::size_t length) noexcept {
     auto &self_ = self(state);
 
-    // Counted apart: a body in pieces leaves the message as it comes.
+    // Counted apart: a body in pieces leaves the message as it comes. In 64 bits under WASM too, as memory does not
+    // bound it.
     self_.body_size_ += length;
 
     if (self_.body_size_ > self_.body_limit()) {
@@ -398,7 +403,7 @@ struct parser<Message>::impl {
   std::string field_value_;
   std::size_t header_size_ = 0;
   std::size_t field_count_ = 0;
-  std::size_t body_size_ = 0;
+  std::uint64_t body_size_ = 0;
   std::error_code error_;
   char const *reason_ = nullptr;
   verb request_method_ = verb::get;
@@ -462,9 +467,12 @@ bool parser<Message>::body_streamed() const noexcept {
 template <class Message>
   requires std::same_as<Message, request> || std::same_as<Message, response>
 void parser<Message>::take_body(std::string &piece) noexcept {
-  // Each keeps the memory of the other: nothing allocates once they have grown.
   piece.clear();
-  piece.swap(impl_->message_.body);
+
+  // A body read whole stays whole. Each keeps the memory of the other: nothing allocates once they have grown.
+  if (impl_->body_streamed_) {
+    piece.swap(impl_->message_.body);
+  }
 }
 
 template <class Message>

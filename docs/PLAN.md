@@ -21,7 +21,8 @@ One pull request per topic, under the rule in [`AGENTS.md`](../AGENTS.md). A new
 before much is built on it. Points marked "To settle" and the [open questions](#open-questions) are the maintainer's to
 decide. Steps marked *(maintainer merges)* are big architecture changes.
 
-**Current step: 3.** Step 0 only waits for the maintainer.
+**Current step: 3.** Step 0 only waits for the maintainer, and step 2 keeps the two points it says are left, as the first
+nightly fuzz run has not been read yet.
 
 ### Done
 
