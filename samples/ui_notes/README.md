@@ -33,7 +33,7 @@ Add a note, start typing another one, and change `notes_page.hpp` in your editor
 | `tw("btn btn-primary")` to `tw("btn btn-secondary")` | shows at once | stays |
 | `tw("text-4xl font-bold")` to `tw("text-4xl font-bold text-rose-500")`, a class not used yet | Tailwind generates it, and it shows at once | stays |
 | A comment, or spaces | nothing | stays |
-| Anything else, such as adding a `state` | a rebuild of about 1 s, then the page reloads | **lost** |
+| Anything else, such as adding a `state` | a rebuild of about 0.8 s, then the page reloads | **lost** |
 | `int x = oops;` | the compiler's first error, over the page | |
 
 ## The API
@@ -90,9 +90,9 @@ A page can live in a header, with no source of its own. Two things keep its rebu
   by hand for now; it could be generated from it.
 
 Measured from a save to the end of the build, for a change in the page, on one machine with 8 cores: 3.9 s with everything
-in one source and nothing precompiled, about 1 s as it is here.
+in one source and nothing precompiled, about 0.8 s as it is here.
 
 ## Build for production
 
-`npm run build` writes everything to `dist/`, the C++ compiled for size: about 51 KB of gzipped WASM, 7 KB of CSS and 5 KB of
+`npm run build` writes everything to `dist/`, the C++ compiled for size: about 52 KB of gzipped WASM, 7 KB of CSS and 5 KB of
 JavaScript. Quoll's server does not serve static files yet.

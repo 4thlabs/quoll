@@ -1,6 +1,6 @@
 # Quoll — plan
 
-Last update: 2026-11-04. The [roadmap](#roadmap) says what comes next, and is the reference for the order of the work.
+Last update: 2026-11-05. The [roadmap](#roadmap) says what comes next, and is the reference for the order of the work.
 
 ## Target
 
@@ -19,8 +19,7 @@ Build time and hot reload are kept short and measured all along.
 
 One pull request per topic, under the rule in [`AGENTS.md`](../AGENTS.md). A new public API is shown to the maintainer
 before much is built on it. Points marked "To settle" and the [open questions](#open-questions) are the maintainer's to
-decide. Steps marked *(maintainer merges)* are big architecture changes. Figures given as "today" were measured when this
-roadmap was written.
+decide. Steps marked *(maintainer merges)* are big architecture changes.
 
 **Current step: 2.** Step 0 only waits for the maintainer.
 
@@ -30,8 +29,8 @@ roadmap was written.
 over TCP, over `fetch`, and through OpenSSL). A first `quoll::ui` with its DOM renderer, Tailwind through Vite, and two
 levels of hot reload, in the sample `ui_notes`. In CI: `clang-tidy`, the standard library's checks, Apple Clang on macOS, Codex's review and a protected `main`.
 
-Compiled libraries (step 1): a program compiles neither llhttp nor asio. A page rebuilds in 0.81 s and a native server in 3.9 s,
-for 52 KB of gzipped WASM with the REST client, against about 45 KB for React and ReactDOM alone. A literal shows in about 31 ms,
+Compiled libraries (step 1): a program using `quoll::runtime` compiles neither llhttp nor asio. A page rebuilds in 0.81 s and a
+native server in 3.9 s, for 52 KB of gzipped WASM with the REST client, against about 45 KB for React and ReactDOM alone. A literal shows in about 31 ms,
 keeping the state.
 
 ### Step 0: finish the setup
@@ -41,20 +40,29 @@ What is left is the maintainer's:
 - Require the job `macos` on `main`.
 - Delete the secret `CLAUDE_CODE_OAUTH_TOKEN`.
 
-The branch `ui-ipp` stays, for step 1.
-
 *Done when:* both are done.
 
 ### Step 1: compiled libraries *(done)*
 
-`src/*.cpp` and one mode, like Capy and Corosio, rather than the two modes of `.ipp` files. Templates over application types
-stay in headers, with `quoll::async`, templates and functions of some lines, and `io::memory_stream`, a stream for tests. An
-installed Quoll runs a program with no asio available.
+`src/*.cpp` and one mode, like Capy and Corosio, rather than the two modes of `.ipp` files. What stays in headers is what the
+coding rules list. An installed Quoll runs a program with no asio available, checked by hand: nothing in CI does it yet, and it
+still links OpenSSL.
 
-Figures, from the first PR of this step to the last, without ccache: a page rebuilds in 0.81 s rather than 1.15 s, a native
-server in 3.9 s rather than 13.7 s. The cost: a native binary 19 % larger, for step 4. Two things follow from compiling once. An
-`assert` in a library follows its build type, not the application's. A program using `tcp_stream` or `runtime::context()`
-compiles asio too, in the same version as the library.
+Figures, from the first PR of this step to the last, without ccache:
+
+| | Before | After |
+|---|---|---|
+| Rebuild of a page | 1.15 s | 0.81 s |
+| Reload of a page after a rebuild | about 1.2 s | not measured again |
+| Gzipped WASM | 51.47 KB | 51.86 KB |
+| Rebuild of a native server | 13.7 s | 3.9 s |
+| Full build of a native server | 13.7 s | 9.5 s |
+| Binary of a native server | 1013 KB | 1206 KB |
+
+Two things follow from compiling once. A program is built in the same mode as its Quoll: an `assert` in a source follows the
+library's build type, and inline code holding one, compiled on both sides, is an ODR violation when the modes differ, which
+nothing detects. A program using `tcp_stream` or `runtime::context()` compiles asio too, in the same version as the library,
+which nothing checks either.
 
 ### Step 2: client and server, security and completeness
 
@@ -111,6 +119,8 @@ Only what the harness shows. Candidates:
 - A client copies the request body into the serialized message: write the head and the body as two buffers.
 - A TLS client builds its context per connection, and resumes no session.
 - A client builds a parser per request, which now allocates: one per connection avoids it.
+- The size of a native binary, 19 % larger since step 1, as static libraries link whole objects: `--gc-sections`, link-time
+  optimization.
 - Idle connections are only found closed when a request uses them: closing them after an idle time, and letting a POST
   reuse one, which needs a stream that tells a closed peer before writing.
 
