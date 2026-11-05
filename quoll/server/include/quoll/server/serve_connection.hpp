@@ -67,8 +67,9 @@ namespace quoll::server {
  *   be serialized.
  * - The response to HEAD carries no body: it announces the length of the one the GET route produced.
  *
- * Not yet: a lingering close after an error response, without which a client still sending may get a reset rather than
- * its response.
+ * Ending a connection stops sending first, with `stream.shutdown_send()`: a TLS peer gets its closing message. After
+ * the last response, what the peer still sends is then read and dropped, as `options.lingering_timeout` and
+ * `options.lingering_time` say, unless `options.drain` or a stop request ends it.
  *
  * Owns `stream`; `router` and `options` outlive the task.
  */

@@ -311,6 +311,34 @@ TEST_CASE("memory_stream: a write that throws sends nothing", "[io][memory_strea
   REQUIRE(read->text == "data");
 }
 
+TEST_CASE("memory_stream: shutdown_send ends what the peer reads, and reading goes on", "[io][memory_stream]") {
+  auto [client, server] = quoll::io::make_memory_stream_pair();
+  std::string const sent = "bye";
+  std::string const answer = "late";
+
+  auto const steps = [&]() -> quoll::async::task<std::string> {
+    std::array<char, 16> chunk{};
+
+    (void)co_await quoll::io::write(server, std::as_bytes(std::span{sent}));
+    REQUIRE_FALSE((co_await server.shutdown_send()).error);
+
+    auto const first = co_await client.read_some(std::as_writable_bytes(std::span{chunk}));
+
+    REQUIRE(first.transferred == sent.size());
+    REQUIRE((co_await client.read_some(std::as_writable_bytes(std::span{chunk}))).error ==
+            quoll::io::error::end_of_stream);
+
+    // The other direction is still open.
+    (void)co_await quoll::io::write(client, std::as_bytes(std::span{answer}));
+
+    auto const later = co_await server.read_some(std::as_writable_bytes(std::span{chunk}));
+
+    co_return std::string{chunk.data(), later.transferred};
+  };
+
+  REQUIRE(quoll::test::run(steps()) == answer);
+}
+
 TEST_CASE("io::write writes every byte", "[io][write]") {
   auto [left, right] = io::make_memory_stream_pair();
 

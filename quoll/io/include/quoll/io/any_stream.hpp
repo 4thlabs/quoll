@@ -42,6 +42,7 @@
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/detail/stream_vtable.hpp>
+#include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
 
 #include <cassert>
@@ -60,9 +61,9 @@ namespace quoll::io {
  *
  * Wraps any ByteStream whose operations return their awaitable by value (a socket, a TLS session, a memory_stream)
  * behind one type, for code that cannot be a template over the stream: connectors, connection pools. The wrapped
- * stream is kept with room for the awaitables of one read and one write. A stream that fits in 192 bytes with them,
- * and moves without throwing, is held in place; a bigger one is allocated once, when it is wrapped. Reading and
- * writing never allocate.
+ * stream is kept with room for the awaitables of one read, one write and one shutdown. A stream that fits in 192 bytes
+ * with them, and moves without throwing, is held in place; a bigger one is allocated once, when it is wrapped. Reading
+ * and writing never allocate.
  *
  * Move-only. Like the wrapped stream, it must not be moved or destroyed while one of its operations is pending, and
  * has at most one read and one write pending at a time. A moved-from any_stream can only be assigned to or
@@ -72,7 +73,7 @@ namespace quoll::io {
  */
 class any_stream {
 public:
-  /** @brief Awaitable returned by read_some() and write_some(). */
+  /** @brief Awaitable returned by read_some(), write_some() and shutdown_send(). */
   class [[nodiscard]] awaitable {
   public:
     awaitable(awaitable const &) = delete;
@@ -146,7 +147,7 @@ public:
   /** @brief Reads with the wrapped stream. */
   [[nodiscard]] awaitable read_some(std::span<std::byte> buffer) {
     assert(vtable_ != nullptr && "any_stream used after being moved from");
-    assert(!reading_ && "any_stream: a read is already pending");
+    assert(!reading_ && !shutting_down_ && "any_stream: a read or a shutdown is already pending");
 
     auto *const wrapped = vtable_->read_some(block_, buffer);
 
@@ -157,12 +158,26 @@ public:
   /** @brief Writes with the wrapped stream. */
   [[nodiscard]] awaitable write_some(std::span<std::byte const> data) {
     assert(vtable_ != nullptr && "any_stream used after being moved from");
-    assert(!writing_ && "any_stream: a write is already pending");
+    assert(!writing_ && !shutting_down_ && "any_stream: a write or a shutdown is already pending");
 
     auto *const wrapped = vtable_->write_some(block_, data);
 
     writing_ = true;
     return awaitable{wrapped, *vtable_->write, writing_};
+  }
+
+  /**
+   * @brief Stops sending, with the wrapped stream: see HalfClosableStream. A stream that is not one reports
+   * `std::errc::operation_not_supported`, so that a caller goes on as it would with no way to do this.
+   */
+  [[nodiscard]] awaitable shutdown_send() {
+    assert(vtable_ != nullptr && "any_stream used after being moved from");
+    assert(!reading_ && !writing_ && !shutting_down_ && "any_stream: an operation is still pending");
+
+    auto *const wrapped = vtable_->shutdown_send(block_);
+
+    shutting_down_ = true;
+    return awaitable{wrapped, *vtable_->shutdown, shutting_down_};
   }
 
   /** @brief The wrapped stream if its type is exactly `S`, otherwise `nullptr`. */
@@ -194,7 +209,8 @@ private:
   }
 
   void take(any_stream &other) noexcept {
-    assert(!other.reading_ && !other.writing_ && "any_stream moved while one of its operations is pending");
+    assert(!other.reading_ && !other.writing_ && !other.shutting_down_ &&
+           "any_stream moved while one of its operations is pending");
 
     vtable_ = std::exchange(other.vtable_, nullptr);
 
@@ -213,7 +229,8 @@ private:
 
   void reset() noexcept {
     if (vtable_ != nullptr) {
-      assert(!reading_ && !writing_ && "any_stream destroyed while one of its operations is pending");
+      assert(!reading_ && !writing_ && !shutting_down_ &&
+             "any_stream destroyed while one of its operations is pending");
       vtable_->destroy(block_);
       vtable_ = nullptr;
       block_ = nullptr;
@@ -225,10 +242,12 @@ private:
   detail::stream_vtable const *vtable_ = nullptr;
   bool reading_ = false;
   bool writing_ = false;
+  bool shutting_down_ = false;
 };
 
 static_assert(async::ContextAwaitable<any_stream::awaitable>);
 static_assert(ByteStream<any_stream>);
+static_assert(HalfClosableStream<any_stream>);
 
 } // namespace quoll::io
 

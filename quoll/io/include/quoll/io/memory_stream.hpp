@@ -42,6 +42,7 @@
 #include <quoll/async/work_item.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/detail/memory_channel.hpp>
+#include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
 
 #include <array>
@@ -151,6 +152,28 @@ public:
     std::span<std::byte const> data_;
   };
 
+  /** @brief Awaitable returned by shutdown_send(). Completes without suspending. */
+  class [[nodiscard]] shutdown_awaitable {
+  public:
+    [[nodiscard]] bool await_ready() const noexcept { return true; }
+
+    [[nodiscard]] bool await_suspend(std::coroutine_handle<>, async::await_context const &) const noexcept {
+      return false;
+    }
+
+    [[nodiscard]] io_result await_resume() {
+      channel_->close();
+      return {};
+    }
+
+  private:
+    friend class memory_stream;
+
+    explicit shutdown_awaitable(detail::memory_channel &channel) noexcept : channel_(&channel) {}
+
+    detail::memory_channel *channel_;
+  };
+
   memory_stream(memory_stream const &) = delete;
   memory_stream &operator=(memory_stream const &) = delete;
 
@@ -173,6 +196,9 @@ public:
 
   /** @brief Hands all of `data` to the peer. */
   [[nodiscard]] write_awaitable write_some(std::span<std::byte const> data) noexcept { return {outbound(), data}; }
+
+  /** @brief Stops sending, as close() does: see HalfClosableStream. */
+  [[nodiscard]] shutdown_awaitable shutdown_send() noexcept { return shutdown_awaitable{outbound()}; }
 
   /**
    * @brief Closes the sending side: the peer reads what was already written, then `io::error::end_of_stream`.
@@ -213,8 +239,9 @@ private:
 };
 
 static_assert(async::ContextAwaitable<memory_stream::read_awaitable>);
+static_assert(async::ContextAwaitable<memory_stream::shutdown_awaitable>);
 static_assert(async::ContextAwaitable<memory_stream::write_awaitable>);
-static_assert(ByteStream<memory_stream>);
+static_assert(HalfClosableStream<memory_stream>);
 
 /** @brief Two connected memory_stream ends. */
 [[nodiscard]] inline std::pair<memory_stream, memory_stream> make_memory_stream_pair() {

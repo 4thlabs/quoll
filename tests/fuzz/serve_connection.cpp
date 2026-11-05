@@ -41,7 +41,7 @@
 #include <quoll/fuzz/api.hpp>
 #include <quoll/fuzz/support.hpp>
 #include <quoll/io/any_stream.hpp>
-#include <quoll/io/byte_stream.hpp>
+#include <quoll/io/half_closable_stream.hpp>
 #include <quoll/server/connection_options.hpp>
 #include <quoll/server/serve_connection.hpp>
 #include <quoll/test/run.hpp>
@@ -70,11 +70,13 @@ public:
     return input_.write_some(data);
   }
 
+  [[nodiscard]] auto shutdown_send() const noexcept { return input_.shutdown_send(); }
+
 private:
   quoll::fuzz::input_stream input_;
 };
 
-static_assert(quoll::io::ByteStream<checked_stream>);
+static_assert(quoll::io::HalfClosableStream<checked_stream>);
 
 } // namespace
 

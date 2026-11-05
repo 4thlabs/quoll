@@ -45,23 +45,74 @@
 #include <quoll/asio/detail/operation.hpp>
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/async/task.hpp>
-#include <quoll/io/byte_stream.hpp>
+#include <quoll/io/half_closable_stream.hpp>
+#include <quoll/io/io_result.hpp>
 
+#include <asio/buffer.hpp>
 #include <asio/ip/tcp.hpp>
 #include <asio/ssl/stream.hpp>
+#include <asio/write.hpp>
 
+#include <openssl/bio.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+
+#include <cstddef>
+#include <memory>
+#include <optional>
+#include <string>
 #include <system_error>
 #include <utility>
 
 namespace quoll::asio {
+
+namespace detail {
+
+// TLS's closing message of a session, as bytes, nothing if it cannot give one (before the end of its handshake). Asio's
+// async_shutdown sends it, but goes on to wait for the peer's, and fails on anything else: a peer still sending has
+// to be read instead. So OpenSSL writes it to a buffer of ours, for the socket.
+[[nodiscard]] inline std::optional<std::string> closing_message(SSL *session) {
+  std::unique_ptr<BIO, decltype(&::BIO_free)> const buffer{::BIO_new(::BIO_s_mem()), &::BIO_free};
+
+  if (!buffer) {
+    return std::nullopt;
+  }
+
+  // Each of these takes over the reference it is given, and releases the one it replaces: `buffer` keeps its own.
+  BIO *const original = ::SSL_get_wbio(session);
+
+  ::BIO_up_ref(original);
+  ::BIO_up_ref(buffer.get());
+  ::SSL_set0_wbio(session, buffer.get());
+
+  auto const shutdown = ::SSL_shutdown(session);
+
+  ::SSL_set0_wbio(session, original);
+  ::ERR_clear_error();
+
+  // OpenSSL would now refuse what the peer still sends, and reading it is the point of stopping only this side. Nothing
+  // is written after this: the message left is what the flag stands for.
+  ::SSL_set_shutdown(session, ::SSL_get_shutdown(session) & ~SSL_SENT_SHUTDOWN);
+
+  if (shutdown < 0) {
+    return std::nullopt;
+  }
+
+  char *bytes = nullptr;
+  auto const size = BIO_get_mem_data(buffer.get(), &bytes);
+
+  return std::string(bytes, static_cast<std::size_t>(size));
+}
+
+} // namespace detail
 
 /**
  * @brief ByteStream over a TLS session on a connected asio TCP socket.
  *
  * Behaves as a tcp_stream, once handshake() has completed. The peer closing its side with TLS's closing message is
  * `io::error::end_of_stream`, and without it `std::errc::connection_reset`, as the data may have been cut by anyone. A
- * stop request ends what is pending, and leaves the session unusable: close the stream. Destroying it closes the socket
- * without sending TLS's closing message.
+ * stop request ends what is pending, and leaves the session unusable but for shutdown_send(): close the stream after
+ * that. shutdown_send() sends TLS's closing message, and destroying the stream without it closes without one.
  */
 class tls_stream : public detail::basic_stream<::asio::ssl::stream<::asio::ip::tcp::socket>> {
 public:
@@ -80,13 +131,48 @@ public:
     co_return detail::to_io_error(error);
   }
 
+  /**
+   * @brief Sends TLS's closing message and stops sending: see io::HalfClosableStream. What the peer sends can still be
+   * read. Reports `std::errc::not_connected` for a session that cannot send it, before the end of its handshake.
+   */
+  [[nodiscard]] async::task<io::io_result> shutdown_send() {
+    auto &state = checked_state();
+    std::optional<std::string> message;
+
+    // On the executor of the session, like everything touching it.
+    auto const [error, written] =
+        co_await detail::make_operation<std::size_t>(state.write, [&state, &message](auto handler) {
+          message = detail::closing_message(state.stream.native_handle());
+
+          if (!message) {
+            std::move(handler)(std::make_error_code(std::errc::not_connected), std::size_t{0});
+            return;
+          }
+
+          ::asio::async_write(state.stream.next_layer(), ::asio::buffer(*message), std::move(handler));
+        });
+
+    if (error) {
+      co_return io::io_result{detail::to_io_error(error), written};
+    }
+
+    auto const [closed] = co_await detail::make_operation<>(state.write, [&state](auto handler) {
+      std::error_code shutdown;
+
+      state.stream.next_layer().shutdown(::asio::ip::tcp::socket::shutdown_send, shutdown);
+      std::move(handler)(shutdown);
+    });
+
+    co_return io::io_result{detail::to_io_error(closed), 0};
+  }
+
   /** @brief The session, for what OpenSSL offers. */
   [[nodiscard]] session_type &session() noexcept { return checked_state().stream; }
 };
 
 static_assert(async::ContextAwaitable<tls_stream::read_awaitable>);
 static_assert(async::ContextAwaitable<tls_stream::write_awaitable>);
-static_assert(io::ByteStream<tls_stream>);
+static_assert(io::HalfClosableStream<tls_stream>);
 
 } // namespace quoll::asio
 
