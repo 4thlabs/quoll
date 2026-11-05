@@ -506,14 +506,24 @@ public:
         message.status, message.reason, message.version, message.fields, response_body{http::body_reader{*this}, self},
         trailers_};
 
-    if (parser_.done() && message.body.empty()) {
+    // Nothing more is due: its connection and its place go now, whether the caller reads what came or not.
+    if (parser_.done()) {
+      parser_.take_body(piece_);
+      held_piece_ = !piece_.empty();
       finish();
+    } else if (auto const failure = parser_.failure(); failure && message.body.empty()) {
+      fail(failure);
     }
 
     return response;
   }
 
   [[nodiscard]] async::task<std::optional<std::string_view>> read() {
+    if (held_piece_) {
+      held_piece_ = false;
+      co_return std::string_view{piece_};
+    }
+
     if (failure_) {
       throw std::system_error{failure_, "quoll::client: cannot read the response"};
     }
@@ -531,6 +541,10 @@ public:
       co_await async::detail::with_optional_timeout(shared_->options.response_timeout, read_piece());
     } catch (std::system_error const &thrown) {
       failed = thrown.code();
+    } catch (...) {
+      // What it had read may be lost: nothing can follow it.
+      fail(std::make_error_code(std::errc::io_error));
+      throw;
     }
 
     // A cancellation too: a stream does not take it up again, and over TLS its session is gone.
@@ -543,6 +557,9 @@ public:
     // caller is at work on that piece. What it leaves alone is the piece.
     if (parser_.done()) {
       finish();
+    } else if (auto const failure = parser_.failure()) {
+      // Past this piece: the connection can carry nothing more, and the next read says so.
+      fail(failure);
     }
 
     if (piece_.empty()) {
@@ -595,6 +612,8 @@ private:
   std::error_code failure_;
   bool request_keeps_alive_ = false;
   bool ended_ = false;
+  // What came whole with the head, for the first read.
+  bool held_piece_ = false;
 };
 
 async::task<streamed_response> stream_prepared(std::shared_ptr<transport_core> shared, prepared_request request) {

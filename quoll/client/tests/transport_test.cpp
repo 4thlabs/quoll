@@ -1863,7 +1863,7 @@ TEST_CASE("client::transport: a stream holds its place in max_connections until 
     client::transport const transport{memory_connector{server}, "example.com", 80, options};
 
     auto const first = [&]() -> task<int> {
-      auto response = co_await transport.stream(make_request(verb::get, "/hello"));
+      auto response = co_await transport.stream(make_request(verb::get, "/pieces"));
 
       order.emplace_back("first has its head");
 
@@ -2284,4 +2284,84 @@ TEST_CASE("client::transport: the place of a stream goes with its last piece, no
 
   REQUIRE(quoll::test::run(loop, reading()) == "hello|hello");
   REQUIRE(server.connections == 1);
+}
+
+TEST_CASE("client::transport: a response that came whole keeps nothing, read or not", "[client]") {
+  auto const router = make_streaming_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport_options options;
+
+    options.max_connections = 1;
+
+    client::transport const transport{memory_connector{server}, "example.com", 80, options};
+
+    // Dropped without reading, then held on to: neither holds up what follows, nor costs a connection.
+    static_cast<void>(co_await transport.stream(make_request(verb::get, "/hello")));
+
+    auto const kept = co_await transport.stream(make_request(verb::get, "/hello"));
+    auto const other = co_await transport.send(make_request(verb::get, "/hello"));
+    auto const piece = co_await kept.body.read();
+
+    co_return std::string{*piece} + "|" + other.body + (co_await kept.body.read() ? "|more" : "|end");
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "hello|hello|end");
+  REQUIRE(server.connections == 1);
+}
+
+TEST_CASE("client::transport: what is at fault after a good piece frees its place at once", "[client]") {
+  auto connections = 0;
+
+  auto const serve = [&](io::memory_stream stream) -> task<> {
+    std::string buffer;
+    http::request_parser parser;
+
+    ++connections;
+
+    auto const this_one = connections;
+
+    if (co_await http::read(stream, buffer, parser)) {
+      co_return;
+    }
+
+    std::string_view const head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+    std::string_view const rest = "4\r\nping\r\nZ\r\n";
+    std::string_view const other = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi";
+
+    if (this_one != 1) {
+      (void)co_await io::write(stream, std::as_bytes(std::span{other}));
+      co_return;
+    }
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{head}));
+
+    for (auto turn = 0; turn < 16; ++turn) {
+      co_await async::yield();
+    }
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{rest}));
+  };
+
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serve, 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport_options options;
+
+    options.max_connections = 1;
+
+    client::transport const transport{memory_connector{server}, "example.com", 80, options};
+    auto response = co_await transport.stream(make_request(verb::get, "/"));
+    auto const piece = co_await response.body.read();
+    auto seen = std::string{*piece};
+
+    // Before reading on: this waits for no place held by a connection that can do nothing more.
+    seen += "|" + (co_await transport.send(make_request(verb::get, "/"))).body;
+    co_return seen;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "ping|hi");
 }
