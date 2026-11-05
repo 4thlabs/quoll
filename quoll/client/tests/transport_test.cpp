@@ -702,10 +702,34 @@ TEST_CASE("client::transport: built from an http URL", "[client]") {
   REQUIRE(secure_with_port.secure);
 
   for (std::string_view const url :
-       {"https://", "https://example.com/api", "ftp://example.com", "example.com", "http://", "http://example.com/api",
-        "http://example.com:0", "http://example.com:65536", "http://example.com:", "http://example.com:8o",
-        "http://[::1", "http://[::1]8080", "http://[example.com]", "http://[192.0.2.1]:80", "http://user@example.com",
-        "http://exa mple.com", "http://example.com?x=1", "http://example.com:8080#top"}) {
+       {"https://", "ftp://example.com", "example.com", "http://", "http://example.com:0", "http://example.com:65536",
+        "http://example.com:", "http://example.com:8o", "http://[::1", "http://[::1]8080", "http://[example.com]",
+        "http://[192.0.2.1]:80", "http://user@example.com", "http://exa mple.com", "http://example.com?x=1",
+        "http://example.com:8080#top"}) {
+    REQUIRE_THROWS_AS(client::transport<>{url}, std::invalid_argument);
+  }
+
+  auto const with_path = parse_url("https://example.com:8443/api/v1");
+
+  REQUIRE(with_path.host == "example.com");
+  REQUIRE(with_path.port == 8443);
+  REQUIRE(with_path.prefix == "/api/v1");
+  REQUIRE(parse_url("http://example.com/api/").prefix == "/api");
+  REQUIRE(parse_url("http://example.com/a%20b").prefix == "/a%20b");
+  REQUIRE(parse_url("http://example.com/").prefix.empty());
+  REQUIRE(parse_url("http://example.com").prefix.empty());
+  REQUIRE(parse_url("http://example.com/@scope/v1:beta").prefix == "/@scope/v1:beta");
+
+  // A path that would not read as itself.
+  for (std::string_view const url :
+       {"http://example.com/a b",          "http://example.com/a/../b",      "http://example.com/..",
+        "http://example.com/./a",          "http://example.com/a//b",        "http://example.com/%zz",
+        "http://example.com/%2",           "http://example.com/a\tb",        "http://example.com/a\x7f",
+        "http://example.com/%2e%2e/admin", "http://example.com/a%2F..",      "http://example.com/a\\..\\b",
+        "http://example.com/a%00",         "http://example.com/a\"b",        "http://example.com/a<b",
+        "http://example.com/a{b",          "http://example.com/caf\xc3\xa9", "http://user@example.com/v1",
+        "http://example.com/v1?x=1",       "http://example.com/v1#top"}) {
+    CAPTURE(url);
     REQUIRE_THROWS_AS(client::transport<>{url}, std::invalid_argument);
   }
 

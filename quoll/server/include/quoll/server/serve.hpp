@@ -113,9 +113,10 @@ struct listener_ref {
  * @brief Accepts the connections of `listener` and serves each one with `router`, concurrently, on `executor`.
  *
  * Each connection runs serve_connection() as a task of its own, spawned on `executor` (a thread pool or a strand,
- * for instance, while the accept loop stays on its I/O loop). A stop request is graceful: it ends the accept loop,
- * closes the idle connections, and lets the requests under way finish, within `options.shutdown_timeout`, past which
- * they are stopped.
+ * for instance, while the accept loop stays on its I/O loop). An executor without a timer, as a thread pool has none,
+ * leaves the timeouts of `options.connection` without effect, and a slow peer can hold its connection. A stop request
+ * is graceful: it ends the accept loop, closes the idle connections, and lets the requests under way finish, within
+ * `options.shutdown_timeout`, past which they are stopped.
  *
  * Accepting stops with `std::errc::operation_canceled`: a stop request, or the application closing its listener.
  * Another accept failure goes to `options.on_accept_error`. By default it is skipped when it concerns one connection
