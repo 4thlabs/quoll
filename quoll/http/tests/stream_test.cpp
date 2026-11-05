@@ -396,3 +396,29 @@ TEST_CASE("http::read_head stops at the head, and read goes on with the body", "
 
   REQUIRE(quoll::test::run(steps()) == "ping");
 }
+
+TEST_CASE("http::write owns what it sends: its message may be a temporary, kept or not", "[http][stream]") {
+  auto [client, server] = io::make_memory_stream_pair();
+  std::string const body(1000, 'x');
+
+  auto const response_with_body = [&body] {
+    http::response response;
+
+    response.body = body;
+    return response;
+  };
+
+  auto const steps = [&]() -> task<std::string> {
+    auto pending = http::write(server, response_with_body());
+
+    check(co_await std::move(pending));
+
+    std::string buffer;
+    http::response_parser parser;
+
+    check(co_await http::read(client, buffer, parser));
+    co_return parser.release().body;
+  };
+
+  REQUIRE(run(steps()) == body);
+}

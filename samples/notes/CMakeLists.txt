@@ -4,6 +4,12 @@ target_link_libraries(quoll_notes_server PRIVATE quoll::rest quoll::runtime quol
 add_executable(quoll_notes_client client.cpp)
 target_link_libraries(quoll_notes_client PRIVATE quoll::rest quoll::runtime)
 
+# What dangles is an error in a sample too.
+if(TARGET quoll_warnings)
+  target_link_libraries(quoll_notes_server PRIVATE quoll_warnings)
+  target_link_libraries(quoll_notes_client PRIVATE quoll_warnings)
+endif()
+
 # The whole session of the client against the server, over loopback TCP.
 if(QUOLL_BUILD_TESTS AND UNIX)
   add_test(

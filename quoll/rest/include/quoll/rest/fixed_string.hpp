@@ -37,6 +37,8 @@
 #ifndef QUOLL_REST_FIXED_STRING_HPP
 #define QUOLL_REST_FIXED_STRING_HPP
 
+#include <quoll/async/lifetimebound.hpp>
+
 #include <algorithm>
 #include <cstddef>
 #include <string_view>
@@ -56,7 +58,7 @@ struct fixed_string {
   // Not explicit: a literal must convert to it in a template argument.
   consteval fixed_string(char const (&text)[N]) noexcept { std::copy_n(text, N, value); }
 
-  [[nodiscard]] constexpr std::string_view view() const noexcept { return {value, N - 1}; }
+  [[nodiscard]] constexpr std::string_view view() const noexcept QUOLL_LIFETIMEBOUND { return {value, N - 1}; }
 
   [[nodiscard]] constexpr bool operator==(fixed_string const &) const noexcept = default;
 

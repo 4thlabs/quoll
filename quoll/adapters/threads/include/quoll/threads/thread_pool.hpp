@@ -38,6 +38,7 @@
 #define QUOLL_THREADS_THREAD_POOL_HPP
 
 #include <quoll/async/executor.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/work_item.hpp>
 
 #include <atomic>
@@ -110,7 +111,7 @@ public:
 
   ~thread_pool();
 
-  [[nodiscard]] executor get_executor() noexcept { return executor{*this}; }
+  [[nodiscard]] executor get_executor() noexcept QUOLL_LIFETIMEBOUND { return executor{*this}; }
 
 private:
   void push(async::work_item &item) noexcept;

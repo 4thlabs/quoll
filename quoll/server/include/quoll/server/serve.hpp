@@ -39,6 +39,7 @@
 
 #include <quoll/async/any_executor.hpp>
 #include <quoll/async/executor.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/io/any_stream.hpp>
@@ -126,7 +127,8 @@ struct listener_ref {
  * then rethrows the failure if there was one: `listener` and `router` need to outlive the task only.
  */
 template <async::Executor Executor, io::Listener Listener>
-async::task<> serve(Executor executor, Listener &listener, http::router const &router, serve_options options = {}) {
+async::task<> serve(Executor executor, Listener &listener QUOLL_LIFETIMEBOUND,
+                    http::router const &router QUOLL_LIFETIMEBOUND, serve_options options = {}) {
   return detail::serve_accepting(async::any_executor{std::move(executor)}, detail::listener_ref{listener}, router,
                                  std::move(options));
 }
@@ -139,7 +141,8 @@ async::task<> serve(Executor executor, Listener &listener, http::router const &r
  * @endcode
  */
 template <io::Listener Listener>
-async::task<> serve(Listener &listener, http::router const &router, serve_options options = {}) {
+async::task<> serve(Listener &listener QUOLL_LIFETIMEBOUND, http::router const &router QUOLL_LIFETIMEBOUND,
+                    serve_options options = {}) {
   return detail::serve_accepting_here(detail::listener_ref{listener}, router, std::move(options));
 }
 

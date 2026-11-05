@@ -37,6 +37,7 @@
 #ifndef QUOLL_SERVER_SERVE_CONNECTION_HPP
 #define QUOLL_SERVER_SERVE_CONNECTION_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/io/any_stream.hpp>
@@ -73,22 +74,24 @@ namespace quoll::server {
  *
  * Owns `stream`; `router` and `options` outlive the task.
  */
-async::task<> serve_connection(io::any_stream stream, http::router const &router, connection_options const &options);
+async::task<> serve_connection(io::any_stream stream, http::router const &router QUOLL_LIFETIMEBOUND,
+                               connection_options const &options QUOLL_LIFETIMEBOUND);
 
 /** @brief serve_connection() with the default options. */
-async::task<> serve_connection(io::any_stream stream, http::router const &router);
+async::task<> serve_connection(io::any_stream stream, http::router const &router QUOLL_LIFETIMEBOUND);
 
 /** @brief serve_connection() on a stream an io::any_stream can hold. */
 template <io::ByteStream Stream>
   requires std::constructible_from<io::any_stream, Stream>
-async::task<> serve_connection(Stream stream, http::router const &router, connection_options const &options) {
+async::task<> serve_connection(Stream stream, http::router const &router QUOLL_LIFETIMEBOUND,
+                               connection_options const &options QUOLL_LIFETIMEBOUND) {
   return serve_connection(io::any_stream{std::move(stream)}, router, options);
 }
 
 /** @brief serve_connection() on a stream an io::any_stream can hold, with the default options. */
 template <io::ByteStream Stream>
   requires std::constructible_from<io::any_stream, Stream>
-async::task<> serve_connection(Stream stream, http::router const &router) {
+async::task<> serve_connection(Stream stream, http::router const &router QUOLL_LIFETIMEBOUND) {
   return serve_connection(io::any_stream{std::move(stream)}, router);
 }
 

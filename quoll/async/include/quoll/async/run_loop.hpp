@@ -38,6 +38,7 @@
 #define QUOLL_ASYNC_RUN_LOOP_HPP
 
 #include <quoll/async/executor.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/work_item.hpp>
 
 #include <cassert>
@@ -85,7 +86,7 @@ public:
 
   ~run_loop() { assert(head_ == nullptr && "run_loop destroyed with queued coroutines: run() it first"); }
 
-  [[nodiscard]] executor get_executor() noexcept { return executor{*this}; }
+  [[nodiscard]] executor get_executor() noexcept QUOLL_LIFETIMEBOUND { return executor{*this}; }
 
   /**
    * @brief Resumes queued coroutines, including the ones they post, until the queue is empty.

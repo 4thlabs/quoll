@@ -61,6 +61,9 @@ class local_transport {
 public:
   explicit local_transport(router const &target) noexcept : router_(target) {}
 
+  // A temporary would be gone before the first request.
+  explicit local_transport(router const &&) = delete;
+
   [[nodiscard]] async::task<response> send(request message) const { return send_to(router_, std::move(message)); }
 
 private:

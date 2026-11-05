@@ -37,6 +37,7 @@
 #ifndef QUOLL_HTTP_READ_HPP
 #define QUOLL_HTTP_READ_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/parser.hpp>
@@ -111,7 +112,9 @@ template <io::ByteStream Stream, class Message, std::predicate Reached>
  * Precondition: the parser holds no complete message.
  */
 template <io::ByteStream Stream, class Message>
-[[nodiscard]] async::task<std::error_code> read(Stream &stream, std::string &buffer, parser<Message> &message_parser) {
+[[nodiscard]] async::task<std::error_code> read(Stream &stream QUOLL_LIFETIMEBOUND,
+                                                std::string &buffer QUOLL_LIFETIMEBOUND,
+                                                parser<Message> &message_parser QUOLL_LIFETIMEBOUND) {
   assert(!message_parser.done() && "http::read() with a message not released yet");
 
   return detail::read_until(stream, buffer, message_parser, [&message_parser] { return message_parser.done(); });
@@ -122,8 +125,9 @@ template <io::ByteStream Stream, class Message>
  * with it. read() then goes on with the body.
  */
 template <io::ByteStream Stream, class Message>
-[[nodiscard]] async::task<std::error_code> read_head(Stream &stream, std::string &buffer,
-                                                     parser<Message> &message_parser) {
+[[nodiscard]] async::task<std::error_code> read_head(Stream &stream QUOLL_LIFETIMEBOUND,
+                                                     std::string &buffer QUOLL_LIFETIMEBOUND,
+                                                     parser<Message> &message_parser QUOLL_LIFETIMEBOUND) {
   assert(!message_parser.done() && "http::read_head() with a message not released yet");
 
   return detail::read_until(stream, buffer, message_parser,

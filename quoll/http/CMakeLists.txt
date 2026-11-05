@@ -70,3 +70,14 @@ quoll_declare_compile_fail_tests(
   DEPS
     quoll::http
 )
+
+# What Clang refuses, now that it is told what refers to what. Only Clang can tell.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  quoll_declare_compile_fail_tests(
+    SOURCES
+      tests/compile_fail/dangling_dispatch.cpp
+      tests/compile_fail/dangling_view.cpp
+    DEPS
+      quoll::http
+  )
+endif()

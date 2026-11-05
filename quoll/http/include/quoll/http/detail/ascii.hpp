@@ -37,6 +37,8 @@
 #ifndef QUOLL_HTTP_DETAIL_ASCII_HPP
 #define QUOLL_HTTP_DETAIL_ASCII_HPP
 
+#include <quoll/async/lifetimebound.hpp>
+
 #include <cstddef>
 #include <string_view>
 
@@ -91,7 +93,7 @@ namespace quoll::http::detail {
   return text.find_first_of(std::string_view{"\r\n\0", 3}) != std::string_view::npos;
 }
 
-[[nodiscard]] constexpr std::string_view trim(std::string_view text) noexcept {
+[[nodiscard]] constexpr std::string_view trim(std::string_view text QUOLL_LIFETIMEBOUND) noexcept {
   auto const first = text.find_first_not_of(" \t");
 
   if (first == std::string_view::npos) {
