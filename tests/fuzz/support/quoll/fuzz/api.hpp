@@ -157,6 +157,21 @@ struct service {
                      rest::validators([](rest::credential<rest::bearer_auth> const &) { return true; },
                                       [](rest::credential<rest::api_key<"X-Api-Key">> const &) { return true; },
                                       [](rest::credential<rest::api_key_query<"key">> const &) { return true; }));
+    // A response in pieces, of a length the path says, right or wrong, or in chunks.
+    router.get("/out-pieces/{length}", [](std::string length) {
+      http::response response;
+
+      if (length != "chunked") {
+        response.fields.add("Content-Length", length);
+      }
+
+      response.body_writer = [](http::body_stream out) -> async::task<> {
+        co_await out.write("some");
+        co_await out.write("");
+        co_await out.write("thing");
+      };
+      return response;
+    });
     // A body in pieces, read to its end, or left halfway when its first piece asks for it.
     router.post("/in-pieces/{name}", [](std::string name, http::body_reader body) -> async::task<http::response> {
       http::response response;

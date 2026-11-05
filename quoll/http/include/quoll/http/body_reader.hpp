@@ -52,6 +52,17 @@ namespace detail {
 
 [[nodiscard]] async::task<std::optional<std::string_view>> no_body();
 
+// The body of a request already whole, as one piece.
+class whole_body {
+public:
+  explicit whole_body(std::string_view body QUOLL_LIFETIMEBOUND) noexcept : body_(body) {}
+
+  [[nodiscard]] async::task<std::optional<std::string_view>> read();
+
+private:
+  std::string_view body_;
+};
+
 } // namespace detail
 
 /**
@@ -79,9 +90,11 @@ namespace detail {
  * as a handler's own timeout is: reading may go on after it, and the handler's response stands. Stopping during `100
  * Continue` is a failure, as what did not leave whole leaves a stream nothing more can be written to.
  *
- * Copied freely, it refers to what reads the body, valid until the handler's task ends. A default-constructed one has
- * nothing to read. One read() at a time, and a body is read once: a middleware calling `next` again finds what is left
- * of it. The trailers of a body in pieces are not handed over: `request.trailers` is empty.
+ * Copied freely, it refers to what reads the body, valid until the response has left: a body_writer may read it, as an
+ * echo or a proxy does, if it came with http::local_transport or a connection, and not from a dispatch() of your own. A
+ * default-constructed one has nothing to read. One read() at a time, and a body is read once: a middleware calling
+ * `next` again finds what is left of it. The trailers of a body in pieces are not handed over: `request.trailers` is
+ * empty.
  *
  * Thread safety: none. What reads through it does so on the executor of the handler's task: moved to another, without a
  * timer, it has no read timeout.

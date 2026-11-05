@@ -37,6 +37,7 @@
 #ifndef QUOLL_HTTP_RESPONSE_HPP
 #define QUOLL_HTTP_RESPONSE_HPP
 
+#include <quoll/http/body_stream.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/version.hpp>
@@ -58,6 +59,9 @@ struct response {
 
   /** @brief Fields sent after a chunked body. */
   http::fields trailers;
+
+  /** @brief Writes the body in pieces, rather than `body`, which stays empty: see http::body_writer. */
+  http::body_writer body_writer{};
 };
 
 } // namespace quoll::http
