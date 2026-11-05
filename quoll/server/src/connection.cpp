@@ -261,6 +261,13 @@ async::task<request_read> read_whole_request(io::any_stream &stream, std::string
   co_return co_await within_read_timeout(http::read(stream, buffer, parser), options);
 }
 
+// What reading a body throws through a handler, told apart from what a handler throws on its own by its type, whatever
+// its code.
+class body_not_read : public std::system_error {
+public:
+  using std::system_error::system_error;
+};
+
 // What a handler taking an http::body_reader reads through, one read timeout per piece: a transfer takes as long as it
 // keeps coming. It remembers what stopped it, which says how the request is answered, whatever the handler made of it.
 class streamed_body {
@@ -271,12 +278,11 @@ public:
 
   [[nodiscard]] async::task<std::optional<std::string_view>> read() {
     if (failure_) {
-      throw std::system_error{failure_->error, "quoll::server: cannot read the body"};
+      throw body_not_read{failure_->error, "quoll::server: cannot read the body"};
     }
 
-    if (ended_) {
-      co_return std::nullopt;
-    }
+    // What a read cut short leaves is no new piece.
+    piece_.clear();
 
     if (continue_owed_) {
       continue_owed_ = false;
@@ -287,7 +293,7 @@ public:
 
     if (read.error == std::errc::operation_canceled) {
       // Whoever cancels it, as a handler's own timeout does, says what happens next: the body is not at fault.
-      throw std::system_error{read.error, "quoll::server: reading the body was stopped"};
+      throw body_not_read{read.error, "quoll::server: reading the body was stopped"};
     }
 
     if (read.error) {
@@ -295,14 +301,13 @@ public:
 
       // What came before it is the handler's: the failure is for the next read.
       if (piece_.empty()) {
-        throw std::system_error{read.error, "quoll::server: cannot read the body"};
+        throw body_not_read{read.error, "quoll::server: cannot read the body"};
       }
 
       co_return std::string_view{piece_};
     }
 
     if (piece_.empty()) {
-      ended_ = true;
       co_return std::nullopt;
     }
 
@@ -312,6 +317,7 @@ public:
   [[nodiscard]] std::optional<request_read> const &failure() const noexcept { return failure_; }
 
 private:
+  // Stopped or not, a `100 Continue` that did not leave whole leaves a stream nothing more can be written to.
   async::task<> send_continue() {
     std::error_code sent;
 
@@ -323,7 +329,7 @@ private:
 
     if (sent) {
       failure_ = request_read{sent};
-      throw std::system_error{sent, "quoll::server: cannot ask for the body"};
+      throw body_not_read{sent, "quoll::server: cannot ask for the body"};
     }
   }
 
@@ -334,7 +340,6 @@ private:
   std::string piece_;
   std::optional<request_read> failure_;
   bool continue_owed_;
-  bool ended_ = false;
 };
 
 // The router's response, or 500 if a handler or a middleware threw, reported to the application's callback if it gave
@@ -344,13 +349,8 @@ async::task<http::response> respond(http::router const &router, http::request re
   try {
     co_return co_await router.dispatch(std::move(request),
                                        body != nullptr ? http::body_reader{*body} : http::body_reader{});
-  } catch (std::system_error const &thrown) {
-    // A body that could not be read is no failure of the handler's, which only let it through.
-    auto const of_the_body = body != nullptr && body->failure() && thrown.code() == body->failure()->error;
-
-    if (options.on_handler_error && !of_the_body) {
-      options.on_handler_error(std::current_exception());
-    }
+  } catch (body_not_read const &) {
+    // No failure of the handler's, which only let it through.
   } catch (...) {
     if (options.on_handler_error) {
       options.on_handler_error(std::current_exception());

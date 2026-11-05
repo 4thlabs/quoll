@@ -121,7 +121,7 @@ public:
    * A parameter that cannot be read as its type answers 400. The route is named after `path`, as next::route() says.
    * The handler says the types: the only one a path says is `{name:path}`, for the rest of it. The query is in
    * `request.target`, or in the route_match of add(). A last parameter of type http::body_reader reads the body of the
-   * request in pieces, rather than `request.body`: see body_reader.
+   * request in pieces, rather than `request.body`, empty for the middlewares too: see body_reader.
    */
   template <class F>
   void get(detail::checked_path<std::type_identity_t<F>> path, F target) {

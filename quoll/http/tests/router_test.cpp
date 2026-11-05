@@ -991,3 +991,68 @@ TEST_CASE("router: what dispatch() is given to read the body reaches the handler
 
   REQUIRE(answered->body == "|from the stream");
 }
+
+TEST_CASE("router: a body read through next twice is read once, with or without a stream", "[http][router]") {
+  http::router router;
+
+  router.post("/up", [](http::body_reader body) -> task<http::response> {
+    http::response response;
+
+    while (auto const piece = co_await body.read()) {
+      response.body += *piece;
+    }
+
+    co_return response;
+  });
+  router.use([](http::request request, http::next const &next) -> task<http::response> {
+    auto first = co_await next(request);
+    auto second = co_await next(std::move(request));
+
+    first.body += "|" + second.body;
+    co_return first;
+  });
+
+  http::request message;
+
+  message.method = http::verb::post;
+  message.target = "/up";
+  message.body = "abc";
+
+  auto const answered = quoll::test::run(router.dispatch(std::move(message)));
+
+  REQUIRE(answered->body == "abc|");
+}
+
+TEST_CASE("router: a HEAD request reads its body as the GET route it goes to does", "[http][router]") {
+  http::router router;
+
+  router.get("/a", [](http::body_reader) { return http::response{}; });
+  router.get("/b", [](http::request) { return http::response{}; });
+
+  http::request message;
+
+  message.method = http::verb::head;
+  message.target = "/a";
+  REQUIRE(router.reads_body_in_pieces(message));
+
+  message.target = "/b";
+  REQUIRE_FALSE(router.reads_body_in_pieces(message));
+}
+
+TEST_CASE("body_reader: target() recovers what it reads through", "[http][router]") {
+  struct first_source {
+    [[nodiscard]] task<std::optional<std::string_view>> read() { co_return std::nullopt; }
+  };
+
+  struct second_source {
+    [[nodiscard]] task<std::optional<std::string_view>> read() { co_return std::nullopt; }
+  };
+
+  first_source source;
+  http::body_reader const reader{source};
+  http::body_reader const nothing;
+
+  REQUIRE(reader.target<first_source>() == &source);
+  REQUIRE(reader.target<second_source>() == nullptr);
+  REQUIRE(nothing.target<first_source>() == nullptr);
+}

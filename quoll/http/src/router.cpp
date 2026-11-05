@@ -336,6 +336,26 @@ void router::add_route(verb method, std::string_view path, std::string name, han
   routes_.push_back(entry{method, std::move(segments), std::move(name), std::move(target), body_in_pieces});
 }
 
+namespace {
+
+class whole_body {
+public:
+  explicit whole_body(std::string_view body) noexcept : body_(body) {}
+
+  [[nodiscard]] async::task<std::optional<std::string_view>> read() {
+    if (body_.empty()) {
+      co_return std::nullopt;
+    }
+
+    co_return std::exchange(body_, std::string_view{});
+  }
+
+private:
+  std::string_view body_;
+};
+
+} // namespace
+
 namespace detail {
 
 struct resolved_route {
@@ -464,8 +484,11 @@ detail::resolved_route router::resolve(request const &message) const {
 
 bool router::reads_body_in_pieces(request const &head) const {
   // Resolving allocates, and dispatch() does it again: only for what may be such a route.
-  auto const may_be = std::ranges::any_of(
-      routes_, [&head](entry const &route) { return route.body_in_pieces && route.method == head.method; });
+  auto const may_be = std::ranges::any_of(routes_, [&head](entry const &route) {
+    // A HEAD request may go to the GET route.
+    return route.body_in_pieces &&
+           (route.method == head.method || (head.method == verb::head && route.method == verb::get));
+  });
 
   return may_be && resolve(head).body_in_pieces;
 }
@@ -473,7 +496,12 @@ bool router::reads_body_in_pieces(request const &head) const {
 async::task<response> router::dispatch(request message, body_reader reader) const {
   auto resolved = resolve(message);
 
-  resolved.match.reader = reader;
+  // With nothing reading it from a stream, a request's body already whole is one piece: here rather than in the route,
+  // so that a middleware calling next again finds what is left of it, as it does with a stream.
+  auto const body = resolved.body_in_pieces && !reader ? std::exchange(message.body, {}) : std::string{};
+  whole_body whole{body};
+
+  resolved.match.reader = reader || !resolved.body_in_pieces ? reader : body_reader{whole};
 
   // Nothing else reads what routing found, and a middleware may call next again: only here can it be moved.
   if (middlewares_.empty() && resolved.target != nullptr) {

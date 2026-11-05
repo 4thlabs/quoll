@@ -37,6 +37,7 @@
 #ifndef QUOLL_HTTP_BODY_READER_HPP
 #define QUOLL_HTTP_BODY_READER_HPP
 
+#include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 
@@ -73,11 +74,14 @@ namespace detail {
  * read() gives a view, valid up to the next read(), and nothing at the end of the body, as often as it is asked. What
  * prevents reading throws std::system_error, as a body cut short or too large (http::error), or a stream that failed:
  * left to run through the handler, it answers as a request refused as it is read would. Failing once, read() goes on
- * failing.
+ * failing, but for a cancellation, as a handler's own timeout is: reading may go on after it.
  *
  * Copied freely, it refers to what reads the body, valid until the handler's task ends. A default-constructed one has
  * nothing to read. One read() at a time, and a body is read once: a middleware calling `next` again finds what is left
  * of it. The trailers of a body in pieces are not handed over: `request.trailers` is empty.
+ *
+ * Thread safety: none. What reads through it does so on the executor of the handler's task: moved to another, without a
+ * timer, it has no read timeout.
  */
 class body_reader {
 public:
@@ -89,11 +93,18 @@ public:
       { source.read() } -> std::same_as<async::task<std::optional<std::string_view>>>;
     }
   explicit body_reader(Source &source QUOLL_LIFETIMEBOUND) noexcept
-      : source_(&source), read_([](void *erased) { return static_cast<Source *>(erased)->read(); }) {}
+      : source_(&source), read_([](void *erased) { return static_cast<Source *>(erased)->read(); }),
+        type_(async::detail::type_id_of<Source>()) {}
 
   /** @brief The next piece of the body, or nothing at its end. */
   [[nodiscard]] async::task<std::optional<std::string_view>> read() const {
     return read_ != nullptr ? read_(source_) : detail::no_body();
+  }
+
+  /** @brief What it reads through if it is exactly a `Source`, otherwise `nullptr`. */
+  template <class Source>
+  [[nodiscard]] Source *target() const noexcept {
+    return read_ != nullptr && type_ == async::detail::type_id_of<Source>() ? static_cast<Source *>(source_) : nullptr;
   }
 
   /** @brief Whether it reads something. */
@@ -102,6 +113,7 @@ public:
 private:
   void *source_ = nullptr;
   async::task<std::optional<std::string_view>> (*read_)(void *) = nullptr;
+  async::detail::type_id type_{};
 };
 
 } // namespace quoll::http

@@ -37,7 +37,6 @@
 #ifndef QUOLL_HTTP_DETAIL_TYPED_ROUTE_HPP
 #define QUOLL_HTTP_DETAIL_TYPED_ROUTE_HPP
 
-#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/body_reader.hpp>
 #include <quoll/http/detail/number.hpp>
@@ -140,17 +139,6 @@ inline constexpr std::size_t body_readers_in<std::tuple<Arguments...>> =
 template <class F>
 inline constexpr bool reads_body_in_pieces = body_readers_in<typename signature_of<F>::arguments> != 0;
 
-// The body of a request already whole, as one piece: what a handler reads when nothing streams it to it.
-class whole_body {
-public:
-  explicit whole_body(std::string_view body QUOLL_LIFETIMEBOUND) noexcept : body_(body) {}
-
-  [[nodiscard]] async::task<std::optional<std::string_view>> read();
-
-private:
-  std::string_view body_;
-};
-
 template <class Tuple>
 struct takes_request : std::false_type {};
 
@@ -213,9 +201,9 @@ struct no_request {};
 
 // What a parameter of a handler is: read from `match`, or what reads the body.
 template <class T, std::size_t Index>
-[[nodiscard]] std::optional<T> read_parameter(route_match &match, body_reader reader) {
+[[nodiscard]] std::optional<T> read_parameter(route_match &match) {
   if constexpr (std::same_as<T, body_reader>) {
-    return reader;
+    return match.reader;
   } else {
     return read_path_parameter<T>(match.params.at(Index));
   }
@@ -225,14 +213,8 @@ template <class T, std::size_t Index>
 // ended, so that references and views are fine in a handler, a coroutine too.
 template <class Result, class F, class Request, class... Parameters, std::size_t... Index>
 async::task<response> call_typed(F &target, request message, route_match match, std::index_sequence<Index...>) {
-  // Nothing streams it to it, when a router is called directly: what it reads is the body, which `message` no longer
-  // holds.
-  auto const body = (is_body_reader<Parameters> || ...) ? std::exchange(message.body, {}) : std::string{};
-  whole_body whole{body};
-  auto const reader = match.reader ? match.reader : body_reader{whole};
-
   std::tuple<std::optional<std::remove_cvref_t<Parameters>>...> values{
-      read_parameter<std::remove_cvref_t<Parameters>, Index>(match, reader)...};
+      read_parameter<std::remove_cvref_t<Parameters>, Index>(match)...};
 
   if (!(std::get<Index>(values).has_value() && ...)) {
     co_return status_response(status::bad_request);

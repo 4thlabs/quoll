@@ -1538,3 +1538,35 @@ TEST_CASE("serve_connection: a peer gone when the body is asked for", "[server]"
   REQUIRE(outcome);
   REQUIRE(failures == 0);
 }
+
+TEST_CASE("serve_connection: a stop during the reading of a body is no failure of the handler", "[server][timer]") {
+  quoll::test::virtual_time time;
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  auto failures = 0;
+  std::stop_source stopping;
+  connection_options options;
+
+  options.on_handler_error = [&](std::exception_ptr const &) { ++failures; };
+
+  auto const peer = [&](io::memory_stream stream) -> task<bool> {
+    std::string const sent = "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 8\r\n\r\nping";
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{sent}));
+    co_await quoll::async::sleep_for(1s);
+    stopping.request_stop();
+    co_return true;
+  };
+
+  auto const serving = [&](io::memory_stream stream) -> task<bool> {
+    co_await quoll::async::detail::stop_scope<void>{quoll::server::serve_connection(std::move(stream), router, options),
+                                                    stopping.get_token()};
+    co_return true;
+  };
+
+  auto const outcome =
+      quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peer(std::move(client))));
+
+  REQUIRE(outcome);
+  REQUIRE(failures == 0);
+}

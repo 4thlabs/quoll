@@ -53,7 +53,10 @@ struct route_match {
   std::vector<std::string> params;
   /** @brief The query string, after `?` and still encoded; empty without one. */
   std::string query;
-  /** @brief What reads the body, when what serves the request left it unread: see router::reads_body_in_pieces(). */
+  /**
+   * @brief What reads the body, on the route of a handler taking an http::body_reader: nothing on a route of
+   * router::add(), whose request comes whole.
+   */
   body_reader reader{};
 };
 
