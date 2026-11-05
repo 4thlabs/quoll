@@ -83,6 +83,7 @@ http::request make_request(http::verb method, std::string target, std::string bo
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/http/body_stream.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/io/any_listener.hpp>
@@ -140,6 +141,18 @@ http::router make_router() {
 
     response.body = "hello";
     co_return response;
+  });
+  router.get("/pieces", [](http::request) {
+    http::response response;
+
+    response.body_writer = [](http::body_stream out) -> task<> {
+      std::string const piece(std::size_t{4} * 1024, 'x');
+
+      for (auto index = 0; index < 256; ++index) {
+        co_await out.write(piece);
+      }
+    };
+    return response;
   });
   router.add(http::verb::post, "/echo", "echo", [](http::request request, http::route_match) -> task<http::response> {
     http::response response;
@@ -358,6 +371,25 @@ TEST_CASE("TLS: requests reuse a connection kept alive", "[tls][asio][runtime]")
   };
 
   REQUIRE(run_task(with_server<std::string>(server_certificate(), call, {}, &accepted)) == "hello");
+  REQUIRE(accepted == 1);
+}
+
+TEST_CASE("TLS: a body read in pieces, on a connection then reused", "[tls][asio][runtime]") {
+  int accepted = 0;
+
+  std::function<task<std::string>(std::string)> const call = [](std::string url) -> task<std::string> {
+    client::transport<> const transport{url, trusting_the_authority()};
+    auto response = co_await transport.stream(make_request(http::verb::get, "/pieces"));
+    std::size_t size = 0;
+
+    while (auto const piece = co_await response.body.read()) {
+      size += piece->size();
+    }
+
+    co_return std::to_string(size) + " " + (co_await transport.send(make_request(http::verb::get, "/hello"))).body;
+  };
+
+  REQUIRE(run_task(with_server<std::string>(server_certificate(), call, {}, &accepted)) == "1048576 hello");
   REQUIRE(accepted == 1);
 }
 

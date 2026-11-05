@@ -462,7 +462,7 @@ public:
     parser_->set_body_streaming([](http::response const &head) { return !http::is_informational(head.status); });
 
     for (;;) {
-      if (auto const error = co_await http::read_head(connection, buffer_, *parser_)) {
+      if (auto const error = co_await http::read(connection, buffer_, *parser_)) {
         if (retry_if_closed && interim == 0 && closed_meanwhile(error)) {
           co_return false;
         }
@@ -473,17 +473,6 @@ public:
       auto const status = parser_->head().status;
 
       if (http::is_informational(status) && !parser_->upgrade()) {
-        // Counted once whole, as send() does, for what closes before its end to be tried again as well.
-        if (!parser_->done()) {
-          if (auto const error = co_await http::read(connection, buffer_, *parser_)) {
-            if (retry_if_closed && interim == 0 && closed_meanwhile(error)) {
-              co_return false;
-            }
-
-            throw std::system_error{error, "quoll::client: cannot read the response"};
-          }
-        }
-
         if (++interim > max_interim_responses) {
           throw std::system_error{http::error::bad_message, "quoll::client: too many interim responses"};
         }
@@ -511,12 +500,18 @@ public:
         message.status, message.reason, message.version, message.fields, response_body{http::body_reader{*this}, self},
         trailers_};
 
-    // Nothing more is due: its connection and its place go now, whether the caller reads what came or not.
-    if (parser_->done()) {
+    // Nothing more can come: its connection and its place go now, whether the caller reads what came or not, and
+    // however the bytes were cut.
+    auto const failure = parser_->failure();
+
+    if (parser_->done() || failure) {
       parser_->take_body(piece_);
       held_piece_ = !piece_.empty();
+    }
+
+    if (parser_->done()) {
       finish();
-    } else if (auto const failure = parser_->failure(); failure && message.body.empty()) {
+    } else if (failure) {
       fail(failure);
     }
 

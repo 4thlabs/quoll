@@ -176,7 +176,8 @@ public:
 
   /**
    * @brief Sends `request` and produces its response once its head has come: its body is read in pieces, for what
-   * memory cannot or need not hold, up to `limits.max_streamed_body_size`. Connections and retries are as in send(). A
+   * memory cannot or need not hold, up to `limits.max_streamed_body_size`. Connections and retries are as in send() up
+   * to the head: from there, a connection that closes is a failure of `body.read()`, as what came is the caller's. A
    * 3xx response is a result, whatever `max_redirects` says, as its body is for the caller to read or drop.
    *
    * @throws std::invalid_argument here, as send() does.

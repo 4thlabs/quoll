@@ -1908,6 +1908,27 @@ TEST_CASE("client::transport: a stream holds its place in max_connections until 
   REQUIRE(order == std::vector<std::string>{"first has its head", "first ended", "second answered"});
 }
 
+namespace {
+
+// A connector to a router on a virtual time, whose timeouts then jump.
+class timed_connector {
+public:
+  timed_connector(virtual_time &clock, http::router const &routes) noexcept : clock_(&clock), routes_(&routes) {}
+
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    auto [client_end, server_end] = io::make_memory_stream_pair();
+
+    co_spawn(clock_->get_executor(), quoll::server::serve_connection(std::move(server_end), *routes_), async::detached);
+    co_return io::any_stream{std::move(client_end)};
+  }
+
+private:
+  virtual_time *clock_;
+  http::router const *routes_;
+};
+
+} // namespace
+
 TEST_CASE("client::transport: a body in pieces has a response timeout per piece", "[client][timer]") {
   virtual_time time;
   http::router router;
@@ -1925,23 +1946,6 @@ TEST_CASE("client::transport: a body in pieces has a response timeout per piece"
     };
     return response;
   });
-
-  class timed_connector {
-  public:
-    timed_connector(virtual_time &clock, http::router const &routes) noexcept : clock_(&clock), routes_(&routes) {}
-
-    [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
-      auto [client_end, server_end] = io::make_memory_stream_pair();
-
-      co_spawn(clock_->get_executor(), quoll::server::serve_connection(std::move(server_end), *routes_),
-               async::detached);
-      co_return io::any_stream{std::move(client_end)};
-    }
-
-  private:
-    virtual_time *clock_;
-    http::router const *routes_;
-  };
 
   auto const reading = [&]() -> task<std::string> {
     client::transport const transport{timed_connector{time, router}, "example.com", 80, {.response_timeout = 3s}};
@@ -2089,23 +2093,6 @@ TEST_CASE("client::transport: a cancellation ends the reading, as a stream does 
   });
 
   auto const reading = [&]() -> task<std::string> {
-    class timed_connector {
-    public:
-      timed_connector(virtual_time &clock, http::router const &routes) noexcept : clock_(&clock), routes_(&routes) {}
-
-      [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
-        auto [client_end, server_end] = io::make_memory_stream_pair();
-
-        co_spawn(clock_->get_executor(), quoll::server::serve_connection(std::move(server_end), *routes_),
-                 async::detached);
-        co_return io::any_stream{std::move(client_end)};
-      }
-
-    private:
-      virtual_time *clock_;
-      http::router const *routes_;
-    };
-
     client::transport const transport{timed_connector{time, router}, "example.com", 80, {.response_timeout = 0s}};
     auto response = co_await transport.stream(make_request(verb::get, "/slowly"));
     std::string seen = std::string{*co_await response.body.read()};
@@ -2328,6 +2315,7 @@ TEST_CASE("client::transport: a response that came whole keeps nothing, read or 
 }
 
 TEST_CASE("client::transport: what is at fault after a good piece frees its place at once", "[client]") {
+  auto const in_one_read = GENERATE(false, true);
   auto connections = 0;
 
   auto const serve = [&](io::memory_stream stream) -> task<> {
@@ -2348,6 +2336,13 @@ TEST_CASE("client::transport: what is at fault after a good piece frees its plac
 
     if (this_one != 1) {
       (void)co_await io::write(stream, std::as_bytes(std::span{other}));
+      co_return;
+    }
+
+    if (in_one_read) {
+      auto const whole = std::string{head} + std::string{rest};
+
+      (void)co_await io::write(stream, std::as_bytes(std::span{whole}));
       co_return;
     }
 
@@ -2375,10 +2370,18 @@ TEST_CASE("client::transport: what is at fault after a good piece frees its plac
 
     // Before reading on: this waits for no place held by a connection that can do nothing more.
     seen += "|" + (co_await transport.send(make_request(verb::get, "/"))).body;
+
+    try {
+      static_cast<void>(co_await response.body.read());
+      seen += "|no failure";
+    } catch (std::system_error const &) {
+      seen += "|failed";
+    }
+
     co_return seen;
   };
 
-  REQUIRE(quoll::test::run(loop, reading()) == "ping|hi");
+  REQUIRE(quoll::test::run(loop, reading()) == "ping|hi|failed");
 }
 
 TEST_CASE("client::transport: stream() completes with the head, before its body has come", "[client]") {
@@ -2571,4 +2574,105 @@ TEST_CASE("client::transport: a response kept past its end does not keep its tra
   };
 
   REQUIRE(quoll::test::run(loop, reading()) == true);
+}
+
+TEST_CASE("client::transport: stream() has no limit on a body by default", "[client]") {
+  auto const got = stream_from(answering({"HTTP/1.1 200 OK\r\nContent-Length: 5368709120\r\n\r\nping"}), "/");
+
+  REQUIRE(got.body == "ping");
+  REQUIRE(got.error == http::error::partial_message);
+}
+
+TEST_CASE("client::transport: stream() keeps and takes an idle connection as send() does", "[client]") {
+  // Each connection answers twice, for one kept to be seen to carry the second request rather than close under it.
+  auto const whole = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi";
+  auto const twice = [&](auto serve, verb method, client::transport_options options = {}, std::string field = {}) {
+    async::run_loop loop;
+    memory_server server{loop.get_executor(), serve, 0, {}, {}};
+
+    auto const reading = [&]() -> task<std::string> {
+      client::transport const transport{memory_connector{server}, "example.com", 80, options};
+      auto first = make_request(verb::get, "/");
+
+      if (!field.empty()) {
+        first.fields.add("Connection", field);
+      }
+
+      auto ended = co_await transport.stream(std::move(first));
+
+      while (co_await ended.body.read()) {
+      }
+
+      // The other end has had the time to go, if it goes.
+      for (auto turn = 0; turn < 16; ++turn) {
+        co_await async::yield();
+      }
+
+      auto response = co_await transport.stream(make_request(method, "/"));
+      auto const piece = co_await response.body.read();
+
+      co_return std::string{*piece};
+    };
+
+    REQUIRE(quoll::test::run(loop, reading()) == "hi");
+    return server.connections;
+  };
+
+  SECTION("a GET takes it") { REQUIRE(twice(answering({whole, whole}, true), verb::get) == 1); }
+
+  SECTION("a POST does not, as what it does may not be done twice") {
+    REQUIRE(twice(answering({whole, whole}, true), verb::post) == 2);
+  }
+
+  SECTION("one the server closed is replaced") { REQUIRE(twice(answering({whole}), verb::get) == 2); }
+
+  SECTION("none is kept when none may be") {
+    REQUIRE(twice(answering({whole, whole}, true), verb::get, {.max_idle_connections = 0}) == 2);
+  }
+
+  SECTION("none is kept when the request closes it") {
+    REQUIRE(twice(answering({whole, whole}, true), verb::get, {}, "close") == 2);
+  }
+
+  SECTION("none is kept when the response closes it") {
+    auto const closing = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi";
+
+    REQUIRE(twice(answering({closing, closing}, true), verb::get) == 2);
+  }
+}
+
+TEST_CASE("client::transport: what stops stream() before the head", "[client][timer]") {
+  virtual_time time;
+  http::router router;
+
+  router.get("/silent", [](http::request) -> task<http::response> {
+    co_await async::sleep_for(1h);
+    co_return http::response{};
+  });
+
+  auto const failure_of = [&](client::transport_options options, auto wrap) -> task<std::error_code> {
+    client::transport const transport{timed_connector{time, router}, "example.com", 80, options};
+
+    try {
+      static_cast<void>(co_await wrap(transport.stream(make_request(verb::get, "/silent"))));
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  SECTION("its response timeout") {
+    auto const untouched = [](auto started) { return started; };
+
+    REQUIRE(quoll::test::run(time, failure_of({.response_timeout = 3s}, untouched)) ==
+            std::make_error_code(std::errc::timed_out));
+  }
+
+  SECTION("a timeout of the caller's, that is a stop request") {
+    auto const in_time = [](auto started) { return async::with_timeout(1s, std::move(started)); };
+
+    REQUIRE(quoll::test::run(time, failure_of({.response_timeout = 0s}, in_time)) ==
+            std::make_error_code(std::errc::timed_out));
+  }
 }
