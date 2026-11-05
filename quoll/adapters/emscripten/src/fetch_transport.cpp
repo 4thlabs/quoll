@@ -40,7 +40,9 @@
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/work_item.hpp>
+#include <quoll/client/streamed_response.hpp>
 #include <quoll/emscripten/detail/js.hpp>
+#include <quoll/http/body_reader.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/check.hpp>
 #include <quoll/http/fields.hpp>
@@ -53,6 +55,7 @@
 #include <array>
 #include <coroutine>
 #include <exception>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -104,6 +107,84 @@ constexpr std::array<std::string_view, 3> fetch_decoded_fields{
   return packed;
 }
 
+// The JavaScript entry of a fetch, for as long as a body is to be read from it. Going, it aborts what is left of the
+// fetch and frees the entry. Thread safety: none, on the event loop's thread.
+class fetch_entry {
+public:
+  fetch_entry() noexcept = default;
+
+  explicit fetch_entry(int id) noexcept : id_(id) {}
+
+  fetch_entry(fetch_entry const &) = delete;
+  fetch_entry &operator=(fetch_entry const &) = delete;
+
+  fetch_entry(fetch_entry &&other) noexcept : id_(std::exchange(other.id_, 0)) {}
+
+  fetch_entry &operator=(fetch_entry &&other) noexcept {
+    if (this != &other) {
+      reset();
+      id_ = std::exchange(other.id_, 0);
+    }
+
+    return *this;
+  }
+
+  ~fetch_entry() { reset(); }
+
+  // 0 once there is none: JavaScript counts from 1.
+  [[nodiscard]] int id() const noexcept { return id_; }
+
+  // Gives up on the fetch.
+  void reset() noexcept {
+    if (id_ != 0) {
+      quoll_emscripten_fetch_abort(id_);
+      finish();
+    }
+  }
+
+  // The fetch is over: there is nothing to abort.
+  void finish() noexcept {
+    if (id_ != 0) {
+      quoll_emscripten_fetch_release(std::exchange(id_, 0));
+    }
+  }
+
+private:
+  int id_ = 0;
+};
+
+// What the operations waiting on a fetch give a stop request to.
+struct aborter {
+  int id;
+
+  void operator()() const noexcept { quoll_emscripten_fetch_abort(id); }
+};
+
+[[nodiscard]] std::string fetch_bytes(int id, fetch_part which) {
+  std::string bytes(quoll_emscripten_fetch_size(id, static_cast<int>(which)), '\0');
+
+  quoll_emscripten_fetch_copy(id, static_cast<int>(which), bytes.data());
+  return bytes;
+}
+
+// What an aborted or failed fetch throws. `message`: why it failed, as JavaScript tells.
+[[nodiscard]] std::system_error fetch_failure(fetch_outcome outcome, std::string const &url,
+                                              std::string const &message) {
+  if (outcome == fetch_outcome::aborted) {
+    return std::system_error{std::make_error_code(std::errc::operation_canceled),
+                             "quoll::emscripten::fetch_transport: " + url};
+  }
+
+  return std::system_error{std::make_error_code(std::errc::io_error),
+                           "quoll::emscripten::fetch_transport: " + url + ": " + message};
+}
+
+// What a fetch_operation gives: its response and, when its body is to be read in pieces, what reads it.
+struct fetched {
+  http::response response;
+  fetch_entry entry;
+};
+
 // A fetch() awaited by a coroutine. The completion, run by the event loop, reads the response out of JavaScript and
 // posts the coroutine back to its executor. A stop request aborts the fetch, through its AbortController. Everything
 // runs on the event loop's thread: the operation is not thread-safe.
@@ -112,9 +193,9 @@ constexpr std::array<std::string_view, 3> fetch_decoded_fields{
 // resumes. Movable until it suspends, so that it can be co_await-ed as a temporary.
 class fetch_operation {
 public:
-  // `fields`: the request's fields, packed by pack_fields().
-  fetch_operation(std::string url, std::string fields, http::request const &request)
-      : url_(std::move(url)), fields_(std::move(fields)), request_(&request) {}
+  // `fields`: the request's fields, packed by pack_fields(). `streaming`: the body is left to be read in pieces.
+  fetch_operation(std::string url, std::string fields, http::request const &request, bool streaming)
+      : url_(std::move(url)), fields_(std::move(fields)), request_(&request), streaming_(streaming) {}
 
   fetch_operation(fetch_operation const &) = delete;
   fetch_operation &operator=(fetch_operation const &) = delete;
@@ -122,7 +203,8 @@ public:
 
   // Only moved before it suspends: nothing is pending yet.
   fetch_operation(fetch_operation &&other) noexcept
-      : url_(std::move(other.url_)), fields_(std::move(other.fields_)), request_(other.request_) {}
+      : url_(std::move(other.url_)), fields_(std::move(other.fields_)), request_(other.request_),
+        streaming_(other.streaming_) {}
 
   ~fetch_operation() = default;
 
@@ -142,44 +224,33 @@ public:
 
     auto const id =
         quoll_emscripten_fetch_start(url_.c_str(), method.data(), method.size(), fields_.data(), fields_.size(),
-                                     request_->body.data(), request_->body.size(), &complete, this);
+                                     request_->body.data(), request_->body.size(), streaming_ ? 1 : 0, &complete, this);
 
     stop_callback_.emplace(context.stop_token, aborter{id});
     return true;
   }
 
-  [[nodiscard]] http::response await_resume() {
+  [[nodiscard]] fetched await_resume() {
     stop_callback_.reset();
 
     if (exception_) {
       std::rethrow_exception(exception_);
     }
 
-    switch (outcome_) {
-    case fetch_outcome::response:
-      return std::move(response_);
-    case fetch_outcome::aborted:
-      throw std::system_error{std::make_error_code(std::errc::operation_canceled),
-                              "quoll::emscripten::fetch_transport: " + url_};
-    case fetch_outcome::failed:
-      break;
+    if (outcome_ != fetch_outcome::response) {
+      throw fetch_failure(outcome_, url_, failure_);
     }
 
-    throw std::system_error{std::make_error_code(std::errc::io_error),
-                            "quoll::emscripten::fetch_transport: " + url_ + ": " + failure_};
+    return fetched{std::move(response_), std::move(entry_)};
   }
 
 private:
-  struct aborter {
-    int id;
-
-    void operator()() const noexcept { quoll_emscripten_fetch_abort(id); }
-  };
-
   // Called by the event loop once the fetch settled. A failure to post the coroutine back calls std::terminate (see
   // async::Executor); this executor's post cannot fail.
   static void complete(void *operation, int id, int outcome) noexcept {
     auto &self = *static_cast<fetch_operation *>(operation);
+
+    self.entry_ = fetch_entry{id};
 
     try {
       self.read(id, static_cast<fetch_outcome>(outcome));
@@ -187,7 +258,11 @@ private:
       self.exception_ = std::current_exception();
     }
 
-    quoll_emscripten_fetch_release(id);
+    // Otherwise it stays for the body, unless the exception above leaves it to abort with this operation.
+    if (!self.streaming_ || self.outcome_ != fetch_outcome::response) {
+      self.entry_.finish();
+    }
+
     self.context_->executor.post(self.item_);
   }
 
@@ -195,15 +270,15 @@ private:
     outcome_ = outcome;
 
     if (outcome != fetch_outcome::response) {
-      failure_ = part(id, fetch_part::reason);
+      failure_ = fetch_bytes(id, fetch_part::reason);
       return;
     }
 
     response_.status = static_cast<http::status>(quoll_emscripten_fetch_status(id));
-    response_.reason = part(id, fetch_part::reason);
-    response_.body = part(id, fetch_part::body);
+    response_.reason = fetch_bytes(id, fetch_part::reason);
+    response_.body = fetch_bytes(id, fetch_part::body);
 
-    auto const fields = part(id, fetch_part::fields);
+    auto const fields = fetch_bytes(id, fetch_part::fields);
     std::string_view rest{fields};
 
     while (!rest.empty()) {
@@ -218,20 +293,15 @@ private:
     }
   }
 
-  [[nodiscard]] static std::string part(int id, fetch_part which) {
-    std::string bytes(quoll_emscripten_fetch_size(id, static_cast<int>(which)), '\0');
-
-    quoll_emscripten_fetch_copy(id, static_cast<int>(which), bytes.data());
-    return bytes;
-  }
-
   std::string url_;
   std::string fields_;
   http::request const *request_;
+  bool streaming_;
   async::await_context const *context_ = nullptr;
   async::work_item item_;
   fetch_outcome outcome_ = fetch_outcome::response;
   http::response response_;
+  fetch_entry entry_;
   std::string failure_;
   std::exception_ptr exception_;
   std::optional<std::stop_callback<aborter>> stop_callback_;
@@ -239,9 +309,162 @@ private:
 
 static_assert(async::ContextAwaitable<fetch_operation>);
 
+// A JavaScript read of the next piece of a body, into `piece`, awaited by a coroutine: true for a piece, false at the
+// end of the body. As fetch_operation: a stop request aborts the fetch, and the completion points to the operation.
+class read_operation {
+public:
+  // `url`, for what it throws, and `piece` outlive it.
+  read_operation(int id, std::string const &url, std::string &piece) noexcept : id_(id), url_(&url), piece_(&piece) {}
+
+  read_operation(read_operation const &) = delete;
+  read_operation &operator=(read_operation const &) = delete;
+  read_operation &operator=(read_operation &&) = delete;
+
+  // Only moved before it suspends: nothing is pending yet.
+  read_operation(read_operation &&other) noexcept : id_(other.id_), url_(other.url_), piece_(other.piece_) {}
+
+  ~read_operation() = default;
+
+  [[nodiscard]] bool await_ready() const noexcept { return false; }
+
+  // Returns false, resuming the awaiter at once, when stop is already requested.
+  [[nodiscard]] bool await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
+    if (context.stop_token.stop_requested()) {
+      outcome_ = fetch_outcome::aborted;
+      return false;
+    }
+
+    item_.handle = handle;
+    context_ = &context;
+    quoll_emscripten_fetch_read(id_, &complete, this);
+    stop_callback_.emplace(context.stop_token, aborter{id_});
+    return true;
+  }
+
+  [[nodiscard]] bool await_resume() {
+    stop_callback_.reset();
+
+    if (exception_) {
+      std::rethrow_exception(exception_);
+    }
+
+    if (outcome_ == fetch_outcome::aborted || outcome_ == fetch_outcome::failed) {
+      throw fetch_failure(outcome_, *url_, failure_);
+    }
+
+    return outcome_ == fetch_outcome::response;
+  }
+
+private:
+  // Called by the event loop once the read settled. See fetch_operation::complete().
+  static void complete(void *operation, int outcome) noexcept {
+    auto &self = *static_cast<read_operation *>(operation);
+
+    self.outcome_ = static_cast<fetch_outcome>(outcome);
+
+    try {
+      self.read();
+    } catch (...) {
+      self.exception_ = std::current_exception();
+    }
+
+    self.context_->executor.post(self.item_);
+  }
+
+  void read() {
+    if (outcome_ == fetch_outcome::aborted || outcome_ == fetch_outcome::failed) {
+      failure_ = fetch_bytes(id_, fetch_part::reason);
+    } else if (outcome_ == fetch_outcome::response) {
+      piece_->resize(quoll_emscripten_fetch_size(id_, static_cast<int>(fetch_part::body)));
+      quoll_emscripten_fetch_copy(id_, static_cast<int>(fetch_part::body), piece_->data());
+    }
+  }
+
+  int id_;
+  std::string const *url_;
+  std::string *piece_;
+  async::await_context const *context_ = nullptr;
+  async::work_item item_;
+  fetch_outcome outcome_ = fetch_outcome::end;
+  std::string failure_;
+  std::exception_ptr exception_;
+  std::optional<std::stop_callback<aborter>> stop_callback_;
+};
+
+static_assert(async::ContextAwaitable<read_operation>);
+
+// The body of a fetch being read in pieces, and its entry: what a streamed_response holds. Thread safety: none, on the
+// event loop's thread.
+class fetch_stream {
+public:
+  fetch_stream(fetch_entry entry, std::string url) : entry_(std::move(entry)), url_(std::move(url)) {
+    // Nothing will come, whether the caller reads or not: JavaScript has no reason to keep it.
+    if (quoll_emscripten_fetch_has_body(entry_.id()) == 0) {
+      entry_.finish();
+    }
+  }
+
+  [[nodiscard]] async::task<std::optional<std::string_view>> read() {
+    if (failure_) {
+      std::rethrow_exception(failure_);
+    }
+
+    if (entry_.id() == 0) {
+      co_return std::nullopt;
+    }
+
+    try {
+      if (co_await read_operation{entry_.id(), url_, piece_}) {
+        co_return std::string_view{piece_};
+      }
+    } catch (...) {
+      // A cancellation too: a stream does not take it up again.
+      failure_ = std::current_exception();
+      entry_.reset();
+      throw;
+    }
+
+    entry_.finish();
+    co_return std::nullopt;
+  }
+
+private:
+  fetch_entry entry_;
+  std::string url_;
+  std::string piece_;
+  // What ended the reading, for the following reads to throw too.
+  std::exception_ptr failure_;
+};
+
 // `fields`: the request's fields, packed by pack_fields().
 [[nodiscard]] async::task<http::response> fetch(std::string url, std::string fields, http::request request) {
-  co_return co_await fetch_operation{std::move(url), std::move(fields), request};
+  auto result = co_await fetch_operation{std::move(url), std::move(fields), request, false};
+
+  co_return std::move(result.response);
+}
+
+// `fields`: the request's fields, packed by pack_fields().
+[[nodiscard]] async::task<client::streamed_response> fetch_in_pieces(std::string url, std::string fields,
+                                                                     http::request request) {
+  auto result = co_await fetch_operation{url, std::move(fields), request, true};
+  auto stream = std::make_shared<fetch_stream>(std::move(result.entry), std::move(url));
+  auto &response = result.response;
+
+  co_return client::streamed_response{response.status,
+                                      std::move(response.reason),
+                                      response.version,
+                                      std::move(response.fields),
+                                      client::response_body{http::body_reader{*stream}, stream},
+                                      std::make_shared<http::fields const>()};
+}
+
+// What send() and stream() ask of a target before anything runs.
+void check_target(std::string const &target) {
+  if (!target.starts_with('/')) {
+    throw std::invalid_argument{"quoll::emscripten::fetch_transport: the target is not in origin form"};
+  }
+
+  http::detail::check_target(target);
 }
 
 } // namespace
@@ -249,16 +472,21 @@ static_assert(async::ContextAwaitable<fetch_operation>);
 } // namespace detail
 
 async::task<http::response> fetch_transport::send(http::request request) const {
-  if (!request.target.starts_with('/')) {
-    throw std::invalid_argument{"quoll::emscripten::fetch_transport: the target is not in origin form"};
-  }
-
-  http::detail::check_target(request.target);
+  detail::check_target(request.target);
 
   auto url = base_url_ + request.target;
   auto fields = detail::pack_fields(request.fields);
 
   return detail::fetch(std::move(url), std::move(fields), std::move(request));
+}
+
+async::task<client::streamed_response> fetch_transport::stream(http::request request) const {
+  detail::check_target(request.target);
+
+  auto url = base_url_ + request.target;
+  auto fields = detail::pack_fields(request.fields);
+
+  return detail::fetch_in_pieces(std::move(url), std::move(fields), std::move(request));
 }
 
 } // namespace quoll::emscripten

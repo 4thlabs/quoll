@@ -40,7 +40,7 @@
 
 addToLibrary({
   // Fetches started and not released yet, by id: the abort controller, then the status and the parts of the response
-  // (or the failure message) once settled.
+  // (or the failure message) once settled, and the reader of a body read in pieces.
   $quollFetches: {
     next: 1,
     entries: {},
@@ -262,20 +262,32 @@ addToLibrary({
   $quollBytesToString: (pointer, size) => String.fromCharCode(...HEAPU8.subarray(pointer, pointer + size)),
   $quollStringToBytes: (text) => Uint8Array.from(text, (character) => character.charCodeAt(0)),
 
+  // Keeps why a fetch failed as its part 0, and says how: 1 (aborted by quoll_emscripten_fetch_abort) or 2 (failure).
+  $quollFetchFailed: (entry, error) => {
+    // Node's fetch tells why in the cause (ECONNREFUSED...).
+    const cause = error.cause ? `: ${error.cause.message ?? error.cause}` : '';
+
+    entry.parts = [new TextEncoder().encode(`${error.message ?? error}${cause}`), new Uint8Array(), new Uint8Array()];
+    // Only our own abort is a cancellation: the browser aborts too (page unloaded), as a failure.
+    return entry.controller.signal.aborted ? 1 : 2;
+  },
+
   // Starts fetch(url, {method, headers, body}). `headers` holds one "name:value\n" line per field. Calls
   // complete(operation, id, outcome) once settled, outcome being 0 (response), 1 (aborted by
-  // quoll_emscripten_fetch_abort) or 2 (failure).
+  // quoll_emscripten_fetch_abort) or 2 (failure). With `streaming`, it settles with the head of the response, whose body
+  // quoll_emscripten_fetch_read then reads; without, with the whole body as part 2.
   quoll_emscripten_fetch_start__deps: [
     '$quollFetches',
+    '$quollFetchFailed',
     '$quollBytesToString',
     '$quollStringToBytes',
     '$UTF8ToString',
     '$callUserCallback',
   ],
   quoll_emscripten_fetch_start: (
-    url, method, methodSize, headers, headersSize, body, bodySize, complete, operation) => {
+    url, method, methodSize, headers, headersSize, body, bodySize, streaming, complete, operation) => {
     const id = quollFetches.next++;
-    const entry = { controller: new AbortController(), status: 0, parts: [] };
+    const entry = { controller: new AbortController(), status: 0, parts: [], reader: null };
     const init = {
       method: quollBytesToString(method, methodSize),
       headers: [],
@@ -301,22 +313,21 @@ addToLibrary({
         const fields = [];
 
         response.headers.forEach((value, name) => fields.push(`${name}:${value}\n`));
+
+        // A response with no body at all (HEAD, 204) has no reader either.
+        if (streaming) {
+          entry.reader = response.body?.getReader() ?? null;
+        }
+
         entry.parts = [
           quollStringToBytes(response.statusText),
           quollStringToBytes(fields.join('')),
-          new Uint8Array(await response.arrayBuffer()),
+          streaming ? new Uint8Array() : new Uint8Array(await response.arrayBuffer()),
         ];
         entry.status = response.status;
         return 0;
       } catch (error) {
-        // Node's fetch tells why in the cause (ECONNREFUSED...).
-        const cause = error.cause ? `: ${error.cause.message ?? error.cause}` : '';
-
-        const message = new TextEncoder().encode(`${error.message ?? error}${cause}`);
-
-        entry.parts = [message, new Uint8Array(), new Uint8Array()];
-        // Only our own abort is a cancellation: the browser aborts too (page unloaded), as a failure.
-        return entry.controller.signal.aborted ? 1 : 2;
+        return quollFetchFailed(entry, error);
       }
     };
 
@@ -327,6 +338,39 @@ addToLibrary({
       callUserCallback(() => {{{ makeDynCall('vpii', 'complete') }}}(operation, id, outcome));
     });
     return id;
+  },
+
+  // Whether a fetch started with `streaming` has a body to read.
+  quoll_emscripten_fetch_has_body__deps: ['$quollFetches'],
+  quoll_emscripten_fetch_has_body: (id) => (quollFetches.entries[id].reader ? 1 : 0),
+
+  // Reads the next piece of a body, one JavaScript read at a time, and holds only that one, as part 2. Calls
+  // complete(operation, outcome), outcome being 0 (a piece), 1 (aborted by quoll_emscripten_fetch_abort), 2 (failure) or
+  // 3 (the end of the body). One at a time: the entry stays until it has completed.
+  quoll_emscripten_fetch_read__deps: ['$quollFetches', '$quollFetchFailed', '$callUserCallback'],
+  quoll_emscripten_fetch_read: (id, complete, operation) => {
+    const entry = quollFetches.entries[id];
+
+    const settle = async () => {
+      try {
+        const { done, value } = await entry.reader.read();
+
+        if (done) {
+          return 3;
+        }
+
+        entry.parts[2] = value;
+        return 0;
+      } catch (error) {
+        return quollFetchFailed(entry, error);
+      }
+    };
+
+    {{{ runtimeKeepalivePush() }}}
+    settle().then((outcome) => {
+      {{{ runtimeKeepalivePop() }}}
+      callUserCallback(() => {{{ makeDynCall('vpi', 'complete') }}}(operation, outcome));
+    });
   },
 
   // Ignores a fetch already released.

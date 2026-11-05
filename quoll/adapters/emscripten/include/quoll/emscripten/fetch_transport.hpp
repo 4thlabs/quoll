@@ -38,6 +38,7 @@
 #define QUOLL_EMSCRIPTEN_FETCH_TRANSPORT_HPP
 
 #include <quoll/async/task.hpp>
+#include <quoll/client/streamed_response.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/transport.hpp>
@@ -66,8 +67,28 @@ namespace quoll::emscripten {
  * `std::errc::io_error` and fetch's message; a stop request aborts the fetch, with `std::errc::operation_canceled`.
  * The task resumes on its awaiter's executor, which must run on the event loop (quoll::emscripten::executor).
  *
- * The task copies what it needs: the transport does not have to outlive it. Thread safety: use it, and request stop,
- * from the thread running the event loop.
+ * stream() gives the same response without waiting for its body, read a piece at a time, as JavaScript reads it from
+ * `response.body`, so that nothing holds it whole:
+ *
+ * @code
+ * quoll::emscripten::fetch_transport transport{"https://api.example.com"};
+ * auto response = co_await transport.stream(std::move(request));
+ *
+ * while (auto const piece = co_await response.body.read()) {
+ *   show(*piece);
+ * }
+ * @endcode
+ *
+ * The task completes when fetch() resolves, with the status, status text and fields of send(). A failed read throws
+ * std::system_error from `body.read()`, with `std::errc::io_error` and fetch's message, and a stop request during a
+ * read aborts the fetch, with `std::errc::operation_canceled`: either ends the reading, the following reads throw the
+ * same, and the fetch is aborted and released. Past the end of the body, or with none to read (HEAD, 204), it is
+ * released at once. The last copy of `body` to go before the end aborts the fetch and releases it, which is how to give
+ * up on a body; a body moved from has nothing to read. `trailers` is not null and stays empty, as fetch does not expose
+ * them, and `limits.max_streamed_body_size` has no equal here, as a fetch_transport has no limits.
+ *
+ * The tasks copy what they need: the transport does not have to outlive them. Thread safety: use it, the bodies it
+ * gives included, and request stop, from the thread running the event loop.
  */
 class fetch_transport {
 public:
@@ -88,6 +109,13 @@ public:
    * spaces or line breaks, a field name that is not a token, a value with a line break.
    */
   [[nodiscard]] async::task<http::response> send(http::request request) const;
+
+  /**
+   * @brief Fetches `request`, with a response whose body is read in pieces: see above.
+   *
+   * @throws std::invalid_argument here, before the task runs, as send() does.
+   */
+  [[nodiscard]] async::task<client::streamed_response> stream(http::request request) const;
 
 private:
   std::string base_url_;
