@@ -58,6 +58,9 @@ enum class error {
   upgraded,
   /** @brief A request's `Expect` field asks for something other than `100-continue`: for a server to report. */
   unsupported_expectation,
+  /** @brief A client followed client::transport_options::max_redirects redirects, and got one more: for a client to
+     report. */
+  too_many_redirects,
 };
 
 /** @brief The category of http::error codes. */

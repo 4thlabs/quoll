@@ -63,6 +63,8 @@ public:
       return "HTTP connection switched to another protocol";
     case error::unsupported_expectation:
       return "unsupported HTTP expectation";
+    case error::too_many_redirects:
+      return "too many HTTP redirects";
     }
     return "unknown quoll.http error";
   }

@@ -36,6 +36,7 @@
 
 #include <quoll/client/detail/url.hpp>
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/percent.hpp>
 #include <quoll/http/detail/route_template.hpp>
@@ -43,6 +44,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -178,26 +180,68 @@ namespace {
 }
 
 // A decimal port, 1 to 65535.
-[[nodiscard]] std::uint16_t parse_port(std::string_view text) {
+[[nodiscard]] constexpr std::optional<std::uint16_t> parse_port(std::string_view text) noexcept {
   if (text.empty() || text.size() > 5) {
-    invalid_url("invalid port");
+    return std::nullopt;
   }
 
   unsigned value = 0;
 
   for (auto const character : text) {
     if (character < '0' || character > '9') {
-      invalid_url("invalid port");
+      return std::nullopt;
     }
 
     value = value * 10 + static_cast<unsigned>(character - '0');
   }
 
   if (value == 0 || value > 65535) {
-    invalid_url("invalid port");
+    return std::nullopt;
   }
 
   return static_cast<std::uint16_t>(value);
+}
+
+struct authority_parts {
+  std::string_view host;
+  std::optional<std::uint16_t> port;
+};
+
+// `host[:port]` or `[ipv6][:port]`, brackets holding an IPv6 address only (RFC 3986): nothing when it is neither.
+[[nodiscard]] constexpr std::optional<authority_parts>
+split_authority(std::string_view authority QUOLL_LIFETIMEBOUND) noexcept {
+  auto host = authority;
+  std::string_view rest;
+
+  if (authority.starts_with('[')) {
+    auto const closing = authority.find(']');
+
+    if (closing == std::string_view::npos) {
+      return std::nullopt;
+    }
+
+    host = authority.substr(1, closing - 1);
+    rest = authority.substr(closing + 1);
+
+    if (!host.contains(':') || (!rest.empty() && !rest.starts_with(':'))) {
+      return std::nullopt;
+    }
+  } else if (auto const colon = authority.find(':'); colon != std::string_view::npos) {
+    host = authority.substr(0, colon);
+    rest = authority.substr(colon);
+  }
+
+  if (rest.empty()) {
+    return authority_parts{host, std::nullopt};
+  }
+
+  auto const port = parse_port(rest.substr(1));
+
+  if (!port) {
+    return std::nullopt;
+  }
+
+  return authority_parts{host, port};
 }
 
 // A character RFC 3986 allows in a path as it is: unreserved, sub-delims, `:` and `@`, and the separators.
@@ -249,6 +293,59 @@ void check_prefix(std::string_view path) {
   }
 }
 
+// A character RFC 3986 allows in a reference without its fragment, or `[` and `]`, which a query often holds as they
+// are, and which a path may not. A backslash is not one, which some clients read as a slash, and so is no way to reach
+// another server.
+[[nodiscard]] constexpr bool reference_character(char character) noexcept {
+  return path_character(character) || character == '?' || character == '[' || character == ']';
+}
+
+// What a proxy or a framework would read as another server, or cut short, once it decodes the path of a target.
+[[nodiscard]] bool reads_as_itself(std::string_view path) {
+  auto const decoded = http::detail::percent_decode(path);
+
+  return decoded && !decoded->starts_with("//") && !decoded->starts_with("/\\") && !decoded->contains('\0');
+}
+
+// Whether `authority` names what the `Host` field `host` does. Credentials end up in the host, or in the port, and
+// differ.
+[[nodiscard]] constexpr bool same_authority(std::string_view authority, std::string_view host,
+                                            std::uint16_t default_port) noexcept {
+  auto const named = split_authority(authority);
+  auto const asked = split_authority(host);
+
+  return named && asked && http::detail::iequals(named->host, asked->host) &&
+         named->port.value_or(default_port) == asked->port.value_or(default_port);
+}
+
+// `path`, starting with a slash, without its `.` and `..` segments (RFC 3986, 5.2.4).
+[[nodiscard]] std::string remove_dot_segments(std::string_view path) {
+  std::string result;
+
+  for (std::size_t start = 0; start < path.size();) {
+    auto const end = end_of(path, '/', start + 1);
+    auto const segment = path.substr(start + 1, end - start - 1);
+    auto const last = end == path.size();
+
+    if (segment == "." || segment == "..") {
+      if (segment == ".." && !result.empty()) {
+        result.erase(result.rfind('/'));
+      }
+
+      if (last) {
+        result += '/';
+      }
+    } else {
+      result += '/';
+      result += segment;
+    }
+
+    start = end;
+  }
+
+  return result;
+}
+
 } // namespace
 
 origin parse_url(std::string_view url) {
@@ -285,39 +382,16 @@ origin parse_url(std::string_view url) {
   result.port = secure ? 443 : 80;
   result.secure = secure;
 
-  if (authority.starts_with('[')) {
-    auto const closing = authority.find(']');
+  auto const parts = split_authority(authority);
 
-    if (closing == std::string_view::npos) {
-      invalid_url("unclosed bracket");
-    }
-
-    result.host = authority.substr(1, closing - 1);
-
-    // Brackets hold an IPv6 address only (RFC 3986): a name or an IPv4 address goes without.
-    if (!result.host.contains(':')) {
-      invalid_url("brackets around a host that is not an IPv6 address");
-    }
-
-    auto const rest = authority.substr(closing + 1);
-
-    if (!rest.empty()) {
-      if (!rest.starts_with(':')) {
-        invalid_url("invalid authority");
-      }
-
-      result.port = parse_port(rest.substr(1));
-    }
-
-    return result;
+  if (!parts) {
+    invalid_url("invalid host or port in " + std::string{authority});
   }
 
-  auto const colon = authority.find(':');
+  result.host = parts->host;
 
-  result.host = authority.substr(0, colon);
-
-  if (colon != std::string_view::npos) {
-    result.port = parse_port(authority.substr(colon + 1));
+  if (parts->port) {
+    result.port = *parts->port;
   }
 
   return result;
@@ -337,6 +411,80 @@ std::string host_field(std::string_view host, std::uint16_t port, std::uint16_t 
   }
 
   return field;
+}
+
+std::optional<std::string> resolve_location(std::string_view location, std::string_view host, bool secure,
+                                            std::string_view target) {
+  auto reference = location.substr(0, location.find('#'));
+
+  if (!std::ranges::all_of(reference, reference_character) || !http::detail::valid_escapes(reference)) {
+    return std::nullopt;
+  }
+
+  // RFC 3986 reads an empty reference as the resource itself: a server saying so has not said where to go, and
+  // following it would send the same request again, a POST too, up to the limit.
+  if (reference.empty()) {
+    return std::nullopt;
+  }
+
+  auto const scheme_end = reference.find_first_of(":/?");
+
+  if (scheme_end != std::string_view::npos && reference[scheme_end] == ':') {
+    if (!http::detail::iequals(reference.substr(0, scheme_end), secure ? "https" : "http")) {
+      return std::nullopt;
+    }
+
+    reference.remove_prefix(scheme_end + 1);
+
+    if (!reference.starts_with("//")) {
+      return std::nullopt;
+    }
+  }
+
+  auto named_server = false;
+
+  if (reference.starts_with("//")) {
+    reference.remove_prefix(2);
+
+    auto const authority = reference.substr(0, reference.find_first_of("/?"));
+
+    if (!same_authority(authority, host, secure ? 443 : 80)) {
+      return std::nullopt;
+    }
+
+    reference.remove_prefix(authority.size());
+    named_server = true;
+  }
+
+  auto const query_start = reference.find('?');
+  auto const reference_path = reference.substr(0, query_start);
+  auto const query = query_start == std::string_view::npos ? std::string_view{} : reference.substr(query_start);
+  auto const base_path = target.substr(0, target.find_first_of("?#"));
+
+  if (reference_path.find_first_of("[]") != std::string_view::npos) {
+    return std::nullopt;
+  }
+
+  std::string resolved;
+
+  if (reference_path.empty()) {
+    // A query alone keeps the path as it was sent (RFC 3986, 5.2.2).
+    resolved = named_server ? std::string_view{"/"} : base_path;
+  } else if (reference_path.starts_with('/')) {
+    resolved = remove_dot_segments(reference_path);
+  } else {
+    auto merged = std::string{base_path.substr(0, base_path.rfind('/') + 1)};
+
+    merged += reference_path;
+    resolved = remove_dot_segments(merged);
+  }
+
+  if (!reads_as_itself(resolved)) {
+    return std::nullopt;
+  }
+
+  resolved += query;
+  return resolved;
 }
 
 } // namespace quoll::client::detail

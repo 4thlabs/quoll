@@ -82,6 +82,7 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
   quoll::client::transport_options options;
 
   options.limits = quoll::fuzz::low_limits;
+  options.max_redirects = 2;
 
   // With a timer, as a client has one. A second send takes the connection the first one kept, or finds it closed.
   quoll::test::virtual_time time;
