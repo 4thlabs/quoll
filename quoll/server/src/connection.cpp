@@ -51,12 +51,15 @@
 #include <quoll/http/write.hpp>
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <optional>
 #include <span>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -216,6 +219,8 @@ async::task<std::error_code> send_response(io::any_stream &stream, http::respons
 async::task<> serve_connection(io::any_stream stream, http::router const &router, connection_options const &options) {
   std::string buffer;
   http::request_parser parser{options.limits};
+  std::uint64_t const connection = next_connection_id++;
+  std::size_t served = 0;
 
   // What ends the wait for a request: the task's stop request, or a request to drain.
   std::stop_source idle_stop;
@@ -248,12 +253,20 @@ async::task<> serve_connection(io::any_stream stream, http::router const &router
     auto keep_alive = parser.keep_alive() && !parser.upgrade();
     auto request = parser.release();
     auto const head = request.method == http::verb::head;
+    std::string_view const target = request.target;
     auto response = co_await respond(router, std::move(request), options);
 
-    keep_alive = keep_alive && !http::detail::closes_connection(response.fields) && !options.drain.stop_requested();
+    ++served;
+    keep_alive = keep_alive && !http::detail::closes_connection(response.fields) && !options.drain.stop_requested() &&
+                 (options.max_requests == 0 || served <= options.max_requests);
     prepare(response, head, keep_alive);
+    auto const sent = co_await send_response(stream, response, keep_alive, options);
 
-    if (co_await send_response(stream, response, keep_alive, options) || !keep_alive) {
+    if (options.on_request) {
+      options.on_request({.connection = connection, .target = target, .status = response.status});
+    }
+
+    if (sent == std::errc::operation_canceled || !keep_alive) {
       co_return;
     }
   }

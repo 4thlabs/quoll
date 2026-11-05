@@ -112,6 +112,9 @@ public:
 
   [[nodiscard]] executor get_executor() noexcept { return executor{*this}; }
 
+  /** @brief How many coroutines the workers have resumed so far. */
+  [[nodiscard]] std::size_t completed() const noexcept { return completed_; }
+
 private:
   void push(async::work_item &item) noexcept;
   [[nodiscard]] std::coroutine_handle<> pop();
@@ -123,6 +126,7 @@ private:
   std::mutex mutex_;
   // Taken from incoming_ under mutex_, in posting order.
   async::work_item *ready_ = nullptr;
+  std::size_t completed_ = 0;
   // Last: joined before the queue they read is destroyed.
   std::vector<std::jthread> workers_;
 };

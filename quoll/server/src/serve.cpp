@@ -51,6 +51,7 @@
 #include <optional>
 #include <stop_token>
 #include <system_error>
+#include <thread>
 #include <utility>
 
 namespace quoll::server::detail {
@@ -67,7 +68,7 @@ namespace {
 }
 
 // What an accept failure does by default. Running out of something passes, as connections end: not a reason to end a
-// server, nor to try again at once. Without a timer, it cannot wait.
+// server, nor to try again at once. Without a timer, connections get a moment to end before it gives up.
 async::task<bool> accept_again(std::error_code error) {
   if (one_connection_failure(error)) {
     co_return true;
@@ -80,6 +81,7 @@ async::task<bool> accept_again(std::error_code error) {
   auto const timer = (co_await async::current_executor()).query<async::timer_ref>();
 
   if (!timer) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{100});
     co_return false;
   }
 

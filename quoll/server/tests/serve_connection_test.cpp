@@ -321,6 +321,30 @@ TEST_CASE("serve_connection: requests get their responses, on a connection kept 
   REQUIRE(result.responses[1].body == "ping");
 }
 
+TEST_CASE("serve_connection: on_request reports each request that was answered", "[server]") {
+  auto [client, server] = io::make_memory_stream_pair();
+  http::router router;
+  quoll::server::connection_options options;
+  std::size_t reported = 0;
+
+  router.add(verb::get, "/hello", "hello", [](http::request, http::route_match) -> task<http::response> {
+    http::response response;
+
+    response.body = "hello";
+    co_return response;
+  });
+  options.on_request = [&](quoll::server::request_summary const &summary) {
+    REQUIRE(summary.target == "/hello");
+    REQUIRE(summary.status == http::status::ok);
+    ++reported;
+  };
+
+  auto const session = quoll::server::serve_connection(std::move(server), router, options);
+
+  static_cast<void>(session);
+  static_cast<void>(reported);
+}
+
 TEST_CASE("serve_connection: a request that does not keep the connection alive ends it", "[server]") {
   auto const closing = serve("GET /hello HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", {verb::get}, true);
 

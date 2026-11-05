@@ -135,6 +135,7 @@ void thread_pool::work(std::stop_token const &token) {
 
     if (auto const handle = pop()) {
       handle.resume();
+      ++completed_;
       continue;
     }
 

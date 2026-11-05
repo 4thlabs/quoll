@@ -39,12 +39,29 @@
 
 #include <quoll/http/parser.hpp>
 
+#include <quoll/http/status.hpp>
+
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <functional>
 #include <stop_token>
+#include <string_view>
 
 namespace quoll::server {
+
+// The identifier of the next connection a server accepts.
+[[maybe_unused]] static std::uint64_t next_connection_id = 0;
+
+/** @brief What on_request() reports of a request that was answered. */
+struct request_summary {
+  /** @brief The connection it came on: they are numbered in the order they start. */
+  std::uint64_t connection = 0;
+  /** @brief The request's target; valid during the call. */
+  std::string_view target;
+  http::status status = http::status::ok;
+};
 
 /**
  * @brief How serve_connection() reads requests and reports what its handlers throw.
@@ -81,6 +98,12 @@ struct connection_options {
    * not throw. Empty: the 500 is all that is left of it.
    */
   std::function<void(std::exception_ptr)> on_handler_error{};
+
+  /** @brief Called once a response has left, for an access log; on the connection's executor. It must not throw. */
+  std::function<void(request_summary const &)> on_request{};
+
+  /** @brief At most this many requests on a connection, whose last response says `Connection: close`. 0: no limit. */
+  std::size_t max_requests = 0;
 };
 
 } // namespace quoll::server
