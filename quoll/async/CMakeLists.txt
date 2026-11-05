@@ -5,6 +5,7 @@ quoll_declare_tests(
     tests/any_executor_test.cpp
     tests/executor_ref_test.cpp
     tests/run_loop_test.cpp
+    tests/slots_test.cpp
     tests/stop_token_test.cpp
     tests/synchronized_test.cpp
     tests/task_test.cpp
