@@ -51,6 +51,8 @@ ctest --test-dir build -j"$(nproc)"   # "quoll" (every test case), compile_fail.
 ./build/tests/quoll_tests "[tag]"     # Catch2 filters
 emcmake cmake -B build-wasm && cmake --build build-wasm -j"$(nproc)" && ctest --test-dir build-wasm   # runs under node
 run-clang-tidy-19 -p build -quiet "$PWD/(quoll|samples)/.*\.cpp$"   # needs a Clang build; the same as CI
+cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -DQUOLL_BENCH=ON -DQUOLL_BUILD_TESTS=OFF && cmake --build build-bench --target quoll_bench -j"$(nproc)" \
+  && build-bench/tests/bench/quoll_bench tcp   # what it costs: docs/BENCHMARKS.md
 CC=clang-19 CXX=clang++-19 cmake -B build-fuzz -DCMAKE_BUILD_TYPE=RelWithDebInfo -DQUOLL_FUZZ=ON -DQUOLL_BUILD_TESTS=OFF -DQUOLL_BUILD_SAMPLES=OFF \
   && cmake --build build-fuzz --target quoll_fuzzers -j"$(nproc)" && tests/fuzz/run.sh build-fuzz 60   # libFuzzer, 60 s a target
 ```
@@ -86,6 +88,9 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   and passes only when the compilation fails with that message, taken literally (native builds only).
 - `tests/fuzz/`: one libFuzzer target per source, built with `QUOLL_FUZZ` (Clang, under ASan and UBSan) rather than in
   `quoll_tests`, its seeds in `corpus/<target>/`. An input that crashed one joins its seeds, with a test of the fix.
+- `tests/bench/`: `quoll_bench`, built with `QUOLL_BENCH`, measures requests per second, latency and allocations, its figures in
+  `docs/BENCHMARKS.md`. `bench.yml` runs it every night, and on a PR touching it only, and checks the allocations per request against
+  the budgets in its source, GCC 13's, which do not depend on the machine. A change that raises one says why.
 - `samples/<sample>/`: small programs using Quoll, built when `QUOLL_BUILD_SAMPLES` is ON (default when top-level).
   `samples/notes` (native): a REST contract, its server and its client over TCP; with tests ON, the ctest
   `notes_round_trip` runs them against each other. `samples/ui_notes` (Emscripten): the same contract in a browser.

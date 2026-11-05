@@ -106,8 +106,8 @@ limits, the shutdown and the features are tested, and the reliability points are
 
 ### Step 3: streaming
 
-- First pull request: a benchmark harness (requests per second, latency, allocations per request) and its baseline, as
-  streaming touches the hot paths.
+- Done: a benchmark harness (requests per second, latency, allocations per request) and its baseline, in
+  [`BENCHMARKS.md`](BENCHMARKS.md), as streaming touches the hot paths.
 - Streamed request and response bodies, on the server, the client and browser `fetch`.
 - Static files, in streaming, from step 2: without it, a file has to fit in memory. Reading one blocks the loop, and Quoll has no
   asynchronous file I/O yet, which comes with them.

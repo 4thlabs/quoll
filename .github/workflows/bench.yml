@@ -1,0 +1,63 @@
+name: Bench
+
+# Every night rather than on every pull request; one touching the program runs it, as nothing else builds it. The budgets of
+# allocations do not depend on the machine, unlike the rates, which only go in the summary of the run: a runner is too noisy
+# for them to fail anything.
+on:
+  schedule:
+    - cron: "47 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tests/bench/**"
+      - "tests/support/**"
+      - "cmake/QuollHelpers.cmake"
+      - ".github/workflows/bench.yml"
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its previous run; the nightly runs go to the end.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CPM_SOURCE_CACHE: ${{ github.workspace }}/.cpm-cache
+
+jobs:
+  bench:
+    name: bench
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Cache CPM sources
+        uses: actions/cache@v4
+        with:
+          path: .cpm-cache
+          key: cpm-bench-${{ hashFiles('**/CMakeLists.txt', 'cmake/**') }}
+
+      - name: Set up ccache
+        uses: ./.github/actions/ccache
+        with:
+          job: bench
+
+      - name: Configure
+        run: >-
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DQUOLL_BENCH=ON -DQUOLL_TLS=ON -DQUOLL_BUILD_TESTS=OFF
+          -DQUOLL_BUILD_SAMPLES=OFF
+        env:
+          CXX: g++-13
+
+      - name: Build
+        run: cmake --build build --target quoll_bench --parallel "$(nproc)"
+
+      - name: Check the allocations
+        run: build/tests/bench/quoll_bench allocations --check
+
+      - name: Measure
+        run: build/tests/bench/quoll_bench tcp 5 >> "$GITHUB_STEP_SUMMARY"

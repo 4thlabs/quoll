@@ -18,11 +18,13 @@ if(NOT TARGET quoll_warnings)
   target_compile_options(quoll_warnings INTERFACE $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Werror=dangling>)
   # The standard library checks what it can at run time, such as an index out of bounds or an empty optional read: the
   # test run stops rather than reading what it should not. Each library has its own switch, and neither changes the ABI,
-  # so that what is built without them still links.
-  target_compile_definitions(quoll_warnings INTERFACE
-    _GLIBCXX_ASSERTIONS
-    _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST
-  )
+  # so that what is built without them still links. A benchmark measures what an application gets, which has none.
+  if(NOT QUOLL_BENCH)
+    target_compile_definitions(quoll_warnings INTERFACE
+      _GLIBCXX_ASSERTIONS
+      _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST
+    )
+  endif()
 endif()
 
 #
