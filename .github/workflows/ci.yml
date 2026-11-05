@@ -23,6 +23,7 @@ jobs:
   native:
     name: ${{ matrix.compiler.name }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -52,10 +53,39 @@ jobs:
         with:
           job: ${{ matrix.compiler.name }}
 
-      # Clang 19, the oldest Clang Quoll supports, is not preinstalled on the runner.
+      # Clang 19, the oldest Clang Quoll supports, is not preinstalled on the runner. Its packages are kept: installing it
+      # takes seconds, but in 5 runs of 60 a slow mirror made it 9 to 15 minutes (36 MB at 41 kB/s), when every download of
+      # that run was slow, so that trying again would not help.
+      - name: Name Clang's packages
+        id: clang
+        if: startsWith(matrix.compiler.name, 'clang')
+        run: |
+          packages=$(apt-get install --print-uris -qq --no-install-recommends clang-19 clang-tidy-19 | cut -d ' ' -f 2)
+          echo "hash=$(echo "$packages" | sha256sum | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Clang's packages
+        id: clang-packages
+        if: startsWith(matrix.compiler.name, 'clang')
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/clang-packages
+          key: clang-packages-${{ steps.clang.outputs.hash }}
+
       - name: Install Clang
         if: startsWith(matrix.compiler.name, 'clang')
-        run: sudo apt-get install -y --no-install-recommends clang-19 clang-tidy-19
+        run: |
+          mkdir -p ~/.cache/clang-packages/partial
+          sudo apt-get install -y --no-install-recommends -o Dir::Cache::archives="$HOME/.cache/clang-packages" \
+            clang-19 clang-tidy-19
+          sudo chown -R "$USER" ~/.cache/clang-packages
+
+      # At once rather than at the end of the job: what a slow mirror took a long time to give is not lost if the job fails.
+      - name: Save Clang's packages
+        if: startsWith(matrix.compiler.name, 'clang') && steps.clang-packages.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/clang-packages
+          key: clang-packages-${{ steps.clang.outputs.hash }}
 
       - name: Configure
         run: >-
@@ -68,7 +98,7 @@ jobs:
         run: cmake --build build --parallel "$(nproc)"
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure --parallel "$(nproc)"
+        run: ctest --test-dir build --output-on-failure --timeout 300 --parallel "$(nproc)"
 
       # Quoll's own sources only: the rules are in .clang-tidy. It also reports when a test failed, and it would pass
       # with no file selected, hence the count. Keep the command in step with AGENTS.md.
@@ -85,7 +115,7 @@ jobs:
         run: |
           cmake -B build-no-tls -DCMAKE_BUILD_TYPE=Debug -DQUOLL_HEADER_CHECKS=OFF -DQUOLL_TLS=OFF
           cmake --build build-no-tls --parallel "$(nproc)"
-          ctest --test-dir build-no-tls --output-on-failure --parallel "$(nproc)" --exclude-regex "^compile_fail"
+          ctest --test-dir build-no-tls --output-on-failure --timeout 300 --parallel "$(nproc)" --exclude-regex "^compile_fail"
 
   # Apple Clang and its libc++, in a version of its own: Apple numbers them apart from LLVM. Xcode is pinned on the oldest
   # supported, as Clang is on Linux. The header checks run here too, as Emscripten's libc++ does not cover the native
@@ -93,6 +123,7 @@ jobs:
   macos:
     name: macos
     runs-on: macos-26
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -125,7 +156,7 @@ jobs:
 
       - name: Test
         run: >-
-          ctest --test-dir build --output-on-failure --parallel "$(sysctl -n hw.ncpu)" --exclude-regex "^compile_fail"
+          ctest --test-dir build --output-on-failure --timeout 300 --parallel "$(sysctl -n hw.ncpu)" --exclude-regex "^compile_fail"
 
       - name: Show how ccache did
         run: ccache --show-stats
@@ -133,6 +164,7 @@ jobs:
   sanitizers:
     name: gcc-13 ${{ matrix.sanitizer.name }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -173,11 +205,12 @@ jobs:
         run: cmake --build build --parallel "$(nproc)"
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure --parallel "$(nproc)" --exclude-regex "^compile_fail"
+        run: ctest --test-dir build --output-on-failure --timeout 300 --parallel "$(nproc)" --exclude-regex "^compile_fail"
 
   wasm:
     name: emscripten
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -215,7 +248,7 @@ jobs:
         run: cmake --build build-wasm --parallel "$(nproc)"
 
       - name: Test
-        run: ctest --test-dir build-wasm --output-on-failure
+        run: ctest --test-dir build-wasm --output-on-failure --timeout 300
 
       - name: Show how ccache did
         run: ccache --show-stats
@@ -223,6 +256,7 @@ jobs:
   format:
     name: clang-format
     runs-on: ubuntu-24.04
+    timeout-minutes: 2
 
     steps:
       - name: Checkout repository
