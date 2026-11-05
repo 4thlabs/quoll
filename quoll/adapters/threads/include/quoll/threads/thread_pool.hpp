@@ -37,6 +37,7 @@
 #ifndef QUOLL_THREADS_THREAD_POOL_HPP
 #define QUOLL_THREADS_THREAD_POOL_HPP
 
+#include <quoll/async/detail/synchronized.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/work_item.hpp>
@@ -45,7 +46,6 @@
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
-#include <mutex>
 #include <stop_token>
 #include <thread>
 #include <vector>
@@ -121,9 +121,8 @@ private:
 
   std::atomic<async::work_item *> incoming_{nullptr};
   std::atomic<std::uint32_t> epoch_{0};
-  std::mutex mutex_;
-  // Taken from incoming_ under mutex_, in posting order.
-  async::work_item *ready_ = nullptr;
+  // Taken from incoming_ under its lock, in posting order.
+  async::detail::synchronized<async::work_item *> ready_{nullptr};
   // Last: joined before the queue they read is destroyed.
   std::vector<std::jthread> workers_;
 };

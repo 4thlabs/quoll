@@ -91,7 +91,9 @@ thread_pool::~thread_pool() {
     worker.join();
   }
 
-  assert(incoming_.load() == nullptr && ready_ == nullptr && "thread_pool posted to after its destruction started");
+  assert(incoming_.load() == nullptr && ready_.with([](async::work_item const *const &ready) {
+    return ready == nullptr;
+  }) && "thread_pool posted to after its destruction started");
 }
 
 void thread_pool::push(async::work_item &item) noexcept {
@@ -108,23 +110,23 @@ void thread_pool::push(async::work_item &item) noexcept {
 
 // The next coroutine to resume, or a null handle when nothing is queued.
 std::coroutine_handle<> thread_pool::pop() {
-  std::scoped_lock const lock{mutex_};
+  return ready_.with([this](async::work_item *&ready) -> std::coroutine_handle<> {
+    if (ready == nullptr) {
+      ready = reverse(incoming_.exchange(nullptr));
+    }
 
-  if (ready_ == nullptr) {
-    ready_ = reverse(incoming_.exchange(nullptr));
-  }
+    if (ready == nullptr) {
+      return {};
+    }
 
-  if (ready_ == nullptr) {
-    return {};
-  }
+    auto *const item = ready;
 
-  auto *const item = ready_;
+    ready = item->next;
 
-  ready_ = item->next;
-
-  // Read before resuming: the item may live in the frame the coroutine
-  // destroys.
-  return item->handle;
+    // Read before resuming: the item may live in the frame the coroutine
+    // destroys.
+    return item->handle;
+  });
 }
 
 void thread_pool::work(std::stop_token const &token) {

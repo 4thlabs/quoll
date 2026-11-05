@@ -36,6 +36,8 @@
 
 #include <quoll/asio/runtime.hpp>
 
+#include <quoll/async/detail/synchronized.hpp>
+
 #include <quoll/asio/executor.hpp>
 
 #include <asio/executor_work_guard.hpp>
@@ -47,7 +49,6 @@
 #include <csignal>
 #include <cstddef>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <signal.h>
 #include <stop_token>
@@ -169,14 +170,11 @@ struct runtime::state {
   asio::executor<::asio::io_context::executor_type> loop{context.get_executor()};
   std::stop_source stop;
   std::optional<stop_signals> signals;
-  std::mutex work_mutex;
-  std::weak_ptr<void> work;
+  async::detail::synchronized<std::weak_ptr<void>> work;
 
   // Whether no executor of the runtime is alive: its tasks have ended.
-  [[nodiscard]] bool idle() {
-    std::lock_guard const lock{work_mutex};
-
-    return work.expired();
+  [[nodiscard]] bool idle() const {
+    return work.with([](std::weak_ptr<void> const &held) { return held.expired(); });
   }
 };
 
@@ -231,13 +229,16 @@ runtime::runtime() : state_(std::make_unique<state>()) {}
 runtime::~runtime() = default;
 
 runtime::executor runtime::get_executor() {
-  std::lock_guard const lock{state_->work_mutex};
-  auto work = state_->work.lock();
+  auto work = state_->work.with([this](std::weak_ptr<void> &held) {
+    auto token = held.lock();
 
-  if (!work) {
-    work = std::make_shared<work_token>(*state_);
-    state_->work = work;
-  }
+    if (!token) {
+      token = std::make_shared<work_token>(*state_);
+      held = token;
+    }
+
+    return token;
+  });
 
   return executor{*state_, std::move(work)};
 }

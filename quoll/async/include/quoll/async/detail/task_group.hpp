@@ -39,12 +39,12 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/detail/synchronized.hpp>
 #include <quoll/async/executor_ref.hpp>
 #include <quoll/async/work_item.hpp>
 
 #include <coroutine>
 #include <cstddef>
-#include <mutex>
 #include <optional>
 #include <utility>
 
@@ -64,16 +64,16 @@ public:
     [[nodiscard]] bool await_ready() const noexcept { return false; }
 
     [[nodiscard]] bool await_suspend(std::coroutine_handle<> handle, await_context const &context) {
-      std::lock_guard const lock{group_->mutex_};
+      return group_->state_.with([&](counted &state) {
+        if (state.live == 0) {
+          return false;
+        }
 
-      if (group_->live_ == 0) {
-        return false;
-      }
-
-      item_.handle = handle;
-      group_->waiter_ = &item_;
-      group_->executor_.emplace(context.executor);
-      return true;
+        item_.handle = handle;
+        state.waiter = &item_;
+        state.executor.emplace(context.executor);
+        return true;
+      });
     }
 
     void await_resume() const noexcept {}
@@ -84,28 +84,22 @@ public:
   };
 
   void started() {
-    std::lock_guard const lock{mutex_};
-
-    ++live_;
+    state_.with([](counted &state) { ++state.live; });
   }
 
-  // The last connection resumes serve(), if it waits. Called from a completion handler: noexcept, as a post that fails
+  // The last connection resumes serve(), if it waits. Called from a completion handler: noexcept, as a post failing
   // there would leave serve() suspended forever.
   void ended() noexcept {
-    work_item *waiter = nullptr;
-    std::optional<executor_ref> executor;
-
-    {
-      std::lock_guard const lock{mutex_};
-
-      if (--live_ == 0 && waiter_ != nullptr) {
-        waiter = std::exchange(waiter_, nullptr);
-        executor = executor_;
+    auto const woken = state_.with([](counted &state) -> std::optional<std::pair<work_item *, executor_ref>> {
+      if (--state.live != 0 || state.waiter == nullptr) {
+        return std::nullopt;
       }
-    }
 
-    if (waiter != nullptr) {
-      executor->post(*waiter);
+      return std::pair{std::exchange(state.waiter, nullptr), *state.executor};
+    });
+
+    if (woken) {
+      woken->second.post(*woken->first);
     }
   }
 
@@ -113,17 +107,18 @@ public:
 
   // How many tasks run now, which others may change as soon as this returns.
   [[nodiscard]] std::size_t live() const {
-    std::lock_guard const lock{mutex_};
-
-    return live_;
+    return state_.with([](counted const &state) { return state.live; });
   }
 
 private:
-  mutable std::mutex mutex_;
-  std::size_t live_ = 0;
-  work_item *waiter_ = nullptr;
-  // The executor of serve(), valid while it waits.
-  std::optional<executor_ref> executor_;
+  struct counted {
+    std::size_t live = 0;
+    work_item *waiter = nullptr;
+    // The executor of what waits, valid meanwhile.
+    std::optional<executor_ref> executor{};
+  };
+
+  synchronized<counted> state_;
 };
 
 static_assert(async::ContextAwaitable<task_group::join_awaitable>);
