@@ -91,6 +91,8 @@ private:
 /**
  * @brief Writes the body of a message in pieces, for what cannot or need not hold it whole in memory.
  *
+ * On a response, or on a request sent through a client::transport (see its send()):
+ *
  * @code
  * router.get("/export", [](http::request) {
  *   http::response response;

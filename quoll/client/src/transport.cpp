@@ -36,13 +36,21 @@
 
 #include <quoll/client/transport.hpp>
 
+#include <quoll/async/current_executor.hpp>
+#include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/detail/slots.hpp>
+#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/synchronized.hpp>
+#include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/lifetimebound.hpp>
+#include <quoll/async/sleep_for.hpp>
+#include <quoll/async/timer_ref.hpp>
+#include <quoll/async/when_all.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
+#include <quoll/http/detail/streamed_head.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/parser.hpp>
@@ -55,13 +63,16 @@
 #include <quoll/io/error.hpp>
 #include <quoll/io/write.hpp>
 
+#include <atomic>
 #include <cassert>
+#include <chrono>
 #include <cstddef>
 #include <iterator>
 #include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -134,6 +145,10 @@ struct prepared_request {
   http::verb method = http::verb::get;
   // The request lets its connection carry another one (HTTP/1.1, no `Connection: close`).
   bool keep_alive = false;
+  // A body in pieces: `wire` is then its head.
+  http::body_writer writer{};
+  http::detail::streamed_framing framing{};
+  http::fields trailers{};
 };
 
 // Methods whose request may be sent twice: the server may have received the first copy before closing. Listed rather
@@ -160,22 +175,150 @@ constexpr int max_interim_responses = 8;
   return error == io::error::end_of_stream || error == std::errc::connection_reset || error == std::errc::broken_pipe;
 }
 
+// The body of a request going out through its writer, while what reads the response goes on beside it: a server may
+// answer before the end, and one that does not read while it writes would otherwise hold both up. Each write has
+// `timeout`, and the response too, once the body has left. An answer stops what is still writing. What a server closing
+// does to a write is no failure yet: its answer may be on its way. Thread safety: complete() and stop() from what
+// reads.
+class upload {
+public:
+  upload(io::any_stream &connection QUOLL_LIFETIMEBOUND, prepared_request const &request QUOLL_LIFETIMEBOUND,
+         std::chrono::nanoseconds timeout) noexcept
+      : connection_(&connection), request_(&request), wire_(request.wire, request.framing), timeout_(timeout) {}
+
+  // Ends once the answer has come, or throws what ends it without one.
+  [[nodiscard]] async::task<> run() {
+    auto const outer = co_await async::current_stop_token();
+    std::stop_callback const follow{outer, [this] { stop_.request_stop(); }};
+
+    try {
+      co_await async::detail::stop_scope<void>{request_->writer(http::body_stream{*this}), stop_.get_token()};
+      co_await async::detail::stop_scope<void>{finish(), stop_.get_token()};
+    } catch (...) {
+      if (!stop_.stop_requested() && !closed_) {
+        throw;
+      }
+    }
+
+    auto const executor = co_await async::current_executor();
+
+    // With a timer to wait on: what reads the response has its own end otherwise.
+    if (stop_.stop_requested() || timeout_ == std::chrono::nanoseconds::zero() || !executor.query<async::timer_ref>()) {
+      co_return;
+    }
+
+    try {
+      co_await async::detail::stop_scope<void>{async::sleep_for(timeout_), stop_.get_token()};
+    } catch (std::system_error const &) {
+      co_return;
+    }
+
+    throw std::system_error{std::make_error_code(std::errc::timed_out), "quoll::client: no response to the request"};
+  }
+
+  // What the writer writes through: see http::body_stream.
+  [[nodiscard]] async::task<> write(std::string_view piece) {
+    if (failure_) {
+      throw std::system_error{failure_, "quoll::client: the body cannot go on"};
+    }
+
+    if (stop_.stop_requested()) {
+      throw std::system_error{std::make_error_code(std::errc::operation_canceled),
+                              "quoll::client: the body was answered before its end"};
+    }
+
+    if (wire_.past_its_length(piece)) {
+      failure_ = std::make_error_code(std::errc::message_size);
+      throw std::length_error{"quoll::client: a body_writer wrote more than its Content-Length"};
+    }
+
+    if (auto const bytes = wire_.frame(piece); !bytes.empty()) {
+      co_await send(bytes);
+    }
+  }
+
+  [[nodiscard]] std::stop_source &stop() noexcept { return stop_; }
+
+  // All of the request has left.
+  [[nodiscard]] bool complete() const noexcept { return complete_.load(std::memory_order_acquire); }
+
+private:
+  [[nodiscard]] async::task<> finish() {
+    // A writer may have made nothing of it.
+    if (failure_) {
+      throw std::system_error{failure_, "quoll::client: cannot send the body"};
+    }
+
+    if (stop_.stop_requested()) {
+      co_return;
+    }
+
+    if (wire_.short_of_its_length()) {
+      throw std::length_error{"quoll::client: a body_writer wrote less than its Content-Length"};
+    }
+
+    if (auto const bytes = wire_.end(request_->trailers); !bytes.empty()) {
+      co_await send(bytes);
+    }
+
+    complete_.store(true, std::memory_order_release);
+  }
+
+  // Thrown rather than returned: a write a timeout cancelled is then that timeout's timed_out.
+  [[nodiscard]] async::task<> write_bytes(std::string_view bytes) {
+    auto const sent = co_await io::write(*connection_, std::as_bytes(std::span{bytes}));
+
+    if (sent.error) {
+      throw std::system_error{sent.error, "quoll::client: cannot send the body"};
+    }
+  }
+
+  [[nodiscard]] async::task<> send(std::string_view bytes) {
+    try {
+      co_await async::detail::with_optional_timeout(timeout_, write_bytes(bytes));
+    } catch (std::system_error const &thrown) {
+      failure_ = thrown.code();
+      closed_ = closed_meanwhile(thrown.code());
+      throw;
+    }
+  }
+
+  io::any_stream *connection_;
+  prepared_request const *request_;
+  http::detail::streamed_wire wire_;
+  std::chrono::nanoseconds timeout_;
+  std::stop_source stop_;
+  std::atomic<bool> complete_ = false;
+  std::error_code failure_;
+  bool closed_ = false;
+};
+
+// What reads the response beside an upload: its end, however it ends, stops what is still writing.
+template <class T>
+[[nodiscard]] async::task<T> until_answered(upload &sending, async::task<T> reading) {
+  async::detail::stop_on_exit const answered{sending.stop()};
+
+  co_return co_await std::move(reading);
+}
+
 // Sends `request` on `connection` and reads its final response, skipping the interim 1xx ones; the connection goes
 // back to `pool` if it can carry another request. With `retry_if_closed` (an idle connection), a connection found
 // closed before any response, or answering 408 first (sent by the server before it closed the idle connection), is
 // not an error: no response, the caller sends the request again on a new connection. Without it, a response or an
 // exception.
 async::task<std::optional<http::response>> exchange(connection_pool &pool, http::parse_limits limits,
-                                                    io::any_stream connection, prepared_request const &request,
-                                                    bool retry_if_closed) {
-  auto const sent = co_await io::write(connection, std::as_bytes(std::span{request.wire}));
+                                                    io::any_stream &connection, prepared_request const &request,
+                                                    bool retry_if_closed, upload const *sending = nullptr) {
+  if (sending == nullptr) {
+    auto const sent = co_await io::write(connection, std::as_bytes(std::span{request.wire}));
 
-  if (sent.error) {
-    if (retry_if_closed && closed_meanwhile(sent.error)) {
-      co_return std::nullopt;
+    if (sent.error) {
+      if (retry_if_closed && closed_meanwhile(sent.error)) {
+        co_return std::nullopt;
+      }
+
+      throw std::system_error{sent.error, "quoll::client: cannot send the request"};
     }
-
-    throw std::system_error{sent.error, "quoll::client: cannot send the request"};
   }
 
   std::string buffer;
@@ -210,12 +353,26 @@ async::task<std::optional<http::response>> exchange(connection_pool &pool, http:
     }
 
     // Bytes past the response would be read as the next one: a connection carrying them is not reused.
-    if (request.keep_alive && keep_alive && !upgrade && buffer.empty()) {
+    // Nor is one whose request has not left whole, which is what comes next on it.
+    if (request.keep_alive && keep_alive && !upgrade && buffer.empty() && (sending == nullptr || sending->complete())) {
       pool.give_back(std::move(connection));
     }
 
     co_return response;
   }
+}
+
+// exchange() for a request with a body in pieces: on a connection of its own, as a writer runs once and nothing can be
+// sent again.
+async::task<http::response> exchange_uploading(connection_pool &pool, http::parse_limits limits,
+                                               io::any_stream connection, prepared_request const &request,
+                                               std::chrono::nanoseconds timeout) {
+  upload sending{connection, request, timeout};
+  auto [uploaded, response] = co_await async::when_all(
+      sending.run(), until_answered(sending, exchange(pool, limits, connection, request, false, &sending)));
+
+  assert(response && "client::exchange() without retry_if_closed produced no response");
+  co_return std::move(*response);
 }
 
 } // namespace
@@ -294,11 +451,10 @@ async::task<http::response> send_prepared(std::shared_ptr<transport_core> shared
     co_await async::detail::with_optional_timeout(shared->options.connect_timeout, place.take(*shared->places));
   }
 
-  if (idempotent(request.method)) {
+  if (idempotent(request.method) && !request.writer) {
     if (auto idle = shared->pool.take()) {
       auto response = co_await async::detail::with_optional_timeout(
-          shared->options.response_timeout,
-          exchange(shared->pool, shared->options.limits, std::move(*idle), request, true));
+          shared->options.response_timeout, exchange(shared->pool, shared->options.limits, *idle, request, true));
 
       if (response) {
         co_return std::move(*response);
@@ -312,9 +468,14 @@ async::task<http::response> send_prepared(std::shared_ptr<transport_core> shared
   make_room(*shared);
 
   auto connection = co_await async::detail::with_optional_timeout(shared->options.connect_timeout, shared->open());
+
+  if (request.writer) {
+    co_return co_await exchange_uploading(shared->pool, shared->options.limits, std::move(connection), request,
+                                          shared->options.response_timeout);
+  }
+
   auto response = co_await async::detail::with_optional_timeout(
-      shared->options.response_timeout,
-      exchange(shared->pool, shared->options.limits, std::move(connection), request, false));
+      shared->options.response_timeout, exchange(shared->pool, shared->options.limits, connection, request, false));
 
   // Without retry_if_closed, exchange() produces a response or throws.
   assert(response && "client::exchange() without retry_if_closed produced no response");
@@ -326,7 +487,17 @@ async::task<http::response> send_prepared(std::shared_ptr<transport_core> shared
   auto const keep_alive = request.version == http::version::http_1_1 &&
                           !http::detail::closes_connection(request.fields) && shared.options.max_idle_connections > 0;
 
-  return prepared_request{http::serialize(request), request.method, keep_alive};
+  prepared_request prepared{.method = request.method, .keep_alive = keep_alive};
+
+  if (request.body_writer) {
+    prepared.framing = http::detail::serialize_streamed_head(request, prepared.wire);
+    prepared.writer = request.body_writer;
+    prepared.trailers = request.trailers;
+  } else {
+    http::serialize(request, prepared.wire);
+  }
+
+  return prepared;
 }
 
 // The statuses that ask for the same thing elsewhere: not 300, a choice for a person, nor 304, which has no elsewhere.
@@ -452,44 +623,25 @@ public:
       throw std::system_error{sent.error, "quoll::client: cannot send the request"};
     }
 
-    auto interim = 0;
+    auto const answered = co_await read_final_head(connection, request, retry_if_closed);
 
-    // Afresh for each attempt: the one before may have left anything in it.
-    buffer_.clear();
-    parser_.emplace(shared_->options.limits);
-    parser_->set_request_method(request.method);
-    // An interim response is read whole: only the final one is the caller's to read.
-    parser_->set_body_streaming([](http::response const &head) { return !http::is_informational(head.status); });
-
-    for (;;) {
-      if (auto const error = co_await http::read(connection, buffer_, *parser_)) {
-        if (retry_if_closed && interim == 0 && closed_meanwhile(error)) {
-          co_return false;
-        }
-
-        throw std::system_error{error, "quoll::client: cannot read the response"};
-      }
-
-      auto const status = parser_->head().status;
-
-      if (http::is_informational(status) && !parser_->upgrade()) {
-        if (++interim > max_interim_responses) {
-          throw std::system_error{http::error::bad_message, "quoll::client: too many interim responses"};
-        }
-
-        // The request method holds until the final one.
-        static_cast<void>(parser_->release());
-        continue;
-      }
-
-      if (retry_if_closed && interim == 0 && status == http::status::request_timeout) {
-        co_return false;
-      }
-
+    if (answered) {
       connection_.emplace(std::move(connection));
       request_keeps_alive_ = request.keep_alive;
-      co_return true;
     }
+
+    co_return answered;
+  }
+
+  // start() for a request with a body in pieces. A head that comes before its end stops it: this is not a conversation,
+  // and what is left of the body has nowhere to go while the caller reads.
+  [[nodiscard]] async::task<> start_uploading(io::any_stream connection, prepared_request const &request) {
+    upload sending{connection, request, shared_->options.response_timeout};
+
+    static_cast<void>(
+        co_await async::when_all(sending.run(), until_answered(sending, read_final_head(connection, request, false))));
+    connection_.emplace(std::move(connection));
+    request_keeps_alive_ = request.keep_alive && sending.complete();
   }
 
   // What the caller gets of the head: the rest of the message stays for read(). A message with nothing more to come
@@ -564,6 +716,43 @@ public:
   }
 
 private:
+  // Reads the head of the final response, on an attempt of its own; false as start() says.
+  [[nodiscard]] async::task<bool> read_final_head(io::any_stream &connection, prepared_request const &request,
+                                                  bool retry_if_closed) {
+    auto interim = 0;
+
+    // Afresh for each attempt: the one before may have left anything in it.
+    buffer_.clear();
+    parser_.emplace(shared_->options.limits);
+    parser_->set_request_method(request.method);
+    // An interim response is read whole: only the final one is the caller's to read.
+    parser_->set_body_streaming([](http::response const &head) { return !http::is_informational(head.status); });
+
+    for (;;) {
+      if (auto const error = co_await http::read(connection, buffer_, *parser_)) {
+        if (retry_if_closed && interim == 0 && closed_meanwhile(error)) {
+          co_return false;
+        }
+
+        throw std::system_error{error, "quoll::client: cannot read the response"};
+      }
+
+      auto const status = parser_->head().status;
+
+      if (http::is_informational(status) && !parser_->upgrade()) {
+        if (++interim > max_interim_responses) {
+          throw std::system_error{http::error::bad_message, "quoll::client: too many interim responses"};
+        }
+
+        // The request method holds until the final one.
+        static_cast<void>(parser_->release());
+        continue;
+      }
+
+      co_return !(retry_if_closed && interim == 0 && status == http::status::request_timeout);
+    }
+  }
+
   // Thrown rather than returned: a read a timeout cancelled is then that timeout's timed_out.
   [[nodiscard]] async::task<> read_piece() {
     if (auto const error = co_await http::read_body(*connection_, buffer_, *parser_, piece_)) {
@@ -626,7 +815,7 @@ async::task<streamed_response> stream_prepared(std::shared_ptr<transport_core> s
                                                   stream->place().take(*shared->places));
   }
 
-  if (idempotent(request.method)) {
+  if (idempotent(request.method) && !request.writer) {
     if (auto idle = shared->pool.take()) {
       auto const started = co_await async::detail::with_optional_timeout(
           shared->options.response_timeout, stream->start(std::move(*idle), request, true));
@@ -643,6 +832,11 @@ async::task<streamed_response> stream_prepared(std::shared_ptr<transport_core> s
   make_room(*shared);
 
   auto connection = co_await async::detail::with_optional_timeout(shared->options.connect_timeout, shared->open());
+
+  if (request.writer) {
+    co_await stream->start_uploading(std::move(connection), request);
+    co_return stream->head(stream);
+  }
 
   static_cast<void>(co_await async::detail::with_optional_timeout(
       shared->options.response_timeout, stream->start(std::move(connection), request, false)));
@@ -686,7 +880,8 @@ async::task<http::response> send(std::shared_ptr<transport_core> const &core, ht
 
   auto prepared = prepare(*core, request);
 
-  if (core->options.max_redirects == 0) {
+  // A body in pieces cannot be sent again: its 3xx is a result.
+  if (core->options.max_redirects == 0 || request.body_writer) {
     return send_prepared(core, std::move(prepared));
   }
 
