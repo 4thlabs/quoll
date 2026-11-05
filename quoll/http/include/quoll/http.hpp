@@ -37,6 +37,7 @@
 #ifndef QUOLL_HTTP_HPP
 #define QUOLL_HTTP_HPP
 
+#include <quoll/http/body_reader.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/local_transport.hpp>

@@ -301,6 +301,7 @@ struct router::entry {
   std::vector<route_segment> segments;
   std::string name;
   handler target;
+  bool body_in_pieces;
 };
 
 router::router() = default;
@@ -311,6 +312,10 @@ router &router::operator=(router &&) noexcept = default;
 router::~router() = default;
 
 void router::add(verb method, std::string_view path, std::string name, handler target) {
+  add_route(method, path, std::move(name), std::move(target), false);
+}
+
+void router::add_route(verb method, std::string_view path, std::string name, handler target, bool body_in_pieces) {
   if (!target) {
     throw std::invalid_argument{"quoll::http::router: empty handler"};
   }
@@ -328,8 +333,29 @@ void router::add(verb method, std::string_view path, std::string name, handler t
     }
   }
 
-  routes_.push_back(entry{method, std::move(segments), std::move(name), std::move(target)});
+  routes_.push_back(entry{method, std::move(segments), std::move(name), std::move(target), body_in_pieces});
+  any_body_in_pieces_ = any_body_in_pieces_ || body_in_pieces;
 }
+
+namespace {
+
+class whole_body {
+public:
+  explicit whole_body(std::string_view body) noexcept : body_(body) {}
+
+  [[nodiscard]] async::task<std::optional<std::string_view>> read() {
+    if (body_.empty()) {
+      co_return std::nullopt;
+    }
+
+    co_return std::exchange(body_, std::string_view{});
+  }
+
+private:
+  std::string_view body_;
+};
+
+} // namespace
 
 namespace detail {
 
@@ -339,6 +365,7 @@ struct resolved_route {
   bool valid = false;
   // The route that answers, null if none does: then, the methods of the routes on that path, if there are any.
   router::handler const *target = nullptr;
+  bool body_in_pieces = false;
   std::vector<verb> allowed{};
   route_match match{};
 };
@@ -448,14 +475,43 @@ detail::resolved_route router::resolve(request const &message) const {
 
   if (chosen != nullptr) {
     resolved.target = &chosen->target;
-    resolved.match = route_match{chosen->name, extract_params(chosen->segments, *segments), std::string{target->query}};
+    resolved.body_in_pieces = chosen->body_in_pieces;
+    resolved.match =
+        route_match{chosen->name, extract_params(chosen->segments, *segments), std::string{target->query}, {}};
   }
 
   return resolved;
 }
 
-async::task<response> router::dispatch(request message) const {
+bool router::reads_body_in_pieces(request const &head) const {
+  if (!any_body_in_pieces_) {
+    return false;
+  }
+
+  // Resolving allocates, and dispatch() does it again: only for what may be such a route.
+  auto const may_be = std::ranges::any_of(routes_, [&head](entry const &route) {
+    // A HEAD request may go to the GET route.
+    return route.body_in_pieces &&
+           (route.method == head.method || (head.method == verb::head && route.method == verb::get));
+  });
+
+  return may_be && resolve(head).body_in_pieces;
+}
+
+async::task<response> router::dispatch(request message, body_reader reader) const {
   auto resolved = resolve(message);
+
+  // Only for a route reading in pieces: its request has neither body nor trailers, as on a connection, where they come
+  // after the handler has started. With nothing reading it from a stream, a body already whole is one piece: here
+  // rather than in the route, so that a middleware calling next again finds what is left of it, as it does with a
+  // stream.
+  auto const body = resolved.body_in_pieces ? std::exchange(message.body, {}) : std::string{};
+  whole_body whole{body};
+
+  if (resolved.body_in_pieces) {
+    message.trailers.clear();
+    resolved.match.reader = reader ? reader : body_reader{whole};
+  }
 
   // Nothing else reads what routing found, and a middleware may call next again: only here can it be moved.
   if (middlewares_.empty() && resolved.target != nullptr) {

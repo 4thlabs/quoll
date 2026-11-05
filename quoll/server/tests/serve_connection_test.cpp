@@ -38,6 +38,8 @@
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/async/with_timeout.hpp>
+#include <quoll/async/yield.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
@@ -110,6 +112,61 @@ http::router make_router() {
 
     response.fields.add("Connection", "keep-alive, Close");
     response.body = "bye";
+    co_return response;
+  });
+  auto const upload = [](http::body_reader body) -> task<http::response> {
+    http::response response;
+
+    while (auto const piece = co_await body.read()) {
+      response.body += *piece;
+    }
+
+    co_return response;
+  };
+
+  router.post("/upload", upload);
+  router.put("/upload/{name}", [](std::string name, http::body_reader body) -> task<http::response> {
+    http::response response;
+
+    response.body = std::move(name) + ":";
+
+    while (auto const piece = co_await body.read()) {
+      response.body += *piece;
+    }
+
+    co_return response;
+  });
+  // Answers without reading what it was sent.
+  router.post("/refuse", [](http::body_reader) {
+    http::response response;
+
+    response.status = http::status::forbidden;
+    return response;
+  });
+  // Reads a piece, then answers, whatever the rest is.
+  router.post("/first", [](http::body_reader body) -> task<http::response> {
+    http::response response;
+
+    response.body = (co_await body.read()).value_or("nothing");
+    co_return response;
+  });
+  // Reads, then fails on its own.
+  router.post("/throwing", [](http::body_reader body) -> task<http::response> {
+    static_cast<void>(co_await body.read());
+    throw std::logic_error{"a bug of its own"};
+  });
+  // Gives up on a body that takes too long, and answers.
+  router.post("/patient", [](http::body_reader body) -> task<http::response> {
+    http::response response;
+
+    try {
+      while (co_await quoll::async::with_timeout(std::chrono::seconds{1}, body.read())) {
+      }
+    } catch (std::system_error const &thrown) {
+      REQUIRE(thrown.code() == std::errc::timed_out);
+      response.status = http::status::gateway_timeout;
+    }
+
     co_return response;
   });
   router.add(verb::get, "/invalid", "invalid", [](http::request, http::route_match) -> task<http::response> {
@@ -1179,4 +1236,372 @@ TEST_CASE("serve_connection: a stream that cannot stop sending just closes", "[s
   };
 
   REQUIRE(quoll::test::run(answer())->starts_with("HTTP/1.1 200"));
+}
+
+TEST_CASE("serve_connection: a handler reads a body in pieces, and the connection goes on", "[server]") {
+  connection_options options;
+
+  // Far less than what is sent: the handler holds it, not the connection.
+  options.limits.max_body_size = 16;
+
+  std::string const body(std::size_t{64} * 1024, 'x');
+  auto const size = std::to_string(body.size());
+
+  SECTION("with a length") {
+    auto const got = serve("POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: " + size + "\r\n\r\n" + body +
+                               "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
+                           {verb::post, verb::get}, false, options);
+
+    REQUIRE(got.responses.size() == 2);
+    REQUIRE(got.responses[0].body == body);
+    REQUIRE(got.responses[1].body == "hello");
+  }
+
+  SECTION("chunked, with a parameter of the path") {
+    auto const got = serve("PUT /upload/a%20b HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+                           "4\r\nping\r\n4\r\npong\r\n0\r\n\r\nGET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
+                           {verb::put, verb::get}, false, options);
+
+    REQUIRE(got.responses.size() == 2);
+    REQUIRE(got.responses[0].body == "a b:pingpong");
+    REQUIRE(got.responses[1].body == "hello");
+  }
+
+  SECTION("empty") {
+    auto const got = serve("POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n"
+                           "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
+                           {verb::post, verb::get}, false, options);
+
+    REQUIRE(got.responses.at(0).body.empty());
+    REQUIRE(got.responses.at(1).body == "hello");
+  }
+
+  SECTION("another route keeps the limit of a whole body") {
+    auto const got =
+        serve("POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: " + size + "\r\n\r\n", {verb::post}, true, options);
+
+    REQUIRE(got.responses.at(0).status == http::status::content_too_large);
+    REQUIRE(got.closed);
+  }
+}
+
+TEST_CASE("serve_connection: what a handler leaves unread ends the connection after its response", "[server]") {
+  auto const refused = serve("POST /refuse HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\npi", {verb::post}, true);
+
+  REQUIRE(refused.responses.at(0).status == http::status::forbidden);
+  REQUIRE(refused.responses.at(0).fields.find("Connection") == "close");
+  REQUIRE(refused.closed);
+
+  auto const partly = serve("POST /first HTTP/1.1\r\nHost: x\r\nContent-Length: 8\r\n\r\nping", {verb::post}, true);
+
+  REQUIRE(partly.responses.at(0).body == "ping");
+  REQUIRE(partly.closed);
+}
+
+TEST_CASE("serve_connection: all of a body came with its head, unread: the connection goes on", "[server]") {
+  auto const got = serve("POST /refuse HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhi"
+                         "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
+                         {verb::post, verb::get});
+
+  REQUIRE(got.responses.at(0).status == http::status::forbidden);
+  REQUIRE(got.responses.at(1).body == "hello");
+}
+
+namespace {
+
+// A head, then the rest once the handler is reading, as what comes with the head is refused before it runs: a whole
+// message in one read reaches no handler if its body is at fault.
+task<http::response> send_in_two(io::memory_stream stream, std::string head, std::string rest) {
+  (void)co_await io::write(stream, std::as_bytes(std::span{head}));
+
+  for (auto turn = 0; turn < 32; ++turn) {
+    co_await quoll::async::yield();
+  }
+
+  (void)co_await io::write(stream, std::as_bytes(std::span{rest}));
+
+  std::string buffer;
+  http::response_parser parser;
+
+  (void)co_await http::read(stream, buffer, parser);
+  co_return parser.release();
+}
+
+} // namespace
+
+TEST_CASE("serve_connection: a body in pieces past its limit", "[server]") {
+  connection_options options;
+
+  options.limits.max_streamed_body_size = 4;
+
+  SECTION("announced: refused at its head") {
+    auto const got =
+        serve("POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n", {verb::post}, true, options);
+
+    REQUIRE(got.responses.at(0).status == http::status::content_too_large);
+    REQUIRE(got.closed);
+  }
+}
+
+TEST_CASE("serve_connection: what stops the reading of a body is no failure of the handler", "[server]") {
+  auto failures = 0;
+  connection_options options;
+
+  options.on_handler_error = [&](std::exception_ptr const &) { ++failures; };
+  options.limits.max_streamed_body_size = 4;
+
+  // Reaches the handler: past it, what is at fault comes through it.
+  auto const through_a_handler = [&](std::string rest) {
+    auto started = false;
+    http::router router;
+
+    router.post("/reading", [&started](http::body_reader body) -> task<http::response> {
+      started = true;
+
+      while (co_await body.read()) {
+      }
+
+      co_return http::response{};
+    });
+
+    auto [client, server] = io::make_memory_stream_pair();
+    auto const outcome = quoll::test::run(quoll::async::when_all(
+        quoll::server::serve_connection(std::move(server), router, options),
+        send_in_two(std::move(client), "POST /reading HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
+                    std::move(rest))));
+
+    REQUIRE(started);
+    return std::get<1>(outcome.value()).status;
+  };
+
+  SECTION("too large, through the handler") {
+    REQUIRE(through_a_handler("5\r\nhello\r\n0\r\n\r\n") == http::status::content_too_large);
+    REQUIRE(failures == 0);
+  }
+
+  SECTION("what is no HTTP") {
+    options.limits.max_streamed_body_size = 1024;
+
+    REQUIRE(through_a_handler("ZZ\r\n") == http::status::bad_request);
+    REQUIRE(failures == 0);
+  }
+
+  SECTION("the peer closing before the end: nothing to answer") {
+    options.limits.max_streamed_body_size = 1024;
+
+    auto const router = make_router();
+    auto [client, server] = io::make_memory_stream_pair();
+
+    // Owns its end: it goes when this ends, with the body cut short, and what is written after that goes nowhere.
+    auto const peer = [](io::memory_stream stream) -> task<bool> {
+      std::string const sent = "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 8\r\n\r\nping";
+
+      co_return !(co_await io::write(stream, std::as_bytes(std::span{sent}))).error;
+    };
+
+    auto const outcome = quoll::test::run(quoll::async::when_all(
+        quoll::server::serve_connection(std::move(server), router, options), peer(std::move(client))));
+
+    REQUIRE(outcome);
+    REQUIRE(std::get<1>(*outcome));
+    REQUIRE(failures == 0);
+  }
+}
+
+TEST_CASE("serve_connection: Expect: 100-continue waits for the handler to ask for the body", "[server]") {
+  SECTION("read: the interim response comes first, then the body") {
+    auto const got =
+        answers_to("POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n", "ping");
+
+    REQUIRE(got.statuses == std::vector{http::status::continue_, http::status::ok});
+    REQUIRE(got.body == "ping");
+  }
+
+  SECTION("refused: the client does not have to send it") {
+    auto const got = serve("POST /refuse HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n",
+                           {verb::post}, true);
+
+    REQUIRE(got.responses.at(0).status == http::status::forbidden);
+    REQUIRE(got.closed);
+  }
+}
+
+TEST_CASE("serve_connection: a body in pieces has a read timeout per piece", "[server][timer]") {
+  quoll::test::virtual_time time;
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  connection_options options;
+
+  options.read_timeout = 3s;
+
+  // Each piece comes in time, for longer than one timeout in all, and the last never does.
+  auto const peer = [](io::memory_stream stream) -> task<http::response> {
+    std::string const head = "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\n";
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{head}));
+
+    for (auto index = 0; index < 3; ++index) {
+      co_await quoll::async::sleep_for(2s);
+
+      std::string_view const part = "p";
+
+      (void)co_await io::write(stream, std::as_bytes(std::span{part}));
+    }
+
+    std::string buffer;
+    http::response_parser parser;
+
+    (void)co_await http::read(stream, buffer, parser);
+    co_return parser.release();
+  };
+
+  auto outcome =
+      quoll::test::run(time, quoll::async::when_all(quoll::server::serve_connection(std::move(server), router, options),
+                                                    peer(std::move(client))));
+
+  REQUIRE(std::get<1>(outcome.value()).status == http::status::request_timeout);
+  // Three pieces two seconds apart, and the timeout after the last.
+  REQUIRE(time.now() >= 9s);
+}
+
+TEST_CASE("serve_connection: what a handler throws on its own, reading a body, is its failure", "[server]") {
+  auto failures = 0;
+  connection_options options;
+
+  options.on_handler_error = [&](std::exception_ptr const &) { ++failures; };
+
+  auto const got =
+      serve("POST /throwing HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nping", {verb::post}, false, options);
+
+  REQUIRE(got.responses.at(0).status == http::status::internal_server_error);
+  REQUIRE(failures == 1);
+}
+
+TEST_CASE("serve_connection: a handler giving up on a body answers, and the connection ends", "[server][timer]") {
+  quoll::test::virtual_time time;
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+
+  auto const peer = [](io::memory_stream stream) -> task<http::response> {
+    std::string const head = "POST /patient HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\n";
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{head}));
+
+    std::string buffer;
+    http::response_parser parser;
+
+    (void)co_await http::read(stream, buffer, parser);
+    co_return parser.release();
+  };
+
+  auto outcome =
+      quoll::test::run(time, quoll::async::when_all(quoll::server::serve_connection(std::move(server), router),
+                                                    peer(std::move(client))));
+  auto const &response = std::get<1>(outcome.value());
+
+  REQUIRE(response.status == http::status::gateway_timeout);
+  REQUIRE(response.fields.find("Connection") == "close");
+}
+
+TEST_CASE("serve_connection: a read that fails goes on failing, after what came before it", "[server]") {
+  std::vector<std::string> seen;
+  http::router router;
+
+  // Reads on, past a failure, and answers something else than what the failure asks.
+  router.post("/stubborn", [&seen](http::body_reader body) -> task<http::response> {
+    for (auto attempt = 0; attempt < 2; ++attempt) {
+      try {
+        while (auto const piece = co_await body.read()) {
+          seen.emplace_back(*piece);
+        }
+      } catch (std::system_error const &thrown) {
+        seen.push_back(thrown.code() == http::error::body_too_large ? "too large" : "another failure");
+      }
+    }
+
+    http::response response;
+
+    response.body = "what the handler made of it";
+    co_return response;
+  });
+
+  connection_options options;
+
+  options.limits.max_streamed_body_size = 4;
+
+  auto [client, server] = io::make_memory_stream_pair();
+  auto const outcome = quoll::test::run(quoll::async::when_all(
+      quoll::server::serve_connection(std::move(server), router, options),
+      // In one read: a chunk that fits, and one past the limit.
+      send_in_two(std::move(client), "POST /stubborn HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
+                  "4\r\nping\r\n1\r\nx\r\n0\r\n\r\n")));
+
+  REQUIRE(outcome);
+
+  auto const &response = std::get<1>(*outcome);
+
+  REQUIRE(seen == std::vector<std::string>{"ping", "too large", "too large"});
+  // The refusal goes out, in the place of what it made of it.
+  REQUIRE(response.status == http::status::content_too_large);
+  REQUIRE(response.body.empty());
+  REQUIRE(response.fields.find("Connection") == "close");
+}
+
+TEST_CASE("serve_connection: a peer gone when the body is asked for", "[server]") {
+  auto failures = 0;
+  connection_options options;
+
+  options.on_handler_error = [&](std::exception_ptr const &) { ++failures; };
+
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+
+  auto const peer = [](io::memory_stream stream) -> task<bool> {
+    std::string const sent = "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n";
+
+    co_return !(co_await io::write(stream, std::as_bytes(std::span{sent}))).error;
+  };
+
+  auto const outcome = quoll::test::run(quoll::async::when_all(
+      quoll::server::serve_connection(std::move(server), router, options), peer(std::move(client))));
+
+  REQUIRE(outcome);
+  REQUIRE(failures == 0);
+}
+
+TEST_CASE("serve_connection: a stop during the reading of a body is no failure of the handler", "[server][timer]") {
+  quoll::test::virtual_time time;
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  auto failures = 0;
+  std::stop_source stopping;
+  connection_options options;
+
+  options.on_handler_error = [&](std::exception_ptr const &) { ++failures; };
+
+  auto const peer = [&](io::memory_stream stream) -> task<bool> {
+    std::string const sent = "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 8\r\n\r\nping";
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{sent}));
+    co_await quoll::async::sleep_for(1s);
+    stopping.request_stop();
+
+    // Nothing comes: not a 500 for a handler that let the stop through.
+    std::array<std::byte, 64> received{};
+
+    co_return (co_await stream.read_some(received)).transferred == 0;
+  };
+
+  auto const serving = [&](io::memory_stream stream) -> task<bool> {
+    co_await quoll::async::detail::stop_scope<void>{quoll::server::serve_connection(std::move(stream), router, options),
+                                                    stopping.get_token()};
+    co_return true;
+  };
+
+  auto const outcome =
+      quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peer(std::move(client))));
+
+  REQUIRE(outcome);
+  REQUIRE(std::get<1>(*outcome));
+  REQUIRE(failures == 0);
 }

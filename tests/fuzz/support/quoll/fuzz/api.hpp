@@ -37,6 +37,9 @@
 #ifndef QUOLL_FUZZ_API_HPP
 #define QUOLL_FUZZ_API_HPP
 
+#include <quoll/async/task.hpp>
+#include <quoll/http/body_reader.hpp>
+#include <quoll/http/response.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
@@ -154,6 +157,21 @@ struct service {
                      rest::validators([](rest::credential<rest::bearer_auth> const &) { return true; },
                                       [](rest::credential<rest::api_key<"X-Api-Key">> const &) { return true; },
                                       [](rest::credential<rest::api_key_query<"key">> const &) { return true; }));
+    // A body in pieces, read to its end, or left halfway when its first piece asks for it.
+    router.post("/in-pieces/{name}", [](std::string name, http::body_reader body) -> async::task<http::response> {
+      http::response response;
+
+      while (auto const piece = co_await body.read()) {
+        response.body += *piece;
+
+        if (piece->starts_with("stop")) {
+          break;
+        }
+      }
+
+      response.body += name;
+      co_return response;
+    });
     return router;
   }();
 
