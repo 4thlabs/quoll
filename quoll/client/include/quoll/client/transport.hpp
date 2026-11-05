@@ -39,6 +39,7 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/client/detail/url.hpp>
+#include <quoll/client/streamed_response.hpp>
 #include <quoll/client/transport_options.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
@@ -75,6 +76,7 @@ struct connector_handle {
                                                                   transport_options const &options);
 
 [[nodiscard]] async::task<http::response> send(std::shared_ptr<transport_core> const &core, http::request request);
+[[nodiscard]] async::task<streamed_response> stream(std::shared_ptr<transport_core> const &core, http::request request);
 
 } // namespace detail
 
@@ -122,7 +124,7 @@ struct connector_handle {
  *
  * Copies share their connections. The task copies what it needs: the transport does not have to outlive it.
  *
- * Thread safety: send() may be called from any thread, concurrently, if the connector allows it.
+ * Thread safety: send() and stream() may be called from any thread, concurrently, if the connector allows it.
  */
 template <io::Connector Connector = io::network_connector>
 class transport {
@@ -170,6 +172,18 @@ public:
    */
   [[nodiscard]] async::task<http::response> send(http::request request) const {
     return detail::send(core_, std::move(request));
+  }
+
+  /**
+   * @brief Sends `request` and produces its response once its head has come: its body is read in pieces, for what
+   * memory cannot or need not hold, up to `limits.max_streamed_body_size`. Connections and retries are as in send() up
+   * to the head: from there, a connection that closes is a failure of `body.read()`, as what came is the caller's. A
+   * 3xx response is a result, whatever `max_redirects` says, as its body is for the caller to read or drop.
+   *
+   * @throws std::invalid_argument here, as send() does.
+   */
+  [[nodiscard]] async::task<streamed_response> stream(http::request request) const {
+    return detail::stream(core_, std::move(request));
   }
 
 private:

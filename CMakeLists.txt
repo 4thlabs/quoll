@@ -22,6 +22,9 @@ option(QUOLL_BUILD_SAMPLES "Build the Quoll samples" ${PROJECT_IS_TOP_LEVEL})
 if(EMSCRIPTEN)
   add_compile_options(-fwasm-exceptions)
   add_link_options(-fwasm-exceptions)
+  # What a coroutine resuming another compiles to, without which a long loop of tasks that never suspend takes the stack with it.
+  add_compile_options(-mtail-call)
+  add_link_options(-mtail-call)
 endif()
 
 # The benchmark program (tests/bench), with the standard library's assertions off, as an application builds it: see

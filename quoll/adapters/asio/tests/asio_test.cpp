@@ -50,6 +50,7 @@
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/client/transport.hpp>
+#include <quoll/http/body_stream.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
@@ -85,6 +86,7 @@
 
 #include <signal.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -1079,6 +1081,71 @@ TEST_CASE("asio: a transport with a path in its URL sends its requests under it"
   };
 
   REQUIRE(run_task(exchange()) == "/api/v1/users/7?x=1 7 root");
+}
+
+TEST_CASE("asio: a body read in pieces over TCP, on a connection then reused", "[asio][runtime][client]") {
+  auto const exchange = []() -> task<std::string> {
+    http::router router;
+
+    router.get("/pieces", [](http::request) {
+      http::response answer;
+
+      answer.body_writer = [](http::body_stream out) -> task<> {
+        std::string const piece(std::size_t{4} * 1024, 'x');
+
+        for (auto index = 0; index < 256; ++index) {
+          co_await out.write(piece);
+        }
+      };
+      return answer;
+    });
+    router.get("/hello", [](http::request) {
+      http::response answer;
+
+      answer.body = "hello";
+      return answer;
+    });
+
+    auto listener = co_await io::listen(0);
+    auto const port = listener.local_port().value();
+    std::stop_source stop;
+
+    auto const serving = [&]() -> task<> {
+      co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router, {.shutdown_timeout = {}}),
+                                                      stop.get_token()};
+    };
+
+    auto const calling = [&]() -> task<std::string> {
+      quoll::async::detail::stop_on_exit const stop_server{stop};
+      quoll::client::transport<> const transport{"http://127.0.0.1:" + std::to_string(port)};
+      http::request request;
+
+      request.target = "/pieces";
+
+      auto response = co_await transport.stream(std::move(request));
+      std::size_t size = 0;
+      std::size_t largest = 0;
+
+      while (auto const piece = co_await response.body.read()) {
+        size += piece->size();
+        largest = std::max(largest, piece->size());
+      }
+
+      http::request next;
+
+      next.target = "/hello";
+
+      auto const hello = co_await transport.send(std::move(next));
+
+      co_return std::to_string(size) + (largest < size ? " in pieces " : " whole ") + hello.body;
+    };
+
+    auto [served, body] = co_await quoll::async::when_all(serving(), calling());
+
+    co_return std::move(body);
+  };
+
+  REQUIRE(run_task(exchange()) == "1048576 in pieces hello");
 }
 
 TEST_CASE("asio: a client still sending a refused body finishes, then reads its answer", "[asio][runtime]") {

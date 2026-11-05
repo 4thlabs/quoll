@@ -159,6 +159,9 @@ public:
    */
   [[nodiscard]] bool upgrade() const noexcept;
 
+  /** @brief What stopped the parser, if something did: what feed() reports from then on. */
+  [[nodiscard]] std::error_code failure() const noexcept;
+
   /** @brief Why the input was rejected, for diagnostics. */
   [[nodiscard]] std::string_view error_reason() const noexcept;
 

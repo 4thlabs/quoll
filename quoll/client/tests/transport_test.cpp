@@ -43,6 +43,7 @@
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/async/with_timeout.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/client.hpp>
 #include <quoll/http/error.hpp>
@@ -58,6 +59,7 @@
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/connector.hpp>
 #include <quoll/io/error.hpp>
+#include <quoll/io/io_result.hpp>
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/io/tls_connector.hpp>
 #include <quoll/io/tls_options.hpp>
@@ -77,6 +79,8 @@
 #include <cstdint>
 #include <exception>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <stop_token>
@@ -1609,4 +1613,1066 @@ TEST_CASE("client::transport: a stop request is no timeout", "[client][timer]") 
   auto const outcome = quoll::test::run(time, async::when_all(send_gets(network, {}), stop_soon()), source.get_token());
 
   REQUIRE(std::get<0>(outcome.value()) == std::errc::operation_canceled);
+}
+
+namespace {
+
+// What a stream() gave, read to its end.
+struct read_whole {
+  http::status status = http::status::ok;
+  std::string body;
+  std::size_t largest = 0;
+  std::string trailer;
+  std::error_code error;
+  int connections = 0;
+};
+
+http::router make_streaming_router() {
+  http::router router;
+
+  router.get("/pieces", [](http::request) {
+    http::response response;
+
+    response.fields.add("X-Head", "yes");
+    response.body_writer = [](http::body_stream out) -> task<> {
+      std::string const piece(std::size_t{4} * 1024, 'x');
+
+      for (auto index = 0; index < 256; ++index) {
+        co_await out.write(piece);
+      }
+    };
+    return response;
+  });
+  router.get("/hello", [](http::request) {
+    http::response response;
+
+    response.body = "hello";
+    return response;
+  });
+  router.get("/empty", [](http::request) { return http::response{}; });
+  return router;
+}
+
+task<read_whole> stream_all(memory_server &server, std::string target, client::transport_options options = {},
+                            verb method = verb::get) {
+  client::transport const transport{memory_connector{server}, "example.com", 80, std::move(options)};
+  read_whole out;
+
+  try {
+    auto response = co_await transport.stream(make_request(method, std::move(target)));
+
+    out.status = response.status;
+
+    while (auto const piece = co_await response.body.read()) {
+      out.body += *piece;
+      out.largest = std::max(out.largest, piece->size());
+    }
+
+    out.trailer = response.trailers->find("X-Sum").value_or("");
+  } catch (std::system_error const &failure) {
+    out.error = failure.code();
+  }
+
+  co_return out;
+}
+
+read_whole stream_from(std::function<task<>(io::memory_stream)> serve, std::string target,
+                       client::transport_options options = {}, verb method = verb::get) {
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), std::move(serve), 0, {}, {}};
+  auto out = quoll::test::run(loop, stream_all(server, std::move(target), std::move(options), method));
+
+  REQUIRE(out);
+  out->connections = server.connections;
+  return std::move(*out);
+}
+
+std::function<task<>(io::memory_stream)> serving(http::router const &router) {
+  return [&router](io::memory_stream stream) { return quoll::server::serve_connection(std::move(stream), router); };
+}
+
+} // namespace
+
+TEST_CASE("client::transport: a response read in pieces, past what memory would hold", "[client]") {
+  auto const router = make_streaming_router();
+  client::transport_options options;
+
+  // Far less than the body: this limit is for what is read whole.
+  options.limits.max_body_size = 16;
+
+  auto const got = stream_from(serving(router), "/pieces", options);
+
+  REQUIRE(!got.error);
+  REQUIRE(got.status == http::status::ok);
+  REQUIRE(got.body == std::string(std::size_t{1024} * 1024, 'x'));
+  // What a read of the stream brings, rather than the body.
+  REQUIRE(got.largest <= 8192);
+}
+
+TEST_CASE("client::transport: stream() takes bodies of every size", "[client]") {
+  auto const router = make_streaming_router();
+
+  SECTION("a whole body") {
+    auto const got = stream_from(serving(router), "/hello");
+
+    REQUIRE(got.body == "hello");
+  }
+
+  SECTION("a body up to the end of the stream") {
+    auto const got = stream_from(answering({"HTTP/1.1 200 OK\r\n\r\nping"}), "/");
+
+    REQUIRE(!got.error);
+    REQUIRE(got.body == "ping");
+  }
+
+  SECTION("no body") {
+    auto const got = stream_from(serving(router), "/empty");
+
+    REQUIRE(!got.error);
+    REQUIRE(got.body.empty());
+  }
+
+  SECTION("a response to HEAD") {
+    auto const got = stream_from(serving(router), "/hello", {}, verb::head);
+
+    REQUIRE(!got.error);
+    REQUIRE(got.body.empty());
+  }
+
+  SECTION("a route that is not there is a result") {
+    auto const got = stream_from(serving(router), "/nowhere");
+
+    REQUIRE(!got.error);
+    REQUIRE(got.status == http::status::not_found);
+  }
+}
+
+TEST_CASE("client::transport: a body read to its end gives its connection back, and its trailers", "[client]") {
+  async::run_loop loop;
+  auto const replies = std::vector<std::string>{
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nping\r\n0\r\nX-Sum: 1\r\n\r\n",
+      "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\npong"};
+  memory_server server{loop.get_executor(), answering(replies), 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::vector<std::string>> {
+    client::transport const transport{memory_connector{server}, "example.com", 80};
+    std::vector<std::string> seen;
+
+    for (auto attempt = 0; attempt < 2; ++attempt) {
+      auto response = co_await transport.stream(make_request(verb::get, "/"));
+      std::string body;
+
+      while (auto const piece = co_await response.body.read()) {
+        body += *piece;
+      }
+
+      // It goes on saying so.
+      REQUIRE_FALSE(co_await response.body.read());
+      seen.push_back(body);
+      seen.emplace_back(response.trailers->find("X-Sum").value_or("none"));
+    }
+
+    co_return seen;
+  };
+
+  auto const seen = quoll::test::run(loop, reading());
+
+  REQUIRE(seen);
+  REQUIRE(*seen == std::vector<std::string>{"ping", "1", "pong", "none"});
+  REQUIRE(server.connections == 1);
+}
+
+TEST_CASE("client::transport: a stream given up on closes its connection", "[client]") {
+  auto const router = make_streaming_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport_options options;
+
+    // What it held must come back, or what follows waits for ever.
+    options.max_connections = 1;
+
+    client::transport const transport{memory_connector{server}, "example.com", 80, options};
+
+    {
+      auto response = co_await transport.stream(make_request(verb::get, "/pieces"));
+
+      // A piece, and no more.
+      static_cast<void>(co_await response.body.read());
+    }
+
+    co_return (co_await transport.send(make_request(verb::get, "/hello"))).body;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "hello");
+  REQUIRE(server.connections == 2);
+}
+
+TEST_CASE("client::transport: a body in pieces fails as send() would", "[client]") {
+  SECTION("cut short, after what came") {
+    auto const got = stream_from(answering({"HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nping"}), "/");
+
+    REQUIRE(got.body == "ping");
+    REQUIRE(got.error == http::error::partial_message);
+  }
+
+  SECTION("past its limit") {
+    client::transport_options options;
+
+    options.limits.max_streamed_body_size = 2;
+
+    auto const got = stream_from(answering({"HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nping"}), "/", options);
+
+    REQUIRE(got.error == http::error::body_too_large);
+  }
+
+  SECTION("no response at all") {
+    auto const got = stream_from(answering({}), "/");
+
+    REQUIRE(got.error == io::error::end_of_stream);
+  }
+}
+
+TEST_CASE("client::transport: stream() skips interim responses, and reuses what send() kept", "[client]") {
+  auto const interim =
+      stream_from(answering({"HTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi"}), "/");
+
+  REQUIRE(interim.status == http::status::ok);
+  REQUIRE(interim.body == "hi");
+
+  async::run_loop loop;
+  auto const router = make_streaming_router();
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport const transport{memory_connector{server}, "example.com", 80};
+
+    static_cast<void>(co_await transport.send(make_request(verb::get, "/hello")));
+
+    auto response = co_await transport.stream(make_request(verb::get, "/hello"));
+    std::string body;
+
+    while (auto const piece = co_await response.body.read()) {
+      body += *piece;
+    }
+
+    co_return body;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "hello");
+  REQUIRE(server.connections == 1);
+}
+
+TEST_CASE("client::transport: a stream holds its place in max_connections until its end", "[client]") {
+  auto const router = make_streaming_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+  std::vector<std::string> order;
+
+  auto const reading = [&]() -> task<int> {
+    client::transport_options options;
+
+    options.max_connections = 1;
+
+    client::transport const transport{memory_connector{server}, "example.com", 80, options};
+
+    auto const first = [&]() -> task<int> {
+      auto response = co_await transport.stream(make_request(verb::get, "/pieces"));
+
+      order.emplace_back("first has its head");
+
+      for (auto turn = 0; turn < 32; ++turn) {
+        co_await async::yield();
+      }
+
+      while (co_await response.body.read()) {
+      }
+
+      order.emplace_back("first ended");
+      co_return 1;
+    };
+
+    auto const second = [&]() -> task<int> {
+      static_cast<void>(co_await transport.send(make_request(verb::get, "/hello")));
+      order.emplace_back("second answered");
+      co_return 2;
+    };
+
+    auto [one, two] = co_await async::when_all(first(), second());
+
+    co_return one + two;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == 3);
+  REQUIRE(order == std::vector<std::string>{"first has its head", "first ended", "second answered"});
+}
+
+namespace {
+
+// A connector to a router on a virtual time, whose timeouts then jump.
+class timed_connector {
+public:
+  timed_connector(virtual_time &clock, http::router const &routes) noexcept : clock_(&clock), routes_(&routes) {}
+
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    auto [client_end, server_end] = io::make_memory_stream_pair();
+
+    co_spawn(clock_->get_executor(), quoll::server::serve_connection(std::move(server_end), *routes_), async::detached);
+    co_return io::any_stream{std::move(client_end)};
+  }
+
+private:
+  virtual_time *clock_;
+  http::router const *routes_;
+};
+
+} // namespace
+
+TEST_CASE("client::transport: a body in pieces has a response timeout per piece", "[client][timer]") {
+  virtual_time time;
+  http::router router;
+
+  router.get("/slowly", [](http::request) {
+    http::response response;
+
+    response.body_writer = [](http::body_stream out) -> task<> {
+      for (auto index = 0; index < 3; ++index) {
+        co_await async::sleep_for(2s);
+        co_await out.write("part");
+      }
+
+      co_await async::sleep_for(1h);
+    };
+    return response;
+  });
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport const transport{timed_connector{time, router}, "example.com", 80, {.response_timeout = 3s}};
+    auto response = co_await transport.stream(make_request(verb::get, "/slowly"));
+    std::string body;
+
+    try {
+      while (auto const piece = co_await response.body.read()) {
+        body += *piece;
+      }
+    } catch (std::system_error const &failure) {
+      body += failure.code() == std::errc::timed_out ? "|timed out" : "|another failure";
+    }
+
+    co_return body;
+  };
+
+  // Three pieces two seconds apart, past one timeout in all, and the last never comes.
+  REQUIRE(quoll::test::run(time, reading()) == "partpartpart|timed out");
+}
+
+TEST_CASE("client::transport: stream() goes on from an idle connection found closed, afresh", "[client]") {
+  auto const second_answer = std::string{"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsecond"};
+  auto const first_answer = std::string{"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfirst"};
+  // Goes without a word, or answers 408 first. A connection cut in the middle of an answer is an answer cut, as with
+  // send().
+  auto const on_idle = GENERATE(as<std::string>{}, "", "HTTP/1.1 408 Request Timeout\r\nContent-Length: 0\r\n\r\n");
+  auto connection = 0;
+
+  auto const serve = [&](io::memory_stream stream) -> task<> {
+    std::string buffer;
+    http::request_parser parser;
+
+    ++connection;
+
+    auto const this_one = connection;
+
+    if (co_await http::read(stream, buffer, parser)) {
+      co_return;
+    }
+
+    static_cast<void>(parser.release());
+
+    auto const &answer = this_one == 1 ? first_answer : second_answer;
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{answer}));
+
+    if (this_one != 1) {
+      co_return;
+    }
+
+    // Kept by the client, then gone at its next request.
+    if (co_await http::read(stream, buffer, parser)) {
+      co_return;
+    }
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{on_idle}));
+  };
+
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serve, 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport const transport{memory_connector{server}, "example.com", 80};
+
+    static_cast<void>(co_await transport.send(make_request(verb::get, "/")));
+
+    auto response = co_await transport.stream(make_request(verb::get, "/"));
+    std::string body;
+
+    while (auto const piece = co_await response.body.read()) {
+      body += *piece;
+    }
+
+    co_return body;
+  };
+
+  CAPTURE(on_idle);
+  REQUIRE(quoll::test::run(loop, reading()) == "second");
+  REQUIRE(server.connections == 2);
+}
+
+TEST_CASE("client::transport: stream() skips an interim response with a body of its own, in two reads", "[client]") {
+  auto const serve = [](io::memory_stream stream) -> task<> {
+    std::string buffer;
+    http::request_parser parser;
+
+    if (co_await http::read(stream, buffer, parser)) {
+      co_return;
+    }
+
+    std::string_view const head = "HTTP/1.1 150 Odd\r\nContent-Length: 4\r\n\r\n";
+    std::string_view const rest = "pingHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi";
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{head}));
+
+    for (auto turn = 0; turn < 16; ++turn) {
+      co_await async::yield();
+    }
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{rest}));
+  };
+
+  auto const got = stream_from(serve, "/");
+
+  REQUIRE(!got.error);
+  REQUIRE(got.status == http::status::ok);
+  REQUIRE(got.body == "hi");
+}
+
+TEST_CASE("client::transport: a response with nothing to read gives its connection back at once", "[client]") {
+  auto const router = make_streaming_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport const transport{memory_connector{server}, "example.com", 80};
+
+    // Dropped without reading: there is nothing to read.
+    static_cast<void>(co_await transport.stream(make_request(verb::head, "/hello")));
+
+    co_return (co_await transport.send(make_request(verb::get, "/hello"))).body;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "hello");
+  REQUIRE(server.connections == 1);
+}
+
+TEST_CASE("client::transport: a cancellation ends the reading, as a stream does not take it up again",
+          "[client][timer]") {
+  virtual_time time;
+
+  http::router router;
+
+  router.get("/slowly", [](http::request) {
+    http::response response;
+
+    response.body_writer = [](http::body_stream out) -> task<> {
+      co_await async::sleep_for(5s);
+      co_await out.write("first");
+      co_await async::sleep_for(5s);
+      co_await out.write("second");
+    };
+    return response;
+  });
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport const transport{timed_connector{time, router}, "example.com", 80, {.response_timeout = 0s}};
+    auto response = co_await transport.stream(make_request(verb::get, "/slowly"));
+    std::string seen = std::string{*co_await response.body.read()};
+
+    // Its own timeout, around a read: the body is not at fault.
+    try {
+      static_cast<void>(co_await async::with_timeout(1s, response.body.read()));
+      seen += "|no timeout";
+    } catch (std::system_error const &thrown) {
+      seen += thrown.code() == std::errc::timed_out ? "|gave up" : "|another failure";
+    }
+
+    try {
+      static_cast<void>(co_await response.body.read());
+      seen += "|read again";
+    } catch (std::system_error const &) {
+      seen += "|ended";
+    }
+
+    co_return seen;
+  };
+
+  REQUIRE(quoll::test::run(time, reading()) == "first|gave up|ended");
+}
+
+TEST_CASE("client::transport: a body that failed leaves its place to others", "[client]") {
+  auto connections = 0;
+
+  auto const serve = [&](io::memory_stream stream) -> task<> {
+    std::string buffer;
+    http::request_parser parser;
+
+    ++connections;
+
+    auto const this_one = connections;
+
+    if (co_await http::read(stream, buffer, parser)) {
+      co_return;
+    }
+
+    // Cut short on the first, whole on the next.
+    auto const answer = std::string{this_one == 1 ? "HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nping"
+                                                  : "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi"};
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{answer}));
+  };
+
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serve, 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport_options options;
+
+    options.max_connections = 1;
+
+    client::transport const transport{memory_connector{server}, "example.com", 80, options};
+    auto response = co_await transport.stream(make_request(verb::get, "/"));
+
+    try {
+      while (co_await response.body.read()) {
+      }
+    } catch (std::system_error const &) {
+    }
+
+    // With `response` still here: this would wait for its place for ever.
+    co_return (co_await transport.send(make_request(verb::get, "/"))).body;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "hi");
+}
+
+TEST_CASE("client::transport: what comes of a body does not depend on how it was cut", "[client]") {
+  std::string const wire = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nping\r\nZ\r\n";
+  // In one read, past the head, and in the middle of the good chunk.
+  auto const cut = GENERATE_COPY(wire.size(), wire.find("4\r\n"), wire.find("ng\r\n"));
+
+  auto const serve = [&](io::memory_stream stream) -> task<> {
+    std::string buffer;
+    http::request_parser parser;
+
+    if (co_await http::read(stream, buffer, parser)) {
+      co_return;
+    }
+
+    auto const first = std::string_view{wire}.substr(0, cut);
+    auto const rest = std::string_view{wire}.substr(cut);
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{first}));
+
+    for (auto turn = 0; turn < 16; ++turn) {
+      co_await async::yield();
+    }
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{rest}));
+  };
+
+  auto const got = stream_from(serve, "/");
+
+  CAPTURE(cut);
+  REQUIRE(got.status == http::status::ok);
+  REQUIRE(got.body == "ping");
+  REQUIRE(got.error == http::error::bad_message);
+}
+
+TEST_CASE("client::transport: a body taken out of its response keeps what reads it", "[client]") {
+  auto const router = make_streaming_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport const transport{memory_connector{server}, "example.com", 80};
+    auto const body = (co_await transport.stream(make_request(verb::get, "/hello"))).body;
+    std::string seen;
+
+    while (auto const piece = co_await body.read()) {
+      seen += *piece;
+    }
+
+    co_return seen;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "hello");
+}
+
+TEST_CASE("client::transport: what stream() refuses before it runs, as send() does", "[client]") {
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), answering({}), 0, {}, {}};
+  client::transport const transport{memory_connector{server}, "example.com", 80};
+
+  REQUIRE_THROWS_AS(transport.stream(make_request(verb::get, "http://example.com/")), std::invalid_argument);
+}
+
+TEST_CASE("client::transport: to stream(), a redirect is a result, whatever max_redirects says", "[client]") {
+  client::transport_options options;
+
+  options.max_redirects = 3;
+
+  auto const got =
+      stream_from(answering({"HTTP/1.1 302 Found\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n"}), "/", options);
+
+  REQUIRE(got.status == http::status::found);
+  REQUIRE(got.connections == 1);
+}
+
+TEST_CASE("client::transport: a stream's connection is kept only if it can carry another request", "[client]") {
+  auto const reply = GENERATE(
+      // Says it closes.
+      std::string{"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\nhi"},
+      // Bytes past the response, which would read as the next one.
+      std::string{"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhiextra"});
+
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), answering({reply}, true), 0, {}, {}};
+
+  auto const reading = [&]() -> task<int> {
+    client::transport const transport{memory_connector{server}, "example.com", 80};
+
+    for (auto attempt = 0; attempt < 2; ++attempt) {
+      auto response = co_await transport.stream(make_request(verb::get, "/"));
+
+      while (co_await response.body.read()) {
+      }
+    }
+
+    co_return server.connections;
+  };
+
+  CAPTURE(reply);
+  REQUIRE(quoll::test::run(loop, reading()) == 2);
+}
+
+TEST_CASE("client::transport: the place of a stream goes with its last piece, not with a read after it", "[client]") {
+  auto const router = make_streaming_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport_options options;
+
+    options.max_connections = 1;
+
+    client::transport const transport{memory_connector{server}, "example.com", 80, options};
+    auto response = co_await transport.stream(make_request(verb::get, "/hello"));
+    auto const piece = co_await response.body.read();
+
+    // At work on the last piece, with no other read: this waits for no place.
+    auto const other = co_await transport.send(make_request(verb::get, "/hello"));
+
+    co_return std::string{*piece} + "|" + other.body;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "hello|hello");
+  REQUIRE(server.connections == 1);
+}
+
+TEST_CASE("client::transport: a response that came whole keeps nothing, read or not", "[client]") {
+  auto const router = make_streaming_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport_options options;
+
+    options.max_connections = 1;
+
+    client::transport const transport{memory_connector{server}, "example.com", 80, options};
+
+    // Dropped without reading, then held on to: neither holds up what follows, nor costs a connection.
+    static_cast<void>(co_await transport.stream(make_request(verb::get, "/hello")));
+
+    auto const kept = co_await transport.stream(make_request(verb::get, "/hello"));
+    auto const other = co_await transport.send(make_request(verb::get, "/hello"));
+    auto const piece = co_await kept.body.read();
+
+    co_return std::string{*piece} + "|" + other.body + (co_await kept.body.read() ? "|more" : "|end");
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "hello|hello|end");
+  REQUIRE(server.connections == 1);
+}
+
+TEST_CASE("client::transport: what is at fault after a good piece frees its place at once", "[client]") {
+  auto const in_one_read = GENERATE(false, true);
+  auto connections = 0;
+
+  auto const serve = [&](io::memory_stream stream) -> task<> {
+    std::string buffer;
+    http::request_parser parser;
+
+    ++connections;
+
+    auto const this_one = connections;
+
+    if (co_await http::read(stream, buffer, parser)) {
+      co_return;
+    }
+
+    std::string_view const head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+    std::string_view const rest = "4\r\nping\r\nZ\r\n";
+    std::string_view const other = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi";
+
+    if (this_one != 1) {
+      (void)co_await io::write(stream, std::as_bytes(std::span{other}));
+      co_return;
+    }
+
+    if (in_one_read) {
+      auto const whole = std::string{head} + std::string{rest};
+
+      (void)co_await io::write(stream, std::as_bytes(std::span{whole}));
+      co_return;
+    }
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{head}));
+
+    for (auto turn = 0; turn < 16; ++turn) {
+      co_await async::yield();
+    }
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{rest}));
+  };
+
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serve, 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport_options options;
+
+    options.max_connections = 1;
+
+    client::transport const transport{memory_connector{server}, "example.com", 80, options};
+    auto response = co_await transport.stream(make_request(verb::get, "/"));
+    auto const piece = co_await response.body.read();
+    auto seen = std::string{*piece};
+
+    // Before reading on: this waits for no place held by a connection that can do nothing more.
+    seen += "|" + (co_await transport.send(make_request(verb::get, "/"))).body;
+
+    try {
+      static_cast<void>(co_await response.body.read());
+      seen += "|no failure";
+    } catch (std::system_error const &) {
+      seen += "|failed";
+    }
+
+    co_return seen;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "ping|hi|failed");
+}
+
+TEST_CASE("client::transport: stream() completes with the head, before its body has come", "[client]") {
+  auto may_send_the_rest = false;
+
+  auto const serve = [&](io::memory_stream stream) -> task<> {
+    std::string buffer;
+    http::request_parser parser;
+
+    if (co_await http::read(stream, buffer, parser)) {
+      co_return;
+    }
+
+    std::string_view const head = "HTTP/1.1 201 Made\r\nX-Head: yes\r\nContent-Length: 4\r\n\r\n";
+    std::string_view const rest = "ping";
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{head}));
+
+    while (!may_send_the_rest) {
+      co_await async::yield();
+    }
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{rest}));
+  };
+
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serve, 0, {}, {}};
+  client::streamed_response seen;
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport const transport{memory_connector{server}, "example.com", 80};
+
+    seen = co_await transport.stream(make_request(verb::get, "/"));
+    may_send_the_rest = true;
+
+    std::string body;
+
+    while (auto const piece = co_await seen.body.read()) {
+      body += *piece;
+    }
+
+    co_return body;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "ping");
+  REQUIRE(seen.status == http::status::created);
+  REQUIRE(seen.reason == "Made");
+  REQUIRE(seen.version == http::version::http_1_1);
+  REQUIRE(seen.fields.find("X-Head") == "yes");
+}
+
+TEST_CASE("client::transport: copies of a body read as one, and one moved from has nothing to read", "[client]") {
+  auto const router = make_streaming_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport const transport{memory_connector{server}, "example.com", 80};
+    auto response = co_await transport.stream(make_request(verb::get, "/hello"));
+    auto const copy = response.body;
+    auto const moved = std::move(response.body);
+    std::string seen;
+
+    if (co_await response.body.read()) { // NOLINT(bugprone-use-after-move)
+      seen += "moved from|";
+    }
+
+    seen += *(co_await copy.read());
+    seen += co_await moved.read() ? "|more" : "|end";
+    co_return seen;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "hello|end");
+}
+
+namespace {
+
+// What closes reads as a reset, as on a socket its peer cut.
+class resetting_stream {
+public:
+  explicit resetting_stream(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
+
+  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte> buffer) {
+    auto read = co_await inner_.read_some(buffer);
+
+    if (read.error == io::error::end_of_stream) {
+      read.error = std::make_error_code(std::errc::connection_reset);
+    }
+
+    co_return read;
+  }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
+    co_return co_await inner_.write_some(data);
+  }
+
+private:
+  io::memory_stream inner_;
+};
+
+class resetting_connector {
+public:
+  explicit resetting_connector(memory_server &server) noexcept : inner_(server) {}
+
+  [[nodiscard]] task<io::any_stream> connect(std::string host, std::uint16_t port) const {
+    auto made = co_await inner_.connect(std::move(host), port);
+
+    co_return io::any_stream{resetting_stream{std::move(*made.target<io::memory_stream>())}};
+  }
+
+private:
+  memory_connector inner_;
+};
+
+// A connector with something to see its end by.
+class watched_connector {
+public:
+  watched_connector(memory_server &server, std::shared_ptr<int> watched) noexcept
+      : inner_(server), watched_(std::move(watched)) {}
+
+  [[nodiscard]] task<io::any_stream> connect(std::string host, std::uint16_t port) const {
+    return inner_.connect(std::move(host), port);
+  }
+
+private:
+  memory_connector inner_;
+  std::shared_ptr<int> watched_;
+};
+
+} // namespace
+
+TEST_CASE("client::transport: stream() tries again what closes during the body of a first interim response",
+          "[client]") {
+  auto connections = 0;
+
+  auto const serve = [&](io::memory_stream stream) {
+    ++connections;
+
+    return connections == 1 ? answer(std::move(stream),
+                                     {"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi",
+                                      "HTTP/1.1 150 Odd\r\nContent-Length: 4\r\n\r\n"},
+                                     false)
+                            : answer(std::move(stream), {"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nagain"}, false);
+  };
+
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serve, 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::string> {
+    client::transport const transport{resetting_connector{server}, "example.com", 80};
+
+    static_cast<void>(co_await transport.send(make_request(verb::get, "/")));
+
+    auto response = co_await transport.stream(make_request(verb::get, "/"));
+    auto const piece = co_await response.body.read();
+
+    co_return std::string{*piece};
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == "again");
+  REQUIRE(connections == 2);
+}
+
+TEST_CASE("client::transport: a response kept past its end does not keep its transport", "[client]") {
+  auto const router = make_streaming_router();
+  auto const cut_short = GENERATE(false, true);
+  auto const serve = cut_short ? answering({"HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nping"}) : serving(router);
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serve, 0, {}, {}};
+
+  auto watched = std::make_shared<int>(0);
+  std::weak_ptr<int> const seen = watched;
+
+  auto const reading = [&]() -> task<bool> {
+    std::optional<client::streamed_response> kept;
+
+    {
+      client::transport const transport{watched_connector{server, std::move(watched)}, "example.com", 80};
+
+      kept = co_await transport.stream(make_request(verb::get, "/pieces"));
+
+      try {
+        while (co_await kept->body.read()) {
+        }
+      } catch (std::system_error const &) {
+      }
+    }
+
+    co_return seen.expired();
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == true);
+}
+
+TEST_CASE("client::transport: stream() has no limit on a body by default", "[client]") {
+  auto const got = stream_from(answering({"HTTP/1.1 200 OK\r\nContent-Length: 5368709120\r\n\r\nping"}), "/");
+
+  REQUIRE(got.body == "ping");
+  REQUIRE(got.error == http::error::partial_message);
+}
+
+TEST_CASE("client::transport: stream() keeps and takes an idle connection as send() does", "[client]") {
+  // Each connection answers twice, for one kept to be seen to carry the second request rather than close under it.
+  auto const whole = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi";
+  auto const twice = [&](auto serve, verb method, client::transport_options options = {}, std::string field = {}) {
+    async::run_loop loop;
+    memory_server server{loop.get_executor(), serve, 0, {}, {}};
+
+    auto const reading = [&]() -> task<std::string> {
+      client::transport const transport{memory_connector{server}, "example.com", 80, options};
+      auto first = make_request(verb::get, "/");
+
+      if (!field.empty()) {
+        first.fields.add("Connection", field);
+      }
+
+      auto ended = co_await transport.stream(std::move(first));
+
+      while (co_await ended.body.read()) {
+      }
+
+      // The other end has had the time to go, if it goes.
+      for (auto turn = 0; turn < 16; ++turn) {
+        co_await async::yield();
+      }
+
+      auto response = co_await transport.stream(make_request(method, "/"));
+      auto const piece = co_await response.body.read();
+
+      co_return std::string{*piece};
+    };
+
+    REQUIRE(quoll::test::run(loop, reading()) == "hi");
+    return server.connections;
+  };
+
+  SECTION("a GET takes it") { REQUIRE(twice(answering({whole, whole}, true), verb::get) == 1); }
+
+  SECTION("a POST does not, as what it does may not be done twice") {
+    REQUIRE(twice(answering({whole, whole}, true), verb::post) == 2);
+  }
+
+  SECTION("one the server closed is replaced") { REQUIRE(twice(answering({whole}), verb::get) == 2); }
+
+  SECTION("none is kept when none may be") {
+    REQUIRE(twice(answering({whole, whole}, true), verb::get, {.max_idle_connections = 0}) == 2);
+  }
+
+  SECTION("none is kept when the request closes it") {
+    REQUIRE(twice(answering({whole, whole}, true), verb::get, {}, "close") == 2);
+  }
+
+  SECTION("none is kept when the response closes it") {
+    auto const closing = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi";
+
+    REQUIRE(twice(answering({closing, closing}, true), verb::get) == 2);
+  }
+}
+
+TEST_CASE("client::transport: what stops stream() before the head", "[client][timer]") {
+  virtual_time time;
+  http::router router;
+
+  router.get("/silent", [](http::request) -> task<http::response> {
+    co_await async::sleep_for(1h);
+    co_return http::response{};
+  });
+
+  auto const failure_of = [&](client::transport_options options, auto wrap) -> task<std::error_code> {
+    client::transport const transport{timed_connector{time, router}, "example.com", 80, options};
+
+    try {
+      static_cast<void>(co_await wrap(transport.stream(make_request(verb::get, "/silent"))));
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  SECTION("its response timeout") {
+    auto const untouched = [](auto started) { return started; };
+
+    REQUIRE(quoll::test::run(time, failure_of({.response_timeout = 3s}, untouched)) ==
+            std::make_error_code(std::errc::timed_out));
+  }
+
+  SECTION("a timeout of the caller's, that is a stop request") {
+    auto const in_time = [](auto started) { return async::with_timeout(1s, std::move(started)); };
+
+    REQUIRE(quoll::test::run(time, failure_of({.response_timeout = 0s}, in_time)) ==
+            std::make_error_code(std::errc::timed_out));
+  }
 }

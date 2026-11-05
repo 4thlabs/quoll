@@ -47,6 +47,7 @@
 #include <quoll/http/fields.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
+#include <quoll/http/response.hpp>
 #include <quoll/http/serializer.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
@@ -260,9 +261,11 @@ public:
   held_place(held_place &&) = delete;
   held_place &operator=(held_place &&) = delete;
 
-  ~held_place() {
+  ~held_place() { release(); }
+
+  void release() noexcept {
     if (places_ != nullptr) {
-      places_->release();
+      std::exchange(places_, nullptr)->release();
     }
   }
 
@@ -425,6 +428,227 @@ async::task<http::response> send_following(std::shared_ptr<transport_core> share
   }
 }
 
+// A response being read in pieces, and its connection: what a streamed_response holds. It owns its place in
+// max_connections until the body has come to its end, or until it goes. Thread safety: none, on the loop of what reads
+// it; what it shares with its transport has its own.
+class response_stream {
+public:
+  explicit response_stream(std::shared_ptr<transport_core> shared)
+      : shared_(std::move(shared)), trailers_(std::make_shared<http::fields>()) {}
+
+  [[nodiscard]] held_place &place() noexcept { return place_; }
+
+  // Sends `request` on `connection` and reads the head of its final response. As in exchange(): with `retry_if_closed`,
+  // a connection found closed, or answering 408 first, gives false, and the caller goes on with another.
+  [[nodiscard]] async::task<bool> start(io::any_stream connection, prepared_request const &request,
+                                        bool retry_if_closed) {
+    auto const sent = co_await io::write(connection, std::as_bytes(std::span{request.wire}));
+
+    if (sent.error) {
+      if (retry_if_closed && closed_meanwhile(sent.error)) {
+        co_return false;
+      }
+
+      throw std::system_error{sent.error, "quoll::client: cannot send the request"};
+    }
+
+    auto interim = 0;
+
+    // Afresh for each attempt: the one before may have left anything in it.
+    buffer_.clear();
+    parser_.emplace(shared_->options.limits);
+    parser_->set_request_method(request.method);
+    // An interim response is read whole: only the final one is the caller's to read.
+    parser_->set_body_streaming([](http::response const &head) { return !http::is_informational(head.status); });
+
+    for (;;) {
+      if (auto const error = co_await http::read(connection, buffer_, *parser_)) {
+        if (retry_if_closed && interim == 0 && closed_meanwhile(error)) {
+          co_return false;
+        }
+
+        throw std::system_error{error, "quoll::client: cannot read the response"};
+      }
+
+      auto const status = parser_->head().status;
+
+      if (http::is_informational(status) && !parser_->upgrade()) {
+        if (++interim > max_interim_responses) {
+          throw std::system_error{http::error::bad_message, "quoll::client: too many interim responses"};
+        }
+
+        // The request method holds until the final one.
+        static_cast<void>(parser_->release());
+        continue;
+      }
+
+      if (retry_if_closed && interim == 0 && status == http::status::request_timeout) {
+        co_return false;
+      }
+
+      connection_.emplace(std::move(connection));
+      request_keeps_alive_ = request.keep_alive;
+      co_return true;
+    }
+  }
+
+  // What the caller gets of the head: the rest of the message stays for read(). A message with nothing more to come
+  // gives its connection back at once, as nothing will read it to its end.
+  [[nodiscard]] streamed_response head(std::shared_ptr<response_stream> const &self) {
+    auto const &message = parser_->head();
+    streamed_response response{
+        message.status, message.reason, message.version, message.fields, response_body{http::body_reader{*this}, self},
+        trailers_};
+
+    // Nothing more can come: its connection and its place go now, whether the caller reads what came or not, and
+    // however the bytes were cut.
+    auto const failure = parser_->failure();
+
+    if (parser_->done() || failure) {
+      parser_->take_body(piece_);
+      held_piece_ = !piece_.empty();
+    }
+
+    if (parser_->done()) {
+      finish();
+    } else if (failure) {
+      fail(failure);
+    }
+
+    return response;
+  }
+
+  [[nodiscard]] async::task<std::optional<std::string_view>> read() {
+    if (held_piece_) {
+      held_piece_ = false;
+      co_return std::string_view{piece_};
+    }
+
+    if (failure_) {
+      throw std::system_error{failure_, "quoll::client: cannot read the response"};
+    }
+
+    if (ended_) {
+      co_return std::nullopt;
+    }
+
+    // What a read cut short leaves is no new piece.
+    piece_.clear();
+
+    try {
+      co_await async::detail::with_optional_timeout(shared_->options.response_timeout, read_piece());
+    } catch (std::system_error const &thrown) {
+      // A cancellation too: a stream does not take it up again, and over TLS its session is gone.
+      fail(thrown.code());
+      throw;
+    } catch (...) {
+      // What it had read may be lost: nothing can follow it.
+      fail(std::make_error_code(std::errc::io_error));
+      throw;
+    }
+
+    // At once, even with a last piece to hand over: its connection and its place are done with, for as long as the
+    // caller is at work on that piece. What it leaves alone is the piece.
+    if (parser_->done()) {
+      finish();
+    } else if (auto const failure = parser_->failure()) {
+      // Past this piece: the connection can carry nothing more, and the next read says so.
+      fail(failure);
+    }
+
+    if (piece_.empty()) {
+      co_return std::nullopt;
+    }
+
+    co_return std::string_view{piece_};
+  }
+
+private:
+  // Thrown rather than returned: a read a timeout cancelled is then that timeout's timed_out.
+  [[nodiscard]] async::task<> read_piece() {
+    if (auto const error = co_await http::read_body(*connection_, buffer_, *parser_, piece_)) {
+      throw std::system_error{error, "quoll::client: cannot read the response"};
+    }
+  }
+
+  void fail(std::error_code why) noexcept {
+    failure_ = why;
+    let_go();
+  }
+
+  void finish() {
+    ended_ = true;
+
+    auto const keep_alive = parser_->keep_alive();
+    auto const upgrade = parser_->upgrade();
+
+    *trailers_ = parser_->release().trailers;
+
+    // Bytes past the response would be read as the next one: a connection carrying them is not reused.
+    if (request_keeps_alive_ && keep_alive && !upgrade && buffer_.empty()) {
+      shared_->pool.give_back(std::move(*connection_));
+    }
+
+    let_go();
+  }
+
+  // Now rather than with what holds this, for as long as the caller keeps it: the place is for others, the server has
+  // no more to send, and what is left to read needs neither the transport nor the parser.
+  void let_go() noexcept {
+    connection_.reset();
+    place_.release();
+    parser_.reset();
+    buffer_ = std::string{};
+    shared_.reset();
+  }
+
+  std::shared_ptr<transport_core> shared_;
+  // One per attempt, from start().
+  std::optional<http::response_parser> parser_;
+  std::shared_ptr<http::fields> trailers_;
+  // Before the connection: it closes first, and only then is its place another's.
+  held_place place_;
+  std::optional<io::any_stream> connection_;
+  std::string buffer_;
+  std::string piece_;
+  std::error_code failure_;
+  bool request_keeps_alive_ = false;
+  bool ended_ = false;
+  // What came whole with the head, for the first read.
+  bool held_piece_ = false;
+};
+
+async::task<streamed_response> stream_prepared(std::shared_ptr<transport_core> shared, prepared_request request) {
+  auto stream = std::make_shared<response_stream>(shared);
+
+  if (shared->places) {
+    co_await async::detail::with_optional_timeout(shared->options.connect_timeout,
+                                                  stream->place().take(*shared->places));
+  }
+
+  if (idempotent(request.method)) {
+    if (auto idle = shared->pool.take()) {
+      auto const started = co_await async::detail::with_optional_timeout(
+          shared->options.response_timeout, stream->start(std::move(*idle), request, true));
+
+      if (started) {
+        co_return stream->head(stream);
+      }
+
+      // Closed by the server after some idle time: the connections idle for longer are likely closed as well.
+      shared->pool.clear();
+    }
+  }
+
+  make_room(*shared);
+
+  auto connection = co_await async::detail::with_optional_timeout(shared->options.connect_timeout, shared->open());
+
+  static_cast<void>(co_await async::detail::with_optional_timeout(
+      shared->options.response_timeout, stream->start(std::move(connection), request, false)));
+  co_return stream->head(stream);
+}
+
 } // namespace
 
 std::shared_ptr<transport_core> make_transport_core(connector_handle connector, std::string host, std::uint16_t port,
@@ -435,16 +659,30 @@ std::shared_ptr<transport_core> make_transport_core(connector_handle connector, 
                                           std::move(prefix), options);
 }
 
-async::task<http::response> send(std::shared_ptr<transport_core> const &core, http::request request) {
+namespace {
+
+// What send() and stream() ask of a request before anything runs.
+void make_ready(transport_core const &core, http::request &request) {
   if (!request.target.starts_with('/')) {
     throw std::invalid_argument{"quoll::client::transport: the target is not in origin form"};
   }
 
-  request.target.insert(0, core->prefix);
+  request.target.insert(0, core.prefix);
 
   if (!request.fields.contains("Host")) {
-    request.fields.add("Host", core->host_field);
+    request.fields.add("Host", core.host_field);
   }
+}
+
+} // namespace
+
+async::task<streamed_response> stream(std::shared_ptr<transport_core> const &core, http::request request) {
+  make_ready(*core, request);
+  return stream_prepared(core, prepare(*core, request));
+}
+
+async::task<http::response> send(std::shared_ptr<transport_core> const &core, http::request request) {
+  make_ready(*core, request);
 
   auto prepared = prepare(*core, request);
 

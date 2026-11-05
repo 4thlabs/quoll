@@ -217,6 +217,11 @@ async::task<std::error_code> read_up_to_continue(io::any_stream &stream, std::st
     co_return error;
   }
 
+  // Past its head, or at its end, as a framing it refuses: no handler sees what is at fault already.
+  if (auto const failure = parser.failure()) {
+    co_return failure;
+  }
+
   auto const expected = expectation_of(parser.head());
 
   if (expected == expectation::unsupported) {
@@ -283,6 +288,11 @@ public:
       throw body_not_read{failure_->error, "quoll::server: cannot read the body"};
     }
 
+    if (stopped_) {
+      throw body_not_read{std::make_error_code(std::errc::operation_canceled),
+                          "quoll::server: reading the body was stopped"};
+    }
+
     // What a read cut short leaves is no new piece.
     piece_.clear();
 
@@ -294,19 +304,20 @@ public:
     auto const read = co_await within_read_timeout(http::read_body(*stream_, *buffer_, *parser_, piece_), *options_);
 
     if (read.error == std::errc::operation_canceled) {
-      // Whoever cancels it, as a handler's own timeout does, says what happens next: the body is not at fault.
+      // Whoever cancels it, as a handler's own timeout does, says what happens next: the body is not at fault, and the
+      // response stands. Reading ends, as a stream does not take it up again: over TLS, its session is gone.
+      stopped_ = true;
       throw body_not_read{read.error, "quoll::server: reading the body was stopped"};
     }
 
     if (read.error) {
       failure_ = read;
+      throw body_not_read{read.error, "quoll::server: cannot read the body"};
+    }
 
-      // What came before it is the handler's: the failure is for the next read.
-      if (piece_.empty()) {
-        throw body_not_read{read.error, "quoll::server: cannot read the body"};
-      }
-
-      co_return std::string_view{piece_};
+    // What came with this piece is at fault, whether the handler reads again or not: this request gets no other answer.
+    if (auto const failure = parser_->failure()) {
+      failure_ = request_read{failure};
     }
 
     if (piece_.empty()) {
@@ -345,6 +356,7 @@ private:
   std::string piece_;
   std::optional<request_read> failure_;
   bool continue_owed_;
+  bool stopped_ = false;
 };
 
 // The router's response, or 500 if a handler or a middleware threw, reported to the application's callback if it gave

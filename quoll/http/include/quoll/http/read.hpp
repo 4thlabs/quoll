@@ -69,13 +69,18 @@ template <io::ByteStream Stream, class Message, std::predicate Reached>
 
       buffer.erase(0, parsed.consumed);
 
-      if (parsed.error) {
-        co_return parsed.error;
-      }
-
+      // Reached first: how the bytes were cut must not change what comes of them, as what was reached is good, and a
+      // failure past it is for what reads on.
       if (reached()) {
         co_return std::error_code{};
       }
+
+      if (parsed.error) {
+        co_return parsed.error;
+      }
+    } else if (auto const failure = message_parser.failure()) {
+      // It stopped with no bytes left to feed: nothing that comes can change that.
+      co_return failure;
     }
 
     auto const received = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
@@ -107,10 +112,10 @@ template <io::ByteStream Stream, class Message, std::predicate Reached>
  * start of the next one (pipelining), or the first bytes of an upgraded protocol.
  *
  * Completes with no error once the parser is done(), including for a body delimited by the end of the stream, or at the
- * end of the head of a message whose body comes in pieces, for read_body();
- * `io::error::end_of_stream` when the peer closed the stream before a new message started; otherwise with the
- * parser's error (`http::error`) or the stream's. `stream`, `buffer` and `message_parser` must outlive the task.
- * Precondition: the parser holds no complete message.
+ * end of the head of a message whose body comes in pieces, for read_body(), with parser::failure() to say if what came
+ * with that head is at fault; `io::error::end_of_stream` when the peer closed the stream before a new message started;
+ * otherwise with the parser's error (`http::error`) or the stream's. `stream`, `buffer` and `message_parser` must
+ * outlive the task. Precondition: the parser holds no complete message.
  */
 template <io::ByteStream Stream, class Message>
 [[nodiscard]] async::task<std::error_code> read(Stream &stream QUOLL_LIFETIMEBOUND,
@@ -126,7 +131,8 @@ template <io::ByteStream Stream, class Message>
 
 /**
  * @brief Like read(), up to the end of the message's head: parser::head_complete(), and perhaps done() if the rest came
- * with it. read() or read_body() then goes on with the body.
+ * with it. read() or read_body() then goes on with the body. What came past the head and is at fault is for them to
+ * report, and parser::failure() says so at once.
  */
 template <io::ByteStream Stream, class Message>
 [[nodiscard]] async::task<std::error_code> read_head(Stream &stream QUOLL_LIFETIMEBOUND,
@@ -143,10 +149,10 @@ template <io::ByteStream Stream, class Message>
  * held.
  *
  * Completes with no error once there is a piece, or once the parser is done(), with what is left of the body, perhaps
- * nothing: release() then hands over the message, with its trailers and no body. Fails like read(), with what the same
- * read of the stream brought before the failure still in `piece`. Memory holds what one read of the stream brings,
- * whatever the size of the body. `stream`, `buffer`, `message_parser` and `piece` must outlive the task. Precondition:
- * parser::head_complete(), as read_head() gets it, and parser::body_streamed().
+ * nothing: release() then hands over the message, with its trailers and no body. Fails like read(), once what came
+ * before the failure has been handed over. Memory holds what one read of the stream brings, whatever the size of the
+ * body. `stream`, `buffer`, `message_parser` and `piece` must outlive the task. Precondition: parser::head_complete(),
+ * as read_head() gets it, and parser::body_streamed().
  */
 template <io::ByteStream Stream, class Message>
 [[nodiscard]] async::task<std::error_code>

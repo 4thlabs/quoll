@@ -111,7 +111,7 @@ limits, the shutdown and the features are tested, and the reliability points are
   [`BENCHMARKS.md`](BENCHMARKS.md), as streaming touches the hot paths.
 - Streamed request and response bodies, on the server, the client and browser `fetch`. A handler takes an `http::body_reader`
   to read its request in pieces, a message's `body_writer` writes in pieces through an `http::body_stream`, and a client's
-  `transport.stream(request)` reads a response in pieces. Done: `http::parser` hands a body over in pieces, with `http::read_body`, and `http::body_reader`: a handler taking one asks for `100 Continue` by reading, and has a read timeout per piece. And `response.body_writer`: chunked by default, with a write timeout per piece.
+  `transport.stream(request)` reads a response in pieces. Done: `http::parser` hands a body over in pieces, with `http::read_body`, and `http::body_reader`: a handler taking one asks for `100 Continue` by reading, and has a read timeout per piece. And `response.body_writer`: chunked by default, with a write timeout per piece. And `transport.stream(request)`, with `streamed_response`: a read timeout per piece, and a connection back at the end of the body.
 - Static files, in streaming, from step 2: without it, a file has to fit in memory. Reading one blocks the loop, and Quoll has no
   asynchronous file I/O yet, which comes with them.
 - A limit on progress or a minimum rate, as the read and write timeouts now cover a message as a whole, which ends a
@@ -211,6 +211,8 @@ changes only what the harness shows. Candidates:
 
 ## Decided
 
+- Under WASM, `-mtail-call` (2026-11-05), with `-fwasm-exceptions`: a coroutine resuming another otherwise grows the stack, and
+  a long loop of tasks that never suspend overflows it. It asks for Chrome 112, Firefox 121 or Safari 18.2.
 - Performance comes last (2026-11-05): the maintainer needs what comes before it first. An earlier step may still take a
   candidate that it reworks anyway, as streaming does with the timers.
 - Coroutine frames are recycled per thread (2026-11-05), ahead of the performance step, at the maintainer's request: a body in
