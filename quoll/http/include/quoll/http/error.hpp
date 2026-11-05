@@ -48,7 +48,7 @@ enum class error {
   bad_message = 1,
   /** @brief The start line and fields exceed parse_limits::max_header_size. */
   header_too_large,
-  /** @brief The body exceeds parse_limits::max_body_size. */
+  /** @brief The body exceeds parse_limits::max_body_size, or max_streamed_body_size if it comes in pieces. */
   body_too_large,
   /** @brief A request method outside http::verb. */
   unsupported_method,

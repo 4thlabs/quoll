@@ -38,12 +38,16 @@
 #include <quoll/http/parser.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -457,4 +461,200 @@ TEST_CASE("Parser: a response to HEAD may announce more than the limit, as nothi
 
   REQUIRE_FALSE(parser.feed(bytes(std::string_view{"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n"})).error);
   REQUIRE(parser.done());
+}
+
+namespace {
+
+// Feeds `wire` in pieces of `size`, taking what comes of the body each time, and hands over what the message is once
+// done.
+struct pieces {
+  std::string body;
+  std::size_t most_held = 0;
+  std::error_code error;
+  bool done = false;
+};
+
+template <class Parser>
+pieces take_in_pieces(Parser &parser, std::string_view wire, std::size_t size) {
+  pieces out;
+  std::string piece;
+
+  while (!wire.empty() && !parser.done()) {
+    auto const result = parser.feed(bytes(wire.substr(0, size)));
+
+    out.most_held = std::max(out.most_held, parser.head().body.size());
+    parser.take_body(piece);
+    out.body += piece;
+    wire.remove_prefix(result.consumed);
+
+    if (result.error) {
+      out.error = result.error;
+      return out;
+    }
+  }
+
+  out.done = parser.done();
+  return out;
+}
+
+auto const always = [](auto const &) { return true; };
+
+} // namespace
+
+TEST_CASE("Parser: a body in pieces comes as it is fed, past the limit of a whole one", "[http][parser]") {
+  auto const size = GENERATE(std::size_t{1}, std::size_t{7}, std::size_t{4096});
+  std::string const body(std::size_t{1000}, 'x');
+  auto const wire =
+      GENERATE_COPY("POST /a HTTP/1.1\r\nContent-Length: 1000\r\n\r\n" + body,
+                    "POST /a HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n3e8\r\n" + body + "\r\n0\r\n\r\n");
+
+  http::request_parser parser{{.max_body_size = 10}};
+
+  parser.set_body_streaming(always);
+
+  auto const out = take_in_pieces(parser, wire, size);
+
+  REQUIRE(!out.error);
+  REQUIRE(out.done);
+  REQUIRE(out.body == body);
+  REQUIRE(out.most_held <= size);
+  REQUIRE(parser.body_streamed());
+
+  auto const message = parser.release();
+
+  REQUIRE(message.body.empty());
+  REQUIRE(message.target == "/a");
+  REQUIRE_FALSE(parser.body_streamed());
+}
+
+TEST_CASE("Parser: the decision is per message, from its head", "[http][parser]") {
+  http::request_parser parser{{.max_body_size = 10}};
+  std::vector<std::string> asked;
+
+  parser.set_body_streaming([&](http::request const &head) {
+    asked.push_back(head.target);
+    return head.fields.contains("X-Asked");
+  });
+
+  auto const streamed =
+      take_in_pieces(parser, "POST /upload HTTP/1.1\r\nX-Asked: 1\r\nContent-Length: 11\r\n\r\nhello world", 4096);
+
+  REQUIRE(streamed.done);
+  REQUIRE(streamed.body == "hello world");
+  REQUIRE(parser.body_streamed());
+  static_cast<void>(parser.release());
+
+  // On the same connection, a message read whole: what the last one was changes nothing to it.
+  REQUIRE(!parser.feed(bytes("POST /small HTTP/1.1\r\nContent-Length: 2\r\n\r\nhi")).error);
+  REQUIRE(parser.done());
+  REQUIRE_FALSE(parser.body_streamed());
+  REQUIRE(parser.release().body == "hi");
+
+  // Not asked for: the limit of a whole body, refused at its head.
+  auto const refused = parser.feed(bytes("POST /big HTTP/1.1\r\nContent-Length: 11\r\n\r\n"));
+
+  REQUIRE(refused.error == http::error::body_too_large);
+  REQUIRE(asked == std::vector<std::string>{"/upload", "/small", "/big"});
+}
+
+TEST_CASE("Parser: the limit of a body in pieces holds, at its head and as it comes", "[http][parser]") {
+  http::request_parser announced{{.max_streamed_body_size = 10}};
+
+  announced.set_body_streaming(always);
+  REQUIRE(take_in_pieces(announced, "POST / HTTP/1.1\r\nContent-Length: 11\r\n\r\n", 4096).error ==
+          http::error::body_too_large);
+
+  http::request_parser chunked{{.max_streamed_body_size = 10}};
+
+  chunked.set_body_streaming(always);
+
+  // Taken as it comes: the limit counts all of it, and not what is held.
+  auto const out =
+      take_in_pieces(chunked, "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nb\r\nhello world\r\n0\r\n\r\n", 1);
+
+  REQUIRE(out.error == http::error::body_too_large);
+  REQUIRE(out.body == "hello worl");
+
+  // A response too: what it announces is known from its head.
+  http::response_parser response{{.max_streamed_body_size = 10}};
+
+  response.set_body_streaming(always);
+  REQUIRE(take_in_pieces(response, "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n", 4096).error ==
+          http::error::body_too_large);
+
+  http::request_parser exact{{.max_streamed_body_size = 10}};
+
+  exact.set_body_streaming(always);
+  REQUIRE(take_in_pieces(exact, "POST / HTTP/1.1\r\nContent-Length: 10\r\n\r\n0123456789", 3).body == "0123456789");
+}
+
+TEST_CASE("Parser: after a body in pieces, its trailers, and the next message from nothing", "[http][parser]") {
+  http::request_parser parser{{.max_streamed_body_size = 12}};
+
+  parser.set_body_streaming(always);
+
+  std::string_view const first =
+      "POST /a HTTP/1.1\r\nTransfer-Encoding: chunked\r\nTrailer: X-Sum\r\n\r\n8\r\n01234567\r\n0\r\nX-Sum: 1\r\n\r\n";
+  std::string_view const second = "POST /b HTTP/1.1\r\nContent-Length: 8\r\n\r\nabcdefgh";
+
+  auto const out = take_in_pieces(parser, first, 4096);
+
+  REQUIRE(out.body == "01234567");
+
+  auto const message = parser.release();
+
+  REQUIRE(message.trailers.find("X-Sum") == "1");
+
+  // What it counted went with the first: these two together are past the limit, neither alone.
+  auto const next = take_in_pieces(parser, second, 4096);
+
+  REQUIRE(!next.error);
+  REQUIRE(next.body == "abcdefgh");
+  REQUIRE(parser.release().target == "/b");
+}
+
+TEST_CASE("Parser: a response's body in pieces ends with the stream, or is found cut", "[http][parser]") {
+  http::response_parser ended;
+
+  ended.set_body_streaming(always);
+
+  auto const out = take_in_pieces(ended, "HTTP/1.1 200 OK\r\n\r\nhello", 2);
+
+  REQUIRE(out.body == "hello");
+  REQUIRE(!ended.finish());
+  REQUIRE(ended.done());
+
+  http::response_parser cut;
+
+  cut.set_body_streaming(always);
+
+  auto const partial = take_in_pieces(cut, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nhello", 2);
+
+  REQUIRE(partial.body == "hello");
+  REQUIRE(cut.finish() == http::error::partial_message);
+
+  // HEAD announces what does not come, and a body in pieces changes nothing to it.
+  http::response_parser head;
+
+  head.set_body_streaming(always);
+  head.set_request_method(http::verb::head);
+
+  auto const nothing = take_in_pieces(head, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n", 4096);
+
+  REQUIRE(nothing.done);
+  REQUIRE(nothing.body.empty());
+}
+
+TEST_CASE("Parser: a response too large for its limit is refused at its head, unless nothing comes", "[http][parser]") {
+  auto const read = [](std::string_view wire, http::verb method = http::verb::get) {
+    http::response_parser parser{{.max_body_size = 10}};
+
+    parser.set_request_method(method);
+    return parser.feed(bytes(wire)).error;
+  };
+
+  REQUIRE(read("HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n") == http::error::body_too_large);
+  REQUIRE(!read("HTTP/1.1 304 Not Modified\r\nContent-Length: 11\r\n\r\n"));
+  REQUIRE(!read("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"));
+  REQUIRE(!read("HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n", http::verb::head));
 }

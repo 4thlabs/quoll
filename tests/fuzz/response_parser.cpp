@@ -78,5 +78,7 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
   parser.set_request_method(method);
   quoll::fuzz::feed_in_pieces(parser, quoll::fuzz::as_text(data + 1, size - 1), piece,
                               [method](http::response const &message) { check_round_trip(message, method); });
+  quoll::fuzz::check_body_in_pieces<http::response_parser>(quoll::fuzz::as_text(data + 1, size - 1), piece,
+                                                           [method](auto &ready) { ready.set_request_method(method); });
   return 0;
 }

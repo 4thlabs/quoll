@@ -45,8 +45,10 @@
 
 #include <concepts>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
 #include <system_error>
 
@@ -59,6 +61,8 @@ struct parse_limits {
   /** @brief Fields and trailers together: bounds the memory of many tiny fields. */
   std::size_t max_field_count = 100;
   std::size_t max_body_size = 8 * 1024 * 1024;
+  /** @brief A body handed over in pieces (see parser::set_body_streaming()), which memory does not have to hold. */
+  std::size_t max_streamed_body_size = std::size_t{1024} * 1024 * 1024;
 };
 
 /** @brief Outcome of parser::feed(). */
@@ -115,6 +119,22 @@ public:
    */
   void set_request_method(verb method) noexcept
     requires(!is_request);
+
+  /**
+   * @brief Asks `decide`, once the start line and fields of each message are parsed, whether its body comes in pieces.
+   *
+   * If it does, parse_limits::max_streamed_body_size bounds it instead of max_body_size, and take_body() hands over
+   * what has come: what is not taken stays in head(), so that memory holds as much as is fed between two calls.
+   * Otherwise the message is read whole, as if nothing had been asked. `decide` must not throw, like what the parser
+   * allocates.
+   */
+  void set_body_streaming(std::function<bool(Message const &head)> decide);
+
+  /** @brief The body of the current message comes in pieces. Known once head_complete(). Reset by release(). */
+  [[nodiscard]] bool body_streamed() const noexcept;
+
+  /** @brief Puts in `piece` what has come of the body since the last call, and nothing if nothing has. */
+  void take_body(std::string &piece) noexcept;
 
   /** @brief A complete message is waiting for release(). */
   [[nodiscard]] bool done() const noexcept;

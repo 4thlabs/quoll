@@ -137,6 +137,7 @@ struct parser<Message>::impl {
 
     done_ = false;
     head_complete_ = false;
+    body_streamed_ = false;
     keep_alive_ = false;
     upgrade_ = false;
 
@@ -161,6 +162,12 @@ struct parser<Message>::impl {
   }
 
   [[nodiscard]] static impl &self(llhttp_t *state) noexcept { return *static_cast<impl *>(state->data); }
+
+  void decide_streaming() noexcept { body_streamed_ = decide_ && decide_(std::as_const(message_)); }
+
+  [[nodiscard]] std::size_t body_limit() const noexcept {
+    return body_streamed_ ? limits_.max_streamed_body_size : limits_.max_body_size;
+  }
 
   // Records why parsing stops; returns the code that stops llhttp.
   [[nodiscard]] int fail(llhttp_t *state, error reason, char const *text) noexcept {
@@ -196,6 +203,7 @@ struct parser<Message>::impl {
     self_.field_value_.clear();
     self_.header_size_ = 0;
     self_.field_count_ = 0;
+    self_.body_size_ = 0;
     self_.in_message_ = true;
     self_.in_trailers_ = false;
     return 0;
@@ -292,9 +300,10 @@ struct parser<Message>::impl {
       }
 
       self_.message_.method = *method;
+      self_.decide_streaming();
 
       // Refused now, rather than once that much has arrived: a client waiting for `100 Continue` sends nothing more.
-      if ((state->flags & F_CONTENT_LENGTH) != 0 && state->content_length > self_.limits_.max_body_size) {
+      if ((state->flags & F_CONTENT_LENGTH) != 0 && state->content_length > self_.body_limit()) {
         static_cast<void>(self_.fail(state, error::body_too_large, "body too large"));
         return -1;
       }
@@ -305,21 +314,39 @@ struct parser<Message>::impl {
       auto const code = llhttp_get_status_code(state);
 
       self_.message_.status = static_cast<status>(code);
-      self_.head_complete_ = true;
+      self_.decide_streaming();
 
       // A 2xx answer to CONNECT turns the connection into a tunnel.
       if (self_.request_method_ == verb::connect && code >= 200 && code < 300) {
+        self_.head_complete_ = true;
         return 2;
       }
 
-      return self_.request_method_ == verb::head ? 1 : 0;
+      if (self_.request_method_ == verb::head) {
+        self_.head_complete_ = true;
+        return 1;
+      }
+
+      // Refused now, rather than past a gigabyte handed over in pieces. These statuses announce what they do not carry.
+      auto const carries_body = code >= 200 && code != 204 && code != 304;
+
+      if (carries_body && (state->flags & F_CONTENT_LENGTH) != 0 && state->content_length > self_.body_limit()) {
+        static_cast<void>(self_.fail(state, error::body_too_large, "body too large"));
+        return -1;
+      }
+
+      self_.head_complete_ = true;
+      return 0;
     }
   }
 
   static int on_body(llhttp_t *state, char const *at, std::size_t length) noexcept {
     auto &self_ = self(state);
 
-    if (self_.message_.body.size() + length > self_.limits_.max_body_size) {
+    // Counted apart: a body in pieces leaves the message as it comes.
+    self_.body_size_ += length;
+
+    if (self_.body_size_ > self_.body_limit()) {
       return self_.fail(state, error::body_too_large, "body too large");
     }
 
@@ -365,11 +392,13 @@ struct parser<Message>::impl {
 
   llhttp_t state_{};
   parse_limits limits_;
+  std::function<bool(Message const &)> decide_;
   Message message_;
   std::string field_name_;
   std::string field_value_;
   std::size_t header_size_ = 0;
   std::size_t field_count_ = 0;
+  std::size_t body_size_ = 0;
   std::error_code error_;
   char const *reason_ = nullptr;
   verb request_method_ = verb::get;
@@ -377,6 +406,7 @@ struct parser<Message>::impl {
   bool keep_alive_ = false;
   bool upgrade_ = false;
   bool head_complete_ = false;
+  bool body_streamed_ = false;
   bool in_message_ = false;
   bool in_trailers_ = false;
 };
@@ -415,6 +445,26 @@ template <class Message>
              requires(!is_request)
 {
   impl_->request_method_ = method;
+}
+
+template <class Message>
+  requires std::same_as<Message, request> || std::same_as<Message, response>
+void parser<Message>::set_body_streaming(std::function<bool(Message const &)> decide) {
+  impl_->decide_ = std::move(decide);
+}
+
+template <class Message>
+  requires std::same_as<Message, request> || std::same_as<Message, response>
+bool parser<Message>::body_streamed() const noexcept {
+  return impl_->body_streamed_;
+}
+
+template <class Message>
+  requires std::same_as<Message, request> || std::same_as<Message, response>
+void parser<Message>::take_body(std::string &piece) noexcept {
+  // Each keeps the memory of the other: nothing allocates once they have grown.
+  piece.clear();
+  piece.swap(impl_->message_.body);
 }
 
 template <class Message>

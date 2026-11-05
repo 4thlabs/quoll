@@ -21,7 +21,7 @@ One pull request per topic, under the rule in [`AGENTS.md`](../AGENTS.md). A new
 before much is built on it. Points marked "To settle" and the [open questions](#open-questions) are the maintainer's to
 decide. Steps marked *(maintainer merges)* are big architecture changes.
 
-**Current step: 2.** Step 0 only waits for the maintainer.
+**Current step: 3.** Step 0 only waits for the maintainer.
 
 ### Done
 
@@ -108,7 +108,9 @@ limits, the shutdown and the features are tested, and the reliability points are
 
 - Done: a benchmark harness (requests per second, latency, allocations per request) and its baseline, in
   [`BENCHMARKS.md`](BENCHMARKS.md), as streaming touches the hot paths.
-- Streamed request and response bodies, on the server, the client and browser `fetch`.
+- Streamed request and response bodies, on the server, the client and browser `fetch`. A handler takes an `http::body_reader`
+  to read its request in pieces, a message's `body_writer` writes in pieces through an `http::body_stream`, and a client's
+  `transport.stream(request)` reads a response in pieces. Done: `http::parser` hands a body over in pieces, and `http::read_body`.
 - Static files, in streaming, from step 2: without it, a file has to fit in memory. Reading one blocks the loop, and Quoll has no
   asynchronous file I/O yet, which comes with them.
 - A limit on progress or a minimum rate, as the read and write timeouts now cover a message as a whole, which ends a
