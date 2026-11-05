@@ -42,8 +42,8 @@
 #include <quoll/http/fields.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/serializer.hpp>
-#include <quoll/io/byte_stream.hpp>
 #include <quoll/io/error.hpp>
+#include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
 
 #include <algorithm>
@@ -186,12 +186,14 @@ public:
 
   [[nodiscard]] awaitable write_some(std::span<std::byte const> data) const noexcept { return {{{}, data.size()}}; }
 
+  [[nodiscard]] awaitable shutdown_send() const noexcept { return {{}}; }
+
 private:
   std::string_view input_;
   std::size_t chunk_;
 };
 
-static_assert(io::ByteStream<input_stream>);
+static_assert(io::HalfClosableStream<input_stream>);
 
 } // namespace quoll::fuzz
 

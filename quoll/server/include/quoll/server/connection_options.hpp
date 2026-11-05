@@ -71,6 +71,16 @@ struct connection_options {
   std::chrono::nanoseconds write_timeout = std::chrono::seconds{30};
 
   /**
+   * @brief After the last response of a connection, once sending has stopped, what the peer still sends is read and
+   * dropped, as closing with its bytes unread would reset the connection, and may destroy the response before it reads
+   * it. This is how long to wait for more of it. Zero, or no timer, closes at once.
+   */
+  std::chrono::nanoseconds lingering_timeout = std::chrono::seconds{5};
+
+  /** @brief How long this goes on as a whole, against a peer that keeps sending. Zero closes at once. */
+  std::chrono::nanoseconds lingering_time = std::chrono::seconds{30};
+
+  /**
    * @brief A stop request here ends the connection gently: an idle one at once, one with a request under way once its
    * response has left, saying `Connection: close` if the request came before the response started. A stop request on
    * the task cancels whatever is pending instead. serve() sets it for its own shutdown, replacing what is given here.

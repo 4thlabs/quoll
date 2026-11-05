@@ -43,6 +43,7 @@
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detached.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
+#include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
@@ -939,6 +940,73 @@ TEST_CASE("asio: a stop request from another thread ends a sleep", "[asio][timer
   context.run();
 
   REQUIRE(error == std::errc::operation_canceled);
+}
+
+namespace {
+
+struct refused_upload {
+  std::string received;
+  std::error_code wrote;
+  std::error_code ended;
+};
+
+// A client sending a body far over the limit, more than a socket's buffers hold, then reading what comes.
+task<refused_upload> upload_refused(quoll::server::connection_options connection) {
+  http::router router;
+  auto listener = co_await io::listen(0);
+  auto const port = listener.local_port().value();
+  std::stop_source stop;
+  std::string const head = "POST /nowhere HTTP/1.1\r\nHost: h\r\nContent-Length: 16777216\r\n\r\n";
+  std::string const body(16 * 1024 * 1024, 'x');
+
+  auto const serving = [&]() -> task<> {
+    co_await quoll::async::detail::stop_scope<void>{
+        quoll::server::serve(listener, router, {.connection = std::move(connection), .shutdown_timeout = {}}),
+        stop.get_token()};
+  };
+
+  auto const uploading = [&]() -> task<refused_upload> {
+    quoll::async::detail::stop_on_exit const stop_server{stop};
+    auto stream = co_await io::connect("127.0.0.1", port);
+    refused_upload result;
+    std::array<char, 4096> chunk{};
+
+    result.wrote = (co_await io::write(stream, std::as_bytes(std::span{head}))).error;
+
+    if (!result.wrote) {
+      result.wrote = (co_await io::write(stream, std::as_bytes(std::span{body}))).error;
+    }
+
+    for (;;) {
+      auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+      if (read.error) {
+        result.ended = read.error;
+        co_return result;
+      }
+
+      result.received.append(chunk.data(), read.transferred);
+    }
+  };
+
+  auto [served, upload] = co_await quoll::async::when_all(serving(), uploading());
+
+  co_return std::move(upload);
+}
+
+} // namespace
+
+TEST_CASE("asio: a client still sending a refused body finishes, then reads its answer", "[asio][runtime]") {
+  quoll::server::connection_options connection;
+
+  connection.limits.max_body_size = 16;
+
+  auto const upload = run_task(upload_refused(std::move(connection)));
+
+  // Closing with its bytes unread would have reset the connection under the client.
+  REQUIRE_FALSE(upload.wrote);
+  REQUIRE(upload.received.starts_with("HTTP/1.1 413"));
+  REQUIRE(upload.ended == io::error::end_of_stream);
 }
 
 TEST_CASE("asio: a REST client from a URL calls server::listen, until Ctrl-C", "[asio][runtime][rest][client]") {

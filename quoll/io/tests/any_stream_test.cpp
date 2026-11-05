@@ -357,6 +357,24 @@ TEST_CASE("any_stream: move assignment replaces the wrapped stream", "[io][any_s
   REQUIRE(run(read_and_write(stream, 1)) == 0U);
 }
 
+TEST_CASE("any_stream: shutdown_send goes to a stream that can, and fails on one that cannot", "[io][any_stream]") {
+  auto [client, server] = quoll::io::make_memory_stream_pair();
+  quoll::io::any_stream closing{std::move(server)};
+  quoll::io::any_stream plain{fixed_stream<8>{}};
+
+  auto const steps = [&]() -> quoll::async::task<std::error_code> {
+    std::array<char, 4> chunk{};
+
+    REQUIRE_FALSE((co_await closing.shutdown_send()).error);
+    REQUIRE((co_await client.read_some(std::as_writable_bytes(std::span{chunk}))).error ==
+            quoll::io::error::end_of_stream);
+    co_return (co_await plain.shutdown_send()).error;
+  };
+
+  static_assert(!quoll::io::HalfClosableStream<fixed_stream<8>>);
+  REQUIRE(run(steps()) == std::errc::operation_not_supported);
+}
+
 TEST_CASE("any_stream: target() recovers the wrapped stream by its exact type", "[io][any_stream]") {
   auto [left, right] = io::make_memory_stream_pair();
   io::any_stream stream{std::move(left)};

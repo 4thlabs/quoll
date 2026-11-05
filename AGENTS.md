@@ -16,7 +16,7 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 Exploration. Modules so far: `quoll::async` (task, executor_ref, any_executor, await_context with stop token,
 current_executor and current_stop_token, executor services, co_spawn and its `detached` handler, when_all, run_loop,
 `Timer` and `timer_ref`, `sleep_for`, `with_timeout`),
-`quoll::io` (`ByteStream`, `Connector`, `Listener`, `BoundListener` and `Network` concepts, `any_stream` /
+`quoll::io` (`ByteStream`, `HalfClosableStream`, `Connector`, `Listener`, `BoundListener` and `Network` concepts, `any_stream` /
 `any_listener` type erasure, `io::network_ref` with `io::connect` / `io::listen` through the executor's network,
 `io::network_connector`, TLS options with `TlsNetwork`, `tls_network_ref`, `TlsConnector`, `io::connect_tls` and
 `io::listen_tls`, in-memory stream pair, `io::write`), `quoll::http` (messages, llhttp parser, serializer,

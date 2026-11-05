@@ -40,6 +40,7 @@
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/io/byte_stream.hpp>
+#include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
 
 #include <coroutine>
@@ -47,6 +48,7 @@
 #include <memory>
 #include <new>
 #include <span>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 
@@ -58,13 +60,39 @@ using read_awaitable_t = decltype(std::declval<S &>().read_some(std::declval<std
 template <class S>
 using write_awaitable_t = decltype(std::declval<S &>().write_some(std::declval<std::span<std::byte const>>()));
 
+// What shutting down a stream that cannot is: an error, at once.
+struct shutdown_not_supported {
+  [[nodiscard]] bool await_ready() const noexcept { return true; }
+
+  [[nodiscard]] bool await_suspend(std::coroutine_handle<>, async::await_context const &) const noexcept {
+    return false;
+  }
+
+  [[nodiscard]] io_result await_resume() const noexcept {
+    return {std::make_error_code(std::errc::operation_not_supported), 0};
+  }
+};
+
+template <class S>
+struct shutdown_awaitable {
+  using type = shutdown_not_supported;
+};
+
+template <HalfClosableStream S>
+struct shutdown_awaitable<S> {
+  using type = decltype(std::declval<S &>().shutdown_send());
+};
+
+template <class S>
+using shutdown_awaitable_t = typename shutdown_awaitable<S>::type;
+
 // A stream whose operations return their awaitable by value: it can be built in a slot of the block.
 template <class S>
-concept erasable_stream =
-    ByteStream<S> && std::is_object_v<read_awaitable_t<S>> && std::is_object_v<write_awaitable_t<S>>;
+concept erasable_stream = ByteStream<S> && std::is_object_v<read_awaitable_t<S>> &&
+                          std::is_object_v<write_awaitable_t<S>> && std::is_object_v<shutdown_awaitable_t<S>>;
 
-// An erased stream and room for the awaitables of its pending read and write: allocated once with the stream, so
-// that operations never allocate.
+// An erased stream and room for the awaitables of its pending read, write and shutdown: allocated once with the stream,
+// so that operations never allocate.
 template <ByteStream S>
 struct stream_block {
   explicit stream_block(S &&wrapped) noexcept(std::is_nothrow_move_constructible_v<S>) : stream(std::move(wrapped)) {}
@@ -83,6 +111,7 @@ struct stream_block {
   S stream;
   alignas(read_awaitable_t<S>) std::byte read_slot[sizeof(read_awaitable_t<S>)];
   alignas(write_awaitable_t<S>) std::byte write_slot[sizeof(write_awaitable_t<S>)];
+  alignas(shutdown_awaitable_t<S>) std::byte shutdown_slot[sizeof(shutdown_awaitable_t<S>)];
 };
 
 // The operations of an awaitable built in a slot. await_suspend is normalized to the coroutine to resume: the
@@ -126,8 +155,10 @@ struct stream_vtable {
   // Build the awaitable of an operation in its slot of the block, and return it.
   void *(*read_some)(void *block, std::span<std::byte> buffer);
   void *(*write_some)(void *block, std::span<std::byte const> data);
+  void *(*shutdown_send)(void *block);
   awaitable_vtable const *read;
   awaitable_vtable const *write;
+  awaitable_vtable const *shutdown;
   void (*destroy)(void *block) noexcept;
   // Moves a block held in place into the storage at `target`, destroys the original and returns the new block;
   // null for a block on the heap, whose pointer is moved instead.
@@ -164,8 +195,18 @@ inline constexpr stream_vtable stream_vtable_for{
 
       return ::new (static_cast<void *>(self.write_slot)) write_awaitable_t<S>(self.stream.write_some(data));
     },
+    [](void *block) -> void * {
+      auto &self = *static_cast<stream_block<S> *>(block);
+
+      if constexpr (HalfClosableStream<S>) {
+        return ::new (static_cast<void *>(self.shutdown_slot)) shutdown_awaitable_t<S>(self.stream.shutdown_send());
+      } else {
+        return ::new (static_cast<void *>(self.shutdown_slot)) shutdown_not_supported{};
+      }
+    },
     &awaitable_vtable_for<read_awaitable_t<S>>,
     &awaitable_vtable_for<write_awaitable_t<S>>,
+    &awaitable_vtable_for<shutdown_awaitable_t<S>>,
     [](void *block) noexcept {
       if constexpr (InPlace) {
         std::destroy_at(static_cast<stream_block<S> *>(block));

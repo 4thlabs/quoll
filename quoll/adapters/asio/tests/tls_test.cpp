@@ -386,6 +386,99 @@ TEST_CASE("TLS: a response delimited by the end of the stream needs TLS's closin
   REQUIRE(run_task(closing_without_notice("HTTP/1.1 200 OK\r\n\r\nmaybe all of it")) == std::errc::connection_reset);
 }
 
+namespace {
+
+// What a client gets from a server for `request` and what it still sends after it, and how the connection ended for it.
+struct raw_exchange {
+  std::string received;
+  std::error_code wrote;
+  std::error_code ended;
+};
+
+std::function<task<raw_exchange>(std::string)> raw_call(std::string request, std::string then = {}) {
+  return [request = std::move(request), then = std::move(then)](std::string url) -> task<raw_exchange> {
+    auto const port = static_cast<std::uint16_t>(std::stoi(url.substr(url.rfind(':') + 1)));
+    auto stream = co_await io::connect_tls("127.0.0.1", port, trusting_the_authority().tls);
+    raw_exchange result;
+    std::array<char, 4096> chunk{};
+
+    result.wrote = (co_await io::write(stream, std::as_bytes(std::span{request}))).error;
+
+    if (!result.wrote && !then.empty()) {
+      result.wrote = (co_await io::write(stream, std::as_bytes(std::span{then}))).error;
+    }
+
+    for (;;) {
+      auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+      if (read.error) {
+        result.ended = read.error;
+        co_return result;
+      }
+
+      result.received.append(chunk.data(), read.transferred);
+    }
+  };
+}
+
+} // namespace
+
+TEST_CASE("TLS: a server ending a connection sends TLS's closing message", "[tls][asio][runtime]") {
+  auto const ended = run_task(with_server<raw_exchange>(
+      server_certificate(), raw_call("GET /hello HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")));
+
+  REQUIRE(ended.received.starts_with("HTTP/1.1 200"));
+  // Not std::errc::connection_reset: this client knows it has it all.
+  REQUIRE(ended.ended == io::error::end_of_stream);
+}
+
+TEST_CASE("TLS: a connection found idle gets TLS's closing message", "[tls][asio][runtime]") {
+  auto const ended = run_task(with_server<raw_exchange>(server_certificate(), raw_call({}), idle_for(20ms)));
+
+  REQUIRE(ended.received.empty());
+  REQUIRE(ended.ended == io::error::end_of_stream);
+}
+
+TEST_CASE("TLS: a client closing its side gets TLS's closing message back", "[tls][asio][runtime]") {
+  auto const call = [](std::string url) -> task<std::error_code> {
+    auto const port = static_cast<std::uint16_t>(std::stoi(url.substr(url.rfind(':') + 1)));
+    auto stream = co_await io::connect_tls("127.0.0.1", port, trusting_the_authority().tls);
+    std::string const request = "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n";
+    std::array<char, 4096> chunk{};
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{request}));
+
+    // The server has answered once this has come: the connection is then waiting for the next request.
+    (void)co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+    (void)co_await stream.shutdown_send();
+
+    for (;;) {
+      auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+      if (read.error) {
+        co_return read.error;
+      }
+    }
+  };
+
+  REQUIRE(run_task(with_server<std::error_code>(server_certificate(), call)) == io::error::end_of_stream);
+}
+
+TEST_CASE("TLS: a client still sending a refused body gets its answer and the end of it", "[tls][asio][runtime]") {
+  server::serve_options options;
+
+  options.connection.limits.max_body_size = 16;
+
+  auto const ended = run_task(with_server<raw_exchange>(
+      server_certificate(),
+      raw_call("POST /hello HTTP/1.1\r\nHost: h\r\nContent-Length: 4194304\r\n\r\n", std::string(4 * 1024 * 1024, 'x')),
+      std::move(options)));
+
+  REQUIRE_FALSE(ended.wrote);
+  REQUIRE(ended.received.starts_with("HTTP/1.1 413"));
+  REQUIRE(ended.ended == io::error::end_of_stream);
+}
+
 TEST_CASE("TLS: a body larger than a TLS record goes both ways", "[tls][asio][runtime]") {
   std::string const sent(1024 * 1024, 'x');
 

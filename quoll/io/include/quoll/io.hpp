@@ -44,6 +44,7 @@
 #include <quoll/io/connect.hpp>
 #include <quoll/io/connector.hpp>
 #include <quoll/io/error.hpp>
+#include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
 #include <quoll/io/listen.hpp>
 #include <quoll/io/listener.hpp>

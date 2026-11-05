@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
@@ -46,6 +47,7 @@
 #include <quoll/http/verb.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/error.hpp>
+#include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/io/write.hpp>
@@ -255,11 +257,55 @@ public:
     co_return io::io_result{};
   }
 
+  // Stuck too: once a write has failed, it must not be tried, or it takes another write timeout.
+  [[nodiscard]] task<io::io_result> shutdown_send() { return write_some({}); }
+
 private:
   io::memory_stream inner_;
 };
 
-static_assert(io::ByteStream<stuck_writes>);
+static_assert(io::HalfClosableStream<stuck_writes>);
+
+// A stream whose shutdown waits until it is stopped, whatever else it does.
+class stuck_shutdown {
+public:
+  explicit stuck_shutdown(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
+
+  [[nodiscard]] auto write_some(std::span<std::byte const> data) { return inner_.write_some(data); }
+
+  [[nodiscard]] task<io::io_result> shutdown_send() {
+    try {
+      co_await quoll::async::sleep_for(1h);
+    } catch (std::system_error const &error) {
+      co_return io::io_result{error.code(), 0};
+    }
+
+    co_return io::io_result{};
+  }
+
+private:
+  io::memory_stream inner_;
+};
+
+static_assert(io::HalfClosableStream<stuck_shutdown>);
+
+// A plain ByteStream, with no way to stop sending.
+class stuck_free_stream {
+public:
+  explicit stuck_free_stream(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) noexcept { return inner_.read_some(buffer); }
+
+  [[nodiscard]] auto write_some(std::span<std::byte const> data) noexcept { return inner_.write_some(data); }
+
+private:
+  io::memory_stream inner_;
+};
+
+static_assert(io::ByteStream<stuck_free_stream>);
+static_assert(!io::HalfClosableStream<stuck_free_stream>);
 
 // A request that starts, then a stream that fails with `failure`; what is written goes to `written`.
 class failing_reads {
@@ -300,6 +346,23 @@ time_until_stuck_writes_end(connection_options const &options,
   auto const answer = [&]() -> task<int> {
     (void)co_await io::write(client, std::as_bytes(std::span{raw}));
     co_await quoll::server::serve_connection(stuck_writes{std::move(server)}, router, options);
+    co_return 1;
+  };
+
+  REQUIRE(quoll::test::run(time, answer()) == 1);
+  return time.now();
+}
+
+// serve_connection() on a stream that writes, but whose shutdown is stuck: its time on the clock.
+std::chrono::nanoseconds time_until_stuck_shutdown_ends(connection_options const &options) {
+  virtual_time time;
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  std::string const raw = "GET /hello HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n";
+
+  auto const answer = [&]() -> task<int> {
+    (void)co_await io::write(client, std::as_bytes(std::span{raw}));
+    co_await quoll::server::serve_connection(stuck_shutdown{std::move(server)}, router, options);
     co_return 1;
   };
 
@@ -599,7 +662,8 @@ TEST_CASE("serve_connection: a request that does not arrive in time answers 408 
 TEST_CASE("serve_connection: the read timeout covers a request as a whole, however it trickles", "[server][timer]") {
   virtual_time time;
 
-  auto const received = session(time, connection_options{.read_timeout = 3s}, [](auto client) {
+  // With nothing read after the answer, as this peer goes on sending.
+  auto const received = session(time, connection_options{.read_timeout = 3s, .lingering_timeout = 0s}, [](auto client) {
     return trickle(std::move(client), "GET /" + std::string(1000, 'a'), 1s);
   });
 
@@ -831,4 +895,217 @@ TEST_CASE("serve_connection: HTTP/1.0 waits for no 100 Continue", "[server][time
 TEST_CASE("serve_connection: a 100 Continue that does not leave is under the write timeout", "[server][timer]") {
   // With no read timeout to end it.
   REQUIRE(time_until_stuck_writes_end(connection_options{.read_timeout = 0s, .write_timeout = 4s}, expecting) == 4s);
+}
+
+namespace {
+
+// How a connection ends with a peer that sends `request`, reads what comes until the server stops sending, sends `more`
+// a second later, and stays connected until `leaves`: when the server had gone, and what the peer read and when.
+struct lingered {
+  std::chrono::nanoseconds server_gone{};
+  std::chrono::nanoseconds answer_ended{};
+  std::string received;
+};
+
+lingered linger_with(connection_options const &options, std::string request, std::chrono::nanoseconds leaves) {
+  virtual_time time;
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  lingered result;
+  std::string const more(10000, 'x');
+
+  auto const serving = [&](io::memory_stream stream) -> task<int> {
+    co_await quoll::server::serve_connection(std::move(stream), router, options);
+    result.server_gone = time.now();
+    co_return 1;
+  };
+
+  auto const peering = [&](io::memory_stream stream) -> task<int> {
+    (void)co_await io::write(stream, std::as_bytes(std::span{request}));
+    result.received = co_await read_until_closed(stream);
+    result.answer_ended = time.now();
+    co_await quoll::async::sleep_for(1s);
+    (void)co_await io::write(stream, std::as_bytes(std::span{more}));
+    co_await quoll::async::sleep_for(leaves - 1s);
+    co_return 1;
+  };
+
+  auto outcome = quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peering(std::move(client))));
+
+  REQUIRE(outcome);
+  return result;
+}
+
+// Refused for its size, with its body still to come.
+std::string const refused = "POST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: 100000\r\n\r\n";
+
+connection_options small_bodies(std::chrono::nanoseconds lingering) {
+  connection_options options;
+
+  options.limits.max_body_size = 10;
+  options.lingering_timeout = lingering;
+  return options;
+}
+
+} // namespace
+
+TEST_CASE("serve_connection: a refused request is answered, then what still comes is dropped", "[server][timer]") {
+  auto const ended = linger_with(small_bodies(5s), refused, 2s);
+
+  // The peer has its answer and the end of it at once, and the server waits for the peer to leave.
+  REQUIRE(ended.received.starts_with("HTTP/1.1 413"));
+  REQUIRE(ended.answer_ended == 0s);
+  REQUIRE(ended.server_gone == 2s);
+}
+
+TEST_CASE("serve_connection: a peer that goes quiet is waited for up to the lingering timeout", "[server][timer]") {
+  auto const ended = linger_with(small_bodies(5s), refused, 60s);
+
+  // Its last bytes came at 1 s.
+  REQUIRE(ended.received.starts_with("HTTP/1.1 413"));
+  REQUIRE(ended.server_gone == 6s);
+}
+
+TEST_CASE("serve_connection: a peer that keeps sending is read up to the lingering time", "[server][timer]") {
+  virtual_time time;
+  auto options = small_bodies(5s);
+
+  options.lingering_time = 3s;
+
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  std::chrono::nanoseconds server_gone{};
+
+  auto const serving = [&](io::memory_stream stream) -> task<int> {
+    co_await quoll::server::serve_connection(std::move(stream), router, options);
+    server_gone = time.now();
+    co_return 1;
+  };
+
+  auto const peering = [&](io::memory_stream stream) -> task<int> {
+    (void)co_await io::write(stream, std::as_bytes(std::span{refused}));
+
+    for (int second = 0; second < 10; ++second) {
+      co_await quoll::async::sleep_for(1s);
+      (void)co_await io::write(stream, std::as_bytes(std::span{refused}));
+    }
+
+    co_return 1;
+  };
+
+  auto outcome = quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peering(std::move(client))));
+
+  REQUIRE(outcome);
+  REQUIRE(server_gone == 3s);
+}
+
+TEST_CASE("serve_connection: a drain or a stop request ends the lingering", "[server][timer]") {
+  virtual_time time;
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  std::stop_source stopping;
+  auto options = small_bodies(5s);
+  std::chrono::nanoseconds server_gone{};
+  auto const stop_with_drain = GENERATE(true, false);
+
+  if (stop_with_drain) {
+    options.drain = stopping.get_token();
+  }
+
+  auto const serving = [&](io::memory_stream stream) -> task<int> {
+    co_await quoll::async::detail::stop_scope<void>{quoll::server::serve_connection(std::move(stream), router, options),
+                                                    stop_with_drain ? std::stop_token{} : stopping.get_token()};
+    server_gone = time.now();
+    co_return 1;
+  };
+
+  auto const peering = [&](io::memory_stream stream) -> task<int> {
+    (void)co_await io::write(stream, std::as_bytes(std::span{refused}));
+    (void)co_await read_until_closed(stream);
+    co_await quoll::async::sleep_for(2s);
+    stopping.request_stop();
+    co_await quoll::async::sleep_for(1s);
+    co_return 1;
+  };
+
+  auto outcome = quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peering(std::move(client))));
+
+  REQUIRE(outcome);
+  REQUIRE(server_gone == 2s);
+}
+
+TEST_CASE("serve_connection: no lingering timeout closes at once", "[server][timer]") {
+  auto const ended = linger_with(small_bodies(0s), refused, 2s);
+
+  REQUIRE(ended.received.starts_with("HTTP/1.1 413"));
+  REQUIRE(ended.server_gone == 0s);
+}
+
+TEST_CASE("serve_connection: a last response lingers too, for what is on its way", "[server][timer]") {
+  auto const ended = linger_with(small_bodies(5s), "GET /hello HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n", 2s);
+
+  REQUIRE(ended.received.starts_with("HTTP/1.1 200"));
+  REQUIRE(ended.answer_ended == 0s);
+  REQUIRE(ended.server_gone == 2s);
+}
+
+TEST_CASE("serve_connection: a connection found idle does not linger", "[server][timer]") {
+  virtual_time time;
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  std::chrono::nanoseconds server_gone{};
+  connection_options const options{.idle_timeout = 3s};
+
+  auto const serving = [&](io::memory_stream stream) -> task<int> {
+    co_await quoll::server::serve_connection(std::move(stream), router, options);
+    server_gone = time.now();
+    co_return 1;
+  };
+
+  auto const peering = [&](io::memory_stream stream) -> task<int> {
+    (void)co_await read_until_closed(stream);
+    co_await quoll::async::sleep_for(10s);
+    co_return 1;
+  };
+
+  auto outcome = quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peering(std::move(client))));
+
+  REQUIRE(outcome);
+  REQUIRE(server_gone == 3s);
+}
+
+TEST_CASE("serve_connection: stopping to send is under the write timeout", "[server][timer]") {
+  REQUIRE(time_until_stuck_shutdown_ends(connection_options{.write_timeout = 4s}) == 4s);
+}
+
+TEST_CASE("serve_connection: without a timer to end it, nothing lingers", "[server]") {
+  auto const router = make_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  std::string const request = "NOT HTTP\r\n\r\n";
+
+  // The peer's end stays open throughout: on a run_loop, which has no timer, reading it would never end.
+  auto const peering = [&]() -> task<std::string> {
+    (void)co_await io::write(client, std::as_bytes(std::span{request}));
+    co_return co_await read_until_closed(client);
+  };
+
+  auto outcome =
+      quoll::test::run(quoll::async::when_all(quoll::server::serve_connection(std::move(server), router), peering()));
+
+  REQUIRE(outcome);
+  REQUIRE(std::get<1>(*outcome).starts_with("HTTP/1.1 400"));
+}
+
+TEST_CASE("serve_connection: a stream that cannot stop sending just closes", "[server]") {
+  auto [client, server] = io::make_memory_stream_pair();
+  auto const router = make_router();
+  std::string const request = "GET /hello HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n";
+
+  auto const answer = [&]() -> task<std::string> {
+    (void)co_await io::write(client, std::as_bytes(std::span{request}));
+    co_await quoll::server::serve_connection(stuck_free_stream{std::move(server)}, router);
+    co_return co_await read_until_closed(client);
+  };
+
+  REQUIRE(quoll::test::run(answer())->starts_with("HTTP/1.1 200"));
 }

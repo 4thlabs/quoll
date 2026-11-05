@@ -36,9 +36,12 @@
 
 #include <quoll/server/serve_connection.hpp>
 
+#include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
+#include <quoll/async/timer_ref.hpp>
+#include <quoll/async/with_timeout.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/detail/status_response.hpp>
@@ -52,9 +55,11 @@
 #include <quoll/http/version.hpp>
 #include <quoll/http/write.hpp>
 #include <quoll/io/any_stream.hpp>
+#include <quoll/io/error.hpp>
 #include <quoll/io/write.hpp>
 
 #include <array>
+#include <chrono>
 #include <exception>
 #include <optional>
 #include <ranges>
@@ -112,23 +117,28 @@ struct request_read {
 // clients send after a body.
 void skip_empty_lines(std::string &buffer) { buffer.erase(0, buffer.find_first_not_of("\r\n")); }
 
-// Waits for a request to start, in `buffer`. False when the connection ends instead, whatever the reason: it was idle,
-// so nothing is owed to the peer.
-async::task<bool> wait_for_request(io::any_stream &stream, std::string &buffer) {
+// What waiting for a request came to: it has started; the wait was ended, by the idle timeout, a drain, a stop request
+// or the peer closing its side, which is still owed the end of this one; or the stream has failed.
+enum class waited { request, over, failed };
+
+// Waits for a request to start, in `buffer`.
+async::task<waited> wait_for_request(io::any_stream &stream, std::string &buffer) {
   std::array<char, 4096> chunk;
 
   while (buffer.empty()) {
     auto const received = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
 
     if (received.error) {
-      co_return false;
+      auto const ended = received.error == std::errc::operation_canceled || received.error == io::error::end_of_stream;
+
+      co_return ended ? waited::over : waited::failed;
     }
 
     buffer.append(chunk.data(), received.transferred);
     skip_empty_lines(buffer);
   }
 
-  co_return true;
+  co_return waited::request;
 }
 
 // What a request's `Expect` fields ask for: a list, of which only this one member exists. An HTTP/1.0 client cannot
@@ -304,9 +314,35 @@ async::task<std::error_code> send_response(io::any_stream &stream, http::respons
                                                           write_response(stream, response, keep_alive));
 }
 
-} // namespace
+// How a connection ends. A stream that failed or a peer that has gone are owed nothing: on a stuck one, trying would
+// take another write timeout. A connection whose wait was ended stops sending, and nothing is on its way yet. After a
+// last response, what is on its way is read, in stages as RFC 9112, 9.6 asks.
+enum class connection_end { nothing_owed, stop_sending, linger };
 
-async::task<> serve_connection(io::any_stream stream, http::router const &router, connection_options const &options) {
+async::task<std::error_code> stop_sending(io::any_stream &stream) { co_return (co_await stream.shutdown_send()).error; }
+
+async::task<io::io_result> read_once(io::any_stream &stream, std::span<std::byte> buffer) {
+  co_return co_await stream.read_some(buffer);
+}
+
+// What the peer still sends, dropped, until it stops or goes quiet. A larger buffer than a request's: this is all it
+// does.
+async::task<std::error_code> drop_what_comes(io::any_stream &stream, std::chrono::nanoseconds silence) {
+  std::array<char, 16 * 1024> chunk;
+
+  for (;;) {
+    auto const received =
+        co_await async::with_timeout(silence, read_once(stream, std::as_writable_bytes(std::span{chunk})));
+
+    if (received.error) {
+      co_return received.error;
+    }
+  }
+}
+
+// Requests and their responses, up to how the connection ends.
+async::task<connection_end> serve_requests(io::any_stream &stream, http::router const &router,
+                                           connection_options const &options) {
   std::string buffer;
   http::request_parser parser{options.limits};
 
@@ -320,22 +356,28 @@ async::task<> serve_connection(io::any_stream stream, http::router const &router
     skip_empty_lines(buffer);
 
     // A pipelined request has already started.
-    if (buffer.empty() &&
-        !co_await async::detail::stop_scope<bool>{
-            async::detail::with_optional_timeout(options.idle_timeout, wait_for_request(stream, buffer)),
-            idle_stop.get_token()}) {
-      co_return;
+    if (buffer.empty()) {
+      auto const wait = co_await async::detail::stop_scope<waited>{
+          async::detail::with_optional_timeout(options.idle_timeout, wait_for_request(stream, buffer)),
+          idle_stop.get_token()};
+
+      if (wait != waited::request) {
+        co_return wait == waited::over ? connection_end::stop_sending : connection_end::nothing_owed;
+      }
     }
 
     if (auto const read = co_await read_whole_request(stream, buffer, parser, options); read.error) {
-      if (auto const answer = read_error_status(read)) {
-        auto rejected = http::detail::status_response(*answer);
+      auto const answer = read_error_status(read);
 
-        prepare(rejected, false, false);
-        (void)co_await send_response(stream, rejected, false, options);
+      if (!answer) {
+        co_return connection_end::nothing_owed;
       }
 
-      co_return;
+      auto rejected = http::detail::status_response(*answer);
+
+      prepare(rejected, false, false);
+      co_return co_await send_response(stream, rejected, false, options) ? connection_end::nothing_owed
+                                                                         : connection_end::linger;
     }
 
     auto keep_alive = parser.keep_alive() && !parser.upgrade();
@@ -346,10 +388,61 @@ async::task<> serve_connection(io::any_stream stream, http::router const &router
     keep_alive = keep_alive && !http::detail::closes_connection(response.fields) && !options.drain.stop_requested();
     prepare(response, head, keep_alive);
 
-    if (co_await send_response(stream, response, keep_alive, options) || !keep_alive) {
-      co_return;
+    if (co_await send_response(stream, response, keep_alive, options)) {
+      co_return connection_end::nothing_owed;
+    }
+
+    if (!keep_alive) {
+      co_return connection_end::linger;
     }
   }
+}
+
+// Reads and drops what the peer still sends, unless it is time for the connection to go.
+async::task<> linger(io::any_stream &stream, connection_options const &options) {
+  auto const stop_token = co_await async::current_stop_token();
+  auto const executor = co_await async::current_executor();
+  auto const zero = std::chrono::nanoseconds::zero();
+
+  // Without a timer to end it, this would wait for as long as the peer likes.
+  if (options.lingering_timeout <= zero || options.lingering_time <= zero || !executor.query<async::timer_ref>() ||
+      options.drain.stop_requested()) {
+    co_return;
+  }
+
+  std::stop_source stop;
+  auto const stop_lingering = [&stop] { stop.request_stop(); };
+  std::stop_callback const on_stop{stop_token, stop_lingering};
+  std::stop_callback const on_drain{options.drain, stop_lingering};
+
+  (void)co_await async::detail::stop_scope<std::error_code>{
+      async::with_timeout(options.lingering_time, drop_what_comes(stream, options.lingering_timeout)),
+      stop.get_token()};
+}
+
+// The last of a connection, once all that it owed has left.
+async::task<> end_connection(io::any_stream &stream, connection_options const &options, connection_end end) {
+  if (end == connection_end::nothing_owed || (co_await async::current_stop_token()).stop_requested()) {
+    co_return;
+  }
+
+  try {
+    auto const sent = co_await async::detail::with_optional_timeout(options.write_timeout, stop_sending(stream));
+
+    if (!sent && end == connection_end::linger) {
+      co_await linger(stream, options);
+    }
+  } catch (std::system_error const &) {
+    // The time ran out, the stop came or the stream failed: with the connection ending anyway, nothing is left to do.
+  }
+}
+
+} // namespace
+
+async::task<> serve_connection(io::any_stream stream, http::router const &router, connection_options const &options) {
+  auto const end = co_await serve_requests(stream, router, options);
+
+  co_await end_connection(stream, options, end);
 }
 
 async::task<> serve_connection(io::any_stream stream, http::router const &router) {

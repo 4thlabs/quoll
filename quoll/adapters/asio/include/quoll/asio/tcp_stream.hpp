@@ -38,11 +38,16 @@
 #define QUOLL_ASIO_TCP_STREAM_HPP
 
 #include <quoll/asio/detail/basic_stream.hpp>
+#include <quoll/asio/detail/io_error.hpp>
+#include <quoll/asio/detail/operation.hpp>
 #include <quoll/async/context_awaitable.hpp>
-#include <quoll/io/byte_stream.hpp>
+#include <quoll/async/task.hpp>
+#include <quoll/io/half_closable_stream.hpp>
+#include <quoll/io/io_result.hpp>
 
 #include <asio/ip/tcp.hpp>
 
+#include <system_error>
 #include <utility>
 
 namespace quoll::asio {
@@ -65,13 +70,27 @@ public:
   /** @brief Takes a connected socket over. */
   explicit tcp_stream(::asio::ip::tcp::socket socket) : basic_stream(std::move(socket)) {}
 
+  /** @brief Stops sending: see io::HalfClosableStream. */
+  [[nodiscard]] async::task<io::io_result> shutdown_send() {
+    auto &state = checked_state();
+
+    auto const [error] = co_await detail::make_operation<>(state.write, [&state](auto handler) {
+      std::error_code shutdown;
+
+      state.stream.shutdown(::asio::ip::tcp::socket::shutdown_send, shutdown);
+      std::move(handler)(shutdown);
+    });
+
+    co_return io::io_result{detail::to_io_error(error), 0};
+  }
+
   /** @brief The socket, for its options, shutdown() and close(). */
   [[nodiscard]] ::asio::ip::tcp::socket &socket() noexcept { return checked_state().stream; }
 };
 
 static_assert(async::ContextAwaitable<tcp_stream::read_awaitable>);
 static_assert(async::ContextAwaitable<tcp_stream::write_awaitable>);
-static_assert(io::ByteStream<tcp_stream>);
+static_assert(io::HalfClosableStream<tcp_stream>);
 
 } // namespace quoll::asio
 

@@ -46,7 +46,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/bound_listener.hpp>
-#include <quoll/io/byte_stream.hpp>
+#include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
 #include <quoll/io/tls_options.hpp>
 
@@ -99,13 +99,15 @@ public:
     return stream_.write_some(data);
   }
 
+  [[nodiscard]] auto shutdown_send() { return stream_.shutdown_send(); }
+
 private:
   tls_stream stream_;
   std::shared_ptr<::asio::ssl::context> context_;
   bool shaken_hands_ = false;
 };
 
-static_assert(io::ByteStream<accepted_tls_stream>);
+static_assert(io::HalfClosableStream<accepted_tls_stream>);
 
 } // namespace detail
 
