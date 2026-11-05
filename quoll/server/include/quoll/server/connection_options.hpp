@@ -42,6 +42,7 @@
 #include <chrono>
 #include <exception>
 #include <functional>
+#include <stop_token>
 
 namespace quoll::server {
 
@@ -67,6 +68,13 @@ struct connection_options {
 
   /** @brief How long a response may take to leave, as a whole. Past it, the connection closes. */
   std::chrono::nanoseconds write_timeout = std::chrono::seconds{30};
+
+  /**
+   * @brief A stop request here ends the connection gently: an idle one at once, one with a request under way once its
+   * response has left, saying `Connection: close`. A stop request on the task cancels whatever is pending instead.
+   * serve() also drains its connections when it stops.
+   */
+  std::stop_token drain{};
 
   /**
    * @brief Called with what a handler threw, which the client receives as a 500; on the connection's executor, must

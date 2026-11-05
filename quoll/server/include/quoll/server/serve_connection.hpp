@@ -54,9 +54,10 @@ namespace quoll::server {
  * Each request goes to the router; its response is written back before the next request is read (pipelined requests
  * wait in the connection's buffer). The connection ends when the peer closes it, after a response to a request that
  * does not keep it alive (`Connection: close`, HTTP/1.0 without keep-alive, an upgrade, which is not served), after a
- * response whose handler set `Connection: close`, on a stream error, or on a stop request, which cancels whatever is
- * pending: a read, a handler's own operations, a write. Timeouts end it too (see connection_options): a connection idle
- * for too long, a request taking too long to arrive (408), a response taking too long to leave.
+ * response whose handler set `Connection: close`, on a stream error, on `options.drain`, gently, or on a stop request,
+ * which cancels whatever is pending: a read, a handler's own operations, a write. Timeouts end it too (see
+ * connection_options): a connection idle for too long, a request taking too long to arrive (408), a response taking too
+ * long to leave.
  *
  * - A request that is not valid HTTP answers 400, one with too large a header 431, too large a body 413, an unknown
  *   method 501, and ends the connection.

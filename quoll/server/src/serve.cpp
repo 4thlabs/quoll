@@ -39,9 +39,13 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/task_group.hpp>
+#include <quoll/async/timer_ref.hpp>
+#include <quoll/async/when_all.hpp>
 #include <quoll/server/serve_connection.hpp>
 
+#include <chrono>
 #include <exception>
 #include <memory>
 #include <optional>
@@ -57,10 +61,38 @@ namespace {
   return error == std::errc::connection_aborted || error == std::errc::connection_reset;
 }
 
+[[nodiscard]] bool out_of_resources(std::error_code error) noexcept {
+  return error == std::errc::too_many_files_open || error == std::errc::too_many_files_open_in_system ||
+         error == std::errc::no_buffer_space || error == std::errc::not_enough_memory;
+}
+
+// What an accept failure does by default. Running out of something passes, as connections end: not a reason to end a
+// server, nor to try again at once. Without a timer, it cannot wait.
+async::task<bool> accept_again(std::error_code error) {
+  if (one_connection_failure(error)) {
+    co_return true;
+  }
+
+  if (!out_of_resources(error)) {
+    co_return false;
+  }
+
+  auto const timer = (co_await async::current_executor()).query<async::timer_ref>();
+
+  if (!timer) {
+    co_return false;
+  }
+
+  co_await timer->wait_for(std::chrono::milliseconds{100});
+  co_return true;
+}
+
 // What the connections of a serve() share: its options, and the count serve() waits on before it completes.
 struct shared_options {
   serve_options options;
   async::detail::task_group connections;
+  // Ends them gently, where the stop token of their tasks cancels what they have pending.
+  std::stop_source drain;
 };
 
 // The outcome of a connection spawned by serve(): it ends by itself, and a failure only ends it, reported to the
@@ -83,16 +115,56 @@ async::task<> serve_shared(io::any_stream stream, http::router const &router, st
   co_await serve_connection(std::move(stream), router, shared->options.connection);
 }
 
+async::task<> join_then_cancel(async::detail::task_group &connections, std::stop_source &deadline) {
+  co_await connections.join();
+  deadline.request_stop();
+}
+
+async::task<> stop_past_deadline(async::timer_ref timer, std::chrono::nanoseconds timeout, std::stop_token cancelled,
+                                 std::stop_source &connections_stop) {
+  try {
+    if (co_await async::detail::stop_scope<bool>{timer.wait_for(timeout), std::move(cancelled)}) {
+      connections_stop.request_stop();
+    }
+  } catch (...) {
+    // Without a deadline left to wait for, nothing else would ever stop them.
+    connections_stop.request_stop();
+    throw;
+  }
+}
+
+// The connections have been asked to drain: waits for them, up to the timeout, past which they are stopped.
+async::task<> wind_down(shared_options &shared, std::stop_source &connections_stop) {
+  auto const timeout = shared.options.shutdown_timeout;
+  auto const timer = (co_await async::current_executor()).query<async::timer_ref>();
+
+  if (timeout <= std::chrono::nanoseconds::zero() || !timer) {
+    connections_stop.request_stop();
+    co_await shared.connections.join();
+    co_return;
+  }
+
+  std::stop_source deadline;
+
+  co_await async::when_all(join_then_cancel(shared.connections, deadline),
+                           stop_past_deadline(*timer, timeout, deadline.get_token(), connections_stop));
+}
+
 } // namespace
 
 async::task<> serve_accepting(async::any_executor executor, listener_ref listener, http::router const &router,
                               serve_options options) {
   auto const stop_token = co_await async::current_stop_token();
   auto const shared = std::make_shared<shared_options>(std::move(options));
+
+  // What was given still drains them, without ending the accept loop.
+  auto const given_drain = std::exchange(shared->options.connection.drain, shared->drain.get_token());
+
   auto const &accept_error = shared->options.on_accept_error;
-  // The connections stop with serve(): on its stop request, and when its accept loop ends for another reason.
   std::stop_source connections_stop;
-  std::stop_callback const forward_stop{stop_token, [&connections_stop] { connections_stop.request_stop(); }};
+  auto const drain = [&shared] { shared->drain.request_stop(); };
+  std::stop_callback const drain_on_stop{stop_token, drain};
+  std::stop_callback const drain_on_given{given_drain, drain};
   std::exception_ptr ending;
 
   while (!stop_token.stop_requested()) {
@@ -118,7 +190,7 @@ async::task<> serve_accepting(async::any_executor executor, listener_ref listene
       auto again = false;
 
       try {
-        again = accept_error ? co_await accept_error(error) : one_connection_failure(error);
+        again = accept_error ? co_await accept_error(error) : co_await accept_again(error);
       } catch (...) {
         ending = std::current_exception();
         break;
@@ -129,6 +201,12 @@ async::task<> serve_accepting(async::any_executor executor, listener_ref listene
         break;
       }
 
+      continue;
+    }
+
+    auto const max_connections = shared->options.max_connections;
+
+    if (max_connections != 0 && shared->connections.live() >= max_connections) {
       continue;
     }
 
@@ -145,6 +223,17 @@ async::task<> serve_accepting(async::any_executor executor, listener_ref listene
     }
   }
 
+  shared->drain.request_stop();
+
+  try {
+    co_await wind_down(*shared, connections_stop);
+  } catch (...) {
+    if (!ending) {
+      ending = std::current_exception();
+    }
+  }
+
+  // Whatever happened above: what the connections use outlives them. Allocates nothing, and is done if they have ended.
   connections_stop.request_stop();
   co_await shared->connections.join();
 
