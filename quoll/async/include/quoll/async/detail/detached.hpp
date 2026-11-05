@@ -37,6 +37,7 @@
 #ifndef QUOLL_ASYNC_DETAIL_DETACHED_HPP
 #define QUOLL_ASYNC_DETAIL_DETACHED_HPP
 
+#include <quoll/async/detail/recycled_frame.hpp>
 #include <quoll/async/work_item.hpp>
 
 #include <coroutine>
@@ -48,7 +49,7 @@ namespace quoll::async::detail {
 // Root coroutine of co_spawn. Created suspended; once released and resumed, its frame destroys itself when it ends.
 class detached {
 public:
-  class promise_type {
+  class promise_type : public recycled_frame {
   public:
     [[nodiscard]] detached get_return_object() noexcept {
       return detached{std::coroutine_handle<promise_type>::from_promise(*this)};

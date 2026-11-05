@@ -18,7 +18,7 @@ guidelines and the C++ Core Guidelines.
 - What is not a template goes in the `src/*.cpp` of its module, compiled once in its library, rather than `inline` in a
   header: a change in an application then has less to compile. Only what a header needs may stay inline: a function forwarding
   to another, one returning a lambda, or one a `QUOLL_` switch changes in the application's sources. Stay in headers too: `quoll::async`, templates and functions of some lines that
-  its concepts and awaitables need; `io::memory_stream`, a stream for tests; and the streams and acceptors of `quoll::asio`, which
+  its concepts and awaitables need, all but what recycles coroutine frames; `io::memory_stream`, a stream for tests; and the streams and acceptors of `quoll::asio`, which
   need asio in the program that uses them.
 - Templates over what the application provides stay in headers. Only a template whose arguments the library closes, such as
   `http::parser` over a request or a response, may be instantiated explicitly in a source, with `extern template`.

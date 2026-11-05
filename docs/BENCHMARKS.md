@@ -1,6 +1,6 @@
 # What Quoll costs
 
-The baseline before streaming (step 3 of [`PLAN.md`](PLAN.md)), which what follows is compared with. The program is
+The baseline, with bodies in pieces (step 3 of [`PLAN.md`](PLAN.md)), which what follows is compared with. The program is
 `tests/bench`:
 
 ```bash
@@ -11,7 +11,7 @@ build-bench/tests/bench/quoll_bench allocations      # the second
 build-bench/tests/bench/quoll_bench serve 8080       # the routes alone, for the third
 ```
 
-Measured on commit `272e663`, in a Docker container of an Intel Core i5-14400 (16 threads), Linux 6.18, GCC 13.3, on a machine
+Measured on commit `d9c3b0f` with coroutine frames recycled, in a Docker container of an Intel Core i5-14400 (16 threads), Linux 6.18, GCC 13.3, on a machine
 that also runs other things: each figure is the median of three runs, and a rate moves by some 10 % from one to the next.
 
 ## Over loopback TCP
@@ -22,21 +22,26 @@ not counted. Standard library assertions are off, as in an application, whereas 
 
 | Scenario | Requests/s | p50 (µs) | p99 (µs) | Allocations, server | Allocations, client |
 | --- | --- | --- | --- | --- | --- |
-| GET, one connection | 69331 | 13 | 37 | 54 | 22 |
-| GET, 16 at once | 129490 | 115 | 295 | 54 | 22 |
-| GET, one connection each | 14392 | 38 | 1004 | 110 | 49 |
-| POST 1 MiB, echoed | 879 | 1109 | 1565 | 107 | 59 |
-| REST GET, JSON | 64629 | 14 | 40 | 64 | 29 |
-| REST POST, JSON | 14206 | 40 | 964 | 108 | 59 |
-| GET over TLS, one connection | 53095 | 17 | 53 | 55 | 22 |
-| GET over TLS, one connection each | 908 | 1065 | 1669 | 116 | 55 |
+| GET, one connection | 60111 | 13 | 45 | 16 | 10 |
+| GET, 16 at once | 121823 | 116 | 312 | 16 | 10 |
+| GET, one connection each | 14618 | 42 | 1017 | 39 | 26 |
+| POST 1 MiB, echoed | 721 | 1331 | 2189 | 43 | 36 |
+| POST 1 MiB, read in pieces | 826 | 1078 | 2419 | 1111 | 26 |
+| GET 1 MiB, written in pieces | 644 | 1429 | 3453 | 1046 | 21 |
+| REST GET, JSON | 55758 | 15 | 48 | 25 | 16 |
+| REST POST, JSON | 14132 | 44 | 1028 | 45 | 35 |
+| GET over TLS, one connection | 45757 | 18 | 60 | 16 | 10 |
+| GET over TLS, one connection each | 620 | 1557 | 2241 | 42 | 31 |
 
 What it shows, for the performance step:
 
 - A client's POST opens a connection each time, as it may not be sent twice on one found closed: a REST POST costs a connection,
   and JSON costs little beside it (REST GET against GET).
-- A new connection has a p99 of about 1 ms against a p50 of 38 µs. Not explained yet.
+- A new connection has a p99 of about 1 ms against a p50 of 42 µs. Not explained yet.
 - Most allocations of a GET are on the server.
+- A body in pieces takes about 4 allocations per piece of 4 KiB, all on the side that streams it, against 16 before
+  coroutine frames were recycled, when a GET took 54 and 22. Old and new binaries, run in turn on the same machine, kept their
+  rates within 6 %: this saves work of the allocator, and not time that shows here.
 
 ## Over a memory stream
 
@@ -46,11 +51,13 @@ also writes the first table in its summary. Of the pull requests, only one touch
 
 | Scenario | Allocations per request, both sides |
 | --- | --- |
-| GET, one connection | 72 |
-| GET, one connection each | 136 |
-| POST 1 MiB, echoed | 144 |
-| REST GET, JSON | 89 |
-| REST POST, JSON | 145 |
+| GET, one connection | 22 |
+| GET, one connection each | 48 |
+| POST 1 MiB, echoed | 63 |
+| POST 1 MiB, read in pieces | 821 |
+| GET 1 MiB, written in pieces | 807 |
+| REST GET, JSON | 37 |
+| REST POST, JSON | 64 |
 
 ## Beside other servers
 
@@ -60,9 +67,9 @@ h2o 2.2.5 from Ubuntu's packages, in a throwaway container, each on one worker a
 
 | Server | 1 connection: requests/s | p50 (µs) | p99 (µs) | 16 connections: requests/s | p50 (µs) | p99 (µs) |
 | --- | --- | --- | --- | --- | --- | --- |
-| Quoll | 80656 | 11 | 35 | 149778 | 104 | 159 |
-| nginx | 100475 | 9 | 24 | 266499 | 58 | 101 |
-| h2o | 80309 | 11 | 30 | 255803 | 59 | 130 |
+| Quoll | 74333 | 11 | 38 | 147940 | 101 | 180 |
+| nginx | 91456 | 9 | 27 | 253381 | 59 | 107 |
+| h2o | 75641 | 11 | 34 | 244903 | 60 | 130 |
 
 It says what one small response costs, on one thread, and nothing of a real application or of several workers. The headers differ
 too: these two send `Date`, `Server` and others that Quoll does not.

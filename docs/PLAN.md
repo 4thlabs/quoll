@@ -194,14 +194,14 @@ them.
 Last, as what comes before it is needed first. It starts from a new baseline, as those steps change what is measured, and
 changes only what the harness shows. Candidates:
 
-- Each bounded phase allocates coroutine frames and an asio timer, about three times per request on the server. A timer
-  per connection avoids it.
+- Each bounded phase takes a coroutine frame, recycled by each thread since `async::detail::recycled_frame`, and an asio timer,
+  about three times per request on the server. A timer per connection avoids it.
 - A client copies the request body into the serialized message: write the head and the body as two buffers.
 - A TLS client builds its context per connection, and resumes no session.
 - A client builds a parser per request, which now allocates: one per connection avoids it.
-- `http::body_reader` and `http::body_stream` return a task per piece, where the type-erasure rules ask for no allocation per
-  operation, and what reads and writes behind them allocates more, as the timeouts do. Left for this step: they have to be
-  measured and changed as a whole, and it changes no handler, which only writes `co_await body.read()`.
+- A body in pieces still takes about 4 allocations per piece behind `http::body_reader` and `http::body_stream`, from what its
+  timeouts do, and those wrappers return a task rather than an awaitable in storage of their own, as the type-erasure rules
+  ask. With frames recycled that task allocates nothing in steady state, and changing it changes no handler.
 - The size of a native binary, 19 % larger since step 1, as static libraries link whole objects: `--gc-sections`, link-time
   optimization.
 - Idle connections are only found closed when a request uses them: closing them after an idle time, and letting a POST
