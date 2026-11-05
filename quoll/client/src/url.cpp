@@ -37,7 +37,10 @@
 #include <quoll/client/detail/url.hpp>
 
 #include <quoll/http/detail/ascii.hpp>
+#include <quoll/http/detail/percent.hpp>
+#include <quoll/http/detail/route_template.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -197,6 +200,55 @@ namespace {
   return static_cast<std::uint16_t>(value);
 }
 
+// A character RFC 3986 allows in a path as it is: unreserved, sub-delims, `:` and `@`, and the separators.
+[[nodiscard]] constexpr bool path_character(char character) noexcept {
+  return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+         (character >= '0' && character <= '9') || std::string_view{"-._~!$&'()*+,;=:@/%"}.contains(character);
+}
+
+// A segment a server reads as a name: decoded, neither a dot segment, in the way the router sees them, nor a NUL.
+[[nodiscard]] bool plain_segment(std::string_view segment) {
+  auto const decoded = http::detail::percent_decode(segment);
+
+  if (!decoded || decoded->contains('\0')) {
+    return false;
+  }
+
+  std::string_view rest = *decoded;
+
+  for (;;) {
+    auto const separator = rest.find_first_of("/\\");
+    auto const part = rest.substr(0, separator);
+
+    if (part == "." || part == "..") {
+      return false;
+    }
+
+    if (separator == std::string_view::npos) {
+      return true;
+    }
+
+    rest.remove_prefix(separator + 1);
+  }
+}
+
+// A path to put before every target: it goes on the wire as it is written, so that it has to be what a server reads.
+void check_prefix(std::string_view path) {
+  if (!std::ranges::all_of(path, path_character) || !http::detail::valid_escapes(path) || path.contains("//")) {
+    invalid_url("a path that would not read as itself");
+  }
+
+  for (std::size_t start = 1; start < path.size();) {
+    auto const end = end_of(path, '/', start);
+
+    if (!plain_segment(path.substr(start, end - start))) {
+      invalid_url("a dot segment or a NUL in the path");
+    }
+
+    start = end + 1;
+  }
+}
+
 } // namespace
 
 origin parse_url(std::string_view url) {
@@ -206,7 +258,7 @@ origin parse_url(std::string_view url) {
   auto const secure = url.size() >= https.size() && http::detail::iequals(url.substr(0, https.size()), https);
 
   if (!secure && (url.size() < http.size() || !http::detail::iequals(url.substr(0, http.size()), http))) {
-    invalid_url("the URL is not http[s]://host[:port]");
+    invalid_url("the URL is not http[s]://host[:port][/path]");
   }
 
   auto authority = url.substr(secure ? https.size() : http.size());
@@ -215,21 +267,20 @@ origin parse_url(std::string_view url) {
     invalid_url("a query or a fragment is not part of a server's URL");
   }
 
+  auto const slash = authority.find('/');
+  auto const path = slash == std::string_view::npos ? std::string_view{} : authority.substr(slash);
+
+  check_prefix(path);
+  authority = authority.substr(0, slash);
+
   if (authority.find('@') != std::string_view::npos) {
     invalid_url("credentials in the URL are not supported; send them with the requests");
   }
 
-  auto const slash = authority.find('/');
-
-  if (slash != std::string_view::npos) {
-    if (slash + 1 != authority.size()) {
-      invalid_url("a path prefix is not supported yet");
-    }
-
-    authority = authority.substr(0, slash);
-  }
-
   origin result;
+
+  // `/v1/` and `/v1` are one prefix, and `/` is none: a target starts with its own slash.
+  result.prefix = path.ends_with('/') ? path.substr(0, path.size() - 1) : path;
 
   result.port = secure ? 443 : 80;
   result.secure = secure;

@@ -71,7 +71,7 @@ struct connector_handle {
 };
 
 [[nodiscard]] std::shared_ptr<transport_core> make_transport_core(connector_handle connector, std::string host,
-                                                                  std::uint16_t port, bool secure,
+                                                                  std::uint16_t port, bool secure, std::string prefix,
                                                                   transport_options const &options);
 
 [[nodiscard]] async::task<http::response> send(std::shared_ptr<transport_core> const &core, http::request request);
@@ -124,19 +124,24 @@ public:
    * an IPv6 address: one with a port (`localhost:8080`), brackets, a zone index, spaces...
    */
   transport(Connector connector, std::string host, std::uint16_t port, transport_options options = {})
-      : core_(make_core(std::move(connector), std::move(host), port, false, options)) {}
+      : core_(make_core(std::move(connector), std::move(host), port, false, {}, options)) {}
 
   /**
-   * @brief A transport to the server of `url`, `http[s]://host[:port]` (an IPv6 address in brackets), connecting with a
-   * default-constructed connector: by default through the network of the executor that sends (io::network_connector),
-   * as quoll::runtime provides it. `https` checks the server as `options.tls` says: by default, against the system's
-   * authorities.
+   * @brief A transport to the server of `url`, `http[s]://host[:port][/path]` (an IPv6 address in brackets), connecting
+   * with a default-constructed connector: by default through the network of the executor that sends
+   * (io::network_connector), as quoll::runtime provides it. `https` checks the server as `options.tls` says: by
+   * default, against the system's authorities.
+   *
+   * A path goes before the target of every request, as it is: with `https://api.example.com/v1`, a target `/users` is
+   * `/v1/users`, and `/` is `/v1/`, never `/v1`. It is no boundary: a target with dot segments of its own can climb out
+   * of it on a server or a proxy resolving them.
    *
    * @code
-   * quoll::client::transport<> transport{"https://api.example.com"};
+   * quoll::client::transport<> transport{"https://api.example.com/v1"};
    * @endcode
    *
-   * @throws std::invalid_argument for another URL (a path prefix is not supported yet), and for `https` with a
+   * @throws std::invalid_argument for another URL, for a path that would not read as itself (a character RFC 3986 does
+   * not allow there, an invalid escape, a dot segment, encoded or not, a NUL, an empty segment), and for `https` with a
    * connector that is no io::TlsConnector.
    */
   explicit transport(std::string_view url, transport_options options = {})
@@ -155,15 +160,18 @@ public:
 
 private:
   transport(Connector connector, detail::origin server, transport_options options)
-      : core_(make_core(std::move(connector), std::move(server.host), server.port, server.secure, options)) {
+      : core_(make_core(std::move(connector), std::move(server.host), server.port, server.secure,
+                        std::move(server.prefix), options)) {
     if (server.secure && !io::TlsConnector<Connector>) {
       throw std::invalid_argument{"quoll::client::transport: this connector cannot open https connections"};
     }
   }
 
   // The only part that knows the connector.
-  [[nodiscard]] static std::shared_ptr<detail::transport_core>
-  make_core(Connector connector, std::string host, std::uint16_t port, bool secure, transport_options const &options) {
+  [[nodiscard]] static std::shared_ptr<detail::transport_core> make_core(Connector connector, std::string host,
+                                                                         std::uint16_t port, bool secure,
+                                                                         std::string prefix,
+                                                                         transport_options const &options) {
     detail::connector_handle handle{
         std::make_shared<Connector const>(std::move(connector)),
         [](void const *erased, std::string const &to, std::uint16_t on, [[maybe_unused]] bool use_tls,
@@ -179,7 +187,7 @@ private:
           return target.connect(to, on);
         }};
 
-    return detail::make_transport_core(std::move(handle), std::move(host), port, secure, options);
+    return detail::make_transport_core(std::move(handle), std::move(host), port, secure, std::move(prefix), options);
   }
 
   std::shared_ptr<detail::transport_core> core_;

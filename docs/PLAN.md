@@ -73,8 +73,7 @@ peer reads as its closing message, and after the last response what still comes 
 still sends its body: to look at with streaming. A client closes its TLS connections without that message.
 
 - Limits and shutdown: graceful shutdown, a connection limit and a wait when out of file descriptors are done
-  (`serve_options`), and limits on headers and bodies were there (`http::parse_limits`). Left: the timer of the connections
-  on a thread pool, which `serve` can hand them from its own loop.
+  (`serve_options`), and limits on headers and bodies were there (`http::parse_limits`).
 - Reliability, in the manner of Rust. C++ has no borrow checker, but types and tools give a good part of what it
   guarantees:
   - Done: `QUOLL_LIFETIMEBOUND` (`[[clang::lifetimebound]]`), with `-Werror=dangling` on Clang. What a handler or a middleware
@@ -95,8 +94,7 @@ still sends its body: to look at with streaming. A client closes its TLS connect
 - A response whose `Content-Length` is more than its body goes out as it is, as the serializer cannot tell one that answers
   HEAD: on a kept connection, its client waits, or reads the next response as that body. `serve_connection` knows the method.
 - Features: middlewares (`router::use`) and routes whose handler takes the path's parameters, checked at compile time
-  (`router::get`...), are done; static files; client redirects, a connection limit per transport, a path prefix in
-  the base URL. A client's `response_timeout` applies per attempt, so a deadline over the whole `send` if that proves
+  (`router::get`...), and a path prefix in the base URL, are done. Left: client redirects, a connection limit per transport. A client's `response_timeout` applies per attempt, so a deadline over the whole `send` if that proves
   confusing.
 
 What stays out of reach: the lifetimes of coroutines remain mostly documented rules ("`router` outlives the task", when
@@ -111,6 +109,8 @@ limits, the shutdown and the features are tested, and the reliability points are
 - First pull request: a benchmark harness (requests per second, latency, allocations per request) and its baseline, as
   streaming touches the hot paths.
 - Streamed request and response bodies, on the server, the client and browser `fetch`.
+- Static files, in streaming, from step 2: without it, a file has to fit in memory. Reading one blocks the loop, and Quoll has no
+  asynchronous file I/O yet, which comes with them.
 - A limit on progress or a minimum rate, as the read and write timeouts now cover a message as a whole, which ends a
   legitimate transfer on a slow link (8 MiB in 30 s is about 2.2 Mbit/s). The same goes for static files.
 - A half-close in `ByteStream`, if step 2 did not bring it.
@@ -571,7 +571,12 @@ Decision: **B** (2026-11-02).
 
 ## Open questions
 
-A choice on middlewares, kept for later by the maintainer (2026-11-05):
+Kept for later by the maintainer, at the end of the plan if the need comes (2026-11-05):
+
+- **Timeouts when connections run on a thread pool.** `serve(pool.get_executor(), listener, router)` leaves the sockets to
+  asio and runs the handlers on the pool, which has no timer: `read_timeout`, `write_timeout` and `idle_timeout` do not apply,
+  so that a slow peer can hold a connection. `serve` could hand them the timer of its accept loop. `quoll::runtime` has none of
+  this: everything there runs on asio, and a thread pool alone serves no HTTP, as it has no network.
 
 - **A middleware for a path prefix**, `router.use("/api", ...)`: for now, it tests `next.path()`.
 
