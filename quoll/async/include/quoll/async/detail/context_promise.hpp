@@ -40,6 +40,7 @@
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/async/detail/context_adapter.hpp>
+#include <quoll/async/detail/recycled_frame.hpp>
 
 #include <type_traits>
 #include <utility>
@@ -48,7 +49,7 @@ namespace quoll::async::detail {
 
 // Base of the promises of coroutines running on an await_context: every co_await hands the context to the awaited
 // ContextAwaitable, and anything else is rejected at compile time.
-class context_promise {
+class context_promise : public recycled_frame {
 public:
   template <class A>
     requires ContextAwaitable<std::remove_cvref_t<A>>
