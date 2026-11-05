@@ -38,6 +38,7 @@
 #define QUOLL_CLIENT_DETAIL_URL_HPP
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -60,6 +61,14 @@ struct origin {
 // The Host field naming `host` on `port`: an IPv6 address in brackets, the port unless it is the scheme's default.
 // Throws std::invalid_argument for a host that is neither a name, an IPv4 nor an IPv6 address.
 [[nodiscard]] std::string host_field(std::string_view host, std::uint16_t port, std::uint16_t default_port = 80);
+
+// The target a `Location` field asks for (RFC 3986, 5.2), from a request sent to `target` with the `Host` field `host`,
+// in origin form: no fragment, and dot segments resolved, unless it is a query alone, which keeps the path as it was
+// sent. Nothing when it names another scheme than `secure` says, another host or port than `host`, says nothing but a
+// fragment, holds what RFC 3986 does not allow in a reference, or leads to a path that, once decoded, starts with two
+// slashes, a slash and a backslash, or holds a NUL.
+[[nodiscard]] std::optional<std::string> resolve_location(std::string_view location, std::string_view host, bool secure,
+                                                          std::string_view target);
 
 } // namespace quoll::client::detail
 

@@ -331,6 +331,8 @@ struct slow_network {
   std::chrono::nanoseconds connect_delay = 0s;
   std::chrono::nanoseconds response_delay = 0s;
   int connections = 0;
+  // What to answer first, raw, before the plain answers.
+  std::vector<std::string> first_replies{};
 };
 
 task<> answer_slowly(io::memory_stream stream, slow_network &network) {
@@ -345,7 +347,12 @@ task<> answer_slowly(io::memory_stream stream, slow_network &network) {
 
     co_await async::sleep_for(network.response_delay);
 
-    std::string const response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+    std::string response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+
+    if (!network.first_replies.empty()) {
+      response = std::move(network.first_replies.front());
+      network.first_replies.erase(network.first_replies.begin());
+    }
 
     if ((co_await io::write(stream, std::as_bytes(std::span{response}))).error) {
       co_return;
@@ -988,6 +995,525 @@ TEST_CASE("client::transport: a stop ends a wait for a free connection, and the 
   };
 
   REQUIRE(quoll::test::run(time, send()) == "ok stopped ok");
+}
+
+namespace {
+
+// What a server answers, raw, whichever connection a request comes on, and the requests it read.
+struct script {
+  std::vector<std::string> replies;
+  std::size_t next = 0;
+  std::vector<http::request> seen{};
+};
+
+task<> play(io::memory_stream stream, script &played) {
+  std::string buffer;
+
+  while (played.next < played.replies.size()) {
+    http::request_parser parser;
+
+    if (co_await http::read(stream, buffer, parser)) {
+      co_return;
+    }
+
+    played.seen.push_back(parser.release());
+
+    auto const &reply = played.replies[played.next++];
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{reply}));
+  }
+}
+
+std::string redirect_to(int status, std::string_view location) {
+  return "HTTP/1.1 " + std::to_string(status) + " Moved\r\nLocation: " + std::string{location} +
+         "\r\nContent-Length: 0\r\n\r\n";
+}
+
+constexpr std::string_view reply_done = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndone";
+
+client::transport_options following(std::size_t redirects) {
+  client::transport_options options;
+
+  options.max_redirects = redirects;
+  return options;
+}
+
+struct followed {
+  outcome result;
+  std::vector<http::request> seen;
+};
+
+followed follow(std::vector<std::string> replies, http::request request, client::transport_options options) {
+  script played{std::move(replies)};
+  auto result = roundtrip([&played](io::memory_stream stream) { return play(std::move(stream), played); },
+                          {std::move(request)}, {}, options);
+
+  return {std::move(result), std::move(played.seen)};
+}
+
+} // namespace
+
+TEST_CASE("client::transport: a redirect is a result unless max_redirects says otherwise", "[client]") {
+  auto const out = follow({redirect_to(302, "/next")}, make_request(verb::get, "/start"), following(0));
+
+  REQUIRE(out.result.responses.size() == 1);
+  REQUIRE(out.result.responses[0].status == http::status::found);
+  REQUIRE(out.seen.size() == 1);
+}
+
+TEST_CASE("client::transport: a redirect sends the request again, on the connection it kept", "[client]") {
+  auto request = make_request(verb::get, "/a/start?x=1");
+
+  request.fields.add("Authorization", "Bearer token");
+
+  auto const out =
+      follow({redirect_to(302, "next?y=2#top"), std::string{reply_done}}, std::move(request), following(1));
+
+  REQUIRE(!out.result.error);
+  REQUIRE(out.result.responses.size() == 1);
+  REQUIRE(out.result.responses[0].body == "done");
+  REQUIRE(out.result.connections == 1);
+  REQUIRE(out.seen.size() == 2);
+  REQUIRE(out.seen[1].target == "/a/next?y=2");
+  REQUIRE(out.seen[1].fields.find("Authorization") == "Bearer token");
+  REQUIRE(out.seen[1].fields.find("Host") == "example.com");
+}
+
+TEST_CASE("client::transport: what a redirect does to the method and the body", "[client]") {
+  struct expected {
+    int status;
+    verb method;
+    verb next;
+  };
+
+  auto const [status, method, next] = GENERATE(
+      expected{301, verb::post, verb::get}, expected{302, verb::post, verb::get}, expected{303, verb::post, verb::get},
+      expected{301, verb::put, verb::put}, expected{302, verb::put, verb::put}, expected{303, verb::put, verb::get},
+      expected{303, verb::delete_, verb::get}, expected{303, verb::head, verb::head},
+      expected{301, verb::head, verb::head}, expected{307, verb::post, verb::post},
+      expected{308, verb::post, verb::post}, expected{307, verb::put, verb::put}, expected{307, verb::head, verb::head},
+      expected{308, verb::get, verb::get}, expected{303, verb::get, verb::get});
+  auto request = make_request(method, "/start", method == verb::head ? "" : "ping");
+
+  request.fields.add("Content-Type", "text/plain");
+  request.fields.add("CONTENT-LANGUAGE", "fr");
+  request.fields.add("Expect", "100-continue");
+  request.fields.add("Digest", "sha-256=abc");
+  request.fields.add("ETag", "\"v1\"");
+  request.fields.add("If-Match", "\"v1\"");
+  request.fields.add("Range", "bytes=0-1");
+  request.fields.add("Last-Modified", "Thu, 05 Nov 2026 10:00:00 GMT");
+  request.fields.add("X-Kept", "yes");
+
+  std::vector<std::string> replies;
+
+  replies.push_back(redirect_to(status, "/next"));
+  // A HEAD reads no body: what it gets must not have one to read past.
+  replies.emplace_back(next == verb::head ? "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n" : reply_done);
+
+  auto const out = follow(std::move(replies), std::move(request), following(1));
+
+  CAPTURE(status, to_string(method));
+  REQUIRE(!out.result.error);
+  REQUIRE(out.result.responses.size() == 1);
+  REQUIRE(out.result.responses[0].status == http::status::ok);
+  REQUIRE(out.seen.size() == 2);
+  REQUIRE(out.seen[1].method == next);
+  REQUIRE(out.seen[1].target == "/next");
+  REQUIRE(out.seen[1].fields.find("X-Kept") == "yes");
+
+  if (next != method) {
+    REQUIRE(out.seen[1].body.empty());
+    REQUIRE(!out.seen[1].fields.contains("Content-Type"));
+    REQUIRE(!out.seen[1].fields.contains("Content-Language"));
+    REQUIRE(!out.seen[1].fields.contains("Content-Length"));
+    REQUIRE(!out.seen[1].fields.contains("Expect"));
+    REQUIRE(!out.seen[1].fields.contains("Digest"));
+    REQUIRE(!out.seen[1].fields.contains("ETag"));
+    REQUIRE(!out.seen[1].fields.contains("If-Match"));
+    REQUIRE(!out.seen[1].fields.contains("Range"));
+    REQUIRE(!out.seen[1].fields.contains("Last-Modified"));
+  } else {
+    REQUIRE(out.seen[1].body == out.seen[0].body);
+    REQUIRE(out.seen[1].fields.find("Content-Type") == "text/plain");
+    REQUIRE(out.seen[1].fields.find("If-Match") == "\"v1\"");
+    REQUIRE(out.seen[1].fields.contains("Expect"));
+  }
+}
+
+TEST_CASE("client::transport: a chunked body and its trailers follow the method through a redirect", "[client]") {
+  auto const status = GENERATE(303, 307);
+  auto request = make_request(verb::post, "/start", "ping");
+
+  request.fields.add("Transfer-Encoding", "chunked");
+  request.fields.add("Trailer", "X-Sum");
+  request.trailers.add("X-Sum", "1");
+
+  auto const out = follow({redirect_to(status, "/next"), std::string{reply_done}}, std::move(request), following(1));
+
+  REQUIRE(!out.result.error);
+  REQUIRE(out.result.responses.at(0).body == "done");
+  REQUIRE(out.seen.size() == 2);
+  REQUIRE(out.seen[0].trailers.find("X-Sum") == "1");
+
+  if (status == 303) {
+    REQUIRE(out.seen[1].method == verb::get);
+    REQUIRE(out.seen[1].body.empty());
+    REQUIRE(out.seen[1].trailers.empty());
+    REQUIRE(!out.seen[1].fields.contains("Transfer-Encoding"));
+    REQUIRE(!out.seen[1].fields.contains("Trailer"));
+  } else {
+    REQUIRE(out.seen[1].method == verb::post);
+    REQUIRE(out.seen[1].body == "ping");
+    REQUIRE(out.seen[1].trailers.find("X-Sum") == "1");
+  }
+}
+
+TEST_CASE("client::transport: a redirect closing its connection is followed on a new one", "[client]") {
+  auto const out = follow({"HTTP/1.1 302 Found\r\nLocation: /next\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+                           std::string{reply_done}},
+                          make_request(verb::get, "/start"), following(1));
+
+  REQUIRE(!out.result.error);
+  REQUIRE(out.result.responses.at(0).body == "done");
+  REQUIRE(out.result.connections == 2);
+  REQUIRE(out.seen.at(1).target == "/next");
+}
+
+TEST_CASE("client::transport: the same Location twice is followed", "[client]") {
+  auto const out = follow({"HTTP/1.1 302 Found\r\nLocation: /next\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n",
+                           std::string{reply_done}},
+                          make_request(verb::get, "/start"), following(1));
+
+  REQUIRE(out.result.responses.at(0).body == "done");
+  REQUIRE(out.seen.at(1).target == "/next");
+}
+
+TEST_CASE("client::transport: a POST sent again by a 307 goes on its own connection", "[client]") {
+  auto const out = follow({redirect_to(307, "/next"), std::string{reply_done}},
+                          make_request(verb::post, "/start", "ping"), following(1));
+
+  REQUIRE(!out.result.error);
+  REQUIRE(out.result.responses.at(0).body == "done");
+  REQUIRE(out.result.connections == 2);
+  REQUIRE(out.seen.size() == 2);
+  REQUIRE(out.seen[1].method == verb::post);
+  REQUIRE(out.seen[1].body == "ping");
+}
+
+TEST_CASE("client::transport: past max_redirects, a request fails", "[client]") {
+  auto const redirects = GENERATE(std::size_t{1}, std::size_t{2});
+  std::vector const replies(redirects + 2, redirect_to(301, "/again"));
+  auto const out = follow(replies, make_request(verb::get, "/start"), following(redirects));
+
+  REQUIRE(out.result.error == http::error::too_many_redirects);
+  REQUIRE(out.result.responses.empty());
+  // The first request, and those the limit lets go.
+  REQUIRE(out.seen.size() == redirects + 1);
+}
+
+TEST_CASE("client::transport: a response that cannot be followed is the result", "[client]") {
+  auto const reply = GENERATE(
+      // Another server or scheme.
+      redirect_to(302, "http://other.example/next"), redirect_to(302, "https://example.com/next"),
+      redirect_to(302, "//other.example/next"), redirect_to(302, "http://example.com:8080/next"),
+      redirect_to(302, "http://example.com@other.example/next"),
+      redirect_to(302, "http://example.com:80@other.example/"), redirect_to(302, "ftp://example.com/next"),
+      redirect_to(302, "mailto:someone@example.com"),
+      // What says nothing, or differs.
+      redirect_to(302, ""), redirect_to(302, "#top"),
+      std::string{"HTTP/1.1 302 Found\r\nLocation: /a\r\nLocation: /b\r\nContent-Length: 0\r\n\r\n"},
+      // What a proxy or a framework would read as another server.
+      redirect_to(302, "/..//other.example/next"), redirect_to(302, "/.//other.example/next"),
+      redirect_to(302, "http://example.com//other.example/next"),
+      // What cannot be read.
+      redirect_to(302, "http:\\\\other.example\\next"), redirect_to(302, "/\\other.example"), redirect_to(302, "/a b"),
+      redirect_to(302, "/%zz"), redirect_to(302, "/caf\xc3\xa9"),
+      // No field, or a status that is no redirect.
+      std::string{"HTTP/1.1 302 Found\r\nContent-Length: 0\r\n\r\n"}, redirect_to(300, "/next"),
+      redirect_to(304, "/next"), redirect_to(200, "/next"));
+
+  auto const out = follow({reply}, make_request(verb::get, "/start"), following(3));
+
+  CAPTURE(reply);
+  REQUIRE(!out.result.error);
+  REQUIRE(out.result.responses.size() == 1);
+  REQUIRE(out.seen.size() == 1);
+}
+
+TEST_CASE("client::transport: the last redirect leaving the server is the result, not an error", "[client]") {
+  auto const out = follow({redirect_to(302, "/next"), redirect_to(302, "http://other.example/")},
+                          make_request(verb::get, "/start"), following(1));
+
+  REQUIRE(!out.result.error);
+  REQUIRE(out.result.responses.size() == 1);
+  REQUIRE(out.result.responses[0].status == http::status::found);
+}
+
+TEST_CASE("client::transport: a redirect keeps within max_connections", "[client]") {
+  auto options = at_most(1);
+
+  options.max_redirects = 1;
+
+  // The place goes back between two requests of a chain, and the GET takes the connection the POST kept.
+  auto const out =
+      follow({redirect_to(303, "/next"), std::string{reply_done}}, make_request(verb::post, "/start", "ping"), options);
+
+  REQUIRE(!out.result.error);
+  REQUIRE(out.result.responses.at(0).body == "done");
+  REQUIRE(out.result.connections == 1);
+}
+
+namespace {
+
+// What a transport built from a URL connects with, which it default-constructs.
+struct url_connector {
+  static inline memory_server *server = nullptr;
+  static inline int tls_connections = 0;
+
+  [[nodiscard]] task<io::any_stream> connect(std::string host, std::uint16_t port) const {
+    co_return co_await memory_connector{*server}.connect(std::move(host), port);
+  }
+
+  [[nodiscard]] task<io::any_stream> connect_tls(std::string host, std::uint16_t port,
+                                                 io::tls_client_options const &) const {
+    ++tls_connections;
+    co_return co_await connect(std::move(host), port);
+  }
+};
+
+static_assert(io::TlsConnector<url_connector>);
+
+} // namespace
+
+TEST_CASE("client::transport: a redirect goes where it says, whatever the path of the transport's URL", "[client]") {
+  async::run_loop loop;
+  script played{{redirect_to(302, "next"), redirect_to(302, "/outside"), std::string{reply_done}}};
+  memory_server server{
+      loop.get_executor(), [&played](io::memory_stream stream) { return play(std::move(stream), played); }, 0, {}, {}};
+
+  url_connector::server = &server;
+
+  auto const body = quoll::test::run(loop, []() -> task<std::string> {
+    client::transport<url_connector> const transport{"http://example.com/v1", following(2)};
+
+    co_return (co_await transport.send(make_request(verb::get, "/start"))).body;
+  }());
+
+  REQUIRE(body == "done");
+  REQUIRE(played.seen.size() == 3);
+  REQUIRE(played.seen[0].target == "/v1/start");
+  REQUIRE(played.seen[1].target == "/v1/next");
+  REQUIRE(played.seen[2].target == "/outside");
+}
+
+TEST_CASE("client::transport: a chain over https stays on https, on TLS connections", "[client][tls]") {
+  async::run_loop loop;
+  script played{
+      {"HTTP/1.1 302 Found\r\nLocation: https://example.com/next\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+       redirect_to(302, "http://example.com/plain")}};
+  memory_server server{
+      loop.get_executor(), [&played](io::memory_stream stream) { return play(std::move(stream), played); }, 0, {}, {}};
+
+  url_connector::server = &server;
+  url_connector::tls_connections = 0;
+
+  auto const status = quoll::test::run(loop, []() -> task<http::status> {
+    client::transport<url_connector> const transport{"https://example.com", following(3)};
+
+    co_return (co_await transport.send(make_request(verb::get, "/start"))).status;
+  }());
+
+  // The second redirect would leave https: it is the result.
+  REQUIRE(status == http::status::found);
+  REQUIRE(played.seen.size() == 2);
+  REQUIRE(played.seen[1].target == "/next");
+  REQUIRE(played.seen[1].fields.find("Host") == "example.com");
+  REQUIRE(url_connector::tls_connections == 2);
+  REQUIRE(server.destination == "example.com:443");
+}
+
+TEST_CASE("client::transport: the Host field of a request says what a Location names", "[client]") {
+  auto const with_host = [] {
+    auto request = make_request(verb::get, "/start");
+
+    request.fields.add("Host", "tenant.example");
+    return request;
+  };
+
+  auto const named =
+      follow({redirect_to(302, "http://tenant.example/next"), std::string{reply_done}}, with_host(), following(1));
+
+  REQUIRE(named.result.responses.at(0).body == "done");
+  REQUIRE(named.seen.at(1).target == "/next");
+  REQUIRE(named.seen.at(1).fields.find("Host") == "tenant.example");
+
+  auto const relative = follow({redirect_to(302, "/next"), std::string{reply_done}}, with_host(), following(1));
+
+  REQUIRE(relative.result.responses.at(0).body == "done");
+  REQUIRE(relative.seen.at(1).fields.find("Host") == "tenant.example");
+
+  // The server the transport connects to is not what this request asked for.
+  auto const other = follow({redirect_to(302, "http://example.com/next")}, with_host(), following(1));
+
+  REQUIRE(other.result.responses.at(0).status == http::status::found);
+  REQUIRE(other.seen.size() == 1);
+}
+
+TEST_CASE("client::transport: a stop ends a chain on a later request", "[client][timer]") {
+  virtual_time time;
+  slow_network network{.time = &time, .response_delay = 2s, .first_replies = {redirect_to(302, "/next")}};
+  std::stop_source stopping;
+  std::chrono::nanoseconds ended{};
+
+  auto const send = [&]() -> task<std::string> {
+    client::transport<slow_connector> transport{slow_connector{network}, "example.com", 80, following(1)};
+
+    auto const sends = [&]() -> task<std::string> {
+      try {
+        static_cast<void>(co_await async::detail::stop_scope<http::response>{
+            transport.send(make_request(verb::get, "/")), stopping.get_token()});
+        co_return "answered";
+      } catch (std::system_error const &failure) {
+        ended = time.now();
+        co_return failure.code() == std::errc::operation_canceled ? "stopped" : "failed";
+      }
+    };
+
+    auto const stops = [&]() -> task<std::string> {
+      co_await async::sleep_for(3s);
+      stopping.request_stop();
+      co_return "";
+    };
+
+    auto [sent, stopped] = co_await async::when_all(sends(), stops());
+
+    co_return sent + stopped;
+  };
+
+  REQUIRE(quoll::test::run(time, send()) == "stopped");
+  REQUIRE(ended == 3s);
+}
+
+TEST_CASE("client::transport: each request of a chain has its own response_timeout", "[client][timer]") {
+  virtual_time time;
+  slow_network network{.time = &time, .response_delay = 2s, .first_replies = {redirect_to(302, "/next")}};
+
+  REQUIRE(quoll::test::run(time, send_gets(network, {.max_redirects = 1, .response_timeout = 3s})) ==
+          std::error_code{});
+  REQUIRE(time.now() == 4s);
+  REQUIRE(network.connections == 1);
+}
+
+TEST_CASE("client::transport: where a Location leads", "[client]") {
+  using quoll::client::detail::resolve_location;
+
+  auto const resolve = [](std::string_view location, std::string_view target = "/b/c/d?q") {
+    return resolve_location(location, "Example.com", false, target);
+  };
+
+  // The examples of RFC 3986, 5.4, that stay on the server, from its /b/c/d?q.
+  REQUIRE(resolve("g") == "/b/c/g");
+  REQUIRE(resolve("./g") == "/b/c/g");
+  REQUIRE(resolve("g/") == "/b/c/g/");
+  REQUIRE(resolve("/g") == "/g");
+  REQUIRE(resolve("?y") == "/b/c/d?y");
+  REQUIRE(resolve("g?y") == "/b/c/g?y");
+  REQUIRE(resolve("g#s") == "/b/c/g");
+  REQUIRE(resolve("g?y#s") == "/b/c/g?y");
+  REQUIRE(resolve(".") == "/b/c/");
+  REQUIRE(resolve("./") == "/b/c/");
+  REQUIRE(resolve("..") == "/b/");
+  REQUIRE(resolve("../") == "/b/");
+  REQUIRE(resolve("../g") == "/b/g");
+  REQUIRE(resolve("../..") == "/");
+  REQUIRE(resolve("../../") == "/");
+  REQUIRE(resolve("../../g") == "/g");
+  REQUIRE(resolve("../../../g") == "/g");
+  REQUIRE(resolve("../../../../g") == "/g");
+  REQUIRE(resolve("/./g") == "/g");
+  REQUIRE(resolve("/../g") == "/g");
+  REQUIRE(resolve("g.") == "/b/c/g.");
+  REQUIRE(resolve(".g") == "/b/c/.g");
+  REQUIRE(resolve("g..") == "/b/c/g..");
+  REQUIRE(resolve("..g") == "/b/c/..g");
+  REQUIRE(resolve("./../g") == "/b/g");
+  REQUIRE(resolve("./g/.") == "/b/c/g/");
+  REQUIRE(resolve("g/./h") == "/b/c/g/h");
+  REQUIRE(resolve("g/../h") == "/b/c/h");
+  REQUIRE(resolve("g?y/./x") == "/b/c/g?y/./x");
+
+  // A full URL naming this server.
+  REQUIRE(resolve("http://example.com/g") == "/g");
+  REQUIRE(resolve("HTTP://EXAMPLE.COM:80/g?y") == "/g?y");
+  REQUIRE(resolve("http://example.com") == "/");
+  REQUIRE(resolve("http://example.com?y") == "/?y");
+  REQUIRE(resolve("//example.com/g") == "/g");
+  REQUIRE(resolve("/a//b") == "/a//b");
+  REQUIRE(resolve("/g?a[]=1") == "/g?a[]=1");
+  REQUIRE(resolve("/%2e%2e/g") == "/%2e%2e/g");
+  REQUIRE(resolve("/a%2Fb") == "/a%2Fb");
+  // A target's path, the transport's URL's included, is one like any other.
+  REQUIRE(resolve("next", "/v1/users") == "/v1/next");
+  REQUIRE(resolve("next", "/a/b#frag/c?x") == "/a/next");
+  REQUIRE(resolve("?y", "/a#frag") == "/a?y");
+  REQUIRE(resolve("?y", "/a/./b") == "/a/./b?y");
+  REQUIRE(resolve("?y", "/a/../b?x") == "/a/../b?y");
+  // A Host field that cannot be read names nothing, and a relative reference needs none.
+  REQUIRE(!resolve_location("http://example.com/g", "exa mple:x", false, "/"));
+  REQUIRE(resolve_location("/g", "exa mple:x", false, "/") == "/g");
+  REQUIRE(resolve("/next", "/v1/users") == "/next");
+
+  // On another port, and over TLS.
+  REQUIRE(resolve_location("http://example.com:8080/g", "example.com:8080", false, "/") == "/g");
+  REQUIRE(resolve_location("http://example.com:08080/g", "example.com:8080", false, "/") == "/g");
+  REQUIRE(resolve_location("https://example.com/g", "example.com", true, "/") == "/g");
+  REQUIRE(resolve_location("//example.com:443/g", "example.com", true, "/") == "/g");
+  REQUIRE(resolve_location("http://[::1]:8080/g", "[::1]:8080", false, "/") == "/g");
+  REQUIRE(resolve_location("http://[::1]/g", "[::1]", false, "/") == "/g");
+  REQUIRE(!resolve_location("https://example.com/g", "example.com", false, "/"));
+  REQUIRE(!resolve_location("http://example.com/g", "example.com", true, "/"));
+  REQUIRE(!resolve_location("http://example.com/g", "example.com:8080", false, "/"));
+  REQUIRE(!resolve_location("http://[::1", "[::1]", false, "/"));
+  REQUIRE(!resolve_location("http://[::1]x/g", "[::1]", false, "/"));
+  REQUIRE(!resolve_location("http://example.com:65616/g", "example.com", false, "/"));
+  REQUIRE(!resolve_location("http://example.com:000080/g", "example.com", false, "/"));
+
+  for (std::string_view const refused : {"",
+                                         "/a[b]/c",
+                                         "/%2F/other.example/g",
+                                         "/%2f%2fother.example",
+                                         "/%5Cother.example",
+                                         "/a%00b",
+                                         "#s",
+                                         "http://example.com:",
+                                         "http://[example.com]/g",
+                                         "/..//g",
+                                         "/.//g",
+                                         "http://example.com//g",
+                                         "http://other.example/g",
+                                         "//other.example/g",
+                                         "///g",
+                                         "http:g",
+                                         "http:/g",
+                                         ":g",
+                                         "javascript:alert(1)",
+                                         "http://user@example.com/g",
+                                         "http://example.com@other.example/g",
+                                         "http://example.com:80@other.example/g",
+                                         "http://example.com:x/g",
+                                         "http://example.com.other.example/g",
+                                         "\\\\other.example\\g",
+                                         "/\\other.example",
+                                         "/a b",
+                                         "/a\tb",
+                                         "/a\"b",
+                                         "/%zz",
+                                         "/%2",
+                                         "/caf\xc3\xa9"}) {
+    CAPTURE(refused);
+    REQUIRE(!resolve(refused));
+  }
 }
 
 TEST_CASE("client::transport: requests that end in time succeed, on one connection", "[client][timer]") {

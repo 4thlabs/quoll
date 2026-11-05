@@ -58,8 +58,9 @@ namespace quoll::emscripten {
  * The response has the status, status text, fields and complete body that fetch exposes. fetch decodes the body
  * (decompressed, de-chunked), so the fields describing the bytes on the wire (Content-Encoding, Content-Length,
  * Transfer-Encoding) are dropped; the other fields are named in lower case, repeated ones are combined, and the
- * version is not known (`http_1_1`). Unlike a client over a connector, fetch follows redirects itself, possibly to
- * another origin: a browser does not expose the 3xx response.
+ * version is not known (`http_1_1`). Unlike client::transport, which follows redirects only when asked and only to
+ * its own server, fetch always follows them itself, possibly to another origin: a browser does not expose the 3xx
+ * response.
  *
  * A failure to get a response (network error, refused connection, CORS) throws std::system_error from the task, with
  * `std::errc::io_error` and fetch's message; a stop request aborts the fetch, with `std::errc::operation_canceled`.

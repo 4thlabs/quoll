@@ -68,6 +68,12 @@ struct transport_options {
    * and a thread pool's do, and a run_loop's does not.
    */
   std::size_t max_connections = 0;
+  /**
+   * @brief How many redirects a request follows; 0: a 3xx response is a result like the others. Past it, the request
+   * fails with std::system_error (`http::error::too_many_redirects`). Only to the transport's own server, in the same
+   * scheme; see client::transport.
+   */
+  std::size_t max_redirects = 0;
   /** @brief How long opening a connection may take, name resolution included, and waiting for `max_connections`. */
   std::chrono::nanoseconds connect_timeout = std::chrono::seconds{30};
   /**

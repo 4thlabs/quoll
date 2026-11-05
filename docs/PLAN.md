@@ -94,7 +94,7 @@ still sends its body: to look at with streaming. A client closes its TLS connect
 - A response whose `Content-Length` is more than its body goes out as it is, as the serializer cannot tell one that answers
   HEAD: on a kept connection, its client waits, or reads the next response as that body. `serve_connection` knows the method.
 - Features: middlewares (`router::use`) and routes whose handler takes the path's parameters, checked at compile time
-  (`router::get`...), a path prefix in the base URL and a connection limit per transport, are done. Left: client redirects. A client's `response_timeout` applies per attempt, so a deadline over the whole `send` if that proves
+  (`router::get`...), a path prefix in the base URL, a connection limit per transport and client redirects, are done. A client's `response_timeout` applies per attempt, so a deadline over the whole `send` if that proves
   confusing.
 
 What stays out of reach: the lifetimes of coroutines remain mostly documented rules ("`router` outlives the task", when

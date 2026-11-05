@@ -99,14 +99,26 @@ struct connector_handle {
  * stream: anyone on the way could have cut it, and it would look complete.
  *
  * Interim 1xx responses are skipped, up to 8 of them, but for a 101 switch of protocol, which is returned as the
- * response. Redirects are not followed: a 3xx response is a result like the others.
+ * response.
+ *
+ * Redirects are not followed unless transport_options::max_redirects says so: a 3xx response is a result like the
+ * others. With it, a 301, 302, 303, 307 or 308 response whose `Location` names the transport's scheme and the host and
+ * port of the request's `Host` field, by default the transport's, sends the request again there, its target being what
+ * `Location` says, whatever the path of the transport's URL. 307 and 308 keep the method. 303 makes it a GET, but for a
+ * HEAD, and 301 and 302 make a POST a GET, as browsers do. When the method changes, the body goes, with its
+ * `Content-*`, `Digest`, `ETag`, `Last-Modified`, `Transfer-Encoding`, `Trailer` and `Expect` fields, and so do the
+ * preconditions (`If-*`, `Range`). The other fields stay, `Authorization` included, as they go to the same server. A
+ * `Location` naming another server or scheme, empty or a fragment alone, repeated with another value, that cannot be
+ * read, or leading to a path that a server decoding it could take for another server, leaves the 3xx response as the
+ * result. Each request of a chain takes its own place and has its own timeouts. Only the last response comes back: the
+ * others are dropped, their `Set-Cookie` included, so that a client keeping cookies leaves max_redirects at 0.
  *
  * A failure to connect is reported as the connector reports it; a failure to send the request or to read its response
  * throws std::system_error from the task, with the stream's error (`std::errc::connection_reset`...), the parser's
  * (`http::error::partial_message`, `http::error::body_too_large`, `http::error::bad_message` past 8 interim
- * responses...) or `io::error::end_of_stream`. A stop request on the awaiter's context abandons the request, with
- * `std::errc::operation_canceled`, and closes its connection; a timeout does the same, with `std::errc::timed_out` (see
- * transport_options).
+ * responses...), `http::error::too_many_redirects` or `io::error::end_of_stream`. A stop request on the awaiter's
+ * context abandons the request, with `std::errc::operation_canceled`, and closes its connection; a timeout does the
+ * same, with `std::errc::timed_out` (see transport_options).
  *
  * Copies share their connections. The task copies what it needs: the transport does not have to outlive it.
  *
@@ -119,6 +131,8 @@ public:
 
   /**
    * @brief A transport to `host` (a name, or an address; IPv6 without brackets) on `port`.
+   *
+   * It counts as `http` for a redirect, whatever the connector does.
    *
    * @throws std::invalid_argument for a host that is neither a name (letters, digits, `-`, `_` and dots), an IPv4 nor
    * an IPv6 address: one with a port (`localhost:8080`), brackets, a zone index, spaces...
