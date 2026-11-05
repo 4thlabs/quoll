@@ -1,9 +1,10 @@
-quoll_declare_module(NAME async)
+quoll_declare_module(NAME async SOURCES src/recycled_frame.cpp)
 
 quoll_declare_tests(
   SOURCES
     tests/any_executor_test.cpp
     tests/co_spawn_test.cpp
+    tests/recycled_frame_test.cpp
     tests/executor_ref_test.cpp
     tests/run_loop_test.cpp
     tests/slots_test.cpp

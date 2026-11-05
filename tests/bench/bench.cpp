@@ -172,6 +172,13 @@ struct card_service {
   card operator()(echo_card, card value) const { return value; }
 };
 
+// The bodies of the large requests.
+std::string const &megabyte() {
+  static std::string const body(std::size_t{1024} * 1024, 'x');
+
+  return body;
+}
+
 http::router make_router() {
   http::router router;
 
@@ -188,6 +195,30 @@ http::router make_router() {
     co_return response;
   });
   rest::mount<card_api>(router, card_service{});
+  router.post("/in-pieces", [](http::body_reader body) -> task<http::response> {
+    http::response response;
+    std::size_t size = 0;
+
+    while (auto const piece = co_await body.read()) {
+      size += piece->size();
+    }
+
+    // A body cut short must not pass for a cheap request.
+    response.status = size == megabyte().size() ? http::status::ok : http::status::bad_request;
+    co_return response;
+  });
+  router.get("/out-pieces", [](http::request) {
+    http::response response;
+
+    // Announced: a body cut short is one the client's parser refuses.
+    response.fields.add("Content-Length", std::to_string(megabyte().size()));
+    response.body_writer = [](http::body_stream out) -> task<> {
+      for (auto index = 0; index < 256; ++index) {
+        co_await out.write(std::string_view{megabyte()}.substr(0, 4096));
+      }
+    };
+    return response;
+  });
   return router;
 }
 
@@ -210,13 +241,6 @@ http::request make_post(std::string const &body) {
   request.target = "/echo";
   request.body = body;
   return request;
-}
-
-// The bodies of the large requests.
-std::string const &megabyte() {
-  static std::string const body(std::size_t{1024} * 1024, 'x');
-
-  return body;
 }
 
 // The server of the measures, on a thread and a loop of its own, so that it does not share a CPU with the client.
@@ -436,6 +460,26 @@ int run_tcp(std::chrono::duration<double> seconds) {
                       return [transport = client::transport<>{plain}] { return transport.send(make_post(megabyte())); };
                     }) &&
        ok;
+  ok = run_scenario("POST 1 MiB, read in pieces", seconds, 1,
+                    [&plain] {
+                      return [transport = client::transport<>{plain}] {
+                        auto request = make_post(megabyte());
+
+                        request.target = "/in-pieces";
+                        return transport.send(std::move(request));
+                      };
+                    }) &&
+       ok;
+  ok = run_scenario("GET 1 MiB, written in pieces", seconds, 1,
+                    [&plain] {
+                      return [transport = client::transport<>{plain}] {
+                        auto request = make_get();
+
+                        request.target = "/out-pieces";
+                        return transport.send(std::move(request));
+                      };
+                    }) &&
+       ok;
   ok = run_scenario("REST GET, JSON", seconds, 1,
                     [&plain] { return [api = rest::client<card_api>{plain}] { return api.call<get_card>(42); }; }) &&
        ok;
@@ -506,8 +550,13 @@ struct budget {
 // As measured with GCC 13 and its standard library, which any other allocates differently from: lower them when a
 // change does better, and say so when one has to raise them.
 constexpr budget budgets[] = {
-    {"GET, one connection", 72.0}, {"GET, one connection each", 136.0}, {"POST 1 MiB, echoed", 144.0},
-    {"REST GET, JSON", 89.0},      {"REST POST, JSON", 145.0},
+    {"GET, one connection", 22.0},
+    {"GET, one connection each", 48.0},
+    {"POST 1 MiB, echoed", 63.0},
+    {"POST 1 MiB, read in pieces", 821.0},
+    {"GET 1 MiB, written in pieces", 800.0},
+    {"REST GET, JSON", 37.0},
+    {"REST POST, JSON", 64.0},
 };
 
 int run_allocations(bool check) {
@@ -565,6 +614,18 @@ int run_allocations(bool check) {
              on_transport([](auto const &transport) { return transport.send(make_get(true)); }));
   measure_on("POST 1 MiB, echoed",
              on_transport([](auto const &transport) { return transport.send(make_post(megabyte())); }));
+  measure_on("POST 1 MiB, read in pieces", on_transport([](auto const &transport) {
+               auto request = make_post(megabyte());
+
+               request.target = "/in-pieces";
+               return transport.send(std::move(request));
+             }));
+  measure_on("GET 1 MiB, written in pieces", on_transport([](auto const &transport) {
+               auto request = make_get();
+
+               request.target = "/out-pieces";
+               return transport.send(std::move(request));
+             }));
   measure_on("REST GET, JSON", on_api([](auto const &api) { return api.template call<get_card>(42); }));
   measure_on("REST POST, JSON", on_api([](auto const &api) { return api.template call<echo_card>(make_card()); }));
 
