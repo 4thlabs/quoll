@@ -24,9 +24,15 @@ if(EMSCRIPTEN)
   add_link_options(-fwasm-exceptions)
 endif()
 
-# Fuzz targets (tests/fuzz), with Clang: everything is instrumented, so that libFuzzer sees Quoll's branches and its dependencies'.
-# In Release, with the standard library's assertions off, as an application builds it: see cmake/QuollHelpers.cmake.
+# The benchmark program (tests/bench), with the standard library's assertions off, as an application builds it: see
+# cmake/QuollHelpers.cmake. The tests rely on those assertions.
 option(QUOLL_BENCH "Build the benchmark program, tests/bench" OFF)
+
+if(QUOLL_BENCH AND QUOLL_BUILD_TESTS)
+  message(FATAL_ERROR "QUOLL_BENCH goes without the tests, which need the assertions it turns off: -DQUOLL_BUILD_TESTS=OFF")
+endif()
+
+# Fuzz targets (tests/fuzz), with Clang: everything is instrumented, so that libFuzzer sees Quoll's branches and its dependencies'.
 option(QUOLL_FUZZ "Build the fuzz targets, with Clang's libFuzzer under ASan and UBSan" OFF)
 
 if(QUOLL_FUZZ)

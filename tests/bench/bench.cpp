@@ -40,7 +40,7 @@
 //   quoll_bench allocations [--check] allocations per request over a memory stream, the same on every machine
 //   quoll_bench serve <port>         the routes alone until Ctrl-C, for a load generator of another project
 //
-// Build it with -DCMAKE_BUILD_TYPE=Release -DQUOLL_BENCH=ON.
+// Build it with -DCMAKE_BUILD_TYPE=Release -DQUOLL_BENCH=ON -DQUOLL_BUILD_TESTS=OFF.
 
 #include <quoll/async.hpp>
 #include <quoll/client.hpp>
@@ -89,8 +89,9 @@ namespace {
 
 // What the client's and the server's threads allocate goes to the counter of their role. OpenSSL and the C library
 // allocate with malloc, uncounted, and so does the thread on which asio resolves a name, which has no role.
-std::atomic<std::uint64_t> server_allocations{0};
-std::atomic<std::uint64_t> client_allocations{0};
+// On lines of their own, so that counting does not slow down what it counts: their two threads would fight for one.
+alignas(64) std::atomic<std::uint64_t> server_allocations{0};
+alignas(64) std::atomic<std::uint64_t> client_allocations{0};
 constinit thread_local std::atomic<std::uint64_t> *allocation_counter = nullptr;
 
 void *counted_allocation(std::size_t size, std::size_t alignment = 0) {
@@ -238,8 +239,8 @@ private:
       tls_listener =
           co_await io::listen_tls(0, {.certificate_file = std::string{QUOLL_BENCH_TLS_DIR} + "/server.pem",
                                       .private_key_file = std::string{QUOLL_BENCH_TLS_DIR} + "/server-key.pem"});
-    } catch (std::exception const &failure) {
-      // A logic_error in a build without OpenSSL, a system_error for a file it cannot read.
+    } catch (std::logic_error const &failure) {
+      // A build without OpenSSL. A certificate it cannot load is a failure, and ends the program.
       std::cerr << "no TLS: " << failure.what() << '\n';
     }
 
@@ -247,8 +248,7 @@ private:
     plain_.set_value(listener.local_port().value());
 
     if (tls_listener) {
-      auto [first, second] =
-          co_await async::when_all(server::serve(listener, router), server::serve(*tls_listener, router));
+      co_await async::when_all(server::serve(listener, router), server::serve(*tls_listener, router));
     } else {
       co_await server::serve(listener, router);
     }
@@ -600,23 +600,25 @@ int main(int argc, char **argv) {
     return usage();
   }
 
-  if (arguments[0] == "tcp") {
+  if (arguments[0] == "tcp" && arguments.size() <= 2) {
     double seconds = 5.0;
 
-    if (arguments.size() > 1 && !parse(arguments[1], seconds)) {
+    // Finite and of a sensible length: a huge one, or a NaN, does not convert to the ticks of the clock.
+    if (arguments.size() == 2 && (!parse(arguments[1], seconds) || !(seconds > 0.0 && seconds <= 3600.0))) {
       return usage();
     }
 
     return run_tcp(std::chrono::duration<double>{seconds});
   }
 
-  if (arguments[0] == "allocations") {
-    return run_allocations(arguments.size() > 1 && arguments[1] == "--check");
+  if (arguments[0] == "allocations" &&
+      (arguments.size() == 1 || (arguments.size() == 2 && arguments[1] == "--check"))) {
+    return run_allocations(arguments.size() == 2);
   }
 
   std::uint16_t port = 0;
 
-  if (arguments[0] == "serve" && arguments.size() > 1 && parse(arguments[1], port)) {
+  if (arguments[0] == "serve" && arguments.size() == 2 && parse(arguments[1], port)) {
     return run_serve(port);
   }
 

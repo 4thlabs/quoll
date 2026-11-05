@@ -4,7 +4,7 @@ The baseline before streaming (step 3 of [`PLAN.md`](PLAN.md)), which what follo
 `tests/bench`:
 
 ```bash
-cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -DQUOLL_BENCH=ON
+cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -DQUOLL_BENCH=ON -DQUOLL_BUILD_TESTS=OFF
 cmake --build build-bench --target quoll_bench -j"$(nproc)"
 build-bench/tests/bench/quoll_bench tcp              # the first table
 build-bench/tests/bench/quoll_bench allocations      # the second
@@ -22,14 +22,14 @@ not counted. Standard library assertions are off, as in an application, whereas 
 
 | Scenario | Requests/s | p50 (µs) | p99 (µs) | Allocations, server | Allocations, client |
 | --- | --- | --- | --- | --- | --- |
-| GET, one connection | 73099 | 13 | 36 | 54 | 22 |
-| GET, 16 at once | 130968 | 118 | 289 | 54 | 22 |
-| GET, one connection each | 14419 | 38 | 1001 | 110 | 49 |
-| POST 1 MiB, echoed | 866 | 1118 | 1590 | 107 | 59 |
-| REST GET, JSON | 66041 | 14 | 39 | 64 | 29 |
-| REST POST, JSON | 14234 | 40 | 965 | 108 | 59 |
-| GET over TLS, one connection | 54860 | 17 | 37 | 55 | 22 |
-| GET over TLS, one connection each | 892 | 1070 | 1739 | 116 | 55 |
+| GET, one connection | 69331 | 13 | 37 | 54 | 22 |
+| GET, 16 at once | 129490 | 115 | 295 | 54 | 22 |
+| GET, one connection each | 14392 | 38 | 1004 | 110 | 49 |
+| POST 1 MiB, echoed | 879 | 1109 | 1565 | 107 | 59 |
+| REST GET, JSON | 64629 | 14 | 40 | 64 | 29 |
+| REST POST, JSON | 14206 | 40 | 964 | 108 | 59 |
+| GET over TLS, one connection | 53095 | 17 | 53 | 55 | 22 |
+| GET over TLS, one connection each | 908 | 1065 | 1669 | 116 | 55 |
 
 What it shows, for the performance step:
 
