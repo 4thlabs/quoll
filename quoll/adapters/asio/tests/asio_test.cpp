@@ -996,6 +996,57 @@ task<refused_upload> upload_refused(quoll::server::connection_options connection
 
 } // namespace
 
+TEST_CASE("asio: a transport with a path in its URL sends its requests under it", "[asio][runtime][client]") {
+  auto const exchange = []() -> task<std::string> {
+    http::router router;
+
+    router.get("/api/v1/users/{id}", [](http::request message, int id) {
+      http::response answer;
+
+      answer.body = message.target + " " + std::to_string(id);
+      return answer;
+    });
+    router.get("/api/v1/", [] {
+      http::response answer;
+
+      answer.body = "root";
+      return answer;
+    });
+
+    auto listener = co_await io::listen(0);
+    auto const port = listener.local_port().value();
+    std::stop_source stop;
+
+    auto const serving = [&]() -> task<> {
+      co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router, {.shutdown_timeout = {}}),
+                                                      stop.get_token()};
+    };
+
+    auto const calling = [&]() -> task<std::string> {
+      quoll::async::detail::stop_on_exit const stop_server{stop};
+      quoll::client::transport<> const transport{"http://127.0.0.1:" + std::to_string(port) + "/api/v1/"};
+
+      auto const request_of = [](std::string target) {
+        http::request message;
+
+        message.target = std::move(target);
+        return message;
+      };
+
+      auto const user = co_await transport.send(request_of("/users/7?x=1"));
+      auto const root = co_await transport.send(request_of("/"));
+
+      co_return user.body + " " + root.body;
+    };
+
+    auto [served, body] = co_await quoll::async::when_all(serving(), calling());
+
+    co_return std::move(body);
+  };
+
+  REQUIRE(run_task(exchange()) == "/api/v1/users/7?x=1 7 root");
+}
+
 TEST_CASE("asio: a client still sending a refused body finishes, then reads its answer", "[asio][runtime]") {
   quoll::server::connection_options connection;
 

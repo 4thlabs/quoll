@@ -43,15 +43,18 @@
 
 namespace quoll::client::detail {
 
-// The server an `http[s]://host[:port]` URL names. The host is checked by host_field().
+// The server an `http[s]://host[:port][/path]` URL names. The host is checked by host_field().
 struct origin {
   std::string host;
   std::uint16_t port = 80;
   bool secure = false;
+  // What comes before the target of every request: `/v1`, with no slash at its end; empty without one.
+  std::string prefix{};
 };
 
-// `http[s]://host[:port]`, optionally followed by `/`; an IPv6 address in brackets (`http://[::1]:8080`). No path
-// prefix yet: a path is refused rather than ignored.
+// `http[s]://host[:port]`, optionally followed by a path, an IPv6 address in brackets (`http://[::1]:8080`). A path
+// that would not read as itself is refused: a character RFC 3986 does not allow there, an invalid escape, a dot
+// segment, encoded or not, a NUL, or an empty segment.
 [[nodiscard]] origin parse_url(std::string_view url);
 
 // The Host field naming `host` on `port`: an IPv6 address in brackets, the port unless it is the scheme's default.

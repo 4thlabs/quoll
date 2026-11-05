@@ -201,9 +201,10 @@ async::task<std::optional<http::response>> exchange(connection_pool &pool, http:
 class transport_core {
 public:
   transport_core(connector_handle connector_, std::string host_, std::uint16_t port_, bool secure_,
-                 std::string host_field_, transport_options const &options_)
+                 std::string host_field_, std::string prefix_, transport_options const &options_)
       : connector(std::move(connector_)), host(std::move(host_)), port(port_), secure(secure_),
-        host_field(std::move(host_field_)), options(options_), pool(options_.max_idle_connections) {}
+        host_field(std::move(host_field_)), prefix(std::move(prefix_)), options(options_),
+        pool(options_.max_idle_connections) {}
 
   [[nodiscard]] async::task<io::any_stream> open() const {
     return connector.open(connector.connector.get(), host, port, secure, options.tls);
@@ -214,6 +215,7 @@ public:
   std::uint16_t port;
   bool secure;
   std::string host_field;
+  std::string prefix;
   transport_options options;
   connection_pool pool;
 };
@@ -250,17 +252,19 @@ async::task<http::response> send_prepared(std::shared_ptr<transport_core> shared
 } // namespace
 
 std::shared_ptr<transport_core> make_transport_core(connector_handle connector, std::string host, std::uint16_t port,
-                                                    bool secure, transport_options const &options) {
+                                                    bool secure, std::string prefix, transport_options const &options) {
   auto field = host_field(host, port, secure ? 443 : 80);
 
   return std::make_shared<transport_core>(std::move(connector), std::move(host), port, secure, std::move(field),
-                                          options);
+                                          std::move(prefix), options);
 }
 
 async::task<http::response> send(std::shared_ptr<transport_core> const &core, http::request request) {
   if (!request.target.starts_with('/')) {
     throw std::invalid_argument{"quoll::client::transport: the target is not in origin form"};
   }
+
+  request.target.insert(0, core->prefix);
 
   if (!request.fields.contains("Host")) {
     request.fields.add("Host", core->host_field);
