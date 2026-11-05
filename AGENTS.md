@@ -122,9 +122,8 @@ the files you touch.
 `main` is protected: everything goes through a PR, with every required CI job and the status `Codex` green, up to date with
 `main` and its threads resolved, with no bypass for admins.
 
-Codex reviews the PRs (the ChatGPT Codex Connector, set up in Codex's settings, following [`REVIEW.md`](REVIEW.md)). Comment
-`@codex review` once the PR is open and after each later push: its automatic trigger is not relied on.
-`codex-review.yml` sets the status `Codex` once it has finished reviewing the last commit.
+Codex reviews a PR when it opens and after each later push, on its own (the ChatGPT Codex Connector, set up in Codex's settings,
+following [`REVIEW.md`](REVIEW.md)). `codex-review.yml` sets the status `Codex` once it has finished reviewing the last commit.
 
 Claude Code may merge the PRs it opened, giving the commit it checked, on one condition: `/code-review high` runs before
 every push, except a clean merge of `main`, and its valid findings are fixed first, but for what the rule below lets go.
@@ -145,8 +144,8 @@ in samples and the sample's Vite plugin a bug that normal use does not meet, but
 races, which are always fixed. A finding that is wrong says why. When it is unclear which of these a point is, for one saying it
 is a bug in particular, the maintainer decides.
 
-If Codex has not completed a review of the last commit 30 minutes after a request,
-request it once more; 30 minutes later, the maintainer decides, who alone can lift the protection.
+If Codex has not completed a review of the last commit 30 minutes after the push or the opening of the PR, whichever is later,
+comment `@codex review`; 30 minutes later, the maintainer decides, who alone can lift the protection.
 
 The maintainer merges a big architecture change, even with every check green: a new module, a change to a hard constraint
 above, a redesign of how modules fit together, and any change to this rule, to `REVIEW.md` or to
