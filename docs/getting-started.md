@@ -277,15 +277,20 @@ try {
 
   std::cout << response.body << '\n';
 } catch (std::system_error const &failure) {
+  // A stop request ends the task, rather than being one more failure to carry on from.
+  if (failure.code() == std::errc::operation_canceled) {
+    throw;
+  }
+
   std::cerr << "no answer: " << failure.what() << '\n';
 }
 ```
 
 A stop request is no failure: what the task awaits throws `std::system_error` with
 `std::errc::operation_canceled`, and that ends the task, with `async::detached` as well, and the program
-goes on. Catch it only to do something before the task ends. `async::detached` lets that error through
-whatever caused it, a closed socket or a read after a cancelled one too: a task that cares can tell them
-apart itself.
+goes on. Catch it only to do something before the task ends, and let it out again. `async::detached`
+ignores that error whatever caused it, a closed socket or a read after a cancelled one too: a task that
+cares can check `co_await quoll::async::current_stop_token()` to tell them apart.
 
 ## Where to go next
 

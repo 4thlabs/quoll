@@ -358,13 +358,40 @@ TEST_CASE("detached: a stop during a wait ends that task, and the others go on",
   REQUIRE(log == std::vector<std::string>{"waits", "went on"});
 }
 
-TEST_CASE("detached: nothing and a value are dropped, a stop too", "[async]") {
+TEST_CASE("detached: a task with a value that a stop ends goes the same way", "[async][timer]") {
+  quoll::test::virtual_time time;
+  std::stop_source stop;
+  auto went_on = false;
+
+  auto const waiting = []() -> task<int> {
+    co_await async::sleep_for(std::chrono::hours{1});
+    co_return 42;
+  };
+
+  auto const stopping = [&]() -> task<> {
+    co_await async::sleep_for(std::chrono::seconds{1});
+    stop.request_stop();
+    went_on = true;
+  };
+
+  co_spawn(time.get_executor(), waiting(), async::detached, stop.get_token());
+  co_spawn(time.get_executor(), stopping(), async::detached);
+  time.run();
+
+  REQUIRE(went_on);
+}
+
+TEST_CASE("detached: nothing and a value are dropped", "[async]") {
   async::detached();
   async::detached(42);
   async::detached(std::exception_ptr{});
+
+#if defined(__EMSCRIPTEN__)
+  // No process of its own to try it in, as there is below.
   async::detached(std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::operation_canceled)}));
-  // As asio reports one.
   async::detached(std::make_exception_ptr(std::system_error{ECANCELED, std::system_category()}));
+#endif
+
   SUCCEED("the program went on");
 }
 
@@ -395,6 +422,8 @@ int exit_status_of_detached(std::exception_ptr failure) {
 
 TEST_CASE("detached: only a stop lets the program go on", "[async]") {
   REQUIRE(exit_status_of_detached(std::make_exception_ptr(std::runtime_error{"failure"})) == 42);
+  // As asio reports one.
+  REQUIRE(exit_status_of_detached(std::make_exception_ptr(std::system_error{ECANCELED, std::system_category()})) == 0);
   REQUIRE(exit_status_of_detached(
               std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::timed_out)})) == 42);
   REQUIRE(exit_status_of_detached(
