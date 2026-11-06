@@ -76,6 +76,9 @@ namespace quoll::http {
  * A middleware wrapping `response.body_writer` around such a route loses its status and fields, unless what it writes
  * through has a `head()` passing them on, and keeps `response.head_comes_with_the_body`.
  *
+ * The response holds such a handler, which it runs, so that it may go on after its router. Copies of a router share it,
+ * what it captures included.
+ *
  * Moved, not copied. Take it by value, or pass it on by reference. Thread safety: one write() at a time.
  */
 class response_writer {

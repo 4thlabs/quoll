@@ -276,8 +276,8 @@ private:
 };
 
 template <class F, class Request, class... Parameters, std::size_t... Index>
-async::task<> run_writing(std::shared_ptr<writing_frame<Parameters...>> frame, F &target, body_stream out,
-                          std::index_sequence<Index...>) {
+async::task<> run_writing(std::shared_ptr<writing_frame<Parameters...>> frame, std::shared_ptr<F> target,
+                          body_stream out, std::index_sequence<Index...>) {
   auto const give_writer = [&]<class T, std::size_t At>() {
     if constexpr (std::same_as<T, response_writer>) {
       std::get<At>(frame->values).emplace(out);
@@ -297,16 +297,17 @@ async::task<> run_writing(std::shared_ptr<writing_frame<Parameters...>> frame, F
       [&] { (drop_writer.template operator()<std::remove_cvref_t<Parameters>, Index>(), ...); }};
 
   if constexpr (std::same_as<Request, no_request>) {
-    co_await std::invoke(target, std::forward<Parameters>(*std::get<Index>(frame->values))...);
+    co_await std::invoke(*target, std::forward<Parameters>(*std::get<Index>(frame->values))...);
   } else {
-    co_await std::invoke(target, std::forward<Request>(frame->message),
+    co_await std::invoke(*target, std::forward<Request>(frame->message),
                          std::forward<Parameters>(*std::get<Index>(frame->values))...);
   }
 }
 
-// The answer of such a route: its parameters read, and its handler to run as the body's writer.
+// The answer of such a route: its parameters read, and its handler to run as the body's writer, which holds it, as a
+// response may go on after its router.
 template <class F, class Request, class... Parameters, std::size_t... Index>
-[[nodiscard]] response answer_writing(F &target, request message, route_match match,
+[[nodiscard]] response answer_writing(std::shared_ptr<F> const &target, request message, route_match match,
                                       std::index_sequence<Index...> indices) {
   auto frame = std::make_shared<writing_frame<Parameters...>>(std::move(message), std::move(match));
   auto const read = [&]<class T, std::size_t At>() {
@@ -324,7 +325,7 @@ template <class F, class Request, class... Parameters, std::size_t... Index>
   response answer;
 
   answer.head_comes_with_the_body = true;
-  answer.body_writer = [frame = std::move(frame), &target, indices](body_stream out) {
+  answer.body_writer = [frame = std::move(frame), target, indices](body_stream out) {
     return run_writing<F, Request, Parameters...>(frame, target, out, indices);
   };
   return answer;
@@ -368,10 +369,11 @@ template <class Result, class F, class Request, class... Parameters>
                 "quoll::http::router: a handler takes one http::response_writer, last");
 
   if constexpr (writes) {
-    return [target = std::move(target)](request message, route_match match) mutable -> async::task<response> {
-      co_return answer_writing<F, Request, Parameters...>(target, std::move(message), std::move(match),
-                                                          std::index_sequence_for<Parameters...>{});
-    };
+    return
+        [target = std::make_shared<F>(std::move(target))](request message, route_match match) -> async::task<response> {
+          co_return answer_writing<F, Request, Parameters...>(target, std::move(message), std::move(match),
+                                                              std::index_sequence_for<Parameters...>{});
+        };
   } else {
     return [target = std::move(target)](request message, route_match match) mutable -> async::task<response> {
       return call_typed<Result, F, Request, Parameters...>(target, std::move(message), std::move(match),
