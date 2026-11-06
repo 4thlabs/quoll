@@ -171,9 +171,10 @@ public:
    * a connection of its own: the writer runs once, so that nothing is sent again, and a 3xx response is a result,
    * whatever `max_redirects` says. The response is read meanwhile. Once whole, it stops the writer through its stop
    * token, and write() then throws, so that a server refusing a body has its answer heard; the task ends with the
-   * writer's. A server that closes makes write() throw too, and its answer is still the result, if it gave one. What
-   * else the writer throws cuts the connection and comes out of this task, as does a body short of its
-   * `Content-Length`. `response_timeout` applies to each piece, then to the response.
+   * writer's. The answer stands, whatever the writer throws from then on. A server that closes makes write() throw too,
+   * and its answer is still the result, if it gave one. What else the writer throws cuts the connection and comes out
+   * of this task, as does a body short of its `Content-Length`. `response_timeout` applies to each piece, then to the
+   * response.
    *
    * @throws std::invalid_argument here, before the task runs, for a target not in origin form (starting with `/`), and
    * for what http::serialize() rejects, for a `body_writer` with a body too, or over HTTP/1.0 with no `Content-Length`.

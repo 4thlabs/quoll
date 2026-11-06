@@ -709,6 +709,55 @@ TEST_CASE("asio: a client on a thread pool talks through sockets run by another 
   REQUIRE(received.body == "hello over TCP");
 }
 
+TEST_CASE("asio: a client on a thread pool sends a body_writer through sockets run by another thread", "[asio][http]") {
+  ::asio::io_context context;
+  auto acceptor = listen(context);
+  // Keeps run() going while the client runs on the pool between two of its socket operations.
+  auto work = ::asio::make_work_guard(context);
+  quoll::threads::thread_pool pool{2};
+  std::promise<http::response> response;
+  std::optional<http::request> request;
+  std::exception_ptr failure;
+
+  acceptor.async_accept([&](std::error_code error, tcp::socket socket) {
+    check(error);
+    spawn(context, serve_one(quoll::asio::tcp_stream{std::move(socket)}), request, failure);
+  });
+
+  auto const uploading = [](quoll::asio::connector connector, std::uint16_t port) -> task<http::response> {
+    quoll::client::transport const transport{std::move(connector), "127.0.0.1", port};
+    http::request message;
+
+    message.method = http::verb::post;
+    message.target = "/accounts/42";
+    message.body_writer = [](http::body_stream out) -> task<> {
+      std::string const piece(std::size_t{4} * 1024, 'x');
+
+      for (auto index = 0; index < 64; ++index) {
+        co_await out.write(piece);
+      }
+    };
+    co_return co_await transport.send(std::move(message));
+  };
+
+  co_spawn(pool.get_executor(), uploading(quoll::asio::connector{context.get_executor()}, port_of(acceptor)),
+           overloaded{[&](http::response value) {
+                        response.set_value(std::move(value));
+                        work.reset();
+                      },
+                      [&](std::exception_ptr error) {
+                        response.set_exception(std::move(error));
+                        work.reset();
+                      }});
+  run(context, failure);
+
+  auto const received = response.get_future().get();
+
+  REQUIRE(request);
+  REQUIRE(request->body.size() == std::size_t{256} * 1024);
+  REQUIRE(received.body == "hello over TCP");
+}
+
 TEST_CASE("asio: a stop request while connecting abandons the attempt", "[asio]") {
   ::asio::io_context context;
   auto acceptor = listen(context);

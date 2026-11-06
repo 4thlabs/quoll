@@ -54,7 +54,8 @@ namespace quoll::http {
  * task producing the response; every response is a result, error statuses included. Whether redirects are followed
  * depends on the transport (fetch follows them). A failure to get one (network
  * error) is reported by the task's exception (std::system_error), and a stop request on the awaiter's context
- * abandons the request, with `std::errc::operation_canceled`.
+ * abandons the request, with `std::errc::operation_canceled`. A `request.body_writer` is for the transport to run: in
+ * pieces over a connection, or to its end first for what has no use for them.
  */
 template <class T>
 concept HttpTransport = requires(T const &transport, request message) {

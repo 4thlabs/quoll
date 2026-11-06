@@ -302,6 +302,68 @@ TEST_CASE("local_transport: a body_writer on a request is whole before its handl
   REQUIRE(quoll::test::run(loop, of_the_wrong_length("3")) == true);
   REQUIRE(quoll::test::run(loop, of_the_wrong_length("5")) == true);
   REQUIRE(quoll::test::run(loop, of_the_wrong_length("4")) == false);
+
+  // Past it, at the write that goes past it, rather than once the writer has ended, if it ever does.
+  auto const writing_for_ever = [&]() -> task<bool> {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.target = "/echo";
+    request.fields.set("Content-Length", "4");
+    request.body_writer = [](http::body_stream out) -> task<> {
+      for (;;) {
+        co_await out.write("four");
+      }
+    };
+
+    try {
+      static_cast<void>(co_await transport.send(std::move(request)));
+    } catch (std::length_error const &) {
+      co_return true;
+    }
+
+    co_return false;
+  };
+
+  REQUIRE(quoll::test::run(loop, writing_for_ever()) == true);
+}
+
+TEST_CASE("local_transport: a stop request ends a body_writer at its next write", "[http][router][timer]") {
+  http::router router;
+
+  router.post("/echo", [] { return http::response{}; });
+
+  http::local_transport const transport{router};
+  quoll::test::virtual_time time;
+
+  auto const sending = [&]() -> task<std::error_code> {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.target = "/echo";
+    request.body_writer = [](http::body_stream out) -> task<> {
+      for (;;) {
+        co_await out.write("x");
+
+        // What makes nothing of the stop here is refused by the write that follows.
+        try {
+          co_await quoll::async::sleep_for(std::chrono::seconds{1});
+        } catch (std::system_error const &) {
+        }
+      }
+    };
+
+    try {
+      static_cast<void>(
+          co_await quoll::async::with_timeout(std::chrono::seconds{3}, transport.send(std::move(request))));
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  REQUIRE(quoll::test::run(time, sending()) == std::make_error_code(std::errc::timed_out));
 }
 
 TEST_CASE("local_transport: a HEAD response has no body, as a connection writes it", "[http][router]") {

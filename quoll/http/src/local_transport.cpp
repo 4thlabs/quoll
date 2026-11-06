@@ -36,19 +36,46 @@
 
 #include <quoll/http/local_transport.hpp>
 
-#include <quoll/http/detail/streamed_head.hpp>
-
+#include <quoll/async/current_stop_token.hpp>
 #include <quoll/http/body_stream.hpp>
+#include <quoll/http/detail/streamed_head.hpp>
+#include <quoll/http/detail/write_whole_body.hpp>
 #include <quoll/http/verb.hpp>
 
+#include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
 namespace quoll::http {
 
 namespace {
+
+// What a writer writes for a request, for what wants it whole. See write_whole_body().
+class request_sink {
+public:
+  request_sink(std::string &body, std::optional<std::uint64_t> announced) noexcept
+      : body_(&body), announced_(announced) {}
+
+  [[nodiscard]] async::task<> write(std::string_view piece) {
+    if ((co_await async::current_stop_token()).stop_requested()) {
+      throw std::system_error{std::make_error_code(std::errc::operation_canceled), "quoll::http: stopped"};
+    }
+
+    if (announced_ && body_->size() + piece.size() > *announced_) {
+      throw std::length_error{"quoll::http: a body_writer wrote more than its Content-Length"};
+    }
+
+    body_->append(piece);
+  }
+
+private:
+  std::string *body_;
+  std::optional<std::uint64_t> announced_;
+};
 
 // What a writer writes, for a caller of the same program that wants a response whole.
 class string_sink {
@@ -74,13 +101,13 @@ async::task<> write_whole_body(request &message) {
   }
 
   auto const announced = announced_length(message.fields);
-  string_sink sink{message.body};
+  request_sink sink{message.body, announced};
 
   co_await message.body_writer(body_stream{sink});
   message.body_writer = nullptr;
 
   if (announced && *announced != message.body.size()) {
-    throw std::length_error{"quoll::http: a body_writer wrote other than its Content-Length"};
+    throw std::length_error{"quoll::http: a body_writer wrote less than its Content-Length"};
   }
 }
 

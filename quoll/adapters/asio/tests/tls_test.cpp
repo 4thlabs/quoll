@@ -435,7 +435,8 @@ TEST_CASE("TLS: a body_writer: all of it, then a server refusing it", "[tls][asi
   REQUIRE(run_task(with_server<std::string>(server_certificate(), call)) == "1048576 413");
 }
 
-TEST_CASE("TLS: a head that cuts a write short leaves the head, and a clean end", "[tls][asio][runtime]") {
+TEST_CASE("TLS: a head that cuts a write short is still a head, whatever becomes of what follows",
+          "[tls][asio][runtime]") {
   std::function<task<std::string>(std::string)> const call = [](std::string url) -> task<std::string> {
     client::transport<> const transport{url, trusting_the_authority()};
     http::request request;

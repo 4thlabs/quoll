@@ -39,6 +39,7 @@
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/check.hpp>
 #include <quoll/http/detail/streamed_head.hpp>
+#include <quoll/http/detail/streamed_wire.hpp>
 
 #include <array>
 #include <charconv>
