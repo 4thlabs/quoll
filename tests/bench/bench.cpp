@@ -64,6 +64,8 @@
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <atomic>
 #include <charconv>
@@ -72,7 +74,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <format>
+#include <fstream>
 #include <future>
 #include <iostream>
 #include <memory>
@@ -243,12 +247,48 @@ http::request make_post(std::string const &body) {
   return request;
 }
 
+// A file of 1 MiB to serve, gone with the program.
+class file_to_serve {
+public:
+  file_to_serve() : directory_(std::filesystem::temp_directory_path() / ("quoll_bench_" + std::to_string(::getpid()))) {
+    std::filesystem::create_directories(directory_);
+    std::ofstream{directory_ / "megabyte.bin", std::ios::binary} << std::string(std::size_t{1024} * 1024, 'x');
+  }
+
+  file_to_serve(file_to_serve const &) = delete;
+  file_to_serve &operator=(file_to_serve const &) = delete;
+  file_to_serve(file_to_serve &&) = delete;
+  file_to_serve &operator=(file_to_serve &&) = delete;
+
+  ~file_to_serve() {
+    std::error_code ignored;
+
+    std::filesystem::remove_all(directory_, ignored);
+  }
+
+  [[nodiscard]] std::filesystem::path const &directory() const noexcept { return directory_; }
+
+private:
+  std::filesystem::path directory_;
+};
+
+// Apart from make_router(): a middleware there would be on the path of what the other scenarios measure.
+http::router make_files_router() {
+  static file_to_serve const file;
+
+  http::router router;
+
+  router.use(server::static_files("/files", file.directory()));
+  return router;
+}
+
 // The server of the measures, on a thread and a loop of its own, so that it does not share a CPU with the client.
 class server_thread {
 public:
   server_thread() : thread_([this](std::stop_token stop) { run(std::move(stop)); }) {
     plain_port_ = plain_.get_future().get();
     secure_port_ = secure_.get_future().get();
+    files_port_ = files_.get_future().get();
   }
 
   server_thread(server_thread const &) = delete;
@@ -259,13 +299,17 @@ public:
 
   [[nodiscard]] std::uint16_t plain_port() const noexcept { return plain_port_; }
 
+  [[nodiscard]] std::uint16_t files_port() const noexcept { return files_port_; }
+
   // 0 without TLS in this build.
   [[nodiscard]] std::uint16_t secure_port() const noexcept { return secure_port_; }
 
 private:
   task<> serve() {
     auto const router = make_router();
+    auto const files_router = make_files_router();
     auto listener = co_await io::listen(0);
+    auto files_listener = co_await io::listen(0);
     std::optional<io::any_listener> tls_listener;
 
     // Asked rather than caught: anything else that fails to set TLS up is a failure, and ends the program.
@@ -278,12 +322,14 @@ private:
     }
 
     secure_.set_value(tls_listener ? tls_listener->local_port().value() : std::uint16_t{0});
+    files_.set_value(files_listener.local_port().value());
     plain_.set_value(listener.local_port().value());
 
     if (tls_listener) {
-      co_await async::when_all(server::serve(listener, router), server::serve(*tls_listener, router));
+      co_await async::when_all(server::serve(listener, router), server::serve(files_listener, files_router),
+                               server::serve(*tls_listener, router));
     } else {
-      co_await server::serve(listener, router);
+      co_await async::when_all(server::serve(listener, router), server::serve(files_listener, files_router));
     }
   }
 
@@ -298,8 +344,10 @@ private:
 
   std::promise<std::uint16_t> plain_;
   std::promise<std::uint16_t> secure_;
+  std::promise<std::uint16_t> files_;
   std::uint16_t plain_port_ = 0;
   std::uint16_t secure_port_ = 0;
+  std::uint16_t files_port_ = 0;
   // Last: its thread uses the rest.
   std::jthread thread_;
 };
@@ -480,6 +528,16 @@ int run_tcp(std::chrono::duration<double> seconds) {
                       };
                     }) &&
        ok;
+  ok = run_scenario("GET a file of 1 MiB", seconds, 1,
+                    [files = "http://127.0.0.1:" + std::to_string(server.files_port())] {
+                      return [transport = client::transport<>{files}] {
+                        auto request = make_get();
+
+                        request.target = "/files/megabyte.bin";
+                        return transport.send(std::move(request));
+                      };
+                    }) &&
+       ok;
   ok = run_scenario("REST GET, JSON", seconds, 1,
                     [&plain] { return [api = rest::client<card_api>{plain}] { return api.call<get_card>(42); }; }) &&
        ok;
@@ -555,6 +613,7 @@ constexpr budget budgets[] = {
     {"POST 1 MiB, echoed", 63.0},
     {"POST 1 MiB, read in pieces", 821.0},
     {"GET 1 MiB, written in pieces", 800.0},
+    {"GET a file of 1 MiB", 115.0},
     {"REST GET, JSON", 37.0},
     {"REST POST, JSON", 64.0},
 };
@@ -578,9 +637,9 @@ int run_allocations(bool check) {
     print_line("| {} | {:.2f} |", scenario, allocations);
   };
 
-  auto const measure_on = [&](std::string_view scenario, auto call) {
+  auto const measure_with = [&](http::router const &serving, std::string_view scenario, auto call) {
     quoll::test::virtual_time time;
-    memory_connector const connector{time, router};
+    memory_connector const connector{time, serving};
 
     auto const allocations = quoll::test::run(time, allocations_of([&call, connector] { return call(connector); }));
 
@@ -591,6 +650,10 @@ int run_allocations(bool check) {
     }
 
     report(scenario, *allocations);
+  };
+
+  auto const measure_on = [&](std::string_view scenario, auto call) {
+    measure_with(router, scenario, std::move(call));
   };
 
   auto const on_transport = [](auto send) {
@@ -626,6 +689,12 @@ int run_allocations(bool check) {
                request.target = "/out-pieces";
                return transport.send(std::move(request));
              }));
+  measure_with(make_files_router(), "GET a file of 1 MiB", on_transport([](auto const &transport) {
+                 auto request = make_get();
+
+                 request.target = "/files/megabyte.bin";
+                 return transport.send(std::move(request));
+               }));
   measure_on("REST GET, JSON", on_api([](auto const &api) { return api.template call<get_card>(42); }));
   measure_on("REST POST, JSON", on_api([](auto const &api) { return api.template call<echo_card>(make_card()); }));
 

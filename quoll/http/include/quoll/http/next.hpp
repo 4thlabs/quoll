@@ -84,6 +84,12 @@ public:
   /** @brief The name of the route that answers, empty if none does (404, 405, 400). */
   [[nodiscard]] std::string_view route() const noexcept;
 
+  /**
+   * @brief Once awaited: whether what came back is the router's own answer (404, 405, 400), with no route and no later
+   * middleware answering in its place, though one may have changed it on its way back.
+   */
+  [[nodiscard]] bool router_answered() const noexcept;
+
   /** @brief The path parameters of that route, percent-decoded, in the order of its template. */
   [[nodiscard]] std::span<std::string const> params() const noexcept;
 

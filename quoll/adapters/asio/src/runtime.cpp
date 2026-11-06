@@ -218,6 +218,10 @@ async::timer_ref runtime::executor::query(async::service_tag<async::timer_ref>) 
   return async::timer_ref{state_->loop};
 }
 
+async::offloader_ref runtime::executor::query(async::service_tag<async::offloader_ref>) const {
+  return async::offloader_ref{state_->loop};
+}
+
 #if defined(QUOLL_ASIO_TLS)
 io::tls_network_ref runtime::executor::query(async::service_tag<io::tls_network_ref>) const {
   return io::tls_network_ref{state_->loop};

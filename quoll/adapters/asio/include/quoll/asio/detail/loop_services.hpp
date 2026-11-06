@@ -37,6 +37,7 @@
 #ifndef QUOLL_ASIO_DETAIL_LOOP_SERVICES_HPP
 #define QUOLL_ASIO_DETAIL_LOOP_SERVICES_HPP
 
+#include <quoll/async/offloader_ref.hpp>
 #include <quoll/async/service.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/io/network_ref.hpp>
@@ -46,9 +47,9 @@ namespace quoll::asio::detail {
 
 // What an executor of an asio loop offers.
 #if defined(QUOLL_ASIO_TLS)
-using loop_services = async::service_list<io::network_ref, async::timer_ref, io::tls_network_ref>;
+using loop_services = async::service_list<io::network_ref, async::timer_ref, async::offloader_ref, io::tls_network_ref>;
 #else
-using loop_services = async::service_list<io::network_ref, async::timer_ref>;
+using loop_services = async::service_list<io::network_ref, async::timer_ref, async::offloader_ref>;
 #endif
 
 } // namespace quoll::asio::detail

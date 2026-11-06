@@ -40,11 +40,14 @@
 #include <quoll/asio/acceptor.hpp>
 #include <quoll/asio/detail/connect.hpp>
 #include <quoll/asio/detail/loop_services.hpp>
+#include <quoll/asio/detail/offload.hpp>
 #include <quoll/asio/detail/tls_connect.hpp>
 #include <quoll/asio/detail/wait.hpp>
 #include <quoll/asio/tls_acceptor.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/offers_service.hpp>
+#include <quoll/async/offloader.hpp>
+#include <quoll/async/offloader_ref.hpp>
 #include <quoll/async/service.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer.hpp>
@@ -84,7 +87,8 @@ namespace quoll::asio {
  * It is also the network of its execution context (io::Network), and offers itself as such (io::network_ref):
  * io::connect() and io::listen() open TCP connections and listening sockets there, for the tasks it runs. Likewise, it
  * is the timer of its execution context (async::Timer), for async::sleep_for() and async::with_timeout(), and, when
- * built with OpenSSL (see QUOLL_TLS), its TLS network (io::TlsNetwork), for io::connect_tls() and io::listen_tls().
+ * built with OpenSSL (see QUOLL_TLS), its TLS network (io::TlsNetwork), for io::connect_tls() and io::listen_tls(). And
+ * what runs blocking work away from the loop (async::Offloader), for async::offload().
  *
  * Thread safety: post() may be called from any thread, as asio's post can.
  */
@@ -126,6 +130,16 @@ public:
 
   /** @brief This executor, as the timer of its execution context: valid while it lives (see async::timer_ref). */
   [[nodiscard]] async::timer_ref query(async::service_tag<async::timer_ref>) const { return async::timer_ref{*this}; }
+
+  /** @brief Runs `work(argument)` on threads of the execution context's own (see async::Offloader). */
+  [[nodiscard]] async::task<> offload(void (*work)(void *) noexcept, void *argument) const {
+    return detail::offload(io_executor(), work, argument);
+  }
+
+  /** @brief This executor, as what runs blocking work: valid while it lives (see async::offloader_ref). */
+  [[nodiscard]] async::offloader_ref query(async::service_tag<async::offloader_ref>) const {
+    return async::offloader_ref{*this};
+  }
 
 #if defined(QUOLL_ASIO_TLS)
   /** @brief Opens a TLS connection to `host` (a name or an address) on `port`, on the execution context. */
@@ -170,6 +184,8 @@ private:
 static_assert(async::Executor<executor<>>);
 static_assert(io::Network<executor<>>);
 static_assert(async::Timer<executor<>>);
+static_assert(async::Offloader<executor<>>);
+static_assert(async::OffersService<executor<>, async::offloader_ref>);
 static_assert(async::OffersService<executor<>, io::network_ref>);
 static_assert(async::OffersService<executor<>, async::timer_ref>);
 #if defined(QUOLL_ASIO_TLS)

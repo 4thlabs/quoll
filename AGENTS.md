@@ -15,20 +15,20 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 
 Exploration. Modules so far: `quoll::async` (task, executor_ref, any_executor, await_context with stop token,
 current_executor and current_stop_token, executor services, co_spawn, on an executor or, in a coroutine, on `this_executor` by default, and its `detached` handler, when_all, run_loop,
-`Timer` and `timer_ref`, `sleep_for`, `with_timeout`),
+`Timer` and `timer_ref`, `sleep_for`, `with_timeout`, `Offloader`, `offloader_ref` and `offload` for blocking work),
 `quoll::io` (`ByteStream`, `HalfClosableStream`, `Connector`, `Listener`, `BoundListener` and `Network` concepts, `any_stream` /
 `any_listener` type erasure, `io::network_ref` with `io::connect` / `io::listen` through the executor's network,
 `io::network_connector`, TLS options with `TlsNetwork`, `tls_network_ref`, `TlsConnector`, `io::connect_tls` and
 `io::listen_tls`, in-memory stream pair, `io::write`), `quoll::http` (messages, llhttp parser, serializer,
 `http::read` / `http::write` over a byte stream, `HttpTransport` concept, sans-IO `router`, `local_transport` to a
 router of the same program; llhttp is compiled and exported as `quoll::llhttp`), `quoll::server` (`serve_connection`
-serves a router on a byte stream, `serve` accepts connections from a `Listener`, `listen(router, port)`),
+serves a router on a byte stream, `serve` accepts connections from a `Listener`, `listen(router, port)`, `static_files`, a middleware),
 `quoll::client` (`transport`, an `HttpTransport` over a `Connector` with keep-alive connections, built from an
 `http[s]://` URL), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `client::transport` by default, and the
 contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates; and the codecs: `json_codec` on
 Glaze, `text_codec`, `param_traits`), `quoll::ui` (a prototype: elements, decorators, `state`, `to_html`, `app` and the `Renderer`
 concept), the adapters `quoll::threads` (thread pool executor; its tests do not run under
-WASM), `quoll::asio` (asio executor offering the network, a timer and TLS, `tcp_stream`, `tls_stream`, connector and acceptors,
+WASM), `quoll::asio` (asio executor offering the network, a timer, threads for blocking work and TLS, `tcp_stream`, `tls_stream`, connector and acceptors,
 `runtime`; native only, its runtime hides asio from a program, its streams and acceptors need standalone asio, TLS needs OpenSSL) and `quoll::emscripten` (JavaScript event loop executor offering
 a timer, `fetch_transport`, whose `stream` reads a response in pieces, `dom_renderer` and `mount`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`),
 and

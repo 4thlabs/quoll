@@ -54,6 +54,19 @@ today. Under Emscripten the target does not exist: a browser runs its own loop.
 The runtime can be neither copied nor moved, and it outlives its executors. `run()` and
 `get_stop_token()` belong to one thread, and `get_executor()` and the executors may be used from any.
 
+### Blocking work
+
+`async::offload` runs work that blocks away from the loop, on threads of the runtime's own, started by its first use, and
+gives what it returns or throws. `server::static_files` reads through it.
+
+```cpp
+auto const size = co_await quoll::async::offload([&] { return std::filesystem::file_size(path); });
+```
+
+On an executor that offers no such thing, as a thread pool and a browser's event loop do not, the work runs right there. A
+stop request cancels what has not started, in line behind other work too, and does not interrupt what has. Two threads do this
+work, and a call stuck on a dead mount holds one until it returns, and the end of the runtime with it.
+
 ## asio
 
 `quoll::asio` is what `quoll::runtime` is natively. A program using only the runtime does not compile

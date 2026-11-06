@@ -49,6 +49,9 @@
 #include <quoll/async/executor_ref.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/offers_service.hpp>
+#include <quoll/async/offload.hpp>
+#include <quoll/async/offloader.hpp>
+#include <quoll/async/offloader_ref.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/service.hpp>
 #include <quoll/async/sleep_for.hpp>

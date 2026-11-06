@@ -4,6 +4,7 @@ quoll_declare_module(
     src/connection.cpp
     src/listen.cpp
     src/serve.cpp
+    src/static_files.cpp
   DEPS
     quoll::http
 )
@@ -12,6 +13,7 @@ quoll_declare_tests(
   SOURCES
     tests/serve_connection_test.cpp
     tests/serve_test.cpp
+    tests/static_files_test.cpp
   DEPS
     quoll::server
 )

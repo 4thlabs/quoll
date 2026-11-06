@@ -348,6 +348,8 @@ struct resolved_route {
   bool body_in_pieces = false;
   std::vector<verb> allowed{};
   route_match match{};
+  // Past the last middleware, with no route. Per request, as all of this is, and a middleware awaits what comes next.
+  mutable bool router_answered = false;
 };
 
 } // namespace detail
@@ -403,6 +405,8 @@ std::string_view next::path() const noexcept { return resolved_->path; }
 std::string_view next::route() const noexcept { return resolved_->match.name; }
 
 std::span<std::string const> next::params() const noexcept { return resolved_->match.params; }
+
+bool next::router_answered() const noexcept { return resolved_->router_answered; }
 
 void router::use(middleware wrapping) {
   if (!wrapping) {
@@ -512,6 +516,7 @@ async::task<response> router::run_from(detail::resolved_route const &resolved, s
   }
 
   if (resolved.target == nullptr) {
+    resolved.router_answered = true;
     co_return answer_without_route(resolved);
   }
 
