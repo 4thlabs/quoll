@@ -432,6 +432,11 @@ TEST_CASE("A request with a body_writer goes in pieces", "[http][serializer]") {
       head.clear();
     }
 
+    SECTION("a TRACE, which RFC 9110 forbids content") {
+      request.method = http::verb::trace;
+      REQUIRE_THROWS_AS(refused(), std::invalid_argument);
+    }
+
     SECTION("a CONNECT, whose bytes are the tunnel's") {
       request.method = http::verb::connect;
       request.target = "example.com:443";

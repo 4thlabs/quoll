@@ -37,6 +37,7 @@
 #ifndef QUOLL_HTTP_DETAIL_STREAMED_WIRE_HPP
 #define QUOLL_HTTP_DETAIL_STREAMED_WIRE_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/http/detail/streamed_head.hpp>
 #include <quoll/http/fields.hpp>
 
@@ -57,10 +58,10 @@ public:
 
   // The bytes that send `piece`, valid until the next call and as long as `piece`: an empty piece sends what is held
   // back, and what has nothing to frame and nothing before it is not copied.
-  [[nodiscard]] std::string_view frame(std::string_view piece);
+  [[nodiscard]] std::string_view frame(std::string_view piece QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND;
 
   // The bytes that end a body that is whole: see short_of_its_length().
-  [[nodiscard]] std::string_view end(fields const &trailers);
+  [[nodiscard]] std::string_view end(fields const &trailers) QUOLL_LIFETIMEBOUND;
 
   // What it returned holds the head: nothing is left to hold back.
   [[nodiscard]] bool started() const noexcept;

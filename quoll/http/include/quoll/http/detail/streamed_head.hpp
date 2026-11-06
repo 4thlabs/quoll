@@ -61,8 +61,8 @@ struct streamed_framing {
 [[nodiscard]] streamed_framing serialize_streamed_head(response const &message, std::string &out);
 
 // Appends the start line and fields of a request with a body_writer, in chunks unless a Content-Length says how much
-// comes. Throws std::invalid_argument for what serialize() rejects, for a body as well as a writer, for a method that
-// has no body, and for HTTP/1.0 with no Content-Length: it has no chunks, and a request cannot end with its connection.
+// comes. Throws std::invalid_argument for what serialize() rejects, for a body as well as a writer, for CONNECT and
+// TRACE, and for HTTP/1.0 with no Content-Length: it has no chunks, and a request cannot end with its connection.
 [[nodiscard]] streamed_framing serialize_streamed_head(request const &message, std::string &out);
 
 // Appends a chunk: nothing for an empty piece, which would read as the last one.

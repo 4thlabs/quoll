@@ -92,8 +92,6 @@ private:
 /**
  * @brief Writes the body of a message in pieces, for what cannot or need not hold it whole in memory.
  *
- * On a response, or on a request sent through a client::transport (see its send()):
- *
  * @code
  * router.get("/export", [](http::request) {
  *   http::response response;
@@ -109,18 +107,20 @@ private:
  * @endcode
  *
  * With a `Content-Length` in the fields, exactly that many bytes are expected: more throws, less cuts the connection,
- * so that its peer sees a body cut short. Without one, the body goes in chunks, or to HTTP/1.0 up to the end of the
- * connection, which its peer cannot tell from a cut. What the writer throws after the start of a body cuts the
- * connection the same way, as a peer must not take what came for all of it, and before it, answers 500. Not called for
- * a response to HEAD.
+ * so that its peer sees a body cut short. The head leaves with the first piece; an empty piece sends it at once.
  *
- * The head leaves with the first piece; an empty piece sends it at once, for a stream to announce itself before its
- * first data.
+ * On a response, the body goes without a `Content-Length` in chunks, or to HTTP/1.0 up to the end of the connection,
+ * which its peer cannot tell from a cut. What the writer throws after the start of a body cuts the connection the same
+ * way, as a peer must not take what came for all of it, and before it, answers 500. Not called for a response to HEAD.
+ * An empty piece is for a stream to announce itself before its first data.
  *
- * It runs after its handler has ended: what it captures by value lives until its task ends, and a `std::string_view` of
- * a path parameter, or a reference to the request, does not. An http::body_reader does, on a connection or through
- * local_transport. With `Expect: 100-continue`, it writes and reads in turn, as `100 Continue` and a piece must not
- * leave at once.
+ * On a response, it runs after its handler has ended: what it captures by value lives until its task ends, and a
+ * `std::string_view` of a path parameter, or a reference to the request, does not. An http::body_reader does, on a
+ * connection or through local_transport. With `Expect: 100-continue`, it writes and reads in turn, as `100 Continue`
+ * and a piece must not leave at once.
+ *
+ * On a request, it runs beside the reading of the response: client::transport::send() says what comes of that, and how
+ * a transport that gathers it first differs. What it captures has to live until the task of the request ends.
  */
 using body_writer = std::function<async::task<>(body_stream)>;
 

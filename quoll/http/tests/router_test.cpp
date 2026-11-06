@@ -326,6 +326,78 @@ TEST_CASE("local_transport: a body_writer on a request is whole before its handl
   };
 
   REQUIRE(quoll::test::run(loop, writing_for_ever()) == true);
+
+  // What a writer makes nothing of does not pass for whole, even at the length it says.
+  auto const making_nothing_of_it = [&]() -> task<bool> {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.target = "/echo";
+    request.fields.set("Content-Length", "6");
+    request.body_writer = [](http::body_stream out) -> task<> {
+      co_await out.write("four");
+
+      try {
+        co_await out.write("more");
+      } catch (std::length_error const &) {
+      }
+
+      try {
+        co_await out.write("xx");
+      } catch (std::system_error const &) {
+      }
+    };
+
+    try {
+      static_cast<void>(co_await transport.send(std::move(request)));
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code() == std::errc::message_size;
+    }
+
+    co_return false;
+  };
+
+  REQUIRE(quoll::test::run(loop, making_nothing_of_it()) == true);
+}
+
+TEST_CASE("local_transport: a body_writer making nothing of a stop runs no handler", "[http][router][timer]") {
+  auto handled = false;
+  http::router router;
+
+  router.post("/echo", [&] {
+    handled = true;
+    return http::response{};
+  });
+
+  http::local_transport const transport{router};
+  quoll::test::virtual_time time;
+
+  auto const sending = [&]() -> task<std::error_code> {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.target = "/echo";
+    request.body_writer = [](http::body_stream out) -> task<> {
+      co_await out.write("part");
+
+      try {
+        co_await quoll::async::sleep_for(std::chrono::hours{1});
+      } catch (std::system_error const &) {
+      }
+    };
+
+    try {
+      static_cast<void>(
+          co_await quoll::async::with_timeout(std::chrono::seconds{3}, transport.send(std::move(request))));
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  REQUIRE(quoll::test::run(time, sending()) == std::make_error_code(std::errc::timed_out));
+  REQUIRE(!handled);
 }
 
 TEST_CASE("local_transport: a stop request ends a body_writer at its next write", "[http][router][timer]") {
