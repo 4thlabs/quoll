@@ -53,8 +53,8 @@ namespace quoll::async {
  * its watchdog costs no exception; `sleep_for()` is what applications call. The wait may last longer than `duration`,
  * never less; a duration of zero or less still goes through the loop.
  *
- * `now()` is the time on the clock it waits by, from any origin, which never goes back: what tells how long a wait
- * lasted, in the same time as the wait itself.
+ * `now()` is the time on the clock it waits by, from an origin of its own, never negative, which never goes back: what
+ * tells how long a wait lasted, in the same time as the wait itself.
  */
 template <class T>
 concept Timer = requires(T const &timer, std::chrono::nanoseconds duration) {

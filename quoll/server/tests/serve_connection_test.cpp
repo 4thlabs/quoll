@@ -2394,6 +2394,23 @@ TEST_CASE("serve_connection: a request has as long as it keeps coming at the min
   }
 }
 
+TEST_CASE("serve_connection: what came in several bursts does not pay for a silence either", "[server][timer]") {
+  auto const target = GENERATE(std::string{"/echo"}, std::string{"/pieces"});
+  virtual_time time;
+  connection_options options;
+
+  options.read_timeout = 3s;
+  options.min_read_rate = 1000;
+
+  // Each part earns less than the timeout, and more than any of them does together.
+  auto const got = paced_session(
+      time, options, [&](auto client) { return send_in_parts(std::move(client), target, 10000, 2000, 1ms, false); });
+
+  REQUIRE(got.received.starts_with("HTTP/1.1 408"));
+  REQUIRE(got.ended >= 3s);
+  REQUIRE(got.ended <= 3s + 10ms);
+}
+
 TEST_CASE("serve_connection: with no minimum rate, a request has its read timeout as a whole", "[server][timer]") {
   virtual_time time;
   connection_options options;

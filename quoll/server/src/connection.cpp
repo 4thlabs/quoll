@@ -68,6 +68,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -189,7 +190,8 @@ enum class expectation { none, a_continue, unsupported };
 
 // How long one direction of a message may still wait for its peer: its timeout, less what it waited, plus what the
 // bytes that came earn at the minimum rate, never above its timeout, so that a burst does not pay for a long silence
-// after it.
+// after it. While an operation goes on, that is one deadline on the timer's clock, which what transfers moves and what
+// watches reads, perhaps on another thread: atomic, as a thread pool with a timer may run them at once.
 class patience {
 public:
   patience(std::chrono::nanoseconds timeout, std::uint64_t min_rate) noexcept
@@ -202,32 +204,29 @@ public:
 
   [[nodiscard]] std::optional<async::timer_ref> const &timer() const noexcept { return timer_; }
 
-  // The clock runs against the peer from here: not between two reads of a handler.
-  void waiting_from_now() noexcept { since_ = timer_->now(); }
+  // The clock runs against the peer from here to operation_over(): not between two reads of a handler.
+  void operation_begins() noexcept { deadline_.store(later(timer_->now(), left_).count(), std::memory_order_relaxed); }
 
-  [[nodiscard]] std::chrono::nanoseconds left_now() const noexcept { return left_ - (timer_->now() - since_); }
+  [[nodiscard]] std::chrono::nanoseconds left_now() const noexcept { return deadline() - timer_->now(); }
 
   void came(std::size_t bytes) noexcept {
-    auto const now = timer_->now();
-
-    left_ -= now - since_;
-    since_ = now;
-
-    if (min_rate_ != 0) {
-      auto const earned = std::chrono::duration<double>{static_cast<double>(bytes) / static_cast<double>(min_rate_)};
-
-      // Compared as they are, and against what is left to the timeout rather than added: a large write at a low rate
-      // may earn more than nanoseconds can hold, and a timeout may be close to all they can.
-      if (earned >= timeout_) {
-        left_ = timeout_;
-      } else if (auto const in_nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(earned);
-                 left_ >= timeout_ - in_nanoseconds) {
-        left_ = timeout_;
-      } else {
-        left_ += in_nanoseconds;
-      }
+    if (min_rate_ == 0) {
+      return;
     }
+
+    auto const latest = later(timer_->now(), timeout_);
+    auto const earned = std::chrono::duration<double>{static_cast<double>(bytes) / static_cast<double>(min_rate_)};
+
+    // Compared as they are: a large write at a low rate may earn more than nanoseconds can hold.
+    auto const moved =
+        earned >= timeout_
+            ? latest
+            : std::min(later(deadline(), std::chrono::duration_cast<std::chrono::nanoseconds>(earned)), latest);
+
+    deadline_.store(moved.count(), std::memory_order_relaxed);
   }
+
+  void operation_over() noexcept { left_ = left_now(); }
 
   void start_again() noexcept { left_ = timeout_; }
 
@@ -239,9 +238,19 @@ public:
   }
 
 private:
+  // `time` plus `more`, where a timeout may be close to all that nanoseconds can hold.
+  [[nodiscard]] static std::chrono::nanoseconds later(std::chrono::nanoseconds time,
+                                                      std::chrono::nanoseconds more) noexcept {
+    return more > std::chrono::nanoseconds::max() - time ? std::chrono::nanoseconds::max() : time + more;
+  }
+
+  [[nodiscard]] std::chrono::nanoseconds deadline() const noexcept {
+    return std::chrono::nanoseconds{deadline_.load(std::memory_order_relaxed)};
+  }
+
   std::chrono::nanoseconds timeout_;
   std::chrono::nanoseconds left_;
-  std::chrono::nanoseconds since_{};
+  std::atomic<std::chrono::nanoseconds::rep> deadline_{0};
   std::uint64_t min_rate_;
   std::optional<async::timer_ref> timer_;
 };
@@ -347,12 +356,12 @@ private:
     async::detail::timeout_state state;
     std::stop_callback const forward_stop{stop_token, async::detail::timeout_stop_forwarder{&state}};
 
-    limit.waiting_from_now();
+    limit.operation_begins();
 
     try {
       auto results = co_await async::when_all(async::detail::timeout_work(std::move(work), state), watch(limit, state));
 
-      limit.came(0);
+      limit.operation_over();
       co_return std::get<0>(std::move(results));
     } catch (std::system_error const &error) {
       if (state.expired && error.code() == std::errc::operation_canceled) {
