@@ -48,6 +48,7 @@
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
+#include <quoll/server/detail/open_beneath.hpp>
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -61,6 +62,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <ranges>
@@ -72,6 +74,28 @@
 #include <vector>
 
 namespace quoll::server {
+
+namespace detail {
+
+int open_beneath(std::filesystem::path const &root, std::filesystem::path const &relative) noexcept {
+  auto current = ::open(root.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+
+  for (auto component = relative.begin(); current >= 0 && component != relative.end(); ++component) {
+    // Only the last may be anything but a directory.
+    auto const last = std::next(component) == relative.end();
+    auto const next =
+        ::openat(current, component->c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | (last ? O_NONBLOCK : O_DIRECTORY));
+    auto const failure = errno;
+
+    ::close(current);
+    errno = failure;
+    current = next;
+  }
+
+  return current;
+}
+
+} // namespace detail
 
 namespace {
 
@@ -135,10 +159,17 @@ void append_hex(std::uint64_t value, std::string &out) {
          error == std::errc::too_many_symbolic_link_levels || error == std::errc::filename_too_long;
 }
 
-// What `path` opens to, if it is a regular file. `path` has had its links followed: O_NOFOLLOW keeps a link put there
-// since from taking it elsewhere, and O_NONBLOCK keeps opening a FIFO from waiting for a writer.
-[[nodiscard]] std::optional<found_file> open_regular(fs::path const &path) {
-  auto const descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW);
+// What a path opened to, with what it is.
+struct opened_path {
+  std::shared_ptr<open_file> file;
+
+  struct stat status {};
+};
+
+// `resolved`, under `root`, opened: nothing if there is nothing there to serve. What cannot say what it opened is
+// trouble: the descriptor is good, so that no answer is a failure of the system.
+[[nodiscard]] std::optional<opened_path> open_resolved(fs::path const &root, fs::path const &resolved) {
+  auto const descriptor = detail::open_beneath(root, resolved.lexically_relative(root));
 
   if (descriptor < 0) {
     std::error_code const error{errno, std::generic_category()};
@@ -150,15 +181,18 @@ void append_hex(std::uint64_t value, std::string &out) {
     throw std::system_error{error, "quoll::server::static_files"};
   }
 
-  auto file = std::make_shared<open_file>(descriptor);
+  opened_path opened{std::make_shared<open_file>(descriptor)};
 
-  struct stat status {};
-
-  if (::fstat(descriptor, &status) != 0 || !S_ISREG(status.st_mode)) {
-    return std::nullopt;
+  if (::fstat(descriptor, &opened.status) != 0) {
+    throw std::system_error{errno, std::generic_category(), "quoll::server::static_files"};
   }
 
-  found_file found{std::move(file), static_cast<std::uint64_t>(status.st_size), status.st_mtime, "\""};
+  return opened;
+}
+
+[[nodiscard]] found_file found_from(opened_path opened) {
+  auto const &status = opened.status;
+  found_file found{std::move(opened.file), static_cast<std::uint64_t>(status.st_size), status.st_mtime, "\""};
 
   append_hex(found.size, found.etag);
   found.etag += '-';
@@ -205,19 +239,29 @@ struct looked_up {
     return {};
   }
 
-  std::error_code error;
+  auto opened = open_resolved(state.root, *path);
 
-  if (!fs::is_directory(*path, error)) {
-    return error || ends_with_slash ? looked_up{} : looked_up{open_regular(*path)};
+  if (!opened) {
+    return {};
   }
 
-  if (state.options.index.empty()) {
+  if (S_ISREG(opened->status.st_mode)) {
+    return ends_with_slash ? looked_up{} : looked_up{found_from(std::move(*opened))};
+  }
+
+  if (!S_ISDIR(opened->status.st_mode) || state.options.index.empty()) {
     return {};
   }
 
   auto const index = inside_root(state.root, *path / state.options.index);
 
-  if (!index || !fs::is_regular_file(*index, error)) {
+  if (!index) {
+    return {};
+  }
+
+  auto opened_index = open_resolved(state.root, *index);
+
+  if (!opened_index || !S_ISREG(opened_index->status.st_mode)) {
     return {};
   }
 
@@ -225,7 +269,7 @@ struct looked_up {
     return {.redirect = true};
   }
 
-  return {.file = open_regular(*index)};
+  return {.file = found_from(std::move(*opened_index))};
 }
 
 // The path relative to `root` that `path`, as next::path() has it, asks for: nothing for what cannot be a file of it.
@@ -660,12 +704,15 @@ async::task<http::response> serve_file(std::shared_ptr<served const> state, http
   auto found = co_await async::offload([&] { return look_up(*state, *relative, ends_with_slash); });
 
   if (found.redirect) {
-    auto const directory = relative->empty() ? fs::path{state->prefix}.filename() : relative->filename();
+    // The prefix is as next::path() has it, a percent sign encoded, unlike a name of the disk.
+    auto const directory = relative->empty()
+                               ? http::detail::percent_decode(fs::path{state->prefix}.filename().string()).value_or("")
+                               : relative->filename().string();
 
     forget_its_content(answer);
     answer.status = http::status::moved_permanently;
     // Relative, and from a name rather than what the peer sent: `./` keeps a colon in it from reading as a scheme.
-    answer.fields.set("Location", "./" + http::detail::percent_encode(directory.string()) + "/" + query);
+    answer.fields.set("Location", "./" + http::detail::percent_encode(directory) + "/" + query);
     co_return answer;
   }
 

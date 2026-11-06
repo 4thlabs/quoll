@@ -49,6 +49,7 @@
 #include <quoll/http/verb.hpp>
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/io/write.hpp>
+#include <quoll/server/detail/open_beneath.hpp>
 #include <quoll/server/serve_connection.hpp>
 #include <quoll/server/static_files.hpp>
 #include <quoll/test/run.hpp>
@@ -403,7 +404,7 @@ TEST_CASE("static_files: a request not to send again", "[server][static]") {
 
     request.fields.add("If-None-Match", "\"other\"");
     request.fields.add("If-Modified-Since", date);
-    REQUIRE(ask(served.router, std::move(request)).status == status::ok);
+    REQUIRE(ask(served.router, request).status == status::ok);
   }
 }
 
@@ -497,7 +498,7 @@ TEST_CASE("static_files: a file larger than a piece, whole and in part", "[serve
   auto request = make_request("/large.bin");
 
   request.fields.add("Range", "bytes=70000-140000");
-  REQUIRE(ask(router, std::move(request)).body == content.substr(70000, 70001));
+  REQUIRE(ask(router, request).body == content.substr(70000, 70001));
 }
 
 TEST_CASE("static_files: the middlewares after it decide first, and what they add stays", "[server][static]") {
@@ -689,7 +690,7 @@ TEST_CASE("static_files: a date is one or it is ignored", "[server][static]") {
 
   // 1 January 2099 is a Thursday: none of these is a date, the last but one by its weekday.
   request.fields.add("If-Modified-Since", value);
-  REQUIRE(ask(served.router, std::move(request)).status == status::ok);
+  REQUIRE(ask(served.router, request).status == status::ok);
 }
 
 TEST_CASE("static_files: a date far ahead, written as it should be", "[server][static]") {
@@ -697,7 +698,7 @@ TEST_CASE("static_files: a date far ahead, written as it should be", "[server][s
   auto request = make_request("/assets/hello.txt");
 
   request.fields.add("If-Modified-Since", "Thu, 01 Jan 2099 00:00:00 GMT");
-  REQUIRE(ask(served.router, std::move(request)).status == status::not_modified);
+  REQUIRE(ask(served.router, request).status == status::not_modified);
 }
 
 TEST_CASE("static_files: a Range is only for a GET", "[server][static]") {
@@ -714,7 +715,7 @@ TEST_CASE("static_files: a Range is only for a GET", "[server][static]") {
   auto out_of_it = make_request("/assets/hello.txt", verb::head);
 
   out_of_it.fields.add("Range", "bytes=100-");
-  REQUIRE(ask(served.router, std::move(out_of_it)).status == status::ok);
+  REQUIRE(ask(served.router, out_of_it).status == status::ok);
 }
 
 TEST_CASE("static_files: the prefix itself is a directory like the others", "[server][static]") {
@@ -785,3 +786,47 @@ TEST_CASE("static_files: out of descriptors is no missing file", "[server][stati
 }
 
 #endif
+
+TEST_CASE("static_files: a prefix with a percent sign redirects to itself", "[server][static]") {
+  temporary_directory directory;
+
+  directory.write("index.html", "<p>home</p>");
+
+  http::router router;
+
+  router.use(server::static_files("/100%25", directory.path()));
+
+  auto const without = ask(router, "/100%25");
+
+  REQUIRE(without.status == status::moved_permanently);
+  REQUIRE(without.fields.find("Location") == "./100%25/");
+  REQUIRE(ask(router, "/100%25/").body == "<p>home</p>");
+}
+
+TEST_CASE("static_files: opening beneath the root follows no link, wherever it is on the path", "[server][static]") {
+  temporary_directory root;
+  temporary_directory outside;
+
+  root.write("nested/file.txt", "inside");
+  outside.write("secret.txt", "secret");
+  fs::create_directory_symlink(outside.path(), root.path() / "gone");
+  fs::create_symlink(outside.path() / "secret.txt", root.path() / "link.txt");
+
+  auto const opens = [&](fs::path const &relative) {
+    auto const descriptor = server::detail::open_beneath(root.path(), relative);
+
+    if (descriptor >= 0) {
+      ::close(descriptor);
+    }
+
+    return descriptor >= 0;
+  };
+
+  REQUIRE(opens("nested/file.txt"));
+  REQUIRE(opens("nested"));
+  REQUIRE(opens(""));
+  // What a directory replaced since the path was checked looks like.
+  REQUIRE(!opens("gone/secret.txt"));
+  REQUIRE(!opens("link.txt"));
+  REQUIRE(!opens("nested/missing.txt"));
+}
