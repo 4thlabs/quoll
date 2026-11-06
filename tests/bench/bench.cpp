@@ -38,6 +38,7 @@
 //
 //   quoll_bench tcp [seconds]        requests per second, latency and allocations per request, over loopback TCP
 //   quoll_bench allocations [--check] allocations per request over a memory stream, the same on every run
+//   quoll_bench large <GiB>          bodies far larger than memory, failing if what the process holds grows with them
 //   quoll_bench serve <port>         the routes alone until Ctrl-C, for a load generator of another project
 //
 // Build it with -DCMAKE_BUILD_TYPE=Release -DQUOLL_BENCH=ON -DQUOLL_BUILD_TESTS=OFF.
@@ -64,6 +65,7 @@
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
 
+#include <sys/resource.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -79,6 +81,7 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <new>
 #include <optional>
@@ -247,7 +250,7 @@ http::request make_post(std::string const &body) {
   return request;
 }
 
-// A file of 1 MiB to serve, gone with the program.
+// A directory with a file of 1 MiB to serve, gone with the program.
 class file_to_serve {
 public:
   file_to_serve() : directory_(std::filesystem::temp_directory_path() / ("quoll_bench_" + std::to_string(::getpid()))) {
@@ -272,14 +275,70 @@ private:
   std::filesystem::path directory_;
 };
 
-// Apart from make_router(): a middleware there would be on the path of what the other scenarios measure.
-http::router make_files_router() {
+std::filesystem::path const &files_directory() {
   static file_to_serve const file;
 
+  return file.directory();
+}
+
+// Apart from make_router(): a middleware there would be on the path of what the other scenarios measure.
+http::router make_files_router() {
   http::router router;
 
-  router.use(server::static_files("/files", file.directory()));
+  router.use(server::static_files("/files", files_directory()));
   return router;
+}
+
+// A piece of what the large transfers send.
+constexpr std::size_t large_piece = std::size_t{64} * 1024;
+
+// `size` bytes of body, a piece at a time.
+http::body_writer writing_pieces(std::uint64_t size) {
+  return [size](http::body_stream out) -> task<> {
+    std::string const piece(large_piece, 'x');
+    auto left = size;
+
+    while (left != 0) {
+      auto const count = std::min<std::uint64_t>(left, piece.size());
+
+      co_await out.write(std::string_view{piece.data(), static_cast<std::size_t>(count)});
+      left -= count;
+    }
+  };
+}
+
+// What `large` sends and asks for, apart from the rest for the same reason: nothing here holds more than a piece.
+http::router make_large_router() {
+  auto router = make_files_router();
+
+  router.post("/large-in", [](http::body_reader body) -> task<http::response> {
+    std::uint64_t size = 0;
+
+    while (auto const piece = co_await body.read()) {
+      size += piece->size();
+    }
+
+    http::response response;
+
+    response.body = std::to_string(size);
+    co_return response;
+  });
+  router.get("/large-out/{size}", [](std::uint64_t size) {
+    http::response response;
+
+    response.fields.set("Content-Length", std::to_string(size));
+    response.body_writer = writing_pieces(size);
+    return response;
+  });
+  return router;
+}
+
+// A body that does not fit in memory is for the application to allow, as it is on its own server.
+server::serve_options large_bodies() {
+  server::serve_options options;
+
+  options.connection.limits.max_streamed_body_size = std::numeric_limits<std::uint64_t>::max();
+  return options;
 }
 
 // The server of the measures, on a thread and a loop of its own, so that it does not share a CPU with the client.
@@ -289,6 +348,7 @@ public:
     plain_port_ = plain_.get_future().get();
     secure_port_ = secure_.get_future().get();
     files_port_ = files_.get_future().get();
+    large_port_ = large_.get_future().get();
   }
 
   server_thread(server_thread const &) = delete;
@@ -301,6 +361,8 @@ public:
 
   [[nodiscard]] std::uint16_t files_port() const noexcept { return files_port_; }
 
+  [[nodiscard]] std::uint16_t large_port() const noexcept { return large_port_; }
+
   // 0 without TLS in this build.
   [[nodiscard]] std::uint16_t secure_port() const noexcept { return secure_port_; }
 
@@ -310,6 +372,8 @@ private:
     auto const files_router = make_files_router();
     auto listener = co_await io::listen(0);
     auto files_listener = co_await io::listen(0);
+    auto const large_router = make_large_router();
+    auto large_listener = co_await io::listen(0);
     std::optional<io::any_listener> tls_listener;
 
     // Asked rather than caught: anything else that fails to set TLS up is a failure, and ends the program.
@@ -323,13 +387,16 @@ private:
 
     secure_.set_value(tls_listener ? tls_listener->local_port().value() : std::uint16_t{0});
     files_.set_value(files_listener.local_port().value());
+    large_.set_value(large_listener.local_port().value());
     plain_.set_value(listener.local_port().value());
 
     if (tls_listener) {
       co_await async::when_all(server::serve(listener, router), server::serve(files_listener, files_router),
+                               server::serve(large_listener, large_router, large_bodies()),
                                server::serve(*tls_listener, router));
     } else {
-      co_await async::when_all(server::serve(listener, router), server::serve(files_listener, files_router));
+      co_await async::when_all(server::serve(listener, router), server::serve(files_listener, files_router),
+                               server::serve(large_listener, large_router, large_bodies()));
     }
   }
 
@@ -345,9 +412,11 @@ private:
   std::promise<std::uint16_t> plain_;
   std::promise<std::uint16_t> secure_;
   std::promise<std::uint16_t> files_;
+  std::promise<std::uint16_t> large_;
   std::uint16_t plain_port_ = 0;
   std::uint16_t secure_port_ = 0;
   std::uint16_t files_port_ = 0;
+  std::uint16_t large_port_ = 0;
   // Last: its thread uses the rest.
   std::jthread thread_;
 };
@@ -701,6 +770,172 @@ int run_allocations(bool check) {
   return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
+template <class T>
+bool parse(std::string_view text, T &value) {
+  auto const [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+
+  return error == std::errc{} && end == text.data() + text.size();
+}
+
+// The most this process has held so far, in MiB. It never goes down, so that the last row says it for all of them. On
+// Linux from VmHWM, as ru_maxrss starts from what the process that forked this one held.
+double peak_memory() {
+#if defined(__linux__)
+  std::ifstream status{"/proc/self/status"};
+  std::string line;
+
+  while (std::getline(status, line)) {
+    if (line.starts_with("VmHWM:")) {
+      return std::strtod(line.c_str() + 6, nullptr) / 1024.0;
+    }
+  }
+
+  return 0.0;
+#else
+  rusage usage{};
+
+  ::getrusage(RUSAGE_SELF, &usage);
+  return static_cast<double>(usage.ru_maxrss) / (1024.0 * 1024.0);
+#endif
+}
+
+// The size of a body read to its end, in pieces and dropped.
+task<std::uint64_t> read_to_its_end(http::response_body const &body QUOLL_LIFETIMEBOUND) {
+  std::uint64_t size = 0;
+
+  while (auto const piece = co_await body.read()) {
+    size += piece->size();
+  }
+
+  co_return size;
+}
+
+task<bool> run_large_transfers(std::uint16_t port, std::uint64_t size) {
+  client::transport<> const transport{"http://127.0.0.1:" + std::to_string(port)};
+  auto ok = true;
+
+  // A row whatever comes of it, as what this mode looks for may well end a transfer: bad_alloc, under its limit.
+  auto const measured = [&](std::string_view name, auto const &transfer) -> task<> {
+    auto const start = steady_clock::now();
+    std::uint64_t moved = 0;
+
+    try {
+      moved = co_await transfer();
+    } catch (std::exception const &failure) {
+      print_line("| {} | failed: {} | | |", name, failure.what());
+      std::cout.flush();
+      ok = false;
+      co_return;
+    }
+
+    std::chrono::duration<double> const taken = steady_clock::now() - start;
+
+    if (moved != size) {
+      print_line("| {} | moved {} bytes of {} | | |", name, moved, size);
+      ok = false;
+    } else {
+      print_line("| {} | {:.0f} | {:.0f} | {:.1f} |", name, static_cast<double>(size) / (1024.0 * 1024.0 * 1024.0),
+                 static_cast<double>(size) / (1024.0 * 1024.0) / taken.count(), peak_memory());
+    }
+
+    std::cout.flush();
+  };
+
+  auto const stream_from = [&](std::string target) -> task<std::uint64_t> {
+    auto request = make_get();
+
+    request.target = std::move(target);
+
+    auto response = co_await transport.stream(std::move(request));
+
+    if (response.status != http::status::ok) {
+      throw std::runtime_error{"status " + std::to_string(static_cast<int>(response.status))};
+    }
+
+    co_return co_await read_to_its_end(response.body);
+  };
+
+  co_await measured("A request in pieces, up", [&]() -> task<std::uint64_t> {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.target = "/large-in";
+    request.fields.set("Content-Length", std::to_string(size));
+    request.body_writer = writing_pieces(size);
+
+    auto const response = co_await transport.send(std::move(request));
+    std::uint64_t received = 0;
+
+    if (response.status != http::status::ok || !parse(response.body, received)) {
+      throw std::runtime_error{"status " + std::to_string(static_cast<int>(response.status)) + ": " + response.body};
+    }
+
+    co_return received;
+  });
+  co_await measured("A response in pieces, down", [&]() { return stream_from("/large-out/" + std::to_string(size)); });
+  co_await measured("A file, down", [&]() { return stream_from("/files/large.bin"); });
+  co_return ok;
+}
+
+// What a process may address while `large` runs: less than any body it is given should be, and far more than it needs.
+constexpr rlim_t large_address_space = rlim_t{512} * 1024 * 1024;
+
+// What the transfers may add to what the process held before them. Generous: this is to see a body held, which is a
+// matter of gibibytes, and not to count mebibytes.
+constexpr double large_growth = 64.0;
+
+// Each way, a body of `gibibytes`, read and written in pieces, under a limit of address space that it does not fit in,
+// and failing if what the process holds grows with it. Both sides are in this process.
+int run_large(std::uint64_t gibibytes) {
+  auto const size = gibibytes * 1024 * 1024 * 1024;
+  rlimit limit{};
+
+  ::getrlimit(RLIMIT_AS, &limit);
+  limit.rlim_cur = std::min(limit.rlim_cur, large_address_space);
+
+  // macOS does not enforce it: the peak below still says what matters.
+  if (::setrlimit(RLIMIT_AS, &limit) != 0) {
+    std::cerr << "no limit of address space here\n";
+  }
+
+  std::error_code failed;
+
+  // Holes, on the disk: what is measured is what goes through memory.
+  { std::ofstream const creating{files_directory() / "large.bin", std::ios::binary}; }
+  std::filesystem::resize_file(files_directory() / "large.bin", size, failed);
+
+  if (failed) {
+    std::cerr << "cannot make a file of that size: " << failed.message() << '\n';
+    return EXIT_FAILURE;
+  }
+
+  server_thread const server;
+  auto const before = peak_memory();
+  auto ok = false;
+
+  print_line("| Transfer | GiB | MiB/s | Peak of the process (MiB) |");
+  print_line("| --- | --- | --- | --- |");
+  print_line("| Before any | | | {:.1f} |", before);
+  std::cout.flush();
+
+  auto const running = [&]() -> task<> { ok = co_await run_large_transfers(server.large_port(), size); };
+
+  {
+    quoll::runtime runtime;
+
+    co_spawn(runtime.get_executor(), running(), async::detached);
+    runtime.run();
+  }
+
+  if (auto const grown = peak_memory() - before; grown > large_growth) {
+    print_line("It grew by {:.1f} MiB, over what is allowed, {:.1f} MiB: something holds a body", grown, large_growth);
+    ok = false;
+  }
+
+  std::cout.flush();
+  return ok ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
 task<> serve_alone(std::uint16_t port) {
   auto const router = make_router();
   auto listener = co_await io::listen(port);
@@ -718,15 +953,8 @@ int run_serve(std::uint16_t port) {
   return EXIT_SUCCESS;
 }
 
-template <class T>
-bool parse(std::string_view text, T &value) {
-  auto const [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
-
-  return error == std::errc{} && end == text.data() + text.size();
-}
-
 int usage() {
-  std::cerr << "usage: quoll_bench tcp [seconds] | allocations [--check] | serve <port>\n";
+  std::cerr << "usage: quoll_bench tcp [seconds] | allocations [--check] | large <GiB> | serve <port>\n";
   return EXIT_FAILURE;
 }
 
@@ -753,6 +981,13 @@ int main(int argc, char **argv) {
   if (arguments[0] == "allocations" &&
       (arguments.size() == 1 || (arguments.size() == 2 && arguments[1] == "--check"))) {
     return run_allocations(arguments.size() == 2);
+  }
+
+  std::uint64_t gibibytes = 0;
+
+  if (arguments[0] == "large" && arguments.size() == 2 && parse(arguments[1], gibibytes) && gibibytes > 0 &&
+      gibibytes <= 1024) {
+    return run_large(gibibytes);
   }
 
   std::uint16_t port = 0;

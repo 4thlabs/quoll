@@ -59,5 +59,9 @@ jobs:
       - name: Check the allocations
         run: build/tests/bench/quoll_bench allocations --check
 
+      # What the allocations cannot see: a body held in memory, by what reads or writes it in pieces.
+      - name: Check that a body larger than the process's memory goes through
+        run: build/tests/bench/quoll_bench large 1
+
       - name: Measure
         run: build/tests/bench/quoll_bench tcp 5 >> "$GITHUB_STEP_SUMMARY"
