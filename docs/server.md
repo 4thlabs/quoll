@@ -223,9 +223,12 @@ Nothing has to outlive what a server starts: its tasks share what it holds, and 
 router it is given. Add the routes first. One added to the server once it serves throws
 `std::logic_error`, and one added to the router it copied is not served. A handler with a state of its
 own is copied with its router: for two servers of one router to share it, hold it in a `std::shared_ptr`.
+A handler does not capture a copy of its server, which would keep it alive forever, with all it holds.
 
 A copy of a server is the same server. It may listen on several ports, each `listen` or `serve` being a task
-of its own, and `max_connections` counts for all of them. `server.connections()` says how many it serves now.
+of its own, and `max_connections` counts for all of them, on a server's connections as a whole. `server.connections()` says how many it
+serves now. A stream given to `serve_connection` counts, and is never refused. `on_accept_error` and `on_connection_error`
+may be called concurrently, when the server's tasks run on several threads.
 
 To know the port before serving, or that the server is ready, listen first and then `serve`. With
 port 0, the system picks a free one:

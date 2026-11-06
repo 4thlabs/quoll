@@ -39,6 +39,7 @@
 
 #include <quoll/async/any_executor.hpp>
 #include <quoll/async/executor.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/io/any_listener.hpp>
@@ -51,6 +52,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -89,6 +91,8 @@ struct server_state;
  * added to the `router` it copied is not served. A handler with a state of its own is copied with its router, so that
  * two servers of one router share it only through a `std::shared_ptr`.
  *
+ * A handler does not capture a copy of its server, which would keep it alive forever, along with all it holds.
+ *
  * It may listen on several ports and serve several listeners, each as a task of its own, which ends on its stop
  * request. `max_connections` counts for all of them.
  *
@@ -110,66 +114,69 @@ public:
   server &operator=(server const &) noexcept = default;
   ~server() = default;
 
+  /** @brief Its router, to read it, or to copy it for an http::local_transport. */
+  [[nodiscard]] http::router const &routes() const noexcept QUOLL_LIFETIMEBOUND;
+
   /**
-   * @brief Its router, for what takes one to add routes, for the time of that call: it is closed once the server
-   * serves.
+   * @brief Calls `edit` with its router, for what adds routes to one, as rest::mount does. Connections read it once the
+   * server serves: `edit` does not keep the reference.
    *
    * @throws std::logic_error once it serves.
    */
-  [[nodiscard]] http::router &routes();
-
-  /** @brief Its router, to read it. */
-  [[nodiscard]] http::router const &routes() const noexcept;
+  template <std::invocable<http::router &> Edit>
+  void edit_routes(Edit &&edit) {
+    std::invoke(std::forward<Edit>(edit), open_routes());
+  }
 
   /** @brief See router::add(). @throws std::logic_error once it serves. */
   void add(verb method, std::string_view path, std::string name, router::handler target) {
-    routes().add(method, path, std::move(name), std::move(target));
+    open_routes().add(method, path, std::move(name), std::move(target));
   }
 
   /** @brief See router::get(). @throws std::logic_error once it serves. */
   template <class F>
   void get(detail::checked_path<std::type_identity_t<F>> path, F target) {
-    routes().get(path, std::move(target));
+    open_routes().get(path, std::move(target));
   }
 
   /** @brief See router::post(). @throws std::logic_error once it serves. */
   template <class F>
   void post(detail::checked_path<std::type_identity_t<F>> path, F target) {
-    routes().post(path, std::move(target));
+    open_routes().post(path, std::move(target));
   }
 
   /** @brief See router::put(). @throws std::logic_error once it serves. */
   template <class F>
   void put(detail::checked_path<std::type_identity_t<F>> path, F target) {
-    routes().put(path, std::move(target));
+    open_routes().put(path, std::move(target));
   }
 
   /** @brief See router::patch(). @throws std::logic_error once it serves. */
   template <class F>
   void patch(detail::checked_path<std::type_identity_t<F>> path, F target) {
-    routes().patch(path, std::move(target));
+    open_routes().patch(path, std::move(target));
   }
 
   /** @brief See router::delete_(). @throws std::logic_error once it serves. */
   template <class F>
   void delete_(detail::checked_path<std::type_identity_t<F>> path, F target) {
-    routes().delete_(path, std::move(target));
+    open_routes().delete_(path, std::move(target));
   }
 
   /** @brief See router::head(). @throws std::logic_error once it serves. */
   template <class F>
   void head(detail::checked_path<std::type_identity_t<F>> path, F target) {
-    routes().head(path, std::move(target));
+    open_routes().head(path, std::move(target));
   }
 
   /** @brief See router::options(). @throws std::logic_error once it serves. */
   template <class F>
   void options(detail::checked_path<std::type_identity_t<F>> path, F target) {
-    routes().options(path, std::move(target));
+    open_routes().options(path, std::move(target));
   }
 
   /** @brief See router::use(). @throws std::logic_error once it serves. */
-  void use(router::middleware wrapping) { routes().use(std::move(wrapping)); }
+  void use(router::middleware wrapping) { open_routes().use(std::move(wrapping)); }
 
   /** @brief How many connections it serves now, through all of its listen(), serve() and serve_connection(). */
   [[nodiscard]] std::size_t connections() const noexcept;
@@ -266,6 +273,7 @@ public:
   }
 
 private:
+  [[nodiscard]] http::router &open_routes();
   [[nodiscard]] async::task<> serve_on(async::any_executor executor, io::any_listener listener) const;
 
   std::shared_ptr<detail::server_state> state_;

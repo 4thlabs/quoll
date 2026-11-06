@@ -1727,6 +1727,25 @@ TEST_CASE("http::server: the task of a temporary runs once it has gone, with its
   REQUIRE(told);
 }
 
+TEST_CASE("http::server: a listen that failed leaves its routes open", "[asio][runtime][server]") {
+  auto const try_it = []() -> task<bool> {
+    auto taken = co_await quoll::io::listen(0);
+    http::server server;
+    bool failed = false;
+
+    try {
+      co_await server.listen(taken.local_port().value());
+    } catch (std::system_error const &) {
+      failed = true;
+    }
+
+    server.get("/after", []() { return http::response{}; });
+    co_return failed;
+  };
+
+  REQUIRE(run_task(try_it()));
+}
+
 TEST_CASE("rest::mount: on a server, as on a router", "[asio][rest][server]") {
   http::server server;
 

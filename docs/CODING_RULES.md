@@ -71,6 +71,8 @@ guidelines and the C++ Core Guidelines.
   (`http::read(stream, ...)`, `router.dispatch()`). The fast path goes behind it, in `detail`.
 - Non-owning parameters as `std::string_view` / `std::span`; ownership through values or `std::unique_ptr`. No raw
   owning pointers, no `new` / `delete`. Throw by value, catch by `const&`.
+- A handle on shared state whose copies are the same object (`http::client`, `http::server`) has copies and no moves, so that
+  one moved from stays usable rather than hold a null pointer, and does not count as owning below.
 - Rule of zero. A type owning a resource (coroutine handle, thread...) explicitly defines or deletes all five
   special members, in the public section; move operations are `noexcept`.
 - `[[nodiscard]]` on observers, factories and awaitables; `noexcept` when it cannot throw; `explicit` on

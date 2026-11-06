@@ -54,7 +54,8 @@ struct serve_options {
   connection_options connection{};
 
   /**
-   * @brief How many connections the server serves at once, through all of its listen() and serve(). Past it, a new
+   * @brief How many connections the server serves at once, those of server::serve_connection() included, which it never
+   * refuses. Past it, a new
    * connection is accepted and closed at once, without a word, which keeps the accept queue moving. Zero: no limit, up
    * to what the system allows.
    */
@@ -79,6 +80,9 @@ struct serve_options {
    * Empty: a failure of one connection only (`connection_aborted`, `connection_reset`) is skipped, running out of
    * something (file descriptors, memory) is retried after 100 ms if the executor has a timer, for as long as it lasts
    * and without a word, and any other is rethrown. Set this to be told.
+   *
+   * This and on_connection_error are the server's, for all of its listen() and serve(): on several threads, they may be
+   * called concurrently.
    */
   std::function<async::task<bool>(std::error_code)> on_accept_error{};
 };
