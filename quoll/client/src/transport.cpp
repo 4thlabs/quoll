@@ -183,7 +183,7 @@ constexpr int max_interim_responses = 8;
 class upload {
 public:
   upload(io::any_stream &connection QUOLL_LIFETIMEBOUND, prepared_request const &request QUOLL_LIFETIMEBOUND,
-         std::chrono::nanoseconds timeout) noexcept
+         std::chrono::nanoseconds timeout)
       : connection_(&connection), request_(&request), wire_(request.wire, request.framing), timeout_(timeout) {}
 
   // Ends once the answer has come, or throws what ends it without one.
@@ -194,8 +194,13 @@ public:
     try {
       co_await async::detail::stop_scope<void>{request_->writer(http::body_stream{*this}), stop_.get_token()};
       co_await async::detail::stop_scope<void>{finish(), stop_.get_token()};
+    } catch (std::system_error const &thrown) {
+      // The server closing is no failure yet, unlike what the writer makes of it.
+      if (!stop_.stop_requested() && !(closed_ && thrown.code() == failure_)) {
+        throw;
+      }
     } catch (...) {
-      if (!stop_.stop_requested() && !closed_) {
+      if (!stop_.stop_requested()) {
         throw;
       }
     }
@@ -210,6 +215,14 @@ public:
     try {
       co_await async::detail::stop_scope<void>{async::sleep_for(timeout_), stop_.get_token()};
     } catch (std::system_error const &) {
+      // A stop ends the wait; a timer that fails leaves nothing else to limit it.
+      if (!stop_.stop_requested()) {
+        throw;
+      }
+    }
+
+    // An answer in the same instant as the timer: it stands.
+    if (stop_.stop_requested()) {
       co_return;
     }
 
@@ -295,7 +308,7 @@ private:
 
 // What reads the response beside an upload: its end, however it ends, stops what is still writing.
 template <class T>
-[[nodiscard]] async::task<T> until_answered(upload &sending, async::task<T> reading) {
+[[nodiscard]] async::task<T> until_answered(upload &sending QUOLL_LIFETIMEBOUND, async::task<T> reading) {
   async::detail::stop_on_exit const answered{sending.stop()};
 
   co_return co_await std::move(reading);
@@ -307,8 +320,9 @@ template <class T>
 // not an error: no response, the caller sends the request again on a new connection. Without it, a response or an
 // exception.
 async::task<std::optional<http::response>> exchange(connection_pool &pool, http::parse_limits limits,
-                                                    io::any_stream &connection, prepared_request const &request,
-                                                    bool retry_if_closed, upload const *sending = nullptr) {
+                                                    io::any_stream &connection QUOLL_LIFETIMEBOUND,
+                                                    prepared_request const &request, bool retry_if_closed,
+                                                    upload const *sending = nullptr) {
   if (sending == nullptr) {
     auto const sent = co_await io::write(connection, std::as_bytes(std::span{request.wire}));
 
@@ -483,7 +497,7 @@ async::task<http::response> send_prepared(std::shared_ptr<transport_core> shared
 }
 
 // The request as it goes on the wire. Throws std::invalid_argument for what http::serialize() rejects.
-[[nodiscard]] prepared_request prepare(transport_core const &shared, http::request const &request) {
+[[nodiscard]] prepared_request prepare(transport_core const &shared, http::request &request) {
   auto const keep_alive = request.version == http::version::http_1_1 &&
                           !http::detail::closes_connection(request.fields) && shared.options.max_idle_connections > 0;
 
@@ -491,8 +505,9 @@ async::task<http::response> send_prepared(std::shared_ptr<transport_core> shared
 
   if (request.body_writer) {
     prepared.framing = http::detail::serialize_streamed_head(request, prepared.wire);
-    prepared.writer = request.body_writer;
-    prepared.trailers = request.trailers;
+    // What it captures may be large, and nothing follows a redirect with it.
+    prepared.writer = std::move(request.body_writer);
+    prepared.trailers = std::move(request.trailers);
   } else {
     http::serialize(request, prepared.wire);
   }
@@ -717,8 +732,8 @@ public:
 
 private:
   // Reads the head of the final response, on an attempt of its own; false as start() says.
-  [[nodiscard]] async::task<bool> read_final_head(io::any_stream &connection, prepared_request const &request,
-                                                  bool retry_if_closed) {
+  [[nodiscard]] async::task<bool> read_final_head(io::any_stream &connection QUOLL_LIFETIMEBOUND,
+                                                  prepared_request const &request, bool retry_if_closed) {
     auto interim = 0;
 
     // Afresh for each attempt: the one before may have left anything in it.
@@ -881,7 +896,7 @@ async::task<http::response> send(std::shared_ptr<transport_core> const &core, ht
   auto prepared = prepare(*core, request);
 
   // A body in pieces cannot be sent again: its 3xx is a result.
-  if (core->options.max_redirects == 0 || request.body_writer) {
+  if (core->options.max_redirects == 0 || prepared.writer) {
     return send_prepared(core, std::move(prepared));
   }
 

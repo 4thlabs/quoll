@@ -2907,6 +2907,38 @@ TEST_CASE("client::transport: what a body_writer gets wrong comes out of send()"
     REQUIRE(quoll::test::run(loop, failing(upload_of(throwing))) == "from the writer hello");
   }
 
+  SECTION("what it makes of a write past its length, which it then ignores") {
+    auto request = upload_of([](http::body_stream out) -> task<> {
+      co_await out.write("four");
+
+      try {
+        co_await out.write("more");
+      } catch (std::length_error const &) {
+      }
+    });
+
+    request.fields.set("Content-Length", "6");
+
+    auto const swallowed = [&]() -> task<std::string> {
+      client::transport const transport{memory_connector{server}, "example.com", 80};
+      std::string seen;
+
+      try {
+        static_cast<void>(co_await transport.send(std::move(request)));
+        seen = "no failure";
+      } catch (std::system_error const &thrown) {
+        seen = thrown.code() == std::errc::message_size ? "its length" : "another failure";
+      }
+
+      // Nothing else went on that connection, and another carries this.
+      seen += " " + (co_await transport.send(make_request(verb::get, "/hello"))).body;
+      connections_after = server.connections;
+      co_return seen;
+    };
+
+    REQUIRE(quoll::test::run(loop, swallowed()) == "its length hello");
+  }
+
   SECTION("what it throws before anything left") {
     auto const throwing = [](http::body_stream) -> task<> {
       throw std::runtime_error{"at once"};
@@ -3035,6 +3067,47 @@ TEST_CASE("client::transport: an answer before the end of a body_writer stops it
 
     REQUIRE(got == "413 no");
     REQUIRE(stopped_by == "a failed write");
+  }
+
+  SECTION("a server that went: what the writer makes of it is the writer's") {
+    auto const by_send_failing = [&](client::transport<memory_connector> const &transport) -> task<std::string> {
+      auto const rethrowing = [](http::body_stream out) -> task<> {
+        try {
+          for (;;) {
+            co_await out.write("x");
+            co_await async::yield();
+          }
+        } catch (std::system_error const &) {
+          throw std::runtime_error{"from the writer"};
+        }
+      };
+
+      try {
+        co_return (co_await transport.send(upload_of(rethrowing))).body;
+      } catch (std::runtime_error const &thrown) {
+        co_return thrown.what();
+      }
+    };
+
+    REQUIRE(after(answering_at_the_head(refused, true), by_send_failing) == "from the writer");
+  }
+
+  SECTION("a server that went: a writer making nothing of it ends well, and the answer stands") {
+    auto const carrying_on = [](http::body_stream out) -> task<> {
+      try {
+        for (;;) {
+          co_await out.write("x");
+          co_await async::yield();
+        }
+      } catch (std::system_error const &) {
+      }
+    };
+
+    auto const by_send_quietly = [&](client::transport<memory_connector> const &transport) -> task<std::string> {
+      co_return (co_await transport.send(upload_of(carrying_on))).body;
+    };
+
+    REQUIRE(after(answering_at_the_head(refused, true), by_send_quietly) == "no");
   }
 
   SECTION("a writer that takes no notice, then ends well") {

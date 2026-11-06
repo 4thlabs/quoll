@@ -366,6 +366,12 @@ streamed_framing serialize_streamed_head(response const &message, std::string &o
   return {.chunked = checked.chunked, .length = length ? std::optional<std::uint64_t>{*length} : std::nullopt};
 }
 
+std::optional<std::uint64_t> announced_length(fields const &entries) {
+  auto const length = declared_length(entries);
+
+  return length ? std::optional<std::uint64_t>{*length} : std::nullopt;
+}
+
 streamed_framing serialize_streamed_head(request const &message, std::string &out) {
   auto rules = request_rules(message);
 

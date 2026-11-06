@@ -159,6 +159,7 @@ http::router make_router() {
     http::response response;
 
     response.status = http::status::content_too_large;
+    response.body = "too large";
     return response;
   });
   router.add(http::verb::post, "/echo", "echo", [](http::request request, http::route_match) -> task<http::response> {
@@ -432,6 +433,36 @@ TEST_CASE("TLS: a body_writer: all of it, then a server refusing it", "[tls][asi
   };
 
   REQUIRE(run_task(with_server<std::string>(server_certificate(), call)) == "1048576 413");
+}
+
+TEST_CASE("TLS: a head that cuts a write short leaves the head, and a clean end", "[tls][asio][runtime]") {
+  std::function<task<std::string>(std::string)> const call = [](std::string url) -> task<std::string> {
+    client::transport<> const transport{url, trusting_the_authority()};
+    http::request request;
+
+    request.method = http::verb::post;
+    request.target = "/refuse";
+    request.body_writer = [](http::body_stream out) -> task<> {
+      std::string const piece(std::size_t{64} * 1024, 'x');
+
+      for (;;) {
+        co_await out.write(piece);
+      }
+    };
+
+    auto response = co_await transport.stream(std::move(request));
+
+    // Whichever comes: what is promised is the head, and no more than a failure from what follows.
+    try {
+      while (co_await response.body.read()) {
+      }
+    } catch (std::system_error const &) {
+    }
+
+    co_return std::to_string(static_cast<int>(response.status));
+  };
+
+  REQUIRE(run_task(with_server<std::string>(server_certificate(), call)) == "413");
 }
 
 TEST_CASE("TLS: a kept connection the server closed is replaced", "[tls][asio][runtime][timer]") {

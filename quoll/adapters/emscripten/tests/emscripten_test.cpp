@@ -433,6 +433,14 @@ TEST_CASE("fetch_transport: a body_writer goes out whole", "[emscripten][http]")
   both.body = "whole";
   both.body_writer = [](http::body_stream) -> quoll::async::task<> { co_return; };
   REQUIRE_THROWS_AS(transport.send(std::move(both)), std::invalid_argument);
+
+  http::request short_of_it;
+
+  short_of_it.method = http::verb::post;
+  short_of_it.target = "/status/200";
+  short_of_it.fields.set("Content-Length", "1000");
+  short_of_it.body_writer = [](http::body_stream out) -> quoll::async::task<> { co_await out.write("four"); };
+  REQUIRE_THROWS_AS(run(transport.send(std::move(short_of_it))), std::length_error);
 }
 
 TEST_CASE("rest::client over fetch_transport calls an API that only has a contract", "[emscripten][rest]") {
