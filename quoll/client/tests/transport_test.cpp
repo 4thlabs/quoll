@@ -2896,14 +2896,18 @@ TEST_CASE("client::transport: what a body_writer gets wrong comes out of send()"
     auto request = upload_of(pieces_of(4, 2));
 
     request.fields.set("Content-Length", "6");
-    REQUIRE(quoll::test::run(loop, failing(std::move(request))) == "length hello");
+    auto const got = quoll::test::run(loop, failing(std::move(request)));
+
+    REQUIRE(got == "length hello");
   }
 
   SECTION("less than its Content-Length") {
     auto request = upload_of(pieces_of(4, 1));
 
     request.fields.set("Content-Length", "6");
-    REQUIRE(quoll::test::run(loop, failing(std::move(request))) == "length hello");
+    auto const got = quoll::test::run(loop, failing(std::move(request)));
+
+    REQUIRE(got == "length hello");
   }
 
   SECTION("what it throws") {
