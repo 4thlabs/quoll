@@ -44,7 +44,9 @@
 #include <quoll/async/timer.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/work_item.hpp>
+#include <quoll/emscripten/detail/fetch_platform.hpp>
 #include <quoll/emscripten/detail/js.hpp>
+#include <quoll/http/platform_ref.hpp>
 
 #include <chrono>
 
@@ -65,7 +67,7 @@ namespace quoll::emscripten {
  */
 class executor {
 public:
-  using services = async::service_list<async::timer_ref>;
+  using services = async::service_list<async::timer_ref, http::platform_ref>;
 
   /** @brief Resumes `item.handle` in a microtask; `item` stays alive and unchanged until then. */
   void post(async::work_item &item) const noexcept { detail::quoll_emscripten_post(&resume, &item); }
@@ -78,6 +80,11 @@ public:
 
   /** @brief This executor, as the timer of the event loop: valid while it lives (see async::timer_ref). */
   [[nodiscard]] async::timer_ref query(async::service_tag<async::timer_ref>) const { return async::timer_ref{*this}; }
+
+  /** @brief The browser's fetch, which http::client goes through here. */
+  [[nodiscard]] http::platform_ref query(async::service_tag<http::platform_ref>) const {
+    return http::platform_ref{detail::the_fetch_platform};
+  }
 
   /** @brief Always true: every executor posts to the same event loop. */
   [[nodiscard]] bool operator==(executor const &) const noexcept = default;

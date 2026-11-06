@@ -154,8 +154,8 @@ leaves the loop running:
 
 ```cpp
 #include <quoll/async.hpp>
+#include <quoll/client.hpp>
 #include <quoll/emscripten.hpp>
-#include <quoll/http.hpp>
 
 #include <iostream>
 
@@ -163,12 +163,8 @@ namespace async = quoll::async;
 namespace http = quoll::http;
 
 async::task<> say_hello() {
-  quoll::emscripten::fetch_client client{"https://api.example.com"};
-  http::request request;
-
-  request.target = "/hello";
-
-  auto const response = co_await client.send(request);
+  http::client client{"https://api.example.com"};
+  auto const response = co_await client.get("/hello");
 
   std::cout << response.body << '\n';
 }
@@ -178,39 +174,38 @@ int main() {
 }
 ```
 
-The same coroutines, contracts and handlers run on both sides. What differs is `main()` and the
-transport, as `rest::client` shows:
+The same coroutines, clients, contracts and handlers run on both sides, and only `main()` differs:
 
 ```cpp
-rest::client<notes::api, quoll::emscripten::fetch_client> client{""};
+http::client client{"/api"};
+rest::client<notes::api> notes{"/api"};
 ```
 
-An empty base URL stays on the page's origin.
+### `http::client` in a browser
 
-### `fetch_client`
-
-An `http::HttpTransport` over the JavaScript `fetch()`. `rest::client` takes it as its transport, and
-each request goes to the base URL followed by its target.
+A client from a URL asks the executor it runs on how to send, as it asks for a network natively, and the
+one here offers the JavaScript `fetch()`. Past a limit, the fetch is aborted, so that memory holds no more than the limit. A URL may be relative to the page: empty, or a path. A connector
+given to a client is still used, as a test in memory does.
 
 What `fetch` does for you, and what it does not let you do:
 
-| Point                | `http::client`                                | `fetch_client`                                                                                                                                     |
+| Point                | Natively                                      | In a browser                                                                                                                                      |
 | -------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Streaming a response | [`stream()`](streaming.md#reading-a-response) | [`stream()`](streaming.md#in-a-browser), with no limit and no timeout per piece                                                                    |
+| Streaming a response | [`stream()`](streaming.md#reading-a-response) | [`stream()`](streaming.md#in-a-browser)                                                                    |
 | Streaming a request  | [In pieces](streaming.md#writing-a-request)   | A `body_writer` runs to its end before the fetch, and goes out whole                                                                               |
 | Redirects            | Followed if asked, to its own server only     | Always followed, possibly to another origin. The 3xx response is not exposed.                                                                      |
 | Fields sent          | All of them                                   | Not those `fetch` manages itself (`Host`, `Content-Length`, `Connection` and the other hop-by-hop fields), nor the trailers.                       |
 | Fields received      | As received                                   | In lower case, repeated ones combined, without those describing the bytes on the wire (`Content-Encoding`, `Content-Length`, `Transfer-Encoding`). |
 | Body received        | As received                                   | Decoded: decompressed and de-chunked.                                                                                                              |
 | HTTP version         | As received                                   | Not known: `http_1_1`.                                                                                                                             |
-| Options              | [`client_options`](client.md#options)         | None: no limits, no connection settings and no timeouts of its own. Use `async::with_timeout`                                                      |
+| Options              | [`client_options`](client.md#options)         | `limits` and `response_timeout` apply. `max_connections`, `max_idle_connections`, `max_redirects`, `connect_timeout` and `tls` have no effect, as the browser decides, and it always checks certificates.                                                      |
 
 A failure to get a response (a network error, a refused connection, CORS) throws `std::system_error`
 with `std::errc::io_error` and `fetch`'s message. A stop request aborts the fetch, with
 `std::errc::operation_canceled`. A target not in origin form, and what `http::serialize` rejects, throw
 `std::invalid_argument` before the task runs.
 
-Use it, and request a stop, from the thread running the event loop.
+Use a client, and request a stop, from the thread running the event loop.
 
 ### What WebAssembly asks of you
 

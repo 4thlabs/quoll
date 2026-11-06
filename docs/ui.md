@@ -69,7 +69,7 @@ struct notes_page {
 | Edit a value           | `input() \| bind(draft)`, for a `state<std::string>`                                                                 |
 | Repeat, or show or not | `list(items, ...)` with a `key()` on each, `when(condition, ...)`                                                    |
 | Change a state         | `count = 1;`, `count.set(1);`, `items.update(...)`                                                                   |
-| Call an API            | A `rest::client` over [`fetch_client`](runtimes.md#fetch_client)                                                     |
+| Call an API            | A `rest::client`, over [`fetch`](runtimes.md#httpclient-in-a-browser)                                                     |
 
 The full table, with Tailwind and the build, is in [the sample](../samples/ui_notes/README.md#the-api).
 

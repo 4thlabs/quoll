@@ -38,6 +38,7 @@
 #define QUOLL_HTTP_DETAIL_CHECK_HPP
 
 #include <quoll/http/fields.hpp>
+#include <quoll/http/request.hpp>
 
 #include <string_view>
 
@@ -49,6 +50,9 @@ namespace quoll::http::detail {
 
 void check_target(std::string_view target);
 void check_field(field const &entry);
+
+// All that serialize() and serialize_streamed_head() reject in a request, for what does not need what they write.
+void check_request(request const &message);
 
 } // namespace quoll::http::detail
 

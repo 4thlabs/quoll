@@ -93,10 +93,9 @@ public:
 
   /**
    * @brief A client of the server at `base_url`, through a transport built from it: with the default one, a connection
-   * over the network of the executor that calls (see quoll::http::client, quoll::runtime); in a browser, name
-   * fetch_client as the transport, which also takes a base URL.
+   * over the network of the executor that calls (see quoll::http::client, quoll::runtime), or the browser's fetch.
    *
-   * A trailing `/` is dropped, so that every transport reads the same URL (fetch_client appends the targets to it).
+   * A trailing `/` is dropped, so that every transport reads the same URL.
    *
    * @code
    * quoll::rest::client<bank::v1> bank{"http://127.0.0.1:8080"};

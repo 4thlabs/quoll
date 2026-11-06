@@ -76,7 +76,7 @@ int main() { quoll::emscripten::mount<counter>(); }   // in the element #app
 | Change a state | `count = 1;`, `count.set(1);`, `items.update([](auto &all) { all.clear(); });` | the view then runs again, once |
 | Read a state | `*count`, `items->size()` | |
 | Load at the start | `async::task<> mounted() { items = co_await api.call<notes::list>({}); }` | an optional member |
-| Call an API | `rest::client<notes::api, quoll::emscripten::fetch_client> api{quoll::emscripten::fetch_client{""}};` | the same contract as the server, so a wrong call does not compile; in a source of its own, see below |
+| Call an API | `rest::client<notes::api> api{std::string{}};` | the same contract as the server, so a wrong call does not compile; in a source of its own, see below |
 | Split the view | a member function returning `element` | nested components with a state of their own are not there yet |
 | Make a decorator | `decorator([](element &target) { target.classes += " card"; })` | |
 

@@ -126,8 +126,24 @@ struct connector_handle {
  *
  * Copies share their connections. The task copies what it needs: the client does not have to outlive it.
  *
+ * In a browser, a Worker or Node, built with Emscripten, a client from a URL goes through the JavaScript fetch(), as
+ * the executor offers it, and the same code does the same thing, but for what fetch keeps to itself:
+ *
+ * - An URL may be relative to the page: empty, or a path. Elsewhere it throws std::invalid_argument.
+ * - `max_connections`, `max_idle_connections`, `max_redirects`, `connect_timeout` and `tls` have no effect, as the
+ * browser decides. It follows redirects itself, possibly to another origin, and always checks certificates. `limits`
+ * and `response_timeout` apply: past a limit, the fetch is aborted.
+ * - The fields fetch manages itself (Host, Content-Length, Connection and the other hop-by-hop ones) are not sent, nor
+ *   are trailers. A `request.body_writer` runs to its end before the fetch, and goes out whole.
+ * - fetch decodes the body, so that the fields describing the bytes on the wire (Content-Encoding, Content-Length,
+ *   Transfer-Encoding) are dropped, the others are named in lower case, repeated ones are combined, and the version is
+ *   not known (`http_1_1`). A browser does not expose a 3xx response.
+ * - A failure to get a response (network error, refused connection, CORS) throws std::system_error, with
+ *   `std::errc::io_error` and fetch's message. The task resumes on its awaiter's executor, on the event loop.
+ * - `trailers` of a streamed response is not null and stays empty.
+ *
  * Thread safety: send(), stream() and the shortcuts over send() may be called from any thread, concurrently, if the
- * connector allows it.
+ * connector allows it. In a browser, use it, the bodies it gives included, from the thread running the event loop.
  */
 class client {
 public:
@@ -146,7 +162,8 @@ public:
    * quoll::http::client client{"https://api.example.com/v1"};
    * @endcode
    *
-   * @throws std::invalid_argument for another URL, and for a path that would not read as itself (a character RFC 3986
+   * @throws std::invalid_argument for another URL, but for one relative to the page in a browser, and for a path that
+   * would not read as itself (a character RFC 3986
    * does not allow there, an invalid escape, a dot segment, encoded or not, a NUL, an empty segment).
    */
   explicit client(std::string_view url, client_options options = {});
