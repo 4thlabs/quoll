@@ -37,6 +37,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/http/body_stream.hpp>
 #include <quoll/http/detail/streamed_head.hpp>
+#include <quoll/http/detail/streamed_wire.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/serializer.hpp>
 

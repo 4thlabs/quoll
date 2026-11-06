@@ -43,7 +43,7 @@
 #include <quoll/emscripten/detail/js.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/check.hpp>
-#include <quoll/http/detail/streamed_head.hpp>
+#include <quoll/http/detail/write_whole_body.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>

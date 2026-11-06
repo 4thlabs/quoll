@@ -46,6 +46,7 @@
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/client.hpp>
+#include <quoll/http/body_reader.hpp>
 #include <quoll/http/body_stream.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/parser.hpp>
@@ -2476,8 +2477,15 @@ public:
     co_return read;
   }
 
+  // What a socket being torn down may say to a write, other than a broken pipe.
   [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
-    co_return co_await inner_.write_some(data);
+    auto wrote = co_await inner_.write_some(data);
+
+    if (wrote.error == std::errc::broken_pipe) {
+      wrote.error = std::make_error_code(std::errc::connection_aborted);
+    }
+
+    co_return wrote;
   }
 
 private:
@@ -3155,6 +3163,21 @@ TEST_CASE("client::transport: an answer before the end of a body_writer stops it
     REQUIRE(received.find("0\r\n\r\n") == std::string::npos);
   }
 
+  SECTION("through stream(), from a server that went") {
+    auto const by_stream = [&](client::transport<memory_connector> const &transport) -> task<std::string> {
+      auto response = co_await transport.stream(upload_of(writing_until_stopped(stopped_by)));
+      std::string body;
+
+      while (auto const piece = co_await response.body.read()) {
+        body += *piece;
+      }
+
+      co_return std::to_string(static_cast<int>(response.status)) + " " + body;
+    };
+
+    REQUIRE(after(answering_at_the_head(refused, true), by_stream) == "413 no");
+  }
+
   SECTION("through stream(), at the head") {
     auto const by_stream = [&](client::transport<memory_connector> const &transport) -> task<std::string> {
       auto response = co_await transport.stream(upload_of(writing_until_stopped(stopped_by)));
@@ -3307,4 +3330,73 @@ TEST_CASE("client::transport: the timeouts of a body_writer", "[client][timer]")
     REQUIRE(quoll::test::run(time, outcome_of(upload_of(writer), {.response_timeout = 0s}, 2s)) == "timed out at 2");
     REQUIRE(stopped_by == "a stop");
   }
+}
+
+TEST_CASE("client::transport: a server that went stands however its socket says so to a write", "[client]") {
+  async::run_loop loop;
+  std::string stopped_by;
+  memory_server server{loop.get_executor(),
+                       answering_at_the_head("HTTP/1.1 413 Too Big\r\nContent-Length: 2\r\n\r\nno", true),
+                       0,
+                       {},
+                       {}};
+
+  auto const sending = [&]() -> task<std::string> {
+    client::transport const transport{resetting_connector{server}, "example.com", 80};
+
+    co_return (co_await transport.send(upload_of(writing_until_stopped(stopped_by)))).body;
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()) == "no");
+  REQUIRE(stopped_by == "a failed write");
+}
+
+TEST_CASE("client::transport: an interim response does not stop a body_writer", "[client]") {
+  http::router router;
+
+  router.post("/count", [](http::body_reader body) -> task<http::response> {
+    std::size_t size = 0;
+
+    while (auto const piece = co_await body.read()) {
+      size += piece->size();
+    }
+
+    http::response response;
+
+    response.body = std::to_string(size);
+    co_return response;
+  });
+  router.get("/hello", [](http::request) {
+    http::response response;
+
+    response.body = "hello";
+    return response;
+  });
+
+  auto const through_stream = GENERATE(false, true);
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const sending = [&]() -> task<std::string> {
+    client::transport const transport{memory_connector{server}, "example.com", 80};
+    auto request = upload_of(pieces_of(4096, 16), verb::post, "/count");
+    std::string got;
+
+    request.fields.set("Expect", "100-continue");
+
+    if (through_stream) {
+      auto response = co_await transport.stream(std::move(request));
+
+      while (auto const piece = co_await response.body.read()) {
+        got += *piece;
+      }
+    } else {
+      got = (co_await transport.send(std::move(request))).body;
+    }
+
+    co_return got + " " + (co_await transport.send(make_request(verb::get, "/hello"))).body;
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()) == "65536 hello");
+  REQUIRE(server.connections == 1);
 }

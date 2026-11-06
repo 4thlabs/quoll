@@ -443,6 +443,40 @@ TEST_CASE("fetch_transport: a body_writer goes out whole", "[emscripten][http]")
   REQUIRE_THROWS_AS(run(transport.send(std::move(short_of_it))), std::length_error);
 }
 
+TEST_CASE("fetch_transport: a timeout ends a body_writer at its next write", "[emscripten][http][timer]") {
+  test_server const server;
+  fetch_transport const transport{server.url()};
+  http::request request;
+
+  request.method = http::verb::post;
+  request.target = "/status/200";
+  request.body_writer = [](http::body_stream out) -> quoll::async::task<> {
+    // Its own wait lets the event loop run the timeout, and what it then writes is refused, whatever it makes of the
+    // wait.
+    for (;;) {
+      try {
+        co_await quoll::async::sleep_for(std::chrono::milliseconds{1});
+      } catch (std::system_error const &) {
+      }
+
+      co_await out.write("x");
+    }
+  };
+
+  auto const timing_out = [&]() -> quoll::async::task<std::error_code> {
+    try {
+      static_cast<void>(
+          co_await quoll::async::with_timeout(std::chrono::milliseconds{20}, transport.send(std::move(request))));
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  REQUIRE(run(timing_out()) == std::make_error_code(std::errc::timed_out));
+}
+
 TEST_CASE("rest::client over fetch_transport calls an API that only has a contract", "[emscripten][rest]") {
   test_server const server;
   quoll::rest::client<node_server_api::api, fetch_transport> const client{fetch_transport{server.url()}};

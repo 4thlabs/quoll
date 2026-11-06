@@ -37,8 +37,6 @@
 #ifndef QUOLL_HTTP_DETAIL_STREAMED_HEAD_HPP
 #define QUOLL_HTTP_DETAIL_STREAMED_HEAD_HPP
 
-#include <quoll/async/lifetimebound.hpp>
-#include <quoll/async/task.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
@@ -51,10 +49,10 @@
 
 namespace quoll::http::detail {
 
-// How the body of a response written in pieces is framed.
+// How a body written in pieces is framed.
 struct streamed_framing {
   bool chunked = false;
-  // What a Content-Length announces; with neither, the body ends with the connection.
+  // What a Content-Length announces; with neither, the body of a response ends with its connection.
   std::optional<std::uint64_t> length{};
 };
 
@@ -75,41 +73,6 @@ void append_last_chunk(fields const &trailers, std::string &out);
 
 // What a Content-Length among `entries` announces. Throws std::invalid_argument for what serialize() rejects.
 [[nodiscard]] std::optional<std::uint64_t> announced_length(fields const &entries);
-
-// Runs the writer of `message` for a transport that has no use for pieces: `body` then holds what it wrote. Throws
-// std::invalid_argument for a body as well as a writer, and std::length_error for what its Content-Length does not say.
-[[nodiscard]] async::task<> write_whole_body(request &message QUOLL_LIFETIMEBOUND);
-
-// What goes on the wire for a body written in pieces. The head leaves with the first piece, in one write, so that the
-// second write of a message does not wait for what acknowledges the first. Thread safety: none.
-class streamed_wire {
-public:
-  streamed_wire(std::string head, streamed_framing framing) noexcept;
-
-  // `piece` would take the body past its Content-Length.
-  [[nodiscard]] bool past_its_length(std::string_view piece) const noexcept;
-
-  // The bytes that send `piece`, valid until the next call and as long as `piece`: an empty piece sends what is held
-  // back, and what has nothing to frame and nothing before it is not copied.
-  [[nodiscard]] std::string_view frame(std::string_view piece);
-
-  // The bytes that end a body that is whole: see short_of_its_length().
-  [[nodiscard]] std::string_view end(fields const &trailers);
-
-  // Nothing has left yet.
-  [[nodiscard]] bool started() const noexcept;
-
-  [[nodiscard]] bool short_of_its_length() const noexcept;
-
-private:
-  void append_head();
-
-  std::string head_;
-  streamed_framing framing_;
-  std::uint64_t left_;
-  std::string wire_;
-  bool started_ = false;
-};
 
 } // namespace quoll::http::detail
 

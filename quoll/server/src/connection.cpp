@@ -47,6 +47,7 @@
 #include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/detail/streamed_head.hpp>
+#include <quoll/http/detail/streamed_wire.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>

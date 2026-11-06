@@ -51,6 +51,7 @@
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/detail/streamed_head.hpp>
+#include <quoll/http/detail/streamed_wire.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/parser.hpp>
@@ -175,6 +176,12 @@ constexpr int max_interim_responses = 8;
   return error == io::error::end_of_stream || error == std::errc::connection_reset || error == std::errc::broken_pipe;
 }
 
+// How a write shows that the server closed, which a socket being torn down says in more ways than an idle one does.
+[[nodiscard]] bool closed_under_a_write(std::error_code error) noexcept {
+  return closed_meanwhile(error) || error == std::errc::connection_aborted || error == std::errc::not_connected ||
+         error == std::errc::wrong_protocol_type;
+}
+
 // The body of a request going out through its writer, while what reads the response goes on beside it: a server may
 // answer before the end, and one that does not read while it writes would otherwise hold both up. Each write has
 // `timeout`, and the response too, once the body has left. An answer stops what is still writing. What a server closing
@@ -291,7 +298,7 @@ private:
       co_await async::detail::with_optional_timeout(timeout_, write_bytes(bytes));
     } catch (std::system_error const &thrown) {
       failure_ = thrown.code();
-      closed_ = closed_meanwhile(thrown.code());
+      closed_ = closed_under_a_write(thrown.code());
       throw;
     }
   }
