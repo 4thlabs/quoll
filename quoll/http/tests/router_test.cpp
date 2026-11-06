@@ -1454,3 +1454,42 @@ TEST_CASE("local_transport: answers what a connection would, for what would misl
 
   REQUIRE(response.value().status == http::status::internal_server_error);
 }
+
+TEST_CASE("response_writer: a response goes on after its router", "[http][router]") {
+  struct kept_sink {
+    std::string *body;
+
+    [[nodiscard]] task<> write(std::string_view piece) const {
+      body->append(piece);
+      co_return;
+    }
+  };
+
+  quoll::async::run_loop loop;
+  std::string written;
+
+  auto const answered = [&]() -> task<http::response> {
+    http::router router;
+
+    router.get("/rows/{name}", [kept = std::string(100, 'x')](std::string name, http::response_writer out) -> task<> {
+      co_await out.write(name);
+      co_await out.write(kept);
+    });
+
+    http::request request;
+
+    request.target = "/rows/first";
+    co_return co_await router.dispatch(std::move(request));
+  };
+
+  auto response = quoll::test::run(loop, answered());
+  kept_sink sink{&written};
+  auto const writer = response.value().body_writer;
+
+  (void)quoll::test::run(loop, [&]() -> task<int> {
+    co_await writer(http::body_stream{sink});
+    co_return 1;
+  }());
+
+  REQUIRE(written == "first" + std::string(100, 'x'));
+}
