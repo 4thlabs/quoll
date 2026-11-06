@@ -96,6 +96,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   `notes_round_trip` runs them against each other. `samples/ui_notes` (Emscripten): the same contract in a browser.
 - With tests ON, every header is also compiled alone in its own translation unit (`quoll_<module>_header_check`),
   so a header that is not self-contained breaks the build (`QUOLL_HEADER_CHECKS`, ON by default).
+- `docs/`: the guides for users, one Markdown file per subject, listed in the `README.md`, beside `PLAN.md`, `CODING_RULES.md` and `BENCHMARKS.md`.
 - Dependencies come from CPM (`cmake/CPM.cmake`, always included: modules need it, not only tests). Under
   Emscripten the root sets `-fwasm-exceptions` and `-mtail-call` before any dependency is added, and each module passes them on to the program: coroutines resuming each other otherwise grow the stack.
 - Under Emscripten the test executable is linked with JSPI and run by `node --experimental-wasm-jspi`: a test waits

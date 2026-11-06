@@ -1,6 +1,6 @@
 # Quoll — plan
 
-Last update: 2026-11-05. The [roadmap](#roadmap) says what comes next, and is the reference for the order of the work.
+Last update: 2026-11-06. The [roadmap](#roadmap) says what comes next, and is the reference for the order of the work.
 
 ## Target
 
@@ -211,6 +211,8 @@ changes only what the harness shows. Candidates:
 
 ## Decided
 
+- Documentation (2026-11-06) is Markdown in the repository for now: a README and one guide per subject directly under `docs/`, with
+  no site generator. A step of the roadmap is done only once its guide in `docs/` says what it brought.
 - Under WASM, `-mtail-call` (2026-11-05), with `-fwasm-exceptions`: a coroutine resuming another otherwise grows the stack, and
   a long loop of tasks that never suspend overflows it. It asks for Chrome 112, Firefox 121 or Safari 18.2.
 - Performance comes last (2026-11-05): the maintainer needs what comes before it first. An earlier step may still take a
