@@ -46,6 +46,7 @@
 #include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/async/yield.hpp>
@@ -987,6 +988,21 @@ TEST_CASE("asio::runtime offers its loop's timer to its tasks", "[asio][runtime]
   using namespace std::chrono_literals;
 
   REQUIRE(run_task(measure_sleep(20ms)) >= 20ms);
+}
+
+TEST_CASE("asio::runtime: its timer's clock goes by as it waits", "[asio][runtime][timer]") {
+  using namespace std::chrono_literals;
+
+  auto const waiting = []() -> task<std::chrono::nanoseconds> {
+    auto const executor = co_await quoll::async::current_executor();
+    auto const timer = executor.query<quoll::async::timer_ref>();
+    auto const started = timer->now();
+
+    co_await quoll::async::sleep_for(20ms);
+    co_return timer->now() - started;
+  };
+
+  REQUIRE(run_task(waiting()) >= 20ms);
 }
 
 TEST_CASE("asio: with_timeout stops a read from a silent peer", "[asio][runtime][timer]") {

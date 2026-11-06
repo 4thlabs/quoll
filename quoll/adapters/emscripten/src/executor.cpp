@@ -41,6 +41,8 @@
 #include <quoll/async/work_item.hpp>
 #include <quoll/emscripten/detail/js.hpp>
 
+#include <emscripten/emscripten.h>
+
 #include <chrono>
 #include <coroutine>
 #include <optional>
@@ -119,6 +121,11 @@ static_assert(async::ContextAwaitable<timer_operation>);
 } // namespace
 
 } // namespace detail
+
+std::chrono::nanoseconds executor::now() const noexcept {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::duration<double, std::milli>{::emscripten_get_now()});
+}
 
 async::task<bool> executor::wait_for(std::chrono::nanoseconds duration) const {
   co_return co_await detail::timer_operation{duration};

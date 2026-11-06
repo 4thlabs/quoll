@@ -40,6 +40,7 @@
 #include <quoll/http/parser.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <exception>
 #include <functional>
 #include <stop_token>
@@ -61,18 +62,34 @@ struct connection_options {
   std::chrono::nanoseconds idle_timeout = std::chrono::seconds{60};
 
   /**
-   * @brief How long a request may take to arrive once it has started, as a whole: a peer sending a byte now and then
-   * gets no more. Past it, it answers 408 and the connection closes. It starts again once `100 Continue` has left, as
-   * the client waits for that. A body read in pieces (http::body_reader) has it per piece: a transfer takes as long as
-   * it keeps coming, so that only a route that asks for it lets a slow peer stay.
+   * @brief How long a request may wait for its peer once it has started, its body read in pieces (http::body_reader)
+   * included, but not the time a handler takes between two reads. Past it, it answers 408 and the connection closes. It
+   * starts again once `100 Continue` has left, as the client waits for that. What arrives adds to what is left, see
+   * `min_read_rate`.
    */
   std::chrono::nanoseconds read_timeout = std::chrono::seconds{30};
 
   /**
-   * @brief How long a response or a `100 Continue` may take to leave, as a whole, and each piece of a response written
-   * in pieces (http::body_writer). Past it, the connection closes.
+   * @brief In bytes per second, what lets a request take as long as it keeps coming: each byte adds `1 / min_read_rate`
+   * of a second to what `read_timeout` has left, up to `read_timeout` itself. At this rate or above, a transfer has all
+   * the time it needs, on a slow link too, and a silence still ends it within `read_timeout`. Below, a peer sending a
+   * little now and then runs out of time. 0: nothing adds to it, a request has `read_timeout` as a whole, and a body
+   * read in pieces has it per piece, so that a route may keep a slow peer on purpose, as a long-lived stream does.
+   */
+  std::uint64_t min_read_rate = std::uint64_t{16} * 1024;
+
+  /**
+   * @brief How long a response or a `100 Continue` may wait for its peer to take it, not counting the time a
+   * body_writer takes between two writes. Past it, the connection closes. What leaves adds to what is left, see
+   * `min_write_rate`.
    */
   std::chrono::nanoseconds write_timeout = std::chrono::seconds{30};
+
+  /**
+   * @brief `min_read_rate` for what leaves, against `write_timeout`. 0: a response has `write_timeout` as a whole, and
+   * one written in pieces (http::body_writer) has it per piece.
+   */
+  std::uint64_t min_write_rate = std::uint64_t{16} * 1024;
 
   /**
    * @brief After the last response of a connection, once sending has stopped, what the peer still sends is read and

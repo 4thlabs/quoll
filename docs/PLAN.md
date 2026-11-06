@@ -111,11 +111,12 @@ limits, the shutdown and the features are tested, and the reliability points are
   [`BENCHMARKS.md`](BENCHMARKS.md), as streaming touches the hot paths.
 - Streamed request and response bodies, on the server, the client and browser `fetch`. A handler takes an `http::body_reader`
   to read its request in pieces, a message's `body_writer` writes in pieces through an `http::body_stream`, and a client's
-  `transport.stream(request)` reads a response in pieces. Done: `http::parser` hands a body over in pieces, with `http::read_body`, and `http::body_reader`: a handler taking one asks for `100 Continue` by reading, and has a read timeout per piece. And `response.body_writer`: chunked by default, with a write timeout per piece. And `transport.stream(request)`, with `http::streamed_response`: a read timeout per piece, and a connection back at the end of the body. A client sends a request in pieces through its `body_writer`, on a connection of its own, as a writer runs once, with the response read meanwhile so that a server refusing a body is heard; `fetch` and `local_transport` gather what it writes first. And `fetch_transport.stream(request)`, with the same `http::streamed_response`: one piece per JavaScript read of `response.body`, so that nothing holds the body whole.
+  `transport.stream(request)` reads a response in pieces. Done: `http::parser` hands a body over in pieces, with `http::read_body`, and `http::body_reader`: a handler taking one asks for `100 Continue` by reading, and goes by the read timeout and its minimum rate, below. And `response.body_writer`: chunked by default, by the write timeout and its minimum rate. And `transport.stream(request)`, with `http::streamed_response`: a read timeout per piece, and a connection back at the end of the body. A client sends a request in pieces through its `body_writer`, on a connection of its own, as a writer runs once, with the response read meanwhile so that a server refusing a body is heard; `fetch` and `local_transport` gather what it writes first. And `fetch_transport.stream(request)`, with the same `http::streamed_response`: one piece per JavaScript read of `response.body`, so that nothing holds the body whole.
 - Static files, in streaming, from step 2: without it, a file has to fit in memory. Reading one blocks the loop, and Quoll has no
   asynchronous file I/O yet, which comes with them.
-- A limit on progress or a minimum rate, as the read and write timeouts now cover a message as a whole, which ends a
-  legitimate transfer on a slow link (8 MiB in 30 s is about 2.2 Mbit/s). The same goes for static files.
+- Done: a minimum rate on the server, `min_read_rate` and `min_write_rate`, 16 KiB/s by default: what comes or leaves adds to
+  what `read_timeout` and `write_timeout` have left, up to themselves, so that a slow link has the time it needs, and a peer
+  sending a little now and then runs out of it. Static files will go by the same.
 - A half-close in `ByteStream`, if step 2 did not bring it.
 
 *Done when:* a transfer far larger than memory runs in bounded memory, on both sides, with the figure measured.

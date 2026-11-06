@@ -52,10 +52,14 @@ namespace quoll::async {
  * on the awaiter's token (at once if it already was). A stop is an expected outcome here, so that with_timeout() ending
  * its watchdog costs no exception; `sleep_for()` is what applications call. The wait may last longer than `duration`,
  * never less; a duration of zero or less still goes through the loop.
+ *
+ * `now()` is the time on the clock it waits by, from any origin, which never goes back: what tells how long a wait
+ * lasted, in the same time as the wait itself.
  */
 template <class T>
 concept Timer = requires(T const &timer, std::chrono::nanoseconds duration) {
   { timer.wait_for(duration) } -> std::same_as<task<bool>>;
+  { timer.now() } noexcept -> std::same_as<std::chrono::nanoseconds>;
 };
 
 } // namespace quoll::async

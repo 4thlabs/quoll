@@ -64,14 +64,17 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
 #include <exception>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <tuple>
 #include <utility>
@@ -1497,13 +1500,14 @@ TEST_CASE("serve_connection: Expect: 100-continue waits for the handler to ask f
   }
 }
 
-TEST_CASE("serve_connection: a body in pieces has a read timeout per piece", "[server][timer]") {
+TEST_CASE("serve_connection: with no minimum rate, a body in pieces has a read timeout per piece", "[server][timer]") {
   quoll::test::virtual_time time;
   auto const router = make_router();
   auto [client, server] = io::make_memory_stream_pair();
   connection_options options;
 
   options.read_timeout = 3s;
+  options.min_read_rate = 0;
 
   // Each piece comes in time, for longer than one timeout in all, and the last never does.
   auto const peer = [](io::memory_stream stream) -> task<http::response> {
@@ -1870,7 +1874,7 @@ TEST_CASE("serve_connection: a stop in a writer is no failure of the writer", "[
   REQUIRE(failures == 0);
 }
 
-TEST_CASE("serve_connection: a response in pieces has a write timeout per piece", "[server][timer]") {
+TEST_CASE("serve_connection: a response in pieces has a write timeout, not its writer", "[server][timer]") {
   SECTION("a slow writer goes on, past one timeout in all") {
     virtual_time time;
     http::router router;
@@ -2169,4 +2173,425 @@ TEST_CASE("serve_connection: what is at fault after a good piece is refused, if 
 
   REQUIRE(outcome);
   REQUIRE(std::get<1>(*outcome).status == http::status::bad_request);
+}
+
+namespace {
+
+// `body` a part at a time, one `pace` apart, as a POST to `target` of the length it says, or of more if `whole` is
+// false: what the server answered, up to its end.
+task<std::string> send_in_parts(io::memory_stream client, std::string target, std::size_t size, std::size_t part,
+                                std::chrono::nanoseconds pace, bool whole = true) {
+  auto const head = "POST " + target +
+                    " HTTP/1.1\r\nHost: h\r\nContent-Length: " + std::to_string(whole ? size : size * 2) + "\r\n\r\n";
+  auto const [received, sent] = co_await quoll::async::when_all(read_until_closed(client), [&]() -> task<> {
+    (void)co_await io::write(client, std::as_bytes(std::span{head}));
+
+    std::string const bytes(part, 'x');
+
+    for (std::size_t done = 0; done < size; done += part) {
+      if ((co_await io::write(client, std::as_bytes(std::span{bytes}))).error) {
+        co_return;
+      }
+
+      co_await quoll::async::sleep_for(pace);
+    }
+  }());
+
+  co_return received;
+}
+
+http::router make_paced_router() {
+  auto router = make_router();
+
+  router.post("/pieces", [](http::body_reader body) -> task<http::response> {
+    std::size_t size = 0;
+
+    while (auto const piece = co_await body.read()) {
+      size += piece->size();
+    }
+
+    http::response response;
+
+    response.body = std::to_string(size);
+    co_return response;
+  });
+  router.post("/thinking", [](http::body_reader body) -> task<http::response> {
+    std::size_t size = 0;
+
+    while (auto const piece = co_await body.read()) {
+      size += piece->size();
+      co_await quoll::async::sleep_for(10s);
+    }
+
+    http::response response;
+
+    response.body = std::to_string(size);
+    co_return response;
+  });
+  router.get("/some", [](http::request) {
+    http::response response;
+
+    response.body = std::string(std::size_t{2500}, 'x');
+    return response;
+  });
+  router.get("/some-in-pieces", [](http::request) {
+    http::response response;
+
+    response.body_writer = [](http::body_stream out) -> task<> {
+      co_await out.write(std::string(std::size_t{2500}, 'x'));
+    };
+    return response;
+  });
+  router.get("/large", [](http::request) {
+    http::response response;
+
+    response.body = std::string(std::size_t{20000}, 'x');
+    return response;
+  });
+  router.get("/writer", [](http::request) {
+    http::response response;
+
+    response.body_writer = [](http::body_stream out) -> task<> {
+      std::string const piece(std::size_t{2000}, 'x');
+
+      for (auto index = 0; index < 10; ++index) {
+        co_await out.write(piece);
+      }
+    };
+    return response;
+  });
+  router.get("/pondering", [](http::request) {
+    http::response response;
+
+    response.body_writer = [](http::body_stream out) -> task<> {
+      for (auto index = 0; index < 3; ++index) {
+        co_await quoll::async::sleep_for(10s);
+        co_await out.write("part");
+      }
+    };
+    return response;
+  });
+  return router;
+}
+
+// A session with a router of its own, on a virtual clock: what the peer read, and when the server was done with it, as
+// the peer may wait longer. Nothing lingers.
+struct paced_outcome {
+  std::string received;
+  std::chrono::nanoseconds ended{};
+};
+
+template <class MakePeer>
+paced_outcome paced_session(virtual_time &time, connection_options options, MakePeer make_peer) {
+  auto const router = make_paced_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  paced_outcome out;
+
+  options.lingering_timeout = 0s;
+
+  auto const serving = [&](io::memory_stream stream) -> task<> {
+    co_await quoll::server::serve_connection(std::move(stream), router, options);
+    out.ended = time.now();
+  };
+
+  auto outcome =
+      quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), make_peer(std::move(client))));
+
+  out.received = std::move(std::get<1>(outcome.value()));
+  return out;
+}
+
+// A peer that takes what is written `part` bytes at a time, one a second.
+class slow_reader {
+public:
+  slow_reader(io::memory_stream inner, std::size_t part, std::size_t &taken) noexcept
+      : inner_(std::move(inner)), part_(part), taken_(&taken) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
+    try {
+      co_await quoll::async::sleep_for(1s);
+    } catch (std::system_error const &error) {
+      co_return io::io_result{error.code(), 0};
+    }
+
+    auto const done = co_await inner_.write_some(data.first(std::min(part_, data.size())));
+
+    *taken_ += done.transferred;
+    co_return done;
+  }
+
+private:
+  io::memory_stream inner_;
+  std::size_t part_;
+  std::size_t *taken_;
+};
+
+// What serve_connection() got out for `target` to a peer taking 2000 bytes a second, and its time on the clock.
+struct written {
+  std::size_t taken = 0;
+  std::chrono::nanoseconds time{};
+};
+
+written written_to_a_slow_reader(connection_options const &options, std::string const &target) {
+  virtual_time time;
+  auto const router = make_paced_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  written out;
+  auto const raw = "GET " + target + " HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n";
+
+  auto const answer = [&]() -> task<int> {
+    (void)co_await io::write(client, std::as_bytes(std::span{raw}));
+    co_await quoll::server::serve_connection(slow_reader{std::move(server), 2000, out.taken}, router, options);
+    co_return 1;
+  };
+
+  REQUIRE(quoll::test::run(time, answer()) == 1);
+  out.time = time.now();
+  return out;
+}
+
+} // namespace
+
+TEST_CASE("serve_connection: a request has as long as it keeps coming at the minimum rate", "[server][timer]") {
+  connection_options options;
+
+  options.read_timeout = 3s;
+  options.min_read_rate = 1000;
+
+  auto const target = GENERATE(std::string{"/echo"}, std::string{"/pieces"});
+
+  SECTION("above it, far past the timeout") {
+    virtual_time time;
+
+    auto const got = paced_session(
+        time, options, [&](auto client) { return send_in_parts(std::move(client), target, 20000, 2000, 1s); });
+
+    REQUIRE(got.received.starts_with("HTTP/1.1 200"));
+    REQUIRE(got.ended >= 9s);
+  }
+
+  SECTION("below it, it runs out of time, whichever way the body is read") {
+    virtual_time time;
+
+    auto const got = paced_session(
+        time, options, [&](auto client) { return send_in_parts(std::move(client), target, 20000, 100, 1s); });
+
+    REQUIRE(got.received.starts_with("HTTP/1.1 408"));
+    REQUIRE(got.ended >= 3s);
+    REQUIRE(got.ended <= 4s);
+  }
+
+  SECTION("a silence ends it within the timeout, whatever came before it") {
+    virtual_time time;
+
+    auto const got = paced_session(
+        time, options, [&](auto client) { return send_in_parts(std::move(client), target, 20000, 20000, 1h, false); });
+
+    REQUIRE(got.received.starts_with("HTTP/1.1 408"));
+    REQUIRE(got.ended == 3s);
+  }
+}
+
+TEST_CASE("serve_connection: with no minimum rate, a request has its read timeout as a whole", "[server][timer]") {
+  virtual_time time;
+  connection_options options;
+
+  options.read_timeout = 3s;
+  options.min_read_rate = 0;
+
+  auto const got = paced_session(
+      time, options, [&](auto client) { return send_in_parts(std::move(client), "/echo", 20000, 2000, 1s); });
+
+  REQUIRE(got.received.starts_with("HTTP/1.1 408"));
+  REQUIRE(got.ended == 3s);
+}
+
+TEST_CASE("serve_connection: the time a handler takes between two reads does not count against its peer",
+          "[server][timer]") {
+  virtual_time time;
+  connection_options options;
+
+  options.read_timeout = 3s;
+  options.min_read_rate = 1000;
+
+  auto const got = paced_session(
+      time, options, [&](auto client) { return send_in_parts(std::move(client), "/thinking", 4000, 2000, 11s); });
+
+  REQUIRE(got.received.starts_with("HTTP/1.1 200"));
+  REQUIRE(got.ended >= 10s);
+}
+
+TEST_CASE("serve_connection: a response has as long as it keeps leaving at the minimum rate", "[server][timer]") {
+  connection_options options;
+
+  options.write_timeout = 3s;
+
+  auto const target = GENERATE(std::string{"/large"}, std::string{"/writer"});
+
+  SECTION("above it, far past the timeout") {
+    options.min_write_rate = 1000;
+
+    auto const out = written_to_a_slow_reader(options, target);
+
+    REQUIRE(out.taken > 20000);
+    REQUIRE(out.time >= 10s);
+  }
+
+  SECTION("below it, it runs out of time") {
+    options.min_write_rate = 5000;
+
+    auto const out = written_to_a_slow_reader(options, target);
+
+    REQUIRE(out.taken < 20000);
+    REQUIRE(out.time >= 3s);
+    REQUIRE(out.time <= 7s);
+  }
+}
+
+TEST_CASE("serve_connection: with no minimum rate, a response has its write timeout", "[server][timer]") {
+  connection_options options;
+
+  options.write_timeout = 3s;
+  options.min_write_rate = 0;
+
+  SECTION("as a whole") {
+    auto const out = written_to_a_slow_reader(options, "/large");
+
+    REQUIRE(out.taken < 20000);
+    REQUIRE(out.time == 3s);
+  }
+
+  SECTION("per piece") {
+    auto const out = written_to_a_slow_reader(options, "/writer");
+
+    REQUIRE(out.taken > 20000);
+  }
+}
+
+TEST_CASE("serve_connection: the time a body_writer takes between two writes does not count against its peer",
+          "[server][timer]") {
+  connection_options options;
+
+  options.write_timeout = 3s;
+  options.min_write_rate = 1000;
+
+  auto const out = written_to_a_slow_reader(options, "/pondering");
+
+  REQUIRE(out.taken > 12);
+  REQUIRE(out.time >= 30s);
+}
+
+TEST_CASE("serve_connection: each request of a connection has all of its time", "[server][timer]") {
+  virtual_time time;
+  connection_options options;
+
+  options.read_timeout = 3s;
+  options.min_read_rate = 0;
+
+  auto const twice = [](io::memory_stream client) -> task<std::string> {
+    auto const [received, sent] = co_await quoll::async::when_all(read_until_closed(client), [&]() -> task<> {
+      for (std::string_view const close : {"", "Connection: close\r\n"}) {
+        auto const first = std::string{"GET /hello HTTP/1.1\r\nHost: h\r\n"} + std::string{close};
+        std::string_view const rest = "\r\n";
+
+        (void)co_await io::write(client, std::as_bytes(std::span{first}));
+        co_await quoll::async::sleep_for(2s);
+        (void)co_await io::write(client, std::as_bytes(std::span{rest}));
+      }
+    }());
+
+    co_return received;
+  };
+
+  auto const got = paced_session(time, options, twice);
+
+  REQUIRE(got.received.starts_with("HTTP/1.1 200"));
+  REQUIRE(got.received.find("HTTP/1.1 200", 1) != std::string::npos);
+}
+
+TEST_CASE("serve_connection: each response of a connection has all of its time", "[server][timer]") {
+  auto const target = GENERATE(std::string{"/some"}, std::string{"/some-in-pieces"});
+  virtual_time time;
+  auto const router = make_paced_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  connection_options options;
+  std::size_t taken = 0;
+
+  // Well below the rate: one response takes most of the timeout, and two would run out of it.
+  options.write_timeout = 3s;
+  options.min_write_rate = 10000;
+
+  auto const raw = "GET " + target + " HTTP/1.1\r\nHost: h\r\n\r\nGET " + target +
+                   " HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n";
+
+  auto const answer = [&]() -> task<int> {
+    (void)co_await io::write(client, std::as_bytes(std::span{raw}));
+    co_await quoll::server::serve_connection(slow_reader{std::move(server), 2000, taken}, router, options);
+    co_return 1;
+  };
+
+  REQUIRE(quoll::test::run(time, answer()) == 1);
+  REQUIRE(taken > 5000);
+}
+
+TEST_CASE("serve_connection: a timeout near all that nanoseconds can hold is one still", "[server][timer]") {
+  virtual_time time;
+  connection_options options;
+
+  options.read_timeout = std::chrono::nanoseconds::max();
+  options.min_read_rate = 1000;
+
+  auto const got = paced_session(
+      time, options, [&](auto client) { return send_in_parts(std::move(client), "/pieces", 20000, 2000, 1ms); });
+
+  REQUIRE(got.received.starts_with("HTTP/1.1 200"));
+}
+
+TEST_CASE("serve_connection: a read stopped once its patience has run out is stopped, not late", "[server][timer]") {
+  virtual_time time;
+  auto router = make_paced_router();
+
+  router.post("/stopped", [](http::body_reader body) -> task<http::response> {
+    std::stop_source stop;
+    http::response response;
+
+    stop.request_stop();
+
+    try {
+      static_cast<void>(
+          co_await quoll::async::detail::stop_scope<std::optional<std::string_view>>{body.read(), stop.get_token()});
+    } catch (std::system_error const &thrown) {
+      response.body = thrown.code() == std::errc::operation_canceled ? "stopped" : "another failure";
+    }
+
+    co_return response;
+  });
+
+  auto [client, server] = io::make_memory_stream_pair();
+  connection_options options;
+
+  // Spent from the start: what ends a read here has to be seen for what it is.
+  options.read_timeout = -1s;
+  options.lingering_timeout = 0s;
+
+  auto const peer = [](io::memory_stream stream) -> task<std::string> {
+    std::string const head = "POST /stopped HTTP/1.1\r\nHost: h\r\nContent-Length: 4\r\nConnection: close\r\n\r\n";
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{head}));
+    co_return co_await read_until_closed(stream);
+  };
+
+  auto const serving = [&](io::memory_stream stream) -> task<> {
+    // The head first, for the operation that reads it not to wait.
+    co_await quoll::async::yield();
+    co_await quoll::server::serve_connection(std::move(stream), router, options);
+  };
+
+  auto outcome = quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peer(std::move(client))));
+  auto const &received = std::get<1>(outcome.value());
+
+  REQUIRE(received.starts_with("HTTP/1.1 200"));
+  REQUIRE(received.ends_with("stopped"));
 }
