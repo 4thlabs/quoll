@@ -801,6 +801,85 @@ TEST_CASE("http::client: braces after a connector and a URL are options, not a p
   REQUIRE_THROWS_AS((http::client{plain_connector{}, "example.com", {}}), std::invalid_argument);
 }
 
+TEST_CASE("http::client: the shortcuts send the method, target, body and type they say", "[client]") {
+  http::router router;
+
+  auto const seeing = [](std::string method) {
+    return [method = std::move(method)](http::request request, http::route_match) -> task<http::response> {
+      http::response response;
+
+      response.fields.set("X-Seen", method + '|' + request.target + '|' +
+                                        std::string{request.fields.find("Content-Type").value_or("none")} + '|' +
+                                        std::string{request.fields.find("Content-Length").value_or("none")} + '|' +
+                                        request.body + '|');
+      co_return response;
+    };
+  };
+
+  for (auto const &prefix : {std::string{}, std::string{"/v1"}}) {
+    auto const at = prefix + "/at";
+
+    router.add(verb::get, at, "get" + prefix, seeing("GET"));
+    router.add(verb::head, at, "head" + prefix, seeing("HEAD"));
+    router.add(verb::delete_, at, "delete" + prefix, seeing("DELETE"));
+    router.add(verb::post, at, "post" + prefix, seeing("POST"));
+    router.add(verb::put, at, "put" + prefix, seeing("PUT"));
+    router.add(verb::patch, at, "patch" + prefix, seeing("PATCH"));
+  }
+
+  async::run_loop loop;
+  memory_server server{
+      loop.get_executor(),
+      [&router](io::memory_stream stream) { return http::server{router}.serve_connection(std::move(stream)); },
+      0,
+      {},
+      {}};
+
+  auto const call = [&]() -> task<std::vector<std::string>> {
+    http::client const client{memory_connector{server}, "example.com", 80};
+    http::client const under_a_path{memory_connector{server}, "http://example.com/v1"};
+    std::vector<std::string> seen;
+
+    auto const keep = [&seen](http::response const &answer) {
+      seen.emplace_back(answer.fields.find("X-Seen").value_or("nothing"));
+    };
+
+    keep(co_await client.get("/at?x=1"));
+    keep(co_await client.head("/at"));
+    keep(co_await client.delete_("/at"));
+    keep(co_await client.post("/at", "a", "text/plain"));
+    keep(co_await client.put("/at", "b", "application/json"));
+    keep(co_await client.patch("/at", "c"));
+    keep(co_await client.post("/at", ""));
+    keep(co_await under_a_path.get("/at"));
+    co_return seen;
+  };
+
+  auto const seen = quoll::test::run(loop, call());
+
+  if (server.failure) {
+    std::rethrow_exception(server.failure);
+  }
+
+  REQUIRE(seen.value() == std::vector<std::string>{"GET|/at?x=1|none|none||", "HEAD|/at|none|none||",
+                                                   "DELETE|/at|none|none||", "POST|/at|text/plain|1|a|",
+                                                   "PUT|/at|application/json|1|b|", "PATCH|/at|none|1|c|",
+                                                   "POST|/at|none|0||", "GET|/v1/at|none|none||"});
+}
+
+TEST_CASE("http::client: a shortcut rejects what send() does, before any task", "[client]") {
+  http::client const client{plain_connector{}, "example.com", 80};
+
+  REQUIRE_THROWS_AS((void)client.get("no-slash"), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.head("no-slash"), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.delete_("no-slash"), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.post("no-slash", "body"), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.put("no-slash", "body"), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.patch("no-slash", "body"), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.get("/with a space"), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.post("/a", "body", "text/plain\r\nEvil: 1"), std::invalid_argument);
+}
+
 TEST_CASE("http::client: one moved from still sends", "[client]") {
   auto const call = []() -> task<int> {
     http::client moved_from{tls_recording_connector{}, "http://example.com"};

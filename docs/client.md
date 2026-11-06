@@ -16,28 +16,39 @@ using namespace std::chrono_literals;
 
 ```cpp
 http::client client{"https://api.example.com/v1"};
-http::request request;
 
-request.method = http::verb::post;
-request.target = "/users?notify=true";
-request.fields.set("Content-Type", "application/json");
-request.body = R"({"name":"Ada"})";
-
-auto const response = co_await client.send(request);
+auto const users = co_await client.get("/users?limit=20");
+auto const response = co_await client.post("/users?notify=true", R"({"name":"Ada"})", "application/json");
 
 if (response.status == http::status::created) {
   std::cout << response.body << '\n';
 }
 ```
 
-Every response is a result, error statuses included. `request.target` is in origin form, starting
+`get`, `head` and `delete_` take a target, and `post`, `put` and `patch` a target, a body and, if it has
+one, its type. For anything else, such as fields of its own, or a request body in pieces, `send` takes a
+whole request, and `stream` reads a [response in pieces](streaming.md):
+
+```cpp
+http::request request;
+
+request.method = http::verb::post;
+request.target = "/users";
+request.fields.set("Authorization", token);
+request.fields.set("Content-Type", "application/json");
+request.body = R"({"name":"Ada"})";
+
+auto const created = co_await client.send(request);
+```
+
+Every response is a result, error statuses included. A target is in origin form, starting
 with `/`. A `Host` field naming the server is added unless the request has one, and `Content-Length`
 when it has a body or is a POST, PUT or PATCH, unless its fields declare a framing.
 
 A client opens its connections through the network of the executor that sends, so that it needs
 nothing from you. Copies share their connections. A task copies what it needs, so that the client
 does not have to outlive it. What holds connections belongs in a coroutine, not in `main()`: see
-[How a program runs](getting-started.md#how-a-program-runs). `send()` and `stream()` may be called
+[How a program runs](getting-started.md#how-a-program-runs). All of these may be called
 concurrently, from any thread, if the connector allows it.
 
 ## URLs
