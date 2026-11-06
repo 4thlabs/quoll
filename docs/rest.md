@@ -156,18 +156,15 @@ struct cards_service {
 };
 ```
 
-`mount` registers the routes in a router, which you then [serve](server.md#serving):
+`mount` registers the routes in a server, or in a router you give one, which you then [serve](server.md#serving):
 
 ```cpp
-http::router router;
+http::server server;
 
-rest::mount<v1>(router, users_service{}, cards_service{},
+rest::mount<v1>(server, users_service{}, cards_service{},
                 rest::validators([](rest::credential<rest::bearer_auth> const &token) {
                   return token.value == "valid";
                 }));
-
-http::server server{router};
-
 co_await server.listen(8080);
 ```
 

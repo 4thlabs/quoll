@@ -1,16 +1,26 @@
 # Server
 
-A server is a router, which maps requests to handlers and does no I/O, and something feeding it the
-requests of connections: `http::server` most of the time. It speaks HTTP/1.x, over TCP or TLS.
-Link `quoll::runtime` and `quoll::server`.
+`http::server` serves routes over connections, in HTTP/1.x, over TCP or TLS. Link `quoll::runtime` and
+`quoll::server`.
 
-To serve a typed API rather than routes by hand, see [REST](rest.md), which registers its routes in
-this same router. The examples here assume:
+```cpp
+http::server server;
+
+server.get("/hello/{name}", hello);
+co_await server.listen(8080);
+```
+
+Its routes live in a router, which maps requests to handlers and does no I/O. The examples of routes
+below name it `router`, and read the same on an `http::router` and on an `http::server`, which has the
+same functions. To serve a typed API rather than routes by hand, see [REST](rest.md).
+
+The examples here assume:
 
 ```cpp
 namespace async = quoll::async;
 namespace http = quoll::http;
 namespace io = quoll::io;
+namespace rest = quoll::rest;
 using namespace std::chrono_literals;
 ```
 
@@ -184,7 +194,20 @@ all of that is the same 404 as what does not exist. There is no listing of a dir
 
 ## Serving
 
-`http::server` serves a router. Its `listen` listens on a port and serves until a stop request. It listens through the network of
+`http::server` holds its routes, added with the same functions as a router's, or starts from a copy of a
+router, for one built apart or shared by several servers. Both take the same options:
+
+```cpp
+http::server simple;
+http::server simple_with_options{{.max_connections = 1000}};
+http::server custom{router};
+http::server custom_with_options{router, {.max_connections = 1000}};
+
+simple.get("/users/{id}", show_user);
+rest::mount<api>(simple, users_service{});
+```
+
+Its `listen` listens on a port and serves until a stop request. It listens through the network of
 the executor it runs on, so that it needs nothing else. It takes the loopback interface by default:
 ask for `0.0.0.0` or `::` to be reachable from outside.
 
@@ -196,9 +219,13 @@ co_await server.listen(8080, {.address = "0.0.0.0"});
 
 It throws `std::system_error` when the address cannot be bound or the certificate loaded.
 
-The server keeps its own copy of the router, so that neither the router nor the server has to outlive
-what it starts. Add the routes first, as one added afterwards is not served. A handler with a state of
-its own is copied along: for two servers of one router to share it, hold it in a `std::shared_ptr`.
+Nothing has to outlive what a server starts: its tasks share what it holds, and it keeps its own copy of a
+router it is given. Add the routes first. One added to the server once it serves throws
+`std::logic_error`, and one added to the router it copied is not served. A handler with a state of its
+own is copied with its router: for two servers of one router to share it, hold it in a `std::shared_ptr`.
+
+A copy of a server is the same server. It may listen on several ports, each `listen` or `serve` being a task
+of its own, and `max_connections` counts for all of them. `server.connections()` says how many it serves now.
 
 To know the port before serving, or that the server is ready, listen first and then `serve`. With
 port 0, the system picks a free one:
@@ -210,10 +237,10 @@ std::cout << "listening on " << listener.local_port().value_or(0) << std::endl;
 
 http::server server{router};
 
-co_await server.serve(listener);
+co_await server.serve(std::move(listener));
 ```
 
-`serve` takes anything modelling `io::Listener`. Each connection runs as a task of its own, so that
+`serve` takes over anything modelling `io::Listener`: what you need of it is read before. Each connection runs as a task of its own, so that
 connections are served concurrently, one request at a time on each.
 
 `server.serve_connection` serves one connection, over anything modelling `io::ByteStream`, until it ends.
@@ -237,8 +264,6 @@ auto [served, response] = co_await async::when_all(
 ```
 
 The peer's stream closes with its task, which ends the connection.
-
-`serve` needs its `listener` to outlive the task. The others need nothing to.
 
 > [!NOTE]
 > `quoll::runtime` runs everything on the thread that calls `run()`. A handler that blocks that
@@ -326,7 +351,7 @@ A body too large is refused as soon as its head announces it.
 | Option                | Default | What it does                                                                                                                |
 | --------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `connection`          |         | The `connection_options` above.                                                                                             |
-| `max_connections`     | 10,000  | How many connections are served at once. Past it, a new one is accepted and closed at once, without a word. Zero: no limit. |
+| `max_connections`     | 10,000  | How many connections the server serves at once, through all of its `listen` and `serve`. Past it, a new one is accepted and closed at once, without a word. Zero: no limit. |
 | `shutdown_timeout`    | 30 s    | How long the requests under way may take to finish once asked to stop. Past it, they are stopped. Zero stops them at once.  |
 | `on_connection_error` | none    | Called with the exception that ended a connection (a stream exception, `std::bad_alloc`...). Must not throw.                |
 | `on_accept_error`     | below   | What an accept failure does.                                                                                                |
@@ -354,7 +379,7 @@ On a stop request:
 2. Idle connections close at once.
 3. Requests under way finish, within `shutdown_timeout`, past which they are stopped. A response not
    started yet says `Connection: close`.
-4. The task completes once its connections have ended, so that `listener` only has to outlive it.
+4. The task completes once its connections have ended, so that nothing has to outlive it.
 
 ## Errors
 

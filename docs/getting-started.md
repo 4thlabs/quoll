@@ -145,17 +145,14 @@ namespace async = quoll::async;
 namespace http = quoll::http;
 
 async::task<> serve_hello() {
-  http::router router;
+  http::server server;
 
-  router.get("/hello/{name}", [](std::string name) {
+  server.get("/hello/{name}", [](std::string name) {
     http::response response;
 
     response.body = "Hello, " + name + "!";
     return response;
   });
-
-  http::server server{router};
-
   co_await server.listen(8080);
 }
 

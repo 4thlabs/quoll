@@ -44,6 +44,7 @@
 #include <quoll/rest/validators.hpp>
 
 #include <array>
+#include <concepts>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -149,6 +150,15 @@ void mount(http::router &router, Args &&...args) {
   }(typename Api::routes{});
 
   router = std::move(staged);
+}
+
+/** @brief mount() on what holds a router of its own, as an http::server. */
+template <class Api, class Target, class... Args>
+  requires requires(Target &target) {
+    { target.routes() } -> std::same_as<http::router &>;
+  }
+void mount(Target &target, Args &&...args) {
+  mount<Api>(target.routes(), std::forward<Args>(args)...);
 }
 
 } // namespace quoll::rest

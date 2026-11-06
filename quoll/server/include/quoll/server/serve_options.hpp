@@ -54,9 +54,9 @@ struct serve_options {
   connection_options connection{};
 
   /**
-   * @brief How many connections are served at once, by one call to listen() or serve(). Past it, a new connection is
-   * accepted and closed at once, without a word, which keeps the accept queue moving. Zero: no limit, up to what the
-   * system allows.
+   * @brief How many connections the server serves at once, through all of its listen() and serve(). Past it, a new
+   * connection is accepted and closed at once, without a word, which keeps the accept queue moving. Zero: no limit, up
+   * to what the system allows.
    */
   std::size_t max_connections = 10'000;
 

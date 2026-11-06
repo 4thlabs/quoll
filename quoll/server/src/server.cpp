@@ -47,15 +47,30 @@
 #include <quoll/io/listen_tls.hpp>
 #include <quoll/server/detail/serve_connection.hpp>
 
+#include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <exception>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <stop_token>
 #include <system_error>
 #include <utility>
 
 namespace quoll::http::detail {
+
+// What a server and its copies share, with its tasks.
+struct server_state {
+  server_state(http::router routes, serve_options serving_options)
+      : router(std::move(routes)), options(std::move(serving_options)) {}
+
+  http::router router;
+  serve_options options;
+  std::atomic<std::size_t> connections{0};
+  // Once set, `router` is read by connections, and closed.
+  std::atomic<bool> serving{false};
+};
 
 namespace {
 
@@ -89,9 +104,12 @@ async::task<bool> accept_again(std::error_code error) {
   co_return true;
 }
 
-// What the connections of a serve() share: its options, and the count serve() waits on before it completes.
+// What the connections of a serve() share. `state` is no owner: the frame of serve() holds it, past each connection's
+// last use of it, and it ends on the accept loop rather than on a connection's thread, as a connection's frame ends
+// after serve() resumes, where what a handler holds has no business ending.
 struct shared_options {
-  serve_options options;
+  server_state *state;
+  connection_options connection;
   async::detail::task_group connections;
   // Ends them gently, where the stop token of their tasks cancels what they have pending.
   std::stop_source drain;
@@ -102,19 +120,38 @@ struct shared_options {
 struct connection_outcome {
   std::shared_ptr<shared_options> shared;
 
-  void operator()() const noexcept { shared->connections.ended(); }
+  void ended() const noexcept {
+    shared->state->connections.fetch_sub(1);
+    shared->connections.ended();
+  }
+
+  void operator()() const noexcept { ended(); }
 
   void operator()(std::exception_ptr failure) const noexcept {
-    if (shared->options.on_connection_error) {
-      shared->options.on_connection_error(std::move(failure));
+    if (shared->state->options.on_connection_error) {
+      shared->state->options.on_connection_error(std::move(failure));
     }
 
-    shared->connections.ended();
+    ended();
   }
 };
 
+// Takes a place among the server's connections, if it has one left: two accept loops may ask at once, so that it cannot
+// look before it takes.
+[[nodiscard]] bool try_open(server_state &state) noexcept {
+  auto const max_connections = state.options.max_connections;
+  auto const before = state.connections.fetch_add(1);
+
+  if (max_connections != 0 && before >= max_connections) {
+    state.connections.fetch_sub(1);
+    return false;
+  }
+
+  return true;
+}
+
 async::task<> serve_shared(io::any_stream stream, http::router const &router, std::shared_ptr<shared_options> shared) {
-  co_await serve_connection(std::move(stream), router, shared->options.connection);
+  co_await serve_connection(std::move(stream), router, shared->connection);
 }
 
 async::task<> join_then_cancel(async::detail::task_group &connections, std::stop_source &deadline) {
@@ -138,7 +175,7 @@ async::task<> stop_past_deadline(async::timer_ref timer, std::chrono::nanosecond
 // The connections have been asked to drain: waits for them, up to the timeout, past which they are stopped. Without a
 // timeout, or a timer to bound it, it has nothing to do.
 async::task<> wind_down(shared_options &shared, std::stop_source &connections_stop) {
-  auto const timeout = shared.options.shutdown_timeout;
+  auto const timeout = shared.state->options.shutdown_timeout;
   auto const timer = (co_await async::current_executor()).query<async::timer_ref>();
 
   if (timeout <= std::chrono::nanoseconds::zero() || !timer) {
@@ -153,16 +190,14 @@ async::task<> wind_down(shared_options &shared, std::stop_source &connections_st
 
 } // namespace
 
-// `router` stays in this frame, where the last copy ends on the accept loop: a connection's frame ends after serve()
-// resumes, maybe on another thread, where what a handler holds has no business ending.
-async::task<> serve_accepting(async::any_executor executor, listener_ref listener,
-                              std::shared_ptr<http::router const> router, serve_options options) {
+async::task<> serve_accepting(async::any_executor executor, io::any_listener listener,
+                              std::shared_ptr<server_state> state) {
   auto const stop_token = co_await async::current_stop_token();
-  auto const shared = std::make_shared<shared_options>(std::move(options));
+  auto const shared = std::make_shared<shared_options>(state.get(), state->options.connection);
 
-  shared->options.connection.drain = shared->drain.get_token();
+  shared->connection.drain = shared->drain.get_token();
 
-  auto const &accept_error = shared->options.on_accept_error;
+  auto const &accept_error = state->options.on_accept_error;
   std::stop_source connections_stop;
   auto const drain = [&shared] { shared->drain.request_stop(); };
   std::stop_callback const drain_on_stop{stop_token, drain};
@@ -174,7 +209,7 @@ async::task<> serve_accepting(async::any_executor executor, listener_ref listene
     std::error_code error;
 
     try {
-      stream.emplace(co_await listener.accept(listener.listener));
+      stream.emplace(co_await listener.accept());
     } catch (std::system_error const &thrown) {
       failure = std::current_exception();
       error = thrown.code();
@@ -205,19 +240,18 @@ async::task<> serve_accepting(async::any_executor executor, listener_ref listene
       continue;
     }
 
-    auto const max_connections = shared->options.max_connections;
-
-    if (max_connections != 0 && shared->connections.live() >= max_connections) {
+    if (!try_open(*state)) {
       continue;
     }
 
     shared->connections.started();
 
     try {
-      async::co_spawn(executor, serve_shared(std::move(*stream), *router, shared), connection_outcome{shared},
+      async::co_spawn(executor, serve_shared(std::move(*stream), state->router, shared), connection_outcome{shared},
                       connections_stop.get_token());
     } catch (...) {
       // Not spawned: stop the others, wait for them, then fail.
+      state->connections.fetch_sub(1);
       shared->connections.ended();
       ending = std::current_exception();
       break;
@@ -243,27 +277,43 @@ async::task<> serve_accepting(async::any_executor executor, listener_ref listene
   }
 }
 
-async::task<> serve_accepting_here(listener_ref listener, std::shared_ptr<http::router const> router,
-                                   serve_options options) {
+namespace {
+
+async::task<> serve_accepting_here(io::any_listener listener, std::shared_ptr<server_state> state) {
   // A copy, held by each connection: their frames end after serve() resumes.
   async::any_executor executor{co_await async::current_executor()};
 
-  co_await serve_accepting(std::move(executor), listener, std::move(router), std::move(options));
+  co_await serve_accepting(std::move(executor), std::move(listener), std::move(state));
 }
 
-namespace {
-
-[[nodiscard]] async::task<> listen_and_serve(std::shared_ptr<http::router const> router, std::uint16_t port,
-                                             listen_options where, serve_options options) {
+[[nodiscard]] async::task<> listen_and_serve(std::shared_ptr<server_state> state, std::uint16_t port,
+                                             listen_options where) {
   auto listener = where.tls.enabled() ? co_await io::listen_tls(port, std::move(where.tls), std::move(where.address))
                                       : co_await io::listen(port, std::move(where.address));
 
-  co_await serve_accepting_here(listener_ref{listener}, std::move(router), std::move(options));
+  co_await serve_accepting_here(std::move(listener), std::move(state));
 }
 
-[[nodiscard]] async::task<> serve_one(io::any_stream stream, std::shared_ptr<http::router const> router,
-                                      connection_options options) {
-  co_await serve_connection(std::move(stream), *router, options);
+// One more connection for connections(), for as long as it lives.
+class counted_connection {
+public:
+  explicit counted_connection(server_state &state) noexcept : state_(&state) { state_->connections.fetch_add(1); }
+
+  counted_connection(counted_connection const &) = delete;
+  counted_connection &operator=(counted_connection const &) = delete;
+  counted_connection(counted_connection &&) = delete;
+  counted_connection &operator=(counted_connection &&) = delete;
+
+  ~counted_connection() { state_->connections.fetch_sub(1); }
+
+private:
+  server_state *state_;
+};
+
+[[nodiscard]] async::task<> serve_one(io::any_stream stream, std::shared_ptr<server_state> state) {
+  counted_connection const counted{*state};
+
+  co_await serve_connection(std::move(stream), state->router, state->options.connection);
 }
 
 } // namespace
@@ -272,15 +322,41 @@ namespace {
 
 namespace quoll::http {
 
+server::server(serve_options options) : server(http::router{}, std::move(options)) {}
+
 server::server(http::router router, serve_options options)
-    : router_(std::make_shared<http::router const>(std::move(router))), options_(std::move(options)) {}
+    : state_(std::make_shared<detail::server_state>(std::move(router), std::move(options))) {}
+
+http::router &server::routes() {
+  if (state_->serving.load()) {
+    throw std::logic_error{"quoll::http::server: routes cannot be added once it serves"};
+  }
+
+  return state_->router;
+}
+
+http::router const &server::routes() const noexcept { return state_->router; }
+
+std::size_t server::connections() const noexcept { return state_->connections.load(); }
 
 async::task<> server::listen(std::uint16_t port, listen_options where) const {
-  return detail::listen_and_serve(router_, port, std::move(where), options_);
+  state_->serving.store(true);
+  return detail::listen_and_serve(state_, port, std::move(where));
+}
+
+async::task<> server::serve(io::any_listener listener) const {
+  state_->serving.store(true);
+  return detail::serve_accepting_here(std::move(listener), state_);
+}
+
+async::task<> server::serve_on(async::any_executor executor, io::any_listener listener) const {
+  state_->serving.store(true);
+  return detail::serve_accepting(std::move(executor), std::move(listener), state_);
 }
 
 async::task<> server::serve_connection(io::any_stream stream) const {
-  return detail::serve_one(std::move(stream), router_, options_.connection);
+  state_->serving.store(true);
+  return detail::serve_one(std::move(stream), state_);
 }
 
 } // namespace quoll::http

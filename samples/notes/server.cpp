@@ -99,18 +99,18 @@ private:
   std::int64_t next_id_ = 1;
 };
 
-// The program: the router and its server live in this coroutine, on the runtime. Listening first, then serving
+// The program: the server lives in this coroutine, on the runtime. Listening first, then serving
 // (what quoll::http::server::listen does in one call), tells when the server is ready: once the address is printed.
 quoll::async::task<> serve_notes(std::uint16_t port) {
-  quoll::http::router router;
+  quoll::http::server server;
 
-  quoll::rest::mount<notes::api>(router, notes_service{});
+  quoll::rest::mount<notes::api>(server, notes_service{});
 
   auto listener = co_await quoll::io::listen(port);
 
   // With port 0, the system picks a free one.
   std::cout << "notes API on http://localhost:" << listener.local_port().value_or(port) << "/api/notes" << std::endl;
-  co_await quoll::http::server{router}.serve(listener);
+  co_await server.serve(std::move(listener));
   std::cout << "stopped\n";
 }
 

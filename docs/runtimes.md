@@ -120,7 +120,7 @@ auto listener = co_await io::listen(8080);
 
 http::server server{router};
 
-co_await server.serve(pool.get_executor(), listener);
+co_await server.serve(pool.get_executor(), std::move(listener));
 ```
 
 > [!WARNING]

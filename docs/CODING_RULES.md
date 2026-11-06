@@ -67,8 +67,8 @@ guidelines and the C++ Core Guidelines.
   model is checked with `static_assert(Concept<Model>);`.
 - `constexpr` wherever possible, `consteval` for compile-time-only helpers.
 - What outlives a call owns what it needs: the public API keeps no reference a user has to keep alive, even at the cost of a
-  copy. The exceptions are `_ref` wrappers, views, and what an operation acts on, as a stream, a listener or the object of
-  a member (`http::read(stream, ...)`, `server.serve(listener)`, `router.dispatch()`). The fast path goes behind it, in `detail`.
+  copy. The exceptions are `_ref` wrappers, views, and what an operation acts on, as a stream or the object of a member
+  (`http::read(stream, ...)`, `router.dispatch()`). The fast path goes behind it, in `detail`.
 - Non-owning parameters as `std::string_view` / `std::span`; ownership through values or `std::unique_ptr`. No raw
   owning pointers, no `new` / `delete`. Throw by value, catch by `const&`.
 - Rule of zero. A type owning a resource (coroutine handle, thread...) explicitly defines or deletes all five

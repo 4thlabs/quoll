@@ -21,8 +21,8 @@ current_executor and current_stop_token, executor services, co_spawn, on an exec
 `io::network_connector`, TLS options with `TlsNetwork`, `tls_network_ref`, `TlsConnector`, `io::connect_tls` and
 `io::listen_tls`, in-memory stream pair, `io::write`), `quoll::http` (messages, llhttp parser, serializer,
 `http::read` / `http::write` over a byte stream, `HttpTransport` concept, sans-IO `router`, `local_transport` to a
-router of the same program; llhttp is compiled and exported as `quoll::llhttp`), `quoll::server` (in `quoll::http`: `server` keeps a copy of a router and serves a byte stream,
-accepts connections from a `Listener` or listens on a port, `static_files`, a middleware),
+router of the same program; llhttp is compiled and exported as `quoll::llhttp`), `quoll::server` (in `quoll::http`: `server` holds routes or a copy of a router, a handle shared with its tasks, and serves a byte stream,
+takes over a `Listener` or listens on a port, `static_files`, a middleware),
 `quoll::client` (in `quoll::http`: `client`, an `HttpTransport` over a `Connector` with keep-alive connections, built from an
 `http[s]://` URL), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `http::client` by default, and the
 contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates; and the codecs: `json_codec` on
