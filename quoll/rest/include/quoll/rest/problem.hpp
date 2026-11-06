@@ -54,14 +54,14 @@ inline constexpr std::string_view problem_content_type = "application/problem+js
  */
 struct problem {
   /** @brief A URI identifying the problem type. */
-  std::optional<std::string> type;
+  std::optional<std::string> type{};
   /** @brief A short summary of the problem type: the reason phrase of the status for the server's own errors. */
-  std::optional<std::string> title;
-  std::optional<int> status;
+  std::optional<std::string> title{};
+  std::optional<int> status{};
   /** @brief What went wrong with this request. */
-  std::optional<std::string> detail;
+  std::optional<std::string> detail{};
   /** @brief A URI identifying this occurrence. */
-  std::optional<std::string> instance;
+  std::optional<std::string> instance{};
 };
 
 } // namespace quoll::rest

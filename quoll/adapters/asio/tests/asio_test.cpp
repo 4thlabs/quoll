@@ -1395,7 +1395,56 @@ TEST_CASE("asio: the minimum rate on a real clock, and a writer reading its requ
   // Below it, it ends short of its end, as the response had started.
   auto const slow = run_task(exchange(1, 30));
 
+  REQUIRE(slow.starts_with("HTTP/1.1 200"));
   REQUIRE(!slow.ends_with("0\r\n\r\n"));
+}
+
+TEST_CASE("asio: a timeout as far back as nanoseconds go has expired, and stays so on a real clock",
+          "[asio][runtime][server]") {
+  auto const exchange = []() -> task<std::string> {
+    http::router router;
+
+    router.get("/hello", [](http::request) { return http::response{}; });
+
+    auto listener = co_await io::listen(0);
+    auto const port = listener.local_port().value();
+    std::stop_source stop;
+    quoll::server::serve_options options;
+
+    options.shutdown_timeout = {};
+    options.connection.read_timeout = std::chrono::nanoseconds::min();
+
+    auto const serving = [&]() -> task<> {
+      co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router, options),
+                                                      stop.get_token()};
+    };
+
+    auto const calling = [&]() -> task<std::string> {
+      quoll::async::detail::stop_on_exit const stop_server{stop};
+      auto stream = co_await io::connect("127.0.0.1", port);
+      std::string_view const start = "GET /hello HTTP/1.1\r\nHost: h\r\n";
+      std::string received;
+      std::array<char, 4096> chunk{};
+
+      (void)co_await io::write(stream, std::as_bytes(std::span{start}));
+
+      for (;;) {
+        auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+        if (read.error) {
+          co_return received;
+        }
+
+        received.append(chunk.data(), read.transferred);
+      }
+    };
+
+    auto [served, received] = co_await quoll::async::when_all(serving(), calling());
+
+    co_return std::move(received);
+  };
+
+  REQUIRE(run_task(exchange()).starts_with("HTTP/1.1 408"));
 }
 
 TEST_CASE("asio: a client still sending a refused body finishes, then reads its answer", "[asio][runtime]") {

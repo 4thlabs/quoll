@@ -193,11 +193,11 @@ enum class expectation { none, a_continue, unsupported };
 // How long one direction of a message may still wait for its peer: its timeout, less what it waited, plus what the
 // bytes that came earn at the minimum rate, never above its timeout, so that a burst does not pay for a long silence
 // after it. While an operation goes on, that is one deadline on the timer's clock, which what transfers moves and what
-// watches reads: atomic, as an executor that runs them on several threads, an io_context some threads run, may do it at
-// once.
+// watches reads: atomic, as an executor running them on several threads may do it at once, though
+// a socket asks for one that does not.
 class patience {
 public:
-  // An operation that takes no longer than `prompt` is not charged: see paced_stream.
+  // An operation that takes no longer than `prompt` gives back all of the timeout: see paced_stream.
   patience(std::chrono::nanoseconds timeout, std::uint64_t min_rate, std::chrono::nanoseconds prompt) noexcept
       : timeout_(timeout), left_(timeout), prompt_(prompt), min_rate_(min_rate) {}
 
@@ -211,11 +211,10 @@ public:
   // The clock runs against the peer from here to operation_over(): not between two reads of a handler.
   void operation_begins() noexcept {
     began_ = timer_->now();
-    left_at_start_ = left_;
     deadline_.store(later(began_, left_).count(), std::memory_order_relaxed);
   }
 
-  [[nodiscard]] std::chrono::nanoseconds left_now() const noexcept { return deadline() - timer_->now(); }
+  [[nodiscard]] std::chrono::nanoseconds left_now() const noexcept { return until(deadline(), timer_->now()); }
 
   void came(std::uint64_t bytes) noexcept {
     if (min_rate_ == 0) {
@@ -237,11 +236,7 @@ public:
   void operation_over() noexcept {
     auto const now = timer_->now();
 
-    left_ = deadline() - now;
-
-    if (now - began_ <= prompt_) {
-      left_ = std::max(left_, left_at_start_);
-    }
+    left_ = now - began_ <= prompt_ ? timeout_ : until(deadline(), now);
   }
 
   void start_again() noexcept { left_ = timeout_; }
@@ -260,13 +255,19 @@ private:
     return more > std::chrono::nanoseconds::max() - time ? std::chrono::nanoseconds::max() : time + more;
   }
 
+  // What is left to `deadline`, where one that has long passed must stay passed rather than wrap around: a clock is
+  // never negative, see async::Timer.
+  [[nodiscard]] static std::chrono::nanoseconds until(std::chrono::nanoseconds deadline,
+                                                      std::chrono::nanoseconds now) noexcept {
+    return deadline < std::chrono::nanoseconds::min() + now ? std::chrono::nanoseconds::min() : deadline - now;
+  }
+
   [[nodiscard]] std::chrono::nanoseconds deadline() const noexcept {
     return std::chrono::nanoseconds{deadline_.load(std::memory_order_relaxed)};
   }
 
   std::chrono::nanoseconds timeout_;
   std::chrono::nanoseconds left_;
-  std::chrono::nanoseconds left_at_start_{};
   std::chrono::nanoseconds began_{};
   std::chrono::nanoseconds prompt_;
   std::atomic<std::chrono::nanoseconds::rep> deadline_{0};
@@ -283,15 +284,18 @@ private:
 // framing that no limit bounds, chunk extensions or a chunk size's leading zeros, earns a peer nothing. They count as
 // the next read begins, as the parser has not seen them before.
 //
-// Writing, what takes no longer than `prompt_write` is not charged: a peer that takes every byte at once must not run
-// out of time because the loop is busy, which on a long stream of small writes would add up to more than they earn. A
-// peer that does not read soon blocks a write for longer.
+// Writing, what takes no longer than `prompt_write` gives back all of the timeout: a peer that takes bytes at once is
+// not the one to blame for what a busy loop or an earlier stall cost, which on a long stream of small writes would add
+// up to more than they earn. A peer that does not read soon blocks a write for longer. A loop that keeps every write
+// waiting for longer than this has other troubles.
 //
 // Thread safety: one read and one write may go on at once, a body_writer reading its request, as each direction keeps
 // to its own patience. `100 Continue` is a write too: a body_writer on such a request writes and reads in turn, as
 // http::body_writer says.
 class paced_stream {
-  static constexpr std::chrono::nanoseconds prompt_write = std::chrono::milliseconds{10};
+  static constexpr std::chrono::nanoseconds prompt_write = std::chrono::milliseconds{100};
+  // Less than any time an operation takes.
+  static constexpr std::chrono::nanoseconds never_prompt{-1};
 
   // What a transfer is awaited through, with no frame of its own, as it is on the path of every request.
   template <io::io_result (paced_stream::*Transferred)(io::io_result)>
@@ -317,7 +321,7 @@ class paced_stream {
 public:
   paced_stream(io::any_stream &stream QUOLL_LIFETIMEBOUND, http::request_parser const &parser QUOLL_LIFETIMEBOUND,
                connection_options const &options) noexcept
-      : stream_(&stream), parser_(&parser), reading_(options.read_timeout, options.min_read_rate, {}),
+      : stream_(&stream), parser_(&parser), reading_(options.read_timeout, options.min_read_rate, never_prompt),
         writing_(options.write_timeout, options.min_write_rate, prompt_write) {}
 
   [[nodiscard]] auto read_some(std::span<std::byte> buffer QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
@@ -355,6 +359,9 @@ public:
     return patiently_writing(write_through(data));
   }
 
+  // A new request: what the parser counts now is its own.
+  void message_begins() noexcept { body_seen_ = 0; }
+
   [[nodiscard]] patience &reading() noexcept QUOLL_LIFETIMEBOUND { return reading_; }
 
   [[nodiscard]] patience &writing() noexcept QUOLL_LIFETIMEBOUND { return writing_; }
@@ -365,10 +372,10 @@ private:
     co_return (co_await io::write(*this, data)).error;
   }
 
-  // What the parser has seen of the body since it was last asked; a new message starts it again.
+  // What the parser has seen of the body since it was last asked.
   [[nodiscard]] std::uint64_t body_since_last() noexcept {
     auto const received = parser_->body_received();
-    auto const since = received >= body_seen_ ? received - body_seen_ : received;
+    auto const since = received - body_seen_;
 
     body_seen_ = received;
     return since;
@@ -520,6 +527,7 @@ async::task<std::error_code> write_continue(paced_stream &stream) {
 // write timeout, like any response. A body in pieces is left to its handler, with `continue_owed` for it.
 async::task<request_read> read_whole_request(paced_stream &stream, std::string &buffer, http::request_parser &parser,
                                              bool &continue_owed) {
+  stream.message_begins();
   stream.reading().start_again();
 
   auto const first =

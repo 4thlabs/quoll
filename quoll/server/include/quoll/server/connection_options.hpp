@@ -88,9 +88,10 @@ struct connection_options {
   std::chrono::nanoseconds write_timeout = std::chrono::seconds{30};
 
   /**
-   * @brief `min_read_rate` for what leaves, against `write_timeout`, every byte earning. A write that leaves at once is
-   * not charged, so that a long stream of small writes to a peer that takes them runs no risk. 0: a response has
-   * `write_timeout` as a whole, and one written in pieces (http::body_writer) has it per piece.
+   * @brief `min_read_rate` for what leaves, against `write_timeout`, every byte earning. A write that leaves within 100
+   * ms gives back all of `write_timeout`, so that a long stream of small writes to a peer that takes them, as
+   * server-sent events are, does not run out of it. 0: a response has `write_timeout` as a whole, and one written in
+   * pieces (http::body_writer) has it per piece.
    */
   std::uint64_t min_write_rate = std::uint64_t{16} * 1024;
 

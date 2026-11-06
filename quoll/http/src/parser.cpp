@@ -141,6 +141,7 @@ struct parser<Message>::impl {
     body_streamed_ = false;
     keep_alive_ = false;
     upgrade_ = false;
+    body_size_ = 0;
 
     // The request method holds until its final response: an interim 1xx answers the same request.
     if constexpr (!is_request) {

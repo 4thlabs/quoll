@@ -210,7 +210,7 @@ co_await quoll::server::listen(
 | `read_timeout`      | 30 s    | How long a request may wait for its peer once started, and not the time a handler takes between two reads. Past it, it answers 408 and the connection closes. It starts again once `100 Continue` has left, as the client waits for that. |
 | `min_read_rate`     | 16 KiB/s | What lets a request take as long as it keeps coming: each byte of its body adds to what `read_timeout` has left, up to `read_timeout` itself. See below. |
 | `write_timeout`     | 30 s    | How long a response or a `100 Continue` may wait for its peer to take it, and not the time a `body_writer` takes between two writes. Past it, the connection closes. |
-| `min_write_rate`    | 16 KiB/s | The same for what leaves, every byte earning. A write that leaves at once is not charged. |
+| `min_write_rate`    | 16 KiB/s | The same for what leaves, every byte earning. A write that leaves within 100 ms gives back all of `write_timeout`. |
 | `lingering_timeout` | 5 s     | After the last response, what the peer still sends is read and dropped: how long to wait for more of it. Zero closes at once.                                       |
 | `lingering_time`    | 30 s    | How long this goes on as a whole, against a peer that keeps sending. Zero closes at once.                                                                           |
 | `limits`            | below   | What a request may hold.                                                                                                                                            |
@@ -231,8 +231,9 @@ framing of a body earns nothing.
 
 At 0, a request or a response has its timeout as a whole, and a body in pieces has it per piece. That is
 what a peer uploading little and slowly on purpose needs, 1 KiB every 5 s for instance, which the default
-ends after about 30 s. It holds for all the routes of a connection, not for one. Writes do not need it: a
-stream of small writes to a peer that takes them runs no risk, whatever the time between them.
+ends after about 30 s. It holds for all the routes of a connection, not for one. Writes do not need it: on a
+stream of small writes to a peer that takes them, each gives back all of the timeout, whatever the time
+between them.
 
 The time a handler takes is not limited: that is the application's to bound, with
 `async::with_timeout`, which stops the work and awaits its end.

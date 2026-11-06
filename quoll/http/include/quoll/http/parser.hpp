@@ -70,7 +70,7 @@ struct parse_limits {
 struct parse_result {
   /** @brief Bytes used from the input; the rest belongs to the next message (or to the upgraded protocol). */
   std::size_t consumed = 0;
-  std::error_code error;
+  std::error_code error{};
 };
 
 /**
@@ -160,8 +160,9 @@ public:
   [[nodiscard]] bool upgrade() const noexcept;
 
   /**
-   * @brief How many bytes of body the current message has brought so far, in pieces or not, and none of its framing, so
-   * that it says what a peer really sent, whatever it wrapped that in.
+   * @brief How many bytes of body the current message has brought so far, in pieces or not, whatever take_body() took,
+   * and none of its framing, so that it says what a peer really sent, whatever it wrapped that in. Back to 0 with
+   * release().
    */
   [[nodiscard]] std::uint64_t body_received() const noexcept;
 

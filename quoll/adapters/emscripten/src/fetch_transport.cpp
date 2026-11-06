@@ -235,8 +235,6 @@ public:
   }
 
   [[nodiscard]] fetched await_resume() {
-    stop_callback_.reset();
-
     if (exception_) {
       std::rethrow_exception(exception_);
     }
@@ -254,6 +252,9 @@ private:
   static void complete(void *operation, int id, int outcome) noexcept {
     auto &self = *static_cast<fetch_operation *>(operation);
 
+    // Settled: a stop from here on is no longer about this, and must not abort what has just succeeded, a body to come
+    // included, in the time before what waits for it resumes.
+    self.stop_callback_.reset();
     self.entry_ = fetch_entry{id};
 
     try {
@@ -347,8 +348,6 @@ public:
   }
 
   [[nodiscard]] bool await_resume() {
-    stop_callback_.reset();
-
     if (exception_) {
       std::rethrow_exception(exception_);
     }
@@ -365,6 +364,8 @@ private:
   static void complete(void *operation, int outcome) noexcept {
     auto &self = *static_cast<read_operation *>(operation);
 
+    // See fetch_operation::complete().
+    self.stop_callback_.reset();
     self.outcome_ = static_cast<fetch_outcome>(outcome);
 
     try {

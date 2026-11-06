@@ -2314,15 +2314,15 @@ paced_outcome paced_session(virtual_time &time, connection_options options, Make
 // A peer that takes what is written `part` bytes at a time, one a second.
 class slow_reader {
 public:
-  slow_reader(io::memory_stream inner, std::size_t part, std::size_t &taken,
-              std::chrono::nanoseconds pause = 1s) noexcept
-      : inner_(std::move(inner)), part_(part), taken_(&taken), pause_(pause) {}
+  slow_reader(io::memory_stream inner, std::size_t part, std::size_t &taken, std::chrono::nanoseconds pause = 1s,
+              std::chrono::nanoseconds stall = {}, int every = 0) noexcept
+      : inner_(std::move(inner)), part_(part), taken_(&taken), pause_(pause), stall_(stall), every_(every) {}
 
   [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
 
   [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
     try {
-      co_await quoll::async::sleep_for(pause_);
+      co_await quoll::async::sleep_for(every_ != 0 && ++writes_ % every_ == 0 ? stall_ : pause_);
     } catch (std::system_error const &error) {
       co_return io::io_result{error.code(), 0};
     }
@@ -2338,6 +2338,9 @@ private:
   std::size_t part_;
   std::size_t *taken_;
   std::chrono::nanoseconds pause_;
+  std::chrono::nanoseconds stall_;
+  int every_;
+  int writes_ = 0;
 };
 
 // What serve_connection() got out for `target` to a peer taking 2000 bytes a second, and its time on the clock.
@@ -2758,4 +2761,66 @@ TEST_CASE("serve_connection: 100 Continue gives a body all of the time again, at
 
   REQUIRE(got.received.starts_with("HTTP/1.1 100"));
   REQUIRE(got.received.find("HTTP/1.1 200") != std::string::npos);
+}
+
+TEST_CASE("serve_connection: a stall of the loop or of a peer is forgiven by the writes it takes at once",
+          "[server][timer]") {
+  virtual_time time;
+  auto const router = make_paced_router();
+  auto [client, server] = io::make_memory_stream_pair();
+  connection_options options;
+  std::size_t taken = 0;
+
+  // Each stall takes most of the timeout, and what comes between them earns far less than that.
+  options.write_timeout = 3s;
+  options.lingering_timeout = 0s;
+
+  std::string const raw = "GET /events HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n";
+
+  auto const answer = [&]() -> task<int> {
+    (void)co_await io::write(client, std::as_bytes(std::span{raw}));
+    co_await quoll::server::serve_connection(slow_reader{std::move(server), 2000, taken, 1ms, 2500ms, 500}, router,
+                                             options);
+    co_return 1;
+  };
+
+  REQUIRE(quoll::test::run(time, answer()) == 1);
+  REQUIRE(taken > std::size_t{2000} * 20);
+}
+
+TEST_CASE("serve_connection: the body of a request earns from its first byte, after another on a connection",
+          "[server][timer]") {
+  auto const target = GENERATE(std::string{"/echo"}, std::string{"/pieces"});
+  virtual_time time;
+  connection_options options;
+
+  options.read_timeout = 3s;
+  options.min_read_rate = 1000;
+
+  auto const two = [&](io::memory_stream client) -> task<std::string> {
+    auto const [received, sent] = co_await quoll::async::when_all(read_until_closed(client), [&]() -> task<> {
+      auto const first = "POST " + target + " HTTP/1.1\r\nHost: h\r\nContent-Length: 3000\r\n\r\n" +
+                         std::string(std::size_t{3000}, 'x');
+      auto const second =
+          "POST " + target + " HTTP/1.1\r\nHost: h\r\nConnection: close\r\nContent-Length: 7000\r\n\r\n";
+      std::string const part(std::size_t{3500}, 'x');
+
+      (void)co_await io::write(client, std::as_bytes(std::span{first}));
+      co_await quoll::async::sleep_for(1ms);
+      (void)co_await io::write(client, std::as_bytes(std::span{second}));
+
+      // Late for what the head left, and what it brings has to pay for the wait for the next one.
+      for (auto index = 0; index < 2; ++index) {
+        co_await quoll::async::sleep_for(2s);
+        (void)co_await io::write(client, std::as_bytes(std::span{part}));
+      }
+    }());
+
+    co_return received;
+  };
+
+  auto const got = paced_session(time, options, two);
+
+  REQUIRE(got.received.starts_with("HTTP/1.1 200"));
+  REQUIRE(got.received.find("HTTP/1.1 200", 1) != std::string::npos);
 }
