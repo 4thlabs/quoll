@@ -203,7 +203,7 @@ Credentials first, then the arguments, then the service. These errors are
 | ----------------------------------- | -------------------------------------------------------- | --------------------------------------------- |
 | Missing or rejected credentials     | 401, with the `WWW-Authenticate` challenge of the scheme | `missing credentials`, `rejected credentials` |
 | An invalid or missing argument      | 400                                                      | What is wrong                                 |
-| A body of another media type        | 415                                                      |                                               |
+| A body of another media type        | 415                                                      | `the body is <the media type of the codec>`   |
 | A service throws `rest::http_error` | Its status                                               | `what()`, sent as it is to the client         |
 | A service throws anything else      | 500                                                      | None                                          |
 
@@ -314,8 +314,11 @@ struct lines_codec {
   [[nodiscard]] std::expected<T, rest::decode_error> decode(std::string_view body) const {
     T lines;
 
-    for (auto const line : std::views::split(body, '\n')) {
-      lines.emplace_back(std::string_view{line});
+    while (!body.empty()) {
+      auto const end = body.find('\n');
+
+      lines.emplace_back(body.substr(0, end));
+      body.remove_prefix(end == std::string_view::npos ? body.size() : end + 1);
     }
 
     return lines;

@@ -33,7 +33,7 @@ if (response.status == http::status::created) {
 
 Every response is a result, error statuses included. `request.target` is in origin form, starting
 with `/`. A `Host` field naming the server is added unless the request has one, and `Content-Length`
-when it has a body.
+when it has a body or is a POST, PUT or PATCH, unless its fields declare a framing.
 
 A transport opens its connections through the network of the executor that sends, so that it needs
 nothing from you. Copies share their connections. A task copies what it needs, so that the transport

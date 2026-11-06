@@ -134,6 +134,7 @@ Build it and run both sides:
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 ./build/hello &                               # the server, on port 8080
+sleep 1                                       # give it time to listen
 ./build/hello call                            # Hello, Ada!
 curl localhost:8080/api/greet/Ada             # {"text":"Hello, Ada!"}
 kill %1

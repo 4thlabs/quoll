@@ -149,8 +149,8 @@ Fuzzing (`fuzz.yml`) and the benchmark (`bench.yml`) run every night, and on a p
   a test of the fix.
 - **Benchmark budgets.** A change raising an allocation budget in `tests/bench` says why.
 - **Documentation.** A step of the roadmap is done only once its guide in `docs/` says what it brought.
-  Documentation is Markdown in the repository for now, and each C++ block in it has to compile against the
-  real headers.
+  Documentation is Markdown in the repository for now. Nothing in CI compiles its C++ blocks yet: compile
+  those you write or change against the real headers, and run what a guide says they do.
 - **Language.** Code, comments, docs and commit messages are in English.
 
 Agents working in this repository also read [`AGENTS.md`](../AGENTS.md).
