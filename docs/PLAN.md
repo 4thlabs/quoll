@@ -15,6 +15,33 @@ A C++ web framework aimed at **performance and ease of use**, in three parts tha
 
 Build time and hot reload are kept short and measured all along.
 
+## Positioning
+
+The aim is to show that C++ can offer a solid web framework. Who to show it to first:
+
+- **C++ programs that lack a web interface,** in robotics, simulation, finance, video or computing. They often end up with a
+  service in Python and a page in React, with their types written twice. What Quoll offers them: *give your C++ program a web
+  interface, in the same language and the same binary.* Their existing code, used with no FFI, is also what a Rust
+  framework cannot offer them. That holds for programs Quoll can build with: see
+  [step 7](#step-7-the-quoll-command-driving-vite-maintainer-merges-the-first-pull-request).
+- **New web applications** next, once [authentication](#step-8-authentication-maintainer-merges) and the
+  [ORM](#step-9-an-orm-maintainer-merges) exist. A developer happy with TypeScript gains little from changing, and is not who
+  this aims at for now.
+
+What shows it, rather than an argument, with no public announcement before step 7 is done:
+
+- A short video: a field of a `struct` that the server and the page both use is renamed and neither compiles, then a Tailwind
+  class changes and the page follows, keeping its state. It claims no more than that: reflection adapts to a field no code
+  names, which then only fails when strict decoding meets it, at run time.
+- A demo people run themselves, in one binary. To settle: which. Proposed: an explorer over DuckDB, which opens a CSV and shows
+  results as they arrive. DuckDB has an interface of its own, so that this stays a demo and not a product.
+- The framework's site, written with Quoll, served by Quoll, with its source in view.
+- A page saying what is guaranteed (the nightly fuzzing, ASan, UBSan and TSan) and what is not (see
+  [step 2](#step-2-client-and-server-security-and-completeness)), as "C++ exposed to the Internet" is the first objection.
+
+The figures to lead with are those of size, build time and memory (see [Done](#done)). Not the rate:
+[nginx is ahead of Quoll](BENCHMARKS.md#beside-other-servers), and performance comes last on the roadmap.
+
 ## Roadmap
 
 One pull request per topic, under the rule in [`AGENTS.md`](../AGENTS.md). A new public API is shown to the maintainer
@@ -174,7 +201,7 @@ avoids a binary per platform. The commands are shown to the maintainer first.
 quoll new my_app
 cd my_app
 quoll dev      # build, watch, Vite, hot reload
-quoll build    # dist/, with the pages that can be written ahead of time as HTML
+quoll build    # dist/, with the pages that can be written ahead of time as HTML, and a PWA
 ```
 
 - The plugin leaves the sample, with its scanner tested in CI. Vite and Tailwind's setup become internal, and an
@@ -183,21 +210,91 @@ quoll build    # dist/, with the pages that can be written ahead of time as HTML
   one directory, an error with no page open can show once on the next page, and a multi-line macro holding a tag is not
   told apart.
 - Build time and hot reload, measured, with a target set at the start of this step from the figures of step 1.
+- A PWA from `quoll build`: a manifest and a service worker, so that an application installs on desktop and mobile and opens
+  offline. Nothing of it exists yet but the type `http::static_files` gives a `webmanifest`. Installed PWAs are restricted on
+  iOS (storage eviction, background work): to check.
+  - How it updates: an installed page may run older WASM than its server, and every codec's decoding is strict
+    (`error_on_missing_keys`), so that a field added to a shared `struct` answers its POST with 400 until the worker updates.
+    What such a page does is to settle with the maintainer.
+- A web interface for an existing program, as [Positioning](#positioning) asks:
+  - Its files embedded in the binary: `http::static_files` serves a directory.
+  - Quoll beside a program's own main loop, on a thread of its own, needs an API first, shown to the maintainer. `run()` returns
+    once no executor is left, so at once if none was taken yet; an executor kept to reach the loop later keeps it running for
+    ever, so that joining that thread hangs; nothing stops a runtime but its tasks ending; and `get_stop_token()` takes SIGINT
+    and SIGTERM, which such a program handles itself. How the program's data reaches the loop's tasks goes with it.
+  - What an existing program can build with, tried on a real one and not only on a new sample: C++23 with GCC ≥ 13, Clang ≥ 19 or
+    Apple Clang ≥ 21 leaves out MSVC and older distributions (see [open questions](#open-questions)); another version of
+    standalone asio in the same binary is an ODR clash, as asio has no versioned namespace; and the program's build mode must
+    be its Quoll's. What cannot be fixed is said in the guide.
+- Ready for LLMs, as an agent is now how many people will first write Quoll:
+  - `quoll new` writes an `AGENTS.md` and a skill into the project, for the version of Quoll it uses, with the commands, the
+    rules a program must follow, and where the guides are.
+  - The repository publishes an `llms.txt` over its guides, and each guide stays readable alone.
+  - What the guides show compiles in CI, as an agent copies it as it stands: their C++ blocks are checked by hand for now.
+  - The errors of the `quoll` command, and the `static_assert` messages of the DSLs, say what to change, as that is what an
+    agent acts on. They stay tested by `compile_fail`.
 
 *Done when:* a new project reaches a running page with hot reload through these commands, and `samples/ui_notes` uses
-them.
+them; that project installs as a PWA, opens offline and takes an update; an agent given only what `quoll new` wrote adds a screen
+and an endpoint to it; and an existing program with its own main loop serves its interface from one binary, stops cleanly with
+it, and has its test and its guide.
 
-### Step 8: desktop and mobile *(maintainer merges)*
+### Step 8: authentication *(maintainer merges)*
 
-- A PWA first, then a webview shell on desktop, then on mobile, all loading the same WASM.
+Before the ORM, as the first programs [Positioning](#positioning) aims at often have no SQL database, and need to sign in as
+soon as they listen beyond their machine. Sessions go through a store of their own (memory, a file), which the ORM implements
+once it exists. A new module, as it needs cryptography that `quoll::rest` and `quoll::server` do not have and must not bring to
+WASM builds.
+
+- Proposed: signing in through an OIDC provider and sessions, and a shared secret in a program's configuration for a machine on a
+  closed network, with no store of passwords, the most exposed part, at the start.
+- Cryptography: nothing in Quoll hashes, signs or draws secure random numbers. OIDC needs ID tokens checked against the
+  provider's keys, a nonce and PKCE, and session ids from a secure source. **To settle at its start:** OpenSSL, as TLS uses, or
+  something else, and what a build with `QUOLL_TLS` off does. None of it written by hand.
+- What the REST DSL lacks: validators answer `bool`, and a service takes only the endpoint's arguments, so that a handler of
+  `GET /me` cannot learn who calls; and a scheme cannot be a cookie, as `rest::security` accepts only `api_key<>`,
+  `api_key_query<>` and `bearer_auth`. A validator's result reaching the service, and a cookie scheme, shown to the maintainer.
+- A page: an OIDC redirect is a navigation, which `quoll::ui` and the Emscripten adapter do not offer, and which loses the WASM
+  state. `fetch_client` sets no `credentials`, so that a page calling another origin neither sends nor keeps a cookie.
+- A native client: `http::client` has no cookie jar, and drops `Set-Cookie` across redirects. To settle whether it needs one.
+- Cookies and what they ask: expiry, revocation, CSRF.
+- What it parses from outside, tokens among them, is fuzzed.
+
+*Done when:* a sample signs in through a real provider, from a page too, its sessions survive a restart through a file, and
+expiry and revocation are tested, with its guide.
+
+### Step 9: an ORM *(maintainer merges)*
+
+A new module. **To settle at its start:** the shape of a query, shown to the maintainer first, the first database, and
+migrations.
+
+- A table is described by a plain aggregate, through the reflection the REST DSL already uses, so that one `struct` may go from
+  the database to the browser, and a field the program names breaks the compilation all along. The compiler does not see the
+  database: a `struct` changed with no migration has to be caught when the program starts, not on its first query.
+- A column kept from the browser, a session's hash or a provider's token: an endpoint's `returns<user>` writes every reflected
+  field, and hiding one through `glz::meta` hides it from the ORM too. Excluding a field per output, or a type of its own for what
+  is sent: to settle, as the easy path must not leak secrets.
+- Native only, as `quoll::asio` is: the core still compiles to WASM with none of it.
+- A query never blocks the loop, and can be given up. A driver over `quoll::io` streams does both. A C client cannot go through
+  `async::offload` as it is: two threads shared with `http::static_files` starve under slow queries, and a call started cannot be
+  stopped, so that a timeout waits for it, and so does a shutdown. It needs threads per database and a way to cancel.
+- Against a real database in CI.
+- Sessions of step 8 stored through it.
+
+*Done when:* a sample stores its data through it, from a contract shared with its page, with its guide.
+
+### Step 10: desktop and mobile *(maintainer merges)*
+
+Secondary to the maintainer, as the PWA of step 7 already installs there.
+
+- A webview shell on desktop, then on mobile, loading the same WASM.
 - Native capabilities (files, sockets) through a small gateway, designed at this step. The webview library is to be
   chosen.
-- Installed PWAs are restricted on iOS (storage eviction, background work), and webview engines differ: WebKit on iOS,
-  macOS and Linux, Chromium on Windows and Android. To check on each.
+- Webview engines differ: WebKit on iOS, macOS and Linux, Chromium on Windows and Android. To check on each.
 
 *Done when:* the sample runs on each target, with the differences between engines listed.
 
-### Step 9: performance
+### Step 11: performance
 
 Last, as what comes before it is needed first. It starts from a new baseline, as those steps change what is measured, and
 changes only what the harness shows. Candidates:
@@ -219,6 +316,15 @@ changes only what the harness shows. Candidates:
 
 ## Decided
 
+- Who it is for first (2026-11-06): C++ programs that lack a web interface, then new web applications, as
+  [Positioning](#positioning) says.
+- Authentication, then an ORM (2026-11-06), come after the `quoll` command and before desktop and mobile, which are secondary:
+  a web application needs them sooner than a native shell does. Authentication depends on no ORM, as the first programs aimed
+  at often have no database.
+- The PWA (2026-11-06) comes from `quoll build`, in step 7, rather than with desktop and mobile: it costs little and already
+  installs on both.
+- Ready for LLMs (2026-11-06): a project and the guides carry what an agent needs to write a Quoll application. What it asks
+  is in step 7.
 - Names (2026-11-06): `http::client` and `http::server`, classes without a template parameter, rather than `client::transport<>`
   and the free functions `server::listen` and `server::serve`. A user thinks of a client and a server, not of a transport, and
   `HttpTransport` stays the concept. `quoll::client` and `quoll::server` stay libraries of their own, so that a program links only
@@ -621,6 +727,8 @@ Kept for later by the maintainer, at the end of the plan if the need comes (2026
 
 Those not settled by a step of the roadmap:
 
+- MSVC, which Quoll does not support, and which many of the programs [Positioning](#positioning) aims at build with: a change to a
+  hard constraint, the maintainer's.
 - The runtime in a browser, where the event loop already runs: no `run()` there, and tasks start with `co_spawn` on the
   event loop. The default `rest::client` transport there would be `fetch`.
 - A default `main()` provided by Quoll, creating the runtime and running an application coroutine, once the shape of

@@ -4,7 +4,7 @@ What Quoll costs, and how to read the figures. They are all in [`BENCHMARKS.md`]
 their tables and how they were measured: an Intel Core i5-14400 in a Docker container, GCC 13, on a
 machine that also runs other things. A rate moves by some 10 % from one run to the next.
 
-Tuning comes last on [the roadmap](PLAN.md#step-9-performance), on purpose: these figures are a
+Tuning comes last on [the roadmap](PLAN.md#step-11-performance), on purpose: these figures are a
 baseline to compare against, not a finished result.
 
 ## What to expect

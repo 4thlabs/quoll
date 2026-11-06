@@ -114,6 +114,6 @@ From [step 6](PLAN.md#step-6-the-ui-dsl-complete) of the roadmap:
 - Making a page written by `to_html` live (hydration): a `value` on a `select` selects nothing yet.
 - Restoring the states after a rebuild.
 
-Tools that take Vite and Tailwind's setup out of an application are
+Tools that take Vite and Tailwind's setup out of an application, and a PWA, are
 [step 7](PLAN.md#step-7-the-quoll-command-driving-vite-maintainer-merges-the-first-pull-request), and
-desktop and mobile shells are [step 8](PLAN.md#step-8-desktop-and-mobile-maintainer-merges).
+desktop and mobile shells are [step 10](PLAN.md#step-10-desktop-and-mobile-maintainer-merges).
