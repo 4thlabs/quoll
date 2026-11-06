@@ -3070,26 +3070,38 @@ TEST_CASE("client::transport: an answer before the end of a body_writer stops it
   }
 
   SECTION("a server that went: what the writer makes of it is the writer's") {
-    auto const by_send_failing = [&](client::transport<memory_connector> const &transport) -> task<std::string> {
-      auto const rethrowing = [](http::body_stream out) -> task<> {
+    auto const rethrowing_as = [](auto own) {
+      return [own](http::body_stream out) -> task<> {
         try {
           for (;;) {
             co_await out.write("x");
             co_await async::yield();
           }
         } catch (std::system_error const &) {
-          throw std::runtime_error{"from the writer"};
+          throw own;
         }
       };
-
-      try {
-        co_return (co_await transport.send(upload_of(rethrowing))).body;
-      } catch (std::runtime_error const &thrown) {
-        co_return thrown.what();
-      }
     };
 
-    REQUIRE(after(answering_at_the_head(refused, true), by_send_failing) == "from the writer");
+    auto const by_send_failing = [&](http::body_writer writer) {
+      return
+          [&, writer = std::move(writer)](client::transport<memory_connector> const &transport) -> task<std::string> {
+            try {
+              co_return (co_await transport.send(upload_of(writer))).body;
+            } catch (std::exception const &thrown) {
+              co_return thrown.what();
+            }
+          };
+    };
+
+    // Of no kind that a write throws, and of the very kind, with another code.
+    REQUIRE(after(answering_at_the_head(refused, true),
+                  by_send_failing(rethrowing_as(std::runtime_error{"from the writer"}))) == "from the writer");
+
+    auto const own = std::system_error{std::make_error_code(std::errc::io_error), "from the writer"};
+
+    REQUIRE(after(answering_at_the_head(refused, true), by_send_failing(rethrowing_as(own))) ==
+            std::string{own.what()});
   }
 
   SECTION("a server that went: a writer making nothing of it ends well, and the answer stands") {

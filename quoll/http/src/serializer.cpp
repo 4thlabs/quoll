@@ -400,6 +400,17 @@ streamed_framing serialize_streamed_head(request const &message, std::string &ou
   return {.chunked = checked.chunked, .length = length ? std::optional<std::uint64_t>{*length} : std::nullopt};
 }
 
+streamed_wire::streamed_wire(std::string head, streamed_framing framing) noexcept
+    : head_(std::move(head)), framing_(framing), left_(framing.length.value_or(0)) {}
+
+bool streamed_wire::past_its_length(std::string_view piece) const noexcept {
+  return framing_.length && piece.size() > left_;
+}
+
+bool streamed_wire::started() const noexcept { return started_; }
+
+bool streamed_wire::short_of_its_length() const noexcept { return left_ != 0; }
+
 void streamed_wire::append_head() {
   if (!started_) {
     started_ = true;

@@ -48,7 +48,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <utility>
 
 namespace quoll::http::detail {
 
@@ -85,13 +84,10 @@ void append_last_chunk(fields const &trailers, std::string &out);
 // second write of a message does not wait for what acknowledges the first. Thread safety: none.
 class streamed_wire {
 public:
-  streamed_wire(std::string head, streamed_framing framing) noexcept
-      : head_(std::move(head)), framing_(framing), left_(framing.length.value_or(0)) {}
+  streamed_wire(std::string head, streamed_framing framing) noexcept;
 
   // `piece` would take the body past its Content-Length.
-  [[nodiscard]] bool past_its_length(std::string_view piece) const noexcept {
-    return framing_.length && piece.size() > left_;
-  }
+  [[nodiscard]] bool past_its_length(std::string_view piece) const noexcept;
 
   // The bytes that send `piece`, valid until the next call and as long as `piece`: an empty piece sends what is held
   // back, and what has nothing to frame and nothing before it is not copied.
@@ -101,9 +97,9 @@ public:
   [[nodiscard]] std::string_view end(fields const &trailers);
 
   // Nothing has left yet.
-  [[nodiscard]] bool started() const noexcept { return started_; }
+  [[nodiscard]] bool started() const noexcept;
 
-  [[nodiscard]] bool short_of_its_length() const noexcept { return left_ != 0; }
+  [[nodiscard]] bool short_of_its_length() const noexcept;
 
 private:
   void append_head();
