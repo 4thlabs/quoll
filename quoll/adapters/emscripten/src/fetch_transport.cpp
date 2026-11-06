@@ -38,16 +38,17 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/emscripten/detail/js.hpp>
-#include <quoll/http/body_reader.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/check.hpp>
 #include <quoll/http/detail/write_whole_body.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
+#include <quoll/http/response_body.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/streamed_response.hpp>
 #include <quoll/http/verb.hpp>
@@ -317,7 +318,8 @@ static_assert(async::ContextAwaitable<fetch_operation>);
 class read_operation {
 public:
   // `url`, for what it throws, and `piece` outlive it.
-  read_operation(int id, std::string const &url, std::string &piece) noexcept : id_(id), url_(&url), piece_(&piece) {}
+  read_operation(int id, std::string const &url QUOLL_LIFETIMEBOUND, std::string &piece QUOLL_LIFETIMEBOUND) noexcept
+      : id_(id), url_(&url), piece_(&piece) {}
 
   read_operation(read_operation const &) = delete;
   read_operation &operator=(read_operation const &) = delete;
@@ -407,7 +409,7 @@ public:
     }
   }
 
-  [[nodiscard]] async::task<std::optional<std::string_view>> read() {
+  [[nodiscard]] async::task<std::optional<std::string_view>> read() QUOLL_LIFETIMEBOUND {
     if (failure_) {
       std::rethrow_exception(failure_);
     }

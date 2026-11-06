@@ -53,16 +53,20 @@ namespace quoll::http {
  * @brief The body of a streamed_response, a piece at a time. Copies share what it reads from, so that it may be taken
  * out of its response, and the last to go lets go of it: what a transport does then is its own to say.
  *
- * Thread safety: none, as what reads it runs on one loop.
+ * One read() at a time, among all the copies. Thread safety: none, as what reads it runs on one loop.
  */
 class response_body {
 public:
   response_body() noexcept = default;
 
-  /** @brief Reads through `source`, kept for as long as a copy of this lives; for what builds a streamed_response. */
+  /**
+   * @brief Reads through `source`, kept for as long as a copy of this lives; for what builds a streamed_response. With
+   * none, it has nothing to read.
+   */
   template <class Source>
     requires std::is_constructible_v<body_reader, Source &>
-  explicit response_body(std::shared_ptr<Source> source) noexcept : reader_(*source), source_(std::move(source)) {}
+  explicit response_body(std::shared_ptr<Source> source) noexcept
+      : reader_(source ? body_reader{*source} : body_reader{}), source_(std::move(source)) {}
 
   /**
    * @brief The next piece, valid up to the next read() and for as long as this, or nothing at the end of the body: see

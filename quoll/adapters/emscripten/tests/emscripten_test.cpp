@@ -488,6 +488,42 @@ TEST_CASE("fetch_transport: stream() takes a body_writer too, gathered first", "
   both.body = "whole";
   both.body_writer = [](http::body_stream) -> quoll::async::task<> { co_return; };
   REQUIRE_THROWS_AS(transport.stream(std::move(both)), std::invalid_argument);
+
+  http::request short_of_it;
+
+  short_of_it.method = http::verb::post;
+  short_of_it.target = "/status/200";
+  short_of_it.fields.set("Content-Length", "1000");
+  short_of_it.body_writer = [](http::body_stream out) -> quoll::async::task<> { co_await out.write("four"); };
+  REQUIRE_THROWS_AS(run(transport.stream(std::move(short_of_it))), std::length_error);
+
+  http::request endless;
+
+  endless.method = http::verb::post;
+  endless.target = "/status/200";
+  endless.body_writer = [](http::body_stream out) -> quoll::async::task<> {
+    for (;;) {
+      try {
+        co_await quoll::async::sleep_for(std::chrono::milliseconds{1});
+      } catch (std::system_error const &) {
+      }
+
+      co_await out.write("x");
+    }
+  };
+
+  auto const timing_out = [&]() -> quoll::async::task<std::error_code> {
+    try {
+      static_cast<void>(
+          co_await quoll::async::with_timeout(std::chrono::milliseconds{20}, transport.stream(std::move(endless))));
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  REQUIRE(run(timing_out()) == std::make_error_code(std::errc::timed_out));
 }
 
 TEST_CASE("fetch_transport: a timeout ends a body_writer at its next write", "[emscripten][http][timer]") {
@@ -538,7 +574,6 @@ TEST_CASE("rest::client over fetch_transport calls an API that only has a contra
 }
 
 namespace {
-
 
 task<http::streamed_response> stream_target(fetch_transport transport, std::string target,
                                             http::verb method = http::verb::get, std::string body = {}) {

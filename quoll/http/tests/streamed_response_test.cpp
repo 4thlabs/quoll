@@ -141,6 +141,12 @@ TEST_CASE("response_body reads its source, whichever transport gave it", "[http]
     REQUIRE(quoll::test::run(loop, read_all(moved)) == "ab");
   }
 
+  SECTION("nothing, from no source") {
+    http::response_body const none{std::shared_ptr<pieces>{}};
+
+    REQUIRE(quoll::test::run(loop, read_all(none)) == "");
+  }
+
   SECTION("letting it go with its last copy") {
     {
       http::response_body const body{std::make_shared<pieces>(std::vector<std::string>{"ab"}, gone)};
