@@ -34,6 +34,8 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/http/detail/final_response.hpp>
+#include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/serializer.hpp>
 
 #include <quoll/http/detail/ascii.hpp>
@@ -365,6 +367,36 @@ streamed_framing serialize_streamed_head(response const &message, std::string &o
   out += "\r\n";
 
   return {.chunked = checked.chunked, .length = length ? std::optional<std::uint64_t>{*length} : std::nullopt};
+}
+
+char const *replace_what_would_mislead(response &answer, verb const method) {
+  auto const code = static_cast<std::uint16_t>(answer.status);
+
+  if (method == verb::connect && code >= 200 && code < 300) {
+    answer = status_response(status::not_implemented);
+    return "quoll::http::server: a 2xx to CONNECT would be a tunnel, which is not offered";
+  }
+
+  if (is_informational(answer.status)) {
+    answer = status_response(status::internal_server_error);
+    return "quoll::http::server: a 1xx is no final response";
+  }
+
+  if (method == verb::head || answer.body_writer || !answer.body.empty() || answer.status == status::not_modified) {
+    return nullptr;
+  }
+
+  try {
+    if (declared_length(answer.fields).value_or(0) == 0) {
+      return nullptr;
+    }
+  } catch (std::invalid_argument const &) {
+    // Written, it answers 500 anyway.
+    return nullptr;
+  }
+
+  answer = status_response(status::internal_server_error);
+  return "quoll::http::server: a Content-Length with no body";
 }
 
 std::optional<std::uint64_t> announced_length(fields const &entries) {

@@ -400,6 +400,10 @@ On a stop request:
 | A handler builds a response that cannot be serialized | 500                                                                                    | goes on                  |
 | A `body_writer` throws                                | 500 if nothing has left, otherwise [a body cut short](streaming.md#writing-a-response) | ends once it has started |
 
+What a handler answers is replaced, and `on_handler_error` told, when its peer would read it as something else: a 2xx to CONNECT,
+a tunnel, which is not offered, answers 501; a 1xx, which is no final response, and a `Content-Length` with no body, but to HEAD or
+as a 304, answer 500.
+
 `Expect: 100-continue` itself is handled for you: a request whose body has not come gets
 `100 Continue`, then its body is read. With an [`http::body_reader`](streaming.md#reading-a-request),
 this waits for the handler to ask for the body.
@@ -422,5 +426,5 @@ OpenSSL throws `std::logic_error` here (see `QUOLL_TLS` in
 
 ## Not there yet
 
-Server-sent events and WebSocket are on [the roadmap](PLAN.md#roadmap), not in Quoll today. A 2xx answer to CONNECT, and a response announcing more `Content-Length` than its body, are
-open points of its [step 2](PLAN.md#step-2-client-and-server-security-and-completeness).
+Server-sent events and WebSocket are on [the roadmap](PLAN.md#roadmap), not in Quoll today. Nor are tunnels: a 2xx answer to
+CONNECT, which would be one, answers 501.

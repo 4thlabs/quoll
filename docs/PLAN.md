@@ -48,8 +48,7 @@ One pull request per topic, under the rule in [`AGENTS.md`](../AGENTS.md). A new
 before much is built on it. Points marked "To settle" and the [open questions](#open-questions) are the maintainer's to
 decide. Steps marked *(maintainer merges)* are big architecture changes.
 
-**Current step: 4.** Step 0 only waits for the maintainer, and step 2 keeps the two points it says are left, as the first
-nightly fuzz run has not been read yet.
+**Current step: 4.** Step 0 only waits for the maintainer.
 
 ### Done
 
@@ -120,10 +119,10 @@ still sends its body: to look at with streaming. A client closes its TLS connect
 - Fuzzing in CI, under ASan and UBSan, is done (`tests/fuzz`, five minutes per target every night, keeping its corpus): the
   HTTP parsers, `serve_connection`, the router, the REST decoding, the client's exchange and the decoding of REST responses.
   Its stream never suspends, writes short or fails a write: a stream that does would reach the timeouts and cancellation.
-- A 2xx answer to CONNECT goes out with framing, and a body if it has one, which a client reads as the tunnel: `prepare()` in
-  `serve_connection` handles HEAD, not this. To settle with the tunnels of step 5.
-- A response whose `Content-Length` is more than its body goes out as it is, as the serializer cannot tell one that answers
-  HEAD: on a kept connection, its client waits, or reads the next response as that body. `serve_connection` knows the method.
+- What a handler answers is replaced when its peer would read it as something else, through a connection as through
+  `local_transport`: a 2xx to CONNECT, a tunnel, which is not offered, answers 501; a 1xx, and a `Content-Length` with no body, but
+  to HEAD or as a 304, answer 500.
+- The first nightly fuzz run, on 2026-11-06, found nothing: five minutes on each of the seven targets, from 225,000 to 12 million runs.
 - Features: middlewares (`router::use`) and routes whose handler takes the path's parameters, checked at compile time
   (`router::get`...), a path prefix in the base URL, a connection limit per transport and client redirects, are done. A client's `response_timeout` applies per attempt, so a deadline over the whole `send` if that proves
   confusing.

@@ -255,6 +255,8 @@ public:
    * - A request with `Expect: 100-continue` whose body has not come gets `100 Continue`, then the body is read.
    * - A handler or a middleware that throws answers 500 (and is reported to `connection.on_handler_error`), as does a
    * response that cannot be serialized.
+   * - An answer its peer would read as something else is replaced, and `connection.on_handler_error` told: a 2xx to
+   * CONNECT answers 501, and a 1xx, or a `Content-Length` with no body, but to HEAD or as a 304, answers 500.
    * - The response to HEAD carries no body: it announces the length of the one the GET route produced.
    *
    * Ending a connection stops sending first, with `stream.shutdown_send()`: a TLS peer gets its closing message. After

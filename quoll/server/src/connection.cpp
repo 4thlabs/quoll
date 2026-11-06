@@ -49,6 +49,7 @@
 #include <quoll/http/body_reader.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
+#include <quoll/http/detail/final_response.hpp>
 #include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/detail/streamed_head.hpp>
 #include <quoll/http/detail/streamed_wire.hpp>
@@ -949,7 +950,8 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
       request = parser.release();
     }
 
-    auto const head = request.method == http::verb::head;
+    auto const method = request.method;
+    auto const head = method == http::verb::head;
     auto const version = request.version;
     auto response = co_await respond(router, std::move(request), options, body ? &*body : nullptr);
 
@@ -968,6 +970,12 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
     }
 
     keep_alive = keep_alive && !http::detail::closes_connection(response.fields) && !options.drain.stop_requested();
+
+    // After that line: what a handler asked of the connection stands, whatever replaces its answer.
+    if (auto const *const wrong = http::detail::replace_what_would_mislead(response, method);
+        wrong != nullptr && options.on_handler_error) {
+      options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
+    }
 
     auto const in_pieces = static_cast<bool>(response.body_writer);
 

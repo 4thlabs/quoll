@@ -2951,12 +2951,11 @@ TEST_CASE("serve_connection: what goes wrong in a body_writer during a stop is s
 
 namespace {
 
-// What a peer gets for `target`, from what `start` makes of its end of the stream.
+// What a peer gets for the bytes `sent` as they are, from what `start` makes of its end of the stream.
 template <class Start>
-[[nodiscard]] std::string answer_to(std::string const &target, Start const &start) {
+[[nodiscard]] std::string answer_to_raw(std::string const &sent, Start const &start) {
   virtual_time time;
   auto [client, server] = io::make_memory_stream_pair();
-  std::string const sent = "GET " + target + " HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
 
   auto const peer = [&sent](io::memory_stream to) -> task<std::string> {
     (void)co_await io::write(to, std::as_bytes(std::span{sent}));
@@ -2966,6 +2965,11 @@ template <class Start>
   auto outcome = quoll::test::run(time, quoll::async::when_all(start(std::move(server)), peer(std::move(client))));
 
   return std::move(std::get<1>(outcome.value()));
+}
+
+template <class Start>
+[[nodiscard]] std::string answer_to(std::string const &target, Start const &start) {
+  return answer_to_raw("GET " + target + " HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", start);
 }
 
 } // namespace
@@ -3086,4 +3090,170 @@ TEST_CASE("http::server: connections() counts one served directly", "[server]") 
   REQUIRE(answer_to("/count", start).starts_with("HTTP/1.1 200"));
   REQUIRE(during == 1);
   REQUIRE(server.connections() == 0);
+}
+
+TEST_CASE("serve_connection: a length with no body answers 500, and the connection goes on", "[server]") {
+  http::router router;
+
+  router.get("/short", []() {
+    http::response response;
+
+    response.fields.set("Content-Length", "5");
+    return response;
+  });
+  router.get("/modified", []() {
+    http::response response;
+
+    response.status = http::status::not_modified;
+    response.fields.set("Content-Length", "5");
+    return response;
+  });
+  router.get("/next", []() {
+    http::response response;
+
+    response.body = "next";
+    return response;
+  });
+
+  http::server const server{router};
+  auto const start = [&server](io::memory_stream stream) { return server.serve_connection(std::move(stream)); };
+
+  auto const answer = answer_to_raw("GET /short HTTP/1.1\r\nHost: x\r\n\r\n"
+                                    "GET /modified HTTP/1.1\r\nHost: x\r\n\r\n"
+                                    "HEAD /short HTTP/1.1\r\nHost: x\r\n\r\n"
+                                    "GET /next HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+                                    start);
+
+  auto const failed = answer.find("HTTP/1.1 500");
+  auto const modified = answer.find("HTTP/1.1 304", failed);
+  auto const announced = answer.find("HTTP/1.1 200", modified);
+  auto const next = answer.find("HTTP/1.1 200", announced + 1);
+
+  REQUIRE(failed == 0);
+  REQUIRE(modified != std::string::npos);
+  REQUIRE(announced != std::string::npos);
+  REQUIRE(answer.substr(modified, announced - modified).find("Content-Length: 5") != std::string::npos);
+  REQUIRE(answer.substr(announced, next - announced).find("Content-Length: 5") != std::string::npos);
+  REQUIRE(next != std::string::npos);
+  REQUIRE(answer.ends_with("next"));
+}
+
+TEST_CASE("serve_connection: a 2xx to CONNECT would be a tunnel, which is not offered", "[server]") {
+  http::router router;
+
+  router.use([](http::request, http::next const &) -> task<http::response> {
+    http::response response;
+
+    response.body = "framed";
+    co_return response;
+  });
+
+  http::server const server{router};
+  auto const start = [&server](io::memory_stream stream) { return server.serve_connection(std::move(stream)); };
+  auto const answer = answer_to_raw("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n", start);
+
+  REQUIRE(answer.starts_with("HTTP/1.1 501"));
+  REQUIRE(answer.find("framed") == std::string::npos);
+}
+
+TEST_CASE("serve_connection: what would mislead its peer goes as a handler's mistake", "[server]") {
+  std::vector<std::string> told;
+  http::router router;
+
+  auto const answering = [](http::status status, std::string length = {}, bool closes = false) {
+    return [=]() {
+      http::response response;
+
+      response.status = status;
+
+      if (!length.empty()) {
+        response.fields.set("Content-Length", length);
+      }
+
+      if (closes) {
+        response.fields.set("Connection", "close");
+      }
+
+      return response;
+    };
+  };
+
+  router.get("/early", answering(http::status::continue_));
+  router.get("/closing", answering(http::status::ok, "5", true));
+  router.get("/empty", answering(http::status::ok, "0"));
+  router.get("/invalid", answering(http::status::ok, "five"));
+  router.get("/next", answering(http::status::no_content));
+
+  http::server const server{router, {.connection = {.on_handler_error = [&told](std::exception_ptr failure) {
+                                       try {
+                                         std::rethrow_exception(std::move(failure));
+                                       } catch (std::logic_error const &wrong) {
+                                         told.emplace_back(wrong.what());
+                                       }
+                                     }}}};
+  auto const start = [&server](io::memory_stream stream) { return server.serve_connection(std::move(stream)); };
+  auto const get = [](std::string_view target) {
+    return "GET " + std::string{target} + " HTTP/1.1\r\nHost: x\r\n\r\n";
+  };
+
+  SECTION("a 1xx is no final response") {
+    auto const answer =
+        answer_to_raw(get("/early") + "GET /next HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", start);
+
+    REQUIRE(answer.starts_with("HTTP/1.1 500"));
+    REQUIRE(answer.find("HTTP/1.1 204") != std::string::npos);
+    REQUIRE(told.size() == 1);
+    REQUIRE(told[0].find("1xx") != std::string::npos);
+  }
+
+  SECTION("what a handler asked of the connection stands") {
+    // The second request is never answered: the connection has closed.
+    auto const answer = answer_to_raw(get("/closing") + get("/next"), start);
+
+    REQUIRE(answer.starts_with("HTTP/1.1 500"));
+    REQUIRE(answer.find("HTTP/1.1 204") == std::string::npos);
+    REQUIRE(told.size() == 1);
+    REQUIRE(told[0].find("Content-Length") != std::string::npos);
+  }
+
+  SECTION("a length of zero is no missing body, and an invalid one still answers 500") {
+    auto const answer = answer_to_raw(
+        get("/empty") + get("/invalid") + "GET /next HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", start);
+
+    REQUIRE(answer.starts_with("HTTP/1.1 200"));
+    REQUIRE(answer.find("HTTP/1.1 500") != std::string::npos);
+    REQUIRE(told.empty());
+  }
+}
+
+TEST_CASE("serve_connection: to CONNECT, only a 2xx is replaced", "[server]") {
+  bool wrote = false;
+  auto status = http::status::ok;
+  http::router router;
+
+  router.use([&](http::request, http::next const &) -> task<http::response> {
+    http::response response;
+
+    response.status = status;
+    response.body_writer = [&wrote](http::body_stream) -> task<> {
+      wrote = true;
+      co_return;
+    };
+    co_return response;
+  });
+
+  http::server const server{router};
+  auto const start = [&server](io::memory_stream stream) { return server.serve_connection(std::move(stream)); };
+  std::string const sent = "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n";
+
+  REQUIRE(answer_to_raw(sent, start).starts_with("HTTP/1.1 501"));
+  REQUIRE_FALSE(wrote);
+
+  status = http::status::no_content;
+  REQUIRE(answer_to_raw(sent, start).starts_with("HTTP/1.1 501"));
+  REQUIRE_FALSE(wrote);
+
+  status = http::status::not_found;
+  REQUIRE(answer_to_raw(sent, start).starts_with("HTTP/1.1 404"));
+  REQUIRE(wrote);
 }
