@@ -170,8 +170,9 @@ void append_hex(std::uint64_t value, std::string &out) {
   return error == std::errc::no_such_file_or_directory || error == std::errc::not_a_directory ||
          error == std::errc::permission_denied || error == std::errc::operation_not_permitted ||
          error == std::errc::too_many_symbolic_link_levels || error == std::errc::filename_too_long ||
-         // A Unix socket, or a device with no driver: no files.
-         error == std::errc::no_such_device_or_address || error == std::errc::no_such_device;
+         // A Unix socket, which macOS says with the last of these, or a device with no driver: no files.
+         error == std::errc::no_such_device_or_address || error == std::errc::no_such_device ||
+         error == std::errc::operation_not_supported;
 }
 
 // What a path opened to, with what it is.
