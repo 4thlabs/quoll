@@ -1005,6 +1005,28 @@ TEST_CASE("asio::runtime: its timer's clock goes by as it waits", "[asio][runtim
   REQUIRE(run_task(waiting()) >= 20ms);
 }
 
+TEST_CASE("asio::runtime: a stop ends a detached task on a real timer, and run() returns", "[asio][runtime][timer]") {
+  using namespace std::chrono_literals;
+
+  quoll::asio::runtime runtime;
+  std::stop_source stop;
+  auto went_on = false;
+
+  auto const waiting = []() -> task<> { co_await quoll::async::sleep_for(1h); };
+
+  auto const stopping = [&]() -> task<> {
+    co_await quoll::async::sleep_for(10ms);
+    stop.request_stop();
+    went_on = true;
+  };
+
+  co_spawn(runtime.get_executor(), waiting(), quoll::async::detached, stop.get_token());
+  co_spawn(runtime.get_executor(), stopping(), quoll::async::detached);
+  runtime.run();
+
+  REQUIRE(went_on);
+}
+
 TEST_CASE("asio: with_timeout stops a read from a silent peer", "[asio][runtime][timer]") {
   using namespace std::chrono_literals;
 

@@ -223,7 +223,8 @@ If you are writing both sides of an API, or calling one with typed requests and 
   thrown again at its `co_await`.
 - **`async::co_spawn`** runs a task from outside a coroutine, from the executor and never inline, and
   gives what comes of it to a handler. With `async::detached`, a value is dropped, and an exception
-  ends the program, as one escaping a `std::thread` does.
+  ends the program, as one escaping a `std::thread` does, unless it is `std::errc::operation_canceled`, what a stop
+  request throws.
 - **`runtime.run()`** returns once the tasks have ended. An executor kept in `main()` would keep it
   running, so give `get_executor()` straight to `co_spawn`.
 - **`runtime.get_stop_token()`** is stopped by the first SIGINT or SIGTERM. Given to `co_spawn`, it
@@ -276,14 +277,20 @@ try {
 
   std::cout << response.body << '\n';
 } catch (std::system_error const &failure) {
+  // A stop request ends the task, rather than being one more failure to carry on from.
+  if (failure.code() == std::errc::operation_canceled) {
+    throw;
+  }
+
   std::cerr << "no answer: " << failure.what() << '\n';
 }
 ```
 
-A stop request is one of these failures: what the task awaits throws `std::system_error` with
-`std::errc::operation_canceled`. `server::listen` and `server::serve` make a clean end of it. Any other
-task given a stop token with `async::detached` has to catch it, or a stop ends the program rather than
-the task: [`tick()`](runtimes.md#quollruntime) shows how.
+A stop request is no failure: what the task awaits throws `std::system_error` with
+`std::errc::operation_canceled`, and that ends the task, with `async::detached` as well, and the program
+goes on. Catch it only to do something before the task ends, and let it out again. `async::detached`
+ignores that error whatever caused it, a closed socket or a read after a cancelled one too: a task that
+cares can check `co_await quoll::async::current_stop_token()` to tell them apart.
 
 ## Where to go next
 

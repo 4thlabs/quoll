@@ -212,6 +212,9 @@ changes only what the harness shows. Candidates:
 
 ## Decided
 
+- `async::detached` (2026-11-06) ignores `std::errc::operation_canceled`, so that a stop ends a task rather than the program, and
+  every other exception still ends the program. It does not see the task's stop token, so it ignores that error whatever caused
+  it: a choice made knowing that, over a check of the token in `co_spawn`.
 - Documentation (2026-11-06) is Markdown in the repository for now: a README and one guide per subject directly under `docs/`, with
   no site generator. A step of the roadmap is done only once its guide in `docs/` says what it brought.
 - Under WASM, `-mtail-call` (2026-11-05), with `-fwasm-exceptions`: a coroutine resuming another otherwise grows the stack, and

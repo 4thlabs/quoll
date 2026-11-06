@@ -25,19 +25,11 @@ build. Application code names no adapter:
 
 #include <chrono>
 #include <iostream>
-#include <system_error>
 
 quoll::async::task<> tick() {
-  try {
-    for (auto left = 3; left > 0; --left) {
-      std::cout << left << std::endl;
-      co_await quoll::async::sleep_for(std::chrono::seconds{1});
-    }
-  } catch (std::system_error const &failure) {
-    // A stop request: with `detached`, letting it out would end the program.
-    if (failure.code() != std::errc::operation_canceled) {
-      throw;
-    }
+  for (auto left = 3; left > 0; --left) {
+    std::cout << left << std::endl;
+    co_await quoll::async::sleep_for(std::chrono::seconds{1});
   }
 }
 
