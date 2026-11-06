@@ -54,6 +54,7 @@ quoll_declare_tests(
     tests/router_test.cpp
     tests/serializer_test.cpp
     tests/stream_test.cpp
+    tests/streamed_response_test.cpp
   DEPS
     quoll::http
 )

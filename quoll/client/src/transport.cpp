@@ -630,7 +630,7 @@ async::task<http::response> send_following(std::shared_ptr<transport_core> share
   }
 }
 
-// A response being read in pieces, and its connection: what a streamed_response holds. It owns its place in
+// A response being read in pieces, and its connection: what an http::streamed_response holds. It owns its place in
 // max_connections until the body has come to its end, or until it goes. Thread safety: none, on the loop of what reads
 // it; what it shares with its transport has its own.
 class response_stream {
@@ -678,11 +678,10 @@ public:
 
   // What the caller gets of the head: the rest of the message stays for read(). A message with nothing more to come
   // gives its connection back at once, as nothing will read it to its end.
-  [[nodiscard]] streamed_response head(std::shared_ptr<response_stream> const &self) {
+  [[nodiscard]] http::streamed_response head(std::shared_ptr<response_stream> const &self) {
     auto const &message = parser_->head();
-    streamed_response response{
-        message.status, message.reason, message.version, message.fields, response_body{http::body_reader{*this}, self},
-        trailers_};
+    http::streamed_response response{
+        message.status, message.reason, message.version, message.fields, http::response_body{self}, trailers_};
 
     // Nothing more can come: its connection and its place go now, whether the caller reads what came or not, and
     // however the bytes were cut.
@@ -840,7 +839,7 @@ private:
   bool held_piece_ = false;
 };
 
-async::task<streamed_response> stream_prepared(std::shared_ptr<transport_core> shared, prepared_request request) {
+async::task<http::streamed_response> stream_prepared(std::shared_ptr<transport_core> shared, prepared_request request) {
   auto stream = std::make_shared<response_stream>(shared);
 
   if (shared->places) {
@@ -903,7 +902,7 @@ void make_ready(transport_core const &core, http::request &request) {
 
 } // namespace
 
-async::task<streamed_response> stream(std::shared_ptr<transport_core> const &core, http::request request) {
+async::task<http::streamed_response> stream(std::shared_ptr<transport_core> const &core, http::request request) {
   make_ready(*core, request);
   return stream_prepared(core, prepare(*core, request));
 }
