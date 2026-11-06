@@ -74,13 +74,19 @@ jobs:
         run: ctest --test-dir build --output-on-failure --timeout 300 --parallel "$(nproc)"
 
       # Quoll's own sources only: the rules are in .clang-tidy. It also reports when a test failed, and it would pass
-      # with no file selected, hence the count. Keep the command in step with AGENTS.md.
+      # with no file selected, hence the counts. Its analyzer takes most of the time, nearly all of it in the tests: they
+      # get it every night, in clang-tidy.yml, and go without it here. Both commands run, to report everything at once.
       - name: clang-tidy
         if: ${{ !cancelled() && startsWith(matrix.compiler.name, 'clang') }}
         run: |
-          sources='/(quoll|samples)/.*\.cpp$'
-          test "$(jq -r '.[].file' build/compile_commands.json | grep -cE "$PWD$sources")" -gt 0
-          run-clang-tidy-19 -p build -quiet -j "$(nproc)" "$PWD$sources"
+          library="$PWD/(quoll|samples)/(?!.*/tests/).*\.cpp$"
+          tests="$PWD/(quoll|samples)/.*/tests/.*\.cpp$"
+          test "$(jq -r '.[].file' build/compile_commands.json | grep -cP "$library")" -gt 0
+          test "$(jq -r '.[].file' build/compile_commands.json | grep -cP "$tests")" -gt 0
+          status=0
+          run-clang-tidy-19 -p build -quiet -j "$(nproc)" "$library" || status=1
+          run-clang-tidy-19 -p build -quiet -j "$(nproc)" -checks='-clang-analyzer-*' "$tests" || status=1
+          exit "$status"
 
       # Without OpenSSL, which applications may lack: the tests say what https:// then does.
       - name: Test without TLS

@@ -1,0 +1,62 @@
+name: clang-tidy
+
+# Every check on what the native build compiles under quoll/ and samples/, the static analyzer on the tests too, which takes
+# minutes: a pull request leaves it out of the tests. One changing the rules runs this as well, to see what they would find.
+# Not a required check, as it does not run on every pull request.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".clang-tidy"
+      - ".github/workflows/clang-tidy.yml"
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its previous run; the nightly runs go to the end.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CPM_SOURCE_CACHE: ${{ github.workspace }}/.cpm-cache
+
+jobs:
+  clang-tidy:
+    name: clang-tidy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Cache CPM sources
+        uses: actions/cache@v4
+        with:
+          path: .cpm-cache
+          key: cpm-${{ hashFiles('**/CMakeLists.txt', 'cmake/**') }}
+
+      - name: Refresh the package lists
+        run: sudo apt-get update
+
+      - name: Install Clang
+        uses: ./.github/actions/apt-packages
+        with:
+          packages: clang-19 clang-tidy-19
+
+      # As in CI: GCC 13's libstdc++, whose reasons are there. No build: clang-tidy reads the sources.
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DQUOLL_HEADER_CHECKS=OFF -DQUOLL_TLS=ON
+        env:
+          CXX: clang++-19
+          CXXFLAGS: --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/13
+
+      # It would pass with no file selected, hence the count. Keep the command in step with AGENTS.md.
+      - name: clang-tidy
+        run: |
+          sources="$PWD/(quoll|samples)/.*\.cpp$"
+          test "$(jq -r '.[].file' build/compile_commands.json | grep -cE "$sources")" -gt 0
+          run-clang-tidy-19 -p build -quiet -j "$(nproc)" "$sources"

@@ -1,5 +1,6 @@
 # Only what stops a real bug and raises no noise, as errors: what Rust's compiler refuses, as far as a tool can tell. Run
-# by the clang-19 job of CI, on the native build: the Emscripten adapter is not analysed. A data member moved, then read
+# by the clang-19 job of CI, which leaves the analyzer out of the tests, and in full by clang-tidy.yml every night, on the
+# native build: the Emscripten adapter is not analysed. A data member moved, then read
 # after a co_await, goes unseen.
 Checks: >-
   -*,
