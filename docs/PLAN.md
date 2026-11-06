@@ -331,6 +331,8 @@ changes only what the harness shows. Candidates:
   `namespace async = quoll::async;`.
 - Performance does not make the user API dangerous (2026-11-06): what outlives a call owns what it needs, and the fast path goes
   behind it, in `detail`. `http::local_transport` keeps its own copy of the router, and `http::server` owns its listeners.
+- `quoll::runtime` under Emscripten too (2026-11-06), so that `main()` reads the same: it is the browser's event loop, and `run()`
+  returns at once, as the loop goes on once `main()` has returned. What differs from a native `run()` is said where it is.
 - The same code on every platform (2026-11-06): `http::client` is the one name, and `fetch_client` went. In a build for Emscripten, a client from a
   URL asks the executor for an `http::platform_ref`, as it asks for a network, so that `quoll::client` does not depend on an adapter. What
   `fetch` keeps to itself has no effect there rather than refusing to run, as the same code has to run.
@@ -728,8 +730,6 @@ Those not settled by a step of the roadmap:
 
 - MSVC, which Quoll does not support, and which many of the programs [Positioning](#positioning) aims at build with: a change to a
   hard constraint, the maintainer's.
-- The runtime in a browser, where the event loop already runs: no `run()` there, and tasks start with `co_spawn` on the
-  event loop.
 - A default `main()` provided by Quoll, creating the runtime and running an application coroutine, once the shape of
   that coroutine (arguments, exit code) is settled.
 - If OpenAPI comes back: the C++ → JSON Schema mapping, 64-bit integers in particular.

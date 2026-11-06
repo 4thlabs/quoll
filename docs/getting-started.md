@@ -52,7 +52,7 @@ CPMAddPackage(
 | Option          | Default | What it does                                                                         |
 | --------------- | ------- | ------------------------------------------------------------------------------------ |
 | `QUOLL_TLS`     | `AUTO`  | TLS through OpenSSL: `AUTO` uses it when found, `ON` requires it, `OFF` goes without |
-| `QUOLL_RUNTIME` | `asio`  | The adapter behind `quoll::runtime`: see [Runtimes](runtimes.md)                     |
+| `QUOLL_RUNTIME` | per platform | The adapter behind `quoll::runtime`: see [Runtimes](runtimes.md)                |
 
 If your program already has an `asio::asio` or a `glaze::glaze` target, define it before adding
 Quoll, which then uses it rather than fetching its own copy.
@@ -119,7 +119,7 @@ find_package(quoll REQUIRED COMPONENTS rest runtime server)
 | `quoll::client`                                      | `http::client`                                                                        |
 | `quoll::rest`                                        | Contracts, `rest::mount`, `rest::client`, codecs                                      |
 | `quoll::ui`                                          | The [UI prototype](ui.md)                                                             |
-| `quoll::runtime`                                     | `quoll::runtime`, the loop a native program runs on: see [Runtimes](runtimes.md)      |
+| `quoll::runtime`                                     | `quoll::runtime`, the loop a program runs on: see [Runtimes](runtimes.md)      |
 | `quoll::asio`, `quoll::threads`, `quoll::emscripten` | The adapters, which a program rarely names: see [Runtimes](runtimes.md)               |
 
 `quoll::server` and `quoll::client` are libraries of their own, so that a program links only what it uses, and
@@ -213,9 +213,8 @@ If you are writing both sides of an API, or calling one with typed requests and 
 
 - **`quoll::runtime`** is the loop a program's tasks run on, run by the thread that calls `run()`.
   It holds the network, the timer and TLS, which is why `http::server` and `http::client` ask for none of
-  them. Natively it is asio underneath, and your program does not compile asio. A browser runs a
-  loop of its own, so that there is no `quoll::runtime` there: see
-  [Runtimes](runtimes.md#emscripten).
+  them. Natively it is asio underneath, and your program does not compile asio. In a browser, it is the page's own loop, and `main()` reads the
+  same, with the differences [its guide](runtimes.md#emscripten) says.
 - **`async::task<T>`** is a coroutine producing a `T`, or nothing for `async::task<>`. It is lazy: it starts
   when awaited, and destroying one that never ran does not run it. An exception it lets out is
   thrown again at its `co_await`.

@@ -9,6 +9,7 @@ quoll_declare_module(
   SOURCES
     src/executor.cpp
     src/fetch_platform.cpp
+    src/runtime.cpp
   DEPS
     quoll::http
     quoll::ui

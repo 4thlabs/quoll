@@ -41,6 +41,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+#endif
+
 namespace {
 
 quoll::async::task<> count(int &runs) {
@@ -51,12 +55,25 @@ quoll::async::task<> count(int &runs) {
 } // namespace
 
 TEST_CASE("quoll::runtime runs the tasks spawned on it, then returns", "[runtime]") {
-  quoll::runtime runtime;
   int runs = 0;
 
-  co_spawn(runtime.get_executor(), count(runs), quoll::async::detached, runtime.get_stop_token());
-  co_spawn(runtime.get_executor(), count(runs), quoll::async::detached);
-  runtime.run();
+  {
+    quoll::runtime runtime;
+
+    co_spawn(runtime.get_executor(), count(runs), quoll::async::detached, runtime.get_stop_token());
+    co_spawn(runtime.get_executor(), count(runs), quoll::async::detached);
+    runtime.run();
+
+#if defined(__EMSCRIPTEN__)
+    REQUIRE_FALSE(runtime.get_stop_token().stop_possible());
+#endif
+  }
+
+#if defined(__EMSCRIPTEN__)
+  // The browser's loop runs them once main() has returned, the runtime gone by then, which this test waits for.
+  REQUIRE(runs == 0);
+  emscripten_sleep(10);
+#endif
 
   REQUIRE(runs == 2);
 }
