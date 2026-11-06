@@ -1336,3 +1336,35 @@ TEST_CASE("http::client through fetch: a relative URL needs an executor offering
 
   REQUIRE_THROWS_AS(run_on(bare_executor{}, send(http::client{"/api"})), std::logic_error);
 }
+
+TEST_CASE("http::client through fetch: the status text counts toward the head's limit", "[emscripten][http]") {
+  test_server const server;
+
+  auto const head_size = [](http::client client) -> task<std::size_t> {
+    auto const response = co_await client.get("/accounts/42");
+    std::size_t size = 0;
+
+    for (auto const &entry : response.fields) {
+      size += entry.name.size() + entry.value.size();
+    }
+
+    co_return size;
+  };
+
+  auto const error_of = [](http::client client) -> task<std::error_code> {
+    try {
+      (void)co_await client.get("/accounts/42");
+    } catch (std::system_error const &failure) {
+      co_return failure.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  // Room for the fields, and for one byte of "OK".
+  auto const fields = run(head_size(http::client{server.url()}));
+
+  REQUIRE_FALSE(run(error_of(http::client{server.url(), {.limits = {.max_header_size = fields + 2}}})));
+  REQUIRE(run(error_of(http::client{server.url(), {.limits = {.max_header_size = fields + 1}}})) ==
+          http::error::header_too_large);
+}

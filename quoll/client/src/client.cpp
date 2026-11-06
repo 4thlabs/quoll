@@ -907,12 +907,12 @@ void make_ready(client_core const &core, http::request &request) {
   }
 }
 
-// What fetch has no limit for, in what a response's head holds.
-void check_platform_head(http::fields const &fields, http::parse_limits const &limits) {
+// What fetch has no limit for, in what a response's head holds: its status text counts, as for the parser.
+void check_platform_head(http::streamed_response const &head, http::parse_limits const &limits) {
   std::size_t count = 0;
-  std::size_t size = 0;
+  std::size_t size = head.reason.size();
 
-  for (auto const &entry : fields) {
+  for (auto const &entry : head.fields) {
     ++count;
     size += entry.name.size() + entry.value.size();
   }
@@ -965,7 +965,7 @@ async::task<http::response> gather_from_platform(http::platform_ref platform, st
                                                  http::parse_limits limits) {
   auto streamed = co_await platform.stream(std::move(url), std::move(request));
 
-  check_platform_head(streamed.fields, limits);
+  check_platform_head(streamed, limits);
 
   http::response answer;
 
@@ -1043,7 +1043,7 @@ async::task<http::streamed_response> stream_on_platform(std::shared_ptr<client_c
   auto answer = co_await async::detail::with_optional_timeout(core->options.response_timeout,
                                                               platform->stream(std::move(url), std::move(request)));
 
-  check_platform_head(answer.fields, core->options.limits);
+  check_platform_head(answer, core->options.limits);
   answer.body = http::response_body{std::make_shared<platform_body>(std::move(answer.body), core->options)};
   co_return answer;
 }
