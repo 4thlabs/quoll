@@ -50,6 +50,7 @@
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/response_body.hpp>
+#include <quoll/http/response_writer.hpp>
 #include <quoll/http/route_match.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/serializer.hpp>

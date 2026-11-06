@@ -38,6 +38,7 @@ quoll_declare_module(
     src/local_transport.cpp
     src/parser.cpp
     src/percent.cpp
+    src/response_writer.cpp
     src/router.cpp
     src/serializer.cpp
   DEPS
@@ -71,6 +72,8 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/router_auto_parameter.cpp
     tests/compile_fail/router_parameter_type.cpp
     tests/compile_fail/router_handler_result.cpp
+    tests/compile_fail/router_response_writer_not_last.cpp
+    tests/compile_fail/router_response_writer_result.cpp
     tests/compile_fail/dangling_dispatch.cpp
   DEPS
     quoll::http

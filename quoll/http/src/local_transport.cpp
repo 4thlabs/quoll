@@ -39,6 +39,7 @@
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/http/body_stream.hpp>
 #include <quoll/http/detail/final_response.hpp>
+#include <quoll/http/detail/late_head.hpp>
 #include <quoll/http/detail/streamed_head.hpp>
 #include <quoll/http/detail/write_whole_body.hpp>
 #include <quoll/http/verb.hpp>
@@ -102,6 +103,29 @@ private:
   std::string *body_;
 };
 
+// What a handler writing through an http::response_writer writes through. To HEAD, its first write throws: the head is
+// all it owes.
+class written_by_handler {
+public:
+  written_by_handler(response &answer, bool head) noexcept : answer_(&answer), head_(head) {}
+
+  void head(status code, fields given) { detail::merge_head(*answer_, code, std::move(given)); }
+
+  [[nodiscard]] async::task<> write(std::string_view piece) {
+    if (head_) {
+      throw std::system_error{std::make_error_code(std::errc::operation_canceled),
+                              "quoll::http::response_writer: HEAD has no body"};
+    }
+
+    answer_->body.append(piece);
+    co_return;
+  }
+
+private:
+  response *answer_;
+  bool head_;
+};
+
 } // namespace
 
 namespace detail {
@@ -151,7 +175,24 @@ async::task<response> local_transport::send_to(std::shared_ptr<router const> tar
   // As a connection answers, and a test here has its failure in hand.
   (void)detail::replace_what_would_mislead(answer, method);
 
-  if (answer.body_writer && !head) {
+  if (answer.body_writer && answer.head_comes_with_the_body) {
+    auto writer = std::move(answer.body_writer);
+
+    answer.body_writer = nullptr;
+    answer.head_comes_with_the_body = false;
+
+    written_by_handler sink{answer, head};
+
+    try {
+      co_await writer(body_stream{sink});
+    } catch (std::system_error const &failure) {
+      if (!head || failure.code() != std::errc::operation_canceled) {
+        throw;
+      }
+    }
+
+    (void)detail::replace_what_would_mislead(answer, method);
+  } else if (answer.body_writer && !head) {
     string_sink sink{answer.body};
 
     co_await answer.body_writer(body_stream{sink});

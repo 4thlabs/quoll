@@ -10,6 +10,7 @@ quoll_declare_module(
 
 quoll_declare_tests(
   SOURCES
+    tests/response_writer_test.cpp
     tests/serve_connection_test.cpp
     tests/server_test.cpp
     tests/static_files_test.cpp
