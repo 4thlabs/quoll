@@ -38,6 +38,7 @@
 #define QUOLL_ASYNC_DETACHED_HPP
 
 #include <exception>
+#include <system_error>
 
 namespace quoll::async {
 
@@ -55,7 +56,19 @@ struct detached_t {
    * standard library's terminate handler reports it. But for std::errc::operation_canceled, whatever caused it: a stop
    * is no failure, and ends the task alone.
    */
-  void operator()(std::exception_ptr failure) const noexcept;
+  void operator()(std::exception_ptr failure) const noexcept {
+    if (!failure) {
+      return;
+    }
+
+    try {
+      std::rethrow_exception(failure);
+    } catch (std::system_error const &thrown) {
+      if (thrown.code() != std::errc::operation_canceled) {
+        std::rethrow_exception(failure);
+      }
+    }
+  }
 };
 
 /**
