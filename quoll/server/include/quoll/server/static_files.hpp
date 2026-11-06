@@ -90,6 +90,8 @@ struct static_files_options {
  * descriptors for instance, is thrown rather than taken for a file that is not there: a 500, told to
  * `on_handler_error`.
  *
+ * `root` is looked at again for each request, so that a link flipped to deploy a new release is followed.
+ *
  * `prefix` is compared with next::path(), so that a percent sign in it is written `%25`, and nothing else is encoded.
  *
  * @throws std::invalid_argument for a `prefix` that does not start with a slash or a `root` that is no directory, and

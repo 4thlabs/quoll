@@ -68,6 +68,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <exception>
 #include <filesystem>
@@ -835,6 +836,9 @@ TEST_CASE("static_files: opening beneath the root follows no link, wherever it i
   REQUIRE(!opens("gone/secret.txt"));
   REQUIRE(!opens("link.txt"));
   REQUIRE(!opens("nested/missing.txt"));
+  // What failed, from the component it failed on.
+  REQUIRE(server::detail::open_beneath(root.path(), "nested/missing.txt") == -ENOENT);
+  REQUIRE(server::detail::open_beneath(root.path(), "gone/secret.txt") < 0);
 }
 
 TEST_CASE("static_files: a file that is no longer the one asked for", "[server][static]") {
@@ -996,3 +1000,121 @@ TEST_CASE("static_files: a file that shrinks under its response cuts it, and say
   REQUIRE(received.ends_with("\r\n\r\nxxxxxxxxxx"));
   REQUIRE(reported == 1);
 }
+
+TEST_CASE("static_files: a date in any of the forms of the RFC", "[server][static]") {
+  site const served;
+
+  auto const with = [&](std::string_view name, std::string value) {
+    auto request = make_request("/assets/hello.txt");
+
+    request.fields.add(name, std::move(value));
+    return ask(served.router, std::move(request)).status;
+  };
+
+  // Far ahead, and written in the forms that can be.
+  REQUIRE(with("If-Modified-Since", "Thu, 01 Jan 2099 00:00:00 GMT") == status::not_modified);
+  REQUIRE(with("If-Modified-Since", "Thu Jan  1 00:00:00 2099") == status::not_modified);
+  // Long ago: in a form that can only say so.
+  REQUIRE(with("If-Unmodified-Since", "Sunday, 06-Nov-94 08:49:37 GMT") == status::precondition_failed);
+  REQUIRE(with("If-Unmodified-Since", "Sun Nov  6 08:49:37 1994") == status::precondition_failed);
+  // None of the forms, or not quite.
+  REQUIRE(with("If-Unmodified-Since", "Sun, 06 Nov 94 08:49:37 GMT") == status::ok);
+  REQUIRE(with("If-Unmodified-Since", "Sunday, 06-Nov-94 08:49:37 PST") == status::ok);
+  REQUIRE(with("If-Unmodified-Since", "Sun Nov  6 08:49:37 94") == status::ok);
+  REQUIRE(with("If-Unmodified-Since", "Sun, 06 Nov 1994 8:49:37 GMT") == status::ok);
+  // On no such day, or not on that weekday.
+  REQUIRE(with("If-Unmodified-Since", "Tue, 31 Feb 1995 08:49:37 GMT") == status::ok);
+  REQUIRE(with("If-Unmodified-Since", "Mon, 06 Nov 1994 08:49:37 GMT") == status::ok);
+}
+
+TEST_CASE("static_files: a list on several lines is one list", "[server][static]") {
+  site const served;
+  auto const etag = std::string{ask(served.router, "/assets/hello.txt").fields.find("ETag").value()};
+
+  auto request = make_request("/assets/hello.txt");
+
+  request.fields.add("If-Match", "\"old\"");
+  request.fields.add("If-Match", etag);
+  REQUIRE(ask(served.router, request).status == status::ok);
+
+  auto none = make_request("/assets/hello.txt");
+
+  none.fields.add("If-None-Match", "\"old\"");
+  none.fields.add("if-none-match", etag);
+  REQUIRE(ask(served.router, none).status == status::not_modified);
+
+  auto ranges = make_request("/assets/hello.txt");
+
+  ranges.fields.add("Range", "bytes=0-1");
+  ranges.fields.add("Range", "bytes=2-3");
+  REQUIRE(ask(served.router, ranges).status == status::ok);
+}
+
+TEST_CASE("static_files: the last bytes of nothing", "[server][static]") {
+  site const served;
+  auto request = make_request("/assets/empty.txt");
+
+  request.fields.add("Range", "bytes=-500");
+  REQUIRE(ask(served.router, request).status == status::ok);
+
+  auto zero = make_request("/assets/hello.txt");
+
+  zero.fields.add("Range", "bytes=-0");
+  REQUIRE(ask(served.router, zero).status == status::range_not_satisfiable);
+}
+
+TEST_CASE("static_files: a root that is a link is followed as it is now", "[server][static]") {
+  temporary_directory holder;
+  temporary_directory first;
+  temporary_directory second;
+
+  first.write("page.txt", "first release");
+  second.write("page.txt", "second release");
+
+  auto const current = holder.path() / "current";
+
+  fs::create_directory_symlink(first.path(), current);
+
+  http::router router;
+
+  router.use(server::static_files("/", current));
+  REQUIRE(ask(router, "/page.txt").body == "first release");
+
+  auto const flipping = holder.path() / "flipping";
+
+  fs::create_directory_symlink(second.path(), flipping);
+  fs::rename(flipping, current);
+  REQUIRE(ask(router, "/page.txt").body == "second release");
+}
+
+TEST_CASE("static_files: what describes a 404 page stays off the file", "[server][static]") {
+  site served;
+
+  served.router.use([](http::request request, http::next const &next) -> task<http::response> {
+    auto response = co_await next(std::move(request));
+
+    response.fields.set("Content-Disposition", "inline; filename=404.html");
+    response.fields.set("Content-Language", "fr");
+    co_return response;
+  });
+
+  auto const response = ask(served.router, "/assets/hello.txt");
+
+  REQUIRE(response.status == status::ok);
+  REQUIRE(!response.fields.contains("Content-Disposition"));
+  REQUIRE(!response.fields.contains("Content-Language"));
+}
+
+#if !defined(__EMSCRIPTEN__)
+
+TEST_CASE("static_files: what is neither a file nor a directory is not even opened", "[server][static]") {
+  site const served;
+  auto const device = served.directory.path() / "null";
+
+  fs::create_symlink("/dev/null", served.directory.path() / "outside");
+  REQUIRE(::mkfifo(device.c_str(), 0600) == 0);
+  REQUIRE(ask(served.router, "/assets/null").status == status::not_found);
+  REQUIRE(ask(served.router, "/assets/outside").status == status::not_found);
+}
+
+#endif

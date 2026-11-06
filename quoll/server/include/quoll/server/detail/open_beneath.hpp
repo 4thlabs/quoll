@@ -44,8 +44,8 @@ namespace quoll::server::detail {
 // Opens `relative`, whose links have been followed already, under the directory `root`, one component at a time and
 // following none: a directory replaced by a link since the path was checked stops it, where open() would follow it out
 // of the root, as O_NOFOLLOW only looks at the last component. For reading, without waiting for a FIFO's writer. Gives
-// a descriptor, or -1 with errno.
-[[nodiscard]] int open_beneath(std::filesystem::path const &root, std::filesystem::path const &relative) noexcept;
+// a descriptor, or the negative of what errno said.
+[[nodiscard]] int open_beneath(std::filesystem::path const &root, std::filesystem::path const &relative);
 
 } // namespace quoll::server::detail
 

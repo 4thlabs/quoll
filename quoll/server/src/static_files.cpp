@@ -90,18 +90,27 @@ constexpr int search_only = O_RDONLY;
 
 } // namespace
 
-int open_beneath(std::filesystem::path const &root, std::filesystem::path const &relative) noexcept {
+int open_beneath(std::filesystem::path const &root, std::filesystem::path const &relative) {
   auto current = ::open(root.c_str(), search_only | O_CLOEXEC | O_DIRECTORY);
 
-  for (auto component = relative.begin(); current >= 0 && component != relative.end(); ++component) {
+  if (current < 0) {
+    return -errno;
+  }
+
+  for (auto component = relative.begin(); component != relative.end(); ++component) {
     // Only the last may be anything but a directory.
     auto const last = std::next(component) == relative.end();
-    auto const next = ::openat(current, component->c_str(),
-                               O_CLOEXEC | O_NOFOLLOW | (last ? O_RDONLY | O_NONBLOCK : search_only | O_DIRECTORY));
+    auto const next =
+        ::openat(current, component->c_str(),
+                 O_CLOEXEC | O_NOFOLLOW | (last ? O_RDONLY | O_NONBLOCK | O_NOCTTY : search_only | O_DIRECTORY));
     auto const failure = errno;
 
     ::close(current);
-    errno = failure;
+
+    if (next < 0) {
+      return -failure;
+    }
+
     current = next;
   }
 
@@ -188,7 +197,7 @@ struct opened_path {
   auto const descriptor = detail::open_beneath(root, resolved.lexically_relative(root));
 
   if (descriptor < 0) {
-    std::error_code const error{errno, std::generic_category()};
+    std::error_code const error{-descriptor, std::generic_category()};
 
     if (nothing_there(error)) {
       return std::nullopt;
@@ -250,12 +259,12 @@ struct looked_up {
 
 // Whether a path whose links have been followed is one to serve: a link must not lead to the `.env` its name does not
 // say.
-[[nodiscard]] bool may_be_served(served const &state, fs::path const &resolved) {
+[[nodiscard]] bool may_be_served(served const &state, fs::path const &root, fs::path const &resolved) {
   if (state.options.dotfiles) {
     return true;
   }
 
-  auto const relative = resolved.lexically_relative(state.root);
+  auto const relative = resolved.lexically_relative(root);
 
   return std::ranges::none_of(relative, [](fs::path const &component) {
     auto const name = component.native();
@@ -264,15 +273,15 @@ struct looked_up {
   });
 }
 
-// `path`, whose links have been followed, if it is under the root and to be served.
-[[nodiscard]] std::optional<fs::path> to_serve(served const &state, fs::path const &path) {
-  auto resolved = inside_root(state.root, path);
+// `path`, once its links are followed, if it is under `root` and to be served.
+[[nodiscard]] std::optional<fs::path> to_serve(served const &state, fs::path const &root, fs::path const &path) {
+  auto resolved = inside_root(root, path);
 
-  return resolved && may_be_served(state, *resolved) ? std::move(resolved) : std::nullopt;
+  return resolved && may_be_served(state, root, *resolved) ? std::move(resolved) : std::nullopt;
 }
 
-[[nodiscard]] std::optional<found_file> regular_file(served const &state, fs::path const &resolved) {
-  auto opened = open_resolved(state.root, resolved);
+[[nodiscard]] std::optional<found_file> regular_file(fs::path const &root, fs::path const &resolved) {
+  auto opened = open_resolved(root, resolved);
 
   if (!opened || !S_ISREG(opened->status.st_mode)) {
     return std::nullopt;
@@ -282,14 +291,10 @@ struct looked_up {
 }
 
 [[nodiscard]] looked_up look_up(served const &state, fs::path const &relative, bool ends_with_slash) {
-  auto const path = to_serve(state, state.root / relative);
-
-  if (!path) {
-    return {};
-  }
-
   std::error_code error;
-  auto const directory = fs::is_directory(*path, error);
+
+  // As it is now: a root that is a link, flipped to deploy a new release, is to be followed.
+  auto const root = fs::canonical(state.root, error);
 
   if (error) {
     if (nothing_there(error)) {
@@ -299,16 +304,33 @@ struct looked_up {
     throw std::system_error{error, "quoll::server::static_files"};
   }
 
-  if (!directory) {
-    return ends_with_slash ? looked_up{} : looked_up{regular_file(state, *path)};
-  }
+  auto const path = to_serve(state, root, root / relative);
 
-  if (state.options.index.empty()) {
+  if (!path) {
     return {};
   }
 
-  auto const index = to_serve(state, *path / state.options.index);
-  auto file = index ? regular_file(state, *index) : std::nullopt;
+  auto const kind = fs::status(*path, error).type();
+
+  if (error) {
+    if (nothing_there(error)) {
+      return {};
+    }
+
+    throw std::system_error{error, "quoll::server::static_files"};
+  }
+
+  // What is neither is not even opened: opening a device may do something.
+  if (kind == fs::file_type::regular) {
+    return ends_with_slash ? looked_up{} : looked_up{regular_file(root, *path)};
+  }
+
+  if (kind != fs::file_type::directory || state.options.index.empty()) {
+    return {};
+  }
+
+  auto const index = to_serve(state, root, *path / state.options.index);
+  auto file = index ? regular_file(root, *index) : std::nullopt;
 
   if (!file) {
     return {};
@@ -378,41 +400,124 @@ struct looked_up {
   return std::string(text.data(), static_cast<std::size_t>(size));
 }
 
-// The time of an HTTP date in its only current form, the one http_date() writes: what is not, a peer's invention above
-// all, is ignored, as RFC 9110 lets a recipient do with a date it cannot read.
-[[nodiscard]] std::optional<std::time_t> parse_http_date(std::string_view text) {
+// The parts of an HTTP date, as text, whichever form they came in.
+struct date_parts {
+  std::string_view weekday;
+  std::string_view day;
+  std::string_view month;
+  std::string_view year;
+  std::string_view time;
+};
+
+// The time of what they say, if that is a moment that exists, on that weekday: what timegm() would otherwise move on to
+// another day, 31 February to March, is no date. Read here rather than by strptime(), whose checks differ from one C
+// library to another, as this comes from the network.
+[[nodiscard]] std::optional<std::time_t> time_of(date_parts const &parts, int year) {
+  static constexpr std::array<std::string_view, 7> days{"Sunday",   "Monday", "Tuesday", "Wednesday",
+                                                        "Thursday", "Friday", "Saturday"};
   static constexpr std::string_view months = "JanFebMarAprMayJunJulAugSepOctNovDec";
-  static constexpr std::string_view form = "Sun, 06 Nov 1994 08:49:37 GMT";
 
-  if (text.size() != form.size()) {
+  auto const day = http::detail::parse_number<int>(http::detail::trim(parts.day));
+  auto const month = months.find(parts.month);
+  auto const hour = http::detail::parse_number<int>(parts.time.substr(0, 2));
+  auto const minute = http::detail::parse_number<int>(parts.time.substr(3, 2));
+  auto const second = http::detail::parse_number<int>(parts.time.substr(6, 2));
+
+  if (parts.time.size() != 8 || parts.time[2] != ':' || parts.time[5] != ':' || parts.month.size() != 3 || !day ||
+      month == std::string_view::npos || month % 3 != 0 || !hour || !minute || !second) {
     return std::nullopt;
   }
 
-  auto const date = http::detail::parse_number<int>(text.substr(5, 2));
-  auto const month = months.find(text.substr(8, 3));
-  auto const year = http::detail::parse_number<int>(text.substr(12, 4));
-  auto const hour = http::detail::parse_number<int>(text.substr(17, 2));
-  auto const minute = http::detail::parse_number<int>(text.substr(20, 2));
-  auto const second = http::detail::parse_number<int>(text.substr(23, 2));
+  std::tm asked{};
 
-  if (!date || month == std::string_view::npos || month % 3 != 0 || !year || !hour || !minute || !second) {
+  asked.tm_year = year - 1900;
+  asked.tm_mon = static_cast<int>(month / 3);
+  asked.tm_mday = *day;
+  asked.tm_hour = *hour;
+  asked.tm_min = *minute;
+  asked.tm_sec = *second;
+
+  // Read back rather than from what timegm() was given, which not all of them normalize.
+  auto given = asked;
+  auto const time = ::timegm(&given);
+  std::tm normalized{};
+
+  ::gmtime_r(&time, &normalized);
+
+  auto const weekday = days.at(static_cast<std::size_t>(normalized.tm_wday));
+
+  if (normalized.tm_year != asked.tm_year || normalized.tm_mon != asked.tm_mon || normalized.tm_mday != asked.tm_mday ||
+      normalized.tm_hour != asked.tm_hour || normalized.tm_min != asked.tm_min || normalized.tm_sec != asked.tm_sec ||
+      (parts.weekday != weekday && parts.weekday != weekday.substr(0, 3))) {
     return std::nullopt;
   }
 
-  std::tm parts{};
+  return time;
+}
 
-  parts.tm_year = *year - 1900;
-  parts.tm_mon = static_cast<int>(month / 3);
-  parts.tm_mday = *date;
-  parts.tm_hour = *hour;
-  parts.tm_min = *minute;
-  parts.tm_sec = *second;
+// A year of four digits: no more, as what a peer sends here must stay far from what an int holds.
+[[nodiscard]] std::optional<int> four_digits(std::string_view text) {
+  return text.size() == 4 ? http::detail::parse_number<int>(text) : std::nullopt;
+}
 
-  auto const time = ::timegm(&parts);
+// The time of an HTTP date, in the three forms RFC 9110, 5.6.7 asks a recipient to accept. What is none of them, a
+// peer's invention above all, is ignored, as it lets a recipient do with a date that cannot be read.
+[[nodiscard]] std::optional<std::time_t> parse_http_date(std::string_view text) {
+  // Sun, 06 Nov 1994 08:49:37 GMT
+  if (text.size() == 29 && text.substr(3, 2) == ", " && text[7] == ' ' && text[11] == ' ' && text[16] == ' ' &&
+      text.substr(25) == " GMT") {
+    auto const year = four_digits(text.substr(12, 4));
 
-  // What it would write itself, or it is not one: 99 January would otherwise move on to April, and any weekday would
-  // do.
-  return http_date(time) == text ? std::optional{time} : std::nullopt;
+    return year ? time_of(
+                      {text.substr(0, 3), text.substr(5, 2), text.substr(8, 3), text.substr(12, 4), text.substr(17, 8)},
+                      *year)
+                : std::nullopt;
+  }
+
+  // Sun Nov  6 08:49:37 1994
+  if (text.size() == 24 && text[3] == ' ' && text[7] == ' ' && text[10] == ' ' && text[19] == ' ') {
+    auto const year = four_digits(text.substr(20, 4));
+
+    return year ? time_of(
+                      {text.substr(0, 3), text.substr(8, 2), text.substr(4, 3), text.substr(20, 4), text.substr(11, 8)},
+                      *year)
+                : std::nullopt;
+  }
+
+  // Sunday, 06-Nov-94 08:49:37 GMT
+  auto const comma = text.find(", ");
+
+  if (comma == std::string_view::npos || text.size() != comma + 2 + 22) {
+    return std::nullopt;
+  }
+
+  auto const rest = text.substr(comma + 2);
+
+  if (rest[2] != '-' || rest[6] != '-' || rest[9] != ' ' || rest.substr(18) != " GMT") {
+    return std::nullopt;
+  }
+
+  auto const short_year = http::detail::parse_number<int>(rest.substr(7, 2));
+
+  if (!short_year || *short_year < 0) {
+    return std::nullopt;
+  }
+
+  // RFC 9110, 5.6.7: what would be more than 50 years ahead is the same year in the past.
+  auto const now = std::time(nullptr);
+  std::tm today{};
+
+  ::gmtime_r(&now, &today);
+
+  auto const this_year = today.tm_year + 1900;
+  auto year = this_year - this_year % 100 + *short_year;
+
+  if (year > this_year + 50) {
+    year -= 100;
+  }
+
+  return time_of({text.substr(0, comma), rest.substr(0, 2), rest.substr(3, 3), rest.substr(7, 2), rest.substr(10, 8)},
+                 year);
 }
 
 // RFC 9110, 13.1.2: the weak comparison, over a list, or `*`.
@@ -524,8 +629,13 @@ enum class range_outcome { whole, part, out_of_file };
       return range_outcome::whole;
     }
 
-    if (*suffix == 0 || size == 0) {
+    if (*suffix == 0) {
       return range_outcome::out_of_file;
+    }
+
+    // Satisfiable, RFC 9110, 14.1.2, and no 206 can say so.
+    if (size == 0) {
+      return range_outcome::whole;
     }
 
     auto const length = std::min(*suffix, size);
@@ -675,7 +785,8 @@ void forget_its_content(http::response &answer) {
   answer.trailers.clear();
   answer.body_writer = nullptr;
 
-  for (auto const name : {"Content-Type", "Content-Length", "Content-Encoding", "Content-Range", "Transfer-Encoding"}) {
+  for (auto const name : {"Content-Type", "Content-Length", "Content-Encoding", "Content-Range", "Content-Language",
+                          "Content-Disposition", "Content-Location", "Transfer-Encoding", "Trailer"}) {
     answer.fields.erase(name);
   }
 }
@@ -729,10 +840,23 @@ void forget_its_content(http::response &answer) {
   return answer;
 }
 
+// A field, on as many lines as it came: a list may, and what makes no sense so, two ranges, reads as what it is.
 [[nodiscard]] std::optional<std::string> copy_of(http::fields const &fields, std::string_view name) {
-  auto const value = fields.find(name);
+  std::optional<std::string> value;
 
-  return value ? std::optional{std::string{*value}} : std::nullopt;
+  for (auto const &entry : fields) {
+    if (!http::detail::iequals(entry.name, name)) {
+      continue;
+    }
+
+    if (value) {
+      value->append(", ");
+    }
+
+    value = value.value_or("") + entry.value;
+  }
+
+  return value;
 }
 
 // A path under the prefix: what follows it, with its leading slash gone.
@@ -819,13 +943,12 @@ http::router::middleware static_files(std::string_view prefix, fs::path const &r
     prefix.remove_suffix(1);
   }
 
-  auto canonical = fs::canonical(root);
-
-  if (!fs::is_directory(canonical)) {
+  if (!fs::is_directory(fs::canonical(root))) {
     throw std::invalid_argument{"quoll::server::static_files: the root is not a directory"};
   }
 
-  auto state = std::make_shared<served const>(served{std::string{prefix}, std::move(canonical), std::move(options)});
+  // As given, rather than where it leads now: see look_up().
+  auto state = std::make_shared<served const>(served{std::string{prefix}, fs::absolute(root), std::move(options)});
 
   return [state = std::move(state)](http::request &&message, http::next const &next) {
     return serve_file(state, std::move(message), next);

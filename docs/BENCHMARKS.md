@@ -28,7 +28,7 @@ not counted. Standard library assertions are off, as in an application, whereas 
 | POST 1 MiB, echoed | 721 | 1331 | 2189 | 43 | 36 |
 | POST 1 MiB, read in pieces | 826 | 1078 | 2419 | 1111 | 26 |
 | GET 1 MiB, written in pieces | 644 | 1429 | 3453 | 1046 | 21 |
-| GET a file of 1 MiB | 2160 | 441 | 775 | 110 | 27 |
+| GET a file of 1 MiB | 2160 | 441 | 775 | 93 | 27 |
 | REST GET, JSON | 55758 | 15 | 48 | 25 | 16 |
 | REST POST, JSON | 14132 | 44 | 1028 | 45 | 35 |
 | GET over TLS, one connection | 45757 | 18 | 60 | 16 | 10 |
@@ -57,7 +57,7 @@ also writes the first table in its summary. Of the pull requests, only one touch
 | POST 1 MiB, echoed | 63 |
 | POST 1 MiB, read in pieces | 821 |
 | GET 1 MiB, written in pieces | 800 |
-| GET a file of 1 MiB | 115 |
+| GET a file of 1 MiB | 121 |
 | REST GET, JSON | 37 |
 | REST POST, JSON | 64 |
 
@@ -71,6 +71,9 @@ already in the page cache, the case where that thread gains nothing:
 | --- | --- | --- | --- |
 | On a thread | 2160, 2074, 2184 | 441 | 110 |
 | On the loop | 2274, 2197, 2239 | 428 | 106 |
+
+Measured before the root was resolved for each request, for deploys that flip a link, which adds a few allocations to the
+server and is why the table above says more.
 
 About 4% of the rate, on a file served at some 2 GiB/s. This row and the one above it come from a later commit than the rest
 of the table. A file goes about three times faster than `GET 1 MiB, written in pieces`, as its pieces are 64 KiB rather

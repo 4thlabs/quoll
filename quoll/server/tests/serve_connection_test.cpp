@@ -2896,3 +2896,44 @@ TEST_CASE("serve_connection: what goes wrong during a stop is still told", "[ser
 
   REQUIRE(reported == 1);
 }
+
+TEST_CASE("serve_connection: what goes wrong in a body_writer during a stop is still told", "[server][timer]") {
+  virtual_time time;
+  http::router router;
+  auto reported = 0;
+  std::stop_source stop;
+
+  router.get("/failing", [&](http::request) {
+    http::response response;
+
+    response.body_writer = [&](http::body_stream) -> task<> {
+      stop.request_stop();
+      throw std::system_error{std::make_error_code(std::errc::io_error)};
+      co_return;
+    };
+    return response;
+  });
+
+  auto [client, server] = io::make_memory_stream_pair();
+  connection_options options;
+
+  options.on_handler_error = [&](std::exception_ptr const &) { ++reported; };
+  options.lingering_timeout = 0s;
+
+  auto const peer = [](io::memory_stream stream) -> task<int> {
+    std::string_view const raw = "GET /failing HTTP/1.1\r\nHost: h\r\n\r\n";
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{raw}));
+    co_return 1;
+  };
+
+  auto const serving = [&](io::memory_stream stream) -> task<> {
+    co_await quoll::async::detail::stop_scope<void>{quoll::server::serve_connection(std::move(stream), router, options),
+                                                    stop.get_token()};
+  };
+
+  static_cast<void>(
+      quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peer(std::move(client)))));
+
+  REQUIRE(reported == 1);
+}

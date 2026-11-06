@@ -817,9 +817,14 @@ async::task<bool> send_streamed(paced_stream &stream, http::response &response, 
       // No failure of the writer's, which only let it through.
     } catch (body_not_read const &) {
       // Nor is this, from a writer reading the request.
+    } catch (std::system_error const &thrown) {
+      // What a stop throws is no failure either, unlike what goes wrong during one.
+      if (options.on_handler_error &&
+          !(stop_token.stop_requested() && thrown.code() == std::errc::operation_canceled)) {
+        options.on_handler_error(std::current_exception());
+      }
     } catch (...) {
-      // A stop is no failure either.
-      if (options.on_handler_error && !stop_token.stop_requested()) {
+      if (options.on_handler_error) {
         options.on_handler_error(std::current_exception());
       }
     }

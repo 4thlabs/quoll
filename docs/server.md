@@ -177,7 +177,8 @@ What comes out:
   Several intervals, or what cannot be read, send it whole. `If-Range` holds it to the file it was for.
 - **A directory.** Without its final slash, a redirect to it, if it has an index.
 
-Nothing outside the root is served, a symbolic link leading out of it included, and neither is what is not a regular file:
+The root is looked at again for each request, so that a link flipped to deploy a new release is followed. Nothing outside it
+is served, a symbolic link leading out of it included, and neither is what is not a regular file:
 all of that is the same 404 as what does not exist. There is no listing of a directory, and no compression.
 
 ## Serving
