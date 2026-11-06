@@ -39,6 +39,7 @@
 
 #include <quoll/http/body_reader.hpp>
 
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -58,6 +59,8 @@ struct route_match {
    * router::add(), whose request comes whole.
    */
   body_reader reader{};
+  /** @brief What `reader` reads from, when nothing outside the router keeps it: for what goes on after dispatch(). */
+  std::shared_ptr<void> reader_owner{};
 };
 
 } // namespace quoll::http

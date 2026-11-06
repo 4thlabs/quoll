@@ -34,9 +34,12 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/late_head.hpp>
 #include <quoll/http/response_writer.hpp>
 
+#include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace quoll::http {
@@ -72,6 +75,10 @@ void response_writer::give_head() {
 }
 
 async::task<> response_writer::write(std::string_view piece) {
+  if (!out_) {
+    throw std::logic_error{"quoll::http::response_writer: write() on one moved from"};
+  }
+
   give_head();
   return out_->write(piece);
 }
@@ -83,9 +90,12 @@ void merge_head(response &answer, status code, fields given) {
     answer.status = code;
   }
 
-  // What the handler sets replaces what a middleware added under that name, every value of it staying.
+  // What the handler sets replaces what a middleware added under that name, every value of it staying, but for what is
+  // a list of its own: a session's cookie, or a Vary for CORS, would be lost.
   for (auto const &entry : given) {
-    answer.fields.erase(entry.name);
+    if (!iequals(entry.name, "Set-Cookie") && !iequals(entry.name, "Vary")) {
+      answer.fields.erase(entry.name);
+    }
   }
 
   for (auto const &entry : given) {

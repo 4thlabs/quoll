@@ -92,7 +92,8 @@ router.get("/export/{name}", [](std::string name, http::response_writer out) -> 
 
 It runs once the router has answered, awaited by what serves the connection, so that its parameters live until it ends,
 references and views too. The head leaves with its first `write`: past that, changing its status or fields does nothing. A
-middleware therefore does not see its status when `next` returns, and adds to its fields, which the handler's replace by name.
+middleware has therefore returned by then: it does not see the status, catch what the handler throws or bound its time, and it adds
+to the fields, which the handler's replace by name, but for `Set-Cookie` and `Vary`, which add up.
 What it throws before its first `write` answers 500, and after it cuts the connection. If it ends without writing, its response has
 an empty body. To HEAD, it runs up to its first `write`, which sends the head and throws `std::errc::operation_canceled`. A route may
 read as it writes, with `(http::body_reader in, http::response_writer out)`.
