@@ -39,13 +39,19 @@
 // - /hang: never;
 // - /gzip: "hello gzipped", compressed (Content-Encoding: gzip);
 // - /status/<code>: that status;
+// - /open: its head at once, then what quoll_test_server_write() writes, up to quoll_test_server_end() or the cut of
+//   quoll_test_server_cut();
 // - anything else: 200, with the request's body as body ("hello over fetch" if empty).
-// Every response tells the request's method, target and x-test field in x-method, x-target and x-test.
+// Every response but those of /hang, /gzip and /open tells the request's method, target and x-test field in x-method,
+// x-target and x-test.
 
 addToLibrary({
   $quollTestServer: {
     server: null,
     port: 0,
+    // The response of the last /open, and whether its connection has closed.
+    open: null,
+    closed: false,
   },
 
   quoll_test_server_start__deps: ['$quollTestServer'],
@@ -64,6 +70,17 @@ addToLibrary({
         if (request.url === '/gzip') {
           response.writeHead(200, { 'content-encoding': 'gzip' });
           response.end(zlib.gzipSync('hello gzipped'));
+          return;
+        }
+
+        if (request.url === '/open') {
+          quollTestServer.open = response;
+          quollTestServer.closed = false;
+          response.on('close', () => {
+            quollTestServer.closed = true;
+          });
+          response.writeHead(200, { 'x-open': 'yes' });
+          response.flushHeaders();
           return;
         }
 
@@ -94,11 +111,39 @@ addToLibrary({
   quoll_test_server_port__deps: ['$quollTestServer'],
   quoll_test_server_port: () => quollTestServer.port,
 
+  quoll_test_server_write__deps: ['$quollTestServer'],
+  quoll_test_server_write: (text, size) => {
+    quollTestServer.open.write(HEAPU8.slice(text, text + size));
+  },
+
+  quoll_test_server_end__deps: ['$quollTestServer'],
+  quoll_test_server_end: () => {
+    quollTestServer.open.end();
+  },
+
+  quoll_test_server_cut__deps: ['$quollTestServer'],
+  quoll_test_server_cut: () => {
+    quollTestServer.open.destroy();
+  },
+
+  quoll_test_server_closed__deps: ['$quollTestServer'],
+  quoll_test_server_closed: () => (quollTestServer.closed ? 1 : 0),
+
+  // The fetches js/quoll_emscripten.js holds an entry for.
+  quoll_test_fetch_entries__deps: ['$quollFetches'],
+  quoll_test_fetch_entries: () => Object.keys(quollFetches.entries).length,
+
+  // The bytes of a body, or of a piece, its entries still hold in JavaScript.
+  quoll_test_fetch_held_bytes__deps: ['$quollFetches'],
+  quoll_test_fetch_held_bytes: () =>
+    Object.values(quollFetches.entries).reduce((held, entry) => held + (entry.parts[2]?.length ?? 0), 0),
+
   quoll_test_server_stop__deps: ['$quollTestServer'],
   quoll_test_server_stop: () => {
     quollTestServer.server.closeAllConnections();
     quollTestServer.server.close();
     quollTestServer.server = null;
     quollTestServer.port = 0;
+    quollTestServer.open = null;
   },
 });

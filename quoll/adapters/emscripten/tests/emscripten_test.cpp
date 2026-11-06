@@ -45,8 +45,10 @@
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
+#include <quoll/http/streamed_response.hpp>
 #include <quoll/http/transport.hpp>
 #include <quoll/http/verb.hpp>
+#include <quoll/http/version.hpp>
 #include <quoll/rest/api.hpp>
 #include <quoll/rest/body.hpp>
 #include <quoll/rest/client.hpp>
@@ -57,10 +59,13 @@
 #include <quoll/test/overloaded.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <emscripten.h>
 
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -68,14 +73,22 @@
 #include <stdexcept>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 // tests/test_server.js
 extern "C" {
 void quoll_test_server_start();
 int quoll_test_server_port();
 void quoll_test_server_stop();
+void quoll_test_server_write(char const *text, std::size_t size);
+void quoll_test_server_end();
+void quoll_test_server_cut();
+int quoll_test_server_closed();
+int quoll_test_fetch_entries();
+int quoll_test_fetch_held_bytes();
 }
 
 namespace {
@@ -443,6 +456,76 @@ TEST_CASE("fetch_transport: a body_writer goes out whole", "[emscripten][http]")
   REQUIRE_THROWS_AS(run(transport.send(std::move(short_of_it))), std::length_error);
 }
 
+TEST_CASE("fetch_transport: stream() takes a body_writer too, gathered first", "[emscripten][http][stream]") {
+  test_server const server;
+  fetch_transport const transport{server.url()};
+  http::request request;
+
+  request.method = http::verb::post;
+  request.target = "/status/200";
+  request.body_writer = [](http::body_stream out) -> quoll::async::task<> {
+    co_await out.write("one ");
+    co_await out.write("two");
+  };
+
+  auto const reading = [&]() -> quoll::async::task<std::string> {
+    auto response = co_await transport.stream(std::move(request));
+    std::string body;
+
+    while (auto const piece = co_await response.body.read()) {
+      body += *piece;
+    }
+
+    co_return body;
+  };
+
+  REQUIRE(run(reading()) == "one two");
+
+  http::request both;
+
+  both.method = http::verb::post;
+  both.target = "/status/200";
+  both.body = "whole";
+  both.body_writer = [](http::body_stream) -> quoll::async::task<> { co_return; };
+  REQUIRE_THROWS_AS(transport.stream(std::move(both)), std::invalid_argument);
+
+  http::request short_of_it;
+
+  short_of_it.method = http::verb::post;
+  short_of_it.target = "/status/200";
+  short_of_it.fields.set("Content-Length", "1000");
+  short_of_it.body_writer = [](http::body_stream out) -> quoll::async::task<> { co_await out.write("four"); };
+  REQUIRE_THROWS_AS(run(transport.stream(std::move(short_of_it))), std::length_error);
+
+  http::request endless;
+
+  endless.method = http::verb::post;
+  endless.target = "/status/200";
+  endless.body_writer = [](http::body_stream out) -> quoll::async::task<> {
+    for (;;) {
+      try {
+        co_await quoll::async::sleep_for(std::chrono::milliseconds{1});
+      } catch (std::system_error const &) {
+      }
+
+      co_await out.write("x");
+    }
+  };
+
+  auto const timing_out = [&]() -> quoll::async::task<std::error_code> {
+    try {
+      static_cast<void>(
+          co_await quoll::async::with_timeout(std::chrono::milliseconds{20}, transport.stream(std::move(endless))));
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  REQUIRE(run(timing_out()) == std::make_error_code(std::errc::timed_out));
+}
+
 TEST_CASE("fetch_transport: a timeout ends a body_writer at its next write", "[emscripten][http][timer]") {
   test_server const server;
   fetch_transport const transport{server.url()};
@@ -488,4 +571,364 @@ TEST_CASE("rest::client over fetch_transport calls an API that only has a contra
   REQUIRE_FALSE(missing.has_value());
   REQUIRE(missing.error().response.status == http::status::not_found);
   REQUIRE(missing.error().reason == "undeclared status 404");
+}
+
+namespace {
+
+task<http::streamed_response> stream_target(fetch_transport transport, std::string target,
+                                            http::verb method = http::verb::get, std::string body = {}) {
+  http::request request;
+
+  request.method = method;
+  request.target = std::move(target);
+  request.body = std::move(body);
+  co_return co_await transport.stream(std::move(request));
+}
+
+task<std::error_code> stream_error(fetch_transport transport, std::string target) {
+  try {
+    (void)co_await stream_target(std::move(transport), std::move(target));
+  } catch (std::system_error const &error) {
+    co_return error.code();
+  }
+
+  co_return std::error_code{};
+}
+
+// Requests a target the server never answers, then requests stop: when_all starts the fetch first.
+task<std::error_code> stream_then_stop(fetch_transport transport, std::stop_source &source) {
+  auto const [error, stopped] =
+      co_await quoll::async::when_all(stream_error(std::move(transport), "/hang"), request_stop(source));
+
+  co_return error;
+}
+
+// The next piece, copied as what the view shows does not outlive the task's result.
+task<std::optional<std::string>> next_piece(http::response_body const &body) {
+  auto const piece = co_await body.read();
+
+  co_return piece ? std::optional<std::string>{*piece} : std::nullopt;
+}
+
+task<std::string> read_rest(http::response_body const &body) {
+  std::string rest;
+
+  while (auto const piece = co_await body.read()) {
+    rest += *piece;
+  }
+
+  co_return rest;
+}
+
+// What read() throws, or a default error if it does not.
+task<std::system_error> read_failure(http::response_body const &body) {
+  try {
+    (void)co_await body.read();
+  } catch (std::system_error const &error) {
+    co_return error;
+  }
+
+  co_return std::system_error{std::error_code{}};
+}
+
+// Reads what has not been written yet, then requests stop: when_all starts the read first.
+task<std::system_error> read_then_stop(http::response_body const &body, std::stop_source &source) {
+  auto const [failure, stopped] = co_await quoll::async::when_all(read_failure(body), request_stop(source));
+
+  co_return failure;
+}
+
+task<std::error_code> read_with_timeout(http::response_body const &body, std::chrono::nanoseconds timeout) {
+  try {
+    (void)co_await quoll::async::with_timeout(timeout, body.read());
+  } catch (std::system_error const &error) {
+    co_return error.code();
+  }
+
+  co_return std::error_code{};
+}
+
+void server_writes(std::string_view text) { quoll_test_server_write(text.data(), text.size()); }
+
+// Whether the connection of /open closes on the server's side within a time limit, on the event loop.
+bool server_sees_close() {
+  auto const start = emscripten_get_now();
+
+  while (quoll_test_server_closed() == 0 && emscripten_get_now() - start < 5'000.0) {
+    emscripten_sleep(1);
+  }
+
+  return quoll_test_server_closed() != 0;
+}
+
+// Long enough for a close to reach the server, were one on its way.
+void let_the_event_loop_run() { emscripten_sleep(50); }
+
+} // namespace
+
+TEST_CASE("fetch_transport: stream completes before the body, and hands it over as it comes", "[emscripten][stream]") {
+  test_server const server;
+  // The server has written nothing of the body: waiting for it would never end, and fail by the time limit of run().
+  auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+
+  REQUIRE(response.status == http::status::ok);
+  REQUIRE(response.fields.find("x-open") == "yes");
+
+  server_writes("first");
+  REQUIRE(run(next_piece(response.body)) == "first");
+  // Copied, and no longer held in JavaScript as well.
+  REQUIRE(quoll_test_fetch_held_bytes() == 0);
+
+  server_writes("second");
+  REQUIRE(run(next_piece(response.body)) == "second");
+
+  quoll_test_server_end();
+  REQUIRE(run(next_piece(response.body)) == std::nullopt);
+}
+
+TEST_CASE("fetch_transport: stream gives several pieces, none larger than what was written at once",
+          "[emscripten][stream]") {
+  test_server const server;
+  auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+  std::vector<std::string> const writes{"one", "two", "three", std::string(1 << 20, 'x')};
+  std::vector<std::size_t> pieces;
+
+  for (auto const &written : writes) {
+    std::string received;
+
+    server_writes(written);
+    pieces.push_back(0);
+
+    while (received.size() < written.size()) {
+      auto const piece = run(next_piece(response.body));
+
+      REQUIRE(piece.has_value());
+      REQUIRE(piece->size() <= written.size());
+      received += *piece;
+      ++pieces.back();
+    }
+
+    REQUIRE(received == written);
+  }
+
+  // Nothing holds the large one whole.
+  REQUIRE(pieces.back() > 1);
+
+  quoll_test_server_end();
+  REQUIRE(run(next_piece(response.body)) == std::nullopt);
+}
+
+TEST_CASE("fetch_transport: stream gives the status, status text and fields of send", "[emscripten][stream]") {
+  test_server const server;
+  auto const response = run(stream_target(fetch_transport{server.url()}, "/status/404", http::verb::post, "a body"));
+
+  REQUIRE(response.status == http::status::not_found);
+  REQUIRE(response.reason == "Not Found");
+  REQUIRE(response.version == http::version::http_1_1);
+  REQUIRE(response.fields.find("x-method") == "POST");
+  REQUIRE(response.fields.find("x-target") == "/status/404");
+  REQUIRE(run(read_rest(response.body)) == "a body");
+  REQUIRE(response.trailers != nullptr);
+  REQUIRE(response.trailers->empty());
+}
+
+TEST_CASE("fetch_transport: stream decodes a body, without the fields of the wire", "[emscripten][stream]") {
+  test_server const server;
+  auto const response = run(stream_target(fetch_transport{server.url()}, "/gzip"));
+
+  REQUIRE_FALSE(response.fields.contains("Content-Encoding"));
+  REQUIRE_FALSE(response.fields.contains("Content-Length"));
+  REQUIRE(run(read_rest(response.body)) == "hello gzipped");
+}
+
+TEST_CASE("fetch_transport: stream of an empty body frees its fetch at the end", "[emscripten][stream]") {
+  test_server const server;
+  auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+
+  REQUIRE(quoll_test_fetch_entries() == 1);
+
+  quoll_test_server_end();
+  REQUIRE(run(next_piece(response.body)) == std::nullopt);
+  // With the response still here, and however often it is asked.
+  REQUIRE(quoll_test_fetch_entries() == 0);
+  REQUIRE(run(next_piece(response.body)) == std::nullopt);
+}
+
+TEST_CASE("fetch_transport: stream with no body at all ends at once", "[emscripten][stream]") {
+  test_server const server;
+  auto const [method, target] = GENERATE(table<http::verb, std::string>({
+      {http::verb::head, "/"},
+      {http::verb::get, "/status/204"},
+  }));
+  auto const response = run(stream_target(fetch_transport{server.url()}, target, method));
+
+  REQUIRE(response.fields.find("x-target") == target);
+  // Before any read: nothing will come.
+  REQUIRE(quoll_test_fetch_entries() == 0);
+  REQUIRE(run(next_piece(response.body)) == std::nullopt);
+}
+
+TEST_CASE("fetch_transport: a body cut by the server fails with io_error, after what came", "[emscripten][stream]") {
+  test_server const server;
+  auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+
+  server_writes("before");
+  REQUIRE(run(next_piece(response.body)) == "before");
+
+  quoll_test_server_cut();
+
+  auto const failure = run(read_failure(response.body));
+
+  REQUIRE(failure.code() == std::errc::io_error);
+  REQUIRE_THAT(failure.what(), Catch::Matchers::ContainsSubstring("terminated"));
+  // Reading ended there: the same again, with the entry gone though the response is here.
+  REQUIRE(quoll_test_fetch_entries() == 0);
+
+  auto const again = run(read_failure(response.body));
+
+  REQUIRE(again.code() == std::errc::io_error);
+  REQUIRE(std::string_view{again.what()} == failure.what());
+}
+
+TEST_CASE("fetch_transport: a stop request during a read ends the reading", "[emscripten][stream]") {
+  test_server const server;
+  auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+  std::stop_source source;
+
+  REQUIRE(run(read_then_stop(response.body, source), source).code() == std::errc::operation_canceled);
+  REQUIRE(quoll_test_fetch_entries() == 0);
+  REQUIRE(server_sees_close());
+
+  // Without a stop request now: the reading is over, not this read alone.
+  REQUIRE(run(read_failure(response.body)).code() == std::errc::operation_canceled);
+}
+
+TEST_CASE("fetch_transport: a stop request made before a read ends the reading", "[emscripten][stream]") {
+  test_server const server;
+  auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+  std::stop_source source;
+
+  source.request_stop();
+
+  REQUIRE(run(read_failure(response.body), source).code() == std::errc::operation_canceled);
+  REQUIRE(quoll_test_fetch_entries() == 0);
+  REQUIRE(server_sees_close());
+  REQUIRE(run(read_failure(response.body)).code() == std::errc::operation_canceled);
+}
+
+TEST_CASE("fetch_transport: with_timeout on a read ends the reading", "[emscripten][stream][timer]") {
+  using namespace std::chrono_literals;
+
+  test_server const server;
+  auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+
+  REQUIRE(run(read_with_timeout(response.body, 20ms)) == std::errc::timed_out);
+  REQUIRE(quoll_test_fetch_entries() == 0);
+  REQUIRE(server_sees_close());
+  REQUIRE(run(read_failure(response.body)).code() == std::errc::operation_canceled);
+}
+
+TEST_CASE("fetch_transport: dropping a response before the end aborts its fetch", "[emscripten][stream]") {
+  test_server const server;
+  auto const dropped_at = GENERATE(0, 1);
+
+  {
+    auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+
+    if (dropped_at == 1) {
+      server_writes("first");
+      REQUIRE(run(next_piece(response.body)) == "first");
+    }
+
+    let_the_event_loop_run();
+    REQUIRE(quoll_test_server_closed() == 0);
+    REQUIRE(quoll_test_fetch_entries() == 1);
+  }
+
+  REQUIRE(quoll_test_fetch_entries() == 0);
+  REQUIRE(server_sees_close());
+}
+
+TEST_CASE("fetch_transport: copies of a body share the reading, and the last to go aborts", "[emscripten][stream]") {
+  test_server const server;
+  std::optional<http::streamed_response> response{run(stream_target(fetch_transport{server.url()}, "/open"))};
+  std::optional<http::response_body> copy{response->body};
+
+  server_writes("one");
+  REQUIRE(run(next_piece(response->body)) == "one");
+
+  server_writes("two");
+  REQUIRE(run(next_piece(*copy)) == "two");
+
+  // The response goes, and the copy holds the fetch.
+  response.reset();
+  let_the_event_loop_run();
+  REQUIRE(quoll_test_server_closed() == 0);
+  REQUIRE(quoll_test_fetch_entries() == 1);
+
+  server_writes("three");
+  REQUIRE(run(next_piece(*copy)) == "three");
+
+  copy.reset();
+  REQUIRE(quoll_test_fetch_entries() == 0);
+  REQUIRE(server_sees_close());
+}
+
+TEST_CASE("fetch_transport: a body moved from has nothing to read", "[emscripten][stream]") {
+  test_server const server;
+  auto response = run(stream_target(fetch_transport{server.url()}, "/open"));
+  auto const moved = std::move(response.body);
+
+  REQUIRE(run(next_piece(response.body)) == std::nullopt);
+  REQUIRE(quoll_test_fetch_entries() == 1);
+
+  server_writes("still here");
+  REQUIRE(run(next_piece(moved)) == "still here");
+}
+
+TEST_CASE("fetch_transport: stream fails as send does", "[emscripten][stream]") {
+  SECTION("a server nobody listens on") {
+    std::string url;
+
+    {
+      test_server const server;
+
+      url = server.url();
+    }
+
+    REQUIRE(run(stream_error(fetch_transport{url}, "/")) == std::errc::io_error);
+  }
+
+  SECTION("a stop request during the fetch") {
+    test_server const server;
+    std::stop_source source;
+
+    REQUIRE(run(stream_then_stop(fetch_transport{server.url()}, source), source) == std::errc::operation_canceled);
+  }
+
+  SECTION("a stop request before the fetch") {
+    test_server const server;
+    std::stop_source source;
+
+    source.request_stop();
+
+    REQUIRE(run(stream_error(fetch_transport{server.url()}, "/"), source) == std::errc::operation_canceled);
+  }
+
+  REQUIRE(quoll_test_fetch_entries() == 0);
+}
+
+TEST_CASE("fetch_transport: stream rejects before fetching what send rejects", "[emscripten][stream]") {
+  fetch_transport const transport{"http://127.0.0.1"};
+  http::request injected_value;
+  http::request other_host;
+  http::request with_space;
+
+  injected_value.fields.add("X-Test", "a\nX-Injected:1");
+  other_host.target = "@evil.example/";
+  with_space.target = "/a b";
+
+  REQUIRE_THROWS_AS((void)transport.stream(std::move(injected_value)), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)transport.stream(std::move(other_host)), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)transport.stream(std::move(with_space)), std::invalid_argument);
 }

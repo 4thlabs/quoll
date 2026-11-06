@@ -30,7 +30,7 @@ Glaze, `text_codec`, `param_traits`), `quoll::ui` (a prototype: elements, decora
 concept), the adapters `quoll::threads` (thread pool executor; its tests do not run under
 WASM), `quoll::asio` (asio executor offering the network, a timer and TLS, `tcp_stream`, `tls_stream`, connector and acceptors,
 `runtime`; native only, its runtime hides asio from a program, its streams and acceptors need standalone asio, TLS needs OpenSSL) and `quoll::emscripten` (JavaScript event loop executor offering
-a timer, `fetch_transport`, `dom_renderer` and `mount`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`),
+a timer, `fetch_transport`, whose `stream` reads a response in pieces, `dom_renderer` and `mount`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`),
 and
 `quoll::runtime` (`<quoll/runtime.hpp>`: `quoll::runtime`, the runtime of the adapter chosen with `QUOLL_RUNTIME`, asio
 natively; none under Emscripten). A client GET runs end to end over a memory stream, over TCP through the asio
