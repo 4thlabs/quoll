@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/emscripten/detail/fetch_platform.hpp>
 #include <quoll/emscripten/executor.hpp>
 
 #include <quoll/async/await_context.hpp>
@@ -129,6 +130,10 @@ std::chrono::nanoseconds executor::now() const noexcept {
 
 async::task<bool> executor::wait_for(std::chrono::nanoseconds duration) const {
   co_return co_await detail::timer_operation{duration};
+}
+
+http::platform_ref executor::query(async::service_tag<http::platform_ref>) const {
+  return http::platform_ref{detail::the_fetch_platform};
 }
 
 } // namespace quoll::emscripten

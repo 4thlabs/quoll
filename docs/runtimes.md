@@ -184,8 +184,10 @@ rest::client<notes::api> notes{"https://api.example.com"};
 ### `http::client` in a browser
 
 A client from a URL asks the executor it runs on how to send, as it asks for a network natively, and the
-one here offers the JavaScript `fetch()`. Past a limit, the fetch is aborted, so that memory holds no more than the limit. A URL may also be relative to the page, empty or a path, which only a browser can
-make sense of: natively it throws `std::invalid_argument`. On an executor that does not offer `fetch`, a request throws
+one here offers the JavaScript `fetch()`. Past a limit, the fetch is aborted, so that memory holds no more than the limit. A URL may also be relative, which only a browser can make sense of, and natively
+it throws `std::invalid_argument`: empty or a path, from the page's origin, or `.` or `./path`, from the page itself, for one served
+under a path of its own. What `fetch` refuses throws `std::invalid_argument` before the task runs: a GET or a HEAD with a body or a
+`body_writer`, and the methods CONNECT and TRACE. On an executor that does not offer `fetch`, a request throws
 `std::logic_error`, as one without a network does natively. A connector given to a client is still used, as a test in memory does.
 
 What `fetch` does for you, and what it does not let you do:

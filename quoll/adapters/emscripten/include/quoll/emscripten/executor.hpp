@@ -44,7 +44,6 @@
 #include <quoll/async/timer.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/work_item.hpp>
-#include <quoll/emscripten/detail/fetch_platform.hpp>
 #include <quoll/emscripten/detail/js.hpp>
 #include <quoll/http/platform_ref.hpp>
 
@@ -82,9 +81,7 @@ public:
   [[nodiscard]] async::timer_ref query(async::service_tag<async::timer_ref>) const { return async::timer_ref{*this}; }
 
   /** @brief The browser's fetch, which http::client goes through here. */
-  [[nodiscard]] http::platform_ref query(async::service_tag<http::platform_ref>) const {
-    return http::platform_ref{detail::the_fetch_platform};
-  }
+  [[nodiscard]] http::platform_ref query(async::service_tag<http::platform_ref>) const;
 
   /** @brief Always true: every executor posts to the same event loop. */
   [[nodiscard]] bool operator==(executor const &) const noexcept = default;

@@ -61,7 +61,7 @@ namespace quoll::http::detail {
 namespace {
 
 struct platform_state {
-  // Scheme and authority, empty for what is relative to the page.
+  // Scheme and authority, empty for what is relative to the page's origin, `.` for what is relative to the page.
   std::string origin;
   std::string prefix;
   client_options options;
@@ -72,6 +72,14 @@ struct platform_state {
 void make_ready(platform_state const &state, http::request &request) {
   if (!request.target.starts_with('/')) {
     throw std::invalid_argument{"quoll::http::client: the target is not in origin form"};
+  }
+
+  using enum http::verb;
+
+  // fetch() would reject them, as a TypeError that reads as a network failure.
+  if (((request.method == get || request.method == head) && (request.body_writer || !request.body.empty())) ||
+      request.method == connect || request.method == trace) {
+    throw std::invalid_argument{"quoll::http::client: what a browser's fetch refuses to send"};
   }
 
   request.target.insert(0, state.prefix);
@@ -232,29 +240,35 @@ private:
 } // namespace
 
 client_backend make_platform_backend(std::string_view url, client_options const &options) {
-  auto const relative = url.empty() || url.starts_with('/');
-  // Relative to the page, only its path counts: it reads as a URL's does.
-  auto server = relative ? parse_url("http://page.invalid" + std::string{url}) : parse_url(url);
+  static constexpr client_operations operations{
+      [](std::shared_ptr<void> const &state, http::request request) {
+        auto const platform = std::static_pointer_cast<platform_state>(state);
+
+        make_ready(*platform, request);
+        return send_on_platform(platform, std::move(request));
+      },
+      [](std::shared_ptr<void> const &state, http::request request) {
+        auto const platform = std::static_pointer_cast<platform_state>(state);
+
+        make_ready(*platform, request);
+        return stream_on_platform(platform, std::move(request));
+      },
+  };
+
+  // From the page itself: what follows the dot reads as a path does, and the dot keeps the rest beside the page.
+  auto const from_the_page = url == "." || url.starts_with("./");
+  auto const path = from_the_page ? url.substr(1) : url;
+  auto const relative = path.empty() || path.starts_with('/');
+  auto server = relative ? parse_url("http://page.invalid" + std::string{path}) : parse_url(url);
 
   // Refuses a host that is none, as a client over a connector does.
   (void)host_field(server.host, server.port, server.secure ? 443 : 80);
 
-  auto const scheme = url.find("://");
-  auto origin = relative ? std::string{} : std::string{url.substr(0, url.find('/', scheme + 3))};
+  auto origin = from_the_page ? std::string{"."}
+                : relative    ? std::string{}
+                              : std::string{url.substr(0, url.find('/', url.find("://") + 3))};
 
-  return {std::make_shared<platform_state>(std::move(origin), std::move(server.prefix), options),
-          [](std::shared_ptr<void> const &state, http::request request) {
-            auto const platform = std::static_pointer_cast<platform_state>(state);
-
-            make_ready(*platform, request);
-            return send_on_platform(platform, std::move(request));
-          },
-          [](std::shared_ptr<void> const &state, http::request request) {
-            auto const platform = std::static_pointer_cast<platform_state>(state);
-
-            make_ready(*platform, request);
-            return stream_on_platform(platform, std::move(request));
-          }};
+  return {std::make_shared<platform_state>(std::move(origin), std::move(server.prefix), options), &operations};
 }
 
 } // namespace quoll::http::detail
