@@ -41,21 +41,31 @@
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detached.hpp>
 #include <quoll/async/run_loop.hpp>
+#include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/test/run.hpp>
+#include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <cerrno>
+#include <chrono>
 #include <exception>
 #include <memory>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
+
+#if !defined(__EMSCRIPTEN__)
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -322,3 +332,73 @@ TEST_CASE("co_spawn(this_executor): the stop token of the coroutine is not taken
   REQUIRE_FALSE(alone);
   REQUIRE(passed);
 }
+
+TEST_CASE("detached: a stop during a wait ends that task, and the others go on", "[async][timer]") {
+  quoll::test::virtual_time time;
+  std::stop_source stop;
+  std::vector<std::string> log;
+
+  auto const waiting = [&]() -> task<> {
+    log.emplace_back("waits");
+    co_await async::sleep_for(std::chrono::hours{1});
+    log.emplace_back("was not stopped");
+  };
+
+  auto const going_on = [&]() -> task<> {
+    co_await async::sleep_for(std::chrono::seconds{1});
+    stop.request_stop();
+    co_await async::sleep_for(std::chrono::seconds{1});
+    log.emplace_back("went on");
+  };
+
+  co_spawn(time.get_executor(), waiting(), async::detached, stop.get_token());
+  co_spawn(time.get_executor(), going_on(), async::detached);
+  time.run();
+
+  REQUIRE(log == std::vector<std::string>{"waits", "went on"});
+}
+
+TEST_CASE("detached: nothing and a value are dropped, a stop too", "[async]") {
+  async::detached();
+  async::detached(42);
+  async::detached(std::exception_ptr{});
+  async::detached(std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::operation_canceled)}));
+  // As asio reports one.
+  async::detached(std::make_exception_ptr(std::system_error{ECANCELED, std::system_category()}));
+  SUCCEED("the program went on");
+}
+
+#if !defined(__EMSCRIPTEN__)
+
+namespace {
+
+// What comes of `failure` given to detached, in a process of its own: the status it exits with.
+int exit_status_of_detached(std::exception_ptr failure) {
+  auto const child = ::fork();
+
+  REQUIRE(child >= 0);
+
+  if (child == 0) {
+    std::set_terminate([] { ::_exit(42); });
+    async::detached(std::move(failure));
+    ::_exit(0);
+  }
+
+  int status = 0;
+
+  REQUIRE(::waitpid(child, &status, 0) == child);
+  REQUIRE(WIFEXITED(status));
+  return WEXITSTATUS(status);
+}
+
+} // namespace
+
+TEST_CASE("detached: only a stop lets the program go on", "[async]") {
+  REQUIRE(exit_status_of_detached(std::make_exception_ptr(std::runtime_error{"failure"})) == 42);
+  REQUIRE(exit_status_of_detached(
+              std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::timed_out)})) == 42);
+  REQUIRE(exit_status_of_detached(
+              std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::operation_canceled)})) == 0);
+}
+
+#endif

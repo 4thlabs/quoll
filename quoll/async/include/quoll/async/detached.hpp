@@ -51,19 +51,16 @@ struct detached_t {
   void operator()(T &&) const noexcept {}
 
   /**
-   * @brief A task let an exception escape: it ends the program, as an exception escaping a std::thread does; the
-   * standard library's terminate handler reports it.
+   * @brief A task let an exception escape: it ends the program, as an exception escaping a std::thread does, and the
+   * standard library's terminate handler reports it. But for std::errc::operation_canceled, whatever caused it: a stop
+   * is no failure, and ends the task alone.
    */
-  void operator()(std::exception_ptr failure) const noexcept {
-    if (failure) {
-      std::rethrow_exception(failure);
-    }
-  }
+  void operator()(std::exception_ptr failure) const noexcept;
 };
 
 /**
  * @brief Completion handler for co_spawn() whose task is on its own, like asio::detached: its value is dropped, and an
- * exception it lets escape ends the program.
+ * exception it lets escape ends the program, unless it is std::errc::operation_canceled, what a stop request throws.
  *
  * @code
  * co_spawn(runtime.get_executor(), serve_notes(8080), quoll::async::detached, runtime.get_stop_token());

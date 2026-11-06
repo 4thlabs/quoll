@@ -1,4 +1,5 @@
-quoll_declare_module(NAME async SOURCES src/recycled_frame.cpp)
+quoll_declare_module(NAME async SOURCES src/detached.cpp
+    src/recycled_frame.cpp)
 
 quoll_declare_tests(
   SOURCES
