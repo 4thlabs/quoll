@@ -64,7 +64,7 @@ The tests run under Node, with JSPI. A test waits for the event loop by suspendi
 ### Other checks
 
 ```bash
-# clang-tidy, as CI runs it: needs a Clang build
+# clang-tidy, as it runs every night: needs a Clang build. On a pull request, the tests go without its analyzer
 run-clang-tidy-19 -p build -quiet "$PWD/(quoll|samples)/.*\.cpp$"
 
 # libFuzzer, under ASan and UBSan: 60 s a target
@@ -124,14 +124,15 @@ Every pull request and push to `main` goes through `.github/workflows/ci.yml`:
 | Job                     | What it does                                                             |
 | ----------------------- | ------------------------------------------------------------------------ |
 | GCC 13                  | Build, tests, header checks and `compile_fail`, then a build without TLS |
-| Clang 19                | Build, tests, `compile_fail`, `clang-tidy`                               |
+| Clang 19                | Build, tests, `compile_fail`, `clang-tidy` without its analyzer on tests |
 | GCC 13 with TSan        | Build and tests                                                          |
 | GCC 13 with ASan, UBSan | Build and tests                                                          |
 | Emscripten              | Build and tests under Node, header checks                                |
 | macOS                   | Build and tests with Apple Clang, header checks                          |
 | clang-format            | Every `.hpp` and `.cpp`, with `clang-format-18`                          |
 
-Fuzzing (`fuzz.yml`) and the benchmark (`bench.yml`) run every night, and on a pull request touching them.
+Fuzzing (`fuzz.yml`), the benchmark (`bench.yml`) and all of `clang-tidy` (`clang-tidy.yml`) run every night, and on a pull
+request touching them.
 `codex-review.yml` sets the status `Codex`, once Codex has finished reviewing the last commit.
 
 ## Contributing

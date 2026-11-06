@@ -50,7 +50,7 @@ cmake --build build -j"$(nproc)"
 ctest --test-dir build -j"$(nproc)"   # "quoll" (every test case), compile_fail.<case>, and the samples' tests
 ./build/tests/quoll_tests "[tag]"     # Catch2 filters
 emcmake cmake -B build-wasm && cmake --build build-wasm -j"$(nproc)" && ctest --test-dir build-wasm   # runs under node
-run-clang-tidy-19 -p build -quiet "$PWD/(quoll|samples)/.*\.cpp$"   # needs a Clang build; the same as CI
+run-clang-tidy-19 -p build -quiet "$PWD/(quoll|samples)/.*\.cpp$"   # needs a Clang build; all of it, as every night: a PR leaves the analyzer out of the tests
 cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -DQUOLL_BENCH=ON -DQUOLL_BUILD_TESTS=OFF && cmake --build build-bench --target quoll_bench -j"$(nproc)" \
   && build-bench/tests/bench/quoll_bench tcp   # what it costs: docs/BENCHMARKS.md
 CC=clang-19 CXX=clang++-19 cmake -B build-fuzz -DCMAKE_BUILD_TYPE=RelWithDebInfo -DQUOLL_FUZZ=ON -DQUOLL_BUILD_TESTS=OFF -DQUOLL_BUILD_SAMPLES=OFF \
@@ -121,7 +121,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). CI (`.github/workflows/ci.yml`): GCC 13, Clang 19
 and Emscripten build + tests, GCC 13 with TSan and with ASan / UBSan, and a clang-format check, on every PR and push to
-`main`, and Apple Clang on macOS; fuzzing (`.github/workflows/fuzz.yml`) runs every night, and on a PR touching its targets; the header checks run on GCC 13, Emscripten and macOS, the `compile_fail` ctests on GCC 13 and Clang 19, `clang-tidy`
+`main`, and Apple Clang on macOS; fuzzing (`.github/workflows/fuzz.yml`) and `clang-tidy` with its analyzer on the tests too (`clang-tidy.yml`) run every night, and on a PR touching their targets or rules; the header checks run on GCC 13, Emscripten and macOS, the `compile_fail` ctests on GCC 13 and Clang 19, `clang-tidy`
 (`.clang-tidy`) on Clang 19, and the jobs keep their compilations in ccache. Formatting: `clang-format -i <file>` with the repo `.clang-format`; format only
 the files you touch.
 
