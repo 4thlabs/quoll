@@ -252,7 +252,7 @@ value the server would read differently) throws `std::invalid_argument` there, b
 answers 500, not that API's status.
 
 The transport is a template parameter: any `http::HttpTransport`. That is `http::client` by
-default, [`fetch_client`](runtimes.md#fetch_client) in a browser, and `http::local_transport` for
+default, on [`fetch`](runtimes.md#httpclient-in-a-browser) in a browser, and `http::local_transport` for
 a router of the same program, which is how to test a contract without a network:
 
 ```cpp

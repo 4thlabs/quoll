@@ -44,6 +44,8 @@
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/next.hpp>
 #include <quoll/http/parser.hpp>
+#include <quoll/http/platform.hpp>
+#include <quoll/http/platform_ref.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>

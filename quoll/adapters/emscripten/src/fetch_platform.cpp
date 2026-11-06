@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/emscripten/fetch_client.hpp>
+#include <quoll/emscripten/detail/fetch_platform.hpp>
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
@@ -43,8 +43,6 @@
 #include <quoll/async/work_item.hpp>
 #include <quoll/emscripten/detail/js.hpp>
 #include <quoll/http/detail/ascii.hpp>
-#include <quoll/http/detail/check.hpp>
-#include <quoll/http/detail/write_whole_body.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
@@ -97,8 +95,6 @@ constexpr std::array<std::string_view, 3> fetch_decoded_fields{
   std::string packed;
 
   for (auto const &entry : fields) {
-    http::detail::check_field(entry);
-
     if (is_one_of(entry.name, fetch_managed_fields)) {
       continue;
     }
@@ -173,12 +169,10 @@ struct aborter {
 [[nodiscard]] std::system_error fetch_failure(fetch_outcome outcome, std::string const &url,
                                               std::string const &message) {
   if (outcome == fetch_outcome::aborted) {
-    return std::system_error{std::make_error_code(std::errc::operation_canceled),
-                             "quoll::emscripten::fetch_client: " + url};
+    return std::system_error{std::make_error_code(std::errc::operation_canceled), "quoll::http::client: " + url};
   }
 
-  return std::system_error{std::make_error_code(std::errc::io_error),
-                           "quoll::emscripten::fetch_client: " + url + ": " + message};
+  return std::system_error{std::make_error_code(std::errc::io_error), "quoll::http::client: " + url + ": " + message};
 }
 
 // What a fetch_operation gives: its response and, when its body is to be read in pieces, what reads it and the URL its
@@ -197,9 +191,9 @@ struct fetched {
 // resumes. Movable until it suspends, so that it can be co_await-ed as a temporary.
 class fetch_operation {
 public:
-  // `fields`: the request's fields, packed by pack_fields(). `streaming`: the body is left to be read in pieces.
-  fetch_operation(std::string url, std::string fields, http::request const &request, bool streaming)
-      : url_(std::move(url)), fields_(std::move(fields)), request_(&request), streaming_(streaming) {}
+  // `fields`: the request's fields, packed by pack_fields()..
+  fetch_operation(std::string url, std::string fields, http::request const &request)
+      : url_(std::move(url)), fields_(std::move(fields)), request_(&request) {}
 
   fetch_operation(fetch_operation const &) = delete;
   fetch_operation &operator=(fetch_operation const &) = delete;
@@ -207,8 +201,7 @@ public:
 
   // Only moved before it suspends: nothing is pending yet.
   fetch_operation(fetch_operation &&other) noexcept
-      : url_(std::move(other.url_)), fields_(std::move(other.fields_)), request_(other.request_),
-        streaming_(other.streaming_) {}
+      : url_(std::move(other.url_)), fields_(std::move(other.fields_)), request_(other.request_) {}
 
   ~fetch_operation() = default;
 
@@ -228,7 +221,7 @@ public:
 
     auto const id =
         quoll_emscripten_fetch_start(url_.c_str(), method.data(), method.size(), fields_.data(), fields_.size(),
-                                     request_->body.data(), request_->body.size(), streaming_ ? 1 : 0, &complete, this);
+                                     request_->body.data(), request_->body.size(), &complete, this);
 
     stop_callback_.emplace(context.stop_token, aborter{id});
     return true;
@@ -264,7 +257,7 @@ private:
     }
 
     // Otherwise it stays for the body, unless the exception above leaves it to abort with this operation.
-    if (!self.streaming_ || self.outcome_ != fetch_outcome::response) {
+    if (self.outcome_ != fetch_outcome::response) {
       self.entry_.finish();
     }
 
@@ -281,7 +274,6 @@ private:
 
     response_.status = static_cast<http::status>(quoll_emscripten_fetch_status(id));
     response_.reason = fetch_bytes(id, fetch_part::reason);
-    response_.body = fetch_bytes(id, fetch_part::body);
 
     auto const fields = fetch_bytes(id, fetch_part::fields);
     std::string_view rest{fields};
@@ -301,7 +293,6 @@ private:
   std::string url_;
   std::string fields_;
   http::request const *request_;
-  bool streaming_;
   async::await_context const *context_ = nullptr;
   async::work_item item_;
   fetch_outcome outcome_ = fetch_outcome::response;
@@ -443,26 +434,9 @@ private:
 };
 
 // `fields`: the request's fields, packed by pack_fields().
-[[nodiscard]] async::task<http::response> fetch(std::string url, std::string fields, http::request request) {
-  // Whole before it leaves: a fetch sending in pieces needs HTTP/2, and browsers that do not all have it.
-  if (request.body_writer) {
-    co_await http::detail::write_whole_body(request);
-  }
-
-  auto result = co_await fetch_operation{std::move(url), std::move(fields), request, false};
-
-  co_return std::move(result.response);
-}
-
-// `fields`: the request's fields, packed by pack_fields().
 [[nodiscard]] async::task<http::streamed_response> fetch_in_pieces(std::string url, std::string fields,
                                                                    http::request request) {
-  // Whole before it leaves: a fetch sending in pieces needs HTTP/2, and browsers that do not all have it.
-  if (request.body_writer) {
-    co_await http::detail::write_whole_body(request);
-  }
-
-  auto result = co_await fetch_operation{std::move(url), std::move(fields), request, true};
+  auto result = co_await fetch_operation{std::move(url), std::move(fields), request};
   auto stream = std::make_shared<fetch_stream>(std::move(result.entry), std::move(result.url));
   auto &response = result.response;
 
@@ -474,39 +448,14 @@ private:
                                     std::make_shared<http::fields const>()};
 }
 
-// What send() and stream() ask of a request before anything runs.
-void check_request(http::request const &request) {
-  if (!request.target.starts_with('/')) {
-    throw std::invalid_argument{"quoll::emscripten::fetch_client: the target is not in origin form"};
-  }
-
-  http::detail::check_target(request.target);
-
-  if (request.body_writer && !request.body.empty()) {
-    throw std::invalid_argument{"quoll::emscripten::fetch_client: a request with a body_writer and a body"};
-  }
-}
-
 } // namespace
 
-} // namespace detail
-
-async::task<http::response> fetch_client::send(http::request request) const {
-  detail::check_request(request);
-
-  auto url = base_url_ + request.target;
-  auto fields = detail::pack_fields(request.fields);
-
-  return detail::fetch(std::move(url), std::move(fields), std::move(request));
-}
-
-async::task<http::streamed_response> fetch_client::stream(http::request request) const {
-  detail::check_request(request);
-
-  auto url = base_url_ + request.target;
+async::task<http::streamed_response> fetch_platform::stream(std::string url, http::request request) const {
   auto fields = detail::pack_fields(request.fields);
 
   return detail::fetch_in_pieces(std::move(url), std::move(fields), std::move(request));
 }
+
+} // namespace detail
 
 } // namespace quoll::emscripten

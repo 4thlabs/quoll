@@ -35,6 +35,9 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/client/client.hpp>
+#include <quoll/http/detail/check.hpp>
+#include <quoll/http/detail/write_whole_body.hpp>
+#include <quoll/http/platform_ref.hpp>
 #include <quoll/io/network_connector.hpp>
 
 #include <quoll/async/current_executor.hpp>
@@ -46,7 +49,6 @@
 #include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/sleep_for.hpp>
-#include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/http/detail/ascii.hpp>
@@ -436,6 +438,9 @@ public:
   connection_pool pool;
   // Requests on a connection at once, when options.max_connections limits them.
   std::optional<async::detail::slots> places;
+  // Where a request goes through the executor's http::platform_ref, if it offers one: scheme and authority, empty for
+  // what is relative to the page. Only for a client from a URL, in a build with such a platform.
+  std::optional<std::string> platform_origin;
 };
 
 namespace {
@@ -902,16 +907,86 @@ void make_ready(client_core const &core, http::request &request) {
   }
 }
 
-} // namespace
+// What fetch has no limit for, in what a response's head holds.
+void check_platform_head(http::fields const &fields, http::parse_limits const &limits) {
+  std::size_t count = 0;
+  std::size_t size = 0;
 
-async::task<http::streamed_response> client_stream(std::shared_ptr<client_core> const &core, http::request request) {
-  make_ready(*core, request);
-  return stream_prepared(core, prepare(*core, request));
+  for (auto const &entry : fields) {
+    ++count;
+    size += entry.name.size() + entry.value.size();
+  }
+
+  if (count > limits.max_field_count || size > limits.max_header_size) {
+    throw std::system_error{http::error::header_too_large, "quoll::http::client: cannot read the response"};
+  }
 }
 
-async::task<http::response> client_send(std::shared_ptr<client_core> const &core, http::request request) {
-  make_ready(*core, request);
+// A body the platform reads in pieces, with what the client's options ask of it. A failure ends it, as one ends a
+// connection: the fetch goes, and the next reads fail the same way, as a piece missing would otherwise read as nothing.
+class platform_body {
+public:
+  platform_body(http::response_body body, client_options const &options) noexcept
+      : body_(std::move(body)), timeout_(options.response_timeout), left_(options.limits.max_streamed_body_size) {}
 
+  [[nodiscard]] async::task<std::optional<std::string_view>> read() {
+    if (failure_) {
+      std::rethrow_exception(failure_);
+    }
+
+    try {
+      auto const piece = co_await async::detail::with_optional_timeout(timeout_, body_.read());
+
+      if (piece) {
+        if (piece->size() > left_) {
+          throw std::system_error{http::error::body_too_large, "quoll::http::client: cannot read the response"};
+        }
+
+        left_ -= piece->size();
+      }
+
+      co_return piece;
+    } catch (...) {
+      failure_ = std::current_exception();
+      body_ = http::response_body{};
+      throw;
+    }
+  }
+
+private:
+  http::response_body body_;
+  std::chrono::nanoseconds timeout_;
+  std::uint64_t left_;
+  std::exception_ptr failure_;
+};
+
+// A whole body through the platform, which holds no more of it than its limit allows: past it, the fetch goes.
+async::task<http::response> gather_from_platform(http::platform_ref platform, std::string url, http::request request,
+                                                 http::parse_limits limits) {
+  auto streamed = co_await platform.stream(std::move(url), std::move(request));
+
+  check_platform_head(streamed.fields, limits);
+
+  http::response answer;
+
+  while (auto const piece = co_await streamed.body.read()) {
+    if (piece->size() > limits.max_body_size - answer.body.size()) {
+      throw std::system_error{http::error::body_too_large, "quoll::http::client: cannot read the response"};
+    }
+
+    answer.body.append(*piece);
+  }
+
+  answer.status = streamed.status;
+  answer.reason = std::move(streamed.reason);
+  answer.version = streamed.version;
+  answer.fields = std::move(streamed.fields);
+  co_return answer;
+}
+
+// A connection and what follows it, for what does not go through a platform.
+[[nodiscard]] async::task<http::response> send_connected(std::shared_ptr<client_core> const &core,
+                                                         http::request request) {
   auto prepared = prepare(*core, request);
 
   // A body in pieces cannot be sent again: its 3xx is a result.
@@ -921,6 +996,107 @@ async::task<http::response> client_send(std::shared_ptr<client_core> const &core
 
   return send_following(core, std::move(request), std::move(prepared));
 }
+
+// A URL relative to the page has nowhere to go without the page's fetch.
+void check_connectable(client_core const &core) {
+  if (core.platform_origin->empty()) {
+    throw std::logic_error{"quoll::http::client: a URL relative to the page needs an executor offering fetch"};
+  }
+}
+
+// Through the platform, if the executor offers one; otherwise as any client, on the executor's network.
+async::task<http::response> send_on_platform(std::shared_ptr<client_core> core, http::request request) {
+  auto const executor = co_await async::current_executor();
+  auto const platform = executor.query<http::platform_ref>();
+
+  if (!platform) {
+    check_connectable(*core);
+    co_return co_await send_connected(core, std::move(request));
+  }
+
+  // Outside the timeout: the time a writer takes is its own.
+  if (request.body_writer) {
+    co_await http::detail::write_whole_body(request);
+  }
+
+  auto url = *core->platform_origin + request.target;
+
+  co_return co_await async::detail::with_optional_timeout(
+      core->options.response_timeout,
+      gather_from_platform(*platform, std::move(url), std::move(request), core->options.limits));
+}
+
+async::task<http::streamed_response> stream_on_platform(std::shared_ptr<client_core> core, http::request request) {
+  auto const executor = co_await async::current_executor();
+  auto const platform = executor.query<http::platform_ref>();
+
+  if (!platform) {
+    check_connectable(*core);
+    co_return co_await stream_prepared(core, prepare(*core, request));
+  }
+
+  if (request.body_writer) {
+    co_await http::detail::write_whole_body(request);
+  }
+
+  auto url = *core->platform_origin + request.target;
+  auto answer = co_await async::detail::with_optional_timeout(core->options.response_timeout,
+                                                              platform->stream(std::move(url), std::move(request)));
+
+  check_platform_head(answer.fields, core->options.limits);
+  answer.body = http::response_body{std::make_shared<platform_body>(std::move(answer.body), core->options)};
+  co_return answer;
+}
+
+} // namespace
+
+async::task<http::streamed_response> client_stream(std::shared_ptr<client_core> const &core, http::request request) {
+  make_ready(*core, request);
+
+  if (core->platform_origin) {
+    http::detail::check_request(request);
+    return stream_on_platform(core, std::move(request));
+  }
+
+  return stream_prepared(core, prepare(*core, request));
+}
+
+async::task<http::response> client_send(std::shared_ptr<client_core> const &core, http::request request) {
+  make_ready(*core, request);
+
+  if (core->platform_origin) {
+    http::detail::check_request(request);
+    return send_on_platform(core, std::move(request));
+  }
+
+  return send_connected(core, std::move(request));
+}
+
+namespace {
+
+#if defined(__EMSCRIPTEN__)
+
+[[nodiscard]] origin parse_url_of_this_platform(std::string_view url) {
+  // Relative to the page, which a client has no other use for: only its path counts, as a URL's does.
+  return url.empty() || url.starts_with('/') ? parse_url("http://page.invalid" + std::string{url}) : parse_url(url);
+}
+
+void go_through_platform(client_core &core, std::string_view url) {
+  auto const scheme = url.find("://");
+
+  core.platform_origin =
+      scheme == std::string_view::npos ? std::string{} : std::string{url.substr(0, url.find('/', scheme + 3))};
+}
+
+#else
+
+[[nodiscard]] origin parse_url_of_this_platform(std::string_view url) { return parse_url(url); }
+
+void go_through_platform(client_core &, std::string_view) {}
+
+#endif
+
+} // namespace
 
 } // namespace quoll::http::detail
 
@@ -946,7 +1122,9 @@ namespace {
 } // namespace
 
 client::client(std::string_view url, client_options options)
-    : client(io::network_connector{}, url, std::move(options)) {}
+    : client(io::network_connector{}, detail::parse_url_of_this_platform(url), options) {
+  detail::go_through_platform(*core_, url);
+}
 
 async::task<response> client::get(std::string target) const {
   return send(simple_request(verb::get, std::move(target)));

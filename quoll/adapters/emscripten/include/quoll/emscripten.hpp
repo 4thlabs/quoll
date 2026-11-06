@@ -39,7 +39,6 @@
 
 #include <quoll/emscripten/dom_renderer.hpp>
 #include <quoll/emscripten/executor.hpp>
-#include <quoll/emscripten/fetch_client.hpp>
 #include <quoll/emscripten/mount.hpp>
 
 #endif // QUOLL_EMSCRIPTEN_HPP

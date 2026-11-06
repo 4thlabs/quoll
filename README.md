@@ -152,7 +152,7 @@ is in [Getting started](docs/getting-started.md).
 | [Client](docs/client.md)                   | `http::client`, URLs, keep-alive and retries, redirects, TLS, failures          |
 | [Streaming](docs/streaming.md)             | Reading and writing bodies in pieces, on both sides, and what ends them         |
 | [REST](docs/rest.md)                       | The contract, `mount`, `rest::client`, codecs, third-party APIs                 |
-| [Runtimes](docs/runtimes.md)               | `quoll::runtime`, the adapters, `fetch_client`, what WebAssembly asks of you    |
+| [Runtimes](docs/runtimes.md)               | `quoll::runtime`, the adapters, `http::client` in a browser, what WebAssembly asks of you    |
 | [UI](docs/ui.md)                           | The `quoll::ui` prototype                                                       |
 | [Performance](docs/performance.md)         | What Quoll costs, and how it is measured                                        |
 | [Development](docs/development.md)         | Building from source, tests, the checks of CI, how to contribute                |

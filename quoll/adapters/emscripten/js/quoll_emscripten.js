@@ -274,8 +274,8 @@ addToLibrary({
 
   // Starts fetch(url, {method, headers, body}). `headers` holds one "name:value\n" line per field. Calls
   // complete(operation, id, outcome) once settled, outcome being 0 (response), 1 (aborted by
-  // quoll_emscripten_fetch_abort) or 2 (failure). With `streaming`, it settles with the head of the response, whose body
-  // quoll_emscripten_fetch_read then reads; without, with the whole body as part 2.
+  // quoll_emscripten_fetch_abort) or 2 (failure). It settles with the head of the response, whose body
+  // quoll_emscripten_fetch_read then reads.
   quoll_emscripten_fetch_start__deps: [
     '$quollFetches',
     '$quollFetchFailed',
@@ -285,7 +285,7 @@ addToLibrary({
     '$callUserCallback',
   ],
   quoll_emscripten_fetch_start: (
-    url, method, methodSize, headers, headersSize, body, bodySize, streaming, complete, operation) => {
+    url, method, methodSize, headers, headersSize, body, bodySize, complete, operation) => {
     const id = quollFetches.next++;
     const entry = { controller: new AbortController(), status: 0, parts: [], reader: null };
     const init = {
@@ -319,14 +319,12 @@ addToLibrary({
         response.headers.forEach((value, name) => fields.push(`${name}:${value}\n`));
 
         // A response with no body at all (HEAD, 204) has no reader either.
-        if (streaming) {
-          entry.reader = response.body?.getReader() ?? null;
-        }
+        entry.reader = response.body?.getReader() ?? null;
 
         entry.parts = [
           quollStringToBytes(response.statusText),
           quollStringToBytes(fields.join('')),
-          streaming ? new Uint8Array() : new Uint8Array(await response.arrayBuffer()),
+          new Uint8Array(),
         ];
         entry.status = response.status;
       } catch (error) {
@@ -343,7 +341,7 @@ addToLibrary({
     return id;
   },
 
-  // Whether a fetch started with `streaming` has a body to read.
+  // Whether a fetch has a body to read.
   quoll_emscripten_fetch_has_body__deps: ['$quollFetches'],
   quoll_emscripten_fetch_has_body: (id) => (quollFetches.entries[id].reader ? 1 : 0),
 
