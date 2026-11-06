@@ -2625,6 +2625,36 @@ TEST_CASE("serve_connection: a read stopped once its patience has run out is sto
   REQUIRE(received.ends_with("stopped"));
 }
 
+TEST_CASE("serve_connection: what came earns its time before the next read waits", "[server][timer]") {
+  auto const target = GENERATE(std::string{"/echo"}, std::string{"/pieces"});
+  virtual_time time;
+  connection_options options;
+
+  options.read_timeout = 3s;
+  options.min_read_rate = 1000;
+
+  // Each part is late for what the head left, and pays for the wait for the next as soon as it has come.
+  auto const late_parts = [&](io::memory_stream client) -> task<std::string> {
+    auto const [received, sent] = co_await quoll::async::when_all(read_until_closed(client), [&]() -> task<> {
+      auto const head = "POST " + target + " HTTP/1.1\r\nHost: h\r\nConnection: close\r\nContent-Length: 8000\r\n\r\n";
+      std::string const part(std::size_t{4000}, 'x');
+
+      (void)co_await io::write(client, std::as_bytes(std::span{head}));
+
+      for (auto index = 0; index < 2; ++index) {
+        co_await quoll::async::sleep_for(2s);
+        (void)co_await io::write(client, std::as_bytes(std::span{part}));
+      }
+    }());
+
+    co_return received;
+  };
+
+  auto const got = paced_session(time, options, late_parts);
+
+  REQUIRE(got.received.starts_with("HTTP/1.1 200"));
+}
+
 TEST_CASE("serve_connection: the framing of a body earns a peer no time", "[server][timer]") {
   auto const target = GENERATE(std::string{"/echo"}, std::string{"/pieces"});
   auto const framing =

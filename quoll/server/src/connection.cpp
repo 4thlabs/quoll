@@ -280,8 +280,8 @@ private:
 // does between two. What it cuts short throws, as timed_out then can only be its own.
 //
 // Reading, only the bytes of a body earn time, as the parser counts them: a head has its timeout as a whole, and
-// framing that no limit bounds, chunk extensions or a chunk size's leading zeros, earns a peer nothing. They count from
-// the read after the one that brought them, as the parser has not seen them before.
+// framing that no limit bounds, chunk extensions or a chunk size's leading zeros, earns a peer nothing. They count as
+// the next read begins, as the parser has not seen them before.
 //
 // Writing, what takes no longer than `prompt_write` is not charged: a peer that takes every byte at once must not run
 // out of time because the loop is busy, which on a long stream of small writes would add up to more than they earn. A
@@ -321,6 +321,11 @@ public:
         writing_(options.write_timeout, options.min_write_rate, prompt_write) {}
 
   [[nodiscard]] auto read_some(std::span<std::byte> buffer QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+    // Before it waits: what the last read brought has been through the parser by now.
+    if (reading_.timer()) {
+      reading_.came(body_since_last());
+    }
+
     return transfer<&paced_stream::was_read>{*this, stream_->read_some(buffer)};
   }
 
@@ -377,15 +382,7 @@ private:
     return done;
   }
 
-  [[nodiscard]] io::io_result was_read(io::io_result done) {
-    static_cast<void>(checked(done));
-
-    if (reading_.timer()) {
-      reading_.came(body_since_last());
-    }
-
-    return done;
-  }
+  [[nodiscard]] io::io_result was_read(io::io_result done) { return checked(done); }
 
   [[nodiscard]] io::io_result was_written(io::io_result done) {
     static_cast<void>(checked(done));
