@@ -45,9 +45,9 @@
 #include <string>
 #include <string_view>
 
-namespace quoll::server {
+namespace quoll::http {
 
-/** @brief How server::static_files() serves a directory. */
+/** @brief How http::static_files() serves a directory. */
 struct static_files_options {
   /** @brief What a request for a directory serves, from that directory; empty: such a request stays a 404. */
   std::string index = "index.html";
@@ -65,8 +65,8 @@ struct static_files_options {
  * @brief A middleware serving the files under `root` for the GET and HEAD requests under `prefix`:
  *
  * @code
- * router.use(quoll::server::static_files("/assets", "./public"));
- * router.use(quoll::server::static_files("/", "./site"));
+ * router.use(quoll::http::static_files("/assets", "./public"));
+ * router.use(quoll::http::static_files("/", "./site"));
  * @endcode
  *
  * It only ever answers what the router itself answers 404 to, once the middlewares added after it have run, so that:
@@ -100,6 +100,6 @@ struct static_files_options {
 [[nodiscard]] http::router::middleware static_files(std::string_view prefix, std::filesystem::path const &root,
                                                     static_files_options options = {});
 
-} // namespace quoll::server
+} // namespace quoll::http
 
 #endif // QUOLL_SERVER_STATIC_FILES_HPP

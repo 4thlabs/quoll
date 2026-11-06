@@ -100,7 +100,7 @@ private:
 };
 
 // The program: the router and its server live in this coroutine, on the runtime. Listening first, then serving
-// (what quoll::server::listen does in one call), tells when the server is ready: once the address is printed.
+// (what quoll::http::server::listen does in one call), tells when the server is ready: once the address is printed.
 quoll::async::task<> serve_notes(std::uint16_t port) {
   quoll::http::router router;
 
@@ -110,7 +110,7 @@ quoll::async::task<> serve_notes(std::uint16_t port) {
 
   // With port 0, the system picks a free one.
   std::cout << "notes API on http://localhost:" << listener.local_port().value_or(port) << "/api/notes" << std::endl;
-  co_await quoll::server::serve(listener, router);
+  co_await quoll::http::server{router}.serve(listener);
   std::cout << "stopped\n";
 }
 

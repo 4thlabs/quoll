@@ -52,7 +52,7 @@ namespace quoll::http {
  * @brief Where a body_writer writes the body of a message, a piece at a time.
  *
  * write() completes once the piece has left, so that a writer goes no faster than its peer reads, and memory holds one
- * piece, but for a transport that gathers a request before sending it (fetch_transport, local_transport). What prevents
+ * piece, but for a transport that gathers a request before sending it (fetch_client, local_transport). What prevents
  * it throws std::system_error, a peer gone for instance, and goes on throwing: left to run through the writer, it ends
  * the connection, and is no failure of the writer's.
  *
@@ -119,7 +119,7 @@ private:
  * connection or through local_transport. With `Expect: 100-continue`, it writes and reads in turn, as `100 Continue`
  * and a piece must not leave at once.
  *
- * On a request, it runs beside the reading of the response: client::transport::send() says what comes of that, and how
+ * On a request, it runs beside the reading of the response: http::client::send() says what comes of that, and how
  * a transport that gathers it first differs. What it captures has to live until the task of the request ends.
  */
 using body_writer = std::function<async::task<>(body_stream)>;

@@ -92,8 +92,8 @@ quoll/
 ├── async/      # task, executors, co_spawn, when_all, timers
 ├── io/         # byte streams, listeners, connectors, TLS options
 ├── http/       # messages, parser, serializer, router
-├── server/     # serve_connection, serve, listen
-├── client/     # transport
+├── server/     # http::server, static_files
+├── client/     # http::client
 ├── rest/       # contracts, mount, client, codecs
 ├── ui/         # the UI prototype
 └── adapters/   # threads, asio, emscripten, runtime

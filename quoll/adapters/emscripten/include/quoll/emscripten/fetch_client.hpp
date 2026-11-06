@@ -34,8 +34,8 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_EMSCRIPTEN_FETCH_TRANSPORT_HPP
-#define QUOLL_EMSCRIPTEN_FETCH_TRANSPORT_HPP
+#ifndef QUOLL_EMSCRIPTEN_FETCH_CLIENT_HPP
+#define QUOLL_EMSCRIPTEN_FETCH_CLIENT_HPP
 
 #include <quoll/async/task.hpp>
 #include <quoll/http/request.hpp>
@@ -60,7 +60,7 @@ namespace quoll::emscripten {
  * The response has the status, status text, fields and complete body that fetch exposes. fetch decodes the body
  * (decompressed, de-chunked), so the fields describing the bytes on the wire (Content-Encoding, Content-Length,
  * Transfer-Encoding) are dropped; the other fields are named in lower case, repeated ones are combined, and the
- * version is not known (`http_1_1`). Unlike client::transport, which follows redirects only when asked and only to
+ * version is not known (`http_1_1`). Unlike http::client, which follows redirects only when asked and only to
  * its own server, fetch always follows them itself, possibly to another origin: a browser does not expose the 3xx
  * response.
  *
@@ -73,8 +73,8 @@ namespace quoll::emscripten {
  * `response.body`, so that nothing holds it whole:
  *
  * @code
- * quoll::emscripten::fetch_transport transport{"https://api.example.com"};
- * auto response = co_await transport.stream(std::move(request));
+ * quoll::emscripten::fetch_client client{"https://api.example.com"};
+ * auto response = co_await client.stream(std::move(request));
  *
  * while (auto const piece = co_await response.body.read()) {
  *   show(*piece);
@@ -87,22 +87,22 @@ namespace quoll::emscripten {
  * same, and the fetch is aborted and released. Past the end of the body, or with none to read (HEAD, 204), it is
  * released at once. The last copy of `body` to go before the end aborts the fetch and releases it, which is how to give
  * up on a body; a body moved from has nothing to read. `trailers` is not null and stays empty, as fetch does not expose
- * them. `limits.max_streamed_body_size` and the read timeout per piece have no equal here, as a fetch_transport has no
+ * them. `limits.max_streamed_body_size` and the read timeout per piece have no equal here, as a fetch_client has no
  * limits: a server gone quiet leaves a read waiting, unless async::with_timeout is put around it.
  *
- * The tasks copy what they need: the transport does not have to outlive them. Thread safety: use it, the bodies it
+ * The tasks copy what they need: the client does not have to outlive them. Thread safety: use it, the bodies it
  * gives included, and request stop, from the thread running the event loop.
  */
-class fetch_transport {
+class fetch_client {
 public:
-  /** @brief A transport sending relative requests, to the page's origin. */
-  fetch_transport() = default;
+  /** @brief A client sending relative requests, to the page's origin. */
+  fetch_client() = default;
 
   /**
-   * @brief A transport sending requests to `base_url`: a scheme and a host (`https://api.example.com`), optionally a
+   * @brief A client sending requests to `base_url`: a scheme and a host (`https://api.example.com`), optionally a
    * port and a path prefix, without a trailing slash.
    */
-  explicit fetch_transport(std::string base_url) noexcept : base_url_(std::move(base_url)) {}
+  explicit fetch_client(std::string base_url) noexcept : base_url_(std::move(base_url)) {}
 
   /**
    * @brief Fetches `request`.
@@ -124,8 +124,8 @@ private:
   std::string base_url_;
 };
 
-static_assert(http::HttpTransport<fetch_transport>);
+static_assert(http::HttpTransport<fetch_client>);
 
 } // namespace quoll::emscripten
 
-#endif // QUOLL_EMSCRIPTEN_FETCH_TRANSPORT_HPP
+#endif // QUOLL_EMSCRIPTEN_FETCH_CLIENT_HPP

@@ -7,14 +7,14 @@ completes once its piece has left.
 
 | To              | On the server                       | On the client                                            |
 | --------------- | ----------------------------------- | -------------------------------------------------------- |
-| Read in pieces  | a handler takes `http::body_reader` | `transport.stream(request)`, then `response.body.read()` |
+| Read in pieces  | a handler takes `http::body_reader` | `client.stream(request)`, then `response.body.read()`    |
 | Write in pieces | `response.body_writer`              | `request.body_writer`                                    |
 
 The examples here assume:
 
 ```cpp
+namespace async = quoll::async;
 namespace http = quoll::http;
-using quoll::async::task;
 using namespace std::chrono_literals;
 ```
 
@@ -27,7 +27,7 @@ A handler taking an `http::body_reader` as its last parameter reads the body as 
 is still there if it takes it first, with `request.body` empty, for the middlewares too:
 
 ```cpp
-router.post("/users/{id}/avatar", [](std::int64_t id, http::body_reader body) -> task<http::response> {
+router.post("/users/{id}/avatar", [](std::int64_t id, http::body_reader body) -> async::task<http::response> {
   while (auto const piece = co_await body.read()) {
     co_await store_piece(id, *piece);
   }
@@ -44,7 +44,7 @@ handed over.
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | The handler leaves some of it unread      | The connection closes after its response. A body that had all come with its head leaves it open.                                                                                                                                                                                                 |
 | `Expect: 100-continue`                    | `100 Continue` leaves at the handler's first `read()`, so that a handler refusing the request saves the upload. A failure while it leaves is a failure of that `read()`.                                                                                                                         |
-| The peer goes quiet or too slow           | `read_timeout` and `min_read_rate` apply as in [Server](server.md#connection_options), across the pieces: a transfer takes as long as it keeps coming at the minimum rate. Past it, `read()` throws, and the request answers 408.                                                                                                 |
+| The peer goes quiet or too slow           | `read_timeout` and `min_read_rate` apply as in [Server](server.md#connection_options), across the pieces: a transfer takes as long as it keeps coming at the minimum rate. Past it, `read()` throws, and the request answers 408.                                                                |
 | The body is too large                     | Past `limits.max_streamed_body_size`, 1 GiB by default: a length that announces it is refused before the handler runs, otherwise `read()` throws. Either way, the request answers 413.                                                                                                           |
 | The body is cut short or the stream fails | `read()` throws `std::system_error`, and goes on throwing. The request is then answered as one refused as it is read would be, whatever the handler made of it, as it could not know what the connection can still carry.                                                                        |
 | The handler stops reading on its own      | A cancellation of the read, as its own `async::with_timeout` is, ends the reading: a stream does not take it up again, and `read()` then throws. The handler's response stands, and the connection closes after it. Over TLS, whose session a cancelled read leaves unusable, it may not arrive. |
@@ -53,11 +53,11 @@ handed over.
 A handler with a patience of its own:
 
 ```cpp
-router.post("/upload", [](http::body_reader body) -> task<http::response> {
+router.post("/upload", [](http::body_reader body) -> async::task<http::response> {
   http::response response;
 
   try {
-    while (auto const piece = co_await quoll::async::with_timeout(1s, body.read())) {
+    while (auto const piece = co_await async::with_timeout(1s, body.read())) {
       co_await store_piece(0, *piece);
     }
   } catch (std::system_error const &failure) {
@@ -85,7 +85,7 @@ router.get("/export", [](http::request) {
   http::response response;
 
   response.fields.set("Content-Type", "text/csv");
-  response.body_writer = [](http::body_stream out) -> task<> {
+  response.body_writer = [](http::body_stream out) -> async::task<> {
     auto const rows = load_rows();
 
     for (auto const &row : rows) {
@@ -112,7 +112,7 @@ itself before its first data.
 router.post("/echo", [](http::body_reader body) {
   http::response response;
 
-  response.body_writer = [body](http::body_stream out) -> task<> {
+  response.body_writer = [body](http::body_stream out) -> async::task<> {
     while (auto const piece = co_await body.read()) {
       co_await out.write(*piece);
     }
@@ -124,26 +124,26 @@ router.post("/echo", [](http::body_reader body) {
 With `Expect: 100-continue`, such a writer writes and reads in turn, as `100 Continue` and a piece must
 not leave at once.
 
-| When                                          | What happens                                                                                                                                                                     |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The writer throws before anything has left    | The client gets a 500, and `on_handler_error` is told.                                                                                                                           |
-| The writer throws once the body has started   | The connection is cut, as a peer must not take what came for all of it, and `on_handler_error` is told.                                                                          |
-| The writer ends short of its `Content-Length` | As the two rows above: a 500 if it wrote nothing, and otherwise the connection is cut. `on_handler_error` is told either way.                                                    |
-| The peer is gone, or a piece does not leave   | `write()` throws `std::system_error`, and goes on throwing. Let through the writer, it ends the connection, and is no failure of the writer's.                                   |
+| When                                          | What happens                                                                                                                                                                                     |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The writer throws before anything has left    | The client gets a 500, and `on_handler_error` is told.                                                                                                                                           |
+| The writer throws once the body has started   | The connection is cut, as a peer must not take what came for all of it, and `on_handler_error` is told.                                                                                          |
+| The writer ends short of its `Content-Length` | As the two rows above: a 500 if it wrote nothing, and otherwise the connection is cut. `on_handler_error` is told either way.                                                                    |
+| The peer is gone, or a piece does not leave   | `write()` throws `std::system_error`, and goes on throwing. Let through the writer, it ends the connection, and is no failure of the writer's.                                                   |
 | A piece takes too long to leave               | `write_timeout` and `min_write_rate` apply as in [Server](server.md#connection_options), across the pieces. Past it, the connection closes. The time the writer takes between pieces is its own. |
-| A stop request on the connection              | What the writer awaits throws `operation_canceled`, a `write()` or a wait of its own. That is no failure of the writer: the connection ends, and `on_handler_error` is not told. |
+| A stop request on the connection              | What the writer awaits throws `operation_canceled`, a `write()` or a wait of its own. That is no failure of the writer: the connection ends, and `on_handler_error` is not told.                 |
 
 ## Reading a response
 
-`transport.stream(request)` gives the response once its head has come. Its body is read in pieces:
+`client.stream(request)` gives the response once its head has come. Its body is read in pieces:
 
 ```cpp
-quoll::client::transport<> transport{"https://downloads.example.com"};
+http::client client{"https://downloads.example.com"};
 http::request request;
 
 request.target = "/big.iso";
 
-auto response = co_await transport.stream(std::move(request));
+auto response = co_await client.stream(request);
 
 if (response.status != http::status::ok) {
   co_return;
@@ -156,10 +156,10 @@ while (auto const piece = co_await response.body.read()) {
 
 This produces an `http::streamed_response`: `status`, `reason`, `version`, `fields`, `body`, and
 `trailers`, the fields that came after a chunked body, once `body` has come to its end. What follows is
-for `client::transport`. [In a browser](#in-a-browser), the response is the same, with other rules.
+for `http::client`. [In a browser](#in-a-browser), the response is the same, with other rules.
 
 - **The connection.** Read to its end, or with nothing to read, its connection goes back to the
-  transport. Destroyed before, the connection closes, which is how to give up on a body. Until then it
+  client. Destroyed before, the connection closes, which is how to give up on a body. Until then it
   holds its place in [`max_connections`](client.md#max_connections).
 - **A piece.** It is valid up to the next `read()`, and for as long as `body`. One `read()` at a time,
   among all the copies of `body`, which share what reads it, so that it may be taken out of its response.
@@ -187,7 +187,7 @@ http::request request;
 
 request.method = http::verb::put;
 request.target = "/backups/today";
-request.body_writer = [](http::body_stream out) -> task<> {
+request.body_writer = [](http::body_stream out) -> async::task<> {
   auto const parts = load_rows();
 
   for (auto const &part : parts) {
@@ -195,7 +195,7 @@ request.body_writer = [](http::body_stream out) -> task<> {
   }
 };
 
-auto const response = co_await transport.send(std::move(request));
+auto const response = co_await client.send(request);
 ```
 
 It goes on a connection of its own, as the writer runs once, so that nothing is sent again, and a 3xx
@@ -233,16 +233,16 @@ Over TLS, a write that this cuts short leaves its session unusable: the head is 
 
 ## In a browser
 
-`fetch_transport` has a `stream()` too, giving the same `http::streamed_response`. The code above runs
-as it is, with `fetch_transport` for `transport`:
+`fetch_client` has a `stream()` too, giving the same `http::streamed_response`. The code above runs
+as it is, with `fetch_client` for `client`:
 
 ```cpp
-quoll::emscripten::fetch_transport transport{"https://api.example.com"};
-quoll::http::request request;
+quoll::emscripten::fetch_client client{"https://api.example.com"};
+http::request request;
 
 request.target = "/feed";
 
-auto response = co_await transport.stream(std::move(request));
+auto response = co_await client.stream(request);
 
 while (auto const piece = co_await response.body.read()) {
   show(*piece);
@@ -250,7 +250,7 @@ while (auto const piece = co_await response.body.read()) {
 ```
 
 Its task completes when `fetch()` resolves, and a piece is what one JavaScript read of `response.body`
-gives, so that nothing holds the body whole. The rest differs from `client::transport`:
+gives, so that nothing holds the body whole. The rest differs from `http::client`:
 
 | When                            | What happens                                                                                                                                                                                                                                             |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -259,7 +259,7 @@ gives, so that nothing holds the body whole. The rest differs from `client::tran
 | The server goes quiet           | Nothing ends the read: there is no timeout per piece. `async::with_timeout` around a read ends the reading as a whole, not that piece: it throws `std::errc::timed_out`, the fetch is aborted, and the next reads throw `std::errc::operation_canceled`. |
 | Giving up on a body             | The last copy of `body` to go before the end aborts the fetch and releases it.                                                                                                                                                                           |
 | The end of the body, or no body | The fetch is released at once.                                                                                                                                                                                                                           |
-| Limits and trailers             | No `max_streamed_body_size`, as a `fetch_transport` has no limits. `trailers` is not null and stays empty, as `fetch` does not expose them.                                                                                                              |
+| Limits and trailers             | No `max_streamed_body_size`, as a `fetch_client` has no limits. `trailers` is not null and stays empty, as `fetch` does not expose them.                                                                                                                 |
 
 A request does not go in pieces. A `request.body_writer` runs to its end before the fetch, through `send()`
 as through `stream()`, and what it wrote goes out whole, as a fetch sending in pieces needs HTTP/2, and is
@@ -267,7 +267,7 @@ not in every browser. So memory holds that body, `write()` does not wait for a p
 nothing left to stop at the head. A stop request or an `async::with_timeout` around the task ends the
 writer at its next `write()`, which throws.
 
-See [`fetch_transport`](runtimes.md#fetch_transport) for what else `fetch` changes.
+See [`fetch_client`](runtimes.md#fetch_client) for what else `fetch` changes.
 
 ## In a test
 

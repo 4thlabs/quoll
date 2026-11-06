@@ -71,6 +71,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/router_auto_parameter.cpp
     tests/compile_fail/router_parameter_type.cpp
     tests/compile_fail/router_handler_result.cpp
+    tests/compile_fail/dangling_dispatch.cpp
   DEPS
     quoll::http
 )
@@ -79,7 +80,6 @@ quoll_declare_compile_fail_tests(
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   quoll_declare_compile_fail_tests(
     SOURCES
-      tests/compile_fail/dangling_dispatch.cpp
       tests/compile_fail/dangling_view.cpp
     DEPS
       quoll::http

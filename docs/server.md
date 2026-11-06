@@ -1,15 +1,16 @@
 # Server
 
 A server is a router, which maps requests to handlers and does no I/O, and something feeding it the
-requests of connections: `server::listen` most of the time. It speaks HTTP/1.x, over TCP or TLS.
+requests of connections: `http::server` most of the time. It speaks HTTP/1.x, over TCP or TLS.
 Link `quoll::runtime` and `quoll::server`.
 
 To serve a typed API rather than routes by hand, see [REST](rest.md), which registers its routes in
 this same router. The examples here assume:
 
 ```cpp
+namespace async = quoll::async;
 namespace http = quoll::http;
-using quoll::async::task;
+namespace io = quoll::io;
 using namespace std::chrono_literals;
 ```
 
@@ -26,7 +27,7 @@ router.get("/users/{id}", [](std::int64_t id) {
   return response;
 });
 
-router.post("/users/{id}/cards", [](http::request request, std::int64_t id) -> task<http::response> {
+router.post("/users/{id}/cards", [](http::request request, std::int64_t id) -> async::task<http::response> {
   co_await add_card(id, request.body);
 
   http::response response;
@@ -45,7 +46,7 @@ router.get("/files/{rest:path}", [](std::string rest) {
 
 The handler says what the parameters are: a number, a `bool` (`true` or `false`), a `std::string` or
 a `std::string_view`. A value that cannot be read as its type answers 400. The handler returns
-`http::response`, or `task<http::response>` when it has something to await.
+`http::response`, or `async::task<http::response>` when it has something to await.
 
 All of this is checked at compile time: the path is a string literal and a valid template, with as
 many parameters as the handler takes, which has types (no `auto`). A path made at run time goes
@@ -53,7 +54,7 @@ through `add()`, which also hands over the name of the route and its query:
 
 ```cpp
 router.add(http::verb::get, "/search", "search",
-           [](http::request, http::route_match match) -> task<http::response> {
+           [](http::request, http::route_match match) -> async::task<http::response> {
              http::response response;
 
              // After `?`, still encoded.
@@ -83,7 +84,7 @@ References and views a handler takes stay valid in a coroutine too, until its ta
 or handler, or a route this method already has with the same shape.
 
 Add routes and middlewares first, then serve: from then on, `dispatch()` may be called from any
-thread. The router outlives the tasks that serve it.
+thread.
 
 ## Responses
 
@@ -110,7 +111,7 @@ A handler setting `Connection: close` ends the connection after its response.
 likes on the way, or by itself. The first one added is the outermost.
 
 ```cpp
-router.use([](http::request request, http::next const &next) -> task<http::response> {
+router.use([](http::request request, http::next const &next) -> async::task<http::response> {
   if (next.path().starts_with("/admin") && !request.fields.contains("Authorization")) {
     http::response refused;
 
@@ -137,14 +138,14 @@ router.use([](http::request request, http::next const &next) -> task<http::respo
 
 ## Static files
 
-`server::static_files` is a middleware serving a directory, for the GET and HEAD requests under a prefix.
+`http::static_files` is a middleware serving a directory, for the GET and HEAD requests under a prefix.
 
 ```cpp
 http::router router;
 
 router.get("/api/hello", hello);
-router.use(quoll::server::static_files("/assets", "./public"));
-router.use(quoll::server::static_files("/", "./site"));
+router.use(http::static_files("/assets", "./public"));
+router.use(http::static_files("/", "./site"));
 ```
 
 It only answers what the router itself answers 404 to, once the middlewares added after it have run:
@@ -158,11 +159,11 @@ It only answers what the router itself answers 404 to, once the middlewares adde
 - Of several on one path, the last added looks first, and a file that is not there leaves the 404 to the one before. That
   is the other way round from Express.
 
-| Option          | Default      | What it does                                                                                             |
-| --------------- | ------------ | -------------------------------------------------------------------------------------------------------- |
-| `index`         | `index.html` | What a request for a directory serves. Empty: such a request stays a 404.                                |
+| Option          | Default      | What it does                                                                                                              |
+| --------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `index`         | `index.html` | What a request for a directory serves. Empty: such a request stays a 404.                                                 |
 | `dotfiles`      | `false`      | Whether names starting with a dot are served. `.env` and `.git` are not, by default, nor what a link leads to among them. |
-| `content_types` | empty        | The `Content-Type` of an extension, lower case with no dot, in addition to those known, and over them.   |
+| `content_types` | empty        | The `Content-Type` of an extension, lower case with no dot, in addition to those known, and over them.                    |
 
 What comes out:
 
@@ -183,52 +184,61 @@ all of that is the same 404 as what does not exist. There is no listing of a dir
 
 ## Serving
 
-`server::listen` listens on a port and serves until a stop request. It listens through the network of
+`http::server` serves a router. Its `listen` listens on a port and serves until a stop request. It listens through the network of
 the executor it runs on, so that it needs nothing else. It takes the loopback interface by default:
 ask for `0.0.0.0` or `::` to be reachable from outside.
 
 ```cpp
-co_await quoll::server::listen(router, 8080, {.address = "0.0.0.0"});
+http::server server{router};
+
+co_await server.listen(8080, {.address = "0.0.0.0"});
 ```
 
 It throws `std::system_error` when the address cannot be bound or the certificate loaded.
+
+The server keeps its own copy of the router, so that neither the router nor the server has to outlive
+what it starts. Add the routes first, as one added afterwards is not served. A handler with a state of
+its own is copied along: for two servers of one router to share it, hold it in a `std::shared_ptr`.
 
 To know the port before serving, or that the server is ready, listen first and then `serve`. With
 port 0, the system picks a free one:
 
 ```cpp
-auto listener = co_await quoll::io::listen(0);
+auto listener = co_await io::listen(0);
 
 std::cout << "listening on " << listener.local_port().value_or(0) << std::endl;
-co_await quoll::server::serve(listener, router);
+
+http::server server{router};
+
+co_await server.serve(listener);
 ```
 
 `serve` takes anything modelling `io::Listener`. Each connection runs as a task of its own, so that
 connections are served concurrently, one request at a time on each.
 
-`serve_connection` serves one connection, over anything modelling `io::ByteStream`, until it ends.
+`server.serve_connection` serves one connection, over anything modelling `io::ByteStream`, until it ends.
 This is how a test runs a server over a memory stream, with a peer beside it:
 
 ```cpp
-auto const peer = [](quoll::io::memory_stream stream) -> task<http::response> {
+auto const peer = [](io::memory_stream stream) -> async::task<http::response> {
   std::string_view const sent = "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n";
   std::string buffer;
   http::response_parser parser;
 
-  co_await quoll::io::write(stream, std::as_bytes(std::span{sent}));
+  co_await io::write(stream, std::as_bytes(std::span{sent}));
   co_await http::read(stream, buffer, parser);
   co_return parser.release();
 };
 
-auto [client_side, server_side] = quoll::io::make_memory_stream_pair();
+auto [client_side, server_side] = io::make_memory_stream_pair();
 
-auto [served, response] = co_await quoll::async::when_all(
-    quoll::server::serve_connection(std::move(server_side), router), peer(std::move(client_side)));
+auto [served, response] = co_await async::when_all(
+    http::server{router}.serve_connection(std::move(server_side)), peer(std::move(client_side)));
 ```
 
 The peer's stream closes with its task, which ends the connection.
 
-In all three, `router` outlives the task.
+`serve` needs its `listener` to outlive the task. The others need nothing to.
 
 > [!NOTE]
 > `quoll::runtime` runs everything on the thread that calls `run()`. A handler that blocks that
@@ -236,32 +246,31 @@ In all three, `router` outlives the task.
 
 ## Options
 
-`listen` takes `listen_options`, holding `serve_options`, holding `connection_options`:
+The server takes `serve_options`, holding `connection_options`, and `listen` takes `listen_options`, which say where:
 
 ```cpp
-co_await quoll::server::listen(
-    router, 8080,
-    {.address = "0.0.0.0",
-     .serve = {.connection = {.idle_timeout = 30s,
-                              .read_timeout = 10s,
-                              .on_handler_error = [](std::exception_ptr failure) { report(failure); }},
-               .max_connections = 1000}});
+http::server server{router, {.connection = {.idle_timeout = 30s,
+                                            .read_timeout = 10s,
+                                            .on_handler_error = [](std::exception_ptr failure) { report(failure); }},
+                             .max_connections = 1000}};
+
+co_await server.listen(8080, {.address = "0.0.0.0"});
 ```
 
 ### `connection_options`
 
-| Option              | Default | What it does                                                                                                                                                        |
-| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `idle_timeout`      | 60 s    | How long a connection waits for a request to start. Past it, the connection closes without a word.                                                                  |
-| `read_timeout`      | 30 s    | How long a request may wait for its peer once started, and not the time a handler takes between two reads. Past it, it answers 408 and the connection closes. It starts again once `100 Continue` has left, as the client waits for that. |
-| `min_read_rate`     | 16 KiB/s | What lets a request take as long as it keeps coming: each byte of its body adds to what `read_timeout` has left, up to `read_timeout` itself. See below. |
-| `write_timeout`     | 30 s    | How long a response or a `100 Continue` may wait for its peer to take it, and not the time a `body_writer` takes between two writes. Past it, the connection closes. |
-| `min_write_rate`    | 16 KiB/s | The same for what leaves, every byte earning. A write that leaves within 100 ms gives back all of `write_timeout`. |
-| `lingering_timeout` | 5 s     | After the last response, what the peer still sends is read and dropped: how long to wait for more of it. Zero closes at once.                                       |
-| `lingering_time`    | 30 s    | How long this goes on as a whole, against a peer that keeps sending. Zero closes at once.                                                                           |
-| `limits`            | below   | What a request may hold.                                                                                                                                            |
-| `on_handler_error`  | none    | Called with what a handler, a middleware or a `body_writer` threw, on the connection's executor. Must not throw.                                                    |
-| `drain`             | none    | A stop request here ends the connection gently. `serve` sets it for its own shutdown, replacing what is given here.                                                 |
+| Option              | Default  | What it does                                                                                                                                                                                                                              |
+| ------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `idle_timeout`      | 60 s     | How long a connection waits for a request to start. Past it, the connection closes without a word.                                                                                                                                        |
+| `read_timeout`      | 30 s     | How long a request may wait for its peer once started, and not the time a handler takes between two reads. Past it, it answers 408 and the connection closes. It starts again once `100 Continue` has left, as the client waits for that. |
+| `min_read_rate`     | 16 KiB/s | What lets a request take as long as it keeps coming: each byte of its body adds to what `read_timeout` has left, up to `read_timeout` itself. See below.                                                                                  |
+| `write_timeout`     | 30 s     | How long a response or a `100 Continue` may wait for its peer to take it, and not the time a `body_writer` takes between two writes. Past it, the connection closes.                                                                      |
+| `min_write_rate`    | 16 KiB/s | The same for what leaves, every byte earning. A write that leaves within 100 ms gives back all of `write_timeout`.                                                                                                                        |
+| `lingering_timeout` | 5 s      | After the last response, what the peer still sends is read and dropped: how long to wait for more of it. Zero closes at once.                                                                                                             |
+| `lingering_time`    | 30 s     | How long this goes on as a whole, against a peer that keeps sending. Zero closes at once.                                                                                                                                                 |
+| `limits`            | below    | What a request may hold.                                                                                                                                                                                                                  |
+| `on_handler_error`  | none     | Called with what a handler, a middleware or a `body_writer` threw, on the connection's executor. Must not throw.                                                                                                                          |
+| `drain`             | none     | A stop request here ends the connection gently. `serve` sets it for its own shutdown, replacing what is given here.                                                                                                                       |
 
 Lingering is there because closing with the peer's bytes unread would reset the connection, and may
 destroy the response before the peer reads it.
@@ -285,9 +294,9 @@ The time a handler takes is not limited: that is the application's to bound, wit
 `async::with_timeout`, which stops the work and awaits its end.
 
 ```cpp
-router.get("/report", [](http::request) -> task<http::response> {
+router.get("/report", [](http::request) -> async::task<http::response> {
   try {
-    co_return co_await quoll::async::with_timeout(5s, build_report());
+    co_return co_await async::with_timeout(5s, build_report());
   } catch (std::system_error const &failure) {
     if (failure.code() != std::errc::timed_out) {
       throw;
@@ -322,7 +331,7 @@ A body too large is refused as soon as its head announces it.
 | `on_connection_error` | none    | Called with the exception that ended a connection (a stream exception, `std::bad_alloc`...). Must not throw.                |
 | `on_accept_error`     | below   | What an accept failure does.                                                                                                |
 
-`on_accept_error` is a function from `std::error_code` to `task<bool>`, so that it may wait first:
+`on_accept_error` is a function from `std::error_code` to `async::task<bool>`, so that it may wait first:
 true accepts again, false ends the accept loop by rethrowing the failure. Without one, a failure of
 one connection is skipped, running out of something (file descriptors, memory) is retried after
 100 ms without a word, and any other failure is rethrown. A rethrow ends the accept loop, and
@@ -336,8 +345,7 @@ stop on Ctrl-C, or your own:
 ```cpp
 std::stop_source stopping;
 
-quoll::async::co_spawn(runtime.get_executor(), serve_api(), quoll::async::detached,
-                       stopping.get_token());
+async::co_spawn(runtime.get_executor(), serve_api(), async::detached, stopping.get_token());
 ```
 
 On a stop request:
@@ -346,8 +354,7 @@ On a stop request:
 2. Idle connections close at once.
 3. Requests under way finish, within `shutdown_timeout`, past which they are stopped. A response not
    started yet says `Connection: close`.
-4. The task completes once its connections have ended, so that `listener` and `router` only have to
-   outlive it.
+4. The task completes once its connections have ended, so that `listener` only has to outlive it.
 
 ## Errors
 
@@ -375,8 +382,9 @@ A certificate and its key make it an HTTPS server. Both files are PEM, the certi
 chain:
 
 ```cpp
-co_await quoll::server::listen(
-    router, 8443, {.tls = {.certificate_file = "cert.pem", .private_key_file = "key.pem"}});
+http::server server{router};
+
+co_await server.listen(8443, {.tls = {.certificate_file = "cert.pem", .private_key_file = "key.pem"}});
 ```
 
 The handshake takes place on the connection's first read, so that a slow peer holds nobody back, and

@@ -36,12 +36,12 @@
 
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
-#include <quoll/client/transport.hpp>
+#include <quoll/client/client.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/io/connect_tls.hpp>
 #include <quoll/io/listen_tls.hpp>
-#include <quoll/server/listen.hpp>
+#include <quoll/server/server.hpp>
 #include <quoll/test/run_task.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -52,10 +52,8 @@
 
 namespace {
 
-namespace client = quoll::client;
 namespace http = quoll::http;
 namespace io = quoll::io;
-namespace server = quoll::server;
 
 using quoll::async::task;
 using quoll::test::free_port;
@@ -94,7 +92,6 @@ http::request make_request(http::verb method, std::string target, std::string bo
 #include <quoll/io/listen.hpp>
 #include <quoll/io/tls_options.hpp>
 #include <quoll/io/write.hpp>
-#include <quoll/server/serve.hpp>
 #include <quoll/test/overloaded.hpp>
 
 #include <array>
@@ -127,8 +124,8 @@ io::tls_server_options other_certificate() {
   return {.certificate_file = tls_file("other.pem"), .private_key_file = tls_file("other-key.pem")};
 }
 
-client::transport_options trusting_the_authority() {
-  client::transport_options options;
+http::client_options trusting_the_authority() {
+  http::client_options options;
 
   options.tls.ca_file = tls_file("ca.pem");
   return options;
@@ -193,7 +190,7 @@ struct counting_listener {
 // loaded before anything else: what cannot be loaded throws from here.
 template <class T>
 task<T> with_server(io::tls_server_options certificate, std::function<task<T>(std::string)> call,
-                    server::serve_options options = {}, int *accepted = nullptr) {
+                    http::serve_options options = {}, int *accepted = nullptr) {
   auto const router = make_router();
   auto listener = co_await io::listen_tls(0, std::move(certificate));
   auto const url = "https://127.0.0.1:" + std::to_string(listener.local_port().value());
@@ -206,7 +203,7 @@ task<T> with_server(io::tls_server_options certificate, std::function<task<T>(st
   std::stop_source stop;
 
   auto const serving = [&]() -> task<> {
-    co_await stop_scope<void>{server::serve(counted, router, std::move(options)), stop.get_token()};
+    co_await stop_scope<void>{http::server{router, std::move(options)}.serve(counted), stop.get_token()};
   };
 
   auto const calling = [&]() -> task<T> {
@@ -221,23 +218,22 @@ task<T> with_server(io::tls_server_options certificate, std::function<task<T>(st
 }
 
 // The body of a GET.
-std::function<task<std::string>(std::string)> get_body(client::transport_options options,
-                                                       std::string target = "/hello") {
+std::function<task<std::string>(std::string)> get_body(http::client_options options, std::string target = "/hello") {
   return [options = std::move(options), target = std::move(target)](std::string url) -> task<std::string> {
-    client::transport<> const transport{url, options};
+    http::client const client{url, options};
 
-    co_return (co_await transport.send(make_request(http::verb::get, target))).body;
+    co_return (co_await client.send(make_request(http::verb::get, target))).body;
   };
 }
 
 // The error a GET fails with: none if it succeeds.
-std::function<task<std::error_code>(std::string)> get_error(client::transport_options options,
+std::function<task<std::error_code>(std::string)> get_error(http::client_options options,
                                                             std::string target = "/hello") {
   return [options = std::move(options), target = std::move(target)](std::string url) -> task<std::error_code> {
-    client::transport<> const transport{url, options};
+    http::client const client{url, options};
 
     try {
-      static_cast<void>(co_await transport.send(make_request(http::verb::get, target)));
+      static_cast<void>(co_await client.send(make_request(http::verb::get, target)));
     } catch (std::system_error const &error) {
       co_return error.code();
     }
@@ -247,14 +243,14 @@ std::function<task<std::error_code>(std::string)> get_error(client::transport_op
 }
 
 // A client that connects to the server's name rather than its address.
-task<std::string> get_by_name(std::string url, client::transport_options options) {
+task<std::string> get_by_name(std::string url, http::client_options options) {
   auto const port = url.substr(url.rfind(':') + 1);
 
   co_return co_await get_body(std::move(options))("https://localhost:" + port);
 }
 
 // The address of a server that accepts TCP connections and answers nothing, not even a handshake.
-task<std::error_code> handshake_with_silent_server(client::transport_options options) {
+task<std::error_code> handshake_with_silent_server(http::client_options options) {
   auto listener = co_await io::listen(0);
   auto const url = "https://127.0.0.1:" + std::to_string(listener.local_port().value());
   auto [accepted, error] = co_await when_all(listener.accept(), get_error(std::move(options))(url));
@@ -274,8 +270,8 @@ std::function<task<std::error_code>(std::string)> idle_tcp_peer() {
   };
 }
 
-server::serve_options idle_for(std::chrono::nanoseconds timeout) {
-  server::serve_options options;
+http::serve_options idle_for(std::chrono::nanoseconds timeout) {
+  http::serve_options options;
 
   options.connection.idle_timeout = timeout;
   return options;
@@ -298,7 +294,7 @@ task<std::error_code> tls_client_of_plain_server() {
   std::stop_source stop;
 
   auto const serving = [&]() -> task<> {
-    co_await stop_scope<void>{server::serve(listener, router), stop.get_token()};
+    co_await stop_scope<void>{http::server{router}.serve(listener), stop.get_token()};
   };
 
   auto const calling = [&]() -> task<std::error_code> {
@@ -330,13 +326,13 @@ task<std::error_code> closing_without_notice(std::string response) {
   co_return error;
 }
 
-// Listens through server::listen, as a program does, and gets a page.
+// Listens through http::server, as a program does, and gets a page.
 task<std::string> listen_and_get(std::uint16_t port) {
   auto const router = make_router();
   std::stop_source stop;
 
   auto const serving = [&]() -> task<> {
-    co_await stop_scope<void>{server::listen(router, port, {.tls = server_certificate()}), stop.get_token()};
+    co_await stop_scope<void>{http::server{router}.listen(port, {.tls = server_certificate()}), stop.get_token()};
   };
 
   auto const calling = [&]() -> task<std::string> {
@@ -356,7 +352,7 @@ TEST_CASE("TLS: a client calls a server, checking its certificate against an aut
   REQUIRE(run_task(with_server<std::string>(server_certificate(), get_body(trusting_the_authority()))) == "hello");
 }
 
-TEST_CASE("TLS: server::listen serves over TLS with a certificate", "[tls][asio][runtime][server]") {
+TEST_CASE("TLS: http::server serves over TLS with a certificate", "[tls][asio][runtime][server]") {
   REQUIRE(run_task(listen_and_get(free_port())) == "hello");
 }
 
@@ -372,10 +368,10 @@ TEST_CASE("TLS: requests reuse a connection kept alive", "[tls][asio][runtime]")
   int accepted = 0;
 
   std::function<task<std::string>(std::string)> const call = [](std::string url) -> task<std::string> {
-    client::transport<> const transport{url, trusting_the_authority()};
+    http::client const client{url, trusting_the_authority()};
 
-    static_cast<void>(co_await transport.send(make_request(http::verb::get, "/hello")));
-    co_return (co_await transport.send(make_request(http::verb::get, "/hello"))).body;
+    static_cast<void>(co_await client.send(make_request(http::verb::get, "/hello")));
+    co_return (co_await client.send(make_request(http::verb::get, "/hello"))).body;
   };
 
   REQUIRE(run_task(with_server<std::string>(server_certificate(), call, {}, &accepted)) == "hello");
@@ -386,15 +382,15 @@ TEST_CASE("TLS: a body read in pieces, on a connection then reused", "[tls][asio
   int accepted = 0;
 
   std::function<task<std::string>(std::string)> const call = [](std::string url) -> task<std::string> {
-    client::transport<> const transport{url, trusting_the_authority()};
-    auto response = co_await transport.stream(make_request(http::verb::get, "/pieces"));
+    http::client const client{url, trusting_the_authority()};
+    auto response = co_await client.stream(make_request(http::verb::get, "/pieces"));
     std::size_t size = 0;
 
     while (auto const piece = co_await response.body.read()) {
       size += piece->size();
     }
 
-    co_return std::to_string(size) + " " + (co_await transport.send(make_request(http::verb::get, "/hello"))).body;
+    co_return std::to_string(size) + " " + (co_await client.send(make_request(http::verb::get, "/hello"))).body;
   };
 
   REQUIRE(run_task(with_server<std::string>(server_certificate(), call, {}, &accepted)) == "1048576 hello");
@@ -403,7 +399,7 @@ TEST_CASE("TLS: a body read in pieces, on a connection then reused", "[tls][asio
 
 TEST_CASE("TLS: a body_writer: all of it, then a server refusing it", "[tls][asio][runtime]") {
   std::function<task<std::string>(std::string)> const call = [](std::string url) -> task<std::string> {
-    client::transport<> const transport{url, trusting_the_authority()};
+    http::client const client{url, trusting_the_authority()};
 
     auto const upload = [](std::string target, http::body_writer writer) {
       http::request request;
@@ -414,14 +410,14 @@ TEST_CASE("TLS: a body_writer: all of it, then a server refusing it", "[tls][asi
       return request;
     };
 
-    auto const whole = co_await transport.send(upload("/echo", [](http::body_stream out) -> task<> {
+    auto const whole = co_await client.send(upload("/echo", [](http::body_stream out) -> task<> {
       std::string const piece(std::size_t{4} * 1024, 'x');
 
       for (auto index = 0; index < 256; ++index) {
         co_await out.write(piece);
       }
     }));
-    auto const refused = co_await transport.send(upload("/refuse", [](http::body_stream out) -> task<> {
+    auto const refused = co_await client.send(upload("/refuse", [](http::body_stream out) -> task<> {
       std::string const piece(std::size_t{64} * 1024, 'x');
 
       for (;;) {
@@ -438,7 +434,7 @@ TEST_CASE("TLS: a body_writer: all of it, then a server refusing it", "[tls][asi
 TEST_CASE("TLS: a head that cuts a write short is still a head, whatever becomes of what follows",
           "[tls][asio][runtime]") {
   std::function<task<std::string>(std::string)> const call = [](std::string url) -> task<std::string> {
-    client::transport<> const transport{url, trusting_the_authority()};
+    http::client const client{url, trusting_the_authority()};
     http::request request;
 
     request.method = http::verb::post;
@@ -451,7 +447,7 @@ TEST_CASE("TLS: a head that cuts a write short is still a head, whatever becomes
       }
     };
 
-    auto response = co_await transport.stream(std::move(request));
+    auto response = co_await client.stream(std::move(request));
 
     // Whichever comes: what is promised is the head, and no more than a failure from what follows.
     try {
@@ -470,11 +466,11 @@ TEST_CASE("TLS: a kept connection the server closed is replaced", "[tls][asio][r
   int accepted = 0;
 
   std::function<task<std::string>(std::string)> const call = [](std::string url) -> task<std::string> {
-    client::transport<> const transport{url, trusting_the_authority()};
+    http::client const client{url, trusting_the_authority()};
 
-    static_cast<void>(co_await transport.send(make_request(http::verb::get, "/hello")));
+    static_cast<void>(co_await client.send(make_request(http::verb::get, "/hello")));
     co_await quoll::async::sleep_for(100ms);
-    co_return (co_await transport.send(make_request(http::verb::get, "/hello"))).body;
+    co_return (co_await client.send(make_request(http::verb::get, "/hello"))).body;
   };
 
   REQUIRE(run_task(with_server<std::string>(server_certificate(), call, idle_for(20ms), &accepted)) == "hello");
@@ -570,7 +566,7 @@ TEST_CASE("TLS: a client closing its side gets TLS's closing message back", "[tl
 }
 
 TEST_CASE("TLS: a client still sending a refused body gets its answer and the end of it", "[tls][asio][runtime]") {
-  server::serve_options options;
+  http::serve_options options;
 
   options.connection.limits.max_body_size = 16;
 
@@ -588,9 +584,9 @@ TEST_CASE("TLS: a body larger than a TLS record goes both ways", "[tls][asio][ru
   std::string const sent(1024 * 1024, 'x');
 
   std::function<task<std::string>(std::string)> const call = [&sent](std::string url) -> task<std::string> {
-    client::transport<> const transport{url, trusting_the_authority()};
+    http::client const client{url, trusting_the_authority()};
 
-    co_return (co_await transport.send(make_request(http::verb::post, "/echo", sent))).body;
+    co_return (co_await client.send(make_request(http::verb::post, "/echo", sent))).body;
   };
 
   REQUIRE(run_task(with_server<std::string>(server_certificate(), call)) == sent);
@@ -612,7 +608,7 @@ TEST_CASE("TLS: a certificate naming another server is refused", "[tls][asio][ru
 }
 
 TEST_CASE("TLS: verify_peer = false accepts any certificate", "[tls][asio][runtime]") {
-  client::transport_options options;
+  http::client_options options;
 
   options.tls.verify_peer = false;
 
@@ -620,7 +616,7 @@ TEST_CASE("TLS: verify_peer = false accepts any certificate", "[tls][asio][runti
 }
 
 TEST_CASE("TLS: an authority file that cannot be read fails the request", "[tls][asio][runtime]") {
-  client::transport_options options;
+  http::client_options options;
 
   options.tls.ca_file = tls_file("no-such-file.pem");
 
@@ -706,17 +702,17 @@ TEST_CASE("TLS: a stop request from another thread cancels a request", "[tls][as
 #else
 
 TEST_CASE("without TLS: what needs it says so", "[tls][asio][runtime]") {
-  client::transport<> const transport{"https://127.0.0.1:1"};
+  http::client const client{"https://127.0.0.1:1"};
 
   auto const send = [&]() -> task<int> {
-    static_cast<void>(co_await transport.send(make_request(http::verb::get, "/")));
+    static_cast<void>(co_await client.send(make_request(http::verb::get, "/")));
     co_return 0;
   };
 
   auto const listen = []() -> task<int> {
     http::router const router;
 
-    co_await server::listen(router, free_port(), {.tls = {.certificate_file = "cert", .private_key_file = "key"}});
+    co_await http::server{router}.listen(free_port(), {.tls = {.certificate_file = "cert", .private_key_file = "key"}});
     co_return 0;
   };
 

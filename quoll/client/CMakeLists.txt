@@ -1,7 +1,7 @@
 quoll_declare_module(
   NAME client
   SOURCES
-    src/transport.cpp
+    src/client.cpp
     src/url.cpp
   DEPS
     quoll::http
@@ -9,7 +9,7 @@ quoll_declare_module(
 
 quoll_declare_tests(
   SOURCES
-    tests/transport_test.cpp
+    tests/client_test.cpp
   DEPS
     quoll::client
     quoll::server

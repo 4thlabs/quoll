@@ -785,7 +785,7 @@ std::string_view path_of(http::next const next) { return next.path(); }
 
 } // namespace
 
-static_assert(!std::constructible_from<http::local_transport, http::router &&>);
+static_assert(std::constructible_from<http::local_transport, http::router>);
 static_assert(std::constructible_from<http::local_transport, http::router &>);
 
 TEST_CASE("router: what a coroutine takes by reference lives until its task ends", "[http][router][timer]") {
@@ -1384,4 +1384,52 @@ TEST_CASE("local_transport: a writer reads the request as it writes the response
   auto const answered = quoll::test::run(transport.send(message));
 
   REQUIRE(answered->body == message.body);
+}
+
+TEST_CASE("local_transport: keeps its own copy of the router", "[http][router]") {
+  auto const hello = []() {
+    http::response response;
+
+    response.body = "hello";
+    return response;
+  };
+
+  auto const make_transport = [&hello] {
+    http::router router;
+
+    router.get("/hello", hello);
+    return http::local_transport{router};
+  };
+
+  auto const transport = make_transport();
+  http::request request;
+
+  request.target = "/hello";
+
+  quoll::async::run_loop loop;
+  auto const response = quoll::test::run(loop, transport.send(request));
+
+  REQUIRE(response.value().body == "hello");
+}
+
+TEST_CASE("local_transport: one moved from still sends", "[http][router]") {
+  http::router router;
+
+  router.get("/hello", []() {
+    http::response response;
+
+    response.body = "hello";
+    return response;
+  });
+
+  http::local_transport moved_from{router};
+  http::local_transport const other{std::move(moved_from)};
+  http::request request;
+
+  request.target = "/hello";
+
+  quoll::async::run_loop loop;
+  auto const response = quoll::test::run(loop, moved_from.send(request)); // NOLINT(bugprone-use-after-move)
+
+  REQUIRE(response.value().body == "hello");
 }

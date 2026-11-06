@@ -34,21 +34,22 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/server/listen.hpp>
+#ifndef QUOLL_SERVER_DETAIL_SERVE_CONNECTION_HPP
+#define QUOLL_SERVER_DETAIL_SERVE_CONNECTION_HPP
 
-#include <quoll/io/any_listener.hpp>
-#include <quoll/io/listen_tls.hpp>
+#include <quoll/async/lifetimebound.hpp>
+#include <quoll/async/task.hpp>
+#include <quoll/http/router.hpp>
+#include <quoll/io/any_stream.hpp>
+#include <quoll/server/connection_options.hpp>
 
-#include <utility>
+namespace quoll::http::detail {
 
-namespace quoll::server {
+// What http::server does for each connection, with what it holds for all of them: no copy per connection, which is why
+// `router` and `options` are references, here where the library answers for their lifetime.
+[[nodiscard]] async::task<> serve_connection(io::any_stream stream, http::router const &router QUOLL_LIFETIMEBOUND,
+                                             connection_options const &options QUOLL_LIFETIMEBOUND);
 
-async::task<> listen(http::router const &router, std::uint16_t port, listen_options options) {
-  auto listener = options.tls.enabled()
-                      ? co_await io::listen_tls(port, std::move(options.tls), std::move(options.address))
-                      : co_await io::listen(port, std::move(options.address));
+} // namespace quoll::http::detail
 
-  co_await serve(listener, router, std::move(options.serve));
-}
-
-} // namespace quoll::server
+#endif // QUOLL_SERVER_DETAIL_SERVE_CONNECTION_HPP

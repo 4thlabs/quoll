@@ -31,6 +31,11 @@ guidelines and the C++ Core Guidelines.
 ## Layout & naming (Boost style)
 
 - Namespace `quoll::<module>`, nested form: `namespace quoll::http {` ... `} // namespace quoll::http`.
+  One exception: `quoll::client` and `quoll::server` are libraries of their own, so that a program links only what it
+  uses, while their names are in `quoll::http` (`http::client`, `http::server`), as a program thinks of them. Their
+  headers stay `<quoll/client/...>` and `<quoll/server/...>`, as a module's do, and their details are in
+  `quoll::http::detail`, under the same directories: a name there is unique across the three libraries, as two of them may
+  never meet in one translation unit, where a clash would be no compile error.
 - Include guards (not `#pragma once`): `QUOLL_<MODULE>_<PATH>_<FILE>_HPP`, closed with the same name in a comment.
 - Includes use angle brackets and the full path: `#include <quoll/async/executor.hpp>`.
 - `snake_case` for types, functions, variables, namespaces and files, like the standard library. `PascalCase` for
@@ -61,6 +66,9 @@ guidelines and the C++ Core Guidelines.
 - Constrain templates with concepts / `requires`; no SFINAE or `enable_if`. Each concept has its own header, and each
   model is checked with `static_assert(Concept<Model>);`.
 - `constexpr` wherever possible, `consteval` for compile-time-only helpers.
+- What outlives a call owns what it needs: the public API keeps no reference a user has to keep alive, even at the cost of a
+  copy. The exceptions are `_ref` wrappers, views, and what an operation acts on, as a stream, a listener or the object of
+  a member (`http::read(stream, ...)`, `server.serve(listener)`, `router.dispatch()`). The fast path goes behind it, in `detail`.
 - Non-owning parameters as `std::string_view` / `std::span`; ownership through values or `std::unique_ptr`. No raw
   owning pointers, no `new` / `delete`. Throw by value, catch by `const&`.
 - Rule of zero. A type owning a resource (coroutine handle, thread...) explicitly defines or deletes all five

@@ -34,12 +34,12 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// A response from a server anyone may run: bytes in pieces, read by a client's transport. It gives a response, or
+// A response from a server anyone may run: bytes in pieces, read by a client. It gives a response, or
 // throws what its documentation says, and nothing else.
 
 #include <quoll/async/task.hpp>
-#include <quoll/client/transport.hpp>
-#include <quoll/client/transport_options.hpp>
+#include <quoll/client/client.hpp>
+#include <quoll/client/client_options.hpp>
 #include <quoll/fuzz/support.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/verb.hpp>
@@ -79,14 +79,14 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
     return 0;
   }
 
-  quoll::client::transport_options options;
+  quoll::http::client_options options;
 
   options.limits = quoll::fuzz::low_limits;
   options.max_redirects = 2;
 
   // With a timer, as a client has one. A second send takes the connection the first one kept, or finds it closed.
   quoll::test::virtual_time time;
-  quoll::client::transport<input_connector> const transport{
+  quoll::http::client const client{
       input_connector{quoll::fuzz::as_text(data + 1, size - 1), std::size_t{data[0]} >> 4U}, "fuzz.example", 80,
       options};
 
@@ -98,7 +98,7 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
     request.target = "/";
 
     try {
-      quoll::fuzz::require(quoll::test::run(time, transport.send(std::move(request))).has_value());
+      quoll::fuzz::require(quoll::test::run(time, client.send(std::move(request))).has_value());
     } catch (std::system_error const &) {
     }
   }
@@ -110,7 +110,7 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
     // As above: a POST takes no connection from the pool, a HEAD reads no body.
     request.method = methods[(data[0] >> 2U) & 3U];
 
-    auto response = co_await transport.stream(std::move(request));
+    auto response = co_await client.stream(std::move(request));
 
     while (co_await response.body.read()) {
     }

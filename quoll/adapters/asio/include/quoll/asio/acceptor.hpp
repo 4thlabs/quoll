@@ -52,7 +52,7 @@
 namespace quoll::asio {
 
 /**
- * @brief Listener accepting TCP connections with asio, for a server (quoll::server::serve).
+ * @brief Listener accepting TCP connections with asio, for a server (quoll::http::server).
  *
  * Takes a listening acceptor over. Each accepted connection is a tcp_stream on the acceptor's executor, handed over as
  * an io::any_stream. A failure to accept throws std::system_error from the task, with asio's error code; a stop

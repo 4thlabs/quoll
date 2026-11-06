@@ -189,7 +189,10 @@ public:
    * @brief The response of the route `message` matches, from its handler, or the 404 / 405 / 400 above, through the
    * middlewares. Anything a handler or a middleware throws, even before it returns its task, comes out of the task.
    */
-  [[nodiscard]] async::task<response> dispatch(request message, body_reader reader = {}) const QUOLL_LIFETIMEBOUND;
+  [[nodiscard]] async::task<response> dispatch(request message, body_reader reader = {}) const &QUOLL_LIFETIMEBOUND;
+
+  // A temporary would be gone before the task reads it.
+  async::task<response> dispatch(request message, body_reader reader = {}) const && = delete;
 
   /**
    * @brief Whether the route of a request with this head reads its body in pieces, so that what serves it leaves the

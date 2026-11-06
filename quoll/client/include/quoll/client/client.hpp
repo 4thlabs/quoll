@@ -34,18 +34,19 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_CLIENT_TRANSPORT_HPP
-#define QUOLL_CLIENT_TRANSPORT_HPP
+#ifndef QUOLL_CLIENT_CLIENT_HPP
+#define QUOLL_CLIENT_CLIENT_HPP
 
 #include <quoll/async/task.hpp>
+#include <quoll/client/client_options.hpp>
 #include <quoll/client/detail/url.hpp>
-#include <quoll/client/transport_options.hpp>
+#include <quoll/http/detail/number.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/streamed_response.hpp>
+#include <quoll/http/transport.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/connector.hpp>
-#include <quoll/io/network_connector.hpp>
 #include <quoll/io/tls_connector.hpp>
 #include <quoll/io/tls_options.hpp>
 
@@ -57,12 +58,12 @@
 #include <string_view>
 #include <utility>
 
-namespace quoll::client {
+namespace quoll::http {
 
 namespace detail {
 
-// What a transport does, whatever its connector: compiled once.
-class transport_core;
+// What a client does, whatever its connector: compiled once.
+class client_core;
 
 // A connector, whichever it is: the core owns it through this.
 struct connector_handle {
@@ -71,13 +72,13 @@ struct connector_handle {
                                       io::tls_client_options const &tls);
 };
 
-[[nodiscard]] std::shared_ptr<transport_core> make_transport_core(connector_handle connector, std::string host,
-                                                                  std::uint16_t port, bool secure, std::string prefix,
-                                                                  transport_options const &options);
+[[nodiscard]] std::shared_ptr<client_core> make_client_core(connector_handle connector, std::string host,
+                                                            std::uint16_t port, bool secure, std::string prefix,
+                                                            client_options const &options);
 
-[[nodiscard]] async::task<http::response> send(std::shared_ptr<transport_core> const &core, http::request request);
-[[nodiscard]] async::task<http::streamed_response> stream(std::shared_ptr<transport_core> const &core,
-                                                          http::request request);
+[[nodiscard]] async::task<http::response> client_send(std::shared_ptr<client_core> const &core, http::request request);
+[[nodiscard]] async::task<http::streamed_response> client_stream(std::shared_ptr<client_core> const &core,
+                                                                 http::request request);
 
 } // namespace detail
 
@@ -87,7 +88,7 @@ struct connector_handle {
  *
  * Each request goes to `host` on `port`, with a `Host` field naming them unless the request has one. Connections are
  * kept open once their response is read (keep-alive), up to `max_idle_connections`, and the next requests reuse them;
- * a request waits for no other, unless transport_options::max_connections says so, and opens a new connection when none
+ * a request waits for no other, unless client_options::max_connections says so, and opens a new connection when none
  * is idle. A connection is not reused after a request or a response that closes it (`Connection: close`, HTTP/1.0), a
  * response delimited by the end of the stream, a switch of protocol, or a stream error.
  *
@@ -104,10 +105,10 @@ struct connector_handle {
  * Interim 1xx responses are skipped, up to 8 of them, but for a 101 switch of protocol, which is returned as the
  * response.
  *
- * Redirects are not followed unless transport_options::max_redirects says so: a 3xx response is a result like the
- * others. With it, a 301, 302, 303, 307 or 308 response whose `Location` names the transport's scheme and the host and
- * port of the request's `Host` field, by default the transport's, sends the request again there, its target being what
- * `Location` says, whatever the path of the transport's URL. 307 and 308 keep the method. 303 makes it a GET, but for a
+ * Redirects are not followed unless client_options::max_redirects says so: a 3xx response is a result like the
+ * others. With it, a 301, 302, 303, 307 or 308 response whose `Location` names the client's scheme and the host and
+ * port of the request's `Host` field, by default the client's, sends the request again there, its target being what
+ * `Location` says, whatever the path of the client's URL. 307 and 308 keep the method. 303 makes it a GET, but for a
  * HEAD, and 301 and 302 make a POST a GET, as browsers do. When the method changes, the body goes, with its
  * `Content-*`, `Digest`, `ETag`, `Last-Modified`, `Transfer-Encoding`, `Trailer` and `Expect` fields, and so do the
  * preconditions (`If-*`, `Range`). The other fields stay, `Authorization` included, as they go to the same server. A
@@ -121,49 +122,64 @@ struct connector_handle {
  * (`http::error::partial_message`, `http::error::body_too_large`, `http::error::bad_message` past 8 interim
  * responses...), `http::error::too_many_redirects` or `io::error::end_of_stream`. A stop request on the awaiter's
  * context abandons the request, with `std::errc::operation_canceled`, and closes its connection; a timeout does the
- * same, with `std::errc::timed_out` (see transport_options).
+ * same, with `std::errc::timed_out` (see client_options).
  *
- * Copies share their connections. The task copies what it needs: the transport does not have to outlive it.
+ * Copies share their connections. The task copies what it needs: the client does not have to outlive it.
  *
  * Thread safety: send() and stream() may be called from any thread, concurrently, if the connector allows it.
  */
-template <io::Connector Connector = io::network_connector>
-class transport {
+class client {
 public:
-  using options_type = transport_options;
+  using options_type = client_options;
 
   /**
-   * @brief A transport to `host` (a name, or an address; IPv6 without brackets) on `port`.
-   *
-   * It counts as `http` for a redirect, whatever the connector does.
-   *
-   * @throws std::invalid_argument for a host that is neither a name (letters, digits, `-`, `_` and dots), an IPv4 nor
-   * an IPv6 address: one with a port (`localhost:8080`), brackets, a zone index, spaces...
-   */
-  transport(Connector connector, std::string host, std::uint16_t port, transport_options options = {})
-      : core_(make_core(std::move(connector), std::move(host), port, false, {}, options)) {}
-
-  /**
-   * @brief A transport to the server of `url`, `http[s]://host[:port][/path]` (an IPv6 address in brackets), connecting
-   * with a default-constructed connector: by default through the network of the executor that sends
-   * (io::network_connector), as quoll::runtime provides it. `https` checks the server as `options.tls` says: by
-   * default, against the system's authorities.
+   * @brief A client of the server at `url`, `http[s]://host[:port][/path]` (an IPv6 address in brackets), connecting
+   * through the network of the executor that sends (io::network_connector), as quoll::runtime provides it. `https`
+   * checks the server as `options.tls` says: by default, against the system's authorities.
    *
    * A path goes before the target of every request, as it is: with `https://api.example.com/v1`, a target `/users` is
    * `/v1/users`, and `/` is `/v1/`, never `/v1`. It is no boundary: a target with dot segments of its own can climb out
    * of it on a server or a proxy resolving them.
    *
    * @code
-   * quoll::client::transport<> transport{"https://api.example.com/v1"};
+   * quoll::http::client client{"https://api.example.com/v1"};
    * @endcode
    *
-   * @throws std::invalid_argument for another URL, for a path that would not read as itself (a character RFC 3986 does
-   * not allow there, an invalid escape, a dot segment, encoded or not, a NUL, an empty segment), and for `https` with a
-   * connector that is no io::TlsConnector.
+   * @throws std::invalid_argument for another URL, and for a path that would not read as itself (a character RFC 3986
+   * does not allow there, an invalid escape, a dot segment, encoded or not, a NUL, an empty segment).
    */
-  explicit transport(std::string_view url, transport_options options = {})
-    requires std::default_initializable<Connector>
-      : transport(Connector{}, detail::parse_url(url), options) {}
+  explicit client(std::string_view url, client_options options = {});
+
+  // Copied rather than moved, which is as cheap: one moved from stays usable, rather than hold a null pointer.
+  client(client const &) noexcept = default;
+  client &operator=(client const &) noexcept = default;
+  ~client() = default;
+
+  /**
+   * @brief A client of the server at `url`, as above, connecting through `connector`: asio's on a context of its own, a
+   * stream in memory in a test...
+   *
+   * @throws std::invalid_argument as above, and for `https` with a connector that is no io::TlsConnector.
+   */
+  template <io::Connector Connector>
+  client(Connector connector, std::string_view url, client_options options = {})
+      : client(std::move(connector), detail::parse_url(url), options) {}
+
+  /**
+   * @brief A client of `host` (a name, or an address; IPv6 without brackets) on `port`, connecting through `connector`.
+   *
+   * It counts as `http` for a redirect, whatever the connector does.
+   *
+   * `Port` is any integer rather than `std::uint16_t`, so that braces after a URL always mean its options: `{}` would
+   * otherwise convert better to a port, and `{connector, "http://example.com", {}}` read its URL as a host.
+   *
+   * @throws std::invalid_argument for a port out of range, and for a host that is neither a name (letters, digits, `-`,
+   * `_` and dots), an IPv4 nor an IPv6 address: one with a port (`localhost:8080`), brackets, a zone index, spaces...
+   */
+  template <io::Connector Connector, std::integral Port>
+    requires(!http::detail::is_any_of<Port, bool, char, wchar_t, char8_t, char16_t, char32_t>)
+  client(Connector connector, std::string host, Port port, client_options options = {})
+      : core_(make_core(std::move(connector), std::move(host), checked_port(port), false, {}, options)) {}
 
   /**
    * @brief Sends `request` and produces its response.
@@ -181,7 +197,7 @@ public:
    * for what http::serialize() rejects, for a `body_writer` with a body too, or over HTTP/1.0 with no `Content-Length`.
    */
   [[nodiscard]] async::task<http::response> send(http::request request) const {
-    return detail::send(core_, std::move(request));
+    return detail::client_send(core_, std::move(request));
   }
 
   /**
@@ -194,7 +210,7 @@ public:
    * reads on its own: a server has to read the whole of the request before it answers, for it all to leave. Over TLS, a
    * write that this cuts short leaves its session unusable: the head is there, and `body.read()` may then fail.
    *
-   * Read to its end, or with nothing to read, its connection goes back to the transport. Destroyed before, with every
+   * Read to its end, or with nothing to read, its connection goes back to the client. Destroyed before, with every
    * copy of `body`, the connection closes; the last copy goes on the loop of what reads it, as it holds the connection.
    * Reading has a timeout of `response_timeout` per piece. A failure closes the connection, leaving its place to
    * others.
@@ -202,23 +218,33 @@ public:
    * @throws std::invalid_argument here, as send() does.
    */
   [[nodiscard]] async::task<http::streamed_response> stream(http::request request) const {
-    return detail::stream(core_, std::move(request));
+    return detail::client_stream(core_, std::move(request));
   }
 
 private:
-  transport(Connector connector, detail::origin server, transport_options options)
+  template <io::Connector Connector>
+  client(Connector connector, detail::origin server, client_options const &options)
       : core_(make_core(std::move(connector), std::move(server.host), server.port, server.secure,
                         std::move(server.prefix), options)) {
     if (server.secure && !io::TlsConnector<Connector>) {
-      throw std::invalid_argument{"quoll::client::transport: this connector cannot open https connections"};
+      throw std::invalid_argument{"quoll::http::client: this connector cannot open https connections"};
     }
   }
 
+  template <std::integral Port>
+  [[nodiscard]] static std::uint16_t checked_port(Port port) {
+    if (!std::in_range<std::uint16_t>(port)) {
+      throw std::invalid_argument{"quoll::http::client: the port is out of range"};
+    }
+
+    return static_cast<std::uint16_t>(port);
+  }
+
   // The only part that knows the connector.
-  [[nodiscard]] static std::shared_ptr<detail::transport_core> make_core(Connector connector, std::string host,
-                                                                         std::uint16_t port, bool secure,
-                                                                         std::string prefix,
-                                                                         transport_options const &options) {
+  template <io::Connector Connector>
+  [[nodiscard]] static std::shared_ptr<detail::client_core>
+  make_core(Connector connector, std::string host, std::uint16_t port, bool secure, std::string prefix,
+            client_options const &options) {
     detail::connector_handle handle{
         std::make_shared<Connector const>(std::move(connector)),
         [](void const *erased, std::string const &to, std::uint16_t on, [[maybe_unused]] bool use_tls,
@@ -234,12 +260,14 @@ private:
           return target.connect(to, on);
         }};
 
-    return detail::make_transport_core(std::move(handle), std::move(host), port, secure, std::move(prefix), options);
+    return detail::make_client_core(std::move(handle), std::move(host), port, secure, std::move(prefix), options);
   }
 
-  std::shared_ptr<detail::transport_core> core_;
+  std::shared_ptr<detail::client_core> core_;
 };
 
-} // namespace quoll::client
+static_assert(HttpTransport<client>);
 
-#endif // QUOLL_CLIENT_TRANSPORT_HPP
+} // namespace quoll::http
+
+#endif // QUOLL_CLIENT_CLIENT_HPP

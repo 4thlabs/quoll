@@ -51,7 +51,7 @@
 #include <quoll/io/write.hpp>
 #include <quoll/server/connection_options.hpp>
 #include <quoll/server/detail/open_beneath.hpp>
-#include <quoll/server/serve_connection.hpp>
+#include <quoll/server/server.hpp>
 #include <quoll/server/static_files.hpp>
 #include <quoll/test/run.hpp>
 
@@ -89,7 +89,6 @@ namespace {
 namespace fs = std::filesystem;
 namespace http = quoll::http;
 namespace io = quoll::io;
-namespace server = quoll::server;
 
 using http::status;
 using http::verb;
@@ -154,7 +153,7 @@ struct site {
   temporary_directory directory;
   http::router router;
 
-  explicit site(std::string_view prefix = "/assets", server::static_files_options options = {}) {
+  explicit site(std::string_view prefix = "/assets", http::static_files_options options = {}) {
     directory.write("hello.txt", "hello");
     directory.write("page.html", "<p>page</p>");
     directory.write("sub/deep.css", "body{}");
@@ -167,7 +166,7 @@ struct site {
     directory.write("empty.txt", "");
     directory.write("UPPER.PNG", "png");
     directory.write("unknown.quoll", "?");
-    router.use(server::static_files(prefix, directory.path(), std::move(options)));
+    router.use(http::static_files(prefix, directory.path(), std::move(options)));
     router.get("/assets/route", [](http::request) {
       http::response response;
 
@@ -293,7 +292,7 @@ TEST_CASE("static_files: routes and other methods come first", "[server][static]
   SECTION("a 404 of a route is that route's, whatever files there are") {
     http::router router;
 
-    router.use(server::static_files("/assets", served.directory.path()));
+    router.use(http::static_files("/assets", served.directory.path()));
     router.get("/assets/hello.txt", [](http::request) {
       http::response response;
 
@@ -499,7 +498,7 @@ TEST_CASE("static_files: a file larger than a piece, whole and in part", "[serve
 
   http::router router;
 
-  router.use(server::static_files("/", directory.path()));
+  router.use(http::static_files("/", directory.path()));
   REQUIRE(ask(router, "/large.bin").body == content);
 
   auto request = make_request("/large.bin");
@@ -560,8 +559,8 @@ TEST_CASE("static_files: of several, the last added looks first, and the one bef
 
   http::router router;
 
-  router.use(server::static_files("/", first.path()));
-  router.use(server::static_files("/", second.path()));
+  router.use(http::static_files("/", first.path()));
+  router.use(http::static_files("/", second.path()));
 
   REQUIRE(ask(router, "/both.txt").body == "second");
   REQUIRE(ask(router, "/only-first.txt").body == "only first");
@@ -571,8 +570,8 @@ TEST_CASE("static_files: of several, the last added looks first, and the one bef
 TEST_CASE("static_files: what cannot serve is refused at once", "[server][static]") {
   temporary_directory directory;
 
-  REQUIRE_THROWS_AS(server::static_files("assets", directory.path()), std::invalid_argument);
-  REQUIRE_THROWS_AS(server::static_files("/assets", directory.path() / "missing"), fs::filesystem_error);
+  REQUIRE_THROWS_AS(http::static_files("assets", directory.path()), std::invalid_argument);
+  REQUIRE_THROWS_AS(http::static_files("/assets", directory.path() / "missing"), fs::filesystem_error);
 }
 
 TEST_CASE("static_files: on a connection, a HEAD and a part as they go out", "[server][static]") {
@@ -601,7 +600,7 @@ TEST_CASE("static_files: on a connection, a HEAD and a part as they go out", "[s
   };
 
   auto outcome =
-      quoll::test::run(loop, quoll::async::when_all(server::serve_connection(std::move(connection), served.router),
+      quoll::test::run(loop, quoll::async::when_all(http::server{served.router}.serve_connection(std::move(connection)),
                                                     peer(std::move(client))));
   auto const &received = std::get<1>(outcome.value());
   auto const second = received.find("HTTP/1.1 206");
@@ -732,7 +731,7 @@ TEST_CASE("static_files: the prefix itself is a directory like the others", "[se
 
   http::router router;
 
-  router.use(server::static_files("/assets", directory.path()));
+  router.use(http::static_files("/assets", directory.path()));
 
   auto const without = ask(router, "/assets");
 
@@ -801,7 +800,7 @@ TEST_CASE("static_files: a prefix with a percent sign redirects to itself", "[se
 
   http::router router;
 
-  router.use(server::static_files("/100%25", directory.path()));
+  router.use(http::static_files("/100%25", directory.path()));
 
   auto const without = ask(router, "/100%25");
 
@@ -820,7 +819,7 @@ TEST_CASE("static_files: opening beneath the root follows no link, wherever it i
   fs::create_symlink(outside.path() / "secret.txt", root.path() / "link.txt");
 
   auto const opens = [&](fs::path const &relative) {
-    auto const descriptor = server::detail::open_beneath(root.path(), relative);
+    auto const descriptor = http::detail::open_beneath(root.path(), relative);
 
     if (descriptor >= 0) {
       ::close(descriptor);
@@ -837,8 +836,8 @@ TEST_CASE("static_files: opening beneath the root follows no link, wherever it i
   REQUIRE(!opens("link.txt"));
   REQUIRE(!opens("nested/missing.txt"));
   // What failed, from the component it failed on.
-  REQUIRE(server::detail::open_beneath(root.path(), "nested/missing.txt") == -ENOENT);
-  REQUIRE(server::detail::open_beneath(root.path(), "gone/secret.txt") < 0);
+  REQUIRE(http::detail::open_beneath(root.path(), "nested/missing.txt") == -ENOENT);
+  REQUIRE(http::detail::open_beneath(root.path(), "gone/secret.txt") < 0);
 }
 
 TEST_CASE("static_files: a file that is no longer the one asked for", "[server][static]") {
@@ -903,7 +902,7 @@ TEST_CASE("static_files: a root that is no directory is refused at once", "[serv
   temporary_directory directory;
 
   directory.write("file.txt", "a file");
-  REQUIRE_THROWS_AS(server::static_files("/", directory.path() / "file.txt"), std::invalid_argument);
+  REQUIRE_THROWS_AS(http::static_files("/", directory.path() / "file.txt"), std::invalid_argument);
 }
 
 #if !defined(__EMSCRIPTEN__)
@@ -963,12 +962,12 @@ TEST_CASE("static_files: a file that shrinks under its response cuts it, and say
     fs::resize_file(file, 10);
     co_return response;
   });
-  router.use(server::static_files("/", directory.path()));
+  router.use(http::static_files("/", directory.path()));
 
   quoll::async::run_loop loop;
   auto [client, connection] = io::make_memory_stream_pair();
   auto reported = 0;
-  server::connection_options options;
+  http::connection_options options;
 
   options.on_handler_error = [&](std::exception_ptr const &) { ++reported; };
 
@@ -990,9 +989,10 @@ TEST_CASE("static_files: a file that shrinks under its response cuts it, and say
     }
   };
 
-  auto outcome =
-      quoll::test::run(loop, quoll::async::when_all(server::serve_connection(std::move(connection), router, options),
-                                                    peer(std::move(client))));
+  auto outcome = quoll::test::run(
+      loop,
+      quoll::async::when_all(http::server{router, {.connection = options}}.serve_connection(std::move(connection)),
+                             peer(std::move(client))));
   auto const &received = std::get<1>(outcome.value());
 
   REQUIRE(received.starts_with("HTTP/1.1 200"));
@@ -1077,7 +1077,7 @@ TEST_CASE("static_files: a root that is a link is followed as it is now", "[serv
 
   http::router router;
 
-  router.use(server::static_files("/", current));
+  router.use(http::static_files("/", current));
   REQUIRE(ask(router, "/page.txt").body == "first release");
 
   auto const flipping = holder.path() / "flipping";

@@ -7,11 +7,11 @@ serve, and `quoll::runtime` to call.
 The examples here assume:
 
 ```cpp
+namespace async = quoll::async;
 namespace http = quoll::http;
 namespace rest = quoll::rest;
-using quoll::async::task;
-using quoll::http::status;
-using quoll::http::verb;
+using http::status;
+using http::verb;
 ```
 
 ## The contract
@@ -130,7 +130,7 @@ struct users_service {
   }
 
   // Any declared response: a reply<>, built from a value whose type only one response has.
-  task<rest::reply<users::get>> operator()(users::get, std::int64_t id) const {
+  async::task<rest::reply<users::get>> operator()(users::get, std::int64_t id) const {
     if (id == 42) {
       co_return user{.id = 42, .name = "Ada", .email = std::nullopt};
     }
@@ -166,11 +166,13 @@ rest::mount<v1>(router, users_service{}, cards_service{},
                   return token.value == "valid";
                 }));
 
-co_await quoll::server::listen(router, 8080);
+http::server server{router};
+
+co_await server.listen(8080);
 ```
 
 Each endpoint has exactly one service, and each security scheme a validator, returning `bool` or
-`task<bool>`. Otherwise `mount` does not compile (`quoll::rest::mount: no service has an operator...`,
+`async::task<bool>`. Otherwise `mount` does not compile (`quoll::rest::mount: no service has an operator...`,
 `quoll::rest::mount: no validator takes the credential<Scheme>...`). Services and validators are moved
 into storage shared by the routes, which lives as long as the router, and are called from the thread
 awaiting the dispatch. `mount` adds all the routes or none: it throws `std::invalid_argument`, leaving
@@ -182,7 +184,7 @@ When several responses share a type, `rest::respond<Status>(value)` says which:
 using renamed = rest::endpoint<"users.rename", verb::put, "/rename/{id:int64}", rest::returns<user>,
                                rest::returns<user, status::created>>;
 
-task<rest::reply<renamed>> rename(user const &value, bool existed) {
+async::task<rest::reply<renamed>> rename(user const &value, bool existed) {
   if (existed) {
     co_return rest::respond<status::ok>(value);
   }
@@ -213,7 +215,7 @@ problem by returning a response.
 ## Calling: `rest::client`
 
 A client takes the contract and a base URL. It connects as a
-[`client::transport`](client.md) does, with its options:
+[`http::client`](client.md) does, with its options:
 
 ```cpp
 using namespace std::chrono_literals;
@@ -252,8 +254,8 @@ value the server would read differently) throws `std::invalid_argument` there, b
 `rest::call_error` is not an `http_error`: a service letting a failed call to another API escape
 answers 500, not that API's status.
 
-The transport is a template parameter: any `http::HttpTransport`. That is `client::transport<>` by
-default, [`fetch_transport`](runtimes.md#fetch_transport) in a browser, and `http::local_transport` for
+The transport is a template parameter: any `http::HttpTransport`. That is `http::client` by
+default, [`fetch_client`](runtimes.md#fetch_client) in a browser, and `http::local_transport` for
 a router of the same program, which is how to test a contract without a network:
 
 ```cpp
@@ -341,11 +343,11 @@ struct day {
 };
 
 template <>
-struct quoll::rest::param_traits<day> {
+struct rest::param_traits<day> {
   [[nodiscard]] static std::string to_text(day const &value) { return std::to_string(value.number); }
 
   [[nodiscard]] static std::optional<day> from_text(std::string_view text) {
-    auto const number = quoll::rest::param_traits<int>::from_text(text);
+    auto const number = rest::param_traits<int>::from_text(text);
 
     return number ? std::optional{day{*number}} : std::nullopt;
   }
@@ -397,7 +399,7 @@ using api = rest::api<"", get_repository>;
 
 } // namespace github
 
-task<> show_stars() {
+async::task<> show_stars() {
   rest::client<github::api> client{"https://api.github.com"};
   auto const answer = co_await client.try_call<github::get_repository>("4thlabs", "quoll", "my-program");
 

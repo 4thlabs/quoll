@@ -49,7 +49,7 @@ namespace quoll::http {
 
 /**
  * @brief A response received, whose head has come and whose body is read a piece at a time: what a transport's
- * `stream()` produces, client::transport's among them. A handler writing its response in pieces uses
+ * `stream()` produces, http::client's among them. A handler writing its response in pieces uses
  * `response.body_writer` instead.
  *
  * @code

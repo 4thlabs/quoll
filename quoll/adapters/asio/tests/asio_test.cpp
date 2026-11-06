@@ -51,7 +51,7 @@
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/async/yield.hpp>
-#include <quoll/client/transport.hpp>
+#include <quoll/client/client.hpp>
 #include <quoll/http/body_reader.hpp>
 #include <quoll/http/body_stream.hpp>
 #include <quoll/http/parser.hpp>
@@ -69,8 +69,7 @@
 #include <quoll/io/listen.hpp>
 #include <quoll/io/write.hpp>
 #include <quoll/rest.hpp>
-#include <quoll/server/listen.hpp>
-#include <quoll/server/serve.hpp>
+#include <quoll/server/server.hpp>
 #include <quoll/server/static_files.hpp>
 #include <quoll/test/check.hpp>
 #include <quoll/test/overloaded.hpp>
@@ -319,10 +318,10 @@ private:
   int *connections_;
 };
 
-// Sends a GET on `transport`: the error it fails with, if any.
-task<std::error_code> send_error(quoll::client::transport<quoll::asio::connector> transport) {
+// Sends a GET on `client`: the error it fails with, if any.
+task<std::error_code> send_error(quoll::http::client client) {
   try {
-    (void)co_await transport.send(http::request{});
+    (void)co_await client.send(http::request{});
   } catch (std::system_error const &error) {
     co_return error.code();
   }
@@ -330,7 +329,7 @@ task<std::error_code> send_error(quoll::client::transport<quoll::asio::connector
   co_return std::error_code{};
 }
 
-using accounts_client = quoll::rest::client<asio_test::accounts::api, quoll::client::transport<counting_connector>>;
+using accounts_client = quoll::rest::client<asio_test::accounts::api, quoll::http::client>;
 
 struct accounts_calls {
   asio_test::account found;
@@ -446,7 +445,7 @@ task<std::error_code> idle_on_server(std::chrono::nanoseconds timeout) {
   auto listener = co_await io::listen(0);
   auto const port = listener.local_port().value();
   std::stop_source stop;
-  quoll::server::serve_options options;
+  quoll::http::serve_options options;
 
   options.connection.idle_timeout = timeout;
 
@@ -460,7 +459,7 @@ task<std::error_code> idle_on_server(std::chrono::nanoseconds timeout) {
   };
 
   auto const serving = [&]() -> task<> {
-    co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router, std::move(options)),
+    co_await quoll::async::detail::stop_scope<void>{quoll::http::server{router, std::move(options)}.serve(listener),
                                                     stop.get_token()};
   };
 
@@ -479,8 +478,8 @@ task<accounts_calls> call_then_interrupt(std::uint16_t port) {
 }
 
 task<accounts_calls> serve_and_call(http::router const &router, std::uint16_t port) {
-  auto [served, calls] =
-      co_await quoll::async::when_all(quoll::server::listen(router, port), call_then_interrupt(port));
+  http::server const server{router};
+  auto [served, calls] = co_await quoll::async::when_all(server.listen(port), call_then_interrupt(port));
 
   co_return calls;
 }
@@ -732,7 +731,7 @@ TEST_CASE("asio: a client on a thread pool sends a body_writer through sockets r
   });
 
   auto const uploading = [](quoll::asio::connector connector, std::uint16_t port) -> task<http::response> {
-    quoll::client::transport const transport{std::move(connector), "127.0.0.1", port};
+    quoll::http::client const client{std::move(connector), "127.0.0.1", port};
     http::request message;
 
     message.method = http::verb::post;
@@ -744,7 +743,7 @@ TEST_CASE("asio: a client on a thread pool sends a body_writer through sockets r
         co_await out.write(piece);
       }
     };
-    co_return co_await transport.send(std::move(message));
+    co_return co_await client.send(std::move(message));
   };
 
   co_spawn(pool.get_executor(), uploading(quoll::asio::connector{context.get_executor()}, port_of(acceptor)),
@@ -867,7 +866,7 @@ TEST_CASE("asio: quoll::server serves a router over TCP, until a stop request", 
   std::exception_ptr failure;
   bool served = false;
 
-  co_spawn(executor, quoll::server::serve(acceptor, router),
+  co_spawn(executor, quoll::http::server{router}.serve(acceptor),
            overloaded{[&] { served = true; }, [&](std::exception_ptr error) { failure = std::move(error); }},
            source.get_token());
   spawn(context, get_then_stop(quoll::asio::connector{context.get_executor()}, port, source), response, failure);
@@ -890,12 +889,12 @@ TEST_CASE("asio: a REST client calls a mounted API over TCP, on one connection k
 
   std::stop_source source;
   int connections = 0;
-  accounts_client client{quoll::client::transport{
+  accounts_client client{quoll::http::client{
       counting_connector{quoll::asio::connector{context.get_executor()}, connections}, "127.0.0.1", port}};
   std::optional<accounts_calls> calls;
   std::exception_ptr failure;
 
-  co_spawn(executor, quoll::server::serve(acceptor, router),
+  co_spawn(executor, quoll::http::server{router}.serve(acceptor),
            overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }}, source.get_token());
   spawn(context, call_accounts(std::move(client), source), calls, failure);
   run(context, failure);
@@ -925,8 +924,7 @@ TEST_CASE("asio: a stop request abandons a request waiting for its response", "[
   std::exception_ptr failure;
 
   spawn(context,
-        send_error(
-            quoll::client::transport{quoll::asio::connector{context.get_executor()}, "127.0.0.1", port_of(acceptor)}),
+        send_error(quoll::http::client{quoll::asio::connector{context.get_executor()}, "127.0.0.1", port_of(acceptor)}),
         error, failure, source.get_token());
   run(context, failure);
 
@@ -1185,25 +1183,25 @@ TEST_CASE("asio: static_files over TCP: a file far larger than a piece, read awa
   auto const exchange = [&]() -> task<std::string> {
     http::router router;
 
-    router.use(quoll::server::static_files("/files", directory));
+    router.use(quoll::http::static_files("/files", directory));
 
     auto listener = co_await io::listen(0);
     auto const port = listener.local_port().value();
     std::stop_source stop;
 
     auto const serving = [&]() -> task<> {
-      co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router, {.shutdown_timeout = {}}),
-                                                      stop.get_token()};
+      co_await quoll::async::detail::stop_scope<void>{
+          quoll::http::server{router, {.shutdown_timeout = {}}}.serve(listener), stop.get_token()};
     };
 
     auto const calling = [&]() -> task<std::string> {
       quoll::async::detail::stop_on_exit const stop_server{stop};
-      quoll::client::transport<> const transport{"http://127.0.0.1:" + std::to_string(port)};
+      quoll::http::client const client{"http://127.0.0.1:" + std::to_string(port)};
       http::request request;
 
       request.target = "/files/large.bin";
 
-      auto response = co_await transport.stream(std::move(request));
+      auto response = co_await client.stream(std::move(request));
       std::string body;
 
       while (auto const piece = co_await response.body.read()) {
@@ -1272,7 +1270,7 @@ struct refused_upload {
 };
 
 // A client sending a body far over the limit, more than a socket's buffers hold, then reading what comes.
-task<refused_upload> upload_refused(quoll::server::connection_options connection) {
+task<refused_upload> upload_refused(quoll::http::connection_options connection) {
   http::router router;
   auto listener = co_await io::listen(0);
   auto const port = listener.local_port().value();
@@ -1282,7 +1280,7 @@ task<refused_upload> upload_refused(quoll::server::connection_options connection
 
   auto const serving = [&]() -> task<> {
     co_await quoll::async::detail::stop_scope<void>{
-        quoll::server::serve(listener, router, {.connection = std::move(connection), .shutdown_timeout = {}}),
+        quoll::http::server{router, {.connection = std::move(connection), .shutdown_timeout = {}}}.serve(listener),
         stop.get_token()};
   };
 
@@ -1317,7 +1315,7 @@ task<refused_upload> upload_refused(quoll::server::connection_options connection
 
 } // namespace
 
-TEST_CASE("asio: a transport with a path in its URL sends its requests under it", "[asio][runtime][client]") {
+TEST_CASE("asio: a client with a path in its URL sends its requests under it", "[asio][runtime][client]") {
   auto const exchange = []() -> task<std::string> {
     http::router router;
 
@@ -1339,13 +1337,13 @@ TEST_CASE("asio: a transport with a path in its URL sends its requests under it"
     std::stop_source stop;
 
     auto const serving = [&]() -> task<> {
-      co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router, {.shutdown_timeout = {}}),
-                                                      stop.get_token()};
+      co_await quoll::async::detail::stop_scope<void>{
+          quoll::http::server{router, {.shutdown_timeout = {}}}.serve(listener), stop.get_token()};
     };
 
     auto const calling = [&]() -> task<std::string> {
       quoll::async::detail::stop_on_exit const stop_server{stop};
-      quoll::client::transport<> const transport{"http://127.0.0.1:" + std::to_string(port) + "/api/v1/"};
+      quoll::http::client const client{"http://127.0.0.1:" + std::to_string(port) + "/api/v1/"};
 
       auto const request_of = [](std::string target) {
         http::request message;
@@ -1354,8 +1352,8 @@ TEST_CASE("asio: a transport with a path in its URL sends its requests under it"
         return message;
       };
 
-      auto const user = co_await transport.send(request_of("/users/7?x=1"));
-      auto const root = co_await transport.send(request_of("/"));
+      auto const user = co_await client.send(request_of("/users/7?x=1"));
+      auto const root = co_await client.send(request_of("/"));
 
       co_return user.body + " " + root.body;
     };
@@ -1396,18 +1394,18 @@ TEST_CASE("asio: a body read in pieces over TCP, on a connection then reused", "
     std::stop_source stop;
 
     auto const serving = [&]() -> task<> {
-      co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router, {.shutdown_timeout = {}}),
-                                                      stop.get_token()};
+      co_await quoll::async::detail::stop_scope<void>{
+          quoll::http::server{router, {.shutdown_timeout = {}}}.serve(listener), stop.get_token()};
     };
 
     auto const calling = [&]() -> task<std::string> {
       quoll::async::detail::stop_on_exit const stop_server{stop};
-      quoll::client::transport<> const transport{"http://127.0.0.1:" + std::to_string(port)};
+      quoll::http::client const client{"http://127.0.0.1:" + std::to_string(port)};
       http::request request;
 
       request.target = "/pieces";
 
-      auto response = co_await transport.stream(std::move(request));
+      auto response = co_await client.stream(std::move(request));
       std::size_t size = 0;
       std::size_t largest = 0;
 
@@ -1420,7 +1418,7 @@ TEST_CASE("asio: a body read in pieces over TCP, on a connection then reused", "
 
       next.target = "/hello";
 
-      auto const hello = co_await transport.send(std::move(next));
+      auto const hello = co_await client.send(std::move(next));
 
       co_return std::to_string(size) + (largest < size ? " in pieces " : " whole ") + hello.body;
     };
@@ -1466,12 +1464,12 @@ TEST_CASE("asio: a body_writer over TCP: all of it, a server refusing it, and a 
 
       auto const serving = [&]() -> task<> {
         co_await quoll::async::detail::stop_scope<void>{
-            quoll::server::serve(listener, router, {.shutdown_timeout = {}}), stop.get_token()};
+            quoll::http::server{router, {.shutdown_timeout = {}}}.serve(listener), stop.get_token()};
       };
 
       auto const calling = [&]() -> task<std::string> {
         quoll::async::detail::stop_on_exit const stop_server{stop};
-        quoll::client::transport<> const transport{"http://127.0.0.1:" + std::to_string(port)};
+        quoll::http::client const client{"http://127.0.0.1:" + std::to_string(port)};
 
         auto const upload = [](std::string target, http::body_writer writer) {
           http::request request;
@@ -1482,14 +1480,14 @@ TEST_CASE("asio: a body_writer over TCP: all of it, a server refusing it, and a 
           return request;
         };
 
-        auto const whole = co_await transport.send(upload("/size", [](http::body_stream out) -> task<> {
+        auto const whole = co_await client.send(upload("/size", [](http::body_stream out) -> task<> {
           std::string const piece(std::size_t{4} * 1024, 'x');
 
           for (auto index = 0; index < 256; ++index) {
             co_await out.write(piece);
           }
         }));
-        auto const refused = co_await transport.send(upload("/refuse", endless));
+        auto const refused = co_await client.send(upload("/refuse", endless));
 
         co_return whole.body + " " + std::to_string(static_cast<int>(refused.status));
       };
@@ -1508,18 +1506,18 @@ TEST_CASE("asio: a body_writer over TCP: all of it, a server refusing it, and a 
       auto const port = listener.local_port().value();
 
       auto const calling = [&]() -> task<std::error_code> {
-        quoll::client::transport_options options;
+        quoll::http::client_options options;
 
         options.response_timeout = std::chrono::milliseconds{100};
 
-        quoll::client::transport<> const transport{"http://127.0.0.1:" + std::to_string(port), options};
+        quoll::http::client const client{"http://127.0.0.1:" + std::to_string(port), options};
         http::request request;
 
         request.method = http::verb::post;
         request.body_writer = endless;
 
         try {
-          static_cast<void>(co_await transport.send(std::move(request)));
+          static_cast<void>(co_await client.send(std::move(request)));
         } catch (std::system_error const &thrown) {
           co_return thrown.code();
         }
@@ -1557,14 +1555,14 @@ TEST_CASE("asio: the minimum rate on a real clock, and a writer reading its requ
     auto listener = co_await io::listen(0);
     auto const port = listener.local_port().value();
     std::stop_source stop;
-    quoll::server::serve_options options;
+    quoll::http::serve_options options;
 
     options.shutdown_timeout = {};
     options.connection.read_timeout = 500ms;
     options.connection.min_read_rate = 1024;
 
     auto const serving = [&]() -> task<> {
-      co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router, options),
+      co_await quoll::async::detail::stop_scope<void>{quoll::http::server{router, options}.serve(listener),
                                                       stop.get_token()};
     };
 
@@ -1628,13 +1626,13 @@ TEST_CASE("asio: a timeout as far back as nanoseconds go has expired, and stays 
     auto listener = co_await io::listen(0);
     auto const port = listener.local_port().value();
     std::stop_source stop;
-    quoll::server::serve_options options;
+    quoll::http::serve_options options;
 
     options.shutdown_timeout = {};
     options.connection.read_timeout = std::chrono::nanoseconds::min();
 
     auto const serving = [&]() -> task<> {
-      co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router, options),
+      co_await quoll::async::detail::stop_scope<void>{quoll::http::server{router, options}.serve(listener),
                                                       stop.get_token()};
     };
 
@@ -1667,7 +1665,7 @@ TEST_CASE("asio: a timeout as far back as nanoseconds go has expired, and stays 
 }
 
 TEST_CASE("asio: a client still sending a refused body finishes, then reads its answer", "[asio][runtime]") {
-  quoll::server::connection_options connection;
+  quoll::http::connection_options connection;
 
   connection.limits.max_body_size = 16;
 
@@ -1679,7 +1677,7 @@ TEST_CASE("asio: a client still sending a refused body finishes, then reads its 
   REQUIRE(upload.ended == io::error::end_of_stream);
 }
 
-TEST_CASE("asio: a REST client from a URL calls server::listen, until Ctrl-C", "[asio][runtime][rest][client]") {
+TEST_CASE("asio: a REST client from a URL calls http::server, until Ctrl-C", "[asio][runtime][rest][client]") {
   if (sigint_handler() == SIG_IGN) {
     SKIP("SIGINT is ignored by this process (started in the background): raise() would not reach the runtime");
   }
@@ -1693,6 +1691,38 @@ TEST_CASE("asio: a REST client from a URL calls server::listen, until Ctrl-C", "
   REQUIRE(calls.found.owner == "Ada");
   REQUIRE(calls.missing == "no account 7");
   REQUIRE(calls.opened.owner == "Grace");
+}
+
+TEST_CASE("http::server: the task of a temporary runs once it has gone, with its options", "[asio][runtime][server]") {
+  http::router router;
+  bool told = false;
+  http::status status = http::status::ok;
+  std::stop_source stop;
+  auto const port = free_port();
+
+  router.get("/fails", []() -> http::response { throw std::runtime_error{"on purpose"}; });
+
+  auto const get_then_stop = [&]() -> task<> {
+    http::client const client{"http://127.0.0.1:" + std::to_string(port)};
+    http::request request;
+
+    request.target = "/fails";
+    status = (co_await client.send(request)).status;
+    stop.request_stop();
+  };
+
+  quoll::asio::runtime runtime;
+
+  quoll::async::co_spawn(
+      runtime.get_executor(),
+      http::server{router, {.connection = {.on_handler_error = [&told](std::exception_ptr) { told = true; }}}}.listen(
+          port),
+      quoll::async::detached, stop.get_token());
+  quoll::async::co_spawn(runtime.get_executor(), get_then_stop(), quoll::async::detached);
+  runtime.run();
+
+  REQUIRE(status == http::status::internal_server_error);
+  REQUIRE(told);
 }
 
 TEST_CASE("asio::runtime: an executor taken again after the last one went runs its task", "[asio]") {
@@ -1759,7 +1789,7 @@ TEST_CASE("asio: over TCP, a stop request lets the request under way finish", "[
     std::stop_source stop;
 
     auto const serving = [&]() -> task<> {
-      co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router), stop.get_token()};
+      co_await quoll::async::detail::stop_scope<void>{quoll::http::server{router}.serve(listener), stop.get_token()};
     };
 
     auto const stopping = [&]() -> task<> {
@@ -1768,11 +1798,11 @@ TEST_CASE("asio: over TCP, a stop request lets the request under way finish", "[
     };
 
     auto const calling = [&]() -> task<quoll::http::response> {
-      quoll::client::transport<> const transport{"http://127.0.0.1:" + std::to_string(listener.local_port().value())};
+      quoll::http::client const client{"http://127.0.0.1:" + std::to_string(listener.local_port().value())};
       quoll::http::request request;
 
       request.target = "/slow";
-      co_return co_await transport.send(std::move(request));
+      co_return co_await client.send(std::move(request));
     };
 
     auto [served, stopped, answer] = co_await quoll::async::when_all(serving(), stopping(), calling());

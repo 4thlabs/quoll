@@ -73,7 +73,7 @@
 #include <utility>
 #include <vector>
 
-namespace quoll::server {
+namespace quoll::http {
 
 namespace detail {
 
@@ -203,13 +203,13 @@ struct opened_path {
       return std::nullopt;
     }
 
-    throw std::system_error{error, "quoll::server::static_files"};
+    throw std::system_error{error, "quoll::http::static_files"};
   }
 
   opened_path opened{std::make_shared<open_file>(descriptor)};
 
   if (::fstat(descriptor, &opened.status) != 0) {
-    throw std::system_error{errno, std::generic_category(), "quoll::server::static_files"};
+    throw std::system_error{errno, std::generic_category(), "quoll::http::static_files"};
   }
 
   return opened;
@@ -238,7 +238,7 @@ struct opened_path {
       return std::nullopt;
     }
 
-    throw std::system_error{error, "quoll::server::static_files"};
+    throw std::system_error{error, "quoll::http::static_files"};
   }
 
   auto const [in_root, in_path] = std::ranges::mismatch(root, resolved);
@@ -301,7 +301,7 @@ struct looked_up {
       return {};
     }
 
-    throw std::system_error{error, "quoll::server::static_files"};
+    throw std::system_error{error, "quoll::http::static_files"};
   }
 
   auto const path = to_serve(state, root, root / relative);
@@ -317,7 +317,7 @@ struct looked_up {
       return {};
     }
 
-    throw std::system_error{error, "quoll::server::static_files"};
+    throw std::system_error{error, "quoll::http::static_files"};
   }
 
   // What is neither is not even opened: opening a device may do something.
@@ -760,7 +760,7 @@ enum class range_outcome { whole, part, out_of_file };
       });
 
       if (read < 0) {
-        throw std::system_error{static_cast<int>(-read), std::generic_category(), "quoll::server::static_files"};
+        throw std::system_error{static_cast<int>(-read), std::generic_category(), "quoll::http::static_files"};
       }
 
       // Shorter than it was: what it announced cannot be sent, and the connection says so.
@@ -936,7 +936,7 @@ async::task<http::response> serve_file(std::shared_ptr<served const> state, http
 
 http::router::middleware static_files(std::string_view prefix, fs::path const &root, static_files_options options) {
   if (!prefix.starts_with('/')) {
-    throw std::invalid_argument{"quoll::server::static_files: the prefix does not start with a slash"};
+    throw std::invalid_argument{"quoll::http::static_files: the prefix does not start with a slash"};
   }
 
   while (prefix.ends_with('/')) {
@@ -944,7 +944,7 @@ http::router::middleware static_files(std::string_view prefix, fs::path const &r
   }
 
   if (!fs::is_directory(fs::canonical(root))) {
-    throw std::invalid_argument{"quoll::server::static_files: the root is not a directory"};
+    throw std::invalid_argument{"quoll::http::static_files: the root is not a directory"};
   }
 
   // As given, rather than where it leads now: see look_up().
@@ -955,4 +955,4 @@ http::router::middleware static_files(std::string_view prefix, fs::path const &r
   };
 }
 
-} // namespace quoll::server
+} // namespace quoll::http

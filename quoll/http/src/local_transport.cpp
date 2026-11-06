@@ -131,7 +131,9 @@ async::task<> write_whole_body(request &message) {
 
 } // namespace detail
 
-async::task<response> local_transport::send_to(std::reference_wrapper<router const> target, request message) {
+local_transport::local_transport(router target) : router_(std::make_shared<router const>(std::move(target))) {}
+
+async::task<response> local_transport::send_to(std::shared_ptr<router const> target, request message) {
   auto const head = message.method == verb::head;
 
   // A handler reads what it is given: it is all there before it runs, as with `body`.
@@ -140,9 +142,9 @@ async::task<response> local_transport::send_to(std::reference_wrapper<router con
   }
 
   // Here rather than left to dispatch(): a writer may read it, and has to find it there.
-  auto const body = target.get().reads_body_in_pieces(message) ? std::exchange(message.body, {}) : std::string{};
+  auto const body = target->reads_body_in_pieces(message) ? std::exchange(message.body, {}) : std::string{};
   detail::whole_body whole{body};
-  auto answer = co_await target.get().dispatch(std::move(message), body_reader{whole});
+  auto answer = co_await target->dispatch(std::move(message), body_reader{whole});
 
   if (answer.body_writer && !head) {
     string_sink sink{answer.body};

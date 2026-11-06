@@ -49,7 +49,7 @@
 #include <string>
 #include <string_view>
 
-namespace quoll::client::detail {
+namespace quoll::http::detail {
 
 namespace {
 
@@ -176,7 +176,7 @@ namespace {
 }
 
 [[noreturn]] void invalid_url(std::string_view why) {
-  throw std::invalid_argument{"quoll::client::transport: " + std::string{why}};
+  throw std::invalid_argument{"quoll::http::client: " + std::string{why}};
 }
 
 // A decimal port, 1 to 65535.
@@ -401,7 +401,7 @@ std::string host_field(std::string_view host, std::uint16_t port, std::uint16_t 
   auto const ipv6 = host.contains(':');
 
   if (ipv6 ? !valid_ipv6(host) : !valid_host_name(host)) {
-    throw std::invalid_argument{"quoll::client::transport: invalid host"};
+    throw std::invalid_argument{"quoll::http::client: invalid host"};
   }
 
   auto field = ipv6 ? "[" + std::string{host} + "]" : std::string{host};
@@ -487,4 +487,4 @@ std::optional<std::string> resolve_location(std::string_view location, std::stri
   return resolved;
 }
 
-} // namespace quoll::client::detail
+} // namespace quoll::http::detail
