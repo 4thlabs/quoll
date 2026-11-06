@@ -189,7 +189,8 @@ public:
    * 3xx response is a result, whatever `max_redirects` says, as its body is for the caller to read or drop.
    *
    * With a `request.body_writer`, as in send(), except that the head of the response stops the writer, as the caller
-   * reads on its own: a server has to read the whole of the request before it answers, for it all to leave.
+   * reads on its own: a server has to read the whole of the request before it answers, for it all to leave. Over TLS, a
+   * write that this cuts short leaves its session unusable: the head is there, and `body.read()` may then fail.
    *
    * @throws std::invalid_argument here, as send() does.
    */

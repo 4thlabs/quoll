@@ -37,6 +37,7 @@
 #ifndef QUOLL_HTTP_DETAIL_STREAMED_HEAD_HPP
 #define QUOLL_HTTP_DETAIL_STREAMED_HEAD_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
@@ -73,9 +74,12 @@ void append_chunk(std::string_view piece, std::string &out);
 // Appends the last chunk and the trailers, which serialize_streamed_head() has checked.
 void append_last_chunk(fields const &trailers, std::string &out);
 
+// What a Content-Length among `entries` announces. Throws std::invalid_argument for what serialize() rejects.
+[[nodiscard]] std::optional<std::uint64_t> announced_length(fields const &entries);
+
 // Runs the writer of `message` for a transport that has no use for pieces: `body` then holds what it wrote. Throws
-// std::invalid_argument for a body as well as a writer.
-[[nodiscard]] async::task<> write_whole_body(request &message);
+// std::invalid_argument for a body as well as a writer, and std::length_error for what its Content-Length does not say.
+[[nodiscard]] async::task<> write_whole_body(request &message QUOLL_LIFETIMEBOUND);
 
 // What goes on the wire for a body written in pieces. The head leaves with the first piece, in one write, so that the
 // second write of a message does not wait for what acknowledges the first. Thread safety: none.

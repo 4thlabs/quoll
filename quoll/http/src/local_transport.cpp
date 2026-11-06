@@ -69,18 +69,19 @@ private:
 namespace detail {
 
 async::task<> write_whole_body(request &message) {
-  if (!message.body_writer) {
-    co_return;
-  }
-
   if (!message.body.empty()) {
     throw std::invalid_argument{"quoll::http: a request with a body_writer and a body"};
   }
 
+  auto const announced = announced_length(message.fields);
   string_sink sink{message.body};
 
   co_await message.body_writer(body_stream{sink});
   message.body_writer = nullptr;
+
+  if (announced && *announced != message.body.size()) {
+    throw std::length_error{"quoll::http: a body_writer wrote other than its Content-Length"};
+  }
 }
 
 } // namespace detail
@@ -89,7 +90,9 @@ async::task<response> local_transport::send_to(std::reference_wrapper<router con
   auto const head = message.method == verb::head;
 
   // A handler reads what it is given: it is all there before it runs, as with `body`.
-  co_await detail::write_whole_body(message);
+  if (message.body_writer) {
+    co_await detail::write_whole_body(message);
+  }
 
   // Here rather than left to dispatch(): a writer may read it, and has to find it there.
   auto const body = target.get().reads_body_in_pieces(message) ? std::exchange(message.body, {}) : std::string{};

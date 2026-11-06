@@ -281,6 +281,27 @@ TEST_CASE("local_transport: a body_writer on a request is whole before its handl
   };
 
   REQUIRE(quoll::test::run(loop, both()) == true);
+
+  auto const of_the_wrong_length = [&](std::string announced) -> task<bool> {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.target = "/echo";
+    request.fields.set("Content-Length", std::move(announced));
+    request.body_writer = [](http::body_stream out) -> task<> { co_await out.write("four"); };
+
+    try {
+      static_cast<void>(co_await transport.send(std::move(request)));
+    } catch (std::length_error const &) {
+      co_return true;
+    }
+
+    co_return false;
+  };
+
+  REQUIRE(quoll::test::run(loop, of_the_wrong_length("3")) == true);
+  REQUIRE(quoll::test::run(loop, of_the_wrong_length("5")) == true);
+  REQUIRE(quoll::test::run(loop, of_the_wrong_length("4")) == false);
 }
 
 TEST_CASE("local_transport: a HEAD response has no body, as a connection writes it", "[http][router]") {

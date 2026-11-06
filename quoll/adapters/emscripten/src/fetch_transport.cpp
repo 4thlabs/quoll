@@ -243,7 +243,10 @@ static_assert(async::ContextAwaitable<fetch_operation>);
 // `fields`: the request's fields, packed by pack_fields().
 [[nodiscard]] async::task<http::response> fetch(std::string url, std::string fields, http::request request) {
   // Whole before it leaves: a fetch sending in pieces needs HTTP/2, and browsers that do not all have it.
-  co_await http::detail::write_whole_body(request);
+  if (request.body_writer) {
+    co_await http::detail::write_whole_body(request);
+  }
+
   co_return co_await fetch_operation{std::move(url), std::move(fields), request};
 }
 
