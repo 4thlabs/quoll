@@ -307,7 +307,11 @@ addToLibrary({
       init.body = HEAPU8.slice(body, body + bodySize);
     }
 
+    // complete() runs in the continuation of what it awaits, with no hop of its own: a stop in between would abort what
+    // has just settled.
     const settle = async () => {
+      let outcome = 0;
+
       try {
         const response = await fetch(UTF8ToString(url), init);
         const fields = [];
@@ -325,18 +329,17 @@ addToLibrary({
           streaming ? new Uint8Array() : new Uint8Array(await response.arrayBuffer()),
         ];
         entry.status = response.status;
-        return 0;
       } catch (error) {
-        return quollFetchFailed(entry, error);
+        outcome = quollFetchFailed(entry, error);
       }
+
+      {{{ runtimeKeepalivePop() }}}
+      callUserCallback(() => {{{ makeDynCall('vpii', 'complete') }}}(operation, id, outcome));
     };
 
     quollFetches.entries[id] = entry;
     {{{ runtimeKeepalivePush() }}}
-    settle().then((outcome) => {
-      {{{ runtimeKeepalivePop() }}}
-      callUserCallback(() => {{{ makeDynCall('vpii', 'complete') }}}(operation, id, outcome));
-    });
+    settle();
     return id;
   },
 
@@ -351,26 +354,28 @@ addToLibrary({
   quoll_emscripten_fetch_read: (id, complete, operation) => {
     const entry = quollFetches.entries[id];
 
+    // As in quoll_emscripten_fetch_start: no hop before complete().
     const settle = async () => {
+      let outcome = 0;
+
       try {
         const { done, value } = await entry.reader.read();
 
         if (done) {
-          return 3;
+          outcome = 3;
+        } else {
+          entry.parts[2] = value;
         }
-
-        entry.parts[2] = value;
-        return 0;
       } catch (error) {
-        return quollFetchFailed(entry, error);
+        outcome = quollFetchFailed(entry, error);
       }
+
+      {{{ runtimeKeepalivePop() }}}
+      callUserCallback(() => {{{ makeDynCall('vpi', 'complete') }}}(operation, outcome));
     };
 
     {{{ runtimeKeepalivePush() }}}
-    settle().then((outcome) => {
-      {{{ runtimeKeepalivePop() }}}
-      callUserCallback(() => {{{ makeDynCall('vpi', 'complete') }}}(operation, outcome));
-    });
+    settle();
   },
 
   // Ignores a fetch already released.

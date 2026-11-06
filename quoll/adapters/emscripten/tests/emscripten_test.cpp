@@ -35,15 +35,20 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detail/stop_scope.hpp>
+#include <quoll/async/executor.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
+#include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/emscripten.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
+#include <quoll/http/response_body.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/streamed_response.hpp>
 #include <quoll/http/transport.hpp>
@@ -103,12 +108,12 @@ using quoll::test::overloaded;
 // rethrows its exception. Past a time limit, requests stop on `source`, then fails the test; if even the stop request
 // does not end the task, aborts: the task still refers to this frame.
 template <class T>
-T run(task<T> work, std::stop_source source = {}) {
+T run_on(quoll::async::Executor auto executor, task<T> work, std::stop_source source = {}) {
   std::optional<T> result;
   std::exception_ptr failure;
   bool done = false;
 
-  co_spawn(quoll::emscripten::executor{}, std::move(work),
+  co_spawn(std::move(executor), std::move(work),
            overloaded{[&](T value) {
                         result = std::move(value);
                         done = true;
@@ -145,6 +150,11 @@ T run(task<T> work, std::stop_source source = {}) {
   }
 
   return std::move(*result);
+}
+
+template <class T>
+T run(task<T> work, std::stop_source source = {}) {
+  return run_on(quoll::emscripten::executor{}, std::move(work), std::move(source));
 }
 
 // The Node HTTP server of tests/test_server.js, listening on a free port of the loopback interface while it lives.
@@ -454,6 +464,107 @@ TEST_CASE("fetch_transport: a body_writer goes out whole", "[emscripten][http]")
   short_of_it.fields.set("Content-Length", "1000");
   short_of_it.body_writer = [](http::body_stream out) -> quoll::async::task<> { co_await out.write("four"); };
   REQUIRE_THROWS_AS(run(transport.send(std::move(short_of_it))), std::length_error);
+}
+
+namespace {
+
+// The event loop's executor, that asks for a stop first once armed: what comes then is what a fetch that has settled
+// posts, just before what waits for it resumes.
+class stopping_executor {
+public:
+  stopping_executor(std::stop_source &source, bool &armed) noexcept : source_(&source), armed_(&armed) {}
+
+  void post(quoll::async::work_item &item) const noexcept {
+    if (*armed_) {
+      *armed_ = false;
+      source_->request_stop();
+    }
+
+    quoll::emscripten::executor{}.post(item);
+  }
+
+  [[nodiscard]] bool operator==(stopping_executor const &) const noexcept = default;
+
+private:
+  std::stop_source *source_;
+  bool *armed_;
+};
+
+static_assert(quoll::async::Executor<stopping_executor>);
+
+// All of `body`, under no stop, whatever the task reading it was told.
+task<std::string> read_unstopped(http::response_body const &body QUOLL_LIFETIMEBOUND) {
+  std::string all;
+
+  for (;;) {
+    auto const piece =
+        co_await quoll::async::detail::stop_scope<std::optional<std::string_view>>{body.read(), std::stop_token{}};
+
+    if (!piece) {
+      co_return all;
+    }
+
+    all += *piece;
+  }
+}
+
+} // namespace
+
+TEST_CASE("fetch_transport: a stop just after a response has come leaves it whole", "[emscripten][http][stream]") {
+  test_server const server;
+  fetch_transport const transport{server.url()};
+  std::stop_source source;
+  auto armed = false;
+
+  auto const reading = [&]() -> task<std::string> {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.target = "/status/200";
+    request.body = "whole";
+
+    armed = true;
+
+    auto response = co_await transport.stream(std::move(request));
+
+    co_return co_await read_unstopped(response.body);
+  };
+
+  REQUIRE(run_on(stopping_executor{source, armed}, reading(), source) == "whole");
+  REQUIRE(source.stop_requested());
+}
+
+TEST_CASE("fetch_transport: a stop just after a piece has come leaves the body whole", "[emscripten][http][stream]") {
+  test_server const server;
+  fetch_transport const transport{server.url()};
+  std::stop_source source;
+  auto armed = false;
+
+  auto const reading = [&]() -> task<std::string> {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.target = "/status/200";
+    request.body = "whole";
+
+    auto response = co_await transport.stream(std::move(request));
+
+    // The read under the stop that comes, the rest under none.
+    armed = true;
+
+    auto const first = co_await response.body.read();
+
+    if (!first) {
+      co_return std::string{"no piece"};
+    }
+
+    auto all = std::string{*first};
+
+    co_return all + co_await read_unstopped(response.body);
+  };
+
+  REQUIRE(run_on(stopping_executor{source, armed}, reading(), source) == "whole");
+  REQUIRE(source.stop_requested());
 }
 
 TEST_CASE("fetch_transport: stream() takes a body_writer too, gathered first", "[emscripten][http][stream]") {

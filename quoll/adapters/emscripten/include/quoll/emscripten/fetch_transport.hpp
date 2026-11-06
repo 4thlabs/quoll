@@ -66,6 +66,7 @@ namespace quoll::emscripten {
  *
  * A failure to get a response (network error, refused connection, CORS) throws std::system_error from the task, with
  * `std::errc::io_error` and fetch's message; a stop request aborts the fetch, with `std::errc::operation_canceled`.
+ * A stop that comes once a response or a piece has settled aborts nothing: it is delivered, and the next read says so.
  * The task resumes on its awaiter's executor, which must run on the event loop (quoll::emscripten::executor).
  *
  * stream() gives the same response without waiting for its body, read a piece at a time, as JavaScript reads it from

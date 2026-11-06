@@ -47,10 +47,11 @@ namespace quoll::http {
 /**
  * @brief Appends `message` to `out`, as sent on the wire.
  *
- * Adds `Content-Length` when the message has a body (or, for POST / PUT / PATCH, an empty one) and the fields
- * declare no framing. With `Transfer-Encoding` ending in `chunked`, the body is written as one chunk followed by the
- * trailers. A `Content-Length` given in the fields must match the body; only a response with an empty body may
- * announce one it does not send (response to HEAD, 304).
+ * Adds `Content-Length` when the fields declare no framing: to a request with a body, or a POST / PUT / PATCH, and to a
+ * response whatever its body, even an empty one, unless its status has none (1xx, 204, 304). With `Transfer-Encoding`
+ * ending in `chunked`, the body is written as one chunk followed by the trailers. A `Content-Length` given in the
+ * fields must match the body; only a response with an empty body may announce one it does not send (response to HEAD,
+ * 304).
  *
  * Every framing a peer could read differently from what is sent is rejected, as it would desync the connection. What
  * is rejected leaves `out` as it was, whose content can still be sent; `out` must not be part of `message`.
