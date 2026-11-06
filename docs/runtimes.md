@@ -10,9 +10,9 @@ network, the timer and TLS they use. A task asks the executor it runs on for wha
 | `quoll::threads`    | A fixed set of worker threads | No      | No    | No              | Native                            |
 | `quoll::emscripten` | The JavaScript event loop     | No      | Yes   | `fetch` does it | Emscripten: browser, Worker, Node |
 
-An operation that needs what its executor does not offer says so: `async::sleep_for`, `io::listen` and
-`io::connect` throw `std::logic_error`. The timeouts of the server and of the client are different: on
-an executor without a timer, they do not apply.
+An operation that needs what its executor does not offer says so: `async::sleep_for`,
+`async::with_timeout`, `io::listen` and `io::connect` throw `std::logic_error`. The timeouts in the options
+of the server and of the client are different: on an executor without a timer, they do not apply.
 
 ## `quoll::runtime`
 
@@ -25,11 +25,19 @@ build. Application code names no adapter:
 
 #include <chrono>
 #include <iostream>
+#include <system_error>
 
 quoll::async::task<> tick() {
-  for (auto left = 3; left > 0; --left) {
-    std::cout << left << std::endl;
-    co_await quoll::async::sleep_for(std::chrono::seconds{1});
+  try {
+    for (auto left = 3; left > 0; --left) {
+      std::cout << left << std::endl;
+      co_await quoll::async::sleep_for(std::chrono::seconds{1});
+    }
+  } catch (std::system_error const &failure) {
+    // A stop request: with `detached`, letting it out would end the program.
+    if (failure.code() != std::errc::operation_canceled) {
+      throw;
+    }
   }
 }
 
@@ -96,8 +104,9 @@ co_await quoll::server::serve(pool.get_executor(), listener, router);
 
 > [!WARNING]
 > On such an executor, the timeouts of `connection_options` do not apply, as it has no timer, and a slow
-> peer can hold its connection. `shutdown_timeout` then stops requests at once. Handlers run concurrently
-> too, so that what they share is theirs to protect. This is an
+> peer can hold its connection. `shutdown_timeout` then stops requests at once. A handler's own
+> `async::with_timeout` throws `std::logic_error`, which answers 500. Handlers run concurrently too, so
+> that what they share is theirs to protect. This is an
 > [open question](PLAN.md#open-questions) of the roadmap.
 
 `quoll::threads` does not run under WebAssembly: its headers compile there, with nothing to link.
@@ -164,14 +173,14 @@ What `fetch` does for you, and what it does not let you do:
 
 | Point                | `client::transport`                           | `fetch_transport`                                                                                                                                  |
 | -------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Streaming a response | [`stream()`](streaming.md#reading-a-response) | [`stream()`](streaming.md#in-a-browser), with no limit and no timeout per piece |
-| Streaming a request | [In pieces](streaming.md#writing-a-request) | A `body_writer` runs to its end before the fetch, and goes out whole |
+| Streaming a response | [`stream()`](streaming.md#reading-a-response) | [`stream()`](streaming.md#in-a-browser), with no limit and no timeout per piece                                                                    |
+| Streaming a request  | [In pieces](streaming.md#writing-a-request)   | A `body_writer` runs to its end before the fetch, and goes out whole                                                                               |
 | Redirects            | Followed if asked, to its own server only     | Always followed, possibly to another origin. The 3xx response is not exposed.                                                                      |
 | Fields sent          | All of them                                   | Not those `fetch` manages itself (`Host`, `Content-Length`, `Connection` and the other hop-by-hop fields), nor the trailers.                       |
 | Fields received      | As received                                   | In lower case, repeated ones combined, without those describing the bytes on the wire (`Content-Encoding`, `Content-Length`, `Transfer-Encoding`). |
 | Body received        | As received                                   | Decoded: decompressed and de-chunked.                                                                                                              |
 | HTTP version         | As received                                   | Not known: `http_1_1`.                                                                                                                             |
-| Options | [`transport_options`](client.md#options) | None: no limits, no connection settings and no timeouts of its own. Use `async::with_timeout` |
+| Options              | [`transport_options`](client.md#options)      | None: no limits, no connection settings and no timeouts of its own. Use `async::with_timeout`                                                      |
 
 A failure to get a response (a network error, a refused connection, CORS) throws `std::system_error`
 with `std::errc::io_error` and `fetch`'s message. A stop request aborts the fetch, with

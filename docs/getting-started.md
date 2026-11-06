@@ -262,7 +262,8 @@ co_await quoll::async::co_spawn(refresh_cache(), quoll::async::detached);
 ```
 
 This does not wait for the task, and does not suspend. The task does not take the stop token of the
-coroutine: pass it `co_await quoll::async::current_stop_token()` for it to stop along with it.
+coroutine: pass it `co_await quoll::async::current_stop_token()` for it to stop along with it, and see
+[below](#failures) for what a stop does to it.
 
 ### Failures
 
@@ -278,6 +279,11 @@ try {
   std::cerr << "no answer: " << failure.what() << '\n';
 }
 ```
+
+A stop request is one of these failures: what the task awaits throws `std::system_error` with
+`std::errc::operation_canceled`. `server::listen` and `server::serve` make a clean end of it. Any other
+task given a stop token with `async::detached` has to catch it, or a stop ends the program rather than
+the task: [`tick()`](runtimes.md#quollruntime) shows how.
 
 ## Where to go next
 

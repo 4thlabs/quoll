@@ -87,9 +87,10 @@ thread. The router outlives the tasks that serve it.
 
 ## Responses
 
-`http::response` is an aggregate: `status`, `fields`, `body`, `trailers`, and `body_writer` to write
-the body in pieces (see [Streaming](streaming.md)). `Content-Length` is added when the response has a
-body and its fields declare no framing. Quoll adds no `Date` or `Server` field.
+`http::response` is an aggregate: `status`, `reason`, `version`, `fields`, `body`, `trailers`, and
+`body_writer` to write the body in pieces (see [Streaming](streaming.md)). `Content-Length` is added, `0`
+for an empty body, unless its fields declare a framing or its status has no body (1xx, 204, 304). Quoll
+adds no `Date` or `Server` field.
 
 ```cpp
 router.get("/hello", [](http::request) {
@@ -160,13 +161,26 @@ co_await quoll::server::serve(listener, router);
 connections are served concurrently, one request at a time on each.
 
 `serve_connection` serves one connection, over anything modelling `io::ByteStream`, until it ends.
-This is how a test runs a server over a memory stream:
+This is how a test runs a server over a memory stream, with a peer beside it:
 
 ```cpp
+auto const peer = [](quoll::io::memory_stream stream) -> task<http::response> {
+  std::string_view const sent = "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n";
+  std::string buffer;
+  http::response_parser parser;
+
+  co_await quoll::io::write(stream, std::as_bytes(std::span{sent}));
+  co_await http::read(stream, buffer, parser);
+  co_return parser.release();
+};
+
 auto [client_side, server_side] = quoll::io::make_memory_stream_pair();
 
-co_await quoll::server::serve_connection(std::move(server_side), router);
+auto [served, response] = co_await quoll::async::when_all(
+    quoll::server::serve_connection(std::move(server_side), router), peer(std::move(client_side)));
 ```
+
+The peer's stream closes with its task, which ends the connection.
 
 In all three, `router` outlives the task.
 
