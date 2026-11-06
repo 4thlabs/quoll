@@ -36,11 +36,15 @@
 
 #include <quoll/server/serve_connection.hpp>
 
+#include <quoll/async/await_context.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
+#include <quoll/async/detail/timeout_children.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/timer_ref.hpp>
+#include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/http/body_reader.hpp>
 #include <quoll/http/detail/ascii.hpp>
@@ -58,11 +62,17 @@
 #include <quoll/http/version.hpp>
 #include <quoll/http/write.hpp>
 #include <quoll/io/any_stream.hpp>
+#include <quoll/io/byte_stream.hpp>
 #include <quoll/io/error.hpp>
+#include <quoll/io/io_result.hpp>
 #include <quoll/io/write.hpp>
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <coroutine>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <optional>
@@ -73,6 +83,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <tuple>
 #include <utility>
 
 namespace quoll::server {
@@ -179,23 +190,282 @@ enum class expectation { none, a_continue, unsupported };
   return found;
 }
 
-// A task reading, its cancellation thrown: with_timeout() only tells its own from another when it is.
-async::task<std::error_code> throw_canceled(async::task<std::error_code> reading) {
-  auto const error = co_await std::move(reading);
+// How long one direction of a message may still wait for its peer: its timeout, less what it waited, plus what the
+// bytes that came earn at the minimum rate, never above its timeout, so that a burst does not pay for a long silence
+// after it. While an operation goes on, that is one deadline on the timer's clock, which what transfers moves and what
+// watches reads: atomic, as an executor running them on several threads may do it at once, though
+// a socket asks for one that does not.
+class patience {
+public:
+  // An operation that takes no longer than `prompt` gives back all of the timeout: see paced_stream.
+  patience(std::chrono::nanoseconds timeout, std::uint64_t min_rate, std::chrono::nanoseconds prompt) noexcept
+      : timeout_(timeout), left_(timeout), prompt_(prompt), min_rate_(min_rate) {}
 
-  if (error == std::errc::operation_canceled) {
-    throw std::system_error{error};
+  [[nodiscard]] bool limited() const noexcept { return timeout_ != std::chrono::nanoseconds::zero(); }
+
+  // The timer of the operation under way, if it is to be timed: what it transfers then counts.
+  void timed_by(std::optional<async::timer_ref> timer) noexcept { timer_ = timer; }
+
+  [[nodiscard]] std::optional<async::timer_ref> const &timer() const noexcept { return timer_; }
+
+  // The clock runs against the peer from here to operation_over(): not between two reads of a handler.
+  void operation_begins() noexcept {
+    began_ = timer_->now();
+    deadline_.store(later(began_, left_).count(), std::memory_order_relaxed);
   }
 
-  co_return error;
-}
+  [[nodiscard]] std::chrono::nanoseconds left_now() const noexcept { return until(deadline(), timer_->now()); }
 
-// A task reading, up to the read timeout. Streams report their errors as values: thrown, timed_out can only be the
-// timeout's.
-async::task<request_read> within_read_timeout(async::task<std::error_code> reading, connection_options const &options) {
+  void came(std::uint64_t bytes) noexcept {
+    if (min_rate_ == 0) {
+      return;
+    }
+
+    auto const latest = later(timer_->now(), timeout_);
+    auto const earned = std::chrono::duration<double>{static_cast<double>(bytes) / static_cast<double>(min_rate_)};
+
+    // Compared as they are: a large write at a low rate may earn more than nanoseconds can hold.
+    auto const moved =
+        earned >= timeout_
+            ? latest
+            : std::min(later(deadline(), std::chrono::duration_cast<std::chrono::nanoseconds>(earned)), latest);
+
+    deadline_.store(moved.count(), std::memory_order_relaxed);
+  }
+
+  void operation_over() noexcept {
+    auto const now = timer_->now();
+
+    left_ = now - began_ <= prompt_ ? timeout_ : until(deadline(), now);
+  }
+
+  void start_again() noexcept { left_ = timeout_; }
+
+  // A new piece, for what has no rate to go by: each then has all of the timeout.
+  void next_piece() noexcept {
+    if (min_rate_ == 0) {
+      start_again();
+    }
+  }
+
+private:
+  // `time` plus `more`, where a timeout may be close to all that nanoseconds can hold.
+  [[nodiscard]] static std::chrono::nanoseconds later(std::chrono::nanoseconds time,
+                                                      std::chrono::nanoseconds more) noexcept {
+    return more > std::chrono::nanoseconds::max() - time ? std::chrono::nanoseconds::max() : time + more;
+  }
+
+  // What is left to `deadline`, where one that has long passed must stay passed rather than wrap around: a clock is
+  // never negative, see async::Timer.
+  [[nodiscard]] static std::chrono::nanoseconds until(std::chrono::nanoseconds deadline,
+                                                      std::chrono::nanoseconds now) noexcept {
+    return deadline < std::chrono::nanoseconds::min() + now ? std::chrono::nanoseconds::min() : deadline - now;
+  }
+
+  [[nodiscard]] std::chrono::nanoseconds deadline() const noexcept {
+    return std::chrono::nanoseconds{deadline_.load(std::memory_order_relaxed)};
+  }
+
+  std::chrono::nanoseconds timeout_;
+  std::chrono::nanoseconds left_;
+  std::chrono::nanoseconds began_{};
+  std::chrono::nanoseconds prompt_;
+  std::atomic<std::chrono::nanoseconds::rep> deadline_{0};
+  std::uint64_t min_rate_;
+  std::optional<async::timer_ref> timer_;
+};
+
+// The stream of a connection while a message goes through it. One timer per operation, however many reads or writes it
+// takes, as a timer costs allocations: each of them only says what it transferred, and the timer, once it has waited
+// for what was left, looks at what is left now. Only an operation counts against the peer, rather than what a handler
+// does between two. What it cuts short throws, as timed_out then can only be its own.
+//
+// Reading, only the bytes of a body earn time, as the parser counts them: a head has its timeout as a whole, and
+// framing that no limit bounds, chunk extensions or a chunk size's leading zeros, earns a peer nothing. They count as
+// the next read begins, as the parser has not seen them before.
+//
+// Writing, what takes no longer than `prompt_write` gives back all of the timeout: a peer that takes bytes at once is
+// not the one to blame for what a busy loop or an earlier stall cost, which on a long stream of small writes would add
+// up to more than they earn. A peer that does not read soon blocks a write for longer. A loop that keeps every write
+// waiting for longer than this has other troubles.
+//
+// Thread safety: one read and one write may go on at once, a body_writer reading its request, as each direction keeps
+// to its own patience. `100 Continue` is a write too: a body_writer on such a request writes and reads in turn, as
+// http::body_writer says.
+class paced_stream {
+  static constexpr std::chrono::nanoseconds prompt_write = std::chrono::milliseconds{100};
+  // Less than any time an operation takes.
+  static constexpr std::chrono::nanoseconds never_prompt{-1};
+
+  // What a transfer is awaited through, with no frame of its own, as it is on the path of every request.
+  template <io::io_result (paced_stream::*Transferred)(io::io_result)>
+  class [[nodiscard]] transfer {
+  public:
+    transfer(paced_stream &stream, io::any_stream::awaitable inner) noexcept
+        : stream_(&stream), inner_(std::move(inner)) {}
+
+    [[nodiscard]] bool await_ready() { return inner_.await_ready(); }
+
+    [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle,
+                                                        async::await_context const &context) {
+      return inner_.await_suspend(handle, context);
+    }
+
+    [[nodiscard]] io::io_result await_resume() { return (stream_->*Transferred)(inner_.await_resume()); }
+
+  private:
+    paced_stream *stream_;
+    io::any_stream::awaitable inner_;
+  };
+
+public:
+  paced_stream(io::any_stream &stream QUOLL_LIFETIMEBOUND, http::request_parser const &parser QUOLL_LIFETIMEBOUND,
+               connection_options const &options) noexcept
+      : stream_(&stream), parser_(&parser), reading_(options.read_timeout, options.min_read_rate, never_prompt),
+        writing_(options.write_timeout, options.min_write_rate, prompt_write) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+    // Before it waits: what the last read brought has been through the parser by now.
+    if (reading_.timer()) {
+      reading_.came(body_since_last());
+    }
+
+    return transfer<&paced_stream::was_read>{*this, stream_->read_some(buffer)};
+  }
+
+  [[nodiscard]] auto write_some(std::span<std::byte const> data QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+    return transfer<&paced_stream::was_written>{*this, stream_->write_some(data)};
+  }
+
+  // `reading`, which reads through this, under the read patience.
+  [[nodiscard]] async::task<std::error_code>
+  patiently_reading(async::task<std::error_code> reading) QUOLL_LIFETIMEBOUND {
+    return patiently(reading_, std::move(reading));
+  }
+
+  // `writing`, which writes through this, under the write patience, with what stopped it as an error.
+  [[nodiscard]] async::task<std::error_code>
+  patiently_writing(async::task<std::error_code> writing) QUOLL_LIFETIMEBOUND {
+    try {
+      co_return co_await patiently(writing_, std::move(writing));
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+  }
+
+  // All of `data`, as patiently_writing() says.
+  [[nodiscard]] async::task<std::error_code>
+  write_all(std::span<std::byte const> data QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+    return patiently_writing(write_through(data));
+  }
+
+  // A new request: what the parser counts now is its own.
+  void message_begins() noexcept { body_seen_ = 0; }
+
+  [[nodiscard]] patience &reading() noexcept QUOLL_LIFETIMEBOUND { return reading_; }
+
+  [[nodiscard]] patience &writing() noexcept QUOLL_LIFETIMEBOUND { return writing_; }
+
+private:
+  [[nodiscard]] async::task<std::error_code>
+  write_through(std::span<std::byte const> data QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+    co_return (co_await io::write(*this, data)).error;
+  }
+
+  // What the parser has seen of the body since it was last asked.
+  [[nodiscard]] std::uint64_t body_since_last() noexcept {
+    auto const received = parser_->body_received();
+    auto const since = received - body_seen_;
+
+    body_seen_ = received;
+    return since;
+  }
+
+  [[nodiscard]] static io::io_result checked(io::io_result done) {
+    if (done.error == std::errc::operation_canceled) {
+      throw std::system_error{done.error};
+    }
+
+    return done;
+  }
+
+  [[nodiscard]] io::io_result was_read(io::io_result done) { return checked(done); }
+
+  [[nodiscard]] io::io_result was_written(io::io_result done) {
+    static_cast<void>(checked(done));
+
+    if (writing_.timer()) {
+      writing_.came(done.transferred);
+    }
+
+    return done;
+  }
+
+  [[nodiscard]] static async::task<> watch(patience &limit QUOLL_LIFETIMEBOUND,
+                                           async::detail::timeout_state &state QUOLL_LIFETIMEBOUND) {
+    async::detail::stop_on_exit const stop_work{state.work};
+    auto const timer = *limit.timer();
+
+    // Stopped first: what has run out of time then is not what ended it.
+    while (!state.watchdog.stop_requested()) {
+      auto const left = limit.left_now();
+
+      if (left <= std::chrono::nanoseconds::zero()) {
+        state.expired = true;
+        co_return;
+      }
+
+      if (!co_await async::detail::stop_scope<bool>{timer.wait_for(left), state.watchdog.get_token()}) {
+        co_return;
+      }
+    }
+  }
+
+  // with_timeout(), with a timer that looks again at what is left.
+  [[nodiscard]] static async::task<std::error_code> patiently(patience &limit QUOLL_LIFETIMEBOUND,
+                                                              async::task<std::error_code> work) {
+    auto const executor = co_await async::current_executor();
+    auto const timer = executor.query<async::timer_ref>();
+
+    limit.timed_by(limit.limited() ? timer : std::nullopt);
+
+    if (!limit.timer()) {
+      co_return co_await std::move(work);
+    }
+
+    auto const stop_token = co_await async::current_stop_token();
+    async::detail::timeout_state state;
+    std::stop_callback const forward_stop{stop_token, async::detail::timeout_stop_forwarder{&state}};
+
+    limit.operation_begins();
+
+    try {
+      auto results = co_await async::when_all(async::detail::timeout_work(std::move(work), state), watch(limit, state));
+
+      limit.operation_over();
+      co_return std::get<0>(std::move(results));
+    } catch (std::system_error const &error) {
+      if (state.expired && error.code() == std::errc::operation_canceled) {
+        throw std::system_error{std::make_error_code(std::errc::timed_out), "quoll::server: the peer took too long"};
+      }
+
+      throw;
+    }
+  }
+
+  io::any_stream *stream_;
+  http::request_parser const *parser_;
+  patience reading_;
+  patience writing_;
+  std::uint64_t body_seen_ = 0;
+};
+
+static_assert(io::ByteStream<paced_stream>);
+
+// A task reading: what its patience or a stop cut short, thrown there, as what a request read says.
+async::task<request_read> as_request_read(async::task<std::error_code> reading) {
   try {
-    co_return request_read{
-        co_await async::detail::with_optional_timeout(options.read_timeout, throw_canceled(std::move(reading)))};
+    co_return request_read{co_await std::move(reading)};
   } catch (std::system_error const &thrown) {
     if (thrown.code() == std::errc::timed_out) {
       co_return request_read{thrown.code(), true};
@@ -212,7 +482,7 @@ async::task<request_read> within_read_timeout(async::task<std::error_code> readi
 // A request, or its head alone when `100 Continue` is owed before the rest: its client waits for that before its body.
 // Nothing is owed if the body has come already, or if there is none. A body in pieces stays where it is: its handler
 // reads it, and asking for it is what `100 Continue` then says.
-async::task<std::error_code> read_up_to_continue(io::any_stream &stream, std::string &buffer,
+async::task<std::error_code> read_up_to_continue(paced_stream &stream, std::string &buffer,
                                                  http::request_parser &parser, bool &continue_owed) {
   if (auto const error = co_await http::read_head(stream, buffer, parser)) {
     co_return error;
@@ -245,28 +515,34 @@ async::task<std::error_code> read_up_to_continue(io::any_stream &stream, std::st
   co_return co_await http::read(stream, buffer, parser);
 }
 
-async::task<std::error_code> write_continue(io::any_stream &stream) {
+async::task<std::error_code> write_continue(paced_stream &stream) {
   static constexpr std::string_view interim = "HTTP/1.1 100 Continue\r\n\r\n";
 
-  co_return (co_await io::write(stream, std::as_bytes(std::span{interim}))).error;
+  stream.writing().start_again();
+  co_return co_await stream.write_all(std::as_bytes(std::span{interim}));
 }
 
-// A whole request, under one read timeout, as a slow peer must not get more by sending its head slowly too. Only
+// A whole request, under one read patience, as a slow peer must not get more by sending its head slowly too. Only
 // `100 Continue` starts it again, as the time after it is the client's first to send its body. Leaving is under the
 // write timeout, like any response. A body in pieces is left to its handler, with `continue_owed` for it.
-async::task<request_read> read_whole_request(io::any_stream &stream, std::string &buffer, http::request_parser &parser,
-                                             connection_options const &options, bool &continue_owed) {
-  auto const first = co_await within_read_timeout(read_up_to_continue(stream, buffer, parser, continue_owed), options);
+async::task<request_read> read_whole_request(paced_stream &stream, std::string &buffer, http::request_parser &parser,
+                                             bool &continue_owed) {
+  stream.message_begins();
+  stream.reading().start_again();
+
+  auto const first =
+      co_await as_request_read(stream.patiently_reading(read_up_to_continue(stream, buffer, parser, continue_owed)));
 
   if (first.error || !continue_owed || parser.body_streamed()) {
     co_return first;
   }
 
-  if (auto const sent = co_await async::detail::with_optional_timeout(options.write_timeout, write_continue(stream))) {
+  if (auto const sent = co_await write_continue(stream)) {
     co_return request_read{sent};
   }
 
-  co_return co_await within_read_timeout(http::read(stream, buffer, parser), options);
+  stream.reading().start_again();
+  co_return co_await as_request_read(stream.patiently_reading(http::read(stream, buffer, parser)));
 }
 
 // What reading a body throws through a handler, told apart from what a handler throws on its own by its type, whatever
@@ -276,13 +552,13 @@ public:
   using std::system_error::system_error;
 };
 
-// What a handler taking an http::body_reader reads through, one read timeout per piece: a transfer takes as long as it
-// keeps coming. It remembers what stopped it, which says how the request is answered, whatever the handler made of it.
+// What a handler taking an http::body_reader reads through, a transfer taking as long as it keeps coming, at the
+// minimum rate or with a read timeout per piece. It remembers what stopped it, which says how the request is answered,
+// whatever the handler made of it.
 class streamed_body {
 public:
-  streamed_body(io::any_stream &stream, std::string &buffer, http::request_parser &parser,
-                connection_options const &options, bool continue_owed) noexcept
-      : stream_(&stream), buffer_(&buffer), parser_(&parser), options_(&options), continue_owed_(continue_owed) {}
+  streamed_body(paced_stream &stream, std::string &buffer, http::request_parser &parser, bool continue_owed) noexcept
+      : stream_(&stream), buffer_(&buffer), parser_(&parser), continue_owed_(continue_owed) {}
 
   [[nodiscard]] async::task<std::optional<std::string_view>> read() {
     if (failure_) {
@@ -300,9 +576,13 @@ public:
     if (continue_owed_) {
       continue_owed_ = false;
       co_await send_continue();
+      stream_->reading().start_again();
     }
 
-    auto const read = co_await within_read_timeout(http::read_body(*stream_, *buffer_, *parser_, piece_), *options_);
+    stream_->reading().next_piece();
+
+    auto const read =
+        co_await as_request_read(stream_->patiently_reading(http::read_body(*stream_, *buffer_, *parser_, piece_)));
 
     if (read.error == std::errc::operation_canceled) {
       // Whoever cancels it, as a handler's own timeout does, says what happens next: the body is not at fault, and the
@@ -336,24 +616,15 @@ public:
 private:
   // Stopped or not, a `100 Continue` that did not leave whole leaves a stream nothing more can be written to.
   async::task<> send_continue() {
-    std::error_code sent;
-
-    try {
-      sent = co_await async::detail::with_optional_timeout(options_->write_timeout, write_continue(*stream_));
-    } catch (std::system_error const &thrown) {
-      sent = thrown.code();
-    }
-
-    if (sent) {
+    if (auto const sent = co_await write_continue(*stream_)) {
       failure_ = request_read{sent};
       throw body_not_read{sent, "quoll::server: cannot ask for the body"};
     }
   }
 
-  io::any_stream *stream_;
+  paced_stream *stream_;
   std::string *buffer_;
   http::request_parser *parser_;
-  connection_options const *options_;
   std::string piece_;
   std::optional<request_read> failure_;
   bool continue_owed_;
@@ -405,7 +676,7 @@ void prepare(http::response &response, bool head, bool keep_alive) {
 }
 
 // Writes the response, or a 500 in its place if it cannot be serialized (a handler built an invalid one).
-async::task<std::error_code> write_response(io::any_stream &stream, http::response const &response, bool keep_alive) {
+async::task<std::error_code> write_response(paced_stream &stream, http::response const &response, bool keep_alive) {
   std::optional<async::task<std::error_code>> sending;
 
   try {
@@ -420,11 +691,10 @@ async::task<std::error_code> write_response(io::any_stream &stream, http::respon
   co_return co_await std::move(*sending);
 }
 
-// write_response(), up to the timeout: past it, the error is the stream's cancellation.
-async::task<std::error_code> send_response(io::any_stream &stream, http::response const &response, bool keep_alive,
-                                           connection_options const &options) {
-  co_return co_await async::detail::with_optional_timeout(options.write_timeout,
-                                                          write_response(stream, response, keep_alive));
+// write_response(), with what stopped it as an error.
+async::task<std::error_code> send_response(paced_stream &stream, http::response const &response, bool keep_alive) {
+  stream.writing().start_again();
+  co_return co_await stream.patiently_writing(write_response(stream, response, keep_alive));
 }
 
 // What writing a body throws through a writer, told apart from what a writer throws on its own by its type.
@@ -433,18 +703,15 @@ public:
   using std::system_error::system_error;
 };
 
-async::task<std::error_code> write_bytes(io::any_stream &stream, std::span<std::byte const> bytes) {
-  co_return (co_await io::write(stream, bytes)).error;
-}
-
-// What a body_writer writes through, one write timeout per piece: a transfer takes as long as it keeps leaving. The
-// head goes with the first piece, so that a writer failing before its first byte can still be answered. A write that
-// fails or is cancelled may have left part of what it had, so that nothing can follow it on this connection.
+// What a body_writer writes through, a transfer taking as long as it keeps leaving, at the minimum rate or with a write
+// timeout per piece. The head goes with the first piece, so that a writer failing before its first byte can still be
+// answered. A write that fails or is cancelled may have left part of what it had, so that nothing can follow it on this
+// connection.
 class streamed_response {
 public:
-  streamed_response(io::any_stream &stream, connection_options const &options, std::string head,
-                    http::detail::streamed_framing framing, streamed_body *request_body) noexcept
-      : stream_(&stream), options_(&options), request_body_(request_body), wire_(std::move(head), framing) {}
+  streamed_response(paced_stream &stream, std::string head, http::detail::streamed_framing framing,
+                    streamed_body *request_body) noexcept
+      : stream_(&stream), request_body_(request_body), wire_(std::move(head), framing) {}
 
   [[nodiscard]] async::task<> write(std::string_view piece) {
     if (failed_) {
@@ -457,6 +724,7 @@ public:
     }
 
     response_starts();
+    stream_->writing().next_piece();
 
     // An empty piece sends what is held back: a stream announces itself before its first data.
     if (auto const bytes = wire_.frame(piece); !bytes.empty()) {
@@ -471,6 +739,7 @@ public:
     }
 
     response_starts();
+    stream_->writing().next_piece();
 
     auto const bytes = wire_.end(trailers);
 
@@ -478,7 +747,7 @@ public:
       co_return true;
     }
 
-    failed_ = static_cast<bool>(co_await send_within_timeout(bytes));
+    failed_ = static_cast<bool>(co_await stream_->write_all(std::as_bytes(std::span{bytes})));
     co_return !failed_;
   }
 
@@ -494,28 +763,14 @@ private:
     }
   }
 
-  [[nodiscard]] async::task<std::error_code> send_within_timeout(std::string_view bytes) {
-    std::error_code sent;
-
-    try {
-      sent = co_await async::detail::with_optional_timeout(options_->write_timeout,
-                                                           write_bytes(*stream_, std::as_bytes(std::span{bytes})));
-    } catch (std::system_error const &thrown) {
-      sent = thrown.code();
-    }
-
-    co_return sent;
-  }
-
   [[nodiscard]] async::task<> send(std::string_view bytes) {
-    if (auto const sent = co_await send_within_timeout(bytes)) {
+    if (auto const sent = co_await stream_->write_all(std::as_bytes(std::span{bytes}))) {
       failed_ = true;
       throw body_not_written{sent, "quoll::server: cannot write the body"};
     }
   }
 
-  io::any_stream *stream_;
-  connection_options const *options_;
+  paced_stream *stream_;
   streamed_body *request_body_;
   http::detail::streamed_wire wire_;
   bool failed_ = false;
@@ -524,7 +779,7 @@ private:
 // A response with a body_writer, up to whether the connection can go on: a 500 in its place while nothing has left, and
 // otherwise an end of connection for what cannot be whole, which its peer reads as a body cut short. To HEAD, its head
 // alone. `nothing_left` says that a failure is still free to answer otherwise.
-async::task<bool> send_streamed(io::any_stream &stream, http::response &response, bool head, bool keep_alive,
+async::task<bool> send_streamed(paced_stream &stream, http::response &response, bool head, bool keep_alive,
                                 connection_options const &options, streamed_body *request_body, bool &nothing_left) {
   std::string wire;
   std::optional<http::detail::streamed_framing> framing;
@@ -537,14 +792,15 @@ async::task<bool> send_streamed(io::any_stream &stream, http::response &response
 
   auto answer_500 = !framing;
 
+  stream.writing().start_again();
+
   if (framing && head) {
-    co_return !co_await async::detail::with_optional_timeout(options.write_timeout,
-                                                             write_bytes(stream, std::as_bytes(std::span{wire})));
+    co_return !co_await stream.write_all(std::as_bytes(std::span{wire}));
   }
 
   if (framing) {
     auto const stop_token = co_await async::current_stop_token();
-    streamed_response sink{stream, options, std::move(wire), *framing, request_body};
+    streamed_response sink{stream, std::move(wire), *framing, request_body};
     auto complete = false;
 
     try {
@@ -588,7 +844,7 @@ async::task<bool> send_streamed(io::any_stream &stream, http::response &response
   auto failed = http::detail::status_response(http::status::internal_server_error);
 
   prepare(failed, false, keep_alive);
-  co_return !co_await send_response(stream, failed, keep_alive, options);
+  co_return !co_await send_response(stream, failed, keep_alive);
 }
 
 // How a connection ends. A stream that failed or a peer that has gone are owed nothing: on a stuck one, trying would
@@ -622,6 +878,7 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
                                            connection_options const &options) {
   std::string buffer;
   http::request_parser parser{options.limits};
+  paced_stream paced{stream, parser, options};
 
   // What ends the wait for a request: the task's stop request, or a request to drain.
   std::stop_source idle_stop;
@@ -642,8 +899,7 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
     auto rejected = http::detail::status_response(*answer);
 
     prepare(rejected, false, false);
-    co_return co_await send_response(stream, rejected, false, options) ? connection_end::nothing_owed
-                                                                       : connection_end::linger;
+    co_return co_await send_response(paced, rejected, false) ? connection_end::nothing_owed : connection_end::linger;
   };
 
   for (;;) {
@@ -662,7 +918,7 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
 
     bool continue_owed = false;
 
-    if (auto const read = co_await read_whole_request(stream, buffer, parser, options, continue_owed); read.error) {
+    if (auto const read = co_await read_whole_request(paced, buffer, parser, continue_owed); read.error) {
       co_return co_await refuse(read);
     }
 
@@ -673,7 +929,7 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
     if (parser.body_streamed()) {
       // The parser goes on with the body: the handler gets a copy of the head.
       request = parser.head();
-      body.emplace(stream, buffer, parser, options, continue_owed);
+      body.emplace(paced, buffer, parser, continue_owed);
     } else {
       keep_alive = parser.keep_alive() && !parser.upgrade();
       request = parser.release();
@@ -717,7 +973,7 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
     if (in_pieces) {
       auto nothing_left = false;
 
-      if (!co_await send_streamed(stream, response, head, keep_alive, options, body ? &*body : nullptr, nothing_left)) {
+      if (!co_await send_streamed(paced, response, head, keep_alive, options, body ? &*body : nullptr, nothing_left)) {
         // A writer reading the request found it at fault, before the response started.
         if (body && body->failure() && nothing_left) {
           co_return co_await refuse(*body->failure());
@@ -725,7 +981,7 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
 
         co_return connection_end::nothing_owed;
       }
-    } else if (co_await send_response(stream, response, keep_alive, options)) {
+    } else if (co_await send_response(paced, response, keep_alive)) {
       co_return connection_end::nothing_owed;
     }
 

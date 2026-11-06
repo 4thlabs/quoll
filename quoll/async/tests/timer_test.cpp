@@ -131,6 +131,13 @@ task<bool> wait_through_ref(quoll::async::timer_ref timer, std::chrono::nanoseco
   co_return co_await timer.wait_for(duration);
 }
 
+task<std::chrono::nanoseconds> time_of_a_wait(quoll::async::timer_ref timer, std::chrono::nanoseconds duration) {
+  auto const started = timer.now();
+
+  static_cast<void>(co_await timer.wait_for(duration));
+  co_return timer.now() - started;
+}
+
 task<bool> wait_stopped(quoll::async::timer_ref timer, std::stop_source &source) {
   auto [elapsed, stopped] = co_await when_all(wait_through_ref(timer, 1h), stop_after(source, 1s));
 
@@ -335,4 +342,11 @@ TEST_CASE("with_timeout nests: the shortest timeout decides, and both report tim
   REQUIRE(inner_first.now() == 1s);
   REQUIRE(run(outer_first, error_of(with_timeout(1s, with_timeout(1h, value_after(5h, 42))))) == std::errc::timed_out);
   REQUIRE(outer_first.now() == 1s);
+}
+
+TEST_CASE("timer_ref::now() goes by the clock the timer waits by", "[async][timer]") {
+  virtual_time time;
+  auto const executor = time.get_executor();
+
+  REQUIRE(quoll::test::run(time, time_of_a_wait(quoll::async::timer_ref{executor}, 3s)) == 3s);
 }

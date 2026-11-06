@@ -76,6 +76,8 @@ public:
       co_return co_await sleeper{*time_, duration};
     }
 
+    [[nodiscard]] std::chrono::nanoseconds now() const noexcept { return time_->now(); }
+
     [[nodiscard]] async::timer_ref query(async::service_tag<async::timer_ref>) const { return async::timer_ref{*this}; }
 
     [[nodiscard]] bool operator==(executor const &) const noexcept = default;
@@ -116,7 +118,9 @@ private:
   class sleeper {
   public:
     sleeper(virtual_time &time, std::chrono::nanoseconds duration) noexcept
-        : time_(&time), deadline_(time.now_ + duration) {}
+        : time_(&time),
+          deadline_(duration > std::chrono::nanoseconds::max() - time.now_ ? std::chrono::nanoseconds::max()
+                                                                           : time.now_ + duration) {}
 
     // Only moved before it suspends: nothing is pending yet.
     sleeper(sleeper &&other) noexcept : time_(other.time_), deadline_(other.deadline_) {}

@@ -71,6 +71,9 @@ public:
     return vtable_->wait_for(timer_, duration);
   }
 
+  /** @brief The time on the clock it waits by (see Timer). */
+  [[nodiscard]] std::chrono::nanoseconds now() const noexcept { return vtable_->now(timer_); }
+
   /** @brief The referenced timer if its type is exactly `T`, otherwise `nullptr`. */
   template <class T>
   [[nodiscard]] T const *target() const noexcept {
@@ -80,6 +83,7 @@ public:
 private:
   struct vtable {
     task<bool> (*wait_for)(void const *timer, std::chrono::nanoseconds duration);
+    std::chrono::nanoseconds (*now)(void const *timer) noexcept;
     detail::type_id type;
   };
 
@@ -88,6 +92,7 @@ private:
       [](void const *timer, std::chrono::nanoseconds duration) {
         return static_cast<T const *>(timer)->wait_for(duration);
       },
+      [](void const *timer) noexcept { return static_cast<T const *>(timer)->now(); },
       detail::type_id_of<T>(),
   };
 
