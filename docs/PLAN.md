@@ -730,7 +730,7 @@ Those not settled by a step of the roadmap:
 - MSVC, which Quoll does not support, and which many of the programs [Positioning](#positioning) aims at build with: a change to a
   hard constraint, the maintainer's.
 - The runtime in a browser, where the event loop already runs: no `run()` there, and tasks start with `co_spawn` on the
-  event loop. The default `rest::client` transport there would be `fetch`.
+  event loop.
 - A default `main()` provided by Quoll, creating the runtime and running an application coroutine, once the shape of
   that coroutine (arguments, exit code) is settled.
 - If OpenAPI comes back: the C++ → JSON Schema mapping, 64-bit integers in particular.

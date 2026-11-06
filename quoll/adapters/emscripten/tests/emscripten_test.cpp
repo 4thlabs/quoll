@@ -1121,6 +1121,7 @@ TEST_CASE("http::client through fetch: its options still count where they can", 
   REQUIRE(run(error_of(http::client{server.url(), {.limits = {.max_body_size = 2}}}, "/accounts/42")) ==
           http::error::body_too_large);
   REQUIRE(run(error_of(http::client{server.url(), {.response_timeout = 20ms}}, "/hang")) == std::errc::timed_out);
+  // What the browser decides has no effect, rather than refusing to run.
   REQUIRE_FALSE(run(error_of(http::client{server.url(), {.max_connections = 1, .max_redirects = 3}}, "/accounts/42")));
 }
 
