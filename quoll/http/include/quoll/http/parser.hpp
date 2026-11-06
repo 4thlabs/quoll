@@ -70,7 +70,7 @@ struct parse_limits {
 struct parse_result {
   /** @brief Bytes used from the input; the rest belongs to the next message (or to the upgraded protocol). */
   std::size_t consumed = 0;
-  std::error_code error;
+  std::error_code error{};
 };
 
 /**

@@ -378,6 +378,24 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
   }
 }
 
+// A member with no initializer of its own would only warn, and fail nothing, without this.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wmissing-field-initializers"
+
+TEST_CASE("A message takes designated initializers, whichever members they name", "[http][serializer]") {
+  http::request const request{.method = http::verb::post, .target = "/up", .body = "hi"};
+  http::response const response{.status = http::status::created, .body = "made"};
+  http::response const empty{.status = http::status::ok};
+  http::response const nothing{.status = http::status::no_content};
+
+  REQUIRE(http::serialize(request) == "POST /up HTTP/1.1\r\nContent-Length: 2\r\n\r\nhi");
+  REQUIRE(http::serialize(response) == "HTTP/1.1 201 Created\r\nContent-Length: 4\r\n\r\nmade");
+  REQUIRE(http::serialize(empty) == "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+  REQUIRE(http::serialize(nothing) == "HTTP/1.1 204 No Content\r\n\r\n");
+}
+
+#pragma GCC diagnostic pop
+
 TEST_CASE("A request with a body_writer goes in pieces", "[http][serializer]") {
   http::request request;
 

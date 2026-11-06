@@ -51,14 +51,14 @@ struct response {
   http::status status = http::status::ok;
 
   /** @brief Reason phrase as received; when empty, the serializer writes the standard one. */
-  std::string reason;
+  std::string reason{};
 
   http::version version = http::version::http_1_1;
-  http::fields fields;
-  std::string body;
+  http::fields fields{};
+  std::string body{};
 
   /** @brief Fields sent after a chunked body. */
-  http::fields trailers;
+  http::fields trailers{};
 
   /** @brief Writes the body in pieces, rather than `body`, which stays empty: see http::body_writer. */
   http::body_writer body_writer{};
