@@ -50,11 +50,13 @@
 #include <quoll/http/status.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <concepts>
 #include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -269,51 +271,35 @@ struct writing_frame {
   Stored message;
   route_match match;
   std::tuple<std::optional<std::remove_cvref_t<Parameters>>...> values{};
+  // A writer may be copied, and a second run would find what the first moved away.
+  std::atomic_flag started{};
 };
 
-// Runs `action` when it goes, however its scope ends.
-template <class F>
-class at_scope_end {
-public:
-  explicit at_scope_end(F action) noexcept : action_(std::move(action)) {}
-
-  at_scope_end(at_scope_end const &) = delete;
-  at_scope_end &operator=(at_scope_end const &) = delete;
-  at_scope_end(at_scope_end &&) = delete;
-  at_scope_end &operator=(at_scope_end &&) = delete;
-
-  ~at_scope_end() { action_(); }
-
-private:
-  F action_;
-};
+// What a handler is given for `Parameter`: what is kept for it, moved out if it takes it by value, or the writer.
+template <class Parameter, std::size_t Index, class Frame>
+[[nodiscard]] Parameter &&writing_argument(Frame &frame, response_writer &writer) noexcept {
+  if constexpr (is_response_writer<Parameter>) {
+    return static_cast<Parameter &&>(writer);
+  } else {
+    return static_cast<Parameter &&>(*std::get<Index>(frame.values));
+  }
+}
 
 template <class F, class Request, class... Parameters, std::size_t... Index>
 async::task<> run_writing(std::shared_ptr<writing_frame<stored_request<Request>, Parameters...>> frame,
                           std::shared_ptr<F> target, body_stream out, std::index_sequence<Index...>) {
-  auto const give_writer = [&]<class T, std::size_t At>() {
-    if constexpr (std::same_as<T, response_writer>) {
-      std::get<At>(frame->values).emplace(out);
-    }
-  };
-
-  (give_writer.template operator()<std::remove_cvref_t<Parameters>, Index>(), ...);
+  if (frame->started.test_and_set()) {
+    throw std::logic_error{"quoll::http::response_writer: a handler runs once"};
+  }
 
   // Gone with its handler, however it ends: it gives its head to what it writes through, which does not outlive this.
-  auto const drop_writer = [&]<class T, std::size_t At>() {
-    if constexpr (std::same_as<T, response_writer>) {
-      std::get<At>(frame->values).reset();
-    }
-  };
-
-  at_scope_end const dropping{
-      [&] { (drop_writer.template operator()<std::remove_cvref_t<Parameters>, Index>(), ...); }};
+  response_writer writer{out};
 
   if constexpr (std::same_as<Request, no_request>) {
-    co_await std::invoke(*target, std::forward<Parameters>(*std::get<Index>(frame->values))...);
+    co_await std::invoke(*target, writing_argument<Parameters, Index>(*frame, writer)...);
   } else {
     co_await std::invoke(*target, std::forward<Request>(frame->message),
-                         std::forward<Parameters>(*std::get<Index>(frame->values))...);
+                         writing_argument<Parameters, Index>(*frame, writer)...);
   }
 }
 
@@ -338,8 +324,7 @@ template <class F, class Request, class... Parameters, std::size_t... Index>
 
   response answer;
 
-  answer.head_comes_with_the_body = true;
-  answer.body_writer = [frame = std::move(frame), target, indices](body_stream out) {
+  answer.late_head_writer = [frame = std::move(frame), target, indices](body_stream out) {
     return run_writing<F, Request, Parameters...>(frame, target, out, indices);
   };
   return answer;
@@ -378,7 +363,7 @@ template <class Result, class F, class Request, class... Parameters>
                  ...),
                 "quoll::http::router: a path parameter is a std::string, a std::string_view, a number or a bool");
   static_assert(body_reader_comes_last<Parameters...>(),
-                "quoll::http::router: a handler takes one http::body_reader, last");
+                "quoll::http::router: a handler takes one http::body_reader, after its path parameters");
   static_assert(response_writer_comes_last<Parameters...>(),
                 "quoll::http::router: a handler takes one http::response_writer, last");
 

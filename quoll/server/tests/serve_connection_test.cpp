@@ -45,6 +45,7 @@
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
+#include <quoll/http/response_writer.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/serializer.hpp>
 #include <quoll/http/status.hpp>
@@ -58,6 +59,7 @@
 #include <quoll/io/write.hpp>
 #include <quoll/server/connection_options.hpp>
 #include <quoll/server/server.hpp>
+#include <quoll/test/read_until_closed.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
 
@@ -306,21 +308,7 @@ using namespace std::chrono_literals;
 using quoll::http::connection_options;
 using quoll::test::virtual_time;
 
-// What the peer reads until the server closes, as it arrives.
-task<std::string> read_until_closed(io::memory_stream &client) {
-  std::string received;
-  std::array<char, 256> chunk;
-
-  for (;;) {
-    auto const read = co_await client.read_some(std::as_writable_bytes(std::span{chunk}));
-
-    if (read.error) {
-      co_return received;
-    }
-
-    received.append(chunk.data(), read.transferred);
-  }
-}
+using quoll::test::read_until_closed;
 
 // Sends `first` and `second` with `delay` between them, then reads until the server closes. Empty parts are not sent.
 task<std::string> peer(io::memory_stream client, std::string first, std::chrono::nanoseconds delay,
@@ -1947,10 +1935,10 @@ TEST_CASE("serve_connection: a body_writer sent through http::write is refused",
   REQUIRE_THROWS_AS(http::write(server, response), std::invalid_argument);
 }
 
-TEST_CASE("serve_connection: 100 Continue does not follow a response that has started", "[server]") {
+TEST_CASE("serve_connection: 100 Continue leaves before a writer, which may read as it writes", "[server]") {
   http::router router;
 
-  router.post("/preamble-first", [](http::body_reader body) {
+  router.post("/writer", [](http::body_reader body) {
     http::response response;
 
     response.body_writer = [body](http::body_stream out) -> task<> {
@@ -1962,21 +1950,28 @@ TEST_CASE("serve_connection: 100 Continue does not follow a response that has st
     };
     return response;
   });
+  router.post("/handler", [](http::body_reader body, http::response_writer out) -> task<> {
+    co_await out.write("pre:");
 
+    while (auto const piece = co_await body.read()) {
+      co_await out.write(*piece);
+    }
+  });
+
+  auto const target = GENERATE(as<std::string>{}, "/writer", "/handler");
+  auto const head = "POST " + target + " HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n";
   auto [client, server] = io::make_memory_stream_pair();
-  auto const outcome = quoll::test::run(quoll::async::when_all(
-      quoll::http::server{router}.serve_connection(std::move(server)),
-      send_in_two(std::move(client),
-                  "POST /preamble-first HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n",
-                  "ping")));
+  auto const outcome =
+      quoll::test::run(quoll::async::when_all(quoll::http::server{router}.serve_connection(std::move(server)),
+                                              send_body_after_answer(std::move(client), head, "ping")));
 
   REQUIRE(outcome);
 
-  auto const &response = std::get<1>(*outcome);
+  auto const &received = std::get<1>(*outcome);
 
-  // What the client reads first is the final response, and its body reads whole.
-  REQUIRE(response.status == http::status::ok);
-  REQUIRE(response.body == "pre:ping");
+  // It would have to wait for the client otherwise, and a peer says whether it is owed, not what writes.
+  REQUIRE(received.statuses == std::vector{http::status::continue_, http::status::ok});
+  REQUIRE(received.body == "pre:ping");
 }
 
 TEST_CASE("serve_connection: a writer that writes nothing of its length answers 500", "[server]") {

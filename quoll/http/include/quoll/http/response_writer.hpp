@@ -77,11 +77,15 @@ namespace quoll::http {
  * lets it through ends. `Content-Length`, a stop request and a write that fails work as for a `response.body_writer`:
  * see http::body_stream.
  *
- * A middleware wrapping `response.body_writer` around such a route loses its status and fields, unless what it writes
- * through has a `head()` passing them on, and keeps `response.head_comes_with_the_body`.
+ * A middleware finds such a handler in `response.late_head_writer`, not in `response.body_writer`, which replaces it if
+ * set. To wrap it, it sets the former, with what it writes through passing `head()` on: see http::body_stream.
  *
  * The response holds such a handler, which it runs, so that it may go on after its router. Copies of a router share it,
- * what it captures included.
+ * what it captures included. It runs once: run again, it throws std::logic_error.
+ *
+ * It may read as it writes, one write and one read at a time, from two tasks on as many threads as its executor has.
+ * With `Expect: 100-continue`, `100 Continue` leaves before it starts, so that such a route invites its body even if it
+ * goes on to answer without it. To HEAD, none does: reading waits for what does not come, and the handler has its stop.
  *
  * Moved, not copied. Take it by value, or pass it on by reference: it does not outlive the handler's task, and write()
  * on one moved from throws std::logic_error. Thread safety: one write() at a time.

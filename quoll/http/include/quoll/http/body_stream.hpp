@@ -51,6 +51,29 @@
 
 namespace quoll::http {
 
+namespace detail {
+
+// What a body_stream knows of what it writes through.
+struct body_stream_table {
+  async::task<> (*write)(void *, std::string_view);
+  void (*head)(void *, http::status, http::fields);
+  async::detail::type_id type;
+};
+
+template <class Sink>
+inline constexpr body_stream_table body_stream_table_of{
+    .write = [](void *erased, std::string_view piece) { return static_cast<Sink *>(erased)->write(piece); },
+    .head =
+        [](void *erased, http::status status, http::fields fields) {
+          if constexpr (requires(Sink &target) { target.head(status, std::move(fields)); }) {
+            static_cast<Sink *>(erased)->head(status, std::move(fields));
+          }
+        },
+    .type = async::detail::type_id_of<Sink>(),
+};
+
+} // namespace detail
+
 /**
  * @brief Where a body_writer writes the body of a message, a piece at a time.
  *
@@ -73,35 +96,28 @@ public:
                   { sink.write(piece) } -> std::same_as<async::task<>>;
                 }
   explicit body_stream(Sink &sink QUOLL_LIFETIMEBOUND) noexcept
-      : sink_(&sink),
-        write_([](void *erased, std::string_view piece) { return static_cast<Sink *>(erased)->write(piece); }),
-        head_([](void *erased, http::status status, http::fields fields) {
-          if constexpr (requires(Sink &target) { target.head(status, std::move(fields)); }) {
-            static_cast<Sink *>(erased)->head(status, std::move(fields));
-          }
-        }),
-        type_(async::detail::type_id_of<Sink>()) {}
+      : sink_(&sink), table_(&detail::body_stream_table_of<Sink>) {}
 
   /** @brief Writes `piece`, which stays valid until the task ends. An empty one sends the head, if it has not left. */
-  [[nodiscard]] async::task<> write(std::string_view piece QUOLL_LIFETIMEBOUND) const { return write_(sink_, piece); }
+  [[nodiscard]] async::task<> write(std::string_view piece QUOLL_LIFETIMEBOUND) const {
+    return table_->write(sink_, piece);
+  }
 
   /**
    * @brief The status and fields of the response this writes, for a head that leaves with the first write: see
    * http::response_writer. Nothing where a body has no such head.
    */
-  void head(http::status status, http::fields fields) const { head_(sink_, status, std::move(fields)); }
+  void head(http::status status, http::fields fields) const { table_->head(sink_, status, std::move(fields)); }
 
   /** @brief What it writes through if it is exactly a `Sink`, otherwise `nullptr`. */
   template <class Sink>
   [[nodiscard]] Sink *target() const noexcept {
-    return type_ == async::detail::type_id_of<Sink>() ? static_cast<Sink *>(sink_) : nullptr;
+    return table_->type == async::detail::type_id_of<Sink>() ? static_cast<Sink *>(sink_) : nullptr;
   }
 
 private:
   void *sink_;
-  async::task<> (*write_)(void *, std::string_view);
-  void (*head_)(void *, http::status, http::fields);
-  async::detail::type_id type_;
+  detail::body_stream_table const *table_;
 };
 
 /**
@@ -132,8 +148,8 @@ private:
  *
  * On a response, it runs after its handler has ended: what it captures by value lives until its task ends, and a
  * `std::string_view` of a path parameter, or a reference to the request, does not. An http::body_reader does, on a
- * connection or through local_transport. With `Expect: 100-continue`, it writes and reads in turn, as `100 Continue`
- * and a piece must not leave at once.
+ * connection or through local_transport. With `Expect: 100-continue`, `100 Continue` leaves before it
+ * starts.
  *
  * On a request, it runs beside the reading of the response: http::client::send() says what comes of that, and how
  * a transport that gathers it first differs. What it captures has to live until the task of the request ends.

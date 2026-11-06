@@ -63,10 +63,12 @@ struct response {
   /** @brief Writes the body in pieces, rather than `body`, which stays empty: see http::body_writer. */
   http::body_writer body_writer{};
   /**
-   * @brief Set by a route taking an http::response_writer: `body_writer` is its handler, whose status and fields come
-   * with its first write, and which runs for HEAD too. What serves a router reads it.
+   * @brief The handler of a route taking an http::response_writer, set by that route: it gives the status and fields
+   * with its first write, and runs for HEAD too. What serves a router runs it, unless `body_writer` is set, which comes
+   * first: a middleware replaces it by setting that one, and wraps it by setting this one, with what it writes through
+   * passing `head()` on.
    */
-  bool head_comes_with_the_body = false;
+  http::body_writer late_head_writer{};
 };
 
 } // namespace quoll::http

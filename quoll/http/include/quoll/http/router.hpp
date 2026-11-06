@@ -113,15 +113,16 @@ public:
    *
    * The request is optional, and first. A parameter is a number, a `bool` (`true` or `false`), a `std::string` or a
    * `std::string_view`, and references and views stay valid in a coroutine too, until its task ends. The handler
-   * returns `http::response`, or `task<http::response>`.
+   * returns `http::response`, or `task<http::response>`; one that takes an http::response_writer, last, `task<>`.
    *
    * Checked at compile time: `path` is a string literal, a valid template, with as many parameters as the handler
    * takes, which must have types (no `auto`). A path made at run time goes through add(), with a route_match.
    *
    * A parameter that cannot be read as its type answers 400. The route is named after `path`, as next::route() says.
    * The handler says the types: the only one a path says is `{name:path}`, for the rest of it. The query is in
-   * `request.target`, or in the route_match of add(). A last parameter of type http::body_reader reads the body of the
-   * request in pieces, rather than `request.body`, empty for the middlewares too: see body_reader.
+   * `request.target`, or in the route_match of add(). A parameter of type http::body_reader, after those of the path,
+   * reads the body of the request in pieces, rather than `request.body`, empty for the middlewares too: see
+   * body_reader.
    */
   template <class F>
   void get(detail::checked_path<std::type_identity_t<F>> path, F target) {

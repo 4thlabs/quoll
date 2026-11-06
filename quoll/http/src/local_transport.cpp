@@ -56,11 +56,10 @@ namespace quoll::http {
 
 namespace {
 
-// What a writer writes for a request, for what wants it whole. See write_whole_body().
-class request_sink {
+// What a writer writes, for what wants a body whole, with its Content-Length if it matters: see write_whole_body().
+class body_sink {
 public:
-  request_sink(std::string &body, std::optional<std::uint64_t> announced) noexcept
-      : body_(&body), announced_(announced) {}
+  body_sink(std::string &body, std::optional<std::uint64_t> announced) noexcept : body_(&body), announced_(announced) {}
 
   [[nodiscard]] async::task<> write(std::string_view piece) {
     if (failure_) {
@@ -89,20 +88,6 @@ private:
   std::error_code failure_;
 };
 
-// What a writer writes, for a caller of the same program that wants a response whole.
-class string_sink {
-public:
-  explicit string_sink(std::string &body) noexcept : body_(&body) {}
-
-  [[nodiscard]] async::task<> write(std::string_view piece) {
-    body_->append(piece);
-    co_return;
-  }
-
-private:
-  std::string *body_;
-};
-
 // What a write to HEAD throws, told apart from a stop, which is no answer.
 struct head_has_no_body : std::system_error {
   head_has_no_body()
@@ -114,7 +99,8 @@ struct head_has_no_body : std::system_error {
 // all it owes.
 class written_by_handler {
 public:
-  written_by_handler(response &answer, bool head) noexcept : answer_(&answer), head_(head) {}
+  written_by_handler(response &answer, bool head) noexcept
+      : answer_(&answer), sink_(answer.body, std::nullopt), head_(head) {}
 
   void head(status code, fields given) { detail::merge_head(*answer_, code, std::move(given)); }
 
@@ -123,12 +109,12 @@ public:
       throw head_has_no_body{};
     }
 
-    answer_->body.append(piece);
-    co_return;
+    co_await sink_.write(piece);
   }
 
 private:
   response *answer_;
+  body_sink sink_;
   bool head_;
 };
 
@@ -142,7 +128,7 @@ async::task<> write_whole_body(request &message) {
   }
 
   auto const announced = announced_length(message.fields);
-  request_sink sink{message.body, announced};
+  body_sink sink{message.body, announced};
 
   co_await message.body_writer(body_stream{sink});
   message.body_writer = nullptr;
@@ -181,28 +167,32 @@ async::task<response> local_transport::send_to(std::shared_ptr<router const> tar
   // As a connection answers, and a test here has its failure in hand.
   (void)detail::replace_what_would_mislead(answer, method);
 
-  if (answer.body_writer && answer.head_comes_with_the_body) {
-    auto writer = std::move(answer.body_writer);
+  auto const in_pieces = static_cast<bool>(answer.body_writer);
+  auto const body_writer = std::exchange(answer.body_writer, nullptr);
+  auto const late_head_writer = std::exchange(answer.late_head_writer, nullptr);
 
-    answer.body_writer = nullptr;
-    answer.head_comes_with_the_body = false;
+  if (in_pieces && !head) {
+    body_sink sink{answer.body, std::nullopt};
 
+    co_await body_writer(body_stream{sink});
+  } else if (!in_pieces && late_head_writer) {
     written_by_handler sink{answer, head};
 
     try {
-      co_await writer(body_stream{sink});
+      co_await late_head_writer(body_stream{sink});
     } catch (head_has_no_body const &) {
       // The head is all it owes.
     }
 
     (void)detail::replace_what_would_mislead(answer, method);
-  } else if (answer.body_writer && !head) {
-    string_sink sink{answer.body};
-
-    co_await answer.body_writer(body_stream{sink});
   }
 
-  answer.body_writer = nullptr;
+  // A writer that took a stop for an end has no whole body.
+  if (in_pieces || late_head_writer) {
+    if ((co_await async::current_stop_token()).stop_requested()) {
+      throw std::system_error{std::make_error_code(std::errc::operation_canceled), "quoll::http: stopped"};
+    }
+  }
 
   if (head) {
     answer.body.clear();

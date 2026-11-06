@@ -96,7 +96,9 @@ middleware has therefore returned by then: it does not see the status, catch wha
 to the fields, which the handler's replace by name, but for `Set-Cookie` and `Vary`, which add up.
 What it throws before its first `write` answers 500, and after it cuts the connection. If it ends without writing, its response has
 an empty body. To HEAD, it runs up to its first `write`, which sends the head and throws `std::errc::operation_canceled`. A route may
-read as it writes, with `(http::body_reader in, http::response_writer out)`.
+read as it writes, with `(http::body_reader in, http::response_writer out)`. With `Expect: 100-continue`, `100 Continue` leaves
+before it starts, so that such a route invites its body even if it goes on to answer without it. A middleware finds such a handler in `response.late_head_writer`, which a
+`response.body_writer` it sets replaces, and it runs once.
 
 To build a response ahead of time, or to write from a middleware, `response.body_writer` writes the body through an
 `http::body_stream`, once the handler has ended:
@@ -142,8 +144,7 @@ router.post("/echo", [](http::body_reader body) {
 });
 ```
 
-With `Expect: 100-continue`, such a writer writes and reads in turn, as `100 Continue` and a piece must
-not leave at once.
+With `Expect: 100-continue`, `100 Continue` leaves before such a writer starts.
 
 | When                                          | What happens                                                                                                                                                                                     |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

@@ -338,7 +338,7 @@ void serialize(response const &message, std::string &out) {
   auto const rules = response_rules(message);
 
   // Only what streams a response can write it.
-  if (message.body_writer) {
+  if (message.body_writer || message.late_head_writer) {
     reject("a response with a body_writer goes in pieces");
   }
 
@@ -382,7 +382,13 @@ char const *replace_what_would_mislead(response &answer, verb const method) {
     return "quoll::http::server: a 1xx is no final response";
   }
 
-  if (method == verb::head || answer.body_writer || !answer.body.empty() || answer.status == status::not_modified) {
+  if (!answer.body.empty() && (answer.body_writer || answer.late_head_writer)) {
+    answer = status_response(status::internal_server_error);
+    return "quoll::http::server: a body beside what writes one";
+  }
+
+  if (method == verb::head || answer.body_writer || answer.late_head_writer || !answer.body.empty() ||
+      answer.status == status::not_modified) {
     return nullptr;
   }
 

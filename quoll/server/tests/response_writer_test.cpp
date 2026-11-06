@@ -45,12 +45,13 @@
 #include <quoll/io/write.hpp>
 #include <quoll/server/server.hpp>
 #include <quoll/test/overloaded.hpp>
+#include <quoll/test/read_until_closed.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
-#include <array>
 #include <chrono>
 #include <cstddef>
 #include <exception>
@@ -71,23 +72,9 @@ namespace http = quoll::http;
 namespace io = quoll::io;
 
 using async::task;
+using quoll::test::read_until_closed;
 using quoll::test::virtual_time;
 using namespace std::chrono_literals;
-
-task<std::string> read_until_closed(io::memory_stream &stream) {
-  std::string received;
-  std::array<char, 256> chunk;
-
-  for (;;) {
-    auto const result = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
-
-    if (result.error || result.transferred == 0) {
-      co_return received;
-    }
-
-    received.append(chunk.data(), result.transferred);
-  }
-}
 
 // What a peer gets for the bytes `sent`, as they are.
 std::string answer_to(http::server const &server, std::string const &sent) {
@@ -668,7 +655,7 @@ TEST_CASE("response_writer: a middleware wrapping its writer passes its head on"
   router.use([&written](http::request request, http::next const &next) -> task<http::response> {
     auto answer = co_await next(std::move(request));
 
-    answer.body_writer = [&written, inner = std::move(answer.body_writer)](http::body_stream out) -> task<> {
+    answer.late_head_writer = [&written, inner = std::move(answer.late_head_writer)](http::body_stream out) -> task<> {
       wrapping_sink sink{out, &written};
 
       co_await inner(http::body_stream{sink});
@@ -686,19 +673,18 @@ TEST_CASE("response_writer: a middleware wrapping its writer passes its head on"
   REQUIRE(written == 4);
 }
 
-TEST_CASE("response_writer: an answer replaced leaves what is running alone", "[server]") {
+TEST_CASE("response_writer: what wraps it is held for as long as it runs", "[server]") {
   http::router router;
   std::string label;
 
   router.use([&label](http::request request, http::next const &next) -> task<http::response> {
     auto answer = co_await next(std::move(request));
 
-    answer.body_writer = [&label, inner = std::move(answer.body_writer),
-                          kept = std::string(100, 'x')](http::body_stream out) -> task<> {
+    answer.late_head_writer = [&label, inner = std::move(answer.late_head_writer),
+                               kept = std::string(100, 'x')](http::body_stream out) -> task<> {
       try {
         co_await inner(out);
       } catch (std::exception const &) {
-        // Reads what it captured, once the response has been replaced.
         label = kept;
         throw;
       }
@@ -899,7 +885,7 @@ TEST_CASE("response_writer: a route's body stays until it has read it, past disp
   async::run_loop loop;
   auto response = quoll::test::run(loop, router.dispatch(std::move(request)));
   nowhere sink;
-  auto const writer = response.value().body_writer;
+  auto const writer = response.value().late_head_writer;
 
   (void)quoll::test::run(loop, [&]() -> task<int> {
     co_await writer(http::body_stream{sink});
@@ -907,4 +893,274 @@ TEST_CASE("response_writer: a route's body stays until it has read it, past disp
   }());
 
   REQUIRE(read_back == std::string(100, 'y'));
+}
+
+TEST_CASE("response_writer: to HEAD, a Transfer-Encoding announces no length", "[server]") {
+  http::router router;
+
+  router.get("/piped", [](http::response_writer out) -> task<> {
+    out.fields.set("Transfer-Encoding", "chunked");
+    co_await out.write("hello world");
+  });
+
+  auto const answer = answer_to(http::server{router}, "HEAD /piped HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+
+  REQUIRE(answer.starts_with("HTTP/1.1 200"));
+  REQUIRE_FALSE(answer.contains("Content-Length"));
+  REQUIRE_FALSE(answer.contains("Transfer-Encoding"));
+}
+
+TEST_CASE("response_writer: a body beside what writes one answers 500, HEAD included, and nothing runs", "[server]") {
+  http::router router;
+  auto ran = 0;
+  auto told = 0;
+
+  router.use([](http::request request, http::next const &next) -> task<http::response> {
+    auto answer = co_await next(std::move(request));
+
+    answer.body = "from-middleware";
+    co_return answer;
+  });
+  router.get("/handler", [&ran](http::response_writer out) -> task<> {
+    ++ran;
+    co_await out.write("from-handler");
+  });
+  router.get("/writer", [&ran](http::request) {
+    http::response answer;
+
+    answer.body_writer = [&ran](http::body_stream out) -> task<> {
+      ++ran;
+      co_await out.write("from-writer");
+    };
+    return answer;
+  });
+
+  auto const target = GENERATE(as<std::string>{}, "/handler", "/writer");
+  auto const method = GENERATE(http::verb::get, http::verb::head);
+  http::server const server{router, {.connection = {.on_handler_error = [&told](std::exception_ptr) { ++told; }}}};
+  auto const answer = answer_to(server, std::string{method == http::verb::get ? "GET " : "HEAD "} + target +
+                                            " HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+
+  REQUIRE(answer.starts_with("HTTP/1.1 500"));
+  REQUIRE_FALSE(answer.contains("from-"));
+  REQUIRE(told == 1);
+
+  // As it does in the same program.
+  http::local_transport const transport{router};
+  http::request request;
+
+  request.method = method;
+  request.target = target;
+
+  virtual_time time;
+  auto const local = quoll::test::run(time, transport.send(request));
+
+  REQUIRE(local.value().status == http::status::internal_server_error);
+  REQUIRE_FALSE(local.value().body.contains("from-"));
+  REQUIRE(ran == 0);
+}
+
+TEST_CASE("response_writer: through local_transport, a write after a stop throws", "[server][timer]") {
+  http::router router;
+  auto written = 0;
+
+  router.get("/handler", [&written](http::response_writer out) -> task<> {
+    try {
+      co_await async::sleep_for(1h);
+    } catch (std::system_error const &) {
+      // Takes the stop for the end of its wait, and goes on.
+    }
+
+    co_await out.write("late");
+    ++written;
+  });
+  router.get("/writer", [&written](http::request) {
+    http::response answer;
+
+    answer.body_writer = [&written](http::body_stream out) -> task<> {
+      try {
+        co_await async::sleep_for(1h);
+      } catch (std::system_error const &) {
+        // The same.
+      }
+
+      co_await out.write("late");
+      ++written;
+    };
+    return answer;
+  });
+
+  http::local_transport const transport{router};
+  auto const target = GENERATE(as<std::string>{}, "/handler", "/writer");
+  http::request request;
+
+  request.method = http::verb::get;
+  request.target = target;
+
+  virtual_time time;
+  auto stopped = false;
+
+  auto const asking = [&]() -> task<int> {
+    try {
+      (void)co_await async::with_timeout(1s, transport.send(request));
+    } catch (std::system_error const &) {
+      stopped = true;
+    }
+
+    co_return 1;
+  };
+
+  (void)quoll::test::run(time, asking());
+
+  REQUIRE(stopped);
+  REQUIRE(written == 0);
+}
+
+TEST_CASE("response_writer: a body_writer a middleware sets replaces the handler, HEAD included", "[server]") {
+  http::router router;
+  auto handler_ran = 0;
+  auto writer_ran = 0;
+
+  router.use([&writer_ran](http::request request, http::next const &next) -> task<http::response> {
+    auto answer = co_await next(std::move(request));
+
+    answer.body_writer = [&writer_ran](http::body_stream out) -> task<> {
+      ++writer_ran;
+      co_await out.write("cached");
+    };
+    co_return answer;
+  });
+  router.get("/rows", [&handler_ran](http::response_writer out) -> task<> {
+    ++handler_ran;
+    co_await out.write("from-handler");
+  });
+
+  http::server const server{router};
+
+  REQUIRE(answer_to(server, "HEAD /rows HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").starts_with("HTTP/1.1 200"));
+  // As http::body_writer says: not for HEAD.
+  REQUIRE(writer_ran == 0);
+
+  auto const answer = answer_to(server, get("/rows"));
+
+  REQUIRE(answer.contains("cached"));
+  REQUIRE_FALSE(answer.contains("from-handler"));
+  REQUIRE(writer_ran == 1);
+  REQUIRE(handler_ran == 0);
+}
+
+TEST_CASE("response_writer: its handler runs once, whatever holds a copy of it", "[server]") {
+  http::router router;
+  std::vector<std::string> names;
+
+  router.get("/rows/{name}", [&names](std::string name, http::response_writer out) -> task<> {
+    names.push_back(std::move(name));
+    co_await out.write("row");
+  });
+
+  struct nowhere {
+    [[nodiscard]] task<> write(std::string_view) const { co_return; }
+  };
+
+  http::request request;
+
+  request.method = http::verb::get;
+  request.target = "/rows/a-name-long-enough-for-the-heap";
+
+  async::run_loop loop;
+  auto response = quoll::test::run(loop, router.dispatch(std::move(request)));
+  nowhere sink;
+  auto const writer = response.value().late_head_writer;
+  auto const again = writer;
+  auto refused = false;
+
+  (void)quoll::test::run(loop, [&]() -> task<int> {
+    co_await writer(http::body_stream{sink});
+
+    try {
+      co_await again(http::body_stream{sink});
+    } catch (std::logic_error const &) {
+      refused = true;
+    }
+
+    co_return 1;
+  }());
+
+  REQUIRE(refused);
+  REQUIRE(names == std::vector<std::string>{"a-name-long-enough-for-the-heap"});
+}
+
+TEST_CASE("server: HTTP/1.0 gets no chunks, from what writes nothing or a whole body", "[server]") {
+  http::router router;
+
+  router.get("/nothing", [](http::response_writer out) -> task<> {
+    out.fields.set("Transfer-Encoding", "chunked");
+    co_return;
+  });
+  router.get("/whole", [] {
+    http::response answer;
+
+    answer.fields.set("Transfer-Encoding", "chunked");
+    answer.body = "whole";
+    return answer;
+  });
+
+  http::server const server{router};
+  auto const nothing = answer_to(server, "GET /nothing HTTP/1.0\r\nHost: x\r\n\r\n");
+
+  REQUIRE(nothing.starts_with("HTTP/1.1 200"));
+  REQUIRE_FALSE(nothing.contains("Transfer-Encoding"));
+  // Its head alone, no terminating chunk.
+  REQUIRE(nothing.ends_with("Content-Length: 0\r\n\r\n"));
+
+  auto const whole = answer_to(server, "GET /whole HTTP/1.0\r\nHost: x\r\n\r\n");
+
+  REQUIRE_FALSE(whole.contains("Transfer-Encoding"));
+  REQUIRE(whole.contains("Content-Length: 5"));
+  REQUIRE(whole.ends_with("\r\n\r\nwhole"));
+}
+
+TEST_CASE("response_writer: a handler taking the request as well", "[server]") {
+  http::router router;
+
+  router.get("/by-value/{name}", [](http::request request, std::string name, http::response_writer out) -> task<> {
+    out.fields.set("X-Target", request.target);
+    co_await out.write(name);
+  });
+  router.get("/by-reference", [](http::request const &request, http::response_writer out) -> task<> {
+    co_await out.write(request.target);
+  });
+
+  http::server const server{router};
+  auto const by_value = answer_to(server, get("/by-value/a"));
+
+  REQUIRE(by_value.contains("X-Target: /by-value/a"));
+  REQUIRE(by_value.ends_with("1\r\na\r\n0\r\n\r\n"));
+  REQUIRE(answer_to(server, get("/by-reference")).contains("/by-reference"));
+}
+
+TEST_CASE("response_writer: to HEAD through local_transport, its first write sends its head alone", "[server]") {
+  http::router router;
+  auto went_on = false;
+
+  router.get("/rows", [&went_on](http::response_writer out) -> task<> {
+    out.status = http::status::created;
+    out.fields.set("X-Handler", "set");
+    co_await out.write("row");
+    went_on = true;
+  });
+
+  http::local_transport const transport{router};
+  http::request request;
+
+  request.method = http::verb::head;
+  request.target = "/rows";
+
+  virtual_time time;
+  auto const answer = quoll::test::run(time, transport.send(request));
+
+  REQUIRE(answer.value().status == http::status::created);
+  REQUIRE(answer.value().fields.find("X-Handler") == "set");
+  REQUIRE(answer.value().body.empty());
+  REQUIRE_FALSE(went_on);
 }

@@ -1758,17 +1758,12 @@ TEST_CASE("rest::mount: on a server, as on a router", "[asio][rest][server]") {
   REQUIRE(calls.opened.owner == "Grace");
 }
 
-TEST_CASE("response_writer: on a thread pool, as the connection it runs in", "[asio][runtime][server]") {
-  http::router router;
+namespace {
 
-  router.get("/rows", [](http::response_writer out) -> task<> {
-    out.fields.set("X-Handler", "set");
-    co_await out.write("one ");
-    co_await out.write("two");
-  });
-
+// Runs `calling` with a client of a server whose connections run on a thread pool, over TCP.
+template <class Calling>
+void calling_a_server_on_a_pool(http::router const &router, Calling calling) {
   quoll::threads::thread_pool pool{4};
-  std::vector<std::string> bodies;
 
   auto const exchange = [&]() -> task<int> {
     auto listener = co_await quoll::io::listen(0);
@@ -1782,30 +1777,97 @@ TEST_CASE("response_writer: on a thread pool, as the connection it runs in", "[a
       co_return 1;
     };
 
-    auto const calling = [&]() -> task<int> {
-      http::client const client{"http://127.0.0.1:" + std::to_string(port)};
-
-      for (auto request = 0; request < 50; ++request) {
-        auto const response = co_await client.get("/rows");
-
-        bodies.push_back(response.body + ' ' + std::string{response.fields.find("X-Handler").value_or("")});
-      }
-
+    auto const calls = [&]() -> task<int> {
+      co_await calling(http::client{"http://127.0.0.1:" + std::to_string(port)});
       stop.request_stop();
       co_return 1;
     };
 
-    (void)co_await quoll::async::when_all(serving(), calling());
+    (void)co_await quoll::async::when_all(serving(), calls());
     co_return 1;
   };
 
   (void)run_task(exchange());
+}
+
+} // namespace
+
+TEST_CASE("response_writer: on a thread pool, as the connection it runs in", "[asio][runtime][server]") {
+  http::router router;
+
+  router.get("/rows", [](http::response_writer out) -> task<> {
+    out.fields.set("X-Handler", "set");
+    co_await out.write("one ");
+    co_await out.write("two");
+  });
+
+  std::vector<std::string> bodies;
+
+  calling_a_server_on_a_pool(router, [&bodies](http::client const client) -> task<> {
+    for (auto request = 0; request < 50; ++request) {
+      auto const response = co_await client.get("/rows");
+
+      bodies.push_back(response.body + ' ' + std::string{response.fields.find("X-Handler").value_or("")});
+    }
+  });
 
   REQUIRE(bodies.size() == 50);
 
   for (auto const &body : bodies) {
     REQUIRE(body == "one two set");
   }
+}
+
+// What TSan is here for: the first write asks whether the connection goes on, as the read side feeds the parser.
+TEST_CASE("response_writer: on a thread pool, reading as it writes", "[asio][runtime][server]") {
+  http::router router;
+  std::atomic<std::size_t> read_in_all{0};
+
+  router.post("/both", [&read_in_all](http::body_reader in, http::response_writer out) -> task<> {
+    auto const reading = [&]() -> task<int> {
+      while (auto const piece = co_await in.read()) {
+        read_in_all += piece->size();
+      }
+
+      co_return 1;
+    };
+
+    auto const writing = [&]() -> task<int> {
+      for (auto piece = 0; piece < 20; ++piece) {
+        co_await out.write("piece ");
+      }
+
+      co_return 1;
+    };
+
+    (void)co_await quoll::async::when_all(reading(), writing());
+  });
+
+  constexpr auto requests = 20;
+  constexpr std::size_t body_size = 256 * 1024;
+  std::vector<std::size_t> received;
+
+  calling_a_server_on_a_pool(router, [&received](http::client const client) -> task<> {
+    for (auto request = 0; request < requests; ++request) {
+      http::request both;
+
+      both.method = http::verb::post;
+      both.target = "/both";
+      both.body = std::string(body_size, 'x');
+
+      // A peer says whether `100 Continue` is owed, which the handler does not look at.
+      if (request % 2 == 0) {
+        both.fields.set("Expect", "100-continue");
+      }
+
+      auto const response = co_await client.send(std::move(both));
+
+      received.push_back(response.body.size());
+    }
+  });
+
+  REQUIRE(received == std::vector<std::size_t>(requests, 20 * std::string_view{"piece "}.size()));
+  REQUIRE(read_in_all == requests * body_size);
 }
 
 TEST_CASE("asio::runtime: an executor taken again after the last one went runs its task", "[asio]") {
