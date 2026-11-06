@@ -1317,6 +1317,87 @@ TEST_CASE("asio: a body_writer over TCP: all of it, a server refusing it, and a 
   }
 }
 
+TEST_CASE("asio: the minimum rate on a real clock, and a writer reading its request as it writes",
+          "[asio][runtime][server]") {
+  using namespace std::chrono_literals;
+
+  auto const exchange = [](std::size_t part, int parts) -> task<std::string> {
+    http::router router;
+
+    router.post("/both", [](http::body_reader body) {
+      http::response answer;
+
+      answer.body_writer = [body](http::body_stream out) -> task<> {
+        while (auto const piece = co_await body.read()) {
+          co_await out.write(*piece);
+        }
+      };
+      return answer;
+    });
+
+    auto listener = co_await io::listen(0);
+    auto const port = listener.local_port().value();
+    std::stop_source stop;
+    quoll::server::serve_options options;
+
+    options.shutdown_timeout = {};
+    options.connection.read_timeout = 500ms;
+    options.connection.min_read_rate = 1024;
+
+    auto const serving = [&]() -> task<> {
+      co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router, options),
+                                                      stop.get_token()};
+    };
+
+    auto const calling = [&]() -> task<std::string> {
+      quoll::async::detail::stop_on_exit const stop_server{stop};
+      auto stream = co_await io::connect("127.0.0.1", port);
+      auto const size = part * static_cast<std::size_t>(parts);
+      auto const head =
+          "POST /both HTTP/1.1\r\nHost: h\r\nConnection: close\r\nContent-Length: " + std::to_string(size) + "\r\n\r\n";
+      std::string const bytes(part, 'x');
+
+      (void)co_await io::write(stream, std::as_bytes(std::span{head}));
+
+      for (auto index = 0; index < parts; ++index) {
+        if ((co_await io::write(stream, std::as_bytes(std::span{bytes}))).error) {
+          break;
+        }
+
+        co_await quoll::async::sleep_for(50ms);
+      }
+
+      std::string received;
+      std::array<char, 4096> chunk{};
+
+      for (;;) {
+        auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+        if (read.error) {
+          co_return received;
+        }
+
+        received.append(chunk.data(), read.transferred);
+      }
+    };
+
+    auto [served, received] = co_await quoll::async::when_all(serving(), calling());
+
+    co_return std::move(received);
+  };
+
+  // Above the rate, past the timeout in all, the piece echoed as it comes.
+  auto const fast = run_task(exchange(4096, 15));
+
+  REQUIRE(fast.starts_with("HTTP/1.1 200"));
+  REQUIRE(fast.ends_with("0\r\n\r\n"));
+
+  // Below it, it ends short of its end, as the response had started.
+  auto const slow = run_task(exchange(1, 30));
+
+  REQUIRE(!slow.ends_with("0\r\n\r\n"));
+}
+
 TEST_CASE("asio: a client still sending a refused body finishes, then reads its answer", "[asio][runtime]") {
   quoll::server::connection_options connection;
 

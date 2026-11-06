@@ -70,11 +70,13 @@ struct connection_options {
   std::chrono::nanoseconds read_timeout = std::chrono::seconds{30};
 
   /**
-   * @brief In bytes per second, what lets a request take as long as it keeps coming: each byte adds `1 / min_read_rate`
-   * of a second to what `read_timeout` has left, up to `read_timeout` itself. At this rate or above, a transfer has all
-   * the time it needs, on a slow link too, and a silence still ends it within `read_timeout`. Below, a peer sending a
-   * little now and then runs out of time. 0: nothing adds to it, a request has `read_timeout` as a whole, and a body
-   * read in pieces has it per piece, so that a route may keep a slow peer on purpose, as a long-lived stream does.
+   * @brief In bytes per second, what lets a request take as long as it keeps coming: each byte of its body adds
+   * `1 / min_read_rate` of a second to what `read_timeout` has left, up to `read_timeout` itself. At this rate or
+   * above, a transfer has all the time it needs, on a slow link too, and a silence still ends it within `read_timeout`.
+   * Below, a peer sending a little now and then runs out of time, and a head or a body's framing earns nothing. 0:
+   * nothing adds to it, a request has `read_timeout` as a whole, and a body read in pieces has it per piece, which is
+   * what lets a peer upload little and slowly on purpose, a long-lived stream for instance, on all the routes of a
+   * connection.
    */
   std::uint64_t min_read_rate = std::uint64_t{16} * 1024;
 
@@ -86,8 +88,9 @@ struct connection_options {
   std::chrono::nanoseconds write_timeout = std::chrono::seconds{30};
 
   /**
-   * @brief `min_read_rate` for what leaves, against `write_timeout`. 0: a response has `write_timeout` as a whole, and
-   * one written in pieces (http::body_writer) has it per piece.
+   * @brief `min_read_rate` for what leaves, against `write_timeout`, every byte earning. A write that leaves at once is
+   * not charged, so that a long stream of small writes to a peer that takes them runs no risk. 0: a response has
+   * `write_timeout` as a whole, and one written in pieces (http::body_writer) has it per piece.
    */
   std::uint64_t min_write_rate = std::uint64_t{16} * 1024;
 

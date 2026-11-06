@@ -507,6 +507,12 @@ bool parser<Message>::upgrade() const noexcept {
 
 template <class Message>
   requires std::same_as<Message, request> || std::same_as<Message, response>
+std::uint64_t parser<Message>::body_received() const noexcept {
+  return impl_->body_size_;
+}
+
+template <class Message>
+  requires std::same_as<Message, request> || std::same_as<Message, response>
 std::error_code parser<Message>::failure() const noexcept {
   return impl_->error_;
 }
