@@ -1433,3 +1433,24 @@ TEST_CASE("local_transport: one moved from still sends", "[http][router]") {
 
   REQUIRE(response.value().body == "hello");
 }
+
+TEST_CASE("local_transport: answers what a connection would, for what would mislead a peer", "[http][router]") {
+  http::router router;
+
+  router.get("/short", []() {
+    http::response response;
+
+    response.fields.set("Content-Length", "5");
+    return response;
+  });
+
+  http::local_transport const transport{router};
+  http::request request;
+
+  request.target = "/short";
+
+  quoll::async::run_loop loop;
+  auto const response = quoll::test::run(loop, transport.send(request));
+
+  REQUIRE(response.value().status == http::status::internal_server_error);
+}

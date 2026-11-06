@@ -38,6 +38,7 @@
 
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/http/body_stream.hpp>
+#include <quoll/http/detail/final_response.hpp>
 #include <quoll/http/detail/streamed_head.hpp>
 #include <quoll/http/detail/write_whole_body.hpp>
 #include <quoll/http/verb.hpp>
@@ -134,7 +135,8 @@ async::task<> write_whole_body(request &message) {
 local_transport::local_transport(router target) : router_(std::make_shared<router const>(std::move(target))) {}
 
 async::task<response> local_transport::send_to(std::shared_ptr<router const> target, request message) {
-  auto const head = message.method == verb::head;
+  auto const method = message.method;
+  auto const head = method == verb::head;
 
   // A handler reads what it is given: it is all there before it runs, as with `body`.
   if (message.body_writer) {
@@ -145,6 +147,9 @@ async::task<response> local_transport::send_to(std::shared_ptr<router const> tar
   auto const body = target->reads_body_in_pieces(message) ? std::exchange(message.body, {}) : std::string{};
   detail::whole_body whole{body};
   auto answer = co_await target->dispatch(std::move(message), body_reader{whole});
+
+  // As a connection answers, and a test here has its failure in hand.
+  (void)detail::replace_what_would_mislead(answer, method);
 
   if (answer.body_writer && !head) {
     string_sink sink{answer.body};

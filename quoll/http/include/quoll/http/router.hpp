@@ -175,8 +175,8 @@ public:
    *
    * What it does after `next` does not run for what `next` throws: catch it to answer a 500 of its own, or the
    * connection answers one without it. A request refused as it is read (400, 413...) reaches no middleware. A response
-   * it changes has to stay valid: a body larger than its `Content-Length` answers 500, and a smaller one goes out as it
-   * is, which only a response to HEAD may be.
+   * it changes has to stay valid: a body larger than its `Content-Length` answers 500, and a smaller one answers 500
+   * too, but to HEAD, or as a 304.
    *
    * It takes the request by value, `const &` or `&&`, and `next` by value or `const &`: what it refers to lives until
    * its task ends.
