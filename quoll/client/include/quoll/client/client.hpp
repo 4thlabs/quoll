@@ -126,7 +126,8 @@ struct connector_handle {
  *
  * Copies share their connections. The task copies what it needs: the client does not have to outlive it.
  *
- * Thread safety: send() and stream() may be called from any thread, concurrently, if the connector allows it.
+ * Thread safety: send(), stream() and the shortcuts over send() may be called from any thread, concurrently, if the
+ * connector allows it.
  */
 class client {
 public:
@@ -220,6 +221,44 @@ public:
   [[nodiscard]] async::task<http::streamed_response> stream(http::request request) const {
     return detail::client_stream(core_, std::move(request));
   }
+
+  /**
+   * @brief Sends a GET to `target`, as send() does. For fields of its own, send() takes a request, as it does for a
+   * request body in pieces, and stream() reads a response in pieces.
+   *
+   * @code
+   * auto const users = co_await client.get("/users?limit=20");
+   * @endcode
+   *
+   * @throws std::invalid_argument here, as send() does.
+   */
+  [[nodiscard]] async::task<http::response> get(std::string target) const;
+
+  /** @brief Sends a HEAD to `target`: see get(). */
+  [[nodiscard]] async::task<http::response> head(std::string target) const;
+
+  /** @brief Sends a DELETE to `target`: see get(). */
+  [[nodiscard]] async::task<http::response> delete_(std::string target) const;
+
+  /**
+   * @brief Sends a POST of `body` to `target`, as send() does, with `content_type` as its `Content-Type`, if not empty.
+   *
+   * @code
+   * auto const created = co_await client.post("/users?notify=true", R"({"name":"Ada"})", "application/json");
+   * @endcode
+   *
+   * @throws std::invalid_argument here, as send() does.
+   */
+  [[nodiscard]] async::task<http::response> post(std::string target, std::string body,
+                                                 std::string_view content_type = {}) const;
+
+  /** @brief Sends a PUT of `body` to `target`: see post(). */
+  [[nodiscard]] async::task<http::response> put(std::string target, std::string body,
+                                                std::string_view content_type = {}) const;
+
+  /** @brief Sends a PATCH of `body` to `target`: see post(). */
+  [[nodiscard]] async::task<http::response> patch(std::string target, std::string body,
+                                                  std::string_view content_type = {}) const;
 
 private:
   template <io::Connector Connector>

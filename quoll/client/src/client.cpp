@@ -926,7 +926,50 @@ async::task<http::response> client_send(std::shared_ptr<client_core> const &core
 
 namespace quoll::http {
 
+namespace {
+
+[[nodiscard]] request simple_request(verb method, std::string target, std::string body = {},
+                                     std::string_view content_type = {}) {
+  request made;
+
+  made.method = method;
+  made.target = std::move(target);
+  made.body = std::move(body);
+
+  if (!content_type.empty()) {
+    made.fields.add("Content-Type", content_type);
+  }
+
+  return made;
+}
+
+} // namespace
+
 client::client(std::string_view url, client_options options)
     : client(io::network_connector{}, url, std::move(options)) {}
+
+async::task<response> client::get(std::string target) const {
+  return send(simple_request(verb::get, std::move(target)));
+}
+
+async::task<response> client::head(std::string target) const {
+  return send(simple_request(verb::head, std::move(target)));
+}
+
+async::task<response> client::delete_(std::string target) const {
+  return send(simple_request(verb::delete_, std::move(target)));
+}
+
+async::task<response> client::post(std::string target, std::string body, std::string_view content_type) const {
+  return send(simple_request(verb::post, std::move(target), std::move(body), content_type));
+}
+
+async::task<response> client::put(std::string target, std::string body, std::string_view content_type) const {
+  return send(simple_request(verb::put, std::move(target), std::move(body), content_type));
+}
+
+async::task<response> client::patch(std::string target, std::string body, std::string_view content_type) const {
+  return send(simple_request(verb::patch, std::move(target), std::move(body), content_type));
+}
 
 } // namespace quoll::http
