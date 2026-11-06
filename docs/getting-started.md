@@ -188,11 +188,7 @@ namespace http = quoll::http;
 
 async::task<> say_hello() {
   http::client client{"http://127.0.0.1:8080"};
-  http::request request;
-
-  request.target = "/hello/Ada";
-
-  auto const response = co_await client.send(request);
+  auto const response = co_await client.get("/hello/Ada");
 
   std::cout << static_cast<int>(response.status) << ' ' << response.body << '\n';
 }
@@ -275,7 +271,7 @@ to add to it. To carry on, catch it in the coroutine:
 
 ```cpp
 try {
-  auto const response = co_await client.send(request);
+  auto const response = co_await client.get("/hello");
 
   std::cout << response.body << '\n';
 } catch (std::system_error const &failure) {
