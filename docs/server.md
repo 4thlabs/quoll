@@ -153,14 +153,15 @@ It only answers what the router itself answers 404 to, once the middlewares adde
 - Where it stands among the middlewares protects nothing by accident: one added after it that refuses a request refuses its
   file too, and what they add to the 404, CORS headers for instance, stays on the file's response.
 - A path the router refuses (`..`, `%00`) has had its 400.
-- A later middleware answering a 404 of its own, to hide something, has answered: only the router's own counts.
+- A later middleware answering a 404 of its own rather than awaiting `next`, to hide something, has answered: only the
+  router's own counts, which one that awaits `next` and then changes has not replaced.
 - Of several on one path, the last added looks first, and a file that is not there leaves the 404 to the one before. That
   is the other way round from Express.
 
 | Option          | Default      | What it does                                                                                             |
 | --------------- | ------------ | -------------------------------------------------------------------------------------------------------- |
 | `index`         | `index.html` | What a request for a directory serves. Empty: such a request stays a 404.                                |
-| `dotfiles`      | `false`      | Whether names starting with a dot are served. `.env` and `.git` are not, by default.                     |
+| `dotfiles`      | `false`      | Whether names starting with a dot are served. `.env` and `.git` are not, by default, nor what a link leads to among them. |
 | `content_types` | empty        | The `Content-Type` of an extension, lower case with no dot, in addition to those known, and over them.   |
 
 What comes out:
@@ -170,7 +171,8 @@ What comes out:
   disk does not hold up the loop: see [Runtimes](runtimes.md).
 - **What describes it.** `Content-Type` from its extension, `application/octet-stream` otherwise, `Content-Length`,
   `Last-Modified`, `ETag` and `Accept-Ranges`.
-- **A cache.** `If-None-Match` and `If-Modified-Since` answer 304, the first taking over the second.
+- **A cache.** `If-None-Match` and `If-Modified-Since` answer 304, the first taking over the second. `If-Match` and
+  `If-Unmodified-Since` answer 412 when the file is no longer the one asked for, for resuming a download safely.
 - **A part.** A `Range` of one interval answers 206, and 416 out of the file, for resuming a download or seeking in a video.
   Several intervals, or what cannot be read, send it whole. `If-Range` holds it to the file it was for.
 - **A directory.** Without its final slash, a redirect to it, if it has an index.

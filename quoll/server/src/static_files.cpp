@@ -77,14 +77,27 @@ namespace quoll::server {
 
 namespace detail {
 
+namespace {
+
+// To go through a directory, which only asks for the right to search it: a web root in mode 0711 hides its listing.
+#if defined(O_PATH) && !defined(__EMSCRIPTEN__)
+constexpr int search_only = O_PATH;
+#elif defined(O_SEARCH) && !defined(__EMSCRIPTEN__)
+constexpr int search_only = O_SEARCH;
+#else
+constexpr int search_only = O_RDONLY;
+#endif
+
+} // namespace
+
 int open_beneath(std::filesystem::path const &root, std::filesystem::path const &relative) noexcept {
-  auto current = ::open(root.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+  auto current = ::open(root.c_str(), search_only | O_CLOEXEC | O_DIRECTORY);
 
   for (auto component = relative.begin(); current >= 0 && component != relative.end(); ++component) {
     // Only the last may be anything but a directory.
     auto const last = std::next(component) == relative.end();
-    auto const next =
-        ::openat(current, component->c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | (last ? O_NONBLOCK : O_DIRECTORY));
+    auto const next = ::openat(current, component->c_str(),
+                               O_CLOEXEC | O_NOFOLLOW | (last ? O_RDONLY | O_NONBLOCK : search_only | O_DIRECTORY));
     auto const failure = errno;
 
     ::close(current);
@@ -156,7 +169,9 @@ void append_hex(std::uint64_t value, std::string &out) {
 [[nodiscard]] bool nothing_there(std::error_code error) noexcept {
   return error == std::errc::no_such_file_or_directory || error == std::errc::not_a_directory ||
          error == std::errc::permission_denied || error == std::errc::operation_not_permitted ||
-         error == std::errc::too_many_symbolic_link_levels || error == std::errc::filename_too_long;
+         error == std::errc::too_many_symbolic_link_levels || error == std::errc::filename_too_long ||
+         // A Unix socket, or a device with no driver: no files.
+         error == std::errc::no_such_device_or_address || error == std::errc::no_such_device;
 }
 
 // What a path opened to, with what it is.
@@ -232,44 +247,74 @@ struct looked_up {
   bool redirect = false;
 };
 
+// Whether a path whose links have been followed is one to serve: a link must not lead to the `.env` its name does not
+// say.
+[[nodiscard]] bool may_be_served(served const &state, fs::path const &resolved) {
+  if (state.options.dotfiles) {
+    return true;
+  }
+
+  auto const relative = resolved.lexically_relative(state.root);
+
+  return std::ranges::none_of(relative, [](fs::path const &component) {
+    auto const name = component.native();
+
+    return name != "." && name.starts_with('.');
+  });
+}
+
+// `path`, whose links have been followed, if it is under the root and to be served.
+[[nodiscard]] std::optional<fs::path> to_serve(served const &state, fs::path const &path) {
+  auto resolved = inside_root(state.root, path);
+
+  return resolved && may_be_served(state, *resolved) ? std::move(resolved) : std::nullopt;
+}
+
+[[nodiscard]] std::optional<found_file> regular_file(served const &state, fs::path const &resolved) {
+  auto opened = open_resolved(state.root, resolved);
+
+  if (!opened || !S_ISREG(opened->status.st_mode)) {
+    return std::nullopt;
+  }
+
+  return found_from(std::move(*opened));
+}
+
 [[nodiscard]] looked_up look_up(served const &state, fs::path const &relative, bool ends_with_slash) {
-  auto const path = inside_root(state.root, state.root / relative);
+  auto const path = to_serve(state, state.root / relative);
 
   if (!path) {
     return {};
   }
 
-  auto opened = open_resolved(state.root, *path);
+  std::error_code error;
+  auto const directory = fs::is_directory(*path, error);
 
-  if (!opened) {
+  if (error) {
+    if (nothing_there(error)) {
+      return {};
+    }
+
+    throw std::system_error{error, "quoll::server::static_files"};
+  }
+
+  if (!directory) {
+    return ends_with_slash ? looked_up{} : looked_up{regular_file(state, *path)};
+  }
+
+  if (state.options.index.empty()) {
     return {};
   }
 
-  if (S_ISREG(opened->status.st_mode)) {
-    return ends_with_slash ? looked_up{} : looked_up{found_from(std::move(*opened))};
-  }
+  auto const index = to_serve(state, *path / state.options.index);
+  auto file = index ? regular_file(state, *index) : std::nullopt;
 
-  if (!S_ISDIR(opened->status.st_mode) || state.options.index.empty()) {
+  if (!file) {
     return {};
   }
 
-  auto const index = inside_root(state.root, *path / state.options.index);
-
-  if (!index) {
-    return {};
-  }
-
-  auto opened_index = open_resolved(state.root, *index);
-
-  if (!opened_index || !S_ISREG(opened_index->status.st_mode)) {
-    return {};
-  }
-
-  if (!ends_with_slash) {
-    return {.redirect = true};
-  }
-
-  return {.file = found_from(std::move(*opened_index))};
+  // What it opened goes with this: the redirect comes back for it.
+  return ends_with_slash ? looked_up{std::move(file)} : looked_up{.redirect = true};
 }
 
 // The path relative to `root` that `path`, as next::path() has it, asks for: nothing for what cannot be a file of it.
@@ -369,12 +414,10 @@ struct looked_up {
   return http_date(time) == text ? std::optional{time} : std::nullopt;
 }
 
-[[nodiscard]] std::string_view trimmed(std::string_view text) noexcept { return http::detail::trim(text); }
-
 // RFC 9110, 13.1.2: the weak comparison, over a list, or `*`.
 [[nodiscard]] bool none_match_fails(std::string_view list, std::string_view etag) {
   for (auto const member : std::views::split(list, ',')) {
-    auto tag = trimmed(std::string_view{member.begin(), member.end()});
+    auto tag = http::detail::trim(std::string_view{member.begin(), member.end()});
 
     if (tag == "*") {
       return true;
@@ -394,11 +437,42 @@ struct looked_up {
 
 // What a request asks for of a file, as read before it is passed on.
 struct conditions {
+  std::optional<std::string> if_match{};
+  std::optional<std::string> if_unmodified_since{};
   std::optional<std::string> if_none_match{};
   std::optional<std::string> if_modified_since{};
   std::optional<std::string> range{};
   std::optional<std::string> if_range{};
 };
+
+// RFC 9110, 13.1.1: the strong comparison, over a list, or `*`.
+[[nodiscard]] bool match_holds(std::string_view list, std::string_view etag) {
+  for (auto const member : std::views::split(list, ',')) {
+    auto const tag = http::detail::trim(std::string_view{member.begin(), member.end()});
+
+    if (tag == "*" || tag == etag) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// RFC 9110, 13.2.2: what the request holds the file to, the first of them taking over the second. A client resuming a
+// download through these must not get the bytes of another file.
+[[nodiscard]] bool precondition_fails(conditions const &asked, found_file const &found) {
+  if (asked.if_match) {
+    return !match_holds(*asked.if_match, found.etag);
+  }
+
+  if (asked.if_unmodified_since) {
+    auto const since = parse_http_date(*asked.if_unmodified_since);
+
+    return since && found.modified > *since;
+  }
+
+  return false;
+}
 
 [[nodiscard]] bool not_modified(conditions const &asked, found_file const &found) {
   // It takes over the date, which is less exact, when both are there.
@@ -424,7 +498,7 @@ enum class range_outcome { whole, part, out_of_file };
 
 // RFC 9110, 14.2: one interval. What cannot be read, several intervals among it, is as if it were not there.
 [[nodiscard]] range_outcome parse_range(std::string_view header, std::uint64_t size, byte_range &range) {
-  header = trimmed(header);
+  header = http::detail::trim(header);
 
   if (!header.starts_with("bytes=")) {
     return range_outcome::whole;
@@ -438,8 +512,8 @@ enum class range_outcome { whole, part, out_of_file };
     return range_outcome::whole;
   }
 
-  auto const first = trimmed(header.substr(0, dash));
-  auto const last = trimmed(header.substr(dash + 1));
+  auto const first = http::detail::trim(header.substr(0, dash));
+  auto const last = http::detail::trim(header.substr(dash + 1));
 
   // The last `n` bytes.
   if (first.empty()) {
@@ -484,7 +558,7 @@ enum class range_outcome { whole, part, out_of_file };
     return true;
   }
 
-  auto const validator = trimmed(*asked.if_range);
+  auto const validator = http::detail::trim(*asked.if_range);
 
   if (validator.starts_with('"')) {
     return validator == found.etag;
@@ -539,9 +613,7 @@ enum class range_outcome { whole, part, out_of_file };
     extension.erase(0, 1);
   }
 
-  std::ranges::transform(extension, extension.begin(), [](char letter) {
-    return letter >= 'A' && letter <= 'Z' ? static_cast<char>(letter - 'A' + 'a') : letter;
-  });
+  std::ranges::transform(extension, extension.begin(), http::detail::to_lower);
 
   if (auto const given = state.options.content_types.find(extension); given != state.options.content_types.end()) {
     return given->second;
@@ -615,6 +687,12 @@ void forget_its_content(http::response &answer) {
   answer.fields.set("Last-Modified", http_date(found.modified));
   answer.fields.set("Accept-Ranges", "bytes");
 
+  if (precondition_fails(asked, found)) {
+    answer.status = http::status::precondition_failed;
+    answer.fields.set("Content-Length", "0");
+    return answer;
+  }
+
   if (not_modified(asked, found)) {
     answer.status = http::status::not_modified;
     return answer;
@@ -676,14 +754,18 @@ async::task<http::response> serve_file(std::shared_ptr<served const> state, http
   auto const path = next.path();
   auto const under = wanted ? under_prefix(path, state->prefix) : std::nullopt;
 
-  // Nothing is asked of a request a file cannot answer: this is on the path of every request.
-  if (!under) {
+  // Nothing is asked of a request a file cannot answer, one a route answers among them: this is on the path of every
+  // request.
+  if (!under || !next.route().empty()) {
     co_return co_await next(std::move(message));
   }
 
   // Range is only for a GET: RFC 9110, 14.2.
   auto const is_get = message.method == http::verb::get;
-  conditions const asked{copy_of(message.fields, "If-None-Match"), copy_of(message.fields, "If-Modified-Since"),
+  conditions const asked{copy_of(message.fields, "If-Match"),
+                         copy_of(message.fields, "If-Unmodified-Since"),
+                         copy_of(message.fields, "If-None-Match"),
+                         copy_of(message.fields, "If-Modified-Since"),
                          is_get ? copy_of(message.fields, "Range") : std::nullopt,
                          is_get ? copy_of(message.fields, "If-Range") : std::nullopt};
   auto const question = message.target.find('?');
@@ -736,7 +818,13 @@ http::router::middleware static_files(std::string_view prefix, fs::path const &r
     prefix.remove_suffix(1);
   }
 
-  auto state = std::make_shared<served const>(served{std::string{prefix}, fs::canonical(root), std::move(options)});
+  auto canonical = fs::canonical(root);
+
+  if (!fs::is_directory(canonical)) {
+    throw std::invalid_argument{"quoll::server::static_files: the root is not a directory"};
+  }
+
+  auto state = std::make_shared<served const>(served{std::string{prefix}, std::move(canonical), std::move(options)});
 
   return [state = std::move(state)](http::request &&message, http::next const &next) {
     return serve_file(state, std::move(message), next);

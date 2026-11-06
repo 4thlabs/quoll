@@ -69,6 +69,7 @@ enum class status : std::uint16_t {
   method_not_allowed = 405,
   request_timeout = 408,
   conflict = 409,
+  precondition_failed = 412,
   content_too_large = 413,
   unsupported_media_type = 415,
   range_not_satisfiable = 416,
@@ -126,6 +127,8 @@ enum class status : std::uint16_t {
     return "Request Timeout";
   case status::conflict:
     return "Conflict";
+  case status::precondition_failed:
+    return "Precondition Failed";
   case status::content_too_large:
     return "Content Too Large";
   case status::unsupported_media_type:

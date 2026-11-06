@@ -49,6 +49,7 @@
 #include <quoll/http/verb.hpp>
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/io/write.hpp>
+#include <quoll/server/connection_options.hpp>
 #include <quoll/server/detail/open_beneath.hpp>
 #include <quoll/server/serve_connection.hpp>
 #include <quoll/server/static_files.hpp>
@@ -59,14 +60,19 @@
 
 #include <fcntl.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
+#include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -829,4 +835,164 @@ TEST_CASE("static_files: opening beneath the root follows no link, wherever it i
   REQUIRE(!opens("gone/secret.txt"));
   REQUIRE(!opens("link.txt"));
   REQUIRE(!opens("nested/missing.txt"));
+}
+
+TEST_CASE("static_files: a file that is no longer the one asked for", "[server][static]") {
+  site const served;
+  auto const first = ask(served.router, "/assets/hello.txt");
+  auto const etag = std::string{first.fields.find("ETag").value()};
+  auto const date = std::string{first.fields.find("Last-Modified").value()};
+
+  auto const with = [&](std::string_view name, std::string value) {
+    auto request = make_request("/assets/hello.txt");
+
+    request.fields.add(name, std::move(value));
+    request.fields.add("Range", "bytes=1-3");
+    return ask(served.router, std::move(request));
+  };
+
+  SECTION("If-Match") {
+    auto const changed = with("If-Match", "\"old\"");
+
+    REQUIRE(changed.status == status::precondition_failed);
+    REQUIRE(changed.body.empty());
+    REQUIRE(with("If-Match", etag).status == status::partial_content);
+    REQUIRE(with("If-Match", "\"old\", " + etag).status == status::partial_content);
+    REQUIRE(with("If-Match", "*").status == status::partial_content);
+    // The strong comparison.
+    REQUIRE(with("If-Match", "W/" + etag).status == status::precondition_failed);
+  }
+
+  SECTION("If-Unmodified-Since") {
+    REQUIRE(with("If-Unmodified-Since", "Thu, 01 Jan 1970 00:00:00 GMT").status == status::precondition_failed);
+    REQUIRE(with("If-Unmodified-Since", date).status == status::partial_content);
+    REQUIRE(with("If-Unmodified-Since", "not a date").status == status::partial_content);
+  }
+
+  SECTION("the first takes over the second") {
+    auto request = make_request("/assets/hello.txt");
+
+    request.fields.add("If-Match", etag);
+    request.fields.add("If-Unmodified-Since", "Thu, 01 Jan 1970 00:00:00 GMT");
+    REQUIRE(ask(served.router, request).status == status::ok);
+  }
+}
+
+TEST_CASE("static_files: a link does not lead to what its name would not", "[server][static]") {
+  site const served;
+
+  fs::create_symlink(served.directory.path() / ".env", served.directory.path() / "config.txt");
+  fs::create_directory_symlink(served.directory.path() / ".git", served.directory.path() / "repo");
+
+  REQUIRE(ask(served.router, "/assets/config.txt").status == status::not_found);
+  REQUIRE(ask(served.router, "/assets/repo/config").status == status::not_found);
+}
+
+TEST_CASE("static_files: an index that is a dotfile is one", "[server][static]") {
+  site const served{"/assets", {.index = ".env"}};
+
+  served.directory.write("docs/.env", "SECRET");
+  REQUIRE(ask(served.router, "/assets/docs/").status == status::not_found);
+}
+
+TEST_CASE("static_files: a root that is no directory is refused at once", "[server][static]") {
+  temporary_directory directory;
+
+  directory.write("file.txt", "a file");
+  REQUIRE_THROWS_AS(server::static_files("/", directory.path() / "file.txt"), std::invalid_argument);
+}
+
+#if !defined(__EMSCRIPTEN__)
+
+TEST_CASE("static_files: a directory that only lets through, its listing hidden", "[server][static]") {
+  site const served;
+  auto const hidden = served.directory.path() / "hidden";
+
+  served.directory.write("hidden/file.txt", "through");
+  served.directory.write("hidden/index.html", "<p>through</p>");
+  fs::permissions(hidden, fs::perms::owner_exec | fs::perms::owner_write);
+
+  auto const file = ask(served.router, "/assets/hidden/file.txt");
+  auto const index = ask(served.router, "/assets/hidden/");
+
+  fs::permissions(hidden, fs::perms::owner_all);
+
+  REQUIRE(file.body == "through");
+  REQUIRE(index.body == "<p>through</p>");
+}
+
+TEST_CASE("static_files: a socket is no file", "[server][static]") {
+  site const served;
+  auto const path = served.directory.path() / "app.sock";
+  auto const descriptor = ::socket(AF_UNIX, SOCK_STREAM, 0);
+
+  REQUIRE(descriptor >= 0);
+
+  sockaddr_un address{};
+
+  address.sun_family = AF_UNIX;
+  REQUIRE(path.native().size() < sizeof(address.sun_path));
+  std::ranges::copy(path.native(), std::begin(address.sun_path));
+  REQUIRE(::bind(descriptor, reinterpret_cast<sockaddr const *>(&address), sizeof(address)) == 0);
+
+  auto const answered = ask(served.router, "/assets/app.sock").status;
+
+  ::close(descriptor);
+  REQUIRE(answered == status::not_found);
+}
+
+#endif
+
+TEST_CASE("static_files: a file that shrinks under its response cuts it, and says so", "[server][static]") {
+  temporary_directory directory;
+  std::string const content(std::size_t{100} * 1024, 'x');
+
+  directory.write("large.bin", content);
+
+  http::router router;
+  auto const file = directory.path() / "large.bin";
+
+  // Outside of it: by the time the response comes back here, it has what it announced, and nothing has left.
+  router.use([&](http::request request, http::next const &next) -> task<http::response> {
+    auto response = co_await next(std::move(request));
+
+    fs::resize_file(file, 10);
+    co_return response;
+  });
+  router.use(server::static_files("/", directory.path()));
+
+  quoll::async::run_loop loop;
+  auto [client, connection] = io::make_memory_stream_pair();
+  auto reported = 0;
+  server::connection_options options;
+
+  options.on_handler_error = [&](std::exception_ptr const &) { ++reported; };
+
+  auto const peer = [](io::memory_stream stream) -> task<std::string> {
+    std::string_view const raw = "GET /large.bin HTTP/1.1\r\nHost: h\r\n\r\n";
+    std::string received;
+    std::array<char, 4096> chunk{};
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{raw}));
+
+    for (;;) {
+      auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+      if (read.error) {
+        co_return received;
+      }
+
+      received.append(chunk.data(), read.transferred);
+    }
+  };
+
+  auto outcome =
+      quoll::test::run(loop, quoll::async::when_all(server::serve_connection(std::move(connection), router, options),
+                                                    peer(std::move(client))));
+  auto const &received = std::get<1>(outcome.value());
+
+  REQUIRE(received.starts_with("HTTP/1.1 200"));
+  REQUIRE(received.find("Content-Length: 102400") != std::string::npos);
+  REQUIRE(received.ends_with("\r\n\r\nxxxxxxxxxx"));
+  REQUIRE(reported == 1);
 }
