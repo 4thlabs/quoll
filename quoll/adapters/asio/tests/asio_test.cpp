@@ -1758,6 +1758,56 @@ TEST_CASE("rest::mount: on a server, as on a router", "[asio][rest][server]") {
   REQUIRE(calls.opened.owner == "Grace");
 }
 
+TEST_CASE("response_writer: on a thread pool, as the connection it runs in", "[asio][runtime][server]") {
+  http::router router;
+
+  router.get("/rows", [](http::response_writer out) -> task<> {
+    out.fields.set("X-Handler", "set");
+    co_await out.write("one ");
+    co_await out.write("two");
+  });
+
+  quoll::threads::thread_pool pool{4};
+  std::vector<std::string> bodies;
+
+  auto const exchange = [&]() -> task<int> {
+    auto listener = co_await quoll::io::listen(0);
+    auto const port = listener.local_port().value();
+    std::stop_source stop;
+
+    auto const serving = [&]() -> task<int> {
+      co_await quoll::async::detail::stop_scope<void>{
+          http::server{router, {.shutdown_timeout = {}}}.serve(pool.get_executor(), std::move(listener)),
+          stop.get_token()};
+      co_return 1;
+    };
+
+    auto const calling = [&]() -> task<int> {
+      http::client const client{"http://127.0.0.1:" + std::to_string(port)};
+
+      for (auto request = 0; request < 50; ++request) {
+        auto const response = co_await client.get("/rows");
+
+        bodies.push_back(response.body + ' ' + std::string{response.fields.find("X-Handler").value_or("")});
+      }
+
+      stop.request_stop();
+      co_return 1;
+    };
+
+    (void)co_await quoll::async::when_all(serving(), calling());
+    co_return 1;
+  };
+
+  (void)run_task(exchange());
+
+  REQUIRE(bodies.size() == 50);
+
+  for (auto const &body : bodies) {
+    REQUIRE(body == "one two set");
+  }
+}
+
 TEST_CASE("asio::runtime: an executor taken again after the last one went runs its task", "[asio]") {
   quoll::asio::runtime runtime;
   bool ran = false;

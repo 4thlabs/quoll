@@ -50,6 +50,7 @@
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/detail/final_response.hpp>
+#include <quoll/http/detail/late_head.hpp>
 #include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/detail/streamed_head.hpp>
 #include <quoll/http/detail/streamed_wire.hpp>
@@ -658,6 +659,17 @@ async::task<http::response> respond(http::router const &router, http::request re
   co_return http::detail::status_response(http::status::internal_server_error);
 }
 
+// How a body of unknown length goes: HTTP/1.0 has no chunks, and nothing but the end of the connection ends it.
+void frame_in_pieces(http::response &response, http::version version, bool &keep_alive) {
+  if (version == http::version::http_1_0 || response.version == http::version::http_1_0) {
+    response.fields.erase("Transfer-Encoding");
+    response.trailers.clear();
+    keep_alive = keep_alive && response.fields.contains("Content-Length");
+  } else if (!response.fields.contains("Content-Length") && !response.fields.contains("Transfer-Encoding")) {
+    response.fields.set("Transfer-Encoding", "chunked");
+  }
+}
+
 // Ready to write. A response to HEAD has no body: it announces the length of the one it does not carry, with
 // Content-Length rather than chunked coding, whose terminating chunk would be read as the next response. The last
 // response of a connection says so.
@@ -786,6 +798,62 @@ private:
   bool failed_ = false;
 };
 
+// In its place, while nothing has left.
+async::task<std::error_code> send_500(paced_stream &stream, bool keep_alive) {
+  auto failed = http::detail::status_response(http::status::internal_server_error);
+
+  prepare(failed, false, keep_alive);
+  co_return co_await send_response(stream, failed, keep_alive);
+}
+
+// Runs a response's writer through `sink`, and ends its body if it came out whole. What it returns says what is left to
+// do.
+enum class writer_end { whole, answer_500, cut };
+
+template <class Sink>
+async::task<writer_end> run_writer(http::response &response, Sink &sink, connection_options const &options,
+                                   streamed_body *request_body, bool &nothing_left) {
+  auto const stop_token = co_await async::current_stop_token();
+  auto complete = false;
+
+  try {
+    co_await response.body_writer(http::body_stream{sink});
+    complete = true;
+  } catch (body_not_written const &) {
+    // No failure of the writer's, which only let it through.
+  } catch (body_not_read const &) {
+    // Nor is this, from a writer reading the request.
+  } catch (std::system_error const &thrown) {
+    // What a stop throws is no failure either, unlike what goes wrong during one.
+    if (options.on_handler_error && !(stop_token.stop_requested() && thrown.code() == std::errc::operation_canceled)) {
+      options.on_handler_error(std::current_exception());
+    }
+  } catch (...) {
+    if (options.on_handler_error) {
+      options.on_handler_error(std::current_exception());
+    }
+  }
+
+  nothing_left = !sink.started();
+
+  auto const stopped = stop_token.stop_requested();
+  auto const request_failed = request_body != nullptr && request_body->failure();
+
+  // A writer that made nothing of a failed request, or that a stop ended, has no whole body to end.
+  if (complete && !stopped && !request_failed) {
+    if (co_await sink.finish(response.trailers)) {
+      co_return writer_end::whole;
+    }
+
+    if (sink.short_of_its_length() && options.on_handler_error) {
+      options.on_handler_error(std::make_exception_ptr(
+          std::length_error{"quoll::http::server: a body_writer wrote less than its Content-Length"}));
+    }
+  }
+
+  co_return !sink.started() && !stopped && !request_failed ? writer_end::answer_500 : writer_end::cut;
+}
+
 // A response with a body_writer, up to whether the connection can go on: a 500 in its place while nothing has left, and
 // otherwise an end of connection for what cannot be whole, which its peer reads as a body cut short. To HEAD, its head
 // alone. `nothing_left` says that a failure is still free to answer otherwise.
@@ -809,57 +877,175 @@ async::task<bool> send_streamed(paced_stream &stream, http::response &response, 
   }
 
   if (framing) {
-    auto const stop_token = co_await async::current_stop_token();
     streamed_response sink{stream, std::move(wire), *framing, request_body};
-    auto complete = false;
+    auto const end = co_await run_writer(response, sink, options, request_body, nothing_left);
 
-    try {
-      co_await response.body_writer(http::body_stream{sink});
-      complete = true;
-    } catch (body_not_written const &) {
-      // No failure of the writer's, which only let it through.
-    } catch (body_not_read const &) {
-      // Nor is this, from a writer reading the request.
-    } catch (std::system_error const &thrown) {
-      // What a stop throws is no failure either, unlike what goes wrong during one.
-      if (options.on_handler_error &&
-          !(stop_token.stop_requested() && thrown.code() == std::errc::operation_canceled)) {
-        options.on_handler_error(std::current_exception());
-      }
-    } catch (...) {
-      if (options.on_handler_error) {
-        options.on_handler_error(std::current_exception());
-      }
+    if (end == writer_end::whole) {
+      co_return true;
     }
 
-    nothing_left = !sink.started();
-
-    auto const stopped = stop_token.stop_requested();
-    auto const request_failed = request_body != nullptr && request_body->failure();
-
-    // A writer that made nothing of a failed request, or that a stop ended, has no whole body to end.
-    if (complete && !stopped && !request_failed) {
-      if (co_await sink.finish(response.trailers)) {
-        co_return true;
-      }
-
-      if (sink.short_of_its_length() && options.on_handler_error) {
-        options.on_handler_error(std::make_exception_ptr(
-            std::length_error{"quoll::http::server: a body_writer wrote less than its Content-Length"}));
-      }
-    }
-
-    answer_500 = !sink.started() && !stopped && !request_failed;
+    answer_500 = end == writer_end::answer_500;
   }
 
   if (!answer_500) {
     co_return false;
   }
 
-  auto failed = http::detail::status_response(http::status::internal_server_error);
+  co_return !co_await send_500(stream, keep_alive);
+}
 
-  prepare(failed, false, keep_alive);
-  co_return !co_await send_response(stream, failed, keep_alive);
+// What a route with an http::response_writer writes through: the handler gives its status and fields with its first
+// write, so that the head is only made then, and what depends on it. On a request whose body it reads, the connection
+// goes on only if it has read it all by then.
+class late_head_response {
+public:
+  late_head_response(paced_stream &stream, http::response &response, http::verb method, bool &keep_alive,
+                     streamed_body *request_body, http::request_parser const *parser, http::version version,
+                     connection_options const &options) noexcept
+      : stream_(&stream), response_(&response), method_(method), keep_alive_(&keep_alive), request_body_(request_body),
+        parser_(parser), version_(version), options_(&options) {}
+
+  void head(http::status status, http::fields fields) {
+    http::detail::merge_head(*response_, status, std::move(fields));
+  }
+
+  [[nodiscard]] async::task<> write(std::string_view piece) {
+    auto const asked_for_head = method_ == http::verb::head;
+
+    if (asked_for_head && head_tried_) {
+      throw body_not_written{std::make_error_code(std::errc::operation_canceled),
+                             "quoll::http::response_writer: HEAD has no body"};
+    }
+
+    if (!sink_ && !head_tried_) {
+      open();
+    }
+
+    if (asked_for_head) {
+      head_tried_ = true;
+
+      if (request_body_ != nullptr) {
+        request_body_->response_started();
+      }
+
+      if (auto const sent = co_await stream_->write_all(std::as_bytes(std::span{wire_}))) {
+        head_failed_ = true;
+        throw body_not_written{sent, "quoll::http::response_writer: cannot write the head"};
+      }
+
+      throw body_not_written{std::make_error_code(std::errc::operation_canceled),
+                             "quoll::http::response_writer: HEAD has no body"};
+    }
+
+    co_await sink_->write(piece);
+  }
+
+  [[nodiscard]] async::task<bool> finish(http::fields const &trailers) {
+    // No write came: nothing has begun that would need an end.
+    if (!sink_) {
+      co_return true;
+    }
+
+    co_return co_await sink_->finish(trailers);
+  }
+
+  // Nothing has left: there is still time to answer something else.
+  [[nodiscard]] bool started() const noexcept { return head_tried_ || (sink_ && sink_->started()); }
+
+  [[nodiscard]] bool short_of_its_length() const noexcept { return sink_ && sink_->short_of_its_length(); }
+
+  // No write came: its head is all there is.
+  [[nodiscard]] bool wrote_nothing() const noexcept { return !head_tried_ && !sink_; }
+
+  [[nodiscard]] bool head_failed() const noexcept { return head_failed_; }
+
+  // Whether the connection goes on, by what the handler set, read and left to do.
+  void decide_keep_alive() {
+    if (parser_ != nullptr) {
+      *keep_alive_ = parser_->done() && parser_->keep_alive() && !parser_->upgrade();
+    }
+
+    *keep_alive_ =
+        *keep_alive_ && !http::detail::closes_connection(response_->fields) && !options_->drain.stop_requested();
+  }
+
+private:
+  // Throws what a head that cannot leave throws, which answers 500, as nothing has left.
+  void open() {
+    if (auto const *const wrong = http::detail::replace_what_would_mislead(*response_, method_); wrong != nullptr) {
+      throw std::logic_error{wrong};
+    }
+
+    auto const head = method_ == http::verb::head;
+
+    decide_keep_alive();
+
+    if (!head) {
+      frame_in_pieces(*response_, version_, *keep_alive_);
+    }
+
+    prepare(*response_, head, *keep_alive_);
+
+    auto const framing = http::detail::serialize_streamed_head(*response_, wire_);
+
+    if (!head) {
+      sink_.emplace(*stream_, std::move(wire_), framing, request_body_);
+    }
+  }
+
+  paced_stream *stream_;
+  http::response *response_;
+  http::verb method_;
+  bool *keep_alive_;
+  streamed_body *request_body_;
+  http::request_parser const *parser_;
+  http::version version_;
+  connection_options const *options_;
+  std::string wire_;
+  std::optional<streamed_response> sink_;
+  bool head_tried_ = false;
+  bool head_failed_ = false;
+};
+
+// A response whose handler writes it, up to whether the connection can go on, as send_streamed().
+async::task<bool> send_written_by_handler(paced_stream &stream, http::response &response, http::verb method,
+                                          bool &keep_alive, http::version version, connection_options const &options,
+                                          streamed_body *request_body, http::request_parser const *parser,
+                                          bool &nothing_left) {
+  stream.writing().start_again();
+
+  late_head_response sink{stream, response, method, keep_alive, request_body, parser, version, options};
+  auto const end = co_await run_writer(response, sink, options, request_body, nothing_left);
+
+  // To HEAD, the head is all it owes, however the handler took what its write threw.
+  if (method == http::verb::head && !sink.wrote_nothing()) {
+    co_return !sink.head_failed();
+  }
+
+  if (end == writer_end::answer_500) {
+    co_return !co_await send_500(stream, keep_alive);
+  }
+
+  if (end == writer_end::cut) {
+    co_return false;
+  }
+
+  // It ended before any write: its response has what it set, and an empty body.
+  if (sink.wrote_nothing()) {
+    response.body_writer = nullptr;
+    response.head_comes_with_the_body = false;
+
+    if (auto const *const wrong = http::detail::replace_what_would_mislead(response, method);
+        wrong != nullptr && options.on_handler_error) {
+      options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
+    }
+
+    sink.decide_keep_alive();
+    prepare(response, method == http::verb::head, keep_alive);
+    co_return !co_await send_response(stream, response, keep_alive);
+  }
+
+  co_return true;
 }
 
 // How a connection ends. A stream that failed or a peer that has gone are owed nothing: on a stuck one, trying would
@@ -979,20 +1165,28 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
 
     auto const in_pieces = static_cast<bool>(response.body_writer);
 
-    if (in_pieces && !head) {
-      // HTTP/1.0 has no chunks: nothing but the end of the connection ends a body of unknown length.
-      if (version == http::version::http_1_0 || response.version == http::version::http_1_0) {
-        response.fields.erase("Transfer-Encoding");
-        response.trailers.clear();
-        keep_alive = keep_alive && response.fields.contains("Content-Length");
-      } else if (!response.fields.contains("Content-Length") && !response.fields.contains("Transfer-Encoding")) {
-        response.fields.set("Transfer-Encoding", "chunked");
-      }
+    if (in_pieces && !head && !response.head_comes_with_the_body) {
+      frame_in_pieces(response, version, keep_alive);
     }
 
-    prepare(response, head, keep_alive);
+    auto const written_by_handler = in_pieces && response.head_comes_with_the_body;
 
-    if (in_pieces) {
+    if (!written_by_handler) {
+      prepare(response, head, keep_alive);
+    }
+
+    if (written_by_handler) {
+      auto nothing_left = false;
+
+      if (!co_await send_written_by_handler(paced, response, method, keep_alive, version, options,
+                                            body ? &*body : nullptr, body ? &parser : nullptr, nothing_left)) {
+        if (body && body->failure() && nothing_left) {
+          co_return co_await refuse(*body->failure());
+        }
+
+        co_return connection_end::nothing_owed;
+      }
+    } else if (in_pieces) {
       auto nothing_left = false;
 
       if (!co_await send_streamed(paced, response, head, keep_alive, options, body ? &*body : nullptr, nothing_left)) {

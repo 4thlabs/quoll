@@ -40,11 +40,14 @@
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/http/fields.hpp>
+#include <quoll/http/status.hpp>
 
 #include <concepts>
 #include <functional>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 namespace quoll::http {
 
@@ -72,10 +75,21 @@ public:
   explicit body_stream(Sink &sink QUOLL_LIFETIMEBOUND) noexcept
       : sink_(&sink),
         write_([](void *erased, std::string_view piece) { return static_cast<Sink *>(erased)->write(piece); }),
+        head_([](void *erased, http::status status, http::fields fields) {
+          if constexpr (requires(Sink &target) { target.head(status, std::move(fields)); }) {
+            static_cast<Sink *>(erased)->head(status, std::move(fields));
+          }
+        }),
         type_(async::detail::type_id_of<Sink>()) {}
 
   /** @brief Writes `piece`, which stays valid until the task ends. An empty one sends the head, if it has not left. */
   [[nodiscard]] async::task<> write(std::string_view piece QUOLL_LIFETIMEBOUND) const { return write_(sink_, piece); }
+
+  /**
+   * @brief The status and fields of the response this writes, for a head that leaves with the first write: see
+   * http::response_writer. Nothing where a body has no such head.
+   */
+  void head(http::status status, http::fields fields) const { head_(sink_, status, std::move(fields)); }
 
   /** @brief What it writes through if it is exactly a `Sink`, otherwise `nullptr`. */
   template <class Sink>
@@ -86,6 +100,7 @@ public:
 private:
   void *sink_;
   async::task<> (*write_)(void *, std::string_view);
+  void (*head_)(void *, http::status, http::fields);
   async::detail::type_id type_;
 };
 

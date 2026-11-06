@@ -1,0 +1,116 @@
+//   ___              _ _
+//  / _ \ _   _  ___ | | |
+// | | | | | | |/ _ \| | |
+// | |_| | |_| | (_) | | |
+//  \__\_\\__,_|\___/|_|_|
+//
+// BSD 3-Clause License
+//
+// Copyright (c) 2026, Thomas Gourgues (thomas.gourgues@gmail.com)
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#ifndef QUOLL_HTTP_RESPONSE_WRITER_HPP
+#define QUOLL_HTTP_RESPONSE_WRITER_HPP
+
+#include <quoll/async/lifetimebound.hpp>
+#include <quoll/async/task.hpp>
+#include <quoll/http/body_stream.hpp>
+#include <quoll/http/fields.hpp>
+#include <quoll/http/status.hpp>
+
+#include <optional>
+#include <string_view>
+
+namespace quoll::http {
+
+/**
+ * @brief What a handler writes its response through, as its last parameter, for a body in pieces with no lambda around
+ * it.
+ *
+ * @code
+ * router.get("/export/{name}", [](std::string name, http::response_writer out) -> task<> {
+ *   out.fields.set("Content-Type", "text/csv");
+ *
+ *   for (auto const &row : load(name)) {
+ *     co_await out.write(row);
+ *   }
+ * });
+ * @endcode
+ *
+ * The handler returns a `task<>`, and runs once the router has answered and the middlewares have returned, awaited by
+ * what serves the connection, so that its parameters live until it ends, a reference or a view too. A middleware
+ * therefore does not see its status when `next` returns, and adds to its fields, which the handler's replace by name.
+ * The head leaves with its first write: past that, changing the status or the fields does nothing.
+ *
+ * What it throws before its first write answers 500, and after it cuts the connection, as for a `response.body_writer`.
+ * If it ends without writing, its response has an empty body. To HEAD, it runs up to its first write, which sends the
+ * head and throws std::system_error with `std::errc::operation_canceled`, as does any write after that: a handler that
+ * lets it through ends. `Content-Length`, a stop request and a write that fails work as for a `response.body_writer`:
+ * see http::body_stream.
+ *
+ * A middleware wrapping `response.body_writer` around such a route loses its status and fields, unless what it writes
+ * through has a `head()` passing them on, and keeps `response.head_comes_with_the_body`.
+ *
+ * Moved, not copied. Take it by value, or pass it on by reference. Thread safety: one write() at a time.
+ */
+class response_writer {
+public:
+  /** @brief Writes through `out`. A route makes one: a handler is given it. */
+  explicit response_writer(body_stream out) noexcept : out_(out) {}
+
+  response_writer(response_writer const &) = delete;
+  response_writer &operator=(response_writer const &) = delete;
+  response_writer(response_writer &&other) noexcept;
+  response_writer &operator=(response_writer &&other) noexcept;
+
+  /** @brief A handler that wrote nothing gives its head here, for a response with an empty body. */
+  ~response_writer();
+
+  /** @brief The status of the response, until the first write(). 200 leaves what a middleware set. */
+  http::status status = http::status::ok;
+
+  /** @brief The fields of the response, until the first write(). */
+  http::fields fields;
+
+  /**
+   * @brief Writes `piece`, which stays valid until the task ends, and sends the head with the first one: an empty one
+   * sends it at once, for a stream to announce itself before its first data.
+   */
+  [[nodiscard]] async::task<> write(std::string_view piece QUOLL_LIFETIMEBOUND);
+
+private:
+  void give_head();
+
+  // Empty once moved from.
+  std::optional<body_stream> out_;
+  bool head_given_ = false;
+};
+
+} // namespace quoll::http
+
+#endif // QUOLL_HTTP_RESPONSE_WRITER_HPP

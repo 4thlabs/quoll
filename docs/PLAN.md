@@ -331,6 +331,11 @@ changes only what the harness shows. Candidates:
   `namespace async = quoll::async;`.
 - Performance does not make the user API dangerous (2026-11-06): what outlives a call owns what it needs, and the fast path goes
   behind it, in `detail`. `http::local_transport` keeps its own copy of the router, and `http::server` owns its listeners.
+- `http::response_writer` (2026-11-06): a handler writes its body itself, as `res.write` does in Express, rather than returning a lambda
+  that runs once it has ended, where what it captures by reference dangles. It runs as the response's writer, awaited by what serves
+  the connection, with no task of its own, its head leaving with its first write. So a middleware does not see its status: running
+  it up to its first write before the router answers would show it, and was tried, but the handler then outlives what it uses. A
+  `co_yield` can come later on top of it, the reverse being harder. `response.body_writer` stays, for a response built ahead of time.
 - `quoll::runtime` under Emscripten too (2026-11-06), so that `main()` reads the same: it is the browser's event loop, and `run()`
   returns at once, as the loop goes on once `main()` has returned. What differs from a native `run()` is said where it is.
 - The same code on every platform (2026-11-06): `http::client` is the one name, and `fetch_client` went. In a build for Emscripten, a client from a

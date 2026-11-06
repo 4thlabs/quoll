@@ -39,11 +39,13 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/http/body_reader.hpp>
+#include <quoll/http/body_stream.hpp>
 #include <quoll/http/detail/number.hpp>
 #include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
+#include <quoll/http/response_writer.hpp>
 #include <quoll/http/route_match.hpp>
 #include <quoll/http/status.hpp>
 
@@ -51,6 +53,7 @@
 #include <concepts>
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -139,6 +142,16 @@ inline constexpr std::size_t body_readers_in<std::tuple<Arguments...>> =
 template <class F>
 inline constexpr bool reads_body_in_pieces = body_readers_in<typename signature_of<F>::arguments> != 0;
 
+template <class T>
+inline constexpr bool is_response_writer = std::same_as<std::remove_cvref_t<T>, response_writer>;
+
+template <class Tuple>
+inline constexpr std::size_t response_writers_in = 0;
+
+template <class... Arguments>
+inline constexpr std::size_t response_writers_in<std::tuple<Arguments...>> =
+    (std::size_t{is_response_writer<Arguments>} + ... + 0);
+
 template <class Tuple>
 struct takes_request : std::false_type {};
 
@@ -187,7 +200,8 @@ private:
   [[nodiscard]] static consteval std::size_t count() {
     using arguments = typename signature_of<F>::arguments;
 
-    return std::tuple_size_v<arguments> - (takes_request<arguments>::value ? 1 : 0) - body_readers_in<arguments>;
+    return std::tuple_size_v<arguments> - (takes_request<arguments>::value ? 1 : 0) - body_readers_in<arguments> -
+           response_writers_in<arguments>;
   }
 
   std::string_view text_;
@@ -235,27 +249,135 @@ async::task<response> call_typed(F &target, request message, route_match match, 
   }
 }
 
+// What a handler writing through an http::response_writer is given, read once by the route and kept as it is, so that a
+// view stays on what it refers to, until its task ends.
+template <class... Parameters>
+struct writing_frame {
+  request message;
+  route_match match;
+  std::tuple<std::optional<std::remove_cvref_t<Parameters>>...> values{};
+};
+
+// Runs `action` when it goes, however its scope ends.
+template <class F>
+class at_scope_end {
+public:
+  explicit at_scope_end(F action) noexcept : action_(std::move(action)) {}
+
+  at_scope_end(at_scope_end const &) = delete;
+  at_scope_end &operator=(at_scope_end const &) = delete;
+  at_scope_end(at_scope_end &&) = delete;
+  at_scope_end &operator=(at_scope_end &&) = delete;
+
+  ~at_scope_end() { action_(); }
+
+private:
+  F action_;
+};
+
+template <class F, class Request, class... Parameters, std::size_t... Index>
+async::task<> run_writing(std::shared_ptr<writing_frame<Parameters...>> frame, F &target, body_stream out,
+                          std::index_sequence<Index...>) {
+  auto const give_writer = [&]<class T, std::size_t At>() {
+    if constexpr (std::same_as<T, response_writer>) {
+      std::get<At>(frame->values).emplace(out);
+    }
+  };
+
+  (give_writer.template operator()<std::remove_cvref_t<Parameters>, Index>(), ...);
+
+  // Gone with its handler, however it ends: it gives its head to what it writes through, which does not outlive this.
+  auto const drop_writer = [&]<class T, std::size_t At>() {
+    if constexpr (std::same_as<T, response_writer>) {
+      std::get<At>(frame->values).reset();
+    }
+  };
+
+  at_scope_end const dropping{
+      [&] { (drop_writer.template operator()<std::remove_cvref_t<Parameters>, Index>(), ...); }};
+
+  if constexpr (std::same_as<Request, no_request>) {
+    co_await std::invoke(target, std::forward<Parameters>(*std::get<Index>(frame->values))...);
+  } else {
+    co_await std::invoke(target, std::forward<Request>(frame->message),
+                         std::forward<Parameters>(*std::get<Index>(frame->values))...);
+  }
+}
+
+// The answer of such a route: its parameters read, and its handler to run as the body's writer.
+template <class F, class Request, class... Parameters, std::size_t... Index>
+[[nodiscard]] response answer_writing(F &target, request message, route_match match,
+                                      std::index_sequence<Index...> indices) {
+  auto frame = std::make_shared<writing_frame<Parameters...>>(std::move(message), std::move(match));
+  auto const read = [&]<class T, std::size_t At>() {
+    if constexpr (!std::same_as<T, response_writer>) {
+      std::get<At>(frame->values) = read_parameter<T, At>(frame->match);
+    }
+  };
+
+  (read.template operator()<std::remove_cvref_t<Parameters>, Index>(), ...);
+
+  if (!((is_response_writer<Parameters> || std::get<Index>(frame->values).has_value()) && ...)) {
+    return status_response(status::bad_request);
+  }
+
+  response answer;
+
+  answer.head_comes_with_the_body = true;
+  answer.body_writer = [frame = std::move(frame), &target, indices](body_stream out) {
+    return run_writing<F, Request, Parameters...>(frame, target, out, indices);
+  };
+  return answer;
+}
+
 template <class... Parameters>
 [[nodiscard]] consteval bool body_reader_comes_last() {
+  auto reader_seen = false;
+  auto in_order = true;
+
+  // Once one is found, nothing may follow it but what writes the response.
+  ((in_order = in_order && (!reader_seen || is_response_writer<Parameters>),
+    reader_seen = reader_seen || is_body_reader<Parameters>),
+   ...);
+
+  return in_order;
+}
+
+template <class... Parameters>
+[[nodiscard]] consteval bool response_writer_comes_last() {
   auto left = sizeof...(Parameters);
 
-  // Once one is found, nothing may follow it.
-  return (((left--, !is_body_reader<Parameters>) || left == 0) && ...);
+  return (((left--, !is_response_writer<Parameters>) || left == 0) && ...);
 }
 
 template <class Result, class F, class Request, class... Parameters>
 [[nodiscard]] auto typed_handler_for(F target) {
-  static_assert(is_response_result<Result>,
+  constexpr auto writes = (is_response_writer<Parameters> || ...);
+
+  static_assert(writes || is_response_result<Result>,
                 "quoll::http::router: a handler returns http::response or task<http::response>");
-  static_assert(((PathParameter<std::remove_cvref_t<Parameters>> || is_body_reader<Parameters>) && ...),
+  static_assert(!writes || std::same_as<Result, async::task<>>,
+                "quoll::http::router: a handler taking an http::response_writer returns task<>");
+  static_assert(((PathParameter<std::remove_cvref_t<Parameters>> || is_body_reader<Parameters> ||
+                  is_response_writer<Parameters>) &&
+                 ...),
                 "quoll::http::router: a path parameter is a std::string, a std::string_view, a number or a bool");
   static_assert(body_reader_comes_last<Parameters...>(),
                 "quoll::http::router: a handler takes one http::body_reader, last");
+  static_assert(response_writer_comes_last<Parameters...>(),
+                "quoll::http::router: a handler takes one http::response_writer, last");
 
-  return [target = std::move(target)](request message, route_match match) mutable -> async::task<response> {
-    return call_typed<Result, F, Request, Parameters...>(target, std::move(message), std::move(match),
-                                                         std::index_sequence_for<Parameters...>{});
-  };
+  if constexpr (writes) {
+    return [target = std::move(target)](request message, route_match match) mutable -> async::task<response> {
+      co_return answer_writing<F, Request, Parameters...>(target, std::move(message), std::move(match),
+                                                          std::index_sequence_for<Parameters...>{});
+    };
+  } else {
+    return [target = std::move(target)](request message, route_match match) mutable -> async::task<response> {
+      return call_typed<Result, F, Request, Parameters...>(target, std::move(message), std::move(match),
+                                                           std::index_sequence_for<Parameters...>{});
+    };
+  }
 }
 
 template <class F, class Result, class First, class... Rest>
