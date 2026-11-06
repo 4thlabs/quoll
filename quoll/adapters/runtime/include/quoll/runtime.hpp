@@ -42,6 +42,8 @@
 
 #if defined(QUOLL_RUNTIME_ASIO)
 #include <quoll/asio/runtime.hpp>
+#elif defined(QUOLL_RUNTIME_EMSCRIPTEN)
+#include <quoll/emscripten/runtime.hpp>
 #else
 #error "<quoll/runtime.hpp>: no runtime selected; link the quoll::runtime target"
 #endif
@@ -51,6 +53,9 @@ namespace quoll {
 #if defined(QUOLL_RUNTIME_ASIO)
 /** @brief The runtime of the build: the loop a program's tasks run on (see quoll::asio::runtime). */
 using runtime = asio::runtime;
+#elif defined(QUOLL_RUNTIME_EMSCRIPTEN)
+/** @brief The runtime of the build: the browser's event loop (see quoll::emscripten::runtime). */
+using runtime = emscripten::runtime;
 #endif
 
 } // namespace quoll

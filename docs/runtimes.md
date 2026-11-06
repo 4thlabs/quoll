@@ -55,8 +55,8 @@ int main() {
 }
 ```
 
-The CMake variable `QUOLL_RUNTIME` chooses the adapter, and `asio`, the default, is its only value
-today. Under Emscripten the target does not exist: a browser runs its own loop.
+The CMake variable `QUOLL_RUNTIME` chooses the adapter, and has one value per platform today: `asio` natively, and `emscripten`
+under `emcmake`, whose differences are [below](#emscripten). This table is the native one.
 
 | Function           | What it does                                                                                                                                                                  |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -145,17 +145,22 @@ cmake --build build-wasm -j"$(nproc)"
 
 ```cmake
 add_executable(my_page main.cpp)
-target_link_libraries(my_page PRIVATE quoll::emscripten quoll::rest)
+target_link_libraries(my_page PRIVATE quoll::runtime quoll::rest)
 target_link_options(my_page PRIVATE -sALLOW_MEMORY_GROWTH)
 ```
 
-There is no `quoll::runtime` here, and no `run()`. `main()` spawns on the event loop and returns, which
-leaves the loop running:
+`quoll::runtime` is the page's event loop here, and `main()` reads as it does natively. The loop is the
+browser's and goes on once `main()` has returned, so that `run()` returns at once, before any task has run, and what
+follows it runs first. Its stop token never stops, as a page has no Ctrl-C.
+
+> [!WARNING]
+> A task does not refer to a local of `main()`, which is valid natively, as `run()` waits, and is gone here when the
+> task runs. For the same code to run on both, what a task uses lives in it.
 
 ```cpp
 #include <quoll/async.hpp>
 #include <quoll/client.hpp>
-#include <quoll/emscripten.hpp>
+#include <quoll/runtime.hpp>
 
 #include <iostream>
 
@@ -170,11 +175,14 @@ async::task<> say_hello() {
 }
 
 int main() {
-  async::co_spawn(quoll::emscripten::executor{}, say_hello(), async::detached);
+  quoll::runtime runtime;
+
+  async::co_spawn(runtime.get_executor(), say_hello(), async::detached, runtime.get_stop_token());
+  runtime.run();
 }
 ```
 
-The same coroutines, clients, contracts and handlers run on both sides, and only `main()` differs:
+The same `main()`, coroutines, clients and contracts run on both sides, but for what a browser cannot do: a server, there, throws `std::logic_error` when it listens, as the executor offers no network.
 
 ```cpp
 http::client client{"https://api.example.com"};

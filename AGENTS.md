@@ -33,7 +33,7 @@ WASM), `quoll::asio` (asio executor offering the network, a timer, threads for b
 a timer, the browser's `fetch` as the `http::platform_ref` a client from a URL goes through, `dom_renderer` and `mount`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`),
 and
 `quoll::runtime` (`<quoll/runtime.hpp>`: `quoll::runtime`, the runtime of the adapter chosen with `QUOLL_RUNTIME`, asio
-natively; none under Emscripten). A client GET runs end to end over a memory stream, over TCP through the asio
+natively, the browser's event loop under Emscripten). A client GET runs end to end over a memory stream, over TCP through the asio
 connector, and over `fetch` in Node; a `rest::client` built from a URL calls `http::server` over TCP on a `quoll::runtime`.
 **The roadmap in `docs/PLAN.md` says what comes next, and which step is current.** Do not write the module design into this file.
 
