@@ -135,6 +135,52 @@ router.use([](http::request request, http::next const &next) -> task<http::respo
 - What it changes in the request reaches the handler, but not what comes of its method and target:
   the route, its parameters and its query are those that came.
 
+## Static files
+
+`server::static_files` is a middleware serving a directory, for the GET and HEAD requests under a prefix.
+
+```cpp
+http::router router;
+
+router.get("/api/hello", hello);
+router.use(quoll::server::static_files("/assets", "./public"));
+router.use(quoll::server::static_files("/", "./site"));
+```
+
+It only answers what the router itself answers 404 to, once the middlewares added after it have run:
+
+- A route always wins, and a request a route answers costs no look at the disk.
+- Where it stands among the middlewares protects nothing by accident: one added after it that refuses a request refuses its
+  file too, and what they add to the 404, CORS headers for instance, stays on the file's response.
+- A path the router refuses (`..`, `%00`) has had its 400.
+- A later middleware answering a 404 of its own rather than awaiting `next`, to hide something, has answered: only the
+  router's own counts, which one that awaits `next` and then changes has not replaced.
+- Of several on one path, the last added looks first, and a file that is not there leaves the 404 to the one before. That
+  is the other way round from Express.
+
+| Option          | Default      | What it does                                                                                             |
+| --------------- | ------------ | -------------------------------------------------------------------------------------------------------- |
+| `index`         | `index.html` | What a request for a directory serves. Empty: such a request stays a 404.                                |
+| `dotfiles`      | `false`      | Whether names starting with a dot are served. `.env` and `.git` are not, by default, nor what a link leads to among them. |
+| `content_types` | empty        | The `Content-Type` of an extension, lower case with no dot, in addition to those known, and over them.   |
+
+What comes out:
+
+- **In pieces.** A file goes out by 64 KiB, so that what it costs in memory does not depend on its size, and the
+  [minimum rates](#connection_options) apply as to any response. It is read on threads of the runtime's own, so that a slow
+  disk does not hold up the loop: see [Runtimes](runtimes.md).
+- **What describes it.** `Content-Type` from its extension, `application/octet-stream` otherwise, `Content-Length`,
+  `Last-Modified`, `ETag` and `Accept-Ranges`.
+- **A cache.** `If-None-Match` and `If-Modified-Since` answer 304, the first taking over the second. `If-Match` and
+  `If-Unmodified-Since` answer 412 when the file is no longer the one asked for, for resuming a download safely.
+- **A part.** A `Range` of one interval answers 206, and 416 out of the file, for resuming a download or seeking in a video.
+  Several intervals, or what cannot be read, send it whole. `If-Range` holds it to the file it was for.
+- **A directory.** Without its final slash, a redirect to it, if it has an index.
+
+The root is looked at again for each request, so that a link flipped to deploy a new release is followed. Nothing outside it
+is served, a symbolic link leading out of it included, and neither is what is not a regular file:
+all of that is the same 404 as what does not exist. There is no listing of a directory, and no compression.
+
 ## Serving
 
 `server::listen` listens on a port and serves until a stop request. It listens through the network of
@@ -340,6 +386,5 @@ OpenSSL throws `std::logic_error` here (see `QUOLL_TLS` in
 
 ## Not there yet
 
-Static files, server-sent events and WebSocket are on [the roadmap](PLAN.md#roadmap), not in Quoll
-today. A 2xx answer to CONNECT, and a response announcing more `Content-Length` than its body, are
+Server-sent events and WebSocket are on [the roadmap](PLAN.md#roadmap), not in Quoll today. A 2xx answer to CONNECT, and a response announcing more `Content-Length` than its body, are
 open points of its [step 2](PLAN.md#step-2-client-and-server-security-and-completeness).

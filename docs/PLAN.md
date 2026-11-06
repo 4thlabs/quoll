@@ -112,11 +112,13 @@ limits, the shutdown and the features are tested, and the reliability points are
 - Streamed request and response bodies, on the server, the client and browser `fetch`. A handler takes an `http::body_reader`
   to read its request in pieces, a message's `body_writer` writes in pieces through an `http::body_stream`, and a client's
   `transport.stream(request)` reads a response in pieces. Done: `http::parser` hands a body over in pieces, with `http::read_body`, and `http::body_reader`: a handler taking one asks for `100 Continue` by reading, and goes by the read timeout and its minimum rate, below. And `response.body_writer`: chunked by default, by the write timeout and its minimum rate. And `transport.stream(request)`, with `http::streamed_response`: a read timeout per piece, and a connection back at the end of the body. A client sends a request in pieces through its `body_writer`, on a connection of its own, as a writer runs once, with the response read meanwhile so that a server refusing a body is heard; `fetch` and `local_transport` gather what it writes first. And `fetch_transport.stream(request)`, with the same `http::streamed_response`: one piece per JavaScript read of `response.body`, so that nothing holds the body whole.
-- Static files, in streaming, from step 2: without it, a file has to fit in memory. Reading one blocks the loop, and Quoll has no
-  asynchronous file I/O yet, which comes with them.
+- Done: `server::static_files`, a middleware that answers what the router answers 404 to, in pieces, with a cache and ranges. It
+  reads through `async::offload`, a service of an executor that runs blocking work on threads of its own, which only an adapter
+  has: the core still needs none. It costs about 4% of the rate of a file already in the page cache, and a slow disk no longer
+  holds up the loop. `io_uring` may take over behind the same service if a measure asks for it.
 - Done: a minimum rate on the server, `min_read_rate` and `min_write_rate`, 16 KiB/s by default: a body's bytes, or what leaves, add to
   what `read_timeout` and `write_timeout` have left, up to themselves, so that a slow link has the time it needs, and a peer
-  sending a little now and then runs out of it. Static files will go by the same.
+  sending a little now and then runs out of it. Static files go by the same.
 - A half-close in `ByteStream`, if step 2 did not bring it.
 
 *Done when:* a transfer far larger than memory runs in bounded memory, on both sides, with the figure measured.

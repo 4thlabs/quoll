@@ -55,6 +55,7 @@ enum class status : std::uint16_t {
   created = 201,
   accepted = 202,
   no_content = 204,
+  partial_content = 206,
   moved_permanently = 301,
   found = 302,
   see_other = 303,
@@ -68,8 +69,10 @@ enum class status : std::uint16_t {
   method_not_allowed = 405,
   request_timeout = 408,
   conflict = 409,
+  precondition_failed = 412,
   content_too_large = 413,
   unsupported_media_type = 415,
+  range_not_satisfiable = 416,
   expectation_failed = 417,
   unprocessable_content = 422,
   too_many_requests = 429,
@@ -96,6 +99,8 @@ enum class status : std::uint16_t {
     return "Accepted";
   case status::no_content:
     return "No Content";
+  case status::partial_content:
+    return "Partial Content";
   case status::moved_permanently:
     return "Moved Permanently";
   case status::found:
@@ -122,10 +127,14 @@ enum class status : std::uint16_t {
     return "Request Timeout";
   case status::conflict:
     return "Conflict";
+  case status::precondition_failed:
+    return "Precondition Failed";
   case status::content_too_large:
     return "Content Too Large";
   case status::unsupported_media_type:
     return "Unsupported Media Type";
+  case status::range_not_satisfiable:
+    return "Range Not Satisfiable";
   case status::expectation_failed:
     return "Expectation Failed";
   case status::unprocessable_content:

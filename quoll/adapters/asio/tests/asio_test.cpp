@@ -44,6 +44,7 @@
 #include <quoll/async/detached.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
+#include <quoll/async/offload.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer_ref.hpp>
@@ -70,6 +71,7 @@
 #include <quoll/rest.hpp>
 #include <quoll/server/listen.hpp>
 #include <quoll/server/serve.hpp>
+#include <quoll/server/static_files.hpp>
 #include <quoll/test/check.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/test/run_task.hpp>
@@ -89,6 +91,8 @@
 #include <signal.h>
 
 #include <algorithm>
+#include <unistd.h>
+
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -96,6 +100,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <future>
 #include <memory>
 #include <optional>
@@ -1025,6 +1031,197 @@ TEST_CASE("asio::runtime: a stop ends a detached task on a real timer, and run()
   runtime.run();
 
   REQUIRE(went_on);
+}
+
+TEST_CASE("asio::runtime: offload runs its work on another thread, and comes back", "[asio][runtime]") {
+  auto const working = []() -> task<bool> {
+    auto const loop_thread = std::this_thread::get_id();
+    auto const worker = co_await quoll::async::offload([] { return std::this_thread::get_id(); });
+
+    co_return worker != loop_thread &&std::this_thread::get_id() == loop_thread;
+  };
+
+  REQUIRE(run_task(working()));
+
+  auto const failing = []() -> task<int> {
+    co_return co_await quoll::async::offload([]() -> int { throw std::runtime_error{"from the work"}; });
+  };
+
+  REQUIRE_THROWS_AS(run_task(failing()), std::runtime_error);
+}
+
+TEST_CASE("asio::runtime: a stop keeps offload from starting, and does not interrupt what has", "[asio][runtime]") {
+  using namespace std::chrono_literals;
+
+  auto const stopped = []() -> task<std::string> {
+    std::stop_source stop;
+    auto ran = false;
+
+    stop.request_stop();
+
+    try {
+      co_await quoll::async::detail::stop_scope<void>{quoll::async::offload([&] { ran = true; }), stop.get_token()};
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code() == std::errc::operation_canceled && !ran ? "not started" : "another failure";
+    }
+
+    co_return "ran";
+  };
+
+  REQUIRE(run_task(stopped()) == "not started");
+
+  auto const started = []() -> task<std::string> {
+    std::stop_source stop;
+    std::atomic<bool> running{false};
+
+    auto const working = [&]() -> task<std::string> {
+      co_await quoll::async::offload([&] {
+        running = true;
+        std::this_thread::sleep_for(50ms);
+      });
+      co_return "finished";
+    };
+
+    auto const stopping = [&]() -> task<> {
+      while (!running) {
+        co_await quoll::async::sleep_for(1ms);
+      }
+
+      stop.request_stop();
+    };
+
+    auto const under_stop = [&]() -> task<std::string> {
+      co_return co_await quoll::async::detail::stop_scope<std::string>{working(), stop.get_token()};
+    };
+
+    auto [result, stopper] = co_await quoll::async::when_all(under_stop(), stopping());
+
+    co_return std::move(result);
+  };
+
+  REQUIRE(run_task(started()) == "finished");
+}
+
+TEST_CASE("asio::runtime: a stop cancels an offload in line behind others", "[asio][runtime]") {
+  using namespace std::chrono_literals;
+
+  auto const exchange = []() -> task<std::string> {
+    std::atomic<int> running{0};
+    std::atomic<bool> release{false};
+    std::atomic<bool> ran{false};
+    std::stop_source stop;
+
+    // As many as there are threads, for the next to wait in line.
+    auto const holding = [&]() -> task<> {
+      co_await quoll::async::offload([&] {
+        ++running;
+
+        while (!release) {
+          std::this_thread::sleep_for(1ms);
+        }
+      });
+    };
+
+    auto const in_line = [&]() -> task<std::string> {
+      try {
+        co_await quoll::async::detail::stop_scope<void>{quoll::async::offload([&] { ran = true; }), stop.get_token()};
+      } catch (std::system_error const &thrown) {
+        co_return thrown.code() == std::errc::operation_canceled ? "canceled" : "another failure";
+      }
+
+      co_return "ran";
+    };
+
+    auto const stopping = [&]() -> task<> {
+      while (running != 2) {
+        co_await quoll::async::sleep_for(1ms);
+      }
+
+      co_await quoll::async::sleep_for(5ms);
+      stop.request_stop();
+      release = true;
+    };
+
+    auto [first, second, stopper, outcome] =
+        co_await quoll::async::when_all(holding(), holding(), stopping(), in_line());
+
+    co_return outcome + (ran ? " after running" : "");
+  };
+
+  REQUIRE(run_task(exchange()) == "canceled");
+}
+
+TEST_CASE("asio::runtime: run() waits for an offload a detached task is on", "[asio][runtime]") {
+  using namespace std::chrono_literals;
+
+  quoll::asio::runtime runtime;
+  auto ended = false;
+
+  auto const working = [&]() -> task<> {
+    co_await quoll::async::offload([] { std::this_thread::sleep_for(30ms); });
+    ended = true;
+  };
+
+  co_spawn(runtime.get_executor(), working(), quoll::async::detached);
+  runtime.run();
+
+  REQUIRE(ended);
+}
+
+TEST_CASE("asio: static_files over TCP: a file far larger than a piece, read away from the loop",
+          "[asio][runtime][server]") {
+  auto const directory = std::filesystem::temp_directory_path() / ("quoll_static_asio_" + std::to_string(::getpid()));
+
+  std::filesystem::create_directories(directory);
+
+  std::string content;
+
+  for (std::size_t index = 0; content.size() < std::size_t{4} * 1024 * 1024; ++index) {
+    content += std::to_string(index) + ",";
+  }
+
+  std::ofstream{directory / "large.bin", std::ios::binary} << content;
+
+  auto const exchange = [&]() -> task<std::string> {
+    http::router router;
+
+    router.use(quoll::server::static_files("/files", directory));
+
+    auto listener = co_await io::listen(0);
+    auto const port = listener.local_port().value();
+    std::stop_source stop;
+
+    auto const serving = [&]() -> task<> {
+      co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router, {.shutdown_timeout = {}}),
+                                                      stop.get_token()};
+    };
+
+    auto const calling = [&]() -> task<std::string> {
+      quoll::async::detail::stop_on_exit const stop_server{stop};
+      quoll::client::transport<> const transport{"http://127.0.0.1:" + std::to_string(port)};
+      http::request request;
+
+      request.target = "/files/large.bin";
+
+      auto response = co_await transport.stream(std::move(request));
+      std::string body;
+
+      while (auto const piece = co_await response.body.read()) {
+        body += *piece;
+      }
+
+      co_return body;
+    };
+
+    auto [served, body] = co_await quoll::async::when_all(serving(), calling());
+
+    co_return std::move(body);
+  };
+
+  auto const received = run_task(exchange());
+
+  std::filesystem::remove_all(directory);
+  REQUIRE(received == content);
 }
 
 TEST_CASE("asio: with_timeout stops a read from a silent peer", "[asio][runtime][timer]") {

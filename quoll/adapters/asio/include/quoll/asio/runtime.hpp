@@ -40,6 +40,7 @@
 #include <quoll/asio/detail/loop_services.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/offers_service.hpp>
+#include <quoll/async/offloader_ref.hpp>
 #include <quoll/async/service.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/work_item.hpp>
@@ -110,6 +111,9 @@ public:
     /** @brief The timer of the runtime's loop, as long-lived as the runtime. */
     [[nodiscard]] async::timer_ref query(async::service_tag<async::timer_ref>) const;
 
+    /** @brief What runs blocking work away from the loop: valid while this lives. */
+    [[nodiscard]] async::offloader_ref query(async::service_tag<async::offloader_ref>) const;
+
 #if defined(QUOLL_ASIO_TLS)
     /** @brief The TLS network of the runtime's loop, as long-lived as the runtime. */
     [[nodiscard]] io::tls_network_ref query(async::service_tag<io::tls_network_ref>) const;
@@ -162,6 +166,7 @@ private:
 static_assert(async::Executor<runtime::executor>);
 static_assert(async::OffersService<runtime::executor, io::network_ref>);
 static_assert(async::OffersService<runtime::executor, async::timer_ref>);
+static_assert(async::OffersService<runtime::executor, async::offloader_ref>);
 #if defined(QUOLL_ASIO_TLS)
 static_assert(async::OffersService<runtime::executor, io::tls_network_ref>);
 #endif

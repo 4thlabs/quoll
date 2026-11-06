@@ -635,11 +635,18 @@ private:
 // one.
 async::task<http::response> respond(http::router const &router, http::request request,
                                     connection_options const &options, streamed_body *body) {
+  auto const stop_token = co_await async::current_stop_token();
+
   try {
     co_return co_await router.dispatch(std::move(request),
                                        body != nullptr ? http::body_reader{*body} : http::body_reader{});
   } catch (body_not_read const &) {
     // No failure of the handler's, which only let it through.
+  } catch (std::system_error const &thrown) {
+    // What a stop throws is no failure either, unlike what goes wrong during one.
+    if (options.on_handler_error && !(stop_token.stop_requested() && thrown.code() == std::errc::operation_canceled)) {
+      options.on_handler_error(std::current_exception());
+    }
   } catch (...) {
     if (options.on_handler_error) {
       options.on_handler_error(std::current_exception());
@@ -810,9 +817,14 @@ async::task<bool> send_streamed(paced_stream &stream, http::response &response, 
       // No failure of the writer's, which only let it through.
     } catch (body_not_read const &) {
       // Nor is this, from a writer reading the request.
+    } catch (std::system_error const &thrown) {
+      // What a stop throws is no failure either, unlike what goes wrong during one.
+      if (options.on_handler_error &&
+          !(stop_token.stop_requested() && thrown.code() == std::errc::operation_canceled)) {
+        options.on_handler_error(std::current_exception());
+      }
     } catch (...) {
-      // A stop is no failure either.
-      if (options.on_handler_error && !stop_token.stop_requested()) {
+      if (options.on_handler_error) {
         options.on_handler_error(std::current_exception());
       }
     }
