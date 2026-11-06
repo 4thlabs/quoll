@@ -51,7 +51,7 @@ namespace quoll::io {
 
 /**
  * @brief A Connector that also opens encrypted connections: `connect_tls(host, port, options)` completes once the
- * handshake has checked the server. What client::transport needs for `https://`.
+ * handshake has checked the server. What http::client needs for `https://`.
  */
 template <class C>
 concept TlsConnector = Connector<C> && requires(C const &connector, std::string host, std::uint16_t port,

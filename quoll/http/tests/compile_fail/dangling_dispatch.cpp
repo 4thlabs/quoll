@@ -34,10 +34,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: will be destroyed at the end of the full-expression
+// expect: deleted
 
-// A task kept past the router it reads.
-#pragma clang diagnostic error "-Wdangling"
+// A task kept past the router it reads, which no compiler lets through.
 
 #include <quoll/http/router.hpp>
 

@@ -2,7 +2,7 @@
 
 Quoll's core does no I/O and has no loop of its own. An adapter brings those: where tasks run, and the
 network, the timer and TLS they use. A task asks the executor it runs on for what it needs, so that
-`server::listen`, `client::transport` and `async::sleep_for` take none of it as arguments.
+`http::server`, `http::client` and `async::sleep_for` take none of it as arguments.
 
 | Adapter             | Where tasks run               | Network | Timer | TLS             | Builds on                         |
 | ------------------- | ----------------------------- | ------- | ----- | --------------- | --------------------------------- |
@@ -13,6 +13,18 @@ network, the timer and TLS they use. A task asks the executor it runs on for wha
 An operation that needs what its executor does not offer says so: `async::sleep_for`,
 `async::with_timeout`, `io::listen` and `io::connect` throw `std::logic_error`. The timeouts in the options
 of the server and of the client are different: on an executor without a timer, they do not apply.
+
+The fragments here assume:
+
+```cpp
+namespace async = quoll::async;
+namespace http = quoll::http;
+namespace io = quoll::io;
+namespace rest = quoll::rest;
+namespace threads = quoll::threads;
+```
+
+`quoll::asio` and `quoll::emscripten` keep their full names, as `asio::` and `quoll::emscripten::` are what they adapt.
 
 ## `quoll::runtime`
 
@@ -26,17 +38,19 @@ build. Application code names no adapter:
 #include <chrono>
 #include <iostream>
 
-quoll::async::task<> tick() {
+namespace async = quoll::async;
+
+async::task<> tick() {
   for (auto left = 3; left > 0; --left) {
     std::cout << left << std::endl;
-    co_await quoll::async::sleep_for(std::chrono::seconds{1});
+    co_await async::sleep_for(std::chrono::seconds{1});
   }
 }
 
 int main() {
   quoll::runtime runtime;
 
-  quoll::async::co_spawn(runtime.get_executor(), tick(), quoll::async::detached, runtime.get_stop_token());
+  async::co_spawn(runtime.get_executor(), tick(), async::detached, runtime.get_stop_token());
   runtime.run();
 }
 ```
@@ -57,10 +71,10 @@ The runtime can be neither copied nor moved, and it outlives its executors. `run
 ### Blocking work
 
 `async::offload` runs work that blocks away from the loop, on threads of the runtime's own, started by its first use, and
-gives what it returns or throws. `server::static_files` reads through it.
+gives what it returns or throws. `http::static_files` reads through it.
 
 ```cpp
-auto const size = co_await quoll::async::offload([&] { return std::filesystem::file_size(path); });
+auto const size = co_await async::offload([&] { return std::filesystem::file_size(path); });
 ```
 
 On an executor that offers no such thing, as a thread pool and a browser's event loop do not, the work runs right there. A
@@ -87,14 +101,14 @@ at run time.
 
 ## The thread pool
 
-`quoll::threads::thread_pool` resumes coroutines on a fixed set of worker threads, concurrently. Its
+`threads::thread_pool` resumes coroutines on a fixed set of worker threads, concurrently. Its
 executor offers no network and no timer, so that it serves no HTTP alone, and `sleep_for` throws there.
 It holds work for the CPU:
 
 ```cpp
-quoll::threads::thread_pool pool{4};
+threads::thread_pool pool{4};
 
-quoll::async::co_spawn(pool.get_executor(), crunch(), quoll::async::detached);
+async::co_spawn(pool.get_executor(), crunch(), async::detached);
 ```
 
 The pool's destructor lets the workers resume what is queued, then joins them. Every post has to happen
@@ -102,9 +116,11 @@ before that starts: a coroutine woken from outside the pool must have been resum
 may also run there, with the accept loop and the sockets on the runtime:
 
 ```cpp
-auto listener = co_await quoll::io::listen(8080);
+auto listener = co_await io::listen(8080);
 
-co_await quoll::server::serve(pool.get_executor(), listener, router);
+http::server server{router};
+
+co_await server.serve(pool.get_executor(), listener);
 ```
 
 > [!WARNING]
@@ -142,21 +158,23 @@ leaves the loop running:
 #include <quoll/http.hpp>
 
 #include <iostream>
-#include <utility>
 
-quoll::async::task<> say_hello() {
-  quoll::emscripten::fetch_transport transport{"https://api.example.com"};
-  quoll::http::request request;
+namespace async = quoll::async;
+namespace http = quoll::http;
+
+async::task<> say_hello() {
+  quoll::emscripten::fetch_client client{"https://api.example.com"};
+  http::request request;
 
   request.target = "/hello";
 
-  auto const response = co_await transport.send(std::move(request));
+  auto const response = co_await client.send(request);
 
   std::cout << response.body << '\n';
 }
 
 int main() {
-  quoll::async::co_spawn(quoll::emscripten::executor{}, say_hello(), quoll::async::detached);
+  async::co_spawn(quoll::emscripten::executor{}, say_hello(), async::detached);
 }
 ```
 
@@ -164,19 +182,19 @@ The same coroutines, contracts and handlers run on both sides. What differs is `
 transport, as `rest::client` shows:
 
 ```cpp
-rest::client<notes::api, quoll::emscripten::fetch_transport> client{""};
+rest::client<notes::api, quoll::emscripten::fetch_client> client{""};
 ```
 
 An empty base URL stays on the page's origin.
 
-### `fetch_transport`
+### `fetch_client`
 
 An `http::HttpTransport` over the JavaScript `fetch()`. `rest::client` takes it as its transport, and
 each request goes to the base URL followed by its target.
 
 What `fetch` does for you, and what it does not let you do:
 
-| Point                | `client::transport`                           | `fetch_transport`                                                                                                                                  |
+| Point                | `http::client`                                | `fetch_client`                                                                                                                                     |
 | -------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Streaming a response | [`stream()`](streaming.md#reading-a-response) | [`stream()`](streaming.md#in-a-browser), with no limit and no timeout per piece                                                                    |
 | Streaming a request  | [In pieces](streaming.md#writing-a-request)   | A `body_writer` runs to its end before the fetch, and goes out whole                                                                               |
@@ -185,7 +203,7 @@ What `fetch` does for you, and what it does not let you do:
 | Fields received      | As received                                   | In lower case, repeated ones combined, without those describing the bytes on the wire (`Content-Encoding`, `Content-Length`, `Transfer-Encoding`). |
 | Body received        | As received                                   | Decoded: decompressed and de-chunked.                                                                                                              |
 | HTTP version         | As received                                   | Not known: `http_1_1`.                                                                                                                             |
-| Options              | [`transport_options`](client.md#options)      | None: no limits, no connection settings and no timeouts of its own. Use `async::with_timeout`                                                      |
+| Options              | [`client_options`](client.md#options)         | None: no limits, no connection settings and no timeouts of its own. Use `async::with_timeout`                                                      |
 
 A failure to get a response (a network error, a refused connection, CORS) throws `std::system_error`
 with `std::errc::io_error` and `fetch`'s message. A stop request aborts the fetch, with

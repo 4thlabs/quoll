@@ -66,7 +66,7 @@ namespace quoll::asio {
  *   quoll::http::router router;
  *
  *   quoll::rest::mount<notes::api>(router, notes_service{});
- *   co_await quoll::server::listen(router, port);
+ *   co_await quoll::http::server{router}.listen(port);
  * }
  *
  * int main() {
@@ -78,7 +78,7 @@ namespace quoll::asio {
  * @endcode
  *
  * Its executor offers the loop's network (io::network_ref) and timer (async::timer_ref), so that io::connect(),
- * io::listen(), async::sleep_for() and what is built on them (quoll::server::listen, quoll::client::transport, a REST
+ * io::listen(), async::sleep_for() and what is built on them (quoll::http::server, quoll::http::client, a REST
  * client) need nothing handed to them.
  * What does I/O on the loop (a server, a client and its kept connections) lives in the tasks, created and destroyed by
  * them: the program's main coroutine rather than main().

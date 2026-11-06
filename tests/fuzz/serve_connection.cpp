@@ -43,7 +43,7 @@
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/half_closable_stream.hpp>
 #include <quoll/server/connection_options.hpp>
-#include <quoll/server/serve_connection.hpp>
+#include <quoll/server/server.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
 
@@ -85,15 +85,12 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
     return 0;
   }
 
-  quoll::server::connection_options options;
-
-  // Low enough for an input to reach them.
-  options.limits = quoll::fuzz::low_limits;
+  // Limits low enough for an input to reach them.
+  static quoll::http::server const server{quoll::fuzz::routes(), {.connection = {.limits = quoll::fuzz::low_limits}}};
 
   auto const serve = [&]() -> quoll::async::task<bool> {
-    co_await quoll::server::serve_connection(
-        quoll::io::any_stream{checked_stream{quoll::fuzz::as_text(data + 1, size - 1), data[0]}}, quoll::fuzz::routes(),
-        options);
+    co_await server.serve_connection(
+        quoll::io::any_stream{checked_stream{quoll::fuzz::as_text(data + 1, size - 1), data[0]}});
     co_return true;
   };
 

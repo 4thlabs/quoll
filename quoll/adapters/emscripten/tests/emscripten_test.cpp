@@ -103,7 +103,7 @@ namespace {
 namespace http = quoll::http;
 
 using quoll::async::task;
-using quoll::emscripten::fetch_transport;
+using quoll::emscripten::fetch_client;
 using quoll::test::overloaded;
 
 // Runs `work` on the event loop, suspending the test there (JSPI) until it completes, then returns its value or
@@ -213,7 +213,7 @@ task<http::response> get(Transport const &transport) {
   co_return co_await transport.send(std::move(request));
 }
 
-task<http::response> post(fetch_transport transport, std::string target, std::string body) {
+task<http::response> post(fetch_client transport, std::string target, std::string body) {
   http::request request;
 
   request.method = http::verb::post;
@@ -223,7 +223,7 @@ task<http::response> post(fetch_transport transport, std::string target, std::st
   co_return co_await transport.send(std::move(request));
 }
 
-task<http::response> get_target(fetch_transport transport, std::string target, http::fields fields = {}) {
+task<http::response> get_target(fetch_client transport, std::string target, http::fields fields = {}) {
   http::request request;
 
   request.target = std::move(target);
@@ -231,7 +231,7 @@ task<http::response> get_target(fetch_transport transport, std::string target, h
   co_return co_await transport.send(std::move(request));
 }
 
-task<std::error_code> send_error(fetch_transport transport, std::string target) {
+task<std::error_code> send_error(fetch_client transport, std::string target) {
   http::request request;
 
   request.target = std::move(target);
@@ -251,7 +251,7 @@ task<> request_stop(std::stop_source &source) {
 }
 
 // Requests a target the server never answers, then requests stop: when_all starts the fetch first.
-task<std::error_code> send_then_stop(fetch_transport transport, std::stop_source &source) {
+task<std::error_code> send_then_stop(fetch_client transport, std::stop_source &source) {
   auto const [error, stopped] = co_await quoll::async::when_all(send_error(transport, "/hang"), request_stop(source));
 
   co_return error;
@@ -285,7 +285,7 @@ task<std::error_code> sleep_then_stop(std::stop_source &source) {
 }
 
 // Requests a target the server never answers, up to the timeout.
-task<std::error_code> fetch_with_timeout(fetch_transport transport, std::chrono::nanoseconds timeout) {
+task<std::error_code> fetch_with_timeout(fetch_client transport, std::chrono::nanoseconds timeout) {
   http::request request;
 
   request.target = "/hang";
@@ -328,12 +328,12 @@ TEST_CASE("emscripten timer: a stop request ends a sleep", "[emscripten][timer]"
   REQUIRE(run(sleep_then_stop(source), source) == std::errc::operation_canceled);
 }
 
-TEST_CASE("fetch_transport: with_timeout aborts a pending fetch", "[emscripten][timer]") {
+TEST_CASE("fetch_client: with_timeout aborts a pending fetch", "[emscripten][timer]") {
   using namespace std::chrono_literals;
 
   test_server const server;
 
-  REQUIRE(run(fetch_with_timeout(fetch_transport{server.url()}, 20ms)) == std::errc::timed_out);
+  REQUIRE(run(fetch_with_timeout(fetch_client{server.url()}, 20ms)) == std::errc::timed_out);
 }
 
 TEST_CASE("emscripten executor resumes coroutines on the event loop", "[emscripten]") {
@@ -341,9 +341,9 @@ TEST_CASE("emscripten executor resumes coroutines on the event loop", "[emscript
   REQUIRE(quoll::emscripten::executor{} == quoll::emscripten::executor{});
 }
 
-TEST_CASE("fetch_transport: a client GET, end to end", "[emscripten][http]") {
+TEST_CASE("fetch_client: a client GET, end to end", "[emscripten][http]") {
   test_server const server;
-  auto const response = run(get(fetch_transport{server.url()}));
+  auto const response = run(get(fetch_client{server.url()}));
 
   REQUIRE(response.status == http::status::ok);
   REQUIRE(response.reason == "OK");
@@ -353,9 +353,9 @@ TEST_CASE("fetch_transport: a client GET, end to end", "[emscripten][http]") {
   REQUIRE(response.fields.find("X-Test") == "from quoll");
 }
 
-TEST_CASE("fetch_transport: a body goes out and an error status comes back as a response", "[emscripten][http]") {
+TEST_CASE("fetch_client: a body goes out and an error status comes back as a response", "[emscripten][http]") {
   test_server const server;
-  auto const response = run(post(fetch_transport{server.url()}, "/status/404", "a body"));
+  auto const response = run(post(fetch_client{server.url()}, "/status/404", "a body"));
 
   REQUIRE(response.status == http::status::not_found);
   REQUIRE(response.reason == "Not Found");
@@ -363,7 +363,7 @@ TEST_CASE("fetch_transport: a body goes out and an error status comes back as a 
   REQUIRE(response.fields.find("x-method") == "POST");
 }
 
-TEST_CASE("fetch_transport: a server nobody listens on fails", "[emscripten]") {
+TEST_CASE("fetch_client: a server nobody listens on fails", "[emscripten]") {
   std::string url;
 
   {
@@ -372,27 +372,27 @@ TEST_CASE("fetch_transport: a server nobody listens on fails", "[emscripten]") {
     url = server.url();
   }
 
-  REQUIRE(run(send_error(fetch_transport{url}, "/")) == std::errc::io_error);
+  REQUIRE(run(send_error(fetch_client{url}, "/")) == std::errc::io_error);
 }
 
-TEST_CASE("fetch_transport: a stop request aborts a pending fetch", "[emscripten]") {
+TEST_CASE("fetch_client: a stop request aborts a pending fetch", "[emscripten]") {
   test_server const server;
   std::stop_source source;
 
-  REQUIRE(run(send_then_stop(fetch_transport{server.url()}, source), source) == std::errc::operation_canceled);
+  REQUIRE(run(send_then_stop(fetch_client{server.url()}, source), source) == std::errc::operation_canceled);
 }
 
-TEST_CASE("fetch_transport: a stop request made before fetching", "[emscripten]") {
+TEST_CASE("fetch_client: a stop request made before fetching", "[emscripten]") {
   test_server const server;
   std::stop_source source;
 
   source.request_stop();
 
-  REQUIRE(run(send_error(fetch_transport{server.url()}, "/"), source) == std::errc::operation_canceled);
+  REQUIRE(run(send_error(fetch_client{server.url()}, "/"), source) == std::errc::operation_canceled);
 }
 
-TEST_CASE("fetch_transport: a field that would split into others is rejected before fetching", "[emscripten]") {
-  fetch_transport const transport{"http://127.0.0.1"};
+TEST_CASE("fetch_client: a field that would split into others is rejected before fetching", "[emscripten]") {
+  fetch_client const transport{"http://127.0.0.1"};
   http::request injected_value;
   http::request injected_name;
 
@@ -403,8 +403,8 @@ TEST_CASE("fetch_transport: a field that would split into others is rejected bef
   REQUIRE_THROWS_AS((void)transport.send(std::move(injected_name)), std::invalid_argument);
 }
 
-TEST_CASE("fetch_transport: a target that could leave the origin is rejected before fetching", "[emscripten]") {
-  fetch_transport const transport{"http://127.0.0.1"};
+TEST_CASE("fetch_client: a target that could leave the origin is rejected before fetching", "[emscripten]") {
+  fetch_client const transport{"http://127.0.0.1"};
   http::request other_host;
   http::request with_space;
 
@@ -415,23 +415,23 @@ TEST_CASE("fetch_transport: a target that could leave the origin is rejected bef
   REQUIRE_THROWS_AS((void)transport.send(std::move(with_space)), std::invalid_argument);
 }
 
-TEST_CASE("fetch_transport: a compressed body comes decoded, without the fields of the wire", "[emscripten][http]") {
+TEST_CASE("fetch_client: a compressed body comes decoded, without the fields of the wire", "[emscripten][http]") {
   test_server const server;
-  auto const response = run(get_target(fetch_transport{server.url()}, "/gzip"));
+  auto const response = run(get_target(fetch_client{server.url()}, "/gzip"));
 
   REQUIRE(response.body == "hello gzipped");
   REQUIRE_FALSE(response.fields.contains("Content-Encoding"));
   REQUIRE_FALSE(response.fields.contains("Content-Length"));
 }
 
-TEST_CASE("fetch_transport: field values are bytes, both ways", "[emscripten][http]") {
+TEST_CASE("fetch_client: field values are bytes, both ways", "[emscripten][http]") {
   test_server const server;
   http::fields fields;
 
   // Latin-1 'é', not valid UTF-8 on its own.
   fields.add("X-Test", "caf\xE9");
 
-  auto const response = run(get_target(fetch_transport{server.url()}, "/", std::move(fields)));
+  auto const response = run(get_target(fetch_client{server.url()}, "/", std::move(fields)));
 
   REQUIRE(response.fields.find("x-test") == "caf\xE9");
 }
@@ -451,9 +451,9 @@ using api = quoll::rest::api<"", echo, missing>;
 
 } // namespace
 
-TEST_CASE("fetch_transport: a body_writer goes out whole", "[emscripten][http]") {
+TEST_CASE("fetch_client: a body_writer goes out whole", "[emscripten][http]") {
   test_server const server;
-  fetch_transport const transport{server.url()};
+  fetch_client const transport{server.url()};
   http::request request;
 
   request.method = http::verb::post;
@@ -526,9 +526,9 @@ task<std::string> read_unstopped(http::response_body const &body QUOLL_LIFETIMEB
 
 } // namespace
 
-TEST_CASE("fetch_transport: a stop just after a response has come leaves it whole", "[emscripten][http][stream]") {
+TEST_CASE("fetch_client: a stop just after a response has come leaves it whole", "[emscripten][http][stream]") {
   test_server const server;
-  fetch_transport const transport{server.url()};
+  fetch_client const transport{server.url()};
   std::stop_source source;
   auto armed = false;
 
@@ -550,9 +550,9 @@ TEST_CASE("fetch_transport: a stop just after a response has come leaves it whol
   REQUIRE(source.stop_requested());
 }
 
-TEST_CASE("fetch_transport: a stop just after a piece has come leaves the body whole", "[emscripten][http][stream]") {
+TEST_CASE("fetch_client: a stop just after a piece has come leaves the body whole", "[emscripten][http][stream]") {
   test_server const server;
-  fetch_transport const transport{server.url()};
+  fetch_client const transport{server.url()};
   std::stop_source source;
   auto armed = false;
 
@@ -583,9 +583,9 @@ TEST_CASE("fetch_transport: a stop just after a piece has come leaves the body w
   REQUIRE(source.stop_requested());
 }
 
-TEST_CASE("fetch_transport: stream() takes a body_writer too, gathered first", "[emscripten][http][stream]") {
+TEST_CASE("fetch_client: stream() takes a body_writer too, gathered first", "[emscripten][http][stream]") {
   test_server const server;
-  fetch_transport const transport{server.url()};
+  fetch_client const transport{server.url()};
   http::request request;
 
   request.method = http::verb::post;
@@ -653,9 +653,9 @@ TEST_CASE("fetch_transport: stream() takes a body_writer too, gathered first", "
   REQUIRE(run(timing_out()) == std::make_error_code(std::errc::timed_out));
 }
 
-TEST_CASE("fetch_transport: a timeout ends a body_writer at its next write", "[emscripten][http][timer]") {
+TEST_CASE("fetch_client: a timeout ends a body_writer at its next write", "[emscripten][http][timer]") {
   test_server const server;
-  fetch_transport const transport{server.url()};
+  fetch_client const transport{server.url()};
   http::request request;
 
   request.method = http::verb::post;
@@ -687,9 +687,9 @@ TEST_CASE("fetch_transport: a timeout ends a body_writer at its next write", "[e
   REQUIRE(run(timing_out()) == std::make_error_code(std::errc::timed_out));
 }
 
-TEST_CASE("rest::client over fetch_transport calls an API that only has a contract", "[emscripten][rest]") {
+TEST_CASE("rest::client over fetch_client calls an API that only has a contract", "[emscripten][rest]") {
   test_server const server;
-  quoll::rest::client<node_server_api::api, fetch_transport> const client{fetch_transport{server.url()}};
+  quoll::rest::client<node_server_api::api, fetch_client> const client{fetch_client{server.url()}};
 
   REQUIRE(run(client.call<node_server_api::echo>("a b", "from the contract", "the body")) == "the body");
 
@@ -702,7 +702,7 @@ TEST_CASE("rest::client over fetch_transport calls an API that only has a contra
 
 namespace {
 
-task<http::streamed_response> stream_target(fetch_transport transport, std::string target,
+task<http::streamed_response> stream_target(fetch_client transport, std::string target,
                                             http::verb method = http::verb::get, std::string body = {}) {
   http::request request;
 
@@ -712,7 +712,7 @@ task<http::streamed_response> stream_target(fetch_transport transport, std::stri
   co_return co_await transport.stream(std::move(request));
 }
 
-task<std::error_code> stream_error(fetch_transport transport, std::string target) {
+task<std::error_code> stream_error(fetch_client transport, std::string target) {
   try {
     (void)co_await stream_target(std::move(transport), std::move(target));
   } catch (std::system_error const &error) {
@@ -723,7 +723,7 @@ task<std::error_code> stream_error(fetch_transport transport, std::string target
 }
 
 // Requests a target the server never answers, then requests stop: when_all starts the fetch first.
-task<std::error_code> stream_then_stop(fetch_transport transport, std::stop_source &source) {
+task<std::error_code> stream_then_stop(fetch_client transport, std::stop_source &source) {
   auto const [error, stopped] =
       co_await quoll::async::when_all(stream_error(std::move(transport), "/hang"), request_stop(source));
 
@@ -793,10 +793,10 @@ void let_the_event_loop_run() { emscripten_sleep(50); }
 
 } // namespace
 
-TEST_CASE("fetch_transport: stream completes before the body, and hands it over as it comes", "[emscripten][stream]") {
+TEST_CASE("fetch_client: stream completes before the body, and hands it over as it comes", "[emscripten][stream]") {
   test_server const server;
   // The server has written nothing of the body: waiting for it would never end, and fail by the time limit of run().
-  auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+  auto const response = run(stream_target(fetch_client{server.url()}, "/open"));
 
   REQUIRE(response.status == http::status::ok);
   REQUIRE(response.fields.find("x-open") == "yes");
@@ -813,10 +813,10 @@ TEST_CASE("fetch_transport: stream completes before the body, and hands it over 
   REQUIRE(run(next_piece(response.body)) == std::nullopt);
 }
 
-TEST_CASE("fetch_transport: stream gives several pieces, none larger than what was written at once",
+TEST_CASE("fetch_client: stream gives several pieces, none larger than what was written at once",
           "[emscripten][stream]") {
   test_server const server;
-  auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+  auto const response = run(stream_target(fetch_client{server.url()}, "/open"));
   std::vector<std::string> const writes{"one", "two", "three", std::string(1 << 20, 'x')};
   std::vector<std::size_t> pieces;
 
@@ -845,9 +845,9 @@ TEST_CASE("fetch_transport: stream gives several pieces, none larger than what w
   REQUIRE(run(next_piece(response.body)) == std::nullopt);
 }
 
-TEST_CASE("fetch_transport: stream gives the status, status text and fields of send", "[emscripten][stream]") {
+TEST_CASE("fetch_client: stream gives the status, status text and fields of send", "[emscripten][stream]") {
   test_server const server;
-  auto const response = run(stream_target(fetch_transport{server.url()}, "/status/404", http::verb::post, "a body"));
+  auto const response = run(stream_target(fetch_client{server.url()}, "/status/404", http::verb::post, "a body"));
 
   REQUIRE(response.status == http::status::not_found);
   REQUIRE(response.reason == "Not Found");
@@ -859,18 +859,18 @@ TEST_CASE("fetch_transport: stream gives the status, status text and fields of s
   REQUIRE(response.trailers->empty());
 }
 
-TEST_CASE("fetch_transport: stream decodes a body, without the fields of the wire", "[emscripten][stream]") {
+TEST_CASE("fetch_client: stream decodes a body, without the fields of the wire", "[emscripten][stream]") {
   test_server const server;
-  auto const response = run(stream_target(fetch_transport{server.url()}, "/gzip"));
+  auto const response = run(stream_target(fetch_client{server.url()}, "/gzip"));
 
   REQUIRE_FALSE(response.fields.contains("Content-Encoding"));
   REQUIRE_FALSE(response.fields.contains("Content-Length"));
   REQUIRE(run(read_rest(response.body)) == "hello gzipped");
 }
 
-TEST_CASE("fetch_transport: stream of an empty body frees its fetch at the end", "[emscripten][stream]") {
+TEST_CASE("fetch_client: stream of an empty body frees its fetch at the end", "[emscripten][stream]") {
   test_server const server;
-  auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+  auto const response = run(stream_target(fetch_client{server.url()}, "/open"));
 
   REQUIRE(quoll_test_fetch_entries() == 1);
 
@@ -881,13 +881,13 @@ TEST_CASE("fetch_transport: stream of an empty body frees its fetch at the end",
   REQUIRE(run(next_piece(response.body)) == std::nullopt);
 }
 
-TEST_CASE("fetch_transport: stream with no body at all ends at once", "[emscripten][stream]") {
+TEST_CASE("fetch_client: stream with no body at all ends at once", "[emscripten][stream]") {
   test_server const server;
   auto const [method, target] = GENERATE(table<http::verb, std::string>({
       {http::verb::head, "/"},
       {http::verb::get, "/status/204"},
   }));
-  auto const response = run(stream_target(fetch_transport{server.url()}, target, method));
+  auto const response = run(stream_target(fetch_client{server.url()}, target, method));
 
   REQUIRE(response.fields.find("x-target") == target);
   // Before any read: nothing will come.
@@ -895,9 +895,9 @@ TEST_CASE("fetch_transport: stream with no body at all ends at once", "[emscript
   REQUIRE(run(next_piece(response.body)) == std::nullopt);
 }
 
-TEST_CASE("fetch_transport: a body cut by the server fails with io_error, after what came", "[emscripten][stream]") {
+TEST_CASE("fetch_client: a body cut by the server fails with io_error, after what came", "[emscripten][stream]") {
   test_server const server;
-  auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+  auto const response = run(stream_target(fetch_client{server.url()}, "/open"));
 
   server_writes("before");
   REQUIRE(run(next_piece(response.body)) == "before");
@@ -917,9 +917,9 @@ TEST_CASE("fetch_transport: a body cut by the server fails with io_error, after 
   REQUIRE(std::string_view{again.what()} == failure.what());
 }
 
-TEST_CASE("fetch_transport: a stop request during a read ends the reading", "[emscripten][stream]") {
+TEST_CASE("fetch_client: a stop request during a read ends the reading", "[emscripten][stream]") {
   test_server const server;
-  auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+  auto const response = run(stream_target(fetch_client{server.url()}, "/open"));
   std::stop_source source;
 
   REQUIRE(run(read_then_stop(response.body, source), source).code() == std::errc::operation_canceled);
@@ -930,9 +930,9 @@ TEST_CASE("fetch_transport: a stop request during a read ends the reading", "[em
   REQUIRE(run(read_failure(response.body)).code() == std::errc::operation_canceled);
 }
 
-TEST_CASE("fetch_transport: a stop request made before a read ends the reading", "[emscripten][stream]") {
+TEST_CASE("fetch_client: a stop request made before a read ends the reading", "[emscripten][stream]") {
   test_server const server;
-  auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+  auto const response = run(stream_target(fetch_client{server.url()}, "/open"));
   std::stop_source source;
 
   source.request_stop();
@@ -943,11 +943,11 @@ TEST_CASE("fetch_transport: a stop request made before a read ends the reading",
   REQUIRE(run(read_failure(response.body)).code() == std::errc::operation_canceled);
 }
 
-TEST_CASE("fetch_transport: with_timeout on a read ends the reading", "[emscripten][stream][timer]") {
+TEST_CASE("fetch_client: with_timeout on a read ends the reading", "[emscripten][stream][timer]") {
   using namespace std::chrono_literals;
 
   test_server const server;
-  auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+  auto const response = run(stream_target(fetch_client{server.url()}, "/open"));
 
   REQUIRE(run(read_with_timeout(response.body, 20ms)) == std::errc::timed_out);
   REQUIRE(quoll_test_fetch_entries() == 0);
@@ -955,12 +955,12 @@ TEST_CASE("fetch_transport: with_timeout on a read ends the reading", "[emscript
   REQUIRE(run(read_failure(response.body)).code() == std::errc::operation_canceled);
 }
 
-TEST_CASE("fetch_transport: dropping a response before the end aborts its fetch", "[emscripten][stream]") {
+TEST_CASE("fetch_client: dropping a response before the end aborts its fetch", "[emscripten][stream]") {
   test_server const server;
   auto const dropped_at = GENERATE(0, 1);
 
   {
-    auto const response = run(stream_target(fetch_transport{server.url()}, "/open"));
+    auto const response = run(stream_target(fetch_client{server.url()}, "/open"));
 
     if (dropped_at == 1) {
       server_writes("first");
@@ -976,9 +976,9 @@ TEST_CASE("fetch_transport: dropping a response before the end aborts its fetch"
   REQUIRE(server_sees_close());
 }
 
-TEST_CASE("fetch_transport: copies of a body share the reading, and the last to go aborts", "[emscripten][stream]") {
+TEST_CASE("fetch_client: copies of a body share the reading, and the last to go aborts", "[emscripten][stream]") {
   test_server const server;
-  std::optional<http::streamed_response> response{run(stream_target(fetch_transport{server.url()}, "/open"))};
+  std::optional<http::streamed_response> response{run(stream_target(fetch_client{server.url()}, "/open"))};
   std::optional<http::response_body> copy{response->body};
 
   server_writes("one");
@@ -1001,9 +1001,9 @@ TEST_CASE("fetch_transport: copies of a body share the reading, and the last to 
   REQUIRE(server_sees_close());
 }
 
-TEST_CASE("fetch_transport: a body moved from has nothing to read", "[emscripten][stream]") {
+TEST_CASE("fetch_client: a body moved from has nothing to read", "[emscripten][stream]") {
   test_server const server;
-  auto response = run(stream_target(fetch_transport{server.url()}, "/open"));
+  auto response = run(stream_target(fetch_client{server.url()}, "/open"));
   auto const moved = std::move(response.body);
 
   REQUIRE(run(next_piece(response.body)) == std::nullopt);
@@ -1013,7 +1013,7 @@ TEST_CASE("fetch_transport: a body moved from has nothing to read", "[emscripten
   REQUIRE(run(next_piece(moved)) == "still here");
 }
 
-TEST_CASE("fetch_transport: stream fails as send does", "[emscripten][stream]") {
+TEST_CASE("fetch_client: stream fails as send does", "[emscripten][stream]") {
   SECTION("a server nobody listens on") {
     std::string url;
 
@@ -1023,14 +1023,14 @@ TEST_CASE("fetch_transport: stream fails as send does", "[emscripten][stream]") 
       url = server.url();
     }
 
-    REQUIRE(run(stream_error(fetch_transport{url}, "/")) == std::errc::io_error);
+    REQUIRE(run(stream_error(fetch_client{url}, "/")) == std::errc::io_error);
   }
 
   SECTION("a stop request during the fetch") {
     test_server const server;
     std::stop_source source;
 
-    REQUIRE(run(stream_then_stop(fetch_transport{server.url()}, source), source) == std::errc::operation_canceled);
+    REQUIRE(run(stream_then_stop(fetch_client{server.url()}, source), source) == std::errc::operation_canceled);
   }
 
   SECTION("a stop request before the fetch") {
@@ -1039,14 +1039,14 @@ TEST_CASE("fetch_transport: stream fails as send does", "[emscripten][stream]") 
 
     source.request_stop();
 
-    REQUIRE(run(stream_error(fetch_transport{server.url()}, "/"), source) == std::errc::operation_canceled);
+    REQUIRE(run(stream_error(fetch_client{server.url()}, "/"), source) == std::errc::operation_canceled);
   }
 
   REQUIRE(quoll_test_fetch_entries() == 0);
 }
 
-TEST_CASE("fetch_transport: stream rejects before fetching what send rejects", "[emscripten][stream]") {
-  fetch_transport const transport{"http://127.0.0.1"};
+TEST_CASE("fetch_client: stream rejects before fetching what send rejects", "[emscripten][stream]") {
+  fetch_client const transport{"http://127.0.0.1"};
   http::request injected_value;
   http::request other_host;
   http::request with_space;

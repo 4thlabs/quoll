@@ -115,12 +115,15 @@ find_package(quoll REQUIRED COMPONENTS rest runtime server)
 | `quoll::async`                                       | `task`, `co_spawn`, `when_all`, `sleep_for`, `with_timeout`                           |
 | `quoll::io`                                          | Byte streams, listeners, connectors, `io::connect`, `io::listen`, an in-memory stream |
 | `quoll::http`                                        | Messages, the parser and serializer, the router, `http::local_transport`              |
-| `quoll::server`                                      | `server::listen`, `server::serve`, `server::serve_connection`                         |
-| `quoll::client`                                      | `client::transport`                                                                   |
+| `quoll::server`                                      | `http::server`, `http::static_files`, `http::connection_options`                      |
+| `quoll::client`                                      | `http::client`                                                                        |
 | `quoll::rest`                                        | Contracts, `rest::mount`, `rest::client`, codecs                                      |
 | `quoll::ui`                                          | The [UI prototype](ui.md)                                                             |
 | `quoll::runtime`                                     | `quoll::runtime`, the loop a native program runs on: see [Runtimes](runtimes.md)      |
 | `quoll::asio`, `quoll::threads`, `quoll::emscripten` | The adapters, which a program rarely names: see [Runtimes](runtimes.md)               |
+
+`quoll::server` and `quoll::client` are libraries of their own, so that a program links only what it uses, and
+their names are in the namespace `quoll::http`.
 
 A target brings the modules it depends on: linking `quoll::server` brings `quoll::http`, which
 brings `quoll::io` and `quoll::async`. Each module has an umbrella header, such as
@@ -138,9 +141,10 @@ Link `quoll::runtime` and `quoll::server`. This `main.cpp` answers `GET /hello/{
 
 #include <string>
 
+namespace async = quoll::async;
 namespace http = quoll::http;
 
-quoll::async::task<> serve_hello() {
+async::task<> serve_hello() {
   http::router router;
 
   router.get("/hello/{name}", [](std::string name) {
@@ -150,14 +154,15 @@ quoll::async::task<> serve_hello() {
     return response;
   });
 
-  co_await quoll::server::listen(router, 8080);
+  http::server server{router};
+
+  co_await server.listen(8080);
 }
 
 int main() {
   quoll::runtime runtime;
 
-  quoll::async::co_spawn(runtime.get_executor(), serve_hello(), quoll::async::detached,
-                         runtime.get_stop_token());
+  async::co_spawn(runtime.get_executor(), serve_hello(), async::detached, runtime.get_stop_token());
   runtime.run();
 }
 ```
@@ -180,17 +185,17 @@ Link `quoll::runtime` and `quoll::client`. This one calls the server above:
 #include <quoll/runtime.hpp>
 
 #include <iostream>
-#include <utility>
 
+namespace async = quoll::async;
 namespace http = quoll::http;
 
-quoll::async::task<> say_hello() {
-  quoll::client::transport<> transport{"http://127.0.0.1:8080"};
+async::task<> say_hello() {
+  http::client client{"http://127.0.0.1:8080"};
   http::request request;
 
   request.target = "/hello/Ada";
 
-  auto const response = co_await transport.send(std::move(request));
+  auto const response = co_await client.send(request);
 
   std::cout << static_cast<int>(response.status) << ' ' << response.body << '\n';
 }
@@ -198,7 +203,7 @@ quoll::async::task<> say_hello() {
 int main() {
   quoll::runtime runtime;
 
-  quoll::async::co_spawn(runtime.get_executor(), say_hello(), quoll::async::detached);
+  async::co_spawn(runtime.get_executor(), say_hello(), async::detached);
   runtime.run();
 }
 ```
@@ -214,11 +219,11 @@ If you are writing both sides of an API, or calling one with typed requests and 
 `main()` creates the runtime, starts the program's main coroutine on it, and runs it:
 
 - **`quoll::runtime`** is the loop a program's tasks run on, run by the thread that calls `run()`.
-  It holds the network, the timer and TLS, which is why `listen` and `transport` ask for none of
+  It holds the network, the timer and TLS, which is why `http::server` and `http::client` ask for none of
   them. Natively it is asio underneath, and your program does not compile asio. A browser runs a
   loop of its own, so that there is no `quoll::runtime` there: see
   [Runtimes](runtimes.md#emscripten).
-- **`async::task<T>`** is a coroutine producing a `T`, or nothing for `task<>`. It is lazy: it starts
+- **`async::task<T>`** is a coroutine producing a `T`, or nothing for `async::task<>`. It is lazy: it starts
   when awaited, and destroying one that never ran does not run it. An exception it lets out is
   thrown again at its `co_await`.
 - **`async::co_spawn`** runs a task from outside a coroutine, from the executor and never inline, and
@@ -243,12 +248,12 @@ using namespace std::chrono_literals;
 auto const first = co_await load_user(1);
 
 // At once: both run, and it completes once they have.
-auto [second, third] = co_await quoll::async::when_all(load_user(2), load_user(3));
+auto [second, third] = co_await async::when_all(load_user(2), load_user(3));
 
 // With a deadline: the task is stopped, and awaited to its end.
-auto const fourth = co_await quoll::async::with_timeout(2s, load_user(4));
+auto const fourth = co_await async::with_timeout(2s, load_user(4));
 
-co_await quoll::async::sleep_for(100ms);
+co_await async::sleep_for(100ms);
 ```
 
 `with_timeout` asks the task to stop and waits for it to end, so that nothing it refers to is left
@@ -259,11 +264,11 @@ the task's `operation_canceled` becomes a `std::system_error` with `std::errc::t
 A task that runs on its own, while the coroutine goes on:
 
 ```cpp
-co_await quoll::async::co_spawn(refresh_cache(), quoll::async::detached);
+co_await async::co_spawn(refresh_cache(), async::detached);
 ```
 
 This does not wait for the task, and does not suspend. The task does not take the stop token of the
-coroutine: pass it `co_await quoll::async::current_stop_token()` for it to stop along with it, and see
+coroutine: pass it `co_await async::current_stop_token()` for it to stop along with it, and see
 [below](#failures) for what a stop does to it.
 
 ### Failures
@@ -273,7 +278,7 @@ to add to it. To carry on, catch it in the coroutine:
 
 ```cpp
 try {
-  auto const response = co_await transport.send(std::move(request));
+  auto const response = co_await client.send(request);
 
   std::cout << response.body << '\n';
 } catch (std::system_error const &failure) {
@@ -290,7 +295,7 @@ A stop request is no failure: what the task awaits throws `std::system_error` wi
 `std::errc::operation_canceled`, and that ends the task, with `async::detached` as well, and the program
 goes on. Catch it only to do something before the task ends, and let it out again. `async::detached`
 ignores that error whatever caused it, a closed socket or a read after a cancelled one too: a task that
-cares can check `co_await quoll::async::current_stop_token()` to tell them apart.
+cares can check `co_await async::current_stop_token()` to tell them apart.
 
 ## Where to go next
 

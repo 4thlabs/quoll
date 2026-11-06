@@ -38,7 +38,7 @@
 
 #include "notes_api.hpp"
 
-#include <quoll/emscripten/fetch_transport.hpp>
+#include <quoll/emscripten/fetch_client.hpp>
 #include <quoll/rest.hpp>
 
 #include <utility>
@@ -49,8 +49,7 @@ namespace {
 
 // The same contract as the server: a wrong call does not compile. An empty base URL stays on the page's origin.
 [[nodiscard]] auto &api() {
-  static quoll::rest::client<notes::api, quoll::emscripten::fetch_transport> client{
-      quoll::emscripten::fetch_transport{""}};
+  static quoll::rest::client<notes::api, quoll::emscripten::fetch_client> client{quoll::emscripten::fetch_client{""}};
 
   return client;
 }

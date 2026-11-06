@@ -64,7 +64,7 @@ also writes the first table in its summary. Of the pull requests, only one touch
 
 ## A file, read away from the loop
 
-`server::static_files` reads a file on threads of its own, through `async::offload`, so that a slow disk does not hold up
+`http::static_files` reads a file on threads of its own, through `async::offload`, so that a slow disk does not hold up
 the loop. Measured against reading on the loop, in turns, three runs of 3 s each, on an idle machine, for a file of 1 MiB
 already in the page cache, the case where that thread gains nothing:
 

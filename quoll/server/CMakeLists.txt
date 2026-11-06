@@ -2,8 +2,7 @@ quoll_declare_module(
   NAME server
   SOURCES
     src/connection.cpp
-    src/listen.cpp
-    src/serve.cpp
+    src/server.cpp
     src/static_files.cpp
   DEPS
     quoll::http
@@ -12,7 +11,7 @@ quoll_declare_module(
 quoll_declare_tests(
   SOURCES
     tests/serve_connection_test.cpp
-    tests/serve_test.cpp
+    tests/server_test.cpp
     tests/static_files_test.cpp
   DEPS
     quoll::server
@@ -22,9 +21,7 @@ quoll_declare_tests(
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   quoll_declare_compile_fail_tests(
     SOURCES
-      tests/compile_fail/dangling_listen.cpp
-      tests/compile_fail/dangling_router.cpp
-      tests/compile_fail/dangling_serve.cpp
+      tests/compile_fail/dangling_listener.cpp
     DEPS
       quoll::server
   )

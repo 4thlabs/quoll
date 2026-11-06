@@ -38,7 +38,7 @@
 #define QUOLL_REST_CLIENT_HPP
 
 #include <quoll/async/task.hpp>
-#include <quoll/client/transport.hpp>
+#include <quoll/client/client.hpp>
 #include <quoll/http/transport.hpp>
 #include <quoll/rest/call_error.hpp>
 #include <quoll/rest/detail/client_calls.hpp>
@@ -60,7 +60,7 @@ using result = detail::call_result<Endpoint>;
 
 /**
  * @brief Calls the endpoints of `Api` through `Transport` (an http::HttpTransport): a connection natively
- * (quoll::client::transport, the default), fetch in a browser, a Worker or Node, a router of the same program
+ * (quoll::http::client, the default), fetch in a browser, a Worker or Node, a router of the same program
  * (http::local_transport). The api may be a third-party
  * one: its contract is all a client needs.
  *
@@ -80,7 +80,7 @@ using result = detail::call_result<Endpoint>;
  * The task does not refer to the client: the request is built by the call, and the transport's task owns what it
  * needs. Thread safety: none (credentials() changes the client); calls on a const client may be concurrent.
  */
-template <class Api, http::HttpTransport Transport = ::quoll::client::transport<>>
+template <class Api, http::HttpTransport Transport = ::quoll::http::client>
 class client : public detail::client_call_set<client<Api, Transport>, Api,
                                               std::make_index_sequence<detail::max_arity(typename Api::routes{}) + 1>> {
 public:
@@ -93,10 +93,10 @@ public:
 
   /**
    * @brief A client of the server at `base_url`, through a transport built from it: with the default one, a connection
-   * over the network of the executor that calls (see quoll::client::transport, quoll::runtime); in a browser, name
-   * fetch_transport as the transport, which also takes a base URL.
+   * over the network of the executor that calls (see quoll::http::client, quoll::runtime); in a browser, name
+   * fetch_client as the transport, which also takes a base URL.
    *
-   * A trailing `/` is dropped, so that every transport reads the same URL (fetch_transport appends the targets to it).
+   * A trailing `/` is dropped, so that every transport reads the same URL (fetch_client appends the targets to it).
    *
    * @code
    * quoll::rest::client<bank::v1> bank{"http://127.0.0.1:8080"};

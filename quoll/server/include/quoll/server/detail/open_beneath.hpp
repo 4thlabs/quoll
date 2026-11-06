@@ -39,7 +39,7 @@
 
 #include <filesystem>
 
-namespace quoll::server::detail {
+namespace quoll::http::detail {
 
 // Opens `relative`, whose links have been followed already, under the directory `root`, one component at a time and
 // following none: a directory replaced by a link since the path was checked stops it, where open() would follow it out
@@ -47,6 +47,6 @@ namespace quoll::server::detail {
 // a descriptor, or the negative of what errno said.
 [[nodiscard]] int open_beneath(std::filesystem::path const &root, std::filesystem::path const &relative);
 
-} // namespace quoll::server::detail
+} // namespace quoll::http::detail
 
 #endif // QUOLL_SERVER_DETAIL_OPEN_BENEATH_HPP

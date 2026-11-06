@@ -34,7 +34,8 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/client/transport.hpp>
+#include <quoll/client/client.hpp>
+#include <quoll/io/network_connector.hpp>
 
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
@@ -79,12 +80,12 @@
 #include <utility>
 #include <vector>
 
-namespace quoll::client::detail {
+namespace quoll::http::detail {
 
 namespace {
 
-// The idle connections of a transport, between two requests. Thread safety: take() and give_back() may be called
-// from any thread, concurrently. The lock serves the requests of one transport sent from several threads (a thread
+// The idle connections of a client, between two requests. Thread safety: take() and give_back() may be called
+// from any thread, concurrently. The lock serves the requests of one client sent from several threads (a thread
 // pool); with a single thread, as under WASM, it is never contended, and std::mutex needs no thread support there.
 class connection_pool {
 public:
@@ -232,23 +233,24 @@ public:
       co_return;
     }
 
-    throw std::system_error{std::make_error_code(std::errc::timed_out), "quoll::client: no response to the request"};
+    throw std::system_error{std::make_error_code(std::errc::timed_out),
+                            "quoll::http::client: no response to the request"};
   }
 
   // What the writer writes through: see http::body_stream.
   [[nodiscard]] async::task<> write(std::string_view piece) {
     if (failure_) {
-      throw std::system_error{failure_, "quoll::client: the body cannot go on"};
+      throw std::system_error{failure_, "quoll::http::client: the body cannot go on"};
     }
 
     if (stop_.stop_requested()) {
       throw std::system_error{std::make_error_code(std::errc::operation_canceled),
-                              "quoll::client: the body was answered before its end"};
+                              "quoll::http::client: the body was answered before its end"};
     }
 
     if (wire_.past_its_length(piece)) {
       failure_ = std::make_error_code(std::errc::message_size);
-      throw std::length_error{"quoll::client: a body_writer wrote more than its Content-Length"};
+      throw std::length_error{"quoll::http::client: a body_writer wrote more than its Content-Length"};
     }
 
     if (auto const bytes = wire_.frame(piece); !bytes.empty()) {
@@ -265,7 +267,7 @@ private:
   [[nodiscard]] async::task<> finish() {
     // A writer may have made nothing of it.
     if (failure_) {
-      throw std::system_error{failure_, "quoll::client: cannot send the body"};
+      throw std::system_error{failure_, "quoll::http::client: cannot send the body"};
     }
 
     if (stop_.stop_requested()) {
@@ -273,7 +275,7 @@ private:
     }
 
     if (wire_.short_of_its_length()) {
-      throw std::length_error{"quoll::client: a body_writer wrote less than its Content-Length"};
+      throw std::length_error{"quoll::http::client: a body_writer wrote less than its Content-Length"};
     }
 
     if (auto const bytes = wire_.end(request_->trailers); !bytes.empty()) {
@@ -288,7 +290,7 @@ private:
     auto const sent = co_await io::write(*connection_, std::as_bytes(std::span{bytes}));
 
     if (sent.error) {
-      throw std::system_error{sent.error, "quoll::client: cannot send the body"};
+      throw std::system_error{sent.error, "quoll::http::client: cannot send the body"};
     }
   }
 
@@ -337,7 +339,7 @@ async::task<std::optional<http::response>> exchange(connection_pool &pool QUOLL_
         co_return std::nullopt;
       }
 
-      throw std::system_error{sent.error, "quoll::client: cannot send the request"};
+      throw std::system_error{sent.error, "quoll::http::client: cannot send the request"};
     }
   }
 
@@ -353,7 +355,7 @@ async::task<std::optional<http::response>> exchange(connection_pool &pool QUOLL_
         co_return std::nullopt;
       }
 
-      throw std::system_error{error, "quoll::client: cannot read the response"};
+      throw std::system_error{error, "quoll::http::client: cannot read the response"};
     }
 
     auto const keep_alive = parser.keep_alive();
@@ -362,7 +364,7 @@ async::task<std::optional<http::response>> exchange(connection_pool &pool QUOLL_
 
     if (http::is_informational(response.status) && !upgrade) {
       if (++interim > max_interim_responses) {
-        throw std::system_error{http::error::bad_message, "quoll::client: too many interim responses"};
+        throw std::system_error{http::error::bad_message, "quoll::http::client: too many interim responses"};
       }
 
       continue;
@@ -395,7 +397,7 @@ async::task<http::response> exchange_uploading(connection_pool &pool, http::pars
   auto [uploaded, response] = co_await async::when_all(
       sending.run(), until_answered(sending, exchange(pool, limits, connection, request, false, &reusable)));
 
-  assert(response && "client::exchange() without retry_if_closed produced no response");
+  assert(response && "exchange() without retry_if_closed produced no response");
 
   // Once all is over, for its last write to have ended, as what comes next on it would read what a cut one left.
   if (reusable && sending.complete()) {
@@ -407,11 +409,11 @@ async::task<http::response> exchange_uploading(connection_pool &pool, http::pars
 
 } // namespace
 
-// What the copies of a transport share.
-class transport_core {
+// What the copies of a client share.
+class client_core {
 public:
-  transport_core(connector_handle connector_, std::string host_, std::uint16_t port_, bool secure_,
-                 std::string host_field_, std::string prefix_, transport_options const &options_)
+  client_core(connector_handle connector_, std::string host_, std::uint16_t port_, bool secure_,
+              std::string host_field_, std::string prefix_, client_options const &options_)
       : connector(std::move(connector_)), host(std::move(host_)), port(port_), secure(secure_),
         host_field(std::move(host_field_)), prefix(std::move(prefix_)), options(options_),
         pool(options_.max_idle_connections) {
@@ -430,7 +432,7 @@ public:
   bool secure;
   std::string host_field;
   std::string prefix;
-  transport_options options;
+  client_options options;
   connection_pool pool;
   // Requests on a connection at once, when options.max_connections limits them.
   std::optional<async::detail::slots> places;
@@ -467,14 +469,14 @@ private:
 };
 
 // A new connection is about to open: what is idle past the limit makes room for it.
-void make_room(transport_core &shared) {
+void make_room(client_core &shared) {
   if (shared.places) {
     shared.pool.keep_at_most(shared.places->available());
   }
 }
 
-// The task holds the shared state, not the transport.
-async::task<http::response> send_prepared(std::shared_ptr<transport_core> shared, prepared_request request) {
+// The task holds the shared state, not the client.
+async::task<http::response> send_prepared(std::shared_ptr<client_core> shared, prepared_request request) {
   held_place place;
 
   if (shared->places) {
@@ -508,12 +510,12 @@ async::task<http::response> send_prepared(std::shared_ptr<transport_core> shared
       shared->options.response_timeout, exchange(shared->pool, shared->options.limits, connection, request, false));
 
   // Without retry_if_closed, exchange() produces a response or throws.
-  assert(response && "client::exchange() without retry_if_closed produced no response");
+  assert(response && "exchange() without retry_if_closed produced no response");
   co_return std::move(*response);
 }
 
 // The request as it goes on the wire. Throws std::invalid_argument for what http::serialize() rejects.
-[[nodiscard]] prepared_request prepare(transport_core const &shared, http::request &request) {
+[[nodiscard]] prepared_request prepare(client_core const &shared, http::request &request) {
   auto const keep_alive = request.version == http::version::http_1_1 &&
                           !http::detail::closes_connection(request.fields) && shared.options.max_idle_connections > 0;
 
@@ -605,7 +607,7 @@ void redirect_request(http::request &request, http::status status, std::string t
 }
 
 // Sends `request`, already prepared as `prepared` and given its `Host` field, then the ones its redirects ask for.
-async::task<http::response> send_following(std::shared_ptr<transport_core> shared, http::request request,
+async::task<http::response> send_following(std::shared_ptr<client_core> shared, http::request request,
                                            prepared_request prepared) {
   for (std::size_t followed = 0;; ++followed) {
     auto response = co_await send_prepared(shared, std::move(prepared));
@@ -622,7 +624,7 @@ async::task<http::response> send_following(std::shared_ptr<transport_core> share
     }
 
     if (followed == shared->options.max_redirects) {
-      throw std::system_error{http::error::too_many_redirects, "quoll::client: too many redirects"};
+      throw std::system_error{http::error::too_many_redirects, "quoll::http::client: too many redirects"};
     }
 
     redirect_request(request, response.status, std::move(*target));
@@ -632,10 +634,10 @@ async::task<http::response> send_following(std::shared_ptr<transport_core> share
 
 // A response being read in pieces, and its connection: what an http::streamed_response holds. It owns its place in
 // max_connections until the body has come to its end, or until it goes. Thread safety: none, on the loop of what reads
-// it; what it shares with its transport has its own.
+// it; what it shares with its client has its own.
 class response_stream {
 public:
-  explicit response_stream(std::shared_ptr<transport_core> shared)
+  explicit response_stream(std::shared_ptr<client_core> shared)
       : shared_(std::move(shared)), trailers_(std::make_shared<http::fields>()) {}
 
   [[nodiscard]] held_place &place() noexcept { return place_; }
@@ -651,7 +653,7 @@ public:
         co_return false;
       }
 
-      throw std::system_error{sent.error, "quoll::client: cannot send the request"};
+      throw std::system_error{sent.error, "quoll::http::client: cannot send the request"};
     }
 
     auto const answered = co_await read_final_head(connection, request, retry_if_closed);
@@ -708,7 +710,7 @@ public:
     }
 
     if (failure_) {
-      throw std::system_error{failure_, "quoll::client: cannot read the response"};
+      throw std::system_error{failure_, "quoll::http::client: cannot read the response"};
     }
 
     if (ended_) {
@@ -766,14 +768,14 @@ private:
           co_return false;
         }
 
-        throw std::system_error{error, "quoll::client: cannot read the response"};
+        throw std::system_error{error, "quoll::http::client: cannot read the response"};
       }
 
       auto const status = parser_->head().status;
 
       if (http::is_informational(status) && !parser_->upgrade()) {
         if (++interim > max_interim_responses) {
-          throw std::system_error{http::error::bad_message, "quoll::client: too many interim responses"};
+          throw std::system_error{http::error::bad_message, "quoll::http::client: too many interim responses"};
         }
 
         // The request method holds until the final one.
@@ -788,7 +790,7 @@ private:
   // Thrown rather than returned: a read a timeout cancelled is then that timeout's timed_out.
   [[nodiscard]] async::task<> read_piece() {
     if (auto const error = co_await http::read_body(*connection_, buffer_, *parser_, piece_)) {
-      throw std::system_error{error, "quoll::client: cannot read the response"};
+      throw std::system_error{error, "quoll::http::client: cannot read the response"};
     }
   }
 
@@ -814,7 +816,7 @@ private:
   }
 
   // Now rather than with what holds this, for as long as the caller keeps it: the place is for others, the server has
-  // no more to send, and what is left to read needs neither the transport nor the parser.
+  // no more to send, and what is left to read needs neither the client nor the parser.
   void let_go() noexcept {
     connection_.reset();
     place_.release();
@@ -823,7 +825,7 @@ private:
     shared_.reset();
   }
 
-  std::shared_ptr<transport_core> shared_;
+  std::shared_ptr<client_core> shared_;
   // One per attempt, from start().
   std::optional<http::response_parser> parser_;
   std::shared_ptr<http::fields> trailers_;
@@ -839,7 +841,7 @@ private:
   bool held_piece_ = false;
 };
 
-async::task<http::streamed_response> stream_prepared(std::shared_ptr<transport_core> shared, prepared_request request) {
+async::task<http::streamed_response> stream_prepared(std::shared_ptr<client_core> shared, prepared_request request) {
   auto stream = std::make_shared<response_stream>(shared);
 
   if (shared->places) {
@@ -877,20 +879,20 @@ async::task<http::streamed_response> stream_prepared(std::shared_ptr<transport_c
 
 } // namespace
 
-std::shared_ptr<transport_core> make_transport_core(connector_handle connector, std::string host, std::uint16_t port,
-                                                    bool secure, std::string prefix, transport_options const &options) {
+std::shared_ptr<client_core> make_client_core(connector_handle connector, std::string host, std::uint16_t port,
+                                              bool secure, std::string prefix, client_options const &options) {
   auto field = host_field(host, port, secure ? 443 : 80);
 
-  return std::make_shared<transport_core>(std::move(connector), std::move(host), port, secure, std::move(field),
-                                          std::move(prefix), options);
+  return std::make_shared<client_core>(std::move(connector), std::move(host), port, secure, std::move(field),
+                                       std::move(prefix), options);
 }
 
 namespace {
 
 // What send() and stream() ask of a request before anything runs.
-void make_ready(transport_core const &core, http::request &request) {
+void make_ready(client_core const &core, http::request &request) {
   if (!request.target.starts_with('/')) {
-    throw std::invalid_argument{"quoll::client::transport: the target is not in origin form"};
+    throw std::invalid_argument{"quoll::http::client: the target is not in origin form"};
   }
 
   request.target.insert(0, core.prefix);
@@ -902,12 +904,12 @@ void make_ready(transport_core const &core, http::request &request) {
 
 } // namespace
 
-async::task<http::streamed_response> stream(std::shared_ptr<transport_core> const &core, http::request request) {
+async::task<http::streamed_response> client_stream(std::shared_ptr<client_core> const &core, http::request request) {
   make_ready(*core, request);
   return stream_prepared(core, prepare(*core, request));
 }
 
-async::task<http::response> send(std::shared_ptr<transport_core> const &core, http::request request) {
+async::task<http::response> client_send(std::shared_ptr<client_core> const &core, http::request request) {
   make_ready(*core, request);
 
   auto prepared = prepare(*core, request);
@@ -920,4 +922,11 @@ async::task<http::response> send(std::shared_ptr<transport_core> const &core, ht
   return send_following(core, std::move(request), std::move(prepared));
 }
 
-} // namespace quoll::client::detail
+} // namespace quoll::http::detail
+
+namespace quoll::http {
+
+client::client(std::string_view url, client_options options)
+    : client(io::network_connector{}, url, std::move(options)) {}
+
+} // namespace quoll::http

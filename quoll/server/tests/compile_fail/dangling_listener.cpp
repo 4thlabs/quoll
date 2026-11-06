@@ -34,20 +34,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: will be destroyed at the end of the full-expression
+// expect: stack memory
 
-// The same, with a listener of its own.
-
+// A task kept past the listener it accepts from.
 #pragma clang diagnostic error "-Wdangling"
 
-#include <quoll/http/router.hpp>
 #include <quoll/io/any_listener.hpp>
-#include <quoll/server/serve.hpp>
+#include <quoll/server/server.hpp>
 
-#include <utility>
-
-quoll::async::task<> session(quoll::io::any_listener &listener) {
-  auto pending = quoll::server::serve(listener, quoll::http::router{});
-
-  co_await std::move(pending);
+quoll::async::task<> session(quoll::http::server const &server, quoll::io::any_listener listener) {
+  return server.serve(listener);
 }

@@ -112,7 +112,7 @@ static_assert(io::HalfClosableStream<accepted_tls_stream>);
 } // namespace detail
 
 /**
- * @brief Listener accepting TLS connections with asio, for a server (quoll::server::serve): as an acceptor, with a
+ * @brief Listener accepting TLS connections with asio, for a server (quoll::http::server): as an acceptor, with a
  * certificate. Each connection's handshake takes place on its first read.
  *
  * Move-only; the acceptor lives on the heap, so moving it is allowed while an accept is pending. Destroying it, or its

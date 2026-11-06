@@ -36,7 +36,7 @@ one description of an API:
 - **Fast, and measured.** One thread answers about 148,000 small requests a second over 16
   connections, on the machine they were measured on. A benchmark runs every night and holds the
   allocations per request to a budget: see [Performance](docs/performance.md).
-- **Easy to use.** A program is a coroutine. `co_await quoll::server::listen(router, 8080)` is a
+- **Easy to use.** A program is a coroutine. `co_await http::server{router}.listen(8080)` is a
   server, and `rest::client<api> client{"http://127.0.0.1:8080"}` is a client. Neither asks for an
   executor, a connector or an acceptor.
 - **Sans-IO.** The HTTP parser, the serializer and the router do no I/O, and a connection is served
@@ -82,6 +82,7 @@ And a `main.cpp`, holding a contract with one route, its server and a client cal
 #include <iostream>
 #include <string>
 
+namespace async = quoll::async;
 namespace http = quoll::http;
 namespace rest = quoll::rest;
 
@@ -98,15 +99,18 @@ struct greeter {
   greeting operator()(greet, std::string name) const { return {"Hello, " + name + "!"}; }
 };
 
-quoll::async::task<> serve() {
+async::task<> serve() {
   http::router router;
 
   rest::mount<api>(router, greeter{});
-  co_await quoll::server::listen(router, 8080);
+
+  http::server server{router};
+
+  co_await server.listen(8080);
 }
 
 // The client: the same contract, so that a wrong call does not compile.
-quoll::async::task<> call() {
+async::task<> call() {
   rest::client<api> client{"http://127.0.0.1:8080"};
   auto const answer = co_await client.call<greet>("Ada");
 
@@ -117,11 +121,10 @@ int main(int argc, char **) {
   quoll::runtime runtime;
 
   if (argc > 1) {
-    quoll::async::co_spawn(runtime.get_executor(), call(), quoll::async::detached);
+    async::co_spawn(runtime.get_executor(), call(), async::detached);
   } else {
     // Ctrl-C stops this token, which shuts the server down.
-    quoll::async::co_spawn(runtime.get_executor(), serve(), quoll::async::detached,
-                           runtime.get_stop_token());
+    async::co_spawn(runtime.get_executor(), serve(), async::detached, runtime.get_stop_token());
   }
 
   runtime.run();
@@ -149,10 +152,10 @@ is in [Getting started](docs/getting-started.md).
 | ------------------------------------------ | ------------------------------------------------------------------------------- |
 | [Getting started](docs/getting-started.md) | Adding Quoll with CMake, a first server and client, how a program runs          |
 | [Server](docs/server.md)                   | Routes, handlers, middlewares, `listen` and `serve`, timeouts, shutdown, errors |
-| [Client](docs/client.md)                   | `client::transport`, URLs, keep-alive and retries, redirects, TLS, failures     |
+| [Client](docs/client.md)                   | `http::client`, URLs, keep-alive and retries, redirects, TLS, failures          |
 | [Streaming](docs/streaming.md)             | Reading and writing bodies in pieces, on both sides, and what ends them         |
 | [REST](docs/rest.md)                       | The contract, `mount`, `rest::client`, codecs, third-party APIs                 |
-| [Runtimes](docs/runtimes.md)               | `quoll::runtime`, the adapters, `fetch_transport`, what WebAssembly asks of you |
+| [Runtimes](docs/runtimes.md)               | `quoll::runtime`, the adapters, `fetch_client`, what WebAssembly asks of you    |
 | [UI](docs/ui.md)                           | The `quoll::ui` prototype                                                       |
 | [Performance](docs/performance.md)         | What Quoll costs, and how it is measured                                        |
 | [Development](docs/development.md)         | Building from source, tests, the checks of CI, how to contribute                |

@@ -45,7 +45,7 @@
 #include <functional>
 #include <stop_token>
 
-namespace quoll::server {
+namespace quoll::http {
 
 /**
  * @brief How serve_connection() reads requests and reports what its handlers throw.
@@ -120,6 +120,6 @@ struct connection_options {
   std::function<void(std::exception_ptr)> on_handler_error{};
 };
 
-} // namespace quoll::server
+} // namespace quoll::http
 
 #endif // QUOLL_SERVER_CONNECTION_OPTIONS_HPP

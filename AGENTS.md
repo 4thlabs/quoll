@@ -21,20 +21,20 @@ current_executor and current_stop_token, executor services, co_spawn, on an exec
 `io::network_connector`, TLS options with `TlsNetwork`, `tls_network_ref`, `TlsConnector`, `io::connect_tls` and
 `io::listen_tls`, in-memory stream pair, `io::write`), `quoll::http` (messages, llhttp parser, serializer,
 `http::read` / `http::write` over a byte stream, `HttpTransport` concept, sans-IO `router`, `local_transport` to a
-router of the same program; llhttp is compiled and exported as `quoll::llhttp`), `quoll::server` (`serve_connection`
-serves a router on a byte stream, `serve` accepts connections from a `Listener`, `listen(router, port)`, `static_files`, a middleware),
-`quoll::client` (`transport`, an `HttpTransport` over a `Connector` with keep-alive connections, built from an
-`http[s]://` URL), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `client::transport` by default, and the
+router of the same program; llhttp is compiled and exported as `quoll::llhttp`), `quoll::server` (in `quoll::http`: `server` keeps a copy of a router and serves a byte stream,
+accepts connections from a `Listener` or listens on a port, `static_files`, a middleware),
+`quoll::client` (in `quoll::http`: `client`, an `HttpTransport` over a `Connector` with keep-alive connections, built from an
+`http[s]://` URL), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `http::client` by default, and the
 contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates; and the codecs: `json_codec` on
 Glaze, `text_codec`, `param_traits`), `quoll::ui` (a prototype: elements, decorators, `state`, `to_html`, `app` and the `Renderer`
 concept), the adapters `quoll::threads` (thread pool executor; its tests do not run under
 WASM), `quoll::asio` (asio executor offering the network, a timer, threads for blocking work and TLS, `tcp_stream`, `tls_stream`, connector and acceptors,
 `runtime`; native only, its runtime hides asio from a program, its streams and acceptors need standalone asio, TLS needs OpenSSL) and `quoll::emscripten` (JavaScript event loop executor offering
-a timer, `fetch_transport`, whose `stream` reads a response in pieces, `dom_renderer` and `mount`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`),
+a timer, `fetch_client`, whose `stream` reads a response in pieces, `dom_renderer` and `mount`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`),
 and
 `quoll::runtime` (`<quoll/runtime.hpp>`: `quoll::runtime`, the runtime of the adapter chosen with `QUOLL_RUNTIME`, asio
 natively; none under Emscripten). A client GET runs end to end over a memory stream, over TCP through the asio
-connector, and over `fetch` in Node; a `rest::client` built from a URL calls `server::listen` over TCP on a `quoll::runtime`.
+connector, and over `fetch` in Node; a `rest::client` built from a URL calls `http::server` over TCP on a `quoll::runtime`.
 **The roadmap in `docs/PLAN.md` says what comes next, and which step is current.** Do not write the module design into this file.
 
 ## Build & test

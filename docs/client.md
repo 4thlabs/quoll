@@ -1,22 +1,21 @@
 # Client
 
-`client::transport` speaks HTTP/1.1 to one server, keeps its connections and reuses them. It models
+`http::client` speaks HTTP/1.1 to one server, keeps its connections and reuses them. It models
 `http::HttpTransport`, which `rest::client` calls through: for typed requests and responses, see
 [REST](rest.md). Link `quoll::runtime` and `quoll::client`.
 
 The examples here assume:
 
 ```cpp
+namespace async = quoll::async;
 namespace http = quoll::http;
-namespace client = quoll::client;
-using quoll::async::task;
 using namespace std::chrono_literals;
 ```
 
 ## Sending a request
 
 ```cpp
-client::transport<> transport{"https://api.example.com/v1"};
+http::client client{"https://api.example.com/v1"};
 http::request request;
 
 request.method = http::verb::post;
@@ -24,7 +23,7 @@ request.target = "/users?notify=true";
 request.fields.set("Content-Type", "application/json");
 request.body = R"({"name":"Ada"})";
 
-auto const response = co_await transport.send(std::move(request));
+auto const response = co_await client.send(request);
 
 if (response.status == http::status::created) {
   std::cout << response.body << '\n';
@@ -35,8 +34,8 @@ Every response is a result, error statuses included. `request.target` is in orig
 with `/`. A `Host` field naming the server is added unless the request has one, and `Content-Length`
 when it has a body or is a POST, PUT or PATCH, unless its fields declare a framing.
 
-A transport opens its connections through the network of the executor that sends, so that it needs
-nothing from you. Copies share their connections. A task copies what it needs, so that the transport
+A client opens its connections through the network of the executor that sends, so that it needs
+nothing from you. Copies share their connections. A task copies what it needs, so that the client
 does not have to outlive it. What holds connections belongs in a coroutine, not in `main()`: see
 [How a program runs](getting-started.md#how-a-program-runs). `send()` and `stream()` may be called
 concurrently, from any thread, if the connector allows it.
@@ -46,9 +45,9 @@ concurrently, from any thread, if the connector allows it.
 The URL is `http[s]://host[:port][/path]`, an IPv6 address in brackets:
 
 ```cpp
-client::transport<> local{"http://127.0.0.1:8080"};
-client::transport<> v6{"http://[::1]:8080"};
-client::transport<> api{"https://api.example.com/v1"};
+http::client local{"http://127.0.0.1:8080"};
+http::client v6{"http://[::1]:8080"};
+http::client api{"https://api.example.com/v1"};
 ```
 
 A path goes before the target of every request, as it is. With the last one, `/users` is `/v1/users`,
@@ -58,11 +57,13 @@ of it on a server or a proxy resolving them.
 Anything else throws `std::invalid_argument` here: another URL, or a path that would not read as
 itself (an invalid escape, a dot segment, a NUL, an empty segment...).
 
-To connect some other way, give a connector, anything modelling `io::Connector`, with a host and a
-port. It counts as `http` for a redirect:
+To connect some other way, give a connector, anything modelling `io::Connector`, before the URL, or
+with a host and a port, which count as `http` for a redirect. An `https` URL needs an
+`io::TlsConnector`, and throws `std::invalid_argument` otherwise:
 
 ```cpp
-client::transport transport{quoll::io::network_connector{}, "example.com", 80};
+http::client over_url{my_connector{}, "http://api.example.com/v1"};
+http::client over_host{my_connector{}, "example.com", 80};
 ```
 
 ## Options
@@ -70,8 +71,8 @@ client::transport transport{quoll::io::network_connector{}, "example.com", 80};
 The options come after the URL:
 
 ```cpp
-client::transport<> transport{"https://api.example.com",
-                              {.max_connections = 16, .max_redirects = 3, .response_timeout = 5s}};
+http::client client{"https://api.example.com",
+                    {.max_connections = 16, .max_redirects = 3, .response_timeout = 5s}};
 ```
 
 | Option                 | Default   | What it does                                                                                          |
@@ -96,7 +97,7 @@ anew, and each request of a redirect chain has its own. For a deadline over the 
 use `async::with_timeout`:
 
 ```cpp
-auto const response = co_await quoll::async::with_timeout(2s, transport.send(std::move(request)));
+auto const response = co_await async::with_timeout(2s, client.send(request));
 ```
 
 ## Keep-alive and retries
@@ -133,7 +134,7 @@ is closed to make room for a new one.
 ## Redirects
 
 Redirects are not followed by default. With `max_redirects`, a 301, 302, 303, 307 or 308 response
-whose `Location` names the transport's scheme and the host and port of the request's `Host` field
+whose `Location` names the client's scheme and the host and port of the request's `Host` field
 sends the request again there. Past `max_redirects`, the request fails with
 `http::error::too_many_redirects`.
 
@@ -153,8 +154,8 @@ sends the request again there. Past `max_redirects`, the request fails with
 host. To trust a private authority, or for a development setup only, to accept anyone:
 
 ```cpp
-client::transport<> internal{"https://service.internal", {.tls = {.ca_file = "authority.pem"}}};
-client::transport<> development{"https://localhost:8443", {.tls = {.verify_peer = false}}};
+http::client internal{"https://service.internal", {.tls = {.ca_file = "authority.pem"}}};
+http::client development{"https://localhost:8443", {.tls = {.verify_peer = false}}};
 ```
 
 A server closing without TLS's closing message changes nothing for a response whose length is known,
@@ -182,7 +183,7 @@ Whatever keeps a response from coming throws from the task:
 
 ```cpp
 try {
-  auto const response = co_await transport.send(std::move(request));
+  auto const response = co_await client.send(request);
 
   std::cout << response.body << '\n';
 } catch (std::system_error const &failure) {
@@ -218,8 +219,11 @@ http::request request;
 
 request.target = "/hello";
 
-auto const response = co_await local.send(std::move(request));
+auto const response = co_await local.send(request);
 ```
 
-In a browser, `fetch_transport` takes the place of `client::transport`, with [other
-rules](runtimes.md#fetch_transport).
+It keeps its own copy of the router, so that nothing has to outlive it: add the routes first, as one
+added afterwards is not served.
+
+In a browser, `fetch_client` takes the place of `http::client`, with [other
+rules](runtimes.md#fetch_client).

@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/emscripten/fetch_transport.hpp>
+#include <quoll/emscripten/fetch_client.hpp>
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
@@ -174,11 +174,11 @@ struct aborter {
                                               std::string const &message) {
   if (outcome == fetch_outcome::aborted) {
     return std::system_error{std::make_error_code(std::errc::operation_canceled),
-                             "quoll::emscripten::fetch_transport: " + url};
+                             "quoll::emscripten::fetch_client: " + url};
   }
 
   return std::system_error{std::make_error_code(std::errc::io_error),
-                           "quoll::emscripten::fetch_transport: " + url + ": " + message};
+                           "quoll::emscripten::fetch_client: " + url + ": " + message};
 }
 
 // What a fetch_operation gives: its response and, when its body is to be read in pieces, what reads it and the URL its
@@ -477,13 +477,13 @@ private:
 // What send() and stream() ask of a request before anything runs.
 void check_request(http::request const &request) {
   if (!request.target.starts_with('/')) {
-    throw std::invalid_argument{"quoll::emscripten::fetch_transport: the target is not in origin form"};
+    throw std::invalid_argument{"quoll::emscripten::fetch_client: the target is not in origin form"};
   }
 
   http::detail::check_target(request.target);
 
   if (request.body_writer && !request.body.empty()) {
-    throw std::invalid_argument{"quoll::emscripten::fetch_transport: a request with a body_writer and a body"};
+    throw std::invalid_argument{"quoll::emscripten::fetch_client: a request with a body_writer and a body"};
   }
 }
 
@@ -491,7 +491,7 @@ void check_request(http::request const &request) {
 
 } // namespace detail
 
-async::task<http::response> fetch_transport::send(http::request request) const {
+async::task<http::response> fetch_client::send(http::request request) const {
   detail::check_request(request);
 
   auto url = base_url_ + request.target;
@@ -500,7 +500,7 @@ async::task<http::response> fetch_transport::send(http::request request) const {
   return detail::fetch(std::move(url), std::move(fields), std::move(request));
 }
 
-async::task<http::streamed_response> fetch_transport::stream(http::request request) const {
+async::task<http::streamed_response> fetch_client::stream(http::request request) const {
   detail::check_request(request);
 
   auto url = base_url_ + request.target;

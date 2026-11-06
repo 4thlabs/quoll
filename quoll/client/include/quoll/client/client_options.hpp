@@ -34,8 +34,8 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_CLIENT_TRANSPORT_OPTIONS_HPP
-#define QUOLL_CLIENT_TRANSPORT_OPTIONS_HPP
+#ifndef QUOLL_CLIENT_CLIENT_OPTIONS_HPP
+#define QUOLL_CLIENT_CLIENT_OPTIONS_HPP
 
 #include <quoll/http/parser.hpp>
 #include <quoll/io/tls_options.hpp>
@@ -45,18 +45,18 @@
 #include <cstdint>
 #include <limits>
 
-namespace quoll::client {
+namespace quoll::http {
 
 /**
- * @brief Settings of a client::transport.
+ * @brief Settings of a http::client.
  *
  * The timeouts end the request with std::system_error (std::errc::timed_out). Zero disables one. They need the timer of
  * the executor that sends, as quoll::runtime provides it: on an executor without one (a thread pool), they do not
  * apply.
  */
-struct transport_options {
+struct client_options {
   /**
-   * @brief Size limits of the responses, against servers sending unbounded ones. A body through transport::stream(),
+   * @brief Size limits of the responses, against servers sending unbounded ones. A body through client::stream(),
    * that memory does not hold and the caller is reading, has none by default.
    */
   http::parse_limits limits{.max_streamed_body_size = std::numeric_limits<std::uint64_t>::max()};
@@ -76,8 +76,8 @@ struct transport_options {
   std::size_t max_connections = 0;
   /**
    * @brief How many redirects a request follows; 0: a 3xx response is a result like the others. Past it, the request
-   * fails with std::system_error (`http::error::too_many_redirects`). Only to the transport's own server, in the same
-   * scheme; see client::transport.
+   * fails with std::system_error (`http::error::too_many_redirects`). Only to the client's own server, in the same
+   * scheme; see http::client.
    */
   std::size_t max_redirects = 0;
   /** @brief How long opening a connection may take, name resolution included, and waiting for `max_connections`. */
@@ -85,7 +85,7 @@ struct transport_options {
   /**
    * @brief How long a request may take once on a connection, from sending it to reading the end of its response: a
    * connection found closed and tried again counts anew. Its connection is then closed; the request is not tried again,
-   * as the server may be working on it. Through transport::stream(), it is up to the head, then per piece: a transfer
+   * as the server may be working on it. Through client::stream(), it is up to the head, then per piece: a transfer
    * takes as long as it keeps coming. With a `request.body_writer`, it is per piece written, then for the response from
    * the end of the body: the time the writer takes between pieces is its own.
    */
@@ -94,6 +94,6 @@ struct transport_options {
   io::tls_client_options tls{};
 };
 
-} // namespace quoll::client
+} // namespace quoll::http
 
-#endif // QUOLL_CLIENT_TRANSPORT_OPTIONS_HPP
+#endif // QUOLL_CLIENT_CLIENT_OPTIONS_HPP

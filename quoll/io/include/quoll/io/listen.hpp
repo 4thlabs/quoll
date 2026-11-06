@@ -46,7 +46,7 @@
 
 namespace quoll::io {
 
-/** @brief Where io::listen() and quoll::server::listen() listen by default: the loopback interface only. */
+/** @brief Where io::listen() and http::server::listen() listen by default: the loopback interface only. */
 inline constexpr std::string_view default_listen_address = "127.0.0.1";
 
 /**

@@ -42,7 +42,7 @@
 #include <string>
 #include <string_view>
 
-namespace quoll::client::detail {
+namespace quoll::http::detail {
 
 // The server an `http[s]://host[:port][/path]` URL names. The host is checked by host_field().
 struct origin {
@@ -70,6 +70,6 @@ struct origin {
 [[nodiscard]] std::optional<std::string> resolve_location(std::string_view location, std::string_view host, bool secure,
                                                           std::string_view target);
 
-} // namespace quoll::client::detail
+} // namespace quoll::http::detail
 
 #endif // QUOLL_CLIENT_DETAIL_URL_HPP

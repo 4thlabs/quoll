@@ -482,7 +482,7 @@ bool router::reads_body_in_pieces(request const &head) const {
   return may_be && resolve(head).body_in_pieces;
 }
 
-async::task<response> router::dispatch(request message, body_reader reader) const {
+async::task<response> router::dispatch(request message, body_reader reader) const & {
   auto resolved = resolve(message);
 
   // Only for a route reading in pieces: its request has neither body nor trailers, as on a connection, where they come

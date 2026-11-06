@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/server/serve_connection.hpp>
+#include <quoll/server/detail/serve_connection.hpp>
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/current_executor.hpp>
@@ -86,7 +86,7 @@
 #include <tuple>
 #include <utility>
 
-namespace quoll::server {
+namespace quoll::http {
 
 namespace {
 
@@ -446,7 +446,8 @@ private:
       co_return std::get<0>(std::move(results));
     } catch (std::system_error const &error) {
       if (state.expired && error.code() == std::errc::operation_canceled) {
-        throw std::system_error{std::make_error_code(std::errc::timed_out), "quoll::server: the peer took too long"};
+        throw std::system_error{std::make_error_code(std::errc::timed_out),
+                                "quoll::http::server: the peer took too long"};
       }
 
       throw;
@@ -562,12 +563,12 @@ public:
 
   [[nodiscard]] async::task<std::optional<std::string_view>> read() {
     if (failure_) {
-      throw body_not_read{failure_->error, "quoll::server: cannot read the body"};
+      throw body_not_read{failure_->error, "quoll::http::server: cannot read the body"};
     }
 
     if (stopped_) {
       throw body_not_read{std::make_error_code(std::errc::operation_canceled),
-                          "quoll::server: reading the body was stopped"};
+                          "quoll::http::server: reading the body was stopped"};
     }
 
     // What a read cut short leaves is no new piece.
@@ -588,12 +589,12 @@ public:
       // Whoever cancels it, as a handler's own timeout does, says what happens next: the body is not at fault, and the
       // response stands. Reading ends, as a stream does not take it up again: over TLS, its session is gone.
       stopped_ = true;
-      throw body_not_read{read.error, "quoll::server: reading the body was stopped"};
+      throw body_not_read{read.error, "quoll::http::server: reading the body was stopped"};
     }
 
     if (read.error) {
       failure_ = read;
-      throw body_not_read{read.error, "quoll::server: cannot read the body"};
+      throw body_not_read{read.error, "quoll::http::server: cannot read the body"};
     }
 
     // What came with this piece is at fault, whether the handler reads again or not: this request gets no other answer.
@@ -618,7 +619,7 @@ private:
   async::task<> send_continue() {
     if (auto const sent = co_await write_continue(*stream_)) {
       failure_ = request_read{sent};
-      throw body_not_read{sent, "quoll::server: cannot ask for the body"};
+      throw body_not_read{sent, "quoll::http::server: cannot ask for the body"};
     }
   }
 
@@ -722,12 +723,13 @@ public:
 
   [[nodiscard]] async::task<> write(std::string_view piece) {
     if (failed_) {
-      throw body_not_written{std::make_error_code(std::errc::broken_pipe), "quoll::server: the body cannot go on"};
+      throw body_not_written{std::make_error_code(std::errc::broken_pipe),
+                             "quoll::http::server: the body cannot go on"};
     }
 
     if (wire_.past_its_length(piece)) {
       failed_ = true;
-      throw std::length_error{"quoll::server: a body_writer wrote more than its Content-Length"};
+      throw std::length_error{"quoll::http::server: a body_writer wrote more than its Content-Length"};
     }
 
     response_starts();
@@ -773,7 +775,7 @@ private:
   [[nodiscard]] async::task<> send(std::string_view bytes) {
     if (auto const sent = co_await stream_->write_all(std::as_bytes(std::span{bytes}))) {
       failed_ = true;
-      throw body_not_written{sent, "quoll::server: cannot write the body"};
+      throw body_not_written{sent, "quoll::http::server: cannot write the body"};
     }
   }
 
@@ -842,7 +844,7 @@ async::task<bool> send_streamed(paced_stream &stream, http::response &response, 
 
       if (sink.short_of_its_length() && options.on_handler_error) {
         options.on_handler_error(std::make_exception_ptr(
-            std::length_error{"quoll::server: a body_writer wrote less than its Content-Length"}));
+            std::length_error{"quoll::http::server: a body_writer wrote less than its Content-Length"}));
       }
     }
 
@@ -1049,16 +1051,14 @@ async::task<> end_connection(io::any_stream &stream, connection_options const &o
 
 } // namespace
 
+namespace detail {
+
 async::task<> serve_connection(io::any_stream stream, http::router const &router, connection_options const &options) {
   auto const end = co_await serve_requests(stream, router, options);
 
   co_await end_connection(stream, options, end);
 }
 
-async::task<> serve_connection(io::any_stream stream, http::router const &router) {
-  static connection_options const defaults;
+} // namespace detail
 
-  return serve_connection(std::move(stream), router, defaults);
-}
-
-} // namespace quoll::server
+} // namespace quoll::http

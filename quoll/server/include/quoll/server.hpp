@@ -38,9 +38,9 @@
 #define QUOLL_SERVER_HPP
 
 #include <quoll/server/connection_options.hpp>
-#include <quoll/server/listen.hpp>
-#include <quoll/server/serve.hpp>
-#include <quoll/server/serve_connection.hpp>
+#include <quoll/server/listen_options.hpp>
+#include <quoll/server/serve_options.hpp>
+#include <quoll/server/server.hpp>
 #include <quoll/server/static_files.hpp>
 
 #endif // QUOLL_SERVER_HPP

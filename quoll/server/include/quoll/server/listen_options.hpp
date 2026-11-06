@@ -34,56 +34,24 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_SERVER_LISTEN_HPP
-#define QUOLL_SERVER_LISTEN_HPP
+#ifndef QUOLL_SERVER_LISTEN_OPTIONS_HPP
+#define QUOLL_SERVER_LISTEN_OPTIONS_HPP
 
-#include <quoll/async/lifetimebound.hpp>
-#include <quoll/async/task.hpp>
-#include <quoll/http/router.hpp>
 #include <quoll/io/listen.hpp>
 #include <quoll/io/tls_options.hpp>
-#include <quoll/server/serve.hpp>
 
-#include <cstdint>
 #include <string>
 
-namespace quoll::server {
+namespace quoll::http {
 
-/** @brief Where listen() listens, and how it serves. */
+/** @brief Where server::listen() listens. */
 struct listen_options {
   /** @brief The IP address to listen on: loopback by default, `0.0.0.0` or `::` for every interface. */
   std::string address = std::string{io::default_listen_address};
   /** @brief A certificate and its key make it an HTTPS server; without them, it speaks plain HTTP. */
   io::tls_server_options tls{};
-  serve_options serve{};
 };
 
-/**
- * @brief Listens on `port` and serves `router` there, until a stop request: the server of a program.
- *
- * Listens through the network of the executor the task runs on (io::listen), a runtime's: spawned with the runtime's
- * stop token, it stops on Ctrl-C. Throws std::system_error when the address cannot be bound or the certificate loaded,
- * and fails like serve() otherwise. `router` outlives the task, which completes once its connections have ended.
- *
- * @code
- * quoll::async::task<> serve_notes(std::uint16_t port) {
- *   quoll::http::router router;
- *
- *   quoll::rest::mount<notes::api>(router, notes_service{});
- *   co_await quoll::server::listen(router, port);
- * }
- * @endcode
- *
- * Over TLS:
- *
- * @code
- * co_await quoll::server::listen(router, 8443, {.tls = {.certificate_file = "cert.pem", .private_key_file =
- * "key.pem"}});
- * @endcode
- */
-[[nodiscard]] async::task<> listen(http::router const &router QUOLL_LIFETIMEBOUND, std::uint16_t port,
-                                   listen_options options = {});
+} // namespace quoll::http
 
-} // namespace quoll::server
-
-#endif // QUOLL_SERVER_LISTEN_HPP
+#endif // QUOLL_SERVER_LISTEN_OPTIONS_HPP

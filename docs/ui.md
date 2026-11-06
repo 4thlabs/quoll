@@ -18,6 +18,8 @@ A component is an aggregate with a `view()`, and `state<T>` members for what the
 
 #include <string>
 
+namespace async = quoll::async;
+
 using namespace quoll::ui;
 
 struct counter {
@@ -45,7 +47,7 @@ struct notes_page {
   state<std::string> draft;
 
   // Optional: runs once it first shows.
-  quoll::async::task<> mounted() { items = co_await load_notes(); }
+  async::task<> mounted() { items = co_await load_notes(); }
 
   element view() {
     return main_({
@@ -67,7 +69,7 @@ struct notes_page {
 | Edit a value           | `input() \| bind(draft)`, for a `state<std::string>`                                                                 |
 | Repeat, or show or not | `list(items, ...)` with a `key()` on each, `when(condition, ...)`                                                    |
 | Change a state         | `count = 1;`, `count.set(1);`, `items.update(...)`                                                                   |
-| Call an API            | A `rest::client` over [`fetch_transport`](runtimes.md#fetch_transport)                                               |
+| Call an API            | A `rest::client` over [`fetch_client`](runtimes.md#fetch_client)                                                     |
 
 The full table, with Tailwind and the build, is in [the sample](../samples/ui_notes/README.md#the-api).
 
@@ -92,7 +94,7 @@ int main() {
 
 ## Renderers
 
-`quoll::ui::app` only knows a `Renderer`: an interface of node operations, which `dom_renderer` applies
+`ui::app` only knows a `Renderer`: an interface of node operations, which `dom_renderer` applies
 to the page. `quoll::emscripten::mount` puts the two together. It takes a CSS selector, `#app` by
 default, and keeps the app for as long as the page: one app per component type.
 

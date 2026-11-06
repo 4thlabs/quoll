@@ -153,11 +153,9 @@ namespace {
 using quoll_bench::card;
 
 namespace async = quoll::async;
-namespace client = quoll::client;
 namespace http = quoll::http;
 namespace io = quoll::io;
 namespace rest = quoll::rest;
-namespace server = quoll::server;
 
 using async::task;
 using std::chrono::steady_clock;
@@ -285,7 +283,7 @@ std::filesystem::path const &files_directory() {
 http::router make_files_router() {
   http::router router;
 
-  router.use(server::static_files("/files", files_directory()));
+  router.use(http::static_files("/files", files_directory()));
   return router;
 }
 
@@ -334,8 +332,8 @@ http::router make_large_router() {
 }
 
 // A body that does not fit in memory is for the application to allow, as it is on its own server.
-server::serve_options large_bodies() {
-  server::serve_options options;
+http::serve_options large_bodies() {
+  http::serve_options options;
 
   options.connection.limits.max_streamed_body_size = std::numeric_limits<std::uint64_t>::max();
   return options;
@@ -391,12 +389,12 @@ private:
     plain_.set_value(listener.local_port().value());
 
     if (tls_listener) {
-      co_await async::when_all(server::serve(listener, router), server::serve(files_listener, files_router),
-                               server::serve(large_listener, large_router, large_bodies()),
-                               server::serve(*tls_listener, router));
+      co_await async::when_all(http::server{router}.serve(listener), http::server{files_router}.serve(files_listener),
+                               http::server{large_router, large_bodies()}.serve(large_listener),
+                               http::server{router}.serve(*tls_listener));
     } else {
-      co_await async::when_all(server::serve(listener, router), server::serve(files_listener, files_router),
-                               server::serve(large_listener, large_router, large_bodies()));
+      co_await async::when_all(http::server{router}.serve(listener), http::server{files_router}.serve(files_listener),
+                               http::server{large_router, large_bodies()}.serve(large_listener));
     }
   }
 
@@ -493,7 +491,7 @@ task<> send_in_turn(measure &measured QUOLL_LIFETIMEBOUND, Call call) {
   }
 }
 
-// What a client does lives on the loop: its transport and the connections it keeps end with the tasks, before the
+// What a client does lives on the loop: the client and the connections it keeps end with the tasks, before the
 // runtime.
 template <class MakeCall>
 task<> start_tasks(quoll::runtime::executor executor, measure &measured QUOLL_LIFETIMEBOUND, int tasks,
@@ -563,47 +561,46 @@ int run_tcp(std::chrono::duration<double> seconds) {
   print_line("| Scenario | Requests/s | p50 (µs) | p99 (µs) | Allocations, server | Allocations, client |");
   print_line("| --- | --- | --- | --- | --- | --- |");
 
-  auto const get = [](std::string url, bool closing = false, client::transport_options options = {}) {
+  auto const get = [](std::string url, bool closing = false, http::client_options options = {}) {
     return [url = std::move(url), closing, options = std::move(options)] {
-      return [transport = client::transport<>{url, options}, closing] { return transport.send(make_get(closing)); };
+      return [client = http::client{url, options}, closing] { return client.send(make_get(closing)); };
     };
   };
 
   ok = run_scenario("GET, one connection", seconds, 1, get(plain)) && ok;
   ok = run_scenario("GET, 16 at once", seconds, 16, get(plain)) && ok;
   ok = run_scenario("GET, one connection each", seconds, 1, get(plain, true)) && ok;
-  ok = run_scenario("POST 1 MiB, echoed", seconds, 1,
-                    [&plain] {
-                      return [transport = client::transport<>{plain}] { return transport.send(make_post(megabyte())); };
-                    }) &&
+  ok = run_scenario(
+           "POST 1 MiB, echoed", seconds, 1,
+           [&plain] { return [client = http::client{plain}] { return client.send(make_post(megabyte())); }; }) &&
        ok;
   ok = run_scenario("POST 1 MiB, read in pieces", seconds, 1,
                     [&plain] {
-                      return [transport = client::transport<>{plain}] {
+                      return [client = http::client{plain}] {
                         auto request = make_post(megabyte());
 
                         request.target = "/in-pieces";
-                        return transport.send(std::move(request));
+                        return client.send(std::move(request));
                       };
                     }) &&
        ok;
   ok = run_scenario("GET 1 MiB, written in pieces", seconds, 1,
                     [&plain] {
-                      return [transport = client::transport<>{plain}] {
+                      return [client = http::client{plain}] {
                         auto request = make_get();
 
                         request.target = "/out-pieces";
-                        return transport.send(std::move(request));
+                        return client.send(std::move(request));
                       };
                     }) &&
        ok;
   ok = run_scenario("GET a file of 1 MiB", seconds, 1,
                     [files = "http://127.0.0.1:" + std::to_string(server.files_port())] {
-                      return [transport = client::transport<>{files}] {
+                      return [client = http::client{files}] {
                         auto request = make_get();
 
                         request.target = "/files/megabyte.bin";
-                        return transport.send(std::move(request));
+                        return client.send(std::move(request));
                       };
                     }) &&
        ok;
@@ -616,7 +613,7 @@ int run_tcp(std::chrono::duration<double> seconds) {
        ok;
 
   if (server.secure_port() != 0) {
-    client::transport_options options;
+    http::client_options options;
 
     options.tls.ca_file = std::string{QUOLL_BENCH_TLS_DIR} + "/ca.pem";
 
@@ -630,19 +627,18 @@ int run_tcp(std::chrono::duration<double> seconds) {
 // A connection to `router`, served on the same thread, over a memory stream.
 class memory_connector {
 public:
-  memory_connector(quoll::test::virtual_time &time, http::router const &router) noexcept
-      : time_(&time), router_(&router) {}
+  memory_connector(quoll::test::virtual_time &time, http::router const &router) : time_(&time), server_(router) {}
 
   [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
     auto [client_end, server_end] = io::make_memory_stream_pair();
 
-    co_spawn(time_->get_executor(), server::serve_connection(std::move(server_end), *router_), async::detached);
+    co_spawn(time_->get_executor(), server_.serve_connection(std::move(server_end)), async::detached);
     co_return io::any_stream{std::move(client_end)};
   }
 
 private:
   quoll::test::virtual_time *time_;
-  http::router const *router_;
+  http::server server_;
 };
 
 static_assert(io::Connector<memory_connector>);
@@ -725,44 +721,42 @@ int run_allocations(bool check) {
     measure_with(router, scenario, std::move(call));
   };
 
-  auto const on_transport = [](auto send) {
+  auto const on_client = [](auto send) {
     return [send = std::move(send)](memory_connector const &connector) {
-      return [transport = client::transport{connector, "bench.example", 80}, send] { return send(transport); };
+      return [client = http::client{connector, "bench.example", 80}, send] { return send(client); };
     };
   };
 
   auto const on_api = [](auto calling) {
     return [calling = std::move(calling)](memory_connector const &connector) {
-      using memory_client = rest::client<card_api, client::transport<memory_connector>>;
+      using memory_client = rest::client<card_api, http::client>;
 
-      return [api = memory_client{client::transport{connector, "bench.example", 80}}, calling] { return calling(api); };
+      return [api = memory_client{http::client{connector, "bench.example", 80}}, calling] { return calling(api); };
     };
   };
 
   print_line("| Scenario | Allocations per request, both sides |");
   print_line("| --- | --- |");
-  measure_on("GET, one connection", on_transport([](auto const &transport) { return transport.send(make_get()); }));
-  measure_on("GET, one connection each",
-             on_transport([](auto const &transport) { return transport.send(make_get(true)); }));
-  measure_on("POST 1 MiB, echoed",
-             on_transport([](auto const &transport) { return transport.send(make_post(megabyte())); }));
-  measure_on("POST 1 MiB, read in pieces", on_transport([](auto const &transport) {
+  measure_on("GET, one connection", on_client([](auto const &client) { return client.send(make_get()); }));
+  measure_on("GET, one connection each", on_client([](auto const &client) { return client.send(make_get(true)); }));
+  measure_on("POST 1 MiB, echoed", on_client([](auto const &client) { return client.send(make_post(megabyte())); }));
+  measure_on("POST 1 MiB, read in pieces", on_client([](auto const &client) {
                auto request = make_post(megabyte());
 
                request.target = "/in-pieces";
-               return transport.send(std::move(request));
+               return client.send(std::move(request));
              }));
-  measure_on("GET 1 MiB, written in pieces", on_transport([](auto const &transport) {
+  measure_on("GET 1 MiB, written in pieces", on_client([](auto const &client) {
                auto request = make_get();
 
                request.target = "/out-pieces";
-               return transport.send(std::move(request));
+               return client.send(std::move(request));
              }));
-  measure_with(make_files_router(), "GET a file of 1 MiB", on_transport([](auto const &transport) {
+  measure_with(make_files_router(), "GET a file of 1 MiB", on_client([](auto const &client) {
                  auto request = make_get();
 
                  request.target = "/files/megabyte.bin";
-                 return transport.send(std::move(request));
+                 return client.send(std::move(request));
                }));
   measure_on("REST GET, JSON", on_api([](auto const &api) { return api.template call<get_card>(42); }));
   measure_on("REST POST, JSON", on_api([](auto const &api) { return api.template call<echo_card>(make_card()); }));
@@ -811,7 +805,7 @@ task<std::uint64_t> read_to_its_end(http::response_body const &body QUOLL_LIFETI
 }
 
 task<bool> run_large_transfers(std::uint16_t port, std::uint64_t size) {
-  client::transport<> const transport{"http://127.0.0.1:" + std::to_string(port)};
+  http::client const client{"http://127.0.0.1:" + std::to_string(port)};
   auto ok = true;
 
   // A row whatever comes of it, as what this mode looks for may well end a transfer: bad_alloc, under its limit.
@@ -846,7 +840,7 @@ task<bool> run_large_transfers(std::uint16_t port, std::uint64_t size) {
 
     request.target = std::move(target);
 
-    auto response = co_await transport.stream(std::move(request));
+    auto response = co_await client.stream(std::move(request));
 
     if (response.status != http::status::ok) {
       throw std::runtime_error{"status " + std::to_string(static_cast<int>(response.status))};
@@ -863,7 +857,7 @@ task<bool> run_large_transfers(std::uint16_t port, std::uint64_t size) {
     request.fields.set("Content-Length", std::to_string(size));
     request.body_writer = writing_pieces(size);
 
-    auto const response = co_await transport.send(std::move(request));
+    auto const response = co_await client.send(std::move(request));
     std::uint64_t received = 0;
 
     if (response.status != http::status::ok || !parse(response.body, received)) {
@@ -942,7 +936,7 @@ task<> serve_alone(std::uint16_t port) {
 
   print_line("listening on 127.0.0.1:{}", listener.local_port().value());
   std::cout.flush();
-  co_await server::serve(listener, router);
+  co_await http::server{router}.serve(listener);
 }
 
 int run_serve(std::uint16_t port) {

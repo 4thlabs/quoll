@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/server/serve.hpp>
+#include <quoll/server/server.hpp>
 
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
@@ -43,7 +43,9 @@
 #include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
-#include <quoll/server/serve_connection.hpp>
+#include <quoll/io/any_listener.hpp>
+#include <quoll/io/listen_tls.hpp>
+#include <quoll/server/detail/serve_connection.hpp>
 
 #include <chrono>
 #include <exception>
@@ -53,7 +55,7 @@
 #include <system_error>
 #include <utility>
 
-namespace quoll::server::detail {
+namespace quoll::http::detail {
 
 namespace {
 
@@ -151,8 +153,10 @@ async::task<> wind_down(shared_options &shared, std::stop_source &connections_st
 
 } // namespace
 
-async::task<> serve_accepting(async::any_executor executor, listener_ref listener, http::router const &router,
-                              serve_options options) {
+// `router` stays in this frame, where the last copy ends on the accept loop: a connection's frame ends after serve()
+// resumes, maybe on another thread, where what a handler holds has no business ending.
+async::task<> serve_accepting(async::any_executor executor, listener_ref listener,
+                              std::shared_ptr<http::router const> router, serve_options options) {
   auto const stop_token = co_await async::current_stop_token();
   auto const shared = std::make_shared<shared_options>(std::move(options));
 
@@ -210,7 +214,7 @@ async::task<> serve_accepting(async::any_executor executor, listener_ref listene
     shared->connections.started();
 
     try {
-      async::co_spawn(executor, serve_shared(std::move(*stream), router, shared), connection_outcome{shared},
+      async::co_spawn(executor, serve_shared(std::move(*stream), *router, shared), connection_outcome{shared},
                       connections_stop.get_token());
     } catch (...) {
       // Not spawned: stop the others, wait for them, then fail.
@@ -239,11 +243,44 @@ async::task<> serve_accepting(async::any_executor executor, listener_ref listene
   }
 }
 
-async::task<> serve_accepting_here(listener_ref listener, http::router const &router, serve_options options) {
+async::task<> serve_accepting_here(listener_ref listener, std::shared_ptr<http::router const> router,
+                                   serve_options options) {
   // A copy, held by each connection: their frames end after serve() resumes.
   async::any_executor executor{co_await async::current_executor()};
 
-  co_await serve_accepting(std::move(executor), listener, router, std::move(options));
+  co_await serve_accepting(std::move(executor), listener, std::move(router), std::move(options));
 }
 
-} // namespace quoll::server::detail
+namespace {
+
+[[nodiscard]] async::task<> listen_and_serve(std::shared_ptr<http::router const> router, std::uint16_t port,
+                                             listen_options where, serve_options options) {
+  auto listener = where.tls.enabled() ? co_await io::listen_tls(port, std::move(where.tls), std::move(where.address))
+                                      : co_await io::listen(port, std::move(where.address));
+
+  co_await serve_accepting_here(listener_ref{listener}, std::move(router), std::move(options));
+}
+
+[[nodiscard]] async::task<> serve_one(io::any_stream stream, std::shared_ptr<http::router const> router,
+                                      connection_options options) {
+  co_await serve_connection(std::move(stream), *router, options);
+}
+
+} // namespace
+
+} // namespace quoll::http::detail
+
+namespace quoll::http {
+
+server::server(http::router router, serve_options options)
+    : router_(std::make_shared<http::router const>(std::move(router))), options_(std::move(options)) {}
+
+async::task<> server::listen(std::uint16_t port, listen_options where) const {
+  return detail::listen_and_serve(router_, port, std::move(where), options_);
+}
+
+async::task<> server::serve_connection(io::any_stream stream) const {
+  return detail::serve_one(std::move(stream), router_, options_.connection);
+}
+
+} // namespace quoll::http

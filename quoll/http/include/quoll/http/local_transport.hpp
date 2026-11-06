@@ -43,7 +43,7 @@
 #include <quoll/http/router.hpp>
 #include <quoll/http/transport.hpp>
 
-#include <functional>
+#include <memory>
 #include <utility>
 
 namespace quoll::http {
@@ -56,22 +56,25 @@ namespace quoll::http {
  * GET route, has no body. What a handler or a middleware throws comes out of the task, where a connection answers 500:
  * a test sees the failure itself. Nothing is serialized, so that a response a connection could not write passes here.
  * A `request.body_writer` runs to its end before the handler, which finds what it wrote in `body`.
- * Holds a reference: the router outlives the transport and the tasks it returns.
+ * Keeps its own copy of the router, which its tasks share, so that nothing has to outlive them: add the routes first,
+ * as one added to `target` afterwards is not served.
  */
 class local_transport {
 public:
-  explicit local_transport(router const &target) noexcept : router_(target) {}
+  explicit local_transport(router target);
 
-  // A temporary would be gone before the first request.
-  explicit local_transport(router const &&) = delete;
+  // Copied rather than moved, which is as cheap: one moved from stays usable, rather than hold a null pointer.
+  local_transport(local_transport const &) noexcept = default;
+  local_transport &operator=(local_transport const &) noexcept = default;
+  ~local_transport() = default;
 
   [[nodiscard]] async::task<response> send(request message) const { return send_to(router_, std::move(message)); }
 
 private:
-  // Static: the task holds the router reference, not the transport.
-  static async::task<response> send_to(std::reference_wrapper<router const> target, request message);
+  // Static: the task holds the router, not the transport.
+  static async::task<response> send_to(std::shared_ptr<router const> target, request message);
 
-  std::reference_wrapper<router const> router_;
+  std::shared_ptr<router const> router_;
 };
 
 static_assert(HttpTransport<local_transport>);

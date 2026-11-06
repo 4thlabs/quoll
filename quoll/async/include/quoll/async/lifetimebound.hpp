@@ -40,9 +40,8 @@
 /**
  * @def QUOLL_LIFETIMEBOUND
  * @brief Says that what a function returns refers to a parameter, or to `*this` after the parameter list, so that Clang
- * refuses to keep it past a temporary: `auto const name = fields{}.find("Host");`, or
- * `auto const session = serve_connection(stream, make_router());`, whose task would read a router that is gone. Not on
- * what outlives its object, as a handle pointing elsewhere: it would refuse correct code.
+ * refuses to keep it past a temporary: `auto const name = fields{}.find("Host");`. Not on what outlives its object, as
+ * a handle pointing elsewhere: it would refuse correct code.
  *
  * Nothing for a compiler without it. It sees what is kept in a variable or returned, not what goes through another
  * function: only part of what could dangle.

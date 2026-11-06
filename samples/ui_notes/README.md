@@ -42,6 +42,9 @@ Add a note, start typing another one, and change `notes_page.hpp` in your editor
 #include <quoll/emscripten.hpp>
 #include <quoll/ui.hpp>
 
+namespace async = quoll::async;
+namespace rest = quoll::rest;
+
 using namespace quoll::ui;
 
 // A component: an aggregate with a view(), and state<T> members for what the view depends on.
@@ -66,14 +69,14 @@ int main() { quoll::emscripten::mount<counter>(); }   // in the element #app
 | Show a text | `text("Hello")` | |
 | Style | `\| tw("flex gap-2")`, `\| tw_if(done, "line-through")` | write classes whole: Tailwind reads them in the source |
 | Set an attribute | `\| attribute("placeholder", "A note")` | |
-| Handle an event | `\| on_click(...)`, `\| on_input(...)`, `\| on("submit", ...)` | a plain function, or one returning a `task<>` |
+| Handle an event | `\| on_click(...)`, `\| on_input(...)`, `\| on("submit", ...)` | a plain function, or one returning an `async::task<>` |
 | Edit a value | `input() \| bind(draft)` | `draft` is a `state<std::string>` |
 | Repeat | `list(items, [](auto const &item) { return li(item) \| key(item); })` | `key` keeps a node when items move |
 | Show or not | `when(!items->empty(), [] { return p("..."); })` | a plain `if` works too, between two returns |
 | Change a state | `count = 1;`, `count.set(1);`, `items.update([](auto &all) { all.clear(); });` | the view then runs again, once |
 | Read a state | `*count`, `items->size()` | |
-| Load at the start | `task<> mounted() { items = co_await api.call<notes::list>({}); }` | an optional member |
-| Call an API | `quoll::rest::client<notes::api, fetch_transport> api{fetch_transport{""}};` | the same contract as the server, so a wrong call does not compile; in a source of its own, see below |
+| Load at the start | `async::task<> mounted() { items = co_await api.call<notes::list>({}); }` | an optional member |
+| Call an API | `rest::client<notes::api, quoll::emscripten::fetch_client> api{quoll::emscripten::fetch_client{""}};` | the same contract as the server, so a wrong call does not compile; in a source of its own, see below |
 | Split the view | a member function returning `element` | nested components with a state of their own are not there yet |
 | Make a decorator | `decorator([](element &target) { target.classes += " card"; })` | |
 

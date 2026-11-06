@@ -37,7 +37,7 @@
 #ifndef QUOLL_CLIENT_HPP
 #define QUOLL_CLIENT_HPP
 
-#include <quoll/client/transport.hpp>
-#include <quoll/client/transport_options.hpp>
+#include <quoll/client/client.hpp>
+#include <quoll/client/client_options.hpp>
 
 #endif // QUOLL_CLIENT_HPP
