@@ -203,7 +203,7 @@ task<T> with_server(io::tls_server_options certificate, std::function<task<T>(st
   std::stop_source stop;
 
   auto const serving = [&]() -> task<> {
-    co_await stop_scope<void>{http::server{router, std::move(options)}.serve(counted), stop.get_token()};
+    co_await stop_scope<void>{http::server{router, std::move(options)}.serve(std::move(counted)), stop.get_token()};
   };
 
   auto const calling = [&]() -> task<T> {
@@ -294,7 +294,7 @@ task<std::error_code> tls_client_of_plain_server() {
   std::stop_source stop;
 
   auto const serving = [&]() -> task<> {
-    co_await stop_scope<void>{http::server{router}.serve(listener), stop.get_token()};
+    co_await stop_scope<void>{http::server{router}.serve(std::move(listener)), stop.get_token()};
   };
 
   auto const calling = [&]() -> task<std::error_code> {

@@ -17,12 +17,10 @@ quoll_declare_tests(
     quoll::server
 )
 
-# What Clang refuses, now that it is told what a task refers to. Only Clang can tell.
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  quoll_declare_compile_fail_tests(
-    SOURCES
-      tests/compile_fail/dangling_listener.cpp
-    DEPS
-      quoll::server
-  )
-endif()
+quoll_declare_compile_fail_tests(
+  SOURCES
+    tests/compile_fail/serve_listener_not_moved.cpp
+    tests/compile_fail/server_route_handler.cpp
+  DEPS
+    quoll::server
+)

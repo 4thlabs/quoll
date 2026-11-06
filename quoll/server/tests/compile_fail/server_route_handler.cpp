@@ -34,14 +34,12 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: stack memory
+// expect: the_handler_does_not_take_as_many_parameters_as_the_path_has
 
-// A task kept past the listener it accepts from.
-#pragma clang diagnostic error "-Wdangling"
+// A route of a server is checked as one of a router: the path has two parameters, the handler one.
 
-#include <quoll/io/any_listener.hpp>
 #include <quoll/server/server.hpp>
 
-quoll::async::task<> session(quoll::http::server const &server, quoll::io::any_listener listener) {
-  return server.serve(listener);
+void route(quoll::http::server &server) {
+  server.get("/a/{b}/{c}", [](int) { return quoll::http::response{}; });
 }

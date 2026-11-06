@@ -389,12 +389,14 @@ private:
     plain_.set_value(listener.local_port().value());
 
     if (tls_listener) {
-      co_await async::when_all(http::server{router}.serve(listener), http::server{files_router}.serve(files_listener),
-                               http::server{large_router, large_bodies()}.serve(large_listener),
-                               http::server{router}.serve(*tls_listener));
+      co_await async::when_all(http::server{router}.serve(std::move(listener)),
+                               http::server{files_router}.serve(std::move(files_listener)),
+                               http::server{large_router, large_bodies()}.serve(std::move(large_listener)),
+                               http::server{router}.serve(std::move(*tls_listener)));
     } else {
-      co_await async::when_all(http::server{router}.serve(listener), http::server{files_router}.serve(files_listener),
-                               http::server{large_router, large_bodies()}.serve(large_listener));
+      co_await async::when_all(http::server{router}.serve(std::move(listener)),
+                               http::server{files_router}.serve(std::move(files_listener)),
+                               http::server{large_router, large_bodies()}.serve(std::move(large_listener)));
     }
   }
 
@@ -936,7 +938,7 @@ task<> serve_alone(std::uint16_t port) {
 
   print_line("listening on 127.0.0.1:{}", listener.local_port().value());
   std::cout.flush();
-  co_await http::server{router}.serve(listener);
+  co_await http::server{router}.serve(std::move(listener));
 }
 
 int run_serve(std::uint16_t port) {

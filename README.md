@@ -36,7 +36,7 @@ one description of an API:
 - **Fast, and measured.** One thread answers about 148,000 small requests a second over 16
   connections, on the machine they were measured on. A benchmark runs every night and holds the
   allocations per request to a budget: see [Performance](docs/performance.md).
-- **Easy to use.** A program is a coroutine. `co_await http::server{router}.listen(8080)` is a
+- **Easy to use.** A program is a coroutine. `co_await server.listen(8080)` is a
   server, and `rest::client<api> client{"http://127.0.0.1:8080"}` is a client. Neither asks for an
   executor, a connector or an acceptor.
 - **Sans-IO.** The HTTP parser, the serializer and the router do no I/O, and a connection is served
@@ -100,12 +100,9 @@ struct greeter {
 };
 
 async::task<> serve() {
-  http::router router;
+  http::server server;
 
-  rest::mount<api>(router, greeter{});
-
-  http::server server{router};
-
+  rest::mount<api>(server, greeter{});
   co_await server.listen(8080);
 }
 

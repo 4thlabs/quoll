@@ -101,7 +101,7 @@ still sends its body: to look at with streaming. A client closes its TLS connect
   (`router::get`...), a path prefix in the base URL, a connection limit per transport and client redirects, are done. A client's `response_timeout` applies per attempt, so a deadline over the whole `send` if that proves
   confusing.
 
-What stays out of reach: the lifetimes of coroutines remain mostly documented rules ("`listener` outlives the task", when
+What stays out of reach: the lifetimes of coroutines remain mostly documented rules ("what a coroutine takes by reference outlives it", when
 the task outlives the line it was made on), a use after move across functions or through a member goes unseen, and a
 lambda can still capture by reference what dies before it.
 
@@ -224,10 +224,13 @@ changes only what the harness shows. Candidates:
   `HttpTransport` stays the concept. `quoll::client` and `quoll::server` stay libraries of their own, so that a program links only
   what it uses, with their names in `quoll::http`. Guides name at most two levels, through aliases such as
   `namespace async = quoll::async;`.
-- Performance does not make the user API dangerous (2026-11-06): `http::server` and `http::local_transport` keep their own copy of
-  the router, once, rather than a reference, and a connection served directly goes through `server.serve_connection`. What it costs
-  is a copy per server, and a route added afterwards is not served, which the guides say. The free `serve_connection`, by
-  reference, is `detail`, where the library answers for the lifetimes.
+- Performance does not make the user API dangerous (2026-11-06): what outlives a call owns what it needs, and the fast path goes
+  behind it, in `detail`. `http::local_transport` keeps its own copy of the router, and `http::server` owns its listeners.
+- `http::server` is a real object (2026-11-06), like `http::client`: a handle on shared state, which its copies and tasks share, as
+  Corosio's objects are. Half an object, a router and options with each call on its own, left `max_connections` per call and
+  nowhere to count connections. It holds routes of its own, for the simple form, or starts from a copy of a router, with the same
+  options either way, and refuses a route once it serves. `max_connections` and `connections()` count for the whole server. A port
+  is read on the listener before it is given, as nothing else can be right at any moment.
 - `async::detached` (2026-11-06) ignores `std::errc::operation_canceled`, so that a stop ends a task rather than the program, and
   every other exception still ends the program. It does not see the task's stop token, so it ignores that error whatever caused
   it: a choice made knowing that, over a check of the token in `co_spawn`.

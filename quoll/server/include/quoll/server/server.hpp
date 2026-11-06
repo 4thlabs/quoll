@@ -39,9 +39,9 @@
 
 #include <quoll/async/any_executor.hpp>
 #include <quoll/async/executor.hpp>
-#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/router.hpp>
+#include <quoll/io/any_listener.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/listener.hpp>
@@ -49,64 +49,130 @@
 #include <quoll/server/serve_options.hpp>
 
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <string_view>
+#include <type_traits>
 #include <utility>
 
 namespace quoll::http {
 
 namespace detail {
 
-// A listener, whichever it is. Non-owning: the listener outlives the task.
-struct listener_ref {
-  void *listener;
-  async::task<io::any_stream> (*accept)(void *listener);
-
-  template <io::Listener Listener>
-  explicit listener_ref(Listener &target) noexcept
-      : listener(&target),
-        accept([](void *erased) -> async::task<io::any_stream> { return static_cast<Listener *>(erased)->accept(); }) {}
-};
-
-[[nodiscard]] async::task<> serve_accepting(async::any_executor executor, listener_ref listener,
-                                            std::shared_ptr<http::router const> router, serve_options options);
-[[nodiscard]] async::task<> serve_accepting_here(listener_ref listener, std::shared_ptr<http::router const> router,
-                                                 serve_options options);
+struct server_state;
 
 } // namespace detail
 
 /**
- * @brief Serves a router: the server of a program.
+ * @brief Serves routes over connections: the server of a program. It holds its own, added to it, or a copy of a router
+ * built apart, for one shared by several servers or built by another part of the program.
  *
  * @code
  * quoll::async::task<> serve_notes(std::uint16_t port) {
- *   quoll::http::router router;
+ *   quoll::http::server server;
  *
- *   quoll::rest::mount<notes::api>(router, notes_service{});
- *
- *   quoll::http::server server{router};
- *
+ *   quoll::rest::mount<notes::api>(server, notes_service{});
  *   co_await server.listen(port);
  * }
  * @endcode
  *
- * It keeps its own copy of the router, which each of its tasks shares, so that nothing has to outlive them but a
- * listener given to serve(). Add the routes first, as one added to `router` afterwards is not served. A handler with a
- * state of its own is copied along: two servers of one router share it only through a `std::shared_ptr`.
+ * With options, and a router:
  *
- * Each call copies the options, so that a limit such as `max_connections` counts for that call.
+ * @code
+ * quoll::http::server simple{{.max_connections = 1000}};
+ * quoll::http::server custom{router, {.max_connections = 1000}};
+ * @endcode
  *
- * Thread safety: its const functions may be called from any thread.
+ * Its routes are closed once it serves, as connections read them: adding one then throws std::logic_error, and a route
+ * added to the `router` it copied is not served. A handler with a state of its own is copied with its router, so that
+ * two servers of one router share it only through a `std::shared_ptr`.
+ *
+ * It may listen on several ports and serve several listeners, each as a task of its own, which ends on its stop
+ * request. `max_connections` counts for all of them.
+ *
+ * A copy is the same server, with the same routes, options and connections. Its tasks share what it holds, so that
+ * nothing has to outlive them: not the router it was given, nor the server, as a temporary shows.
+ *
+ * Thread safety: add routes from one thread, before it serves. Its const functions may then be called from any thread.
  */
 class server {
 public:
+  /** @brief A server with no route yet, serving as `options` says. */
+  explicit server(serve_options options = {});
+
   /** @brief A server of a copy of `router`, serving as `options` says. */
   explicit server(http::router router, serve_options options = {});
 
   // Copied rather than moved, which is as cheap: one moved from stays usable, rather than hold a null pointer.
-  server(server const &) = default;
-  server &operator=(server const &) = default;
+  server(server const &) noexcept = default;
+  server &operator=(server const &) noexcept = default;
   ~server() = default;
+
+  /**
+   * @brief Its router, for what takes one to add routes, for the time of that call: it is closed once the server
+   * serves.
+   *
+   * @throws std::logic_error once it serves.
+   */
+  [[nodiscard]] http::router &routes();
+
+  /** @brief Its router, to read it. */
+  [[nodiscard]] http::router const &routes() const noexcept;
+
+  /** @brief See router::add(). @throws std::logic_error once it serves. */
+  void add(verb method, std::string_view path, std::string name, router::handler target) {
+    routes().add(method, path, std::move(name), std::move(target));
+  }
+
+  /** @brief See router::get(). @throws std::logic_error once it serves. */
+  template <class F>
+  void get(detail::checked_path<std::type_identity_t<F>> path, F target) {
+    routes().get(path, std::move(target));
+  }
+
+  /** @brief See router::post(). @throws std::logic_error once it serves. */
+  template <class F>
+  void post(detail::checked_path<std::type_identity_t<F>> path, F target) {
+    routes().post(path, std::move(target));
+  }
+
+  /** @brief See router::put(). @throws std::logic_error once it serves. */
+  template <class F>
+  void put(detail::checked_path<std::type_identity_t<F>> path, F target) {
+    routes().put(path, std::move(target));
+  }
+
+  /** @brief See router::patch(). @throws std::logic_error once it serves. */
+  template <class F>
+  void patch(detail::checked_path<std::type_identity_t<F>> path, F target) {
+    routes().patch(path, std::move(target));
+  }
+
+  /** @brief See router::delete_(). @throws std::logic_error once it serves. */
+  template <class F>
+  void delete_(detail::checked_path<std::type_identity_t<F>> path, F target) {
+    routes().delete_(path, std::move(target));
+  }
+
+  /** @brief See router::head(). @throws std::logic_error once it serves. */
+  template <class F>
+  void head(detail::checked_path<std::type_identity_t<F>> path, F target) {
+    routes().head(path, std::move(target));
+  }
+
+  /** @brief See router::options(). @throws std::logic_error once it serves. */
+  template <class F>
+  void options(detail::checked_path<std::type_identity_t<F>> path, F target) {
+    routes().options(path, std::move(target));
+  }
+
+  /** @brief See router::use(). @throws std::logic_error once it serves. */
+  void use(router::middleware wrapping) { routes().use(std::move(wrapping)); }
+
+  /** @brief How many connections it serves now, through all of its listen(), serve() and serve_connection(). */
+  [[nodiscard]] std::size_t connections() const noexcept;
 
   /**
    * @brief Listens on `port` and serves there, until a stop request.
@@ -124,24 +190,35 @@ public:
   [[nodiscard]] async::task<> listen(std::uint16_t port, listen_options where = {}) const;
 
   /**
-   * @brief Accepts the connections of `listener` and serves each one, concurrently, on the executor the task runs on:
-   * the connections run where the accept loop does.
+   * @brief Takes `listener` over, accepts its connections and serves each one, concurrently, on the executor the task
+   * runs on: the connections run where the accept loop does. To know the port the system picked, or that it is ready,
+   * ask the listener first:
+   *
+   * @code
+   * auto listener = co_await quoll::io::listen(0);
+   * auto const port = listener.local_port();
+   *
+   * co_await server.serve(std::move(listener));
+   * @endcode
    *
    * A stop request is graceful: it ends the accept loop, closes the idle connections, and lets the requests under way
    * finish, within `shutdown_timeout`, past which they are stopped.
    *
-   * Accepting stops with `std::errc::operation_canceled`: a stop request, or the application closing its listener.
-   * Another accept failure goes to `on_accept_error`. By default it is skipped when it concerns one connection only,
-   * retried after 100 ms when the system ran out of something (file descriptors, memory) and it has a timer to wait
-   * with, and rethrown otherwise; a rethrow ends the accept loop, not the connections already served.
+   * Accepting stops with `std::errc::operation_canceled`. Another accept failure goes to `on_accept_error`. By default
+   * it is skipped when it concerns one connection only, retried after 100 ms when the system ran out of something (file
+   * descriptors, memory) and it has a timer to wait with, and rethrown otherwise; a rethrow ends the accept loop, not
+   * the connections already served.
    *
-   * However the accept loop ends (a stop request, a closed listener, a failure, an exception from `on_accept_error`),
-   * the connections it spawned end as above, and the task completes once they have ended, then rethrows the failure if
-   * there was one: `listener` needs to outlive the task only.
+   * However the accept loop ends (a stop request, a failure, an exception from `on_accept_error`), the connections it
+   * spawned end as above, and the task completes once they have ended, then rethrows the failure if there was one.
    */
+  [[nodiscard]] async::task<> serve(io::any_listener listener) const;
+
+  /** @brief serve(), for any listener. */
   template <io::Listener Listener>
-  [[nodiscard]] async::task<> serve(Listener &listener QUOLL_LIFETIMEBOUND) const {
-    return detail::serve_accepting_here(detail::listener_ref{listener}, router_, options_);
+    requires(!std::same_as<Listener, io::any_listener>)
+  [[nodiscard]] async::task<> serve(Listener listener) const {
+    return serve(io::any_listener{std::move(listener)});
   }
 
   /**
@@ -150,9 +227,8 @@ public:
    * timeouts of `connection` without effect, and a slow peer can hold its connection.
    */
   template <async::Executor Executor, io::Listener Listener>
-  [[nodiscard]] async::task<> serve(Executor executor, Listener &listener QUOLL_LIFETIMEBOUND) const {
-    return detail::serve_accepting(async::any_executor{std::move(executor)}, detail::listener_ref{listener}, router_,
-                                   options_);
+  [[nodiscard]] async::task<> serve(Executor executor, Listener listener) const {
+    return serve_on(async::any_executor{std::move(executor)}, io::any_listener{std::move(listener)});
   }
 
   /**
@@ -190,8 +266,9 @@ public:
   }
 
 private:
-  std::shared_ptr<http::router const> router_;
-  serve_options options_;
+  [[nodiscard]] async::task<> serve_on(async::any_executor executor, io::any_listener listener) const;
+
+  std::shared_ptr<detail::server_state> state_;
 };
 
 } // namespace quoll::http

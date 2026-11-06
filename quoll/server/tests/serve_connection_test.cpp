@@ -3023,9 +3023,67 @@ TEST_CASE("http::server: one moved from still serves", "[server]") {
   http::server moved_from{router};
   http::server const other{std::move(moved_from)};
 
-  auto const start = [&moved_from](io::memory_stream stream) {
-    return moved_from.serve_connection(std::move(stream)); // NOLINT(bugprone-use-after-move)
+  auto const start = [&moved_from](io::memory_stream stream) { // NOLINT(bugprone-use-after-move)
+    return moved_from.serve_connection(std::move(stream));
   };
 
   REQUIRE(answer_to("/first", start).starts_with("HTTP/1.1 200"));
+}
+
+TEST_CASE("http::server: holds routes of its own, with options", "[server]") {
+  bool told = false;
+
+  http::server server{{.connection = {.on_handler_error = [&told](std::exception_ptr) { told = true; }}}};
+
+  server.get("/hello", []() {
+    http::response response;
+
+    response.body = "hello";
+    return response;
+  });
+  server.get("/fails", []() -> http::response { throw std::runtime_error{"on purpose"}; });
+
+  auto const start = [&server](io::memory_stream stream) { return server.serve_connection(std::move(stream)); };
+
+  auto const hello = answer_to("/hello", start);
+
+  REQUIRE(hello.starts_with("HTTP/1.1 200"));
+  REQUIRE(hello.ends_with("hello"));
+  REQUIRE_FALSE(told);
+
+  REQUIRE(answer_to("/fails", start).starts_with("HTTP/1.1 500"));
+  REQUIRE(told);
+}
+
+TEST_CASE("http::server: a route of a router given is served along with its own", "[server]") {
+  auto const hello = []() { return http::response{}; };
+
+  http::router router;
+
+  router.get("/given", hello);
+
+  http::server server{router};
+
+  server.get("/own", hello);
+
+  auto const start = [&server](io::memory_stream stream) { return server.serve_connection(std::move(stream)); };
+
+  REQUIRE(answer_to("/given", start).starts_with("HTTP/1.1 200"));
+  REQUIRE(answer_to("/own", start).starts_with("HTTP/1.1 200"));
+}
+
+TEST_CASE("http::server: connections() counts one served directly", "[server]") {
+  http::server server;
+  std::size_t during = 0;
+
+  server.get("/count", [&server, &during]() {
+    during = server.connections();
+    return http::response{};
+  });
+
+  auto const start = [&server](io::memory_stream stream) { return server.serve_connection(std::move(stream)); };
+
+  REQUIRE(answer_to("/count", start).starts_with("HTTP/1.1 200"));
+  REQUIRE(during == 1);
+  REQUIRE(server.connections() == 0);
 }
