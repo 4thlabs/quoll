@@ -38,6 +38,7 @@
 
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/percent.hpp>
+#include <quoll/http/detail/plain_segment.hpp>
 #include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/status.hpp>
@@ -157,25 +158,6 @@ struct target_parts {
   return target_parts{path.empty() ? std::string_view{"/"} : path, query};
 }
 
-// Whether a decoded segment is a dot segment, or holds one behind an encoded slash (`..%2Fetc`, `a%5C..`), which a
-// handler joining it to a directory would follow.
-[[nodiscard]] bool holds_dot_segment(std::string_view segment) noexcept {
-  while (true) {
-    auto const separator = segment.find_first_of("/\\");
-    auto const part = segment.substr(0, separator);
-
-    if (part == "." || part == "..") {
-      return true;
-    }
-
-    if (separator == std::string_view::npos) {
-      return false;
-    }
-
-    segment.remove_prefix(separator + 1);
-  }
-}
-
 // The percent-decoded segments of a path, or nothing for an invalid escape, a NUL (`%00`, which C APIs would cut at)
 // or a dot segment (`.`, `..`): the router does not resolve them, and a handler must not see one.
 [[nodiscard]] std::optional<std::vector<std::string>> decode_segments(std::string_view path) {
@@ -187,7 +169,7 @@ struct target_parts {
     auto decoded =
         percent_decode(path.substr(start, slash == std::string_view::npos ? std::string_view::npos : slash - start));
 
-    if (!decoded || decoded->contains('\0') || holds_dot_segment(*decoded)) {
+    if (!decoded || !plain_segment(*decoded)) {
       return std::nullopt;
     }
 

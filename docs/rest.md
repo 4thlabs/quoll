@@ -245,8 +245,8 @@ if (!maybe) {
 | An undeclared status, a body that does not decode | Throws `rest::call_error`, whose `what()` is the problem's detail if any | A `rest::unexpected_response`: the whole response, and why |
 | A failure of the transport                        | Throws `std::system_error`                                               | Throws `std::system_error`                                 |
 
-Arguments are encoded by the call: an invalid one (an empty path parameter, a dot segment, a header
-value the server would read differently) throws `std::invalid_argument` there, before the task runs.
+Arguments are encoded by the call: an invalid one (an empty path parameter, one holding a NUL or a dot segment, a
+header value the server would read differently) throws `std::invalid_argument` there, before the task runs.
 
 `rest::call_error` is not an `http_error`: a service letting a failed call to another API escape
 answers 500, not that API's status.
