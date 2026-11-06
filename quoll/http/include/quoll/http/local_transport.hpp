@@ -55,6 +55,7 @@ namespace quoll::http {
  * It writes the responses as a connection would: the response to a HEAD request, which the router may take from a
  * GET route, has no body. What a handler or a middleware throws comes out of the task, where a connection answers 500:
  * a test sees the failure itself. Nothing is serialized, so that a response a connection could not write passes here.
+ * A `request.body_writer` runs to its end before the handler, which finds what it wrote in `body`.
  * Holds a reference: the router outlives the transport and the tasks it returns.
  */
 class local_transport {

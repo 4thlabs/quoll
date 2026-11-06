@@ -39,6 +39,7 @@
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/check.hpp>
 #include <quoll/http/detail/streamed_head.hpp>
+#include <quoll/http/detail/streamed_wire.hpp>
 
 #include <array>
 #include <charconv>
@@ -249,7 +250,10 @@ void serialize_framing(fields const &entries, std::string const &body, fields co
 
 } // namespace
 
-void serialize(request const &message, std::string &out) {
+namespace {
+
+// What serialize() and a streamed head ask of a request's start line, and what its method allows.
+[[nodiscard]] framing_rules request_rules(request const &message) {
   check_target(message.target);
 
   auto const method_has_body =
@@ -261,15 +265,31 @@ void serialize(request const &message, std::string &out) {
   rules.chunked_allowed = message.version != version::http_1_0;
   // What follows the head of a CONNECT is the tunnel, as a parser reads it: a body would reach the far end.
   rules.body_allowed = message.method != verb::connect;
+  return rules;
+}
 
-  auto const checked = check_framing(message.fields, message.body, message.trailers, rules);
-
+void append_start_line(request const &message, std::string &out) {
   out += to_string(message.method);
   out += ' ';
   out += message.target;
   out += ' ';
   out += to_string(message.version);
   out += "\r\n";
+}
+
+} // namespace
+
+void serialize(request const &message, std::string &out) {
+  auto const rules = request_rules(message);
+
+  // Only what streams a request can write it.
+  if (message.body_writer) {
+    reject("a request with a body_writer goes in pieces");
+  }
+
+  auto const checked = check_framing(message.fields, message.body, message.trailers, rules);
+
+  append_start_line(message, out);
   serialize_framing(message.fields, message.body, message.trailers, checked, out);
 }
 
@@ -345,6 +365,91 @@ streamed_framing serialize_streamed_head(response const &message, std::string &o
   out += "\r\n";
 
   return {.chunked = checked.chunked, .length = length ? std::optional<std::uint64_t>{*length} : std::nullopt};
+}
+
+std::optional<std::uint64_t> announced_length(fields const &entries) {
+  auto const length = declared_length(entries);
+
+  return length ? std::optional<std::uint64_t>{*length} : std::nullopt;
+}
+
+streamed_framing serialize_streamed_head(request const &message, std::string &out) {
+  auto rules = request_rules(message);
+
+  // RFC 9110, 9.3.8: a client must not send content in a TRACE.
+  if (!rules.body_allowed || message.method == verb::trace || !message.body.empty()) {
+    reject("a body_writer on a request that cannot have one, or with a body");
+  }
+
+  rules.add_length = false;
+  rules.length_without_body = true;
+
+  // Chunks unless it says otherwise, which is for this to say rather than for the caller, as for what sets its fields.
+  auto const announced = declared_length(message.fields) || last_coding_is_chunked(message.fields);
+  auto with_chunks = message.fields;
+
+  if (!announced) {
+    with_chunks.add("Transfer-Encoding", "chunked");
+  }
+
+  auto const checked = check_framing(with_chunks, message.body, message.trailers, rules);
+  auto const length = declared_length(with_chunks);
+
+  append_start_line(message, out);
+  serialize_fields(with_chunks, out);
+  out += "\r\n";
+
+  return {.chunked = checked.chunked, .length = length ? std::optional<std::uint64_t>{*length} : std::nullopt};
+}
+
+streamed_wire::streamed_wire(std::string head, streamed_framing framing) noexcept
+    : head_(std::move(head)), framing_(framing), left_(framing.length.value_or(0)) {}
+
+bool streamed_wire::past_its_length(std::string_view piece) const noexcept {
+  return framing_.length && piece.size() > left_;
+}
+
+bool streamed_wire::started() const noexcept { return started_; }
+
+bool streamed_wire::short_of_its_length() const noexcept { return left_ != 0; }
+
+void streamed_wire::append_head() {
+  if (!started_) {
+    started_ = true;
+    wire_ += head_;
+  }
+}
+
+std::string_view streamed_wire::frame(std::string_view piece) {
+  if (framing_.length) {
+    left_ -= piece.size();
+  }
+
+  if (started_ && (!framing_.chunked || piece.empty())) {
+    return piece;
+  }
+
+  wire_.clear();
+  append_head();
+
+  if (framing_.chunked) {
+    append_chunk(piece, wire_);
+  } else {
+    wire_ += piece;
+  }
+
+  return wire_;
+}
+
+std::string_view streamed_wire::end(fields const &trailers) {
+  wire_.clear();
+  append_head();
+
+  if (framing_.chunked) {
+    append_last_chunk(trailers, wire_);
+  }
+
+  return wire_;
 }
 
 void append_chunk(std::string_view piece, std::string &out) {

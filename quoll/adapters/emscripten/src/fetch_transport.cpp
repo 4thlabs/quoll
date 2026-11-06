@@ -40,15 +40,16 @@
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/work_item.hpp>
-#include <quoll/client/streamed_response.hpp>
 #include <quoll/emscripten/detail/js.hpp>
 #include <quoll/http/body_reader.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/check.hpp>
+#include <quoll/http/detail/write_whole_body.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
+#include <quoll/http/streamed_response.hpp>
 #include <quoll/http/verb.hpp>
 
 #include <algorithm>
@@ -440,33 +441,47 @@ private:
 
 // `fields`: the request's fields, packed by pack_fields().
 [[nodiscard]] async::task<http::response> fetch(std::string url, std::string fields, http::request request) {
+  // Whole before it leaves: a fetch sending in pieces needs HTTP/2, and browsers that do not all have it.
+  if (request.body_writer) {
+    co_await http::detail::write_whole_body(request);
+  }
+
   auto result = co_await fetch_operation{std::move(url), std::move(fields), request, false};
 
   co_return std::move(result.response);
 }
 
 // `fields`: the request's fields, packed by pack_fields().
-[[nodiscard]] async::task<client::streamed_response> fetch_in_pieces(std::string url, std::string fields,
-                                                                     http::request request) {
+[[nodiscard]] async::task<http::streamed_response> fetch_in_pieces(std::string url, std::string fields,
+                                                                   http::request request) {
+  // Whole before it leaves: a fetch sending in pieces needs HTTP/2, and browsers that do not all have it.
+  if (request.body_writer) {
+    co_await http::detail::write_whole_body(request);
+  }
+
   auto result = co_await fetch_operation{std::move(url), std::move(fields), request, true};
   auto stream = std::make_shared<fetch_stream>(std::move(result.entry), std::move(result.url));
   auto &response = result.response;
 
-  co_return client::streamed_response{response.status,
-                                      std::move(response.reason),
-                                      response.version,
-                                      std::move(response.fields),
-                                      client::response_body{http::body_reader{*stream}, stream},
-                                      std::make_shared<http::fields const>()};
+  co_return http::streamed_response{response.status,
+                                    std::move(response.reason),
+                                    response.version,
+                                    std::move(response.fields),
+                                    http::response_body{stream},
+                                    std::make_shared<http::fields const>()};
 }
 
-// What send() and stream() ask of a target before anything runs.
-void check_target(std::string const &target) {
-  if (!target.starts_with('/')) {
+// What send() and stream() ask of a request before anything runs.
+void check_request(http::request const &request) {
+  if (!request.target.starts_with('/')) {
     throw std::invalid_argument{"quoll::emscripten::fetch_transport: the target is not in origin form"};
   }
 
-  http::detail::check_target(target);
+  http::detail::check_target(request.target);
+
+  if (request.body_writer && !request.body.empty()) {
+    throw std::invalid_argument{"quoll::emscripten::fetch_transport: a request with a body_writer and a body"};
+  }
 }
 
 } // namespace
@@ -474,7 +489,7 @@ void check_target(std::string const &target) {
 } // namespace detail
 
 async::task<http::response> fetch_transport::send(http::request request) const {
-  detail::check_target(request.target);
+  detail::check_request(request);
 
   auto url = base_url_ + request.target;
   auto fields = detail::pack_fields(request.fields);
@@ -482,8 +497,8 @@ async::task<http::response> fetch_transport::send(http::request request) const {
   return detail::fetch(std::move(url), std::move(fields), std::move(request));
 }
 
-async::task<client::streamed_response> fetch_transport::stream(http::request request) const {
-  detail::check_target(request.target);
+async::task<http::streamed_response> fetch_transport::stream(http::request request) const {
+  detail::check_request(request);
 
   auto url = base_url_ + request.target;
   auto fields = detail::pack_fields(request.fields);

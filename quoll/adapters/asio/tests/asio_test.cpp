@@ -50,6 +50,7 @@
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/client/transport.hpp>
+#include <quoll/http/body_reader.hpp>
 #include <quoll/http/body_stream.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
@@ -708,6 +709,55 @@ TEST_CASE("asio: a client on a thread pool talks through sockets run by another 
   REQUIRE(received.body == "hello over TCP");
 }
 
+TEST_CASE("asio: a client on a thread pool sends a body_writer through sockets run by another thread", "[asio][http]") {
+  ::asio::io_context context;
+  auto acceptor = listen(context);
+  // Keeps run() going while the client runs on the pool between two of its socket operations.
+  auto work = ::asio::make_work_guard(context);
+  quoll::threads::thread_pool pool{2};
+  std::promise<http::response> response;
+  std::optional<http::request> request;
+  std::exception_ptr failure;
+
+  acceptor.async_accept([&](std::error_code error, tcp::socket socket) {
+    check(error);
+    spawn(context, serve_one(quoll::asio::tcp_stream{std::move(socket)}), request, failure);
+  });
+
+  auto const uploading = [](quoll::asio::connector connector, std::uint16_t port) -> task<http::response> {
+    quoll::client::transport const transport{std::move(connector), "127.0.0.1", port};
+    http::request message;
+
+    message.method = http::verb::post;
+    message.target = "/accounts/42";
+    message.body_writer = [](http::body_stream out) -> task<> {
+      std::string const piece(std::size_t{4} * 1024, 'x');
+
+      for (auto index = 0; index < 64; ++index) {
+        co_await out.write(piece);
+      }
+    };
+    co_return co_await transport.send(std::move(message));
+  };
+
+  co_spawn(pool.get_executor(), uploading(quoll::asio::connector{context.get_executor()}, port_of(acceptor)),
+           overloaded{[&](http::response value) {
+                        response.set_value(std::move(value));
+                        work.reset();
+                      },
+                      [&](std::exception_ptr error) {
+                        response.set_exception(std::move(error));
+                        work.reset();
+                      }});
+  run(context, failure);
+
+  auto const received = response.get_future().get();
+
+  REQUIRE(request);
+  REQUIRE(request->body.size() == std::size_t{256} * 1024);
+  REQUIRE(received.body == "hello over TCP");
+}
+
 TEST_CASE("asio: a stop request while connecting abandons the attempt", "[asio]") {
   ::asio::io_context context;
   auto acceptor = listen(context);
@@ -1146,6 +1196,109 @@ TEST_CASE("asio: a body read in pieces over TCP, on a connection then reused", "
   };
 
   REQUIRE(run_task(exchange()) == "1048576 in pieces hello");
+}
+
+TEST_CASE("asio: a body_writer over TCP: all of it, a server refusing it, and a peer that stops reading",
+          "[asio][runtime][client][timer]") {
+  auto const endless = [](http::body_stream out) -> task<> {
+    std::string const piece(std::size_t{64} * 1024, 'x');
+
+    for (;;) {
+      co_await out.write(piece);
+    }
+  };
+
+  SECTION("against a server") {
+    auto const exchange = [&]() -> task<std::string> {
+      http::router router;
+
+      router.post("/size", [](http::request message) {
+        http::response answer;
+
+        answer.body = std::to_string(message.body.size());
+        return answer;
+      });
+      router.post("/refuse", [](http::request, http::body_reader) {
+        http::response answer;
+
+        answer.status = http::status::content_too_large;
+        return answer;
+      });
+
+      auto listener = co_await io::listen(0);
+      auto const port = listener.local_port().value();
+      std::stop_source stop;
+
+      auto const serving = [&]() -> task<> {
+        co_await quoll::async::detail::stop_scope<void>{
+            quoll::server::serve(listener, router, {.shutdown_timeout = {}}), stop.get_token()};
+      };
+
+      auto const calling = [&]() -> task<std::string> {
+        quoll::async::detail::stop_on_exit const stop_server{stop};
+        quoll::client::transport<> const transport{"http://127.0.0.1:" + std::to_string(port)};
+
+        auto const upload = [](std::string target, http::body_writer writer) {
+          http::request request;
+
+          request.method = http::verb::post;
+          request.target = std::move(target);
+          request.body_writer = std::move(writer);
+          return request;
+        };
+
+        auto const whole = co_await transport.send(upload("/size", [](http::body_stream out) -> task<> {
+          std::string const piece(std::size_t{4} * 1024, 'x');
+
+          for (auto index = 0; index < 256; ++index) {
+            co_await out.write(piece);
+          }
+        }));
+        auto const refused = co_await transport.send(upload("/refuse", endless));
+
+        co_return whole.body + " " + std::to_string(static_cast<int>(refused.status));
+      };
+
+      auto [served, body] = co_await quoll::async::when_all(serving(), calling());
+
+      co_return std::move(body);
+    };
+
+    REQUIRE(run_task(exchange()) == "1048576 413");
+  }
+
+  SECTION("against a peer that reads nothing: a write has its timeout") {
+    auto const exchange = [&]() -> task<std::error_code> {
+      auto listener = co_await io::listen(0);
+      auto const port = listener.local_port().value();
+
+      auto const calling = [&]() -> task<std::error_code> {
+        quoll::client::transport_options options;
+
+        options.response_timeout = std::chrono::milliseconds{100};
+
+        quoll::client::transport<> const transport{"http://127.0.0.1:" + std::to_string(port), options};
+        http::request request;
+
+        request.method = http::verb::post;
+        request.body_writer = endless;
+
+        try {
+          static_cast<void>(co_await transport.send(std::move(request)));
+        } catch (std::system_error const &thrown) {
+          co_return thrown.code();
+        }
+
+        co_return std::error_code{};
+      };
+
+      auto [accepted, error] = co_await quoll::async::when_all(listener.accept(), calling());
+
+      co_return error;
+    };
+
+    REQUIRE(run_task(exchange()) == std::errc::timed_out);
+  }
 }
 
 TEST_CASE("asio: a client still sending a refused body finishes, then reads its answer", "[asio][runtime]") {

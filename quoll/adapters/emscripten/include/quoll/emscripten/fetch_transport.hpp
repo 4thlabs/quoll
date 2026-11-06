@@ -38,9 +38,9 @@
 #define QUOLL_EMSCRIPTEN_FETCH_TRANSPORT_HPP
 
 #include <quoll/async/task.hpp>
-#include <quoll/client/streamed_response.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
+#include <quoll/http/streamed_response.hpp>
 #include <quoll/http/transport.hpp>
 
 #include <string>
@@ -54,7 +54,8 @@ namespace quoll::emscripten {
  * Each request goes to `base_url` followed by its target: `https://api.example.com` and `/accounts/42` fetch
  * `https://api.example.com/accounts/42`. An empty base URL keeps the target relative, to the page's origin in a
  * browser. The fields fetch manages itself (Host, Content-Length, Connection and the other hop-by-hop fields) are not
- * sent; the request's trailers neither.
+ * sent; the request's trailers neither. A `request.body_writer` runs to its end before the fetch, and what it wrote
+ * goes out whole: a fetch sending in pieces needs HTTP/2, and is not in every browser.
  *
  * The response has the status, status text, fields and complete body that fetch exposes. fetch decodes the body
  * (decompressed, de-chunked), so the fields describing the bytes on the wire (Content-Encoding, Content-Length,
@@ -116,7 +117,7 @@ public:
    *
    * @throws std::invalid_argument here, before the task runs, as send() does.
    */
-  [[nodiscard]] async::task<client::streamed_response> stream(http::request request) const;
+  [[nodiscard]] async::task<http::streamed_response> stream(http::request request) const;
 
 private:
   std::string base_url_;

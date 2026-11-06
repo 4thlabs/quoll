@@ -34,6 +34,10 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/task.hpp>
+#include <quoll/http/body_stream.hpp>
+#include <quoll/http/detail/streamed_head.hpp>
+#include <quoll/http/detail/streamed_wire.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/serializer.hpp>
 
@@ -371,6 +375,122 @@ TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
     response.trailers.add("X-Checksum", "abc");
 
     require_rejected(response);
+  }
+}
+
+TEST_CASE("A request with a body_writer goes in pieces", "[http][serializer]") {
+  http::request request;
+
+  request.method = http::verb::post;
+  request.target = "/up";
+  request.body_writer = [](http::body_stream) -> quoll::async::task<> { co_return; };
+
+  SECTION("not whole") { REQUIRE_THROWS_AS(http::serialize(request), std::invalid_argument); }
+
+  SECTION("in chunks, unless it says how much comes") {
+    std::string head;
+    auto const framing = http::detail::serialize_streamed_head(request, head);
+
+    REQUIRE(framing.chunked);
+    REQUIRE(head == "POST /up HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n");
+    head.clear();
+    request.fields.set("Content-Length", "4");
+
+    auto const sized = http::detail::serialize_streamed_head(request, head);
+
+    REQUIRE(!sized.chunked);
+    REQUIRE(sized.length == 4);
+    REQUIRE(head == "POST /up HTTP/1.1\r\nContent-Length: 4\r\n\r\n");
+  }
+
+  SECTION("its own chunks, with trailers") {
+    std::string head;
+
+    request.fields.set("Transfer-Encoding", "chunked");
+    request.trailers.add("X-Sum", "1");
+
+    auto const framing = http::detail::serialize_streamed_head(request, head);
+
+    REQUIRE(framing.chunked);
+    REQUIRE(head == "POST /up HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n");
+  }
+
+  SECTION("what it cannot be") {
+    std::string head;
+    auto const refused = [&] { static_cast<void>(http::detail::serialize_streamed_head(request, head)); };
+
+    SECTION("a body too") {
+      request.body = "whole";
+      REQUIRE_THROWS_AS(refused(), std::invalid_argument);
+    }
+
+    SECTION("HTTP/1.0 with no length, which has no chunks") {
+      request.version = http::version::http_1_0;
+      REQUIRE_THROWS_AS(refused(), std::invalid_argument);
+      request.fields.set("Content-Length", "4");
+      REQUIRE_NOTHROW(refused());
+      head.clear();
+    }
+
+    SECTION("a TRACE, which RFC 9110 forbids content") {
+      request.method = http::verb::trace;
+      REQUIRE_THROWS_AS(refused(), std::invalid_argument);
+    }
+
+    SECTION("a CONNECT, whose bytes are the tunnel's") {
+      request.method = http::verb::connect;
+      request.target = "example.com:443";
+      REQUIRE_THROWS_AS(refused(), std::invalid_argument);
+    }
+
+    SECTION("framing in its trailers") {
+      request.trailers.add("Content-Length", "4");
+      REQUIRE_THROWS_AS(refused(), std::invalid_argument);
+    }
+
+    REQUIRE(head.empty());
+  }
+}
+
+TEST_CASE("streamed_wire: a body in pieces, framed", "[http][serializer]") {
+  SECTION("in chunks, the head with the first") {
+    http::detail::streamed_wire wire{"HEAD\r\n", {.chunked = true}};
+
+    REQUIRE(!wire.started());
+    REQUIRE(wire.frame("ab") == "HEAD\r\n2\r\nab\r\n");
+    REQUIRE(wire.started());
+    REQUIRE(wire.frame("").empty());
+    REQUIRE(wire.frame("c") == "1\r\nc\r\n");
+    REQUIRE(wire.end({}) == "0\r\n\r\n");
+  }
+
+  SECTION("an empty piece sends the head") {
+    http::detail::streamed_wire wire{"HEAD", {.chunked = true}};
+
+    REQUIRE(wire.frame("") == "HEAD");
+    REQUIRE(wire.frame("").empty());
+  }
+
+  SECTION("nothing written: the head and its end") {
+    http::detail::streamed_wire wire{"HEAD", {.chunked = true}};
+
+    REQUIRE(wire.end({}) == "HEAD0\r\n\r\n");
+  }
+
+  SECTION("of a known length, not copied past the head") {
+    http::detail::streamed_wire wire{"HEAD", {.length = 3}};
+    std::string_view const last = "c";
+
+    REQUIRE(wire.short_of_its_length());
+    REQUIRE(wire.frame("ab") == "HEADab");
+    REQUIRE(wire.past_its_length("cd"));
+    REQUIRE(!wire.past_its_length(last));
+
+    auto const framed = wire.frame(last);
+
+    REQUIRE(framed.data() == last.data());
+    REQUIRE(!wire.short_of_its_length());
+    REQUIRE(wire.end({}).empty());
   }
 }
 

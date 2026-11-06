@@ -34,53 +34,23 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_CLIENT_STREAMED_RESPONSE_HPP
-#define QUOLL_CLIENT_STREAMED_RESPONSE_HPP
+#ifndef QUOLL_HTTP_STREAMED_RESPONSE_HPP
+#define QUOLL_HTTP_STREAMED_RESPONSE_HPP
 
-#include <quoll/async/lifetimebound.hpp>
-#include <quoll/async/task.hpp>
-#include <quoll/http/body_reader.hpp>
 #include <quoll/http/fields.hpp>
+#include <quoll/http/response_body.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/version.hpp>
 
 #include <memory>
-#include <optional>
 #include <string>
-#include <string_view>
-#include <utility>
 
-namespace quoll::client {
+namespace quoll::http {
 
 /**
- * @brief The body of a streamed_response, a piece at a time. Copies share what reads it, the connection among them, so
- * that it may be taken out of its response, and the last to go closes the connection if it has not come to its end.
- *
- * Thread safety: none, as what reads it runs on one loop.
- */
-class response_body {
-public:
-  response_body() noexcept = default;
-
-  /** @brief What only what builds a streamed_response has to give. */
-  response_body(http::body_reader reader, std::shared_ptr<void> connection) noexcept
-      : reader_(reader), connection_(std::move(connection)) {}
-
-  /**
-   * @brief The next piece, valid up to the next read() and for as long as this, or nothing at the end of the body: see
-   * http::body_reader. A body moved from has nothing to read.
-   */
-  [[nodiscard]] async::task<std::optional<std::string_view>> read() const QUOLL_LIFETIMEBOUND {
-    return connection_ ? reader_.read() : http::body_reader{}.read();
-  }
-
-private:
-  http::body_reader reader_;
-  std::shared_ptr<void> connection_;
-};
-
-/**
- * @brief A response whose head has come, and whose body is read a piece at a time: what transport::stream() produces.
+ * @brief A response received, whose head has come and whose body is read a piece at a time: what a transport's
+ * `stream()` produces, client::transport's among them. A handler writing its response in pieces uses
+ * `response.body_writer` instead.
  *
  * @code
  * auto response = co_await transport.stream(std::move(request));
@@ -90,11 +60,9 @@ private:
  * }
  * @endcode
  *
- * Read to its end, or with nothing to read, its connection goes back to the transport. Destroyed before, the connection
- * closes, which is how to give up on a body. Either way, the last copy of `body` goes on the loop of what reads it, as
- * it holds the connection. A failure to read throws std::system_error from `body.read()`, as transport::send() would,
- * with a read timeout of `response_timeout` per piece, and closes the connection, leaving its place to others, as a
- * cancellation does: reading ends there, as a stream does not take it up again.
+ * Destroyed before the end of its body, with every copy of `body`, is how to give up on it. A failure to read throws
+ * std::system_error from `body.read()`, and reading ends there, as it does on a cancellation: a stream does not take it
+ * up again. Each transport says what else holds, in its `stream()`.
  *
  * Thread safety: none.
  */
@@ -105,11 +73,13 @@ struct streamed_response {
   http::version version = http::version::http_1_1;
   http::fields fields{};
   response_body body{};
-  /** @brief Fields that came after a chunked body, once `body` has come to its end; null on a response default-built or
-   * moved from. */
+  /**
+   * @brief Fields that came after a chunked body, once `body` has come to its end; null on a response default-built or
+   * moved from.
+   */
   std::shared_ptr<http::fields const> trailers{};
 };
 
-} // namespace quoll::client
+} // namespace quoll::http
 
-#endif // QUOLL_CLIENT_STREAMED_RESPONSE_HPP
+#endif // QUOLL_HTTP_STREAMED_RESPONSE_HPP

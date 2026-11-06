@@ -83,6 +83,7 @@ http::request make_request(http::verb method, std::string target, std::string bo
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/http/body_reader.hpp>
 #include <quoll/http/body_stream.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/router.hpp>
@@ -152,6 +153,13 @@ http::router make_router() {
         co_await out.write(piece);
       }
     };
+    return response;
+  });
+  router.post("/refuse", [](http::request, http::body_reader) {
+    http::response response;
+
+    response.status = http::status::content_too_large;
+    response.body = "too large";
     return response;
   });
   router.add(http::verb::post, "/echo", "echo", [](http::request request, http::route_match) -> task<http::response> {
@@ -391,6 +399,71 @@ TEST_CASE("TLS: a body read in pieces, on a connection then reused", "[tls][asio
 
   REQUIRE(run_task(with_server<std::string>(server_certificate(), call, {}, &accepted)) == "1048576 hello");
   REQUIRE(accepted == 1);
+}
+
+TEST_CASE("TLS: a body_writer: all of it, then a server refusing it", "[tls][asio][runtime]") {
+  std::function<task<std::string>(std::string)> const call = [](std::string url) -> task<std::string> {
+    client::transport<> const transport{url, trusting_the_authority()};
+
+    auto const upload = [](std::string target, http::body_writer writer) {
+      http::request request;
+
+      request.method = http::verb::post;
+      request.target = std::move(target);
+      request.body_writer = std::move(writer);
+      return request;
+    };
+
+    auto const whole = co_await transport.send(upload("/echo", [](http::body_stream out) -> task<> {
+      std::string const piece(std::size_t{4} * 1024, 'x');
+
+      for (auto index = 0; index < 256; ++index) {
+        co_await out.write(piece);
+      }
+    }));
+    auto const refused = co_await transport.send(upload("/refuse", [](http::body_stream out) -> task<> {
+      std::string const piece(std::size_t{64} * 1024, 'x');
+
+      for (;;) {
+        co_await out.write(piece);
+      }
+    }));
+
+    co_return std::to_string(whole.body.size()) + " " + std::to_string(static_cast<int>(refused.status));
+  };
+
+  REQUIRE(run_task(with_server<std::string>(server_certificate(), call)) == "1048576 413");
+}
+
+TEST_CASE("TLS: a head that cuts a write short is still a head, whatever becomes of what follows",
+          "[tls][asio][runtime]") {
+  std::function<task<std::string>(std::string)> const call = [](std::string url) -> task<std::string> {
+    client::transport<> const transport{url, trusting_the_authority()};
+    http::request request;
+
+    request.method = http::verb::post;
+    request.target = "/refuse";
+    request.body_writer = [](http::body_stream out) -> task<> {
+      std::string const piece(std::size_t{64} * 1024, 'x');
+
+      for (;;) {
+        co_await out.write(piece);
+      }
+    };
+
+    auto response = co_await transport.stream(std::move(request));
+
+    // Whichever comes: what is promised is the head, and no more than a failure from what follows.
+    try {
+      while (co_await response.body.read()) {
+      }
+    } catch (std::system_error const &) {
+    }
+
+    co_return std::to_string(static_cast<int>(response.status));
+  };
+
+  REQUIRE(run_task(with_server<std::string>(server_certificate(), call)) == "413");
 }
 
 TEST_CASE("TLS: a kept connection the server closed is replaced", "[tls][asio][runtime][timer]") {

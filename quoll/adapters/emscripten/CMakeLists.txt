@@ -10,7 +10,6 @@ quoll_declare_module(
     src/executor.cpp
     src/fetch_transport.cpp
   DEPS
-    quoll::client
     quoll::http
     quoll::ui
 )

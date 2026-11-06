@@ -67,10 +67,10 @@ struct transport_options {
   std::size_t max_idle_connections = 8;
   /**
    * @brief How many connections are open at once, in use or idle; 0: no limit. Past it, a request waits for a request
-   * on a connection to end, and an idle connection is closed to make room for a new one. A streamed_response counts
-   * until its body has come to its end or it goes: read or drop one before a request that needs its place. A stop
-   * request ends the wait, and so does `connect_timeout`, which then starts again to connect. Without a timeout or a
-   * timer, a server that does not answer holds up those that wait. The executors that send have to take a post() from
+   * on a connection to end, and an idle connection is closed to make room for a new one. An http::streamed_response
+   * counts until its body has come to its end or it goes: read or drop one before a request that needs its place. A
+   * stop request ends the wait, and so does `connect_timeout`, which then starts again to connect. Without a timeout or
+   * a timer, a server that does not answer holds up those that wait. The executors that send have to take a post() from
    * another thread, as asio's and a thread pool's do, and a run_loop's does not.
    */
   std::size_t max_connections = 0;
@@ -86,7 +86,8 @@ struct transport_options {
    * @brief How long a request may take once on a connection, from sending it to reading the end of its response: a
    * connection found closed and tried again counts anew. Its connection is then closed; the request is not tried again,
    * as the server may be working on it. Through transport::stream(), it is up to the head, then per piece: a transfer
-   * takes as long as it keeps coming.
+   * takes as long as it keeps coming. With a `request.body_writer`, it is per piece written, then for the response from
+   * the end of the body: the time the writer takes between pieces is its own.
    */
   std::chrono::nanoseconds response_timeout = std::chrono::seconds{60};
   /** @brief How the servers of `https://` URLs are checked: by default, against the system's authorities. */

@@ -40,12 +40,12 @@
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/async/yield.hpp>
-#include <quoll/client/streamed_response.hpp>
 #include <quoll/emscripten.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
+#include <quoll/http/streamed_response.hpp>
 #include <quoll/http/transport.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/http/version.hpp>
@@ -425,6 +425,105 @@ using api = quoll::rest::api<"", echo, missing>;
 
 } // namespace
 
+TEST_CASE("fetch_transport: a body_writer goes out whole", "[emscripten][http]") {
+  test_server const server;
+  fetch_transport const transport{server.url()};
+  http::request request;
+
+  request.method = http::verb::post;
+  request.target = "/status/200";
+  request.body_writer = [](http::body_stream out) -> quoll::async::task<> {
+    co_await out.write("one ");
+    co_await out.write("two");
+  };
+
+  REQUIRE(run(transport.send(std::move(request))).body == "one two");
+
+  http::request both;
+
+  both.method = http::verb::post;
+  both.target = "/status/200";
+  both.body = "whole";
+  both.body_writer = [](http::body_stream) -> quoll::async::task<> { co_return; };
+  REQUIRE_THROWS_AS(transport.send(std::move(both)), std::invalid_argument);
+
+  http::request short_of_it;
+
+  short_of_it.method = http::verb::post;
+  short_of_it.target = "/status/200";
+  short_of_it.fields.set("Content-Length", "1000");
+  short_of_it.body_writer = [](http::body_stream out) -> quoll::async::task<> { co_await out.write("four"); };
+  REQUIRE_THROWS_AS(run(transport.send(std::move(short_of_it))), std::length_error);
+}
+
+TEST_CASE("fetch_transport: stream() takes a body_writer too, gathered first", "[emscripten][http][stream]") {
+  test_server const server;
+  fetch_transport const transport{server.url()};
+  http::request request;
+
+  request.method = http::verb::post;
+  request.target = "/status/200";
+  request.body_writer = [](http::body_stream out) -> quoll::async::task<> {
+    co_await out.write("one ");
+    co_await out.write("two");
+  };
+
+  auto const reading = [&]() -> quoll::async::task<std::string> {
+    auto response = co_await transport.stream(std::move(request));
+    std::string body;
+
+    while (auto const piece = co_await response.body.read()) {
+      body += *piece;
+    }
+
+    co_return body;
+  };
+
+  REQUIRE(run(reading()) == "one two");
+
+  http::request both;
+
+  both.method = http::verb::post;
+  both.target = "/status/200";
+  both.body = "whole";
+  both.body_writer = [](http::body_stream) -> quoll::async::task<> { co_return; };
+  REQUIRE_THROWS_AS(transport.stream(std::move(both)), std::invalid_argument);
+}
+
+TEST_CASE("fetch_transport: a timeout ends a body_writer at its next write", "[emscripten][http][timer]") {
+  test_server const server;
+  fetch_transport const transport{server.url()};
+  http::request request;
+
+  request.method = http::verb::post;
+  request.target = "/status/200";
+  request.body_writer = [](http::body_stream out) -> quoll::async::task<> {
+    // Its own wait lets the event loop run the timeout, and what it then writes is refused, whatever it makes of the
+    // wait.
+    for (;;) {
+      try {
+        co_await quoll::async::sleep_for(std::chrono::milliseconds{1});
+      } catch (std::system_error const &) {
+      }
+
+      co_await out.write("x");
+    }
+  };
+
+  auto const timing_out = [&]() -> quoll::async::task<std::error_code> {
+    try {
+      static_cast<void>(
+          co_await quoll::async::with_timeout(std::chrono::milliseconds{20}, transport.send(std::move(request))));
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  REQUIRE(run(timing_out()) == std::make_error_code(std::errc::timed_out));
+}
+
 TEST_CASE("rest::client over fetch_transport calls an API that only has a contract", "[emscripten][rest]") {
   test_server const server;
   quoll::rest::client<node_server_api::api, fetch_transport> const client{fetch_transport{server.url()}};
@@ -440,10 +539,9 @@ TEST_CASE("rest::client over fetch_transport calls an API that only has a contra
 
 namespace {
 
-namespace client = quoll::client;
 
-task<client::streamed_response> stream_target(fetch_transport transport, std::string target,
-                                              http::verb method = http::verb::get, std::string body = {}) {
+task<http::streamed_response> stream_target(fetch_transport transport, std::string target,
+                                            http::verb method = http::verb::get, std::string body = {}) {
   http::request request;
 
   request.method = method;
@@ -471,13 +569,13 @@ task<std::error_code> stream_then_stop(fetch_transport transport, std::stop_sour
 }
 
 // The next piece, copied as what the view shows does not outlive the task's result.
-task<std::optional<std::string>> next_piece(client::response_body const &body) {
+task<std::optional<std::string>> next_piece(http::response_body const &body) {
   auto const piece = co_await body.read();
 
   co_return piece ? std::optional<std::string>{*piece} : std::nullopt;
 }
 
-task<std::string> read_rest(client::response_body const &body) {
+task<std::string> read_rest(http::response_body const &body) {
   std::string rest;
 
   while (auto const piece = co_await body.read()) {
@@ -488,7 +586,7 @@ task<std::string> read_rest(client::response_body const &body) {
 }
 
 // What read() throws, or a default error if it does not.
-task<std::system_error> read_failure(client::response_body const &body) {
+task<std::system_error> read_failure(http::response_body const &body) {
   try {
     (void)co_await body.read();
   } catch (std::system_error const &error) {
@@ -499,13 +597,13 @@ task<std::system_error> read_failure(client::response_body const &body) {
 }
 
 // Reads what has not been written yet, then requests stop: when_all starts the read first.
-task<std::system_error> read_then_stop(client::response_body const &body, std::stop_source &source) {
+task<std::system_error> read_then_stop(http::response_body const &body, std::stop_source &source) {
   auto const [failure, stopped] = co_await quoll::async::when_all(read_failure(body), request_stop(source));
 
   co_return failure;
 }
 
-task<std::error_code> read_with_timeout(client::response_body const &body, std::chrono::nanoseconds timeout) {
+task<std::error_code> read_with_timeout(http::response_body const &body, std::chrono::nanoseconds timeout) {
   try {
     (void)co_await quoll::async::with_timeout(timeout, body.read());
   } catch (std::system_error const &error) {
@@ -718,8 +816,8 @@ TEST_CASE("fetch_transport: dropping a response before the end aborts its fetch"
 
 TEST_CASE("fetch_transport: copies of a body share the reading, and the last to go aborts", "[emscripten][stream]") {
   test_server const server;
-  std::optional<client::streamed_response> response{run(stream_target(fetch_transport{server.url()}, "/open"))};
-  std::optional<client::response_body> copy{response->body};
+  std::optional<http::streamed_response> response{run(stream_target(fetch_transport{server.url()}, "/open"))};
+  std::optional<http::response_body> copy{response->body};
 
   server_writes("one");
   REQUIRE(run(next_piece(response->body)) == "one");

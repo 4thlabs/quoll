@@ -47,6 +47,7 @@
 #include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/detail/streamed_head.hpp>
+#include <quoll/http/detail/streamed_wire.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
@@ -437,91 +438,59 @@ async::task<std::error_code> write_bytes(io::any_stream &stream, std::span<std::
 }
 
 // What a body_writer writes through, one write timeout per piece: a transfer takes as long as it keeps leaving. The
-// head goes with the first piece, in one write, so that the second write of a response does not wait for what
-// acknowledges the first, and a writer failing before its first byte can still be answered. A write that fails or is
-// cancelled may have left part of what it had, so that nothing can follow it on this connection.
+// head goes with the first piece, so that a writer failing before its first byte can still be answered. A write that
+// fails or is cancelled may have left part of what it had, so that nothing can follow it on this connection.
 class streamed_response {
 public:
   streamed_response(io::any_stream &stream, connection_options const &options, std::string head,
                     http::detail::streamed_framing framing, streamed_body *request_body) noexcept
-      : stream_(&stream), options_(&options), request_body_(request_body), framing_(framing), head_(std::move(head)),
-        left_(framing.length.value_or(0)) {}
+      : stream_(&stream), options_(&options), request_body_(request_body), wire_(std::move(head), framing) {}
 
   [[nodiscard]] async::task<> write(std::string_view piece) {
     if (failed_) {
       throw body_not_written{std::make_error_code(std::errc::broken_pipe), "quoll::server: the body cannot go on"};
     }
 
-    if (framing_.length && piece.size() > left_) {
+    if (wire_.past_its_length(piece)) {
       failed_ = true;
       throw std::length_error{"quoll::server: a body_writer wrote more than its Content-Length"};
     }
 
+    response_starts();
+
     // An empty piece sends what is held back: a stream announces itself before its first data.
-    if (piece.empty()) {
-      if (!started_) {
-        wire_.clear();
-        append_head();
-        co_await send(wire_);
-      }
-
-      co_return;
+    if (auto const bytes = wire_.frame(piece); !bytes.empty()) {
+      co_await send(bytes);
     }
-
-    // Nothing to frame and nothing before it: no copy.
-    if (started_ && !framing_.chunked) {
-      co_await send(piece);
-    } else {
-      wire_.clear();
-      append_head();
-
-      if (framing_.chunked) {
-        http::detail::append_chunk(piece, wire_);
-      } else {
-        wire_ += piece;
-      }
-
-      co_await send(wire_);
-    }
-
-    left_ -= framing_.length ? piece.size() : 0;
   }
 
   // The end of a body that is whole; false if it is not, or if its end could not leave.
   [[nodiscard]] async::task<bool> finish(http::fields const &trailers) {
-    if (failed_ || left_ != 0) {
+    if (failed_ || wire_.short_of_its_length()) {
       co_return false;
     }
 
-    wire_.clear();
-    append_head();
+    response_starts();
 
-    if (framing_.chunked) {
-      http::detail::append_last_chunk(trailers, wire_);
-    }
+    auto const bytes = wire_.end(trailers);
 
-    if (wire_.empty()) {
+    if (bytes.empty()) {
       co_return true;
     }
 
-    failed_ = static_cast<bool>(co_await send_within_timeout(wire_));
+    failed_ = static_cast<bool>(co_await send_within_timeout(bytes));
     co_return !failed_;
   }
 
   // Nothing has left: there is still time to answer something else.
-  [[nodiscard]] bool started() const noexcept { return started_; }
+  [[nodiscard]] bool started() const noexcept { return wire_.started(); }
 
-  [[nodiscard]] bool short_of_its_length() const noexcept { return !failed_ && left_ != 0; }
+  [[nodiscard]] bool short_of_its_length() const noexcept { return !failed_ && wire_.short_of_its_length(); }
 
 private:
-  void append_head() {
-    if (!started_) {
-      started_ = true;
-      wire_ += head_;
-
-      if (request_body_ != nullptr) {
-        request_body_->response_started();
-      }
+  void response_starts() {
+    if (!wire_.started() && request_body_ != nullptr) {
+      request_body_->response_started();
     }
   }
 
@@ -548,11 +517,7 @@ private:
   io::any_stream *stream_;
   connection_options const *options_;
   streamed_body *request_body_;
-  http::detail::streamed_framing framing_;
-  std::string head_;
-  std::uint64_t left_;
-  std::string wire_;
-  bool started_ = false;
+  http::detail::streamed_wire wire_;
   bool failed_ = false;
 };
 
