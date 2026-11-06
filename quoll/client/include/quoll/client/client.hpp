@@ -70,10 +70,14 @@ struct connector_handle {
 };
 
 // What a client does, compiled once: over a connector, or through the platform of the executor.
-struct client_backend {
-  std::shared_ptr<void> state;
+struct client_operations {
   async::task<http::response> (*send)(std::shared_ptr<void> const &state, http::request request);
   async::task<http::streamed_response> (*stream)(std::shared_ptr<void> const &state, http::request request);
+};
+
+struct client_backend {
+  std::shared_ptr<void> state;
+  client_operations const *operations;
 };
 
 [[nodiscard]] client_backend make_client_backend(connector_handle connector, std::string host, std::uint16_t port,
@@ -132,8 +136,11 @@ struct client_backend {
  * In a browser, a Worker or Node, built with Emscripten, a client from a URL goes through the JavaScript fetch(), as
  * the executor offers it, and the same code does the same thing, but for what fetch keeps to itself:
  *
- * - A URL may be relative to the page: empty, or a path. Elsewhere it throws std::invalid_argument. On an executor that
- *   does not offer fetch, a request throws std::logic_error, as one without a network does natively.
+ * - A URL may be relative: empty or a path, from the page's origin, or `.` or `./path`, from the page itself, for one
+ *   served under a path of its own. Elsewhere it throws std::invalid_argument. On an executor that does not offer
+ * fetch, a request throws std::logic_error, as one without a network does natively.
+ * - What fetch refuses throws std::invalid_argument, before the task runs: a GET or a HEAD with a body or a
+ *   `body_writer`, and the methods CONNECT and TRACE.
  * - `max_connections`, `max_idle_connections`, `max_redirects`, `connect_timeout` and `tls` have no effect, as the
  * browser decides. It follows redirects itself, possibly to another origin, and always checks certificates. `limits`
  * and `response_timeout` apply: past a limit, the fetch is aborted.
@@ -219,7 +226,7 @@ public:
    * for what http::serialize() rejects, for a `body_writer` with a body too, or over HTTP/1.0 with no `Content-Length`.
    */
   [[nodiscard]] async::task<http::response> send(http::request request) const {
-    return backend_.send(backend_.state, std::move(request));
+    return backend_.operations->send(backend_.state, std::move(request));
   }
 
   /**
@@ -240,7 +247,7 @@ public:
    * @throws std::invalid_argument here, as send() does.
    */
   [[nodiscard]] async::task<http::streamed_response> stream(http::request request) const {
-    return backend_.stream(backend_.state, std::move(request));
+    return backend_.operations->stream(backend_.state, std::move(request));
   }
 
   /**

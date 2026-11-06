@@ -177,7 +177,7 @@ struct aborter {
   return std::system_error{std::make_error_code(std::errc::io_error), "quoll::http::client: " + url + ": " + message};
 }
 
-// What a fetch_operation gives: its response and, when its body is to be read in pieces, what reads it and the URL its
+// What a fetch_operation gives: its response, and what reads its body and the URL its
 // failures name.
 struct fetched {
   http::response response;
@@ -193,7 +193,7 @@ struct fetched {
 // resumes. Movable until it suspends, so that it can be co_await-ed as a temporary.
 class fetch_operation {
 public:
-  // `fields`: the request's fields, packed by pack_fields()..
+  // `fields`: the request's fields, packed by pack_fields().
   fetch_operation(std::string url, std::string fields, http::request const &request)
       : url_(std::move(url)), fields_(std::move(fields)), request_(&request) {}
 

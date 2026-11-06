@@ -920,14 +920,18 @@ client_backend make_client_backend(connector_handle connector, std::string host,
                                    std::string prefix, client_options const &options) {
   auto field = host_field(host, port, secure ? 443 : 80);
 
+  static constexpr client_operations operations{
+      [](std::shared_ptr<void> const &state, http::request request) {
+        return send_connected(std::static_pointer_cast<client_core>(state), std::move(request));
+      },
+      [](std::shared_ptr<void> const &state, http::request request) {
+        return stream_connected(std::static_pointer_cast<client_core>(state), std::move(request));
+      },
+  };
+
   return {std::make_shared<client_core>(std::move(connector), std::move(host), port, secure, std::move(field),
                                         std::move(prefix), options),
-          [](std::shared_ptr<void> const &state, http::request request) {
-            return send_connected(std::static_pointer_cast<client_core>(state), std::move(request));
-          },
-          [](std::shared_ptr<void> const &state, http::request request) {
-            return stream_connected(std::static_pointer_cast<client_core>(state), std::move(request));
-          }};
+          &operations};
 }
 
 } // namespace quoll::http::detail
