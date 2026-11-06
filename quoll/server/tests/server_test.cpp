@@ -832,7 +832,9 @@ TEST_CASE("http::server: max_connections and connections() count for all it serv
   REQUIRE(server.connections() == 0);
 }
 
-TEST_CASE("http::server: routes are closed once it serves", "[server]") {
+TEST_CASE("http::server: routes are closed once it serves, not before", "[server]") {
+  using namespace std::chrono_literals;
+
   auto const handler = []() { return http::response{}; };
 
   http::server server;
@@ -840,12 +842,75 @@ TEST_CASE("http::server: routes are closed once it serves", "[server]") {
   server.get("/open", handler);
 
   http::server copy = server;
-  canned_listener listener;
-  auto const pending = server.serve(std::move(listener));
+  auto pending = server.serve(canned_listener{});
 
-  REQUIRE_THROWS_AS(server.get("/late", handler), std::logic_error);
-  REQUIRE_THROWS_AS(copy.post("/late", handler), std::logic_error);
-  REQUIRE_THROWS_AS(copy.use([](http::request request, http::next const &next) { return next(std::move(request)); }),
-                    std::logic_error);
-  REQUIRE_THROWS_AS((void)copy.routes(), std::logic_error);
+  // A task made is no task running.
+  server.get("/still-open", handler);
+
+  quoll::test::virtual_time time;
+  std::stop_source source;
+  bool closed = false;
+
+  auto const check = [&]() -> task<> {
+    co_await quoll::async::sleep_for(1s);
+    REQUIRE_THROWS_AS(server.get("/late", handler), std::logic_error);
+    REQUIRE_THROWS_AS(copy.post("/late", handler), std::logic_error);
+    REQUIRE_THROWS_AS(copy.use([](http::request request, http::next const &next) { return next(std::move(request)); }),
+                      std::logic_error);
+    REQUIRE_THROWS_AS(copy.edit_routes([](http::router &) {}), std::logic_error);
+    REQUIRE_NOTHROW((void)std::as_const(copy).routes());
+    closed = true;
+    source.request_stop();
+  };
+
+  quoll::async::co_spawn(time.get_executor(), std::move(pending), ignored(), source.get_token());
+  quoll::async::co_spawn(time.get_executor(), check(), ignored());
+  time.run();
+
+  REQUIRE(closed);
+}
+
+TEST_CASE("http::server: a stream given directly takes a place, and is never refused", "[server]") {
+  using namespace std::chrono_literals;
+
+  auto const router = slow_router(1s);
+  quoll::test::virtual_time time;
+  auto [direct_client, direct_server] = io::make_memory_stream_pair();
+  auto [second_client, second_server] = io::make_memory_stream_pair();
+  auto [refused_client, refused_server] = io::make_memory_stream_pair();
+  canned_listener listener;
+  std::stop_source source;
+  std::optional<std::optional<http::response>> direct;
+  std::optional<std::optional<http::response>> second;
+  std::optional<std::optional<http::response>> refused;
+  std::size_t most = 0;
+
+  listener.streams.emplace_back(std::move(refused_server));
+
+  http::server const server{router, {.max_connections = 1}};
+
+  auto const observe = [&]() -> task<> {
+    co_await quoll::async::sleep_for(500ms);
+    most = server.connections();
+  };
+
+  auto const serve_later = [&server](canned_listener given) -> task<> {
+    co_await quoll::async::sleep_for(50ms);
+    co_await server.serve(std::move(given));
+  };
+
+  quoll::async::co_spawn(time.get_executor(), server.serve_connection(std::move(direct_server)), ignored());
+  quoll::async::co_spawn(time.get_executor(), server.serve_connection(std::move(second_server)), ignored());
+  quoll::async::co_spawn(time.get_executor(), ask(direct_client), store(direct));
+  quoll::async::co_spawn(time.get_executor(), ask(second_client), store(second));
+  quoll::async::co_spawn(time.get_executor(), observe(), ignored());
+  quoll::async::co_spawn(time.get_executor(), stop_after(100ms, source), ignored());
+  quoll::async::co_spawn(time.get_executor(), serve_later(std::move(listener)), ignored(), source.get_token());
+  quoll::async::co_spawn(time.get_executor(), ask(refused_client), store(refused));
+  time.run();
+
+  REQUIRE(direct.value().value().body == "done");
+  REQUIRE(second.value().value().body == "done");
+  REQUIRE_FALSE(refused.value().has_value());
+  REQUIRE(most == 2);
 }

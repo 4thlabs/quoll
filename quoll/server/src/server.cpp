@@ -104,12 +104,12 @@ async::task<bool> accept_again(std::error_code error) {
   co_return true;
 }
 
-// What the connections of a serve() share. `state` is no owner: the frame of serve() holds it, past each connection's
-// last use of it, and it ends on the accept loop rather than on a connection's thread, as a connection's frame ends
-// after serve() resumes, where what a handler holds has no business ending.
+// What the connections of a serve() share. It holds none of what the application gave, which `state` and the frame of
+// serve() hold, past each connection's last use of it: they end on the accept loop rather than on a connection's
+// thread, as a connection's frame ends after serve() resumes, where what a handler or a callback holds has no business
+// ending.
 struct shared_options {
   server_state *state;
-  connection_options connection;
   async::detail::task_group connections;
   // Ends them gently, where the stop token of their tasks cancels what they have pending.
   std::stop_source drain;
@@ -136,22 +136,24 @@ struct connection_outcome {
   }
 };
 
-// Takes a place among the server's connections, if it has one left: two accept loops may ask at once, so that it cannot
-// look before it takes.
+// Takes a place among the server's connections, if it has one left. Two accept loops may ask at once, and connections()
+// reads it: it never goes past the limit, not even for an instant.
 [[nodiscard]] bool try_open(server_state &state) noexcept {
   auto const max_connections = state.options.max_connections;
-  auto const before = state.connections.fetch_add(1);
+  auto open = state.connections.load();
 
-  if (max_connections != 0 && before >= max_connections) {
-    state.connections.fetch_sub(1);
-    return false;
-  }
+  do {
+    if (max_connections != 0 && open >= max_connections) {
+      return false;
+    }
+  } while (!state.connections.compare_exchange_weak(open, open + 1));
 
   return true;
 }
 
-async::task<> serve_shared(io::any_stream stream, http::router const &router, std::shared_ptr<shared_options> shared) {
-  co_await serve_connection(std::move(stream), router, shared->connection);
+async::task<> serve_shared(io::any_stream stream, http::router const &router, connection_options const &options,
+                           std::shared_ptr<shared_options> shared) {
+  co_await serve_connection(std::move(stream), router, options);
 }
 
 async::task<> join_then_cancel(async::detail::task_group &connections, std::stop_source &deadline) {
@@ -188,14 +190,15 @@ async::task<> wind_down(shared_options &shared, std::stop_source &connections_st
                            stop_past_deadline(*timer, timeout, deadline.get_token(), connections_stop));
 }
 
-} // namespace
-
 async::task<> serve_accepting(async::any_executor executor, io::any_listener listener,
                               std::shared_ptr<server_state> state) {
-  auto const stop_token = co_await async::current_stop_token();
-  auto const shared = std::make_shared<shared_options>(state.get(), state->options.connection);
+  state->serving.store(true);
 
-  shared->connection.drain = shared->drain.get_token();
+  auto const stop_token = co_await async::current_stop_token();
+  auto const shared = std::make_shared<shared_options>(state.get());
+  connection_options connection = state->options.connection;
+
+  connection.drain = shared->drain.get_token();
 
   auto const &accept_error = state->options.on_accept_error;
   std::stop_source connections_stop;
@@ -247,8 +250,8 @@ async::task<> serve_accepting(async::any_executor executor, io::any_listener lis
     shared->connections.started();
 
     try {
-      async::co_spawn(executor, serve_shared(std::move(*stream), state->router, shared), connection_outcome{shared},
-                      connections_stop.get_token());
+      async::co_spawn(executor, serve_shared(std::move(*stream), state->router, connection, shared),
+                      connection_outcome{shared}, connections_stop.get_token());
     } catch (...) {
       // Not spawned: stop the others, wait for them, then fail.
       state->connections.fetch_sub(1);
@@ -276,8 +279,6 @@ async::task<> serve_accepting(async::any_executor executor, io::any_listener lis
     std::rethrow_exception(ending);
   }
 }
-
-namespace {
 
 async::task<> serve_accepting_here(io::any_listener listener, std::shared_ptr<server_state> state) {
   // A copy, held by each connection: their frames end after serve() resumes.
@@ -311,6 +312,8 @@ private:
 };
 
 [[nodiscard]] async::task<> serve_one(io::any_stream stream, std::shared_ptr<server_state> state) {
+  state->serving.store(true);
+
   counted_connection const counted{*state};
 
   co_await serve_connection(std::move(stream), state->router, state->options.connection);
@@ -327,7 +330,7 @@ server::server(serve_options options) : server(http::router{}, std::move(options
 server::server(http::router router, serve_options options)
     : state_(std::make_shared<detail::server_state>(std::move(router), std::move(options))) {}
 
-http::router &server::routes() {
+http::router &server::open_routes() {
   if (state_->serving.load()) {
     throw std::logic_error{"quoll::http::server: routes cannot be added once it serves"};
   }
@@ -340,22 +343,18 @@ http::router const &server::routes() const noexcept { return state_->router; }
 std::size_t server::connections() const noexcept { return state_->connections.load(); }
 
 async::task<> server::listen(std::uint16_t port, listen_options where) const {
-  state_->serving.store(true);
   return detail::listen_and_serve(state_, port, std::move(where));
 }
 
 async::task<> server::serve(io::any_listener listener) const {
-  state_->serving.store(true);
   return detail::serve_accepting_here(std::move(listener), state_);
 }
 
 async::task<> server::serve_on(async::any_executor executor, io::any_listener listener) const {
-  state_->serving.store(true);
   return detail::serve_accepting(std::move(executor), std::move(listener), state_);
 }
 
 async::task<> server::serve_connection(io::any_stream stream) const {
-  state_->serving.store(true);
   return detail::serve_one(std::move(stream), state_);
 }
 
