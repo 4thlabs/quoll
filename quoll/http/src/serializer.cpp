@@ -376,7 +376,8 @@ std::optional<std::uint64_t> announced_length(fields const &entries) {
 streamed_framing serialize_streamed_head(request const &message, std::string &out) {
   auto rules = request_rules(message);
 
-  if (!rules.body_allowed || !message.body.empty()) {
+  // RFC 9110, 9.3.8: a client must not send content in a TRACE.
+  if (!rules.body_allowed || message.method == verb::trace || !message.body.empty()) {
     reject("a body_writer on a request that cannot have one, or with a body");
   }
 

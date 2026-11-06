@@ -2874,7 +2874,12 @@ TEST_CASE("client::transport: what a body_writer gets wrong comes out of send()"
   memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
 
   auto const failing = [&](http::request request) -> task<std::string> {
-    client::transport const transport{memory_connector{server}, "example.com", 80};
+    client::transport_options options;
+
+    // A place it did not give back would hold up what follows for ever.
+    options.max_connections = 1;
+
+    client::transport const transport{memory_connector{server}, "example.com", 80, options};
     std::string seen;
 
     try {
@@ -2973,6 +2978,13 @@ TEST_CASE("client::transport: send() refuses a body_writer it could not send, be
   SECTION("a body as well") { request.body = "whole"; }
 
   SECTION("HTTP/1.0 without a length") { request.version = http::version::http_1_0; }
+
+  SECTION("a TRACE") { request.method = verb::trace; }
+
+  SECTION("a CONNECT") {
+    request.method = verb::connect;
+    request.target = "/";
+  }
 
   REQUIRE_THROWS_AS(transport.send(std::move(request)), std::invalid_argument);
   REQUIRE(server.connections == 0);
@@ -3320,6 +3332,31 @@ TEST_CASE("client::transport: the timeouts of a body_writer", "[client][timer]")
             "timed out at 8");
   }
 
+  SECTION("through stream(), the head, from the end of the body") {
+    auto const writer = [](http::body_stream out) -> task<> {
+      co_await async::sleep_for(5s);
+      co_await out.write("part");
+    };
+
+    auto const streaming = [&]() -> task<std::string> {
+      client::transport const transport{timed_connector{time, router}, "example.com", 80, {.response_timeout = 3s}};
+      auto const started = time.now();
+
+      try {
+        static_cast<void>(co_await transport.stream(upload_of(writer, verb::post, "/silent")));
+      } catch (std::system_error const &thrown) {
+        auto const taken = std::chrono::duration_cast<std::chrono::seconds>(time.now() - started);
+
+        co_return (thrown.code() == std::errc::timed_out ? "timed out at " : "another failure at ") +
+            std::to_string(taken.count());
+      }
+
+      co_return "a head";
+    };
+
+    REQUIRE(quoll::test::run(time, streaming()) == "timed out at 8");
+  }
+
   SECTION("a stop request reaches the writer") {
     std::string stopped_by;
     auto const writer = [&stopped_by](http::body_stream) -> task<> {
@@ -3403,4 +3440,57 @@ TEST_CASE("client::transport: an interim response does not stop a body_writer", 
 
   REQUIRE(quoll::test::run(loop, sending()) == "65536 hello");
   REQUIRE(server.connections == 1);
+}
+
+TEST_CASE("client::transport: an upload holds its place in max_connections until it has ended", "[client]") {
+  auto const router = make_upload_router();
+  auto const through_stream = GENERATE(false, true);
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+  std::vector<std::string> order;
+
+  auto const sending = [&]() -> task<int> {
+    client::transport_options options;
+
+    options.max_connections = 1;
+
+    client::transport const transport{memory_connector{server}, "example.com", 80, options};
+
+    auto const uploading = [&]() -> task<int> {
+      auto const writer = [&order](http::body_stream out) -> task<> {
+        order.emplace_back("upload begins");
+
+        for (auto turn = 0; turn < 8; ++turn) {
+          co_await out.write("x");
+          co_await async::yield();
+        }
+
+        order.emplace_back("upload ends");
+      };
+
+      if (through_stream) {
+        auto response = co_await transport.stream(upload_of(writer));
+
+        while (co_await response.body.read()) {
+        }
+      } else {
+        static_cast<void>(co_await transport.send(upload_of(writer)));
+      }
+
+      co_return 1;
+    };
+
+    auto const asking = [&]() -> task<int> {
+      static_cast<void>(co_await transport.send(make_request(verb::get, "/hello")));
+      order.emplace_back("the other answered");
+      co_return 2;
+    };
+
+    auto [one, two] = co_await async::when_all(uploading(), asking());
+
+    co_return one + two;
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()) == 3);
+  REQUIRE(order == std::vector<std::string>{"upload begins", "upload ends", "the other answered"});
 }

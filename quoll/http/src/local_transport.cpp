@@ -61,20 +61,30 @@ public:
       : body_(&body), announced_(announced) {}
 
   [[nodiscard]] async::task<> write(std::string_view piece) {
+    if (failure_) {
+      throw std::system_error{failure_, "quoll::http: the body cannot go on"};
+    }
+
     if ((co_await async::current_stop_token()).stop_requested()) {
-      throw std::system_error{std::make_error_code(std::errc::operation_canceled), "quoll::http: stopped"};
+      failure_ = std::make_error_code(std::errc::operation_canceled);
+      throw std::system_error{failure_, "quoll::http: stopped"};
     }
 
     if (announced_ && body_->size() + piece.size() > *announced_) {
+      failure_ = std::make_error_code(std::errc::message_size);
       throw std::length_error{"quoll::http: a body_writer wrote more than its Content-Length"};
     }
 
     body_->append(piece);
   }
 
+  // What a writer may have made nothing of, for a body cut short not to pass for whole.
+  [[nodiscard]] std::error_code failure() const noexcept { return failure_; }
+
 private:
   std::string *body_;
   std::optional<std::uint64_t> announced_;
+  std::error_code failure_;
 };
 
 // What a writer writes, for a caller of the same program that wants a response whole.
@@ -105,6 +115,14 @@ async::task<> write_whole_body(request &message) {
 
   co_await message.body_writer(body_stream{sink});
   message.body_writer = nullptr;
+
+  if (auto const failure = sink.failure()) {
+    throw std::system_error{failure, "quoll::http: the body was cut short"};
+  }
+
+  if ((co_await async::current_stop_token()).stop_requested()) {
+    throw std::system_error{std::make_error_code(std::errc::operation_canceled), "quoll::http: stopped"};
+  }
 
   if (announced && *announced != message.body.size()) {
     throw std::length_error{"quoll::http: a body_writer wrote less than its Content-Length"};

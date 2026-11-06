@@ -64,7 +64,6 @@
 #include <quoll/io/error.hpp>
 #include <quoll/io/write.hpp>
 
-#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <cstddef>
@@ -176,16 +175,16 @@ constexpr int max_interim_responses = 8;
   return error == io::error::end_of_stream || error == std::errc::connection_reset || error == std::errc::broken_pipe;
 }
 
-// How a write shows that the server closed, which a socket being torn down says in more ways than an idle one does.
-[[nodiscard]] bool closed_under_a_write(std::error_code error) noexcept {
-  return closed_meanwhile(error) || error == std::errc::connection_aborted || error == std::errc::not_connected ||
-         error == std::errc::wrong_protocol_type;
+// A write that fails for the connection's sake leaves the server's answer a chance, however a socket or TLS says so,
+// and what reads it fails by itself if there is none. What this side decided ends things at once.
+[[nodiscard]] bool answer_may_still_come(std::error_code error) noexcept {
+  return error != std::errc::timed_out && error != std::errc::operation_canceled && error != std::errc::message_size;
 }
 
 // The body of a request going out through its writer, while what reads the response goes on beside it: a server may
 // answer before the end, and one that does not read while it writes would otherwise hold both up. Each write has
 // `timeout`, and the response too, once the body has left. An answer stops what is still writing. What a server closing
-// does to a write is no failure yet: its answer may be on its way. Thread safety: complete() and stop() from what
+// does to a write is no failure yet: its answer may be on its way. Thread safety: stop() from what
 // reads.
 class upload {
 public:
@@ -203,7 +202,7 @@ public:
       co_await async::detail::stop_scope<void>{finish(), stop_.get_token()};
     } catch (std::system_error const &thrown) {
       // The server closing is no failure yet, unlike what the writer makes of it.
-      if (!stop_.stop_requested() && !(closed_ && thrown.code() == failure_)) {
+      if (!stop_.stop_requested() && !(thrown.code() == failure_ && answer_may_still_come(failure_))) {
         throw;
       }
     } catch (...) {
@@ -257,10 +256,10 @@ public:
     }
   }
 
-  [[nodiscard]] std::stop_source &stop() noexcept { return stop_; }
+  [[nodiscard]] std::stop_source &stop() noexcept QUOLL_LIFETIMEBOUND { return stop_; }
 
-  // All of the request has left.
-  [[nodiscard]] bool complete() const noexcept { return complete_.load(std::memory_order_acquire); }
+  // All of the request has left: once run() has ended.
+  [[nodiscard]] bool complete() const noexcept { return complete_; }
 
 private:
   [[nodiscard]] async::task<> finish() {
@@ -281,7 +280,7 @@ private:
       co_await send(bytes);
     }
 
-    complete_.store(true, std::memory_order_release);
+    complete_ = true;
   }
 
   // Thrown rather than returned: a write a timeout cancelled is then that timeout's timed_out.
@@ -298,7 +297,6 @@ private:
       co_await async::detail::with_optional_timeout(timeout_, write_bytes(bytes));
     } catch (std::system_error const &thrown) {
       failure_ = thrown.code();
-      closed_ = closed_under_a_write(thrown.code());
       throw;
     }
   }
@@ -308,9 +306,8 @@ private:
   http::detail::streamed_wire wire_;
   std::chrono::nanoseconds timeout_;
   std::stop_source stop_;
-  std::atomic<bool> complete_ = false;
   std::error_code failure_;
-  bool closed_ = false;
+  bool complete_ = false;
 };
 
 // What reads the response beside an upload: its end, however it ends, stops what is still writing.
@@ -326,11 +323,13 @@ template <class T>
 // closed before any response, or answering 408 first (sent by the server before it closed the idle connection), is
 // not an error: no response, the caller sends the request again on a new connection. Without it, a response or an
 // exception.
-async::task<std::optional<http::response>> exchange(connection_pool &pool, http::parse_limits limits,
+async::task<std::optional<http::response>> exchange(connection_pool &pool QUOLL_LIFETIMEBOUND,
+                                                    http::parse_limits limits,
                                                     io::any_stream &connection QUOLL_LIFETIMEBOUND,
-                                                    prepared_request const &request, bool retry_if_closed,
-                                                    upload const *sending = nullptr) {
-  if (sending == nullptr) {
+                                                    prepared_request const &request QUOLL_LIFETIMEBOUND,
+                                                    bool retry_if_closed, bool *reusable = nullptr) {
+  // Its request is on its way, and its connection stays with what sends it.
+  if (reusable == nullptr) {
     auto const sent = co_await io::write(connection, std::as_bytes(std::span{request.wire}));
 
     if (sent.error) {
@@ -374,8 +373,11 @@ async::task<std::optional<http::response>> exchange(connection_pool &pool, http:
     }
 
     // Bytes past the response would be read as the next one: a connection carrying them is not reused.
-    // Nor is one whose request has not left whole, which is what comes next on it.
-    if (request.keep_alive && keep_alive && !upgrade && buffer.empty() && (sending == nullptr || sending->complete())) {
+    auto const can_go_on = request.keep_alive && keep_alive && !upgrade && buffer.empty();
+
+    if (reusable != nullptr) {
+      *reusable = can_go_on;
+    } else if (can_go_on) {
       pool.give_back(std::move(connection));
     }
 
@@ -389,10 +391,17 @@ async::task<http::response> exchange_uploading(connection_pool &pool, http::pars
                                                io::any_stream connection, prepared_request const &request,
                                                std::chrono::nanoseconds timeout) {
   upload sending{connection, request, timeout};
+  auto reusable = false;
   auto [uploaded, response] = co_await async::when_all(
-      sending.run(), until_answered(sending, exchange(pool, limits, connection, request, false, &sending)));
+      sending.run(), until_answered(sending, exchange(pool, limits, connection, request, false, &reusable)));
 
   assert(response && "client::exchange() without retry_if_closed produced no response");
+
+  // Once all is over, for its last write to have ended, as what comes next on it would read what a cut one left.
+  if (reusable && sending.complete()) {
+    pool.give_back(std::move(connection));
+  }
+
   co_return std::move(*response);
 }
 
@@ -657,7 +666,8 @@ public:
 
   // start() for a request with a body in pieces. A head that comes before its end stops it: this is not a conversation,
   // and what is left of the body has nowhere to go while the caller reads.
-  [[nodiscard]] async::task<> start_uploading(io::any_stream connection, prepared_request const &request) {
+  [[nodiscard]] async::task<> start_uploading(io::any_stream connection,
+                                              prepared_request const &request QUOLL_LIFETIMEBOUND) {
     upload sending{connection, request, shared_->options.response_timeout};
 
     static_cast<void>(
@@ -740,7 +750,8 @@ public:
 private:
   // Reads the head of the final response, on an attempt of its own; false as start() says.
   [[nodiscard]] async::task<bool> read_final_head(io::any_stream &connection QUOLL_LIFETIMEBOUND,
-                                                  prepared_request const &request, bool retry_if_closed) {
+                                                  prepared_request const &request QUOLL_LIFETIMEBOUND,
+                                                  bool retry_if_closed) {
     auto interim = 0;
 
     // Afresh for each attempt: the one before may have left anything in it.
