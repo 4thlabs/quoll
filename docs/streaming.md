@@ -233,11 +233,10 @@ Over TLS, a write that this cuts short leaves its session unusable: the head is 
 
 ## In a browser
 
-`fetch_client` has a `stream()` too, giving the same `http::streamed_response`. The code above runs
-as it is, with `fetch_client` for `client`:
+The code above runs as it is, as `http::client` goes through `fetch` there:
 
 ```cpp
-quoll::emscripten::fetch_client client{"https://api.example.com"};
+http::client client{"https://api.example.com"};
 http::request request;
 
 request.target = "/feed";
@@ -250,16 +249,16 @@ while (auto const piece = co_await response.body.read()) {
 ```
 
 Its task completes when `fetch()` resolves, and a piece is what one JavaScript read of `response.body`
-gives, so that nothing holds the body whole. The rest differs from `http::client`:
+gives, so that nothing holds the body whole. The rest differs from what a connection does:
 
 | When                            | What happens                                                                                                                                                                                                                                             |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A read fails                    | `body.read()` throws `std::system_error` with `std::errc::io_error` and `fetch`'s message, what came before it first. The next reads throw the same, and the fetch is aborted and released.                                                              |
 | A stop request during a read    | The fetch is aborted, and `body.read()` throws `std::errc::operation_canceled`. The next reads throw the same.                                                                                                                                           |
-| The server goes quiet           | Nothing ends the read: there is no timeout per piece. `async::with_timeout` around a read ends the reading as a whole, not that piece: it throws `std::errc::timed_out`, the fetch is aborted, and the next reads throw `std::errc::operation_canceled`. |
+| The server goes quiet           | `response_timeout` applies to each piece, as it does natively. `async::with_timeout` around a read ends the reading as a whole, not that piece: it throws `std::errc::timed_out`, the fetch is aborted, and the next reads throw `std::errc::operation_canceled`. |
 | Giving up on a body             | The last copy of `body` to go before the end aborts the fetch and releases it.                                                                                                                                                                           |
 | The end of the body, or no body | The fetch is released at once.                                                                                                                                                                                                                           |
-| Limits and trailers             | No `max_streamed_body_size`, as a `fetch_client` has no limits. `trailers` is not null and stays empty, as `fetch` does not expose them.                                                                                                                 |
+| Limits and trailers             | `max_streamed_body_size` applies, as it does natively. `trailers` is not null and stays empty, as `fetch` does not expose them.                                                                                                                 |
 
 A request does not go in pieces. A `request.body_writer` runs to its end before the fetch, through `send()`
 as through `stream()`, and what it wrote goes out whole, as a fetch sending in pieces needs HTTP/2, and is
@@ -267,7 +266,7 @@ not in every browser. So memory holds that body, `write()` does not wait for a p
 nothing left to stop at the head. A stop request or an `async::with_timeout` around the task ends the
 writer at its next `write()`, which throws.
 
-See [`fetch_client`](runtimes.md#fetch_client) for what else `fetch` changes.
+See [`http::client` in a browser](runtimes.md#httpclient-in-a-browser) for what else `fetch` changes.
 
 ## In a test
 

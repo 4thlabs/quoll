@@ -236,5 +236,5 @@ auto const response = co_await local.send(request);
 It keeps its own copy of the router, so that nothing has to outlive it: add the routes first, as one
 added afterwards is not served.
 
-In a browser, `fetch_client` takes the place of `http::client`, with [other
-rules](runtimes.md#fetch_client).
+In a browser, a client from a URL goes through `fetch`, and the same code does the same thing, but for
+[what `fetch` keeps to itself](runtimes.md#httpclient-in-a-browser).

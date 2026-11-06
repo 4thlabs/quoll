@@ -879,14 +879,6 @@ async::task<http::streamed_response> stream_prepared(std::shared_ptr<client_core
 
 } // namespace
 
-std::shared_ptr<client_core> make_client_core(connector_handle connector, std::string host, std::uint16_t port,
-                                              bool secure, std::string prefix, client_options const &options) {
-  auto field = host_field(host, port, secure ? 443 : 80);
-
-  return std::make_shared<client_core>(std::move(connector), std::move(host), port, secure, std::move(field),
-                                       std::move(prefix), options);
-}
-
 namespace {
 
 // What send() and stream() ask of a request before anything runs.
@@ -902,14 +894,14 @@ void make_ready(client_core const &core, http::request &request) {
   }
 }
 
-} // namespace
-
-async::task<http::streamed_response> client_stream(std::shared_ptr<client_core> const &core, http::request request) {
+[[nodiscard]] async::task<http::streamed_response> stream_connected(std::shared_ptr<client_core> const &core,
+                                                                    http::request request) {
   make_ready(*core, request);
   return stream_prepared(core, prepare(*core, request));
 }
 
-async::task<http::response> client_send(std::shared_ptr<client_core> const &core, http::request request) {
+[[nodiscard]] async::task<http::response> send_connected(std::shared_ptr<client_core> const &core,
+                                                         http::request request) {
   make_ready(*core, request);
 
   auto prepared = prepare(*core, request);
@@ -920,6 +912,26 @@ async::task<http::response> client_send(std::shared_ptr<client_core> const &core
   }
 
   return send_following(core, std::move(request), std::move(prepared));
+}
+
+} // namespace
+
+client_backend make_client_backend(connector_handle connector, std::string host, std::uint16_t port, bool secure,
+                                   std::string prefix, client_options const &options) {
+  auto field = host_field(host, port, secure ? 443 : 80);
+
+  static constexpr client_operations operations{
+      [](std::shared_ptr<void> const &state, http::request request) {
+        return send_connected(std::static_pointer_cast<client_core>(state), std::move(request));
+      },
+      [](std::shared_ptr<void> const &state, http::request request) {
+        return stream_connected(std::static_pointer_cast<client_core>(state), std::move(request));
+      },
+  };
+
+  return {std::make_shared<client_core>(std::move(connector), std::move(host), port, secure, std::move(field),
+                                        std::move(prefix), options),
+          &operations};
 }
 
 } // namespace quoll::http::detail
@@ -945,8 +957,14 @@ namespace {
 
 } // namespace
 
+// Here a client from a URL has no sockets: nothing of a connection reaches a page that does not name a connector, which
+// the linker can then leave out.
+#if defined(__EMSCRIPTEN__)
+client::client(std::string_view url, client_options options) : backend_(detail::make_platform_backend(url, options)) {}
+#else
 client::client(std::string_view url, client_options options)
     : client(io::network_connector{}, url, std::move(options)) {}
+#endif
 
 async::task<response> client::get(std::string target) const {
   return send(simple_request(verb::get, std::move(target)));

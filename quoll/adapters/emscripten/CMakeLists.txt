@@ -8,7 +8,7 @@ quoll_declare_module(
   NAME emscripten
   SOURCES
     src/executor.cpp
-    src/fetch_client.cpp
+    src/fetch_platform.cpp
   DEPS
     quoll::http
     quoll::ui

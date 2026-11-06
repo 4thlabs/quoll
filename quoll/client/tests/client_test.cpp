@@ -724,6 +724,7 @@ TEST_CASE("http::client: built from an http URL", "[client]") {
         "http://example.com:", "http://example.com:8o", "http://[::1", "http://[::1]8080", "http://[example.com]",
         "http://[192.0.2.1]:80", "http://user@example.com", "http://exa mple.com", "http://example.com?x=1",
         "http://example.com:8080#top"}) {
+    CAPTURE(url);
     REQUIRE_THROWS_AS(http::client{url}, std::invalid_argument);
   }
 
@@ -901,6 +902,14 @@ TEST_CASE("http::client: a host takes a port in range", "[client]") {
   REQUIRE_THROWS_AS((http::client{plain_connector{}, "example.com", 65'536}), std::invalid_argument);
   REQUIRE_THROWS_AS((http::client{plain_connector{}, "example.com", -1}), std::invalid_argument);
 }
+
+#if !defined(__EMSCRIPTEN__)
+TEST_CASE("http::client: natively, a URL relative to a page is refused", "[client]") {
+  REQUIRE_THROWS_AS(http::client{""}, std::invalid_argument);
+  REQUIRE_THROWS_AS(http::client{"/api"}, std::invalid_argument);
+  REQUIRE_THROWS_AS(http::client{"."}, std::invalid_argument);
+}
+#endif
 
 TEST_CASE("http::client: the default connector needs an executor offering a network", "[client]") {
   http::client const client{"http://127.0.0.1:8080"};

@@ -74,10 +74,10 @@ void quoll_emscripten_ui_hot_install(void (*replace)(char const *file, unsigned 
 int quoll_emscripten_timer_start(double milliseconds, void (*complete)(void *operation, int elapsed), void *operation);
 void quoll_emscripten_timer_cancel(int id);
 
-// `url` is null-terminated UTF-8; `method` and `headers` are bytes, one per character of the JavaScript string. With
-// `streaming`, it settles with the head of the response: the body is for quoll_emscripten_fetch_read, not a part.
+// `url` is null-terminated UTF-8; `method` and `headers` are bytes, one per character of the JavaScript string. It
+// settles with the head of the response: the body is for quoll_emscripten_fetch_read, not a part.
 int quoll_emscripten_fetch_start(char const *url, char const *method, std::size_t method_size, char const *headers,
-                                 std::size_t headers_size, void const *body, std::size_t body_size, int streaming,
+                                 std::size_t headers_size, void const *body, std::size_t body_size,
                                  void (*complete)(void *operation, int id, int outcome), void *operation);
 int quoll_emscripten_fetch_has_body(int id);
 void quoll_emscripten_fetch_read(int id, void (*complete)(void *operation, int outcome), void *operation);
@@ -105,7 +105,7 @@ enum class fetch_part : int {
   reason = 0,
   // The header fields, "name:value\n" each (bytes).
   fields = 1,
-  // The whole body, or the piece a read has just given.
+  // The piece a read has just given.
   body = 2,
 };
 

@@ -36,6 +36,7 @@
 
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/http/platform_ref.hpp>
 #include <quoll/http/response_body.hpp>
 #include <quoll/http/streamed_response.hpp>
 #include <quoll/test/run.hpp>
@@ -166,4 +167,28 @@ TEST_CASE("streamed_response: built by default, it has nothing to read and no tr
   REQUIRE(response.status == http::status::ok);
   REQUIRE(quoll::test::run(loop, read_all(response.body)) == "");
   REQUIRE(response.trailers == nullptr);
+}
+
+namespace {
+
+struct some_platform {
+  [[nodiscard]] quoll::async::task<quoll::http::streamed_response> stream(std::string, quoll::http::request) const {
+    co_return quoll::http::streamed_response{};
+  }
+};
+
+struct another_platform {
+  [[nodiscard]] quoll::async::task<quoll::http::streamed_response> stream(std::string, quoll::http::request) const {
+    co_return quoll::http::streamed_response{};
+  }
+};
+
+} // namespace
+
+TEST_CASE("platform_ref: gives back the platform it refers to, by its exact type", "[http]") {
+  some_platform const platform;
+  quoll::http::platform_ref const reference{platform};
+
+  REQUIRE(reference.target<some_platform>() == &platform);
+  REQUIRE(reference.target<another_platform>() == nullptr);
 }

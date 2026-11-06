@@ -52,9 +52,9 @@ namespace quoll::http {
  * @brief Where a body_writer writes the body of a message, a piece at a time.
  *
  * write() completes once the piece has left, so that a writer goes no faster than its peer reads, and memory holds one
- * piece, but for a transport that gathers a request before sending it (fetch_client, local_transport). What prevents
- * it throws std::system_error, a peer gone for instance, and goes on throwing: left to run through the writer, it ends
- * the connection, and is no failure of the writer's.
+ * piece, but for a transport that gathers a request before sending it (a browser's http::client, local_transport). What
+ * prevents it throws std::system_error, a peer gone for instance, and goes on throwing: left to run through the writer,
+ * it ends the connection, and is no failure of the writer's.
  *
  * Copied freely, it refers to what writes the body, valid until the writer's task ends. One write() at a time. Thread
  * safety: none. What writes through it does so on the executor of the writer's task: moved to another, without a timer,

@@ -141,7 +141,7 @@ limits, the shutdown and the features are tested, and the reliability points are
   [`BENCHMARKS.md`](BENCHMARKS.md), as streaming touches the hot paths.
 - Streamed request and response bodies, on the server, the client and browser `fetch`. A handler takes an `http::body_reader`
   to read its request in pieces, a message's `body_writer` writes in pieces through an `http::body_stream`, and a client's
-  `client.stream(request)` reads a response in pieces. Done: `http::parser` hands a body over in pieces, with `http::read_body`, and `http::body_reader`: a handler taking one asks for `100 Continue` by reading, and goes by the read timeout and its minimum rate, below. And `response.body_writer`: chunked by default, by the write timeout and its minimum rate. And `client.stream(request)`, with `http::streamed_response`: a read timeout per piece, and a connection back at the end of the body. A client sends a request in pieces through its `body_writer`, on a connection of its own, as a writer runs once, with the response read meanwhile so that a server refusing a body is heard; `fetch` and `local_transport` gather what it writes first. And `fetch_client.stream(request)`, with the same `http::streamed_response`: one piece per JavaScript read of `response.body`, so that nothing holds the body whole.
+  `client.stream(request)` reads a response in pieces. Done: `http::parser` hands a body over in pieces, with `http::read_body`, and `http::body_reader`: a handler taking one asks for `100 Continue` by reading, and goes by the read timeout and its minimum rate, below. And `response.body_writer`: chunked by default, by the write timeout and its minimum rate. And `client.stream(request)`, with `http::streamed_response`: a read timeout per piece, and a connection back at the end of the body. A client sends a request in pieces through its `body_writer`, on a connection of its own, as a writer runs once, with the response read meanwhile so that a server refusing a body is heard; `fetch` and `local_transport` gather what it writes first. And `client.stream(request)` through `fetch`, with the same `http::streamed_response`: one piece per JavaScript read of `response.body`, so that nothing holds the body whole.
 - Done: `http::static_files`, a middleware that answers what the router answers 404 to, in pieces, with a cache and ranges. It
   reads through `async::offload`, a service of an executor that runs blocking work on threads of its own, which only an adapter
   has: the core still needs none. It costs about 4% of the rate of a file already in the page cache, and a slow disk no longer
@@ -166,7 +166,7 @@ The DSL and a runtime, with no UI.
 - After this, and optional: an OpenAPI document generated from the DSL, to document an API or for third-party clients,
   and a generator of contracts from existing documents.
 
-*Done when:* a real third-party API is called from a command-line program, natively and through `fetch_client`, with
+*Done when:* a real third-party API is called from a command-line program, natively and through `fetch`, with
 `call`, `try_call` and credentials.
 
 ### Step 5: SSE, then WebSocket
@@ -255,7 +255,7 @@ WASM builds.
   `GET /me` cannot learn who calls; and a scheme cannot be a cookie, as `rest::security` accepts only `api_key<>`,
   `api_key_query<>` and `bearer_auth`. A validator's result reaching the service, and a cookie scheme, shown to the maintainer.
 - A page: an OIDC redirect is a navigation, which `quoll::ui` and the Emscripten adapter do not offer, and which loses the WASM
-  state. `fetch_client` sets no `credentials`, so that a page calling another origin neither sends nor keeps a cookie.
+  state. In a browser, `http::client` sets no `credentials`, so that a page calling another origin neither sends nor keeps a cookie.
 - A native client: `http::client` has no cookie jar, and drops `Set-Cookie` across redirects. To settle whether it needs one.
 - Cookies and what they ask: expiry, revocation, CSRF.
 - What it parses from outside, tokens among them, is fuzzed.
@@ -332,6 +332,9 @@ changes only what the harness shows. Candidates:
   `namespace async = quoll::async;`.
 - Performance does not make the user API dangerous (2026-11-06): what outlives a call owns what it needs, and the fast path goes
   behind it, in `detail`. `http::local_transport` keeps its own copy of the router, and `http::server` owns its listeners.
+- The same code on every platform (2026-11-06): `http::client` is the one name, and `fetch_client` went. In a build for Emscripten, a client from a
+  URL asks the executor for an `http::platform_ref`, as it asks for a network, so that `quoll::client` does not depend on an adapter. What
+  `fetch` keeps to itself has no effect there rather than refusing to run, as the same code has to run.
 - `http::server` is a real object (2026-11-06), like `http::client`: a handle on shared state, which its copies and tasks share, as
   Corosio's objects are. Half an object, a router and options with each call on its own, left `max_connections` per call and
   nowhere to count connections. It holds routes of its own, for the simple form, or starts from a copy of a router, with the same
@@ -416,7 +419,7 @@ flowchart TB
   subgraph adapters["Adapters"]
     pool["quoll::threads<br/>thread_pool"]
     asio["quoll::asio<br/>executor, tcp_stream, connector, TLS"]
-    emscripten["quoll::emscripten<br/>event loop executor, fetch_client, dom_renderer"]
+    emscripten["quoll::emscripten<br/>event loop executor, fetch, dom_renderer"]
   end
 
   page --> ui
@@ -593,13 +596,11 @@ rest::mount<bank::v1>(router, bank::auth_service{}, bank::users_service{}, bank:
   CORS, a rate limit, auth beyond the schemes) run around the chosen route with `router::use`, and read what routing found
   from `next`.
 
-**Calling it.** A client takes the contract and an `http::HttpTransport`: `fetch_client` in the browser, a Worker
-or Node, and `http::client` over a connector natively. The base URL belongs to the transport.
+**Calling it.** A client takes the contract and an `http::HttpTransport`, by default `http::client`, over the network natively and
+`fetch` in a browser, a Worker or Node. The base URL belongs to the transport.
 
 ```cpp
-using quoll::emscripten::fetch_client;
-
-rest::client<bank::v1, fetch_client> api{fetch_client{"https://bank.example.com"}};
+rest::client<bank::v1> api{"https://bank.example.com"};
 
 api.credentials<rest::bearer_auth>(token);
 
@@ -671,7 +672,7 @@ int main() { quoll::emscripten::mount<counter>(); }
 ```
 
 A state changing runs the view again; the diff reaches a `Renderer`, the DOM in a page. Handlers are plain functions or
-tasks, and call a REST API through a `rest::client` over `fetch_client`.
+tasks, and call a REST API through a `rest::client`.
 
 `to_html(view)` writes the same interface as HTML, natively as under WASM: a page generated ahead of time, or sent by a
 server, without WASM. Making such a page live is hydration: the WASM adopts the nodes it finds rather than creating them,
@@ -729,7 +730,7 @@ Those not settled by a step of the roadmap:
 - MSVC, which Quoll does not support, and which many of the programs [Positioning](#positioning) aims at build with: a change to a
   hard constraint, the maintainer's.
 - The runtime in a browser, where the event loop already runs: no `run()` there, and tasks start with `co_spawn` on the
-  event loop. The default `rest::client` transport there would be `fetch`.
+  event loop.
 - A default `main()` provided by Quoll, creating the runtime and running an application coroutine, once the shape of
   that coroutine (arguments, exit code) is settled.
 - If OpenAPI comes back: the C++ → JSON Schema mapping, 64-bit integers in particular.
