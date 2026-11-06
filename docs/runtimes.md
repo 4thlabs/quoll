@@ -62,7 +62,7 @@ not be the same class:
 
 | Name                                                 | What it is                                                                                                        |
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `asio::runtime::context()`                           | The `io_context` of the runtime                                                                                   |
+| `runtime.context()`                                  | The `io_context` of the runtime                                                                                   |
 | `quoll::asio::executor<>`                            | An executor over any asio executor, an `io_context` or a strand, which is also its network, timer and TLS network |
 | `quoll::asio::tcp_stream`, `quoll::asio::tls_stream` | Streams over asio sockets                                                                                         |
 | `quoll::asio::connector`                             | A connector opening TCP connections on an asio executor                                                           |
