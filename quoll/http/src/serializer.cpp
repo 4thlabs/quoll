@@ -373,17 +373,6 @@ std::optional<std::uint64_t> announced_length(fields const &entries) {
   return length ? std::optional<std::uint64_t>{*length} : std::nullopt;
 }
 
-void check_request(request const &message) {
-  if (message.body_writer) {
-    std::string head;
-
-    (void)serialize_streamed_head(message, head);
-    return;
-  }
-
-  (void)check_framing(message.fields, message.body, message.trailers, request_rules(message));
-}
-
 streamed_framing serialize_streamed_head(request const &message, std::string &out) {
   auto rules = request_rules(message);
 

@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/emscripten/detail/fetch_platform.hpp>
+#include <quoll/http/detail/check.hpp>
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
@@ -58,7 +59,6 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <stdexcept>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -95,6 +95,8 @@ constexpr std::array<std::string_view, 3> fetch_decoded_fields{
   std::string packed;
 
   for (auto const &entry : fields) {
+    http::detail::check_field(entry);
+
     if (is_one_of(entry.name, fetch_managed_fields)) {
       continue;
     }

@@ -62,9 +62,6 @@ namespace quoll::http {
 
 namespace detail {
 
-// What a client does, whatever its connector: compiled once.
-class client_core;
-
 // A connector, whichever it is: the core owns it through this.
 struct connector_handle {
   std::shared_ptr<void const> connector;
@@ -72,13 +69,19 @@ struct connector_handle {
                                       io::tls_client_options const &tls);
 };
 
-[[nodiscard]] std::shared_ptr<client_core> make_client_core(connector_handle connector, std::string host,
-                                                            std::uint16_t port, bool secure, std::string prefix,
-                                                            client_options const &options);
+// What a client does, compiled once: over a connector, or through the platform of the executor.
+struct client_backend {
+  std::shared_ptr<void> state;
+  async::task<http::response> (*send)(std::shared_ptr<void> const &state, http::request request);
+  async::task<http::streamed_response> (*stream)(std::shared_ptr<void> const &state, http::request request);
+};
 
-[[nodiscard]] async::task<http::response> client_send(std::shared_ptr<client_core> const &core, http::request request);
-[[nodiscard]] async::task<http::streamed_response> client_stream(std::shared_ptr<client_core> const &core,
-                                                                 http::request request);
+[[nodiscard]] client_backend make_client_backend(connector_handle connector, std::string host, std::uint16_t port,
+                                                 bool secure, std::string prefix, client_options const &options);
+
+// A client from `url` through the executor's http::platform_ref: what a client from a URL is in a build for Emscripten.
+// Compiled in every build, in a source of its own, so that it runs in the native sanitizers' tests too.
+[[nodiscard]] client_backend make_platform_backend(std::string_view url, client_options const &options);
 
 } // namespace detail
 
@@ -129,7 +132,8 @@ struct connector_handle {
  * In a browser, a Worker or Node, built with Emscripten, a client from a URL goes through the JavaScript fetch(), as
  * the executor offers it, and the same code does the same thing, but for what fetch keeps to itself:
  *
- * - An URL may be relative to the page: empty, or a path. Elsewhere it throws std::invalid_argument.
+ * - A URL may be relative to the page: empty, or a path. Elsewhere it throws std::invalid_argument. On an executor that
+ *   does not offer fetch, a request throws std::logic_error, as one without a network does natively.
  * - `max_connections`, `max_idle_connections`, `max_redirects`, `connect_timeout` and `tls` have no effect, as the
  * browser decides. It follows redirects itself, possibly to another origin, and always checks certificates. `limits`
  * and `response_timeout` apply: past a limit, the fetch is aborted.
@@ -197,7 +201,7 @@ public:
   template <io::Connector Connector, std::integral Port>
     requires(!http::detail::is_any_of<Port, bool, char, wchar_t, char8_t, char16_t, char32_t>)
   client(Connector connector, std::string host, Port port, client_options options = {})
-      : core_(make_core(std::move(connector), std::move(host), checked_port(port), false, {}, options)) {}
+      : backend_(make_backend(std::move(connector), std::move(host), checked_port(port), false, {}, options)) {}
 
   /**
    * @brief Sends `request` and produces its response.
@@ -215,7 +219,7 @@ public:
    * for what http::serialize() rejects, for a `body_writer` with a body too, or over HTTP/1.0 with no `Content-Length`.
    */
   [[nodiscard]] async::task<http::response> send(http::request request) const {
-    return detail::client_send(core_, std::move(request));
+    return backend_.send(backend_.state, std::move(request));
   }
 
   /**
@@ -236,7 +240,7 @@ public:
    * @throws std::invalid_argument here, as send() does.
    */
   [[nodiscard]] async::task<http::streamed_response> stream(http::request request) const {
-    return detail::client_stream(core_, std::move(request));
+    return backend_.stream(backend_.state, std::move(request));
   }
 
   /**
@@ -280,8 +284,8 @@ public:
 private:
   template <io::Connector Connector>
   client(Connector connector, detail::origin server, client_options const &options)
-      : core_(make_core(std::move(connector), std::move(server.host), server.port, server.secure,
-                        std::move(server.prefix), options)) {
+      : backend_(make_backend(std::move(connector), std::move(server.host), server.port, server.secure,
+                              std::move(server.prefix), options)) {
     if (server.secure && !io::TlsConnector<Connector>) {
       throw std::invalid_argument{"quoll::http::client: this connector cannot open https connections"};
     }
@@ -298,9 +302,9 @@ private:
 
   // The only part that knows the connector.
   template <io::Connector Connector>
-  [[nodiscard]] static std::shared_ptr<detail::client_core>
-  make_core(Connector connector, std::string host, std::uint16_t port, bool secure, std::string prefix,
-            client_options const &options) {
+  [[nodiscard]] static detail::client_backend make_backend(Connector connector, std::string host, std::uint16_t port,
+                                                           bool secure, std::string prefix,
+                                                           client_options const &options) {
     detail::connector_handle handle{
         std::make_shared<Connector const>(std::move(connector)),
         [](void const *erased, std::string const &to, std::uint16_t on, [[maybe_unused]] bool use_tls,
@@ -316,10 +320,10 @@ private:
           return target.connect(to, on);
         }};
 
-    return detail::make_client_core(std::move(handle), std::move(host), port, secure, std::move(prefix), options);
+    return detail::make_client_backend(std::move(handle), std::move(host), port, secure, std::move(prefix), options);
   }
 
-  std::shared_ptr<detail::client_core> core_;
+  detail::client_backend backend_;
 };
 
 static_assert(HttpTransport<client>);
