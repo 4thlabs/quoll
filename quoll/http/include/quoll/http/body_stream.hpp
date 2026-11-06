@@ -126,8 +126,9 @@ private:
  *
  * On a response, the body goes without a `Content-Length` in chunks, or to HTTP/1.0 up to the end of the connection,
  * which its peer cannot tell from a cut. What the writer throws after the start of a body cuts the connection the same
- * way, as a peer must not take what came for all of it, and before it, answers 500. Not called for a response to HEAD.
- * An empty piece is for a stream to announce itself before its first data.
+ * way, as a peer must not take what came for all of it, and before it, answers 500. Not called for a response to HEAD,
+ * but for a handler writing through an http::response_writer. An empty piece is for a stream to announce itself before
+ * its first data.
  *
  * On a response, it runs after its handler has ended: what it captures by value lives until its task ends, and a
  * `std::string_view` of a path parameter, or a reference to the request, does not. An http::body_reader does, on a

@@ -143,6 +143,8 @@ router.use([](http::request request, http::next const &next) -> async::task<http
   request refused as it is read (400, 413...) reaches none of them.
 - What it does after `next` does not run for what `next` throws. Catch it to answer a 500 of its own,
   or the connection answers one without it.
+- A handler taking an [`http::response_writer`](streaming.md#writing-a-response) runs once the middlewares have returned: they do
+  not see its status, catch what it throws or bound its time.
 - What it changes in the request reaches the handler, but not what comes of its method and target:
   the route, its parameters and its query are those that came.
 

@@ -249,11 +249,24 @@ async::task<response> call_typed(F &target, request message, route_match match, 
   }
 }
 
+template <class Request>
+using stored_request = std::conditional_t<std::same_as<Request, no_request>, no_request, request>;
+
+template <class Request>
+[[nodiscard]] stored_request<Request> keeping(request message) {
+  if constexpr (std::same_as<Request, no_request>) {
+    return {};
+  } else {
+    return message;
+  }
+}
+
 // What a handler writing through an http::response_writer is given, read once by the route and kept as it is, so that a
 // view stays on what it refers to, until its task ends.
-template <class... Parameters>
+template <class Stored, class... Parameters>
 struct writing_frame {
-  request message;
+  // Nothing for a handler that takes no request: its body would stay in memory for as long as it writes.
+  Stored message;
   route_match match;
   std::tuple<std::optional<std::remove_cvref_t<Parameters>>...> values{};
 };
@@ -276,8 +289,8 @@ private:
 };
 
 template <class F, class Request, class... Parameters, std::size_t... Index>
-async::task<> run_writing(std::shared_ptr<writing_frame<Parameters...>> frame, std::shared_ptr<F> target,
-                          body_stream out, std::index_sequence<Index...>) {
+async::task<> run_writing(std::shared_ptr<writing_frame<stored_request<Request>, Parameters...>> frame,
+                          std::shared_ptr<F> target, body_stream out, std::index_sequence<Index...>) {
   auto const give_writer = [&]<class T, std::size_t At>() {
     if constexpr (std::same_as<T, response_writer>) {
       std::get<At>(frame->values).emplace(out);
@@ -309,7 +322,8 @@ async::task<> run_writing(std::shared_ptr<writing_frame<Parameters...>> frame, s
 template <class F, class Request, class... Parameters, std::size_t... Index>
 [[nodiscard]] response answer_writing(std::shared_ptr<F> const &target, request message, route_match match,
                                       std::index_sequence<Index...> indices) {
-  auto frame = std::make_shared<writing_frame<Parameters...>>(std::move(message), std::move(match));
+  auto frame = std::make_shared<writing_frame<stored_request<Request>, Parameters...>>(
+      keeping<Request>(std::move(message)), std::move(match));
   auto const read = [&]<class T, std::size_t At>() {
     if constexpr (!std::same_as<T, response_writer>) {
       std::get<At>(frame->values) = read_parameter<T, At>(frame->match);

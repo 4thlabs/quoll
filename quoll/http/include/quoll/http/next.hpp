@@ -68,7 +68,10 @@ struct resolved_route;
  */
 class next {
 public:
-  /** @brief The response to `message`. Anything a handler or a later middleware throws comes out of the task. */
+  /**
+   * @brief The response to `message`. Anything a handler or a later middleware throws comes out of the task, but for a
+   * handler writing through an http::response_writer, which runs once this has returned.
+   */
   [[nodiscard]] async::task<response> operator()(request message) const;
 
   /**

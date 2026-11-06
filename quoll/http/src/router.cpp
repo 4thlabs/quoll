@@ -44,6 +44,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -482,6 +483,24 @@ bool router::reads_body_in_pieces(request const &head) const {
   return may_be && resolve(head).body_in_pieces;
 }
 
+namespace {
+
+// A body already whole, as one piece, with what reads it.
+struct owned_body {
+  explicit owned_body(std::string whole) : body(std::move(whole)) {}
+
+  owned_body(owned_body const &) = delete;
+  owned_body &operator=(owned_body const &) = delete;
+  owned_body(owned_body &&) = delete;
+  owned_body &operator=(owned_body &&) = delete;
+  ~owned_body() = default;
+
+  std::string body;
+  detail::whole_body reader{body};
+};
+
+} // namespace
+
 async::task<response> router::dispatch(request message, body_reader reader) const & {
   auto resolved = resolve(message);
 
@@ -489,12 +508,20 @@ async::task<response> router::dispatch(request message, body_reader reader) cons
   // after the handler has started. With nothing reading it from a stream, a body already whole is one piece: here
   // rather than in the route, so that a middleware calling next again finds what is left of it, as it does with a
   // stream.
-  auto const body = resolved.body_in_pieces ? std::exchange(message.body, {}) : std::string{};
-  detail::whole_body whole{body};
-
   if (resolved.body_in_pieces) {
+    auto body = std::exchange(message.body, {});
+
     message.trailers.clear();
-    resolved.match.reader = reader ? reader : body_reader{whole};
+
+    if (reader) {
+      resolved.match.reader = reader;
+    } else {
+      // Held by the match rather than here: a handler writing its response runs once this has returned.
+      auto owned = std::make_shared<owned_body>(std::move(body));
+
+      resolved.match.reader = body_reader{owned->reader};
+      resolved.match.reader_owner = std::move(owned);
+    }
   }
 
   // Nothing else reads what routing found, and a middleware may call next again: only here can it be moved.

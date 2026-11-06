@@ -103,6 +103,13 @@ private:
   std::string *body_;
 };
 
+// What a write to HEAD throws, told apart from a stop, which is no answer.
+struct head_has_no_body : std::system_error {
+  head_has_no_body()
+      : std::system_error{std::make_error_code(std::errc::operation_canceled),
+                          "quoll::http::response_writer: HEAD has no body"} {}
+};
+
 // What a handler writing through an http::response_writer writes through. To HEAD, its first write throws: the head is
 // all it owes.
 class written_by_handler {
@@ -113,8 +120,7 @@ public:
 
   [[nodiscard]] async::task<> write(std::string_view piece) {
     if (head_) {
-      throw std::system_error{std::make_error_code(std::errc::operation_canceled),
-                              "quoll::http::response_writer: HEAD has no body"};
+      throw head_has_no_body{};
     }
 
     answer_->body.append(piece);
@@ -185,10 +191,8 @@ async::task<response> local_transport::send_to(std::shared_ptr<router const> tar
 
     try {
       co_await writer(body_stream{sink});
-    } catch (std::system_error const &failure) {
-      if (!head || failure.code() != std::errc::operation_canceled) {
-        throw;
-      }
+    } catch (head_has_no_body const &) {
+      // The head is all it owes.
     }
 
     (void)detail::replace_what_would_mislead(answer, method);

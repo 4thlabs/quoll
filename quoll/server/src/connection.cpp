@@ -816,8 +816,11 @@ async::task<writer_end> run_writer(http::response &response, Sink &sink, connect
   auto const stop_token = co_await async::current_stop_token();
   auto complete = false;
 
+  // Held here: what replaces the response must not end what is running.
+  auto const writer = std::exchange(response.body_writer, nullptr);
+
   try {
-    co_await response.body_writer(http::body_stream{sink});
+    co_await writer(http::body_stream{sink});
     complete = true;
   } catch (body_not_written const &) {
     // No failure of the writer's, which only let it through.
@@ -960,36 +963,50 @@ public:
   [[nodiscard]] bool head_failed() const noexcept { return head_failed_; }
 
   // Whether the connection goes on, by what the handler set, read and left to do.
-  void decide_keep_alive() {
-    if (parser_ != nullptr) {
-      *keep_alive_ = parser_->done() && parser_->keep_alive() && !parser_->upgrade();
-    }
-
-    *keep_alive_ =
-        *keep_alive_ && !http::detail::closes_connection(response_->fields) && !options_->drain.stop_requested();
-  }
+  void decide_keep_alive() { *keep_alive_ = keeps_alive(); }
 
 private:
-  // Throws what a head that cannot leave throws, which answers 500, as nothing has left.
+  [[nodiscard]] bool keeps_alive() const {
+    auto const going_on =
+        parser_ != nullptr ? parser_->done() && parser_->keep_alive() && !parser_->upgrade() : *keep_alive_;
+
+    return going_on && !http::detail::closes_connection(response_->fields) && !options_->drain.stop_requested();
+  }
+
+  // Makes the head on a copy, so that a handler catching what this throws finds its response as it was: it may then end
+  // without writing. Throws what a head that cannot leave throws, which answers 500, as nothing has left.
   void open() {
-    if (auto const *const wrong = http::detail::replace_what_would_mislead(*response_, method_); wrong != nullptr) {
-      throw std::logic_error{wrong};
+    if (http::is_informational(response_->status)) {
+      throw std::logic_error{"quoll::http::server: a 1xx is no final response"};
     }
 
     auto const head = method_ == http::verb::head;
+    auto keep_alive = keeps_alive();
+    http::response made;
 
-    decide_keep_alive();
+    made.status = response_->status;
+    made.reason = response_->reason;
+    made.version = response_->version;
+    made.fields = response_->fields;
+    made.trailers = response_->trailers;
 
     if (!head) {
-      frame_in_pieces(*response_, version_, *keep_alive_);
+      frame_in_pieces(made, version_, keep_alive);
     }
 
-    prepare(*response_, head, *keep_alive_);
+    prepare(made, head, keep_alive);
 
-    auto const framing = http::detail::serialize_streamed_head(*response_, wire_);
+    std::string wire;
+    auto const framing = http::detail::serialize_streamed_head(made, wire);
 
-    if (!head) {
-      sink_.emplace(*stream_, std::move(wire_), framing, request_body_);
+    *keep_alive_ = keep_alive;
+    response_->fields = std::move(made.fields);
+    response_->trailers = std::move(made.trailers);
+
+    if (head) {
+      wire_ = std::move(wire);
+    } else {
+      sink_.emplace(*stream_, std::move(wire), framing, request_body_);
     }
   }
 
@@ -1022,6 +1039,11 @@ async::task<bool> send_written_by_handler(paced_stream &stream, http::response &
     co_return !sink.head_failed();
   }
 
+  // What a handler asked of the connection stands, whatever replaces its answer.
+  if (!sink.started()) {
+    sink.decide_keep_alive();
+  }
+
   if (end == writer_end::answer_500) {
     co_return !co_await send_500(stream, keep_alive);
   }
@@ -1040,7 +1062,6 @@ async::task<bool> send_written_by_handler(paced_stream &stream, http::response &
       options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
     }
 
-    sink.decide_keep_alive();
     prepare(response, method == http::verb::head, keep_alive);
     co_return !co_await send_response(stream, response, keep_alive);
   }

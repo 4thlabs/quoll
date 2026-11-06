@@ -63,9 +63,13 @@ namespace quoll::http {
  * @endcode
  *
  * The handler returns a `task<>`, and runs once the router has answered and the middlewares have returned, awaited by
- * what serves the connection, so that its parameters live until it ends, a reference or a view too. A middleware
- * therefore does not see its status when `next` returns, and adds to its fields, which the handler's replace by name.
- * The head leaves with its first write: past that, changing the status or the fields does nothing.
+ * what serves the connection, so that its parameters live until it ends, a reference or a view too. The head leaves
+ * with its first write: past that, changing the status or the fields does nothing.
+ *
+ * So a middleware has returned by then. It does not see the status when `next` returns, nor catch what the handler
+ * throws, nor bound it with a timeout around `next`, and what it holds across `next`, a place of a rate limit, is let
+ * go before it runs. It adds to the fields, which the handler's replace by name, but for `Set-Cookie` and `Vary`, which
+ * add up.
  *
  * What it throws before its first write answers 500, and after it cuts the connection, as for a `response.body_writer`.
  * If it ends without writing, its response has an empty body. To HEAD, it runs up to its first write, which sends the
@@ -79,7 +83,8 @@ namespace quoll::http {
  * The response holds such a handler, which it runs, so that it may go on after its router. Copies of a router share it,
  * what it captures included.
  *
- * Moved, not copied. Take it by value, or pass it on by reference. Thread safety: one write() at a time.
+ * Moved, not copied. Take it by value, or pass it on by reference: it does not outlive the handler's task, and write()
+ * on one moved from throws std::logic_error. Thread safety: one write() at a time.
  */
 class response_writer {
 public:

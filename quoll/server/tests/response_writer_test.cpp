@@ -281,13 +281,11 @@ TEST_CASE("response_writer: when its body is not wanted, write ends the handler"
 
   http::server const server{router};
 
-  SECTION("a response to HEAD") {
-    auto const answer = answer_to(server, "HEAD /rows HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  auto const answer = answer_to(server, "HEAD /rows HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
 
-    REQUIRE(answer.starts_with("HTTP/1.1 200"));
-    REQUIRE(answer.find("X-Handler: ran") != std::string::npos);
-    REQUIRE(answer.find("never sent") == std::string::npos);
-  }
+  REQUIRE(answer.starts_with("HTTP/1.1 200"));
+  REQUIRE(answer.find("X-Handler: ran") != std::string::npos);
+  REQUIRE(answer.find("never sent") == std::string::npos);
 
   REQUIRE(ended_with == std::errc::operation_canceled);
 }
@@ -627,4 +625,286 @@ TEST_CASE("response_writer: a drain that began while it waited closes the connec
 
   REQUIRE(received.find("Connection: close") != std::string::npos);
   REQUIRE(received.find("late") != std::string::npos);
+}
+
+namespace {
+
+// Passes a handler's head on, as a middleware wrapping its writer has to.
+struct wrapping_sink {
+  http::body_stream out;
+  std::size_t *written;
+
+  void head(http::status status, http::fields fields) { out.head(status, std::move(fields)); }
+
+  [[nodiscard]] task<> write(std::string_view piece) {
+    *written += piece.size();
+    co_await out.write(piece);
+  }
+};
+
+// Reads what its peer sends, and fails every write.
+class failing_writes {
+public:
+  explicit failing_writes(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) {
+    co_return io::io_result{std::make_error_code(std::errc::broken_pipe), 0};
+  }
+
+  [[nodiscard]] task<io::io_result> shutdown_send() { co_return io::io_result{}; }
+
+private:
+  io::memory_stream inner_;
+};
+
+} // namespace
+
+TEST_CASE("response_writer: a middleware wrapping its writer passes its head on", "[server]") {
+  http::router router;
+  std::size_t written = 0;
+
+  router.use([&written](http::request request, http::next const &next) -> task<http::response> {
+    auto answer = co_await next(std::move(request));
+
+    answer.body_writer = [&written, inner = std::move(answer.body_writer)](http::body_stream out) -> task<> {
+      wrapping_sink sink{out, &written};
+
+      co_await inner(http::body_stream{sink});
+    };
+    co_return answer;
+  });
+  router.get("/rows", [](http::response_writer out) -> task<> {
+    out.status = http::status::created;
+    co_await out.write("body");
+  });
+
+  auto const answer = answer_to(http::server{router}, get("/rows"));
+
+  REQUIRE(answer.starts_with("HTTP/1.1 201"));
+  REQUIRE(written == 4);
+}
+
+TEST_CASE("response_writer: an answer replaced leaves what is running alone", "[server]") {
+  http::router router;
+  std::string label;
+
+  router.use([&label](http::request request, http::next const &next) -> task<http::response> {
+    auto answer = co_await next(std::move(request));
+
+    answer.body_writer = [&label, inner = std::move(answer.body_writer),
+                          kept = std::string(100, 'x')](http::body_stream out) -> task<> {
+      try {
+        co_await inner(out);
+      } catch (std::exception const &) {
+        // Reads what it captured, once the response has been replaced.
+        label = kept;
+        throw;
+      }
+    };
+    co_return answer;
+  });
+  router.get("/early", [](http::response_writer out) -> task<> {
+    out.status = http::status::continue_;
+    co_await out.write("never sent");
+  });
+
+  REQUIRE(answer_to(http::server{router}, get("/early")).starts_with("HTTP/1.1 500"));
+  REQUIRE(label == std::string(100, 'x'));
+}
+
+TEST_CASE("response_writer: what a handler asks of the connection stands, whatever replaces its answer", "[server]") {
+  http::router router;
+
+  router.get("/short", [](http::response_writer out) -> task<> {
+    out.fields.set("Connection", "close");
+    out.fields.set("Content-Length", "5");
+    co_return;
+  });
+  router.get("/throws", [](http::response_writer out) -> task<> {
+    out.fields.set("Connection", "close");
+    throw std::runtime_error{"on purpose"};
+    co_return;
+  });
+  router.get("/next", [](http::request) { return http::response{}; });
+
+  http::server const server{router};
+  std::string const next = "GET /next HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+  auto const keeping_on = [](std::string_view target) {
+    return "GET " + std::string{target} + " HTTP/1.1\r\nHost: x\r\n\r\n";
+  };
+
+  for (auto const *const target : {"/short", "/throws"}) {
+    auto const answer = answer_to(server, keeping_on(target) + next);
+
+    REQUIRE(answer.starts_with("HTTP/1.1 500"));
+    REQUIRE(answer.find("Connection: close") != std::string::npos);
+    REQUIRE(answer.find("HTTP/1.1 200") == std::string::npos);
+  }
+}
+
+TEST_CASE("response_writer: a handler catching what its head threw can answer otherwise", "[server]") {
+  http::router router;
+
+  router.get("/fallback", [](http::response_writer out) -> task<> {
+    out.status = http::status::no_content;
+
+    try {
+      // A 204 has no body: this cannot go.
+      co_await out.write("x");
+    } catch (std::exception const &) {
+      // It answers with what it set.
+    }
+  });
+
+  REQUIRE(answer_to(http::server{router}, get("/fallback")).starts_with("HTTP/1.1 204"));
+}
+
+TEST_CASE("response_writer: write on one moved from throws", "[server]") {
+  http::router router;
+  bool refused = false;
+
+  router.get("/moved", [&refused](http::response_writer out) -> task<> {
+    auto const taken = std::move(out);
+
+    try {
+      // NOLINTNEXTLINE(bugprone-use-after-move)
+      (void)out.write("x");
+    } catch (std::logic_error const &) {
+      refused = true;
+    }
+
+    co_return;
+  });
+
+  (void)answer_to(http::server{router}, get("/moved"));
+
+  REQUIRE(refused);
+}
+
+TEST_CASE("response_writer: Set-Cookie and Vary add up, where other fields replace", "[server]") {
+  http::router router;
+
+  router.use([](http::request request, http::next const &next) -> task<http::response> {
+    auto answer = co_await next(std::move(request));
+
+    answer.fields.add("Set-Cookie", "session=1");
+    answer.fields.add("Vary", "Origin");
+    co_return answer;
+  });
+  router.get("/rows", [](http::response_writer out) -> task<> {
+    out.fields.add("Set-Cookie", "theme=dark");
+    out.fields.add("Vary", "Accept-Encoding");
+    co_await out.write("body");
+  });
+
+  auto const answer = answer_to(http::server{router}, get("/rows"));
+
+  REQUIRE(answer.find("session=1") != std::string::npos);
+  REQUIRE(answer.find("theme=dark") != std::string::npos);
+  REQUIRE(answer.find("Origin") != std::string::npos);
+  REQUIRE(answer.find("Accept-Encoding") != std::string::npos);
+}
+
+TEST_CASE("response_writer: to HTTP/1.0, the body ends with the connection", "[server]") {
+  http::router router;
+
+  router.get("/rows", [](http::response_writer out) -> task<> { co_await out.write("body"); });
+
+  auto const answer = answer_to(http::server{router}, "GET /rows HTTP/1.0\r\n\r\n");
+
+  REQUIRE(answer.find("Transfer-Encoding") == std::string::npos);
+  REQUIRE(answer.find("Connection: close") != std::string::npos);
+  REQUIRE(answer.ends_with("\r\n\r\nbody"));
+}
+
+TEST_CASE("response_writer: to HEAD, a head that fails to leave ends the connection", "[server]") {
+  http::router router;
+  int ran = 0;
+
+  router.get("/rows", [&ran](http::response_writer out) -> task<> {
+    ++ran;
+    co_await out.write("never sent");
+  });
+
+  http::server const server{router};
+  virtual_time time;
+  auto [client, ours] = io::make_memory_stream_pair();
+  std::string const sent = "HEAD /rows HTTP/1.1\r\nHost: x\r\n\r\nHEAD /rows HTTP/1.1\r\nHost: x\r\n\r\n";
+
+  auto const peer = [&sent](io::memory_stream to) -> task<int> {
+    (void)co_await io::write(to, std::as_bytes(std::span{sent}));
+    co_return 1;
+  };
+
+  (void)quoll::test::run(
+      time, async::when_all(server.serve_connection(failing_writes{std::move(ours)}), peer(std::move(client))));
+
+  REQUIRE(ran == 1);
+}
+
+TEST_CASE("response_writer: to HEAD through local_transport, a stop is no answer", "[server][timer]") {
+  http::router router;
+
+  router.get("/slow", [](http::response_writer out) -> task<> {
+    co_await async::sleep_for(1h);
+    co_await out.write("late");
+  });
+
+  http::local_transport const transport{router};
+  http::request request;
+
+  request.method = http::verb::head;
+  request.target = "/slow";
+
+  virtual_time time;
+  std::error_code ended_with;
+
+  auto const asking = [&]() -> task<int> {
+    try {
+      (void)co_await async::with_timeout(1s, transport.send(request));
+    } catch (std::system_error const &failure) {
+      ended_with = failure.code();
+    }
+
+    co_return 1;
+  };
+
+  (void)quoll::test::run(time, asking());
+
+  REQUIRE(ended_with == std::errc::timed_out);
+}
+
+TEST_CASE("response_writer: a route's body stays until it has read it, past dispatch()", "[server]") {
+  http::router router;
+  std::string read_back;
+
+  router.post("/echo", [&read_back](http::body_reader in, http::response_writer) -> task<> {
+    while (auto const piece = co_await in.read()) {
+      read_back += *piece;
+    }
+  });
+
+  http::request request;
+
+  request.method = http::verb::post;
+  request.target = "/echo";
+  request.body = std::string(100, 'y');
+
+  struct nowhere {
+    [[nodiscard]] task<> write(std::string_view) const { co_return; }
+  };
+
+  async::run_loop loop;
+  auto response = quoll::test::run(loop, router.dispatch(std::move(request)));
+  nowhere sink;
+  auto const writer = response.value().body_writer;
+
+  (void)quoll::test::run(loop, [&]() -> task<int> {
+    co_await writer(http::body_stream{sink});
+    co_return 1;
+  }());
+
+  REQUIRE(read_back == std::string(100, 'y'));
 }
