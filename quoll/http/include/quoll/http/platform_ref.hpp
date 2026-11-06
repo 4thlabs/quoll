@@ -37,6 +37,7 @@
 #ifndef QUOLL_HTTP_PLATFORM_REF_HPP
 #define QUOLL_HTTP_PLATFORM_REF_HPP
 
+#include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/platform.hpp>
 #include <quoll/http/request.hpp>
@@ -72,9 +73,16 @@ public:
     return vtable_->stream(platform_, std::move(url), std::move(message));
   }
 
+  /** @brief The referenced platform if its type is exactly `P`, otherwise `nullptr`. */
+  template <class P>
+  [[nodiscard]] P const *target() const noexcept {
+    return vtable_->type == async::detail::type_id_of<P>() ? static_cast<P const *>(platform_) : nullptr;
+  }
+
 private:
   struct vtable {
     async::task<streamed_response> (*stream)(void const *platform, std::string url, request message);
+    async::detail::type_id type;
   };
 
   template <Platform P>
@@ -82,6 +90,7 @@ private:
       [](void const *platform, std::string url, request message) {
         return static_cast<P const *>(platform)->stream(std::move(url), std::move(message));
       },
+      async::detail::type_id_of<P>(),
   };
 
   void const *platform_;
