@@ -2,15 +2,15 @@
 
 include(CMakeFindDependencyMacro)
 
-# quoll::threads and quoll::asio (and quoll::runtime, through it) link Threads::Threads: only looked for when one of
-# them may be used.
+# quoll::threads and quoll::asio (and quoll::runtime, natively, through it) link Threads::Threads: only looked for when one
+# of them may be used.
 if(NOT quoll_FIND_COMPONENTS OR "threads" IN_LIST quoll_FIND_COMPONENTS OR "asio" IN_LIST quoll_FIND_COMPONENTS
-   OR "runtime" IN_LIST quoll_FIND_COMPONENTS)
+   OR ("runtime" IN_LIST quoll_FIND_COMPONENTS AND NOT EMSCRIPTEN))
   find_dependency(Threads)
 endif()
 
 # quoll::asio (and quoll::runtime, through it) links OpenSSL when Quoll was configured with it (QUOLL_TLS).
-if(@QUOLL_PACKAGE_NEEDS_OPENSSL@ AND (NOT quoll_FIND_COMPONENTS OR "asio" IN_LIST quoll_FIND_COMPONENTS
+if("@QUOLL_PACKAGE_NEEDS_OPENSSL@" AND (NOT quoll_FIND_COMPONENTS OR "asio" IN_LIST quoll_FIND_COMPONENTS
    OR "runtime" IN_LIST quoll_FIND_COMPONENTS))
   find_dependency(OpenSSL)
 endif()
@@ -18,7 +18,9 @@ endif()
 # quoll::rest and quoll::ui link glaze::glaze: the application defines it before (CPM, add_subdirectory), or it is found
 # here. Only required when one of them is asked for by name; otherwise looked for quietly, and needed only by a target linking one of them.
 if(NOT TARGET glaze::glaze)
-  if("rest" IN_LIST quoll_FIND_COMPONENTS OR "ui" IN_LIST quoll_FIND_COMPONENTS)
+  # Under Emscripten, quoll::runtime brings quoll::ui, through quoll::emscripten.
+  if("rest" IN_LIST quoll_FIND_COMPONENTS OR "ui" IN_LIST quoll_FIND_COMPONENTS
+     OR ("runtime" IN_LIST quoll_FIND_COMPONENTS AND EMSCRIPTEN))
     find_dependency(glaze)
   elseif(NOT quoll_FIND_COMPONENTS)
     find_package(glaze QUIET)

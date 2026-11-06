@@ -40,5 +40,6 @@
 #include <quoll/emscripten/dom_renderer.hpp>
 #include <quoll/emscripten/executor.hpp>
 #include <quoll/emscripten/mount.hpp>
+#include <quoll/emscripten/runtime.hpp>
 
 #endif // QUOLL_EMSCRIPTEN_HPP

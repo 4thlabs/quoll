@@ -22,7 +22,7 @@ Dependencies come from CPM. Set `CPM_SOURCE_CACHE` to keep them between builds.
 | `QUOLL_BUILD_SAMPLES` | ON at top level | `samples/`                                            |
 | `QUOLL_INSTALL`       | ON at top level | The install rules                                     |
 | `QUOLL_TLS`           | `AUTO`          | TLS through OpenSSL: `AUTO`, `ON` or `OFF`            |
-| `QUOLL_RUNTIME`       | `asio`          | The adapter behind `quoll::runtime`                   |
+| `QUOLL_RUNTIME`       | per platform    | The adapter behind `quoll::runtime`                   |
 | `QUOLL_UI_HOT`        | OFF             | `quoll::ui`: literals replaced while the program runs |
 | `QUOLL_BENCH`         | OFF             | `tests/bench`, without the tests                      |
 | `QUOLL_FUZZ`          | OFF             | `tests/fuzz`, with Clang                              |
