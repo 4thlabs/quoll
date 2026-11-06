@@ -6,9 +6,10 @@ The baseline, with bodies in pieces (step 3 of [`PLAN.md`](PLAN.md)), which what
 ```bash
 cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -DQUOLL_BENCH=ON -DQUOLL_BUILD_TESTS=OFF
 cmake --build build-bench --target quoll_bench -j"$(nproc)"
-build-bench/tests/bench/quoll_bench tcp              # the first table
-build-bench/tests/bench/quoll_bench allocations      # the second
-build-bench/tests/bench/quoll_bench serve 8080       # the routes alone, for the third
+build-bench/tests/bench/quoll_bench tcp              # the table over TCP
+build-bench/tests/bench/quoll_bench allocations      # the budgets
+build-bench/tests/bench/quoll_bench large 32         # bodies far larger than memory
+build-bench/tests/bench/quoll_bench serve 8080       # the routes alone, beside other servers
 ```
 
 Measured on `d9c3b0f` with the pull request recycling coroutine frames on top, in a Docker container of an Intel Core i5-14400 (16 threads), Linux 6.18, GCC 13.3, on a machine
@@ -72,12 +73,32 @@ already in the page cache, the case where that thread gains nothing:
 | On a thread | 2160, 2074, 2184 | 441 | 110 |
 | On the loop | 2274, 2197, 2239 | 428 | 106 |
 
-Measured before the root was resolved for each request, for deploys that flip a link, which adds a few allocations to the
-server and is why the table above says more.
+Measured before the last changes to it: the first table has the allocations of what is there now, with the root resolved for
+each request, for deploys that flip a link. The comparison of the rates has not been run again since.
 
 About 4% of the rate, on a file served at some 2 GiB/s. This row and the one above it come from a later commit than the rest
 of the table. A file goes about three times faster than `GET 1 MiB, written in pieces`, as its pieces are 64 KiB rather
 than 4 KiB.
+
+## Larger than memory
+
+Bodies that do not fit in memory, in pieces of 64 KiB, over loopback TCP, with both sides in one process. The program sets its own
+limit of 512 MiB of address space, which no such body could fit in, and fails if what the process holds grows by more than
+64 MiB. The peak is that of the whole process, both sides together, from `VmHWM`, and never goes down, so that the last row
+says it for all of them. The file is sparse, and read from the page cache, which is the kernel's and not counted here.
+
+Measured once, on the commit that added it, with the limit from `ulimit -v`, and from `ru_maxrss`, run from a shell of little
+memory:
+
+| Transfer | GiB | MiB/s | Peak of the process (MiB) |
+| --- | --- | --- | --- |
+| Before any | | | 9.1 |
+| A request in pieces, up | 32 | 1178 | 10.3 |
+| A response in pieces, down | 32 | 1303 | 10.3 |
+| A file, down | 32 | 1311 | 10.3 |
+
+The same at 8 GiB: a peak of 10.2 MiB. `bench.yml` runs `large 1` every night, whose exit status is the check: `allocations
+--check` could not see this, as it sends whole bodies and counts allocations rather than what they hold.
 
 ## Beside other servers
 

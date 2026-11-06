@@ -37,6 +37,12 @@ both sides over TCP, most of them on the server.
 rebuilt in 3.9 s and a page in 0.81 s, for 52 KB of gzipped WebAssembly with the REST client, at the end
 of [step 1](PLAN.md#step-1-compiled-libraries-done).
 
+## Larger than memory
+
+A body in pieces costs the same whatever its size: 32 GiB each way, a request, a response and a file, at some 1.2 GiB/s over
+loopback, with both sides in one process that never held more than 10.3 MiB. See
+[`BENCHMARKS.md`](BENCHMARKS.md#larger-than-memory) and [Streaming](streaming.md).
+
 ## How it is kept honest
 
 `tests/bench` holds the program, `quoll_bench`:
@@ -46,6 +52,7 @@ cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -DQUOLL_BENCH=ON -DQUOLL_BUILD_T
 cmake --build build-bench --target quoll_bench -j"$(nproc)"
 build-bench/tests/bench/quoll_bench tcp              # rates and latency, over loopback
 build-bench/tests/bench/quoll_bench allocations      # allocations, over a memory stream
+build-bench/tests/bench/quoll_bench large 32         # bodies far larger than memory
 build-bench/tests/bench/quoll_bench serve 8080       # the routes alone, for a load generator
 ```
 

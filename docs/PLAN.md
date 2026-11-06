@@ -21,7 +21,7 @@ One pull request per topic, under the rule in [`AGENTS.md`](../AGENTS.md). A new
 before much is built on it. Points marked "To settle" and the [open questions](#open-questions) are the maintainer's to
 decide. Steps marked *(maintainer merges)* are big architecture changes.
 
-**Current step: 3.** Step 0 only waits for the maintainer, and step 2 keeps the two points it says are left, as the first
+**Current step: 4.** Step 0 only waits for the maintainer, and step 2 keeps the two points it says are left, as the first
 nightly fuzz run has not been read yet.
 
 ### Done
@@ -29,6 +29,9 @@ nightly fuzz run has not been read yet.
 `async`, `io`, `http`, `client`, `server` and `rest`, with timeouts by default and TLS (a client GET and a REST client
 over TCP, over `fetch`, and through OpenSSL). A first `quoll::ui` with its DOM renderer, Tailwind through Vite, and two
 levels of hot reload, in the sample `ui_notes`. In CI: `clang-tidy`, the standard library's checks, Apple Clang on macOS, Codex's review and a protected `main`.
+
+Streaming (step 3): a body in pieces on the server, the client and browser `fetch`, a minimum rate, static files. 32 GiB each way
+through a process that never holds more than 10.3 MiB, checked every night at 1 GiB.
 
 Compiled libraries (step 1): a program using `quoll::runtime` compiles neither llhttp nor asio. A page rebuilds in 0.81 s and a
 native server in 3.9 s, for 52 KB of gzipped WASM with the REST client, against about 45 KB for React and ReactDOM alone. A literal shows in about 31 ms,
@@ -105,7 +108,7 @@ lambda can still capture by reference what dies before it.
 *Done when:* the question above is settled and what it brings is done, the fuzz targets run in CI with no open crash, the
 limits, the shutdown and the features are tested, and the reliability points are in place or dropped with a reason.
 
-### Step 3: streaming
+### Step 3: streaming *(done)*
 
 - Done: a benchmark harness (requests per second, latency, allocations per request) and its baseline, in
   [`BENCHMARKS.md`](BENCHMARKS.md), as streaming touches the hot paths.
@@ -119,9 +122,11 @@ limits, the shutdown and the features are tested, and the reliability points are
 - Done: a minimum rate on the server, `min_read_rate` and `min_write_rate`, 16 KiB/s by default: a body's bytes, or what leaves, add to
   what `read_timeout` and `write_timeout` have left, up to themselves, so that a slow link has the time it needs, and a peer
   sending a little now and then runs out of it. Static files go by the same.
-- A half-close in `ByteStream`, if step 2 did not bring it.
+- Done, by step 2: a half-close, `io::HalfClosableStream` and its `shutdown_send()`.
 
-*Done when:* a transfer far larger than memory runs in bounded memory, on both sides, with the figure measured.
+*Done when:* a transfer far larger than memory runs in bounded memory, on both sides, with the figure measured. Measured: 32 GiB
+each way, a request, a response and a file, with a process that never held more than 10.3 MiB, in
+[`BENCHMARKS.md`](BENCHMARKS.md#larger-than-memory).
 
 ### Step 4: REST from a command-line program
 
