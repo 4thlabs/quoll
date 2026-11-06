@@ -207,8 +207,10 @@ co_await quoll::server::listen(
 | Option              | Default | What it does                                                                                                                                                        |
 | ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `idle_timeout`      | 60 s    | How long a connection waits for a request to start. Past it, the connection closes without a word.                                                                  |
-| `read_timeout`      | 30 s    | How long a request may take to arrive once started, as a whole: a peer sending a byte now and then gets no more. Past it, it answers 408 and the connection closes. |
-| `write_timeout`     | 30 s    | How long a response or a `100 Continue` may take to leave, as a whole. Past it, the connection closes.                                                              |
+| `read_timeout`      | 30 s    | How long a request may wait for its peer once started, and not the time a handler takes between two reads. Past it, it answers 408 and the connection closes. It starts again once `100 Continue` has left, as the client waits for that. |
+| `min_read_rate`     | 16 KiB/s | What lets a request take as long as it keeps coming: each byte of its body adds to what `read_timeout` has left, up to `read_timeout` itself. See below. |
+| `write_timeout`     | 30 s    | How long a response or a `100 Continue` may wait for its peer to take it, and not the time a `body_writer` takes between two writes. Past it, the connection closes. |
+| `min_write_rate`    | 16 KiB/s | The same for what leaves, every byte earning. A write that leaves within 100 ms gives back all of `write_timeout`. |
 | `lingering_timeout` | 5 s     | After the last response, what the peer still sends is read and dropped: how long to wait for more of it. Zero closes at once.                                       |
 | `lingering_time`    | 30 s    | How long this goes on as a whole, against a peer that keeps sending. Zero closes at once.                                                                           |
 | `limits`            | below   | What a request may hold.                                                                                                                                            |
@@ -220,8 +222,18 @@ destroy the response before the peer reads it.
 
 Zero disables a timeout, and a negative one has already expired. Timeouts need the timer of the
 connection's executor, which `quoll::runtime` provides: see
-[thread pools](runtimes.md#the-thread-pool). A body read or written in pieces has `read_timeout` or
-`write_timeout` per piece: see [Streaming](streaming.md).
+[thread pools](runtimes.md#the-thread-pool).
+
+The minimum rates make one rule of slow links and slow peers. At the rate or above, a transfer has all
+the time it needs, 8 MiB in a minute included. A silence still ends it within the timeout, whatever came
+before it. Below the rate, a peer runs out of time, in a body read whole as in pieces, and a head or the
+framing of a body earns nothing.
+
+At 0, a request or a response has its timeout as a whole, and a body in pieces has it per piece. That is
+what a peer uploading little and slowly on purpose needs, 1 KiB every 5 s for instance, which the default
+ends after about 30 s. It holds for all the routes of a connection, not for one. Writes do not need it: on a
+stream of small writes to a peer that takes them, each gives back all of the timeout, whatever the time
+between them.
 
 The time a handler takes is not limited: that is the application's to bound, with
 `async::with_timeout`, which stops the work and awaits its end.

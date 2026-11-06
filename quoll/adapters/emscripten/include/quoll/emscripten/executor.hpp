@@ -73,6 +73,9 @@ public:
   /** @brief Completes with true once `duration` has elapsed, with false on a stop request (see async::Timer). */
   [[nodiscard]] async::task<bool> wait_for(std::chrono::nanoseconds duration) const;
 
+  /** @brief The time on the clock wait_for() goes by (see async::Timer). */
+  [[nodiscard]] std::chrono::nanoseconds now() const noexcept;
+
   /** @brief This executor, as the timer of the event loop: valid while it lives (see async::timer_ref). */
   [[nodiscard]] async::timer_ref query(async::service_tag<async::timer_ref>) const { return async::timer_ref{*this}; }
 

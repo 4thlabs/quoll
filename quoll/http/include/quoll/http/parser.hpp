@@ -159,6 +159,13 @@ public:
    */
   [[nodiscard]] bool upgrade() const noexcept;
 
+  /**
+   * @brief How many bytes of body the current message has brought so far, in pieces or not, whatever take_body() took,
+   * and none of its framing, so that it says what a peer really sent, whatever it wrapped that in. Back to 0 with
+   * release().
+   */
+  [[nodiscard]] std::uint64_t body_received() const noexcept;
+
   /** @brief What stopped the parser, if something did: what feed() reports from then on. */
   [[nodiscard]] std::error_code failure() const noexcept;
 

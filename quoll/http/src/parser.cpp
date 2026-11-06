@@ -141,6 +141,7 @@ struct parser<Message>::impl {
     body_streamed_ = false;
     keep_alive_ = false;
     upgrade_ = false;
+    body_size_ = 0;
 
     // The request method holds until its final response: an interim 1xx answers the same request.
     if constexpr (!is_request) {
@@ -503,6 +504,12 @@ template <class Message>
   requires std::same_as<Message, request> || std::same_as<Message, response>
 bool parser<Message>::upgrade() const noexcept {
   return impl_->upgrade_;
+}
+
+template <class Message>
+  requires std::same_as<Message, request> || std::same_as<Message, response>
+std::uint64_t parser<Message>::body_received() const noexcept {
+  return impl_->body_size_;
 }
 
 template <class Message>

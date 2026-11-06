@@ -119,6 +119,11 @@ public:
     return detail::wait(io_executor(), duration);
   }
 
+  /** @brief The time on the clock wait_for() goes by (see async::Timer). */
+  [[nodiscard]] std::chrono::nanoseconds now() const noexcept {
+    return std::chrono::steady_clock::now().time_since_epoch();
+  }
+
   /** @brief This executor, as the timer of its execution context: valid while it lives (see async::timer_ref). */
   [[nodiscard]] async::timer_ref query(async::service_tag<async::timer_ref>) const { return async::timer_ref{*this}; }
 

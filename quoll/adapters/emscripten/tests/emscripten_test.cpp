@@ -35,11 +35,13 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/current_executor.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/async/work_item.hpp>
@@ -298,6 +300,20 @@ task<std::error_code> fetch_with_timeout(fetch_transport transport, std::chrono:
 }
 
 } // namespace
+
+TEST_CASE("emscripten timer: its clock goes by as it waits", "[emscripten][timer]") {
+  auto const waiting = []() -> quoll::async::task<std::chrono::nanoseconds> {
+    auto const executor = co_await quoll::async::current_executor();
+    auto const timer = executor.query<quoll::async::timer_ref>();
+    auto const started = timer->now();
+
+    co_await quoll::async::sleep_for(std::chrono::milliseconds{20});
+    co_return timer->now() - started;
+  };
+
+  // A wait lasts at least what it asks, give or take the rounding of what JavaScript reports.
+  REQUIRE(run(waiting()) >= std::chrono::milliseconds{19});
+}
 
 TEST_CASE("emscripten executor offers a timer on the event loop", "[emscripten][timer]") {
   using namespace std::chrono_literals;

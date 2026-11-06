@@ -701,3 +701,46 @@ TEST_CASE("Parser: the size of a body in pieces is counted past what a size_t ho
     SUCCEED("a size_t of this platform counts more than a test can send");
   }
 }
+
+TEST_CASE("Parser: body_received counts the body of the current message, and none of its framing", "[http][parser]") {
+  http::request_parser parser;
+
+  auto const feed = [&](std::string_view data) { static_cast<void>(parser.feed(data)); };
+
+  SECTION("of a length") {
+    feed("POST / HTTP/1.1\r\nContent-Length: 4\r\n\r\npi");
+    REQUIRE(parser.body_received() == 2);
+    feed("ng");
+    REQUIRE(parser.body_received() == 4);
+  }
+
+  SECTION("in chunks, whatever wraps them") {
+    feed("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n");
+    REQUIRE(parser.body_received() == 0);
+    feed("00004;name=value\r\nping\r\n");
+    REQUIRE(parser.body_received() == 4);
+    feed("0\r\nX-Trailer: yes\r\n\r\n");
+    REQUIRE(parser.body_received() == 4);
+  }
+
+  SECTION("in pieces, whatever was taken") {
+    parser.set_body_streaming([](http::request const &) { return true; });
+    feed("POST / HTTP/1.1\r\nContent-Length: 4\r\n\r\npi");
+
+    std::string piece;
+
+    parser.take_body(piece);
+    REQUIRE(parser.body_received() == 2);
+    feed("ng");
+    REQUIRE(parser.body_received() == 4);
+  }
+
+  SECTION("back to 0 for the next") {
+    feed("POST / HTTP/1.1\r\nContent-Length: 4\r\n\r\nping");
+    REQUIRE(parser.done());
+    static_cast<void>(parser.release());
+    REQUIRE(parser.body_received() == 0);
+    feed("POST / HTTP/1.1\r\nContent-Length: 2\r\n\r\nhi");
+    REQUIRE(parser.body_received() == 2);
+  }
+}

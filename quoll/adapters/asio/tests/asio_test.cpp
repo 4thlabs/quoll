@@ -46,6 +46,7 @@
 #include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/async/yield.hpp>
@@ -989,6 +990,21 @@ TEST_CASE("asio::runtime offers its loop's timer to its tasks", "[asio][runtime]
   REQUIRE(run_task(measure_sleep(20ms)) >= 20ms);
 }
 
+TEST_CASE("asio::runtime: its timer's clock goes by as it waits", "[asio][runtime][timer]") {
+  using namespace std::chrono_literals;
+
+  auto const waiting = []() -> task<std::chrono::nanoseconds> {
+    auto const executor = co_await quoll::async::current_executor();
+    auto const timer = executor.query<quoll::async::timer_ref>();
+    auto const started = timer->now();
+
+    co_await quoll::async::sleep_for(20ms);
+    co_return timer->now() - started;
+  };
+
+  REQUIRE(run_task(waiting()) >= 20ms);
+}
+
 TEST_CASE("asio: with_timeout stops a read from a silent peer", "[asio][runtime][timer]") {
   using namespace std::chrono_literals;
 
@@ -1299,6 +1315,136 @@ TEST_CASE("asio: a body_writer over TCP: all of it, a server refusing it, and a 
 
     REQUIRE(run_task(exchange()) == std::errc::timed_out);
   }
+}
+
+TEST_CASE("asio: the minimum rate on a real clock, and a writer reading its request as it writes",
+          "[asio][runtime][server]") {
+  using namespace std::chrono_literals;
+
+  auto const exchange = [](std::size_t part, int parts) -> task<std::string> {
+    http::router router;
+
+    router.post("/both", [](http::body_reader body) {
+      http::response answer;
+
+      answer.body_writer = [body](http::body_stream out) -> task<> {
+        while (auto const piece = co_await body.read()) {
+          co_await out.write(*piece);
+        }
+      };
+      return answer;
+    });
+
+    auto listener = co_await io::listen(0);
+    auto const port = listener.local_port().value();
+    std::stop_source stop;
+    quoll::server::serve_options options;
+
+    options.shutdown_timeout = {};
+    options.connection.read_timeout = 500ms;
+    options.connection.min_read_rate = 1024;
+
+    auto const serving = [&]() -> task<> {
+      co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router, options),
+                                                      stop.get_token()};
+    };
+
+    auto const calling = [&]() -> task<std::string> {
+      quoll::async::detail::stop_on_exit const stop_server{stop};
+      auto stream = co_await io::connect("127.0.0.1", port);
+      auto const size = part * static_cast<std::size_t>(parts);
+      auto const head =
+          "POST /both HTTP/1.1\r\nHost: h\r\nConnection: close\r\nContent-Length: " + std::to_string(size) + "\r\n\r\n";
+      std::string const bytes(part, 'x');
+
+      (void)co_await io::write(stream, std::as_bytes(std::span{head}));
+
+      for (auto index = 0; index < parts; ++index) {
+        if ((co_await io::write(stream, std::as_bytes(std::span{bytes}))).error) {
+          break;
+        }
+
+        co_await quoll::async::sleep_for(50ms);
+      }
+
+      std::string received;
+      std::array<char, 4096> chunk{};
+
+      for (;;) {
+        auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+        if (read.error) {
+          co_return received;
+        }
+
+        received.append(chunk.data(), read.transferred);
+      }
+    };
+
+    auto [served, received] = co_await quoll::async::when_all(serving(), calling());
+
+    co_return std::move(received);
+  };
+
+  // Above the rate, past the timeout in all, the piece echoed as it comes.
+  auto const fast = run_task(exchange(4096, 15));
+
+  REQUIRE(fast.starts_with("HTTP/1.1 200"));
+  REQUIRE(fast.ends_with("0\r\n\r\n"));
+
+  // Below it, it ends short of its end, as the response had started.
+  auto const slow = run_task(exchange(1, 30));
+
+  REQUIRE(slow.starts_with("HTTP/1.1 200"));
+  REQUIRE(!slow.ends_with("0\r\n\r\n"));
+}
+
+TEST_CASE("asio: a timeout as far back as nanoseconds go has expired, and stays so on a real clock",
+          "[asio][runtime][server]") {
+  auto const exchange = []() -> task<std::string> {
+    http::router router;
+
+    router.get("/hello", [](http::request) { return http::response{}; });
+
+    auto listener = co_await io::listen(0);
+    auto const port = listener.local_port().value();
+    std::stop_source stop;
+    quoll::server::serve_options options;
+
+    options.shutdown_timeout = {};
+    options.connection.read_timeout = std::chrono::nanoseconds::min();
+
+    auto const serving = [&]() -> task<> {
+      co_await quoll::async::detail::stop_scope<void>{quoll::server::serve(listener, router, options),
+                                                      stop.get_token()};
+    };
+
+    auto const calling = [&]() -> task<std::string> {
+      quoll::async::detail::stop_on_exit const stop_server{stop};
+      auto stream = co_await io::connect("127.0.0.1", port);
+      std::string_view const start = "GET /hello HTTP/1.1\r\nHost: h\r\n";
+      std::string received;
+      std::array<char, 4096> chunk{};
+
+      (void)co_await io::write(stream, std::as_bytes(std::span{start}));
+
+      for (;;) {
+        auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+        if (read.error) {
+          co_return received;
+        }
+
+        received.append(chunk.data(), read.transferred);
+      }
+    };
+
+    auto [served, received] = co_await quoll::async::when_all(serving(), calling());
+
+    co_return std::move(received);
+  };
+
+  REQUIRE(run_task(exchange()).starts_with("HTTP/1.1 408"));
 }
 
 TEST_CASE("asio: a client still sending a refused body finishes, then reads its answer", "[asio][runtime]") {
