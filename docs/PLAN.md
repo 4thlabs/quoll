@@ -255,7 +255,7 @@ WASM builds.
   `GET /me` cannot learn who calls; and a scheme cannot be a cookie, as `rest::security` accepts only `api_key<>`,
   `api_key_query<>` and `bearer_auth`. A validator's result reaching the service, and a cookie scheme, shown to the maintainer.
 - A page: an OIDC redirect is a navigation, which `quoll::ui` and the Emscripten adapter do not offer, and which loses the WASM
-  state. `fetch_client` sets no `credentials`, so that a page calling another origin neither sends nor keeps a cookie.
+  state. In a browser, `http::client` sets no `credentials`, so that a page calling another origin neither sends nor keeps a cookie.
 - A native client: `http::client` has no cookie jar, and drops `Set-Cookie` across redirects. To settle whether it needs one.
 - Cookies and what they ask: expiry, revocation, CSRF.
 - What it parses from outside, tokens among them, is fuzzed.
