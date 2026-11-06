@@ -39,10 +39,10 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/client/detail/url.hpp>
-#include <quoll/client/streamed_response.hpp>
 #include <quoll/client/transport_options.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
+#include <quoll/http/streamed_response.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/connector.hpp>
 #include <quoll/io/network_connector.hpp>
@@ -76,7 +76,8 @@ struct connector_handle {
                                                                   transport_options const &options);
 
 [[nodiscard]] async::task<http::response> send(std::shared_ptr<transport_core> const &core, http::request request);
-[[nodiscard]] async::task<streamed_response> stream(std::shared_ptr<transport_core> const &core, http::request request);
+[[nodiscard]] async::task<http::streamed_response> stream(std::shared_ptr<transport_core> const &core,
+                                                          http::request request);
 
 } // namespace detail
 
@@ -193,9 +194,14 @@ public:
    * reads on its own: a server has to read the whole of the request before it answers, for it all to leave. Over TLS, a
    * write that this cuts short leaves its session unusable: the head is there, and `body.read()` may then fail.
    *
+   * Read to its end, or with nothing to read, its connection goes back to the transport. Destroyed before, with every
+   * copy of `body`, the connection closes; the last copy goes on the loop of what reads it, as it holds the connection.
+   * Reading has a timeout of `response_timeout` per piece. A failure closes the connection, leaving its place to
+   * others.
+   *
    * @throws std::invalid_argument here, as send() does.
    */
-  [[nodiscard]] async::task<streamed_response> stream(http::request request) const {
+  [[nodiscard]] async::task<http::streamed_response> stream(http::request request) const {
     return detail::stream(core_, std::move(request));
   }
 

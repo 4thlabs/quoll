@@ -55,6 +55,7 @@
 #include <quoll/http/response.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
+#include <quoll/http/streamed_response.hpp>
 #include <quoll/http/transport.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/http/version.hpp>
@@ -2412,7 +2413,7 @@ TEST_CASE("client::transport: stream() completes with the head, before its body 
 
   async::run_loop loop;
   memory_server server{loop.get_executor(), serve, 0, {}, {}};
-  client::streamed_response seen;
+  http::streamed_response seen;
 
   auto const reading = [&]() -> task<std::string> {
     client::transport const transport{memory_connector{server}, "example.com", 80};
@@ -2566,7 +2567,7 @@ TEST_CASE("client::transport: a response kept past its end does not keep its tra
   std::weak_ptr<int> const seen = watched;
 
   auto const reading = [&]() -> task<bool> {
-    std::optional<client::streamed_response> kept;
+    std::optional<http::streamed_response> kept;
 
     {
       client::transport const transport{watched_connector{server, std::move(watched)}, "example.com", 80};
