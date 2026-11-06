@@ -39,6 +39,7 @@
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/percent.hpp>
+#include <quoll/http/detail/plain_segment.hpp>
 #include <quoll/http/detail/route_template.hpp>
 
 #include <algorithm>
@@ -250,32 +251,6 @@ split_authority(std::string_view authority QUOLL_LIFETIMEBOUND) noexcept {
          (character >= '0' && character <= '9') || std::string_view{"-._~!$&'()*+,;=:@/%"}.contains(character);
 }
 
-// A segment a server reads as a name: decoded, neither a dot segment, in the way the router sees them, nor a NUL.
-[[nodiscard]] bool plain_segment(std::string_view segment) {
-  auto const decoded = http::detail::percent_decode(segment);
-
-  if (!decoded || decoded->contains('\0')) {
-    return false;
-  }
-
-  std::string_view rest = *decoded;
-
-  for (;;) {
-    auto const separator = rest.find_first_of("/\\");
-    auto const part = rest.substr(0, separator);
-
-    if (part == "." || part == "..") {
-      return false;
-    }
-
-    if (separator == std::string_view::npos) {
-      return true;
-    }
-
-    rest.remove_prefix(separator + 1);
-  }
-}
-
 // A path to put before every target: it goes on the wire as it is written, so that it has to be what a server reads.
 void check_prefix(std::string_view path) {
   if (!std::ranges::all_of(path, path_character) || !http::detail::valid_escapes(path) || path.contains("//")) {
@@ -285,7 +260,9 @@ void check_prefix(std::string_view path) {
   for (std::size_t start = 1; start < path.size();) {
     auto const end = end_of(path, '/', start);
 
-    if (!plain_segment(path.substr(start, end - start))) {
+    auto const decoded = http::detail::percent_decode(path.substr(start, end - start));
+
+    if (!decoded || !http::detail::plain_segment(*decoded)) {
       invalid_url("a dot segment or a NUL in the path");
     }
 

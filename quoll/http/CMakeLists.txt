@@ -38,6 +38,7 @@ quoll_declare_module(
     src/local_transport.cpp
     src/parser.cpp
     src/percent.cpp
+    src/plain_segment.cpp
     src/response_writer.cpp
     src/router.cpp
     src/serializer.cpp

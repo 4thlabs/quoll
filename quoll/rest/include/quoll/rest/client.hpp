@@ -75,7 +75,7 @@ using result = detail::call_result<Endpoint>;
  * The arguments are those of the endpoint, in its order: path parameters (prefixes first), then the argument parts,
  * then the inherited ones; their types come from the endpoint, so braced lists convert (`{.limit = 20}`). They are
  * encoded into the request by the call: an invalid one throws std::invalid_argument there, before the task runs (a
- * path parameter that is empty or a dot segment, a header value the server would read differently).
+ * path parameter that is empty or holds a NUL or a dot segment, a header value the server would read differently).
  *
  * The task does not refer to the client: the request is built by the call, and the transport's task owns what it
  * needs. Thread safety: none (credentials() changes the client); calls on a const client may be concurrent.
