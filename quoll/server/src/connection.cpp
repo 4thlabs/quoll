@@ -695,8 +695,12 @@ bool without_chunks(http::response &response, http::version version) {
     return false;
   }
 
-  if (auto const coding = response.fields.find("Transfer-Encoding");
-      coding && !http::detail::iequals(*coding, "chunked")) {
+  auto const another_coding = std::ranges::any_of(response.fields, [](auto const &entry) {
+    return http::detail::iequals(entry.name, "Transfer-Encoding") &&
+           !http::detail::iequals(http::detail::trim(entry.value), "chunked");
+  });
+
+  if (another_coding) {
     response.version = http::version::http_1_0;
     return true;
   }

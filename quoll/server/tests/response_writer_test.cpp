@@ -1244,15 +1244,105 @@ TEST_CASE("server: to HTTP/1.0, another coding than chunks answers 500 rather th
     answer.body = "gzipped";
     return answer;
   });
+  router.get("/two-lines", [] {
+    http::response answer;
+
+    answer.fields.add("Transfer-Encoding", "chunked");
+    answer.fields.add("Transfer-Encoding", "gzip");
+    answer.body = "gzipped";
+    return answer;
+  });
   router.get("/written", [](http::response_writer out) -> task<> {
     out.fields.set("Transfer-Encoding", "gzip, chunked");
     co_await out.write("gzipped");
   });
 
   http::server const server{router};
-  auto const target = GENERATE(as<std::string>{}, "/whole", "/written");
+  auto const target = GENERATE(as<std::string>{}, "/whole", "/written", "/two-lines");
   auto const answer = answer_to(server, "GET " + target + " HTTP/1.0\r\nHost: x\r\n\r\n");
 
   REQUIRE(answer.contains(" 500 "));
   REQUIRE_FALSE(answer.contains("gzipped"));
+}
+
+TEST_CASE("response_writer: through local_transport, a write that failed in a task of its own is no whole body",
+          "[server][timer]") {
+  http::router router;
+
+  // Stopped by the timeout around it, not by the transport's token, and what it threw goes no further.
+  auto const writing_late = [](http::body_stream out) -> task<> {
+    co_await out.write("prefix");
+
+    auto const late = [&out]() -> task<> {
+      try {
+        co_await async::sleep_for(1h);
+      } catch (std::system_error const &) {
+        // Goes on.
+      }
+
+      co_await out.write("suffix");
+    };
+
+    try {
+      co_await async::with_timeout(1s, late());
+    } catch (std::system_error const &) {
+      // Makes nothing of it.
+    }
+  };
+
+  router.get("/writer", [writing_late](http::request) {
+    http::response answer;
+
+    answer.body_writer = writing_late;
+    return answer;
+  });
+  router.use([writing_late](http::request request, http::next const &next) -> task<http::response> {
+    auto answer = co_await next(std::move(request));
+
+    if (answer.late_head_writer) {
+      answer.late_head_writer = writing_late;
+    }
+
+    co_return answer;
+  });
+  router.get("/handler", [](http::response_writer) -> task<> { co_return; });
+
+  http::local_transport const transport{router};
+  auto const target = GENERATE(as<std::string>{}, "/writer", "/handler");
+  http::request request;
+
+  request.method = http::verb::get;
+  request.target = target;
+
+  virtual_time time;
+  auto cut = false;
+
+  auto const asking = [&]() -> task<int> {
+    try {
+      (void)co_await transport.send(request);
+    } catch (std::system_error const &) {
+      cut = true;
+    }
+
+    co_return 1;
+  };
+
+  (void)quoll::test::run(time, asking());
+
+  REQUIRE(cut);
+}
+
+TEST_CASE("server: to HTTP/1.0, spaces around chunked change nothing", "[server]") {
+  http::router router;
+
+  router.get("/written", [](http::response_writer out) -> task<> {
+    out.fields.set("Transfer-Encoding", " chunked ");
+    co_await out.write("plain");
+  });
+
+  auto const answer = answer_to(http::server{router}, "GET /written HTTP/1.0\r\nHost: x\r\n\r\n");
+
+  REQUIRE(answer.contains(" 200 "));
+  REQUIRE_FALSE(answer.contains("Transfer-Encoding"));
+  REQUIRE(answer.ends_with("\r\n\r\nplain"));
 }

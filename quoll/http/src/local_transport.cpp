@@ -112,6 +112,8 @@ public:
     co_await sink_.write(piece);
   }
 
+  [[nodiscard]] std::error_code failure() const noexcept { return sink_.failure(); }
+
 private:
   response *answer_;
   body_sink sink_;
@@ -170,12 +172,14 @@ async::task<response> local_transport::send_to(std::shared_ptr<router const> tar
   auto const body_writer = std::exchange(answer.body_writer, nullptr);
   auto const late_head_writer = std::exchange(answer.late_head_writer, nullptr);
   auto ran = false;
+  std::error_code failure;
 
   if (body_writer && !head) {
     body_sink sink{answer.body, std::nullopt};
 
     ran = true;
     co_await body_writer(body_stream{sink});
+    failure = sink.failure();
   } else if (!body_writer && late_head_writer) {
     written_by_handler sink{answer, head};
 
@@ -187,10 +191,16 @@ async::task<response> local_transport::send_to(std::shared_ptr<router const> tar
       // The head is all it owes.
     }
 
+    failure = sink.failure();
     (void)detail::replace_what_would_mislead(answer, method);
   }
 
-  // A writer that took a stop for an end has no whole body.
+  // A writer that made nothing of a write that failed, or that took a stop for an end, has no whole body: a task of its
+  // own may have been stopped, with a token that is not this one.
+  if (failure) {
+    throw std::system_error{failure, "quoll::http: the body was cut short"};
+  }
+
   if (ran) {
     if ((co_await async::current_stop_token()).stop_requested()) {
       throw std::system_error{std::make_error_code(std::errc::operation_canceled), "quoll::http: stopped"};
