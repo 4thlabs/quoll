@@ -1416,3 +1416,20 @@ TEST_CASE("server: a 100 Continue that cannot leave runs nothing", "[server]") {
 
   REQUIRE(ran == 0);
 }
+
+TEST_CASE("response_writer: a reason a middleware set goes with its status", "[server]") {
+  http::router router;
+
+  router.use([](http::request request, http::next const &next) -> task<http::response> {
+    auto answer = co_await next(std::move(request));
+
+    answer.reason = "Everything Fine";
+    co_return answer;
+  });
+  router.get("/rows", [](http::response_writer out) -> task<> {
+    out.status = http::status::not_found;
+    co_await out.write("gone");
+  });
+
+  REQUIRE(answer_to(http::server{router}, get("/rows")).starts_with("HTTP/1.1 404 Not Found"));
+}

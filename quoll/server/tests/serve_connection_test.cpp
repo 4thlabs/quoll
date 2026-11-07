@@ -3217,7 +3217,7 @@ TEST_CASE("serve_connection: what would mislead its peer goes as a handler's mis
 
     REQUIRE(answer.starts_with("HTTP/1.1 200"));
     REQUIRE(answer.find("HTTP/1.1 500") != std::string::npos);
-    REQUIRE(told.empty());
+    REQUIRE(told.size() == 1);
   }
 }
 
@@ -3251,4 +3251,36 @@ TEST_CASE("serve_connection: to CONNECT, only a 2xx is replaced", "[server]") {
   status = http::status::not_found;
   REQUIRE(answer_to_raw(sent, start).starts_with("HTTP/1.1 404"));
   REQUIRE(wrote);
+}
+
+TEST_CASE("serve_connection: Host as RFC 9112 says, or 400", "[server]") {
+  http::router router;
+
+  router.get("/", [](http::request) { return http::response{}; });
+
+  auto const answer_to = [&router](std::string sent) {
+    auto [client, server] = io::make_memory_stream_pair();
+
+    auto const peer = [](io::memory_stream to, std::string text) -> task<std::string> {
+      (void)co_await io::write(to, std::as_bytes(std::span{text}));
+      co_return co_await read_until_closed(to);
+    };
+
+    return std::get<1>(
+        quoll::test::run(quoll::async::when_all(quoll::http::server{router}.serve_connection(std::move(server)),
+                                                peer(std::move(client), std::move(sent))))
+            .value());
+  };
+
+  REQUIRE(answer_to("GET / HTTP/1.1\r\nConnection: close\r\n\r\n").starts_with("HTTP/1.1 400"));
+  REQUIRE(answer_to("GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\nConnection: close\r\n\r\n").starts_with("HTTP/1.1 400"));
+  REQUIRE(answer_to("GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n").starts_with("HTTP/1.1 200"));
+  // What is no host, for what is in front and what is behind to read otherwise.
+  REQUIRE(answer_to("GET / HTTP/1.1\r\nHost: a b\r\nConnection: close\r\n\r\n").starts_with("HTTP/1.1 400"));
+  REQUIRE(answer_to("GET / HTTP/1.1\r\nHost: evil@a\r\nConnection: close\r\n\r\n").starts_with("HTTP/1.1 400"));
+  REQUIRE(answer_to("GET / HTTP/1.1\r\nHost: a/b\r\nConnection: close\r\n\r\n").starts_with("HTTP/1.1 400"));
+  REQUIRE(answer_to("GET / HTTP/1.1\r\nHost: [::1]:80\r\nConnection: close\r\n\r\n").starts_with("HTTP/1.1 200"));
+  // HTTP/1.0 may go without.
+  REQUIRE(answer_to("GET / HTTP/1.0\r\n\r\n").contains(" 200 "));
+  REQUIRE(answer_to("GET / HTTP/1.0\r\nHost: a\r\nHost: b\r\n\r\n").contains(" 400 "));
 }

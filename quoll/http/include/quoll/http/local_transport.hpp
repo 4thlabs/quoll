@@ -54,13 +54,15 @@ namespace quoll::http {
  *
  * It writes the responses as a connection would: the response to a HEAD request, which the router may take from a
  * GET route, has no body. What a handler or a middleware throws comes out of the task, where a connection answers 500:
- * a test sees the failure itself. Nothing is serialized, so that a response a connection could not write passes here.
+ * a test sees the failure itself. Nothing is serialized, so that a field a connection could not write passes
+ * here, but a `Content-Length` other than the body answers 500, as there.
  * A `request.body_writer` runs to its end before the handler, which finds what it wrote in `body`.
  * Keeps its own copy of the router, which its tasks share, so that nothing has to outlive them: add the routes first,
  * as one added to `target` afterwards is not served.
  */
 class local_transport {
 public:
+  /** @brief A transport to a copy of `target`. */
   explicit local_transport(router target);
 
   // Copied rather than moved, which is as cheap: one moved from stays usable, rather than hold a null pointer.
@@ -68,6 +70,7 @@ public:
   local_transport &operator=(local_transport const &) noexcept = default;
   ~local_transport() = default;
 
+  /** @brief The response of the router to `message`. Thread safety: from any thread, as copies share a router const. */
   [[nodiscard]] async::task<response> send(request message) const { return send_to(router_, std::move(message)); }
 
 private:

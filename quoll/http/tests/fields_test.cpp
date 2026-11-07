@@ -115,3 +115,26 @@ TEST_CASE("http::fields: set takes a value viewing a field of the list", "[http]
   REQUIRE(*entries.find("Copied") == "a value long enough not to fit in the string itself");
   REQUIRE(entries.size() == 2);
 }
+
+TEST_CASE("fields: erase by a name that views a field of the list", "[http]") {
+  // Long enough for each name to have a buffer of its own, which removing frees.
+  std::string const a(64, 'a');
+  std::string const b(128, 'b');
+  http::fields entries;
+
+  entries.add(a, "1");
+  entries.add(b, "2");
+  entries.add(a, "3");
+  entries.add(b, "4");
+
+  REQUIRE(entries.erase(entries.begin()->name) == 2);
+  REQUIRE(entries.size() == 2);
+  REQUIRE(entries.find(a) == std::nullopt);
+  REQUIRE(entries.find(b) == "2");
+
+  entries.add("From-Value", b);
+
+  // By a value of the list too.
+  REQUIRE(entries.erase(entries.find("From-Value").value()) == 2);
+  REQUIRE(entries.size() == 1);
+}

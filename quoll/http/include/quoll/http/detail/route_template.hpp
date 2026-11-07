@@ -59,6 +59,7 @@ enum class template_error {
   rest_not_last,
   duplicate_name,
   invalid_escape,
+  dot_segment,
 };
 
 struct template_segment {
@@ -107,6 +108,50 @@ struct parsed_template {
   }
 
   return true;
+}
+
+[[nodiscard]] constexpr int hex_digit_value(char digit) noexcept {
+  if (digit >= '0' && digit <= '9') {
+    return digit - '0';
+  }
+
+  return digit >= 'a' && digit <= 'f' ? digit - 'a' + 10 : digit - 'A' + 10;
+}
+
+// What http::detail::plain_segment says of a literal with valid escapes, at compile time too: no request could reach
+// one that fails, as what the router sees of it is refused.
+[[nodiscard]] constexpr bool plain_literal(std::string_view text) noexcept {
+  std::size_t size = 0;
+  std::size_t dots = 0;
+  auto const is_dot_segment = [&] { return size == dots && (size == 1 || size == 2); };
+
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    auto character = text[index];
+
+    if (character == '%') {
+      character = static_cast<char>(hex_digit_value(text[index + 1]) * 16 + hex_digit_value(text[index + 2]));
+      index += 2;
+    }
+
+    if (character == '\0') {
+      return false;
+    }
+
+    if (character == '/' || character == '\\') {
+      if (is_dot_segment()) {
+        return false;
+      }
+
+      size = 0;
+      dots = 0;
+      continue;
+    }
+
+    ++size;
+    dots += character == '.' ? 1 : 0;
+  }
+
+  return !is_dot_segment();
 }
 
 [[nodiscard]] constexpr template_error check_parameter(std::string_view segment) noexcept {
@@ -158,6 +203,10 @@ struct parsed_template {
     if (segment.find_first_of("{}") == std::string_view::npos) {
       if (!valid_escapes(segment)) {
         return fail(template_error::invalid_escape);
+      }
+
+      if (!plain_literal(segment)) {
+        return fail(template_error::dot_segment);
       }
 
       parsed.segments.push_back({segment_kind::literal, segment, {}});

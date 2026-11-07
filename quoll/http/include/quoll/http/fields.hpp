@@ -81,7 +81,7 @@ public:
   void set(std::string_view name, std::string_view value);
 
   /** @brief Removes every field named `name`. @return The number removed. */
-  size_type erase(std::string_view name) noexcept;
+  size_type erase(std::string_view name);
 
   /** @brief The value of the first field named `name`. */
   [[nodiscard]] std::optional<std::string_view> find(std::string_view name) const noexcept QUOLL_LIFETIMEBOUND;

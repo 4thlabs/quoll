@@ -63,7 +63,8 @@ response_writer::~response_writer() {
   try {
     give_head();
   } catch (...) {
-    // Out of memory while the handler ends: its response goes without what it set.
+    // While the handler ends, nowhere to throw it: its response goes without what it set. A head() does not throw, but
+    // for running out of memory (see http::body_stream).
   }
 }
 
@@ -86,8 +87,10 @@ async::task<> response_writer::write(std::string_view piece) {
 namespace detail {
 
 void merge_head(response &answer, status code, fields given) {
+  // A reason a middleware set goes with its status.
   if (code != status::ok) {
     answer.status = code;
+    answer.reason.clear();
   }
 
   // What the handler sets replaces what a middleware added under that name, every value of it staying, but for what is

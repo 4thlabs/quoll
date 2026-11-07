@@ -40,7 +40,9 @@
 #include <quoll/async/task.hpp>
 #include <quoll/http/body_reader.hpp>
 #include <quoll/http/body_stream.hpp>
+#include <quoll/http/detail/has_signature.hpp>
 #include <quoll/http/detail/number.hpp>
+#include <quoll/http/detail/path_parameter.hpp>
 #include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/request.hpp>
@@ -66,12 +68,6 @@
 
 namespace quoll::http::detail {
 
-// What a path parameter can be read as.
-template <class T>
-concept PathParameter =
-    std::same_as<T, std::string> || std::same_as<T, std::string_view> || std::same_as<T, bool> ||
-    std::floating_point<T> || (std::integral<T> && !is_any_of<T, wchar_t, char8_t, char16_t, char32_t>);
-
 // From a text that is the caller's to give away, and that outlives the handler's task: a view stays on it.
 template <PathParameter T>
 [[nodiscard]] std::optional<T> read_path_parameter(std::string &text) {
@@ -85,51 +81,6 @@ template <PathParameter T>
     return parse_number<T>(text);
   }
 }
-
-template <class Result, class... Arguments>
-struct signature {
-  using result = Result;
-  using arguments = std::tuple<Arguments...>;
-};
-
-// The signature of a handler: a function, or an object with a single operator(), which `auto` parameters do not give.
-template <class T>
-struct method_signature {};
-
-template <class C, class R, class... A>
-struct method_signature<R (C::*)(A...)> : signature<R, A...> {};
-
-template <class C, class R, class... A>
-struct method_signature<R (C::*)(A...) const> : signature<R, A...> {};
-
-template <class C, class R, class... A>
-struct method_signature<R (C::*)(A...) noexcept> : signature<R, A...> {};
-
-template <class C, class R, class... A>
-struct method_signature<R (C::*)(A...) const noexcept> : signature<R, A...> {};
-
-// A static operator(), as a `static` lambda has.
-template <class R, class... A>
-struct method_signature<R (*)(A...)> : signature<R, A...> {};
-
-template <class R, class... A>
-struct method_signature<R (*)(A...) noexcept> : signature<R, A...> {};
-
-template <class F>
-struct signature_of {};
-
-template <class F>
-  requires requires { &F::operator(); }
-struct signature_of<F> : method_signature<decltype(&F::operator())> {};
-
-template <class R, class... A>
-struct signature_of<R (*)(A...)> : signature<R, A...> {};
-
-template <class R, class... A>
-struct signature_of<R (*)(A...) noexcept> : signature<R, A...> {};
-
-template <class F>
-concept HasSignature = requires { typename signature_of<F>::arguments; };
 
 template <class T>
 inline constexpr bool is_body_reader = std::same_as<std::remove_cvref_t<T>, body_reader>;

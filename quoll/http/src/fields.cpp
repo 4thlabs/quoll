@@ -39,6 +39,7 @@
 #include <quoll/http/detail/ascii.hpp>
 
 #include <algorithm>
+#include <functional>
 #include <string>
 #include <utility>
 
@@ -52,8 +53,26 @@ void fields::set(std::string_view name, std::string_view value) {
   add(std::move(entry));
 }
 
-fields::size_type fields::erase(std::string_view name) noexcept {
-  return std::erase_if(fields_, [name](field const &entry) { return detail::iequals(entry.name, name); });
+namespace {
+
+[[nodiscard]] bool views_into(std::string_view view, std::string const &text) noexcept {
+  std::less<char const *> const before;
+
+  return !before(view.data(), text.data()) && before(view.data(), text.data() + text.size() + 1);
+}
+
+} // namespace
+
+fields::size_type fields::erase(std::string_view name) {
+  auto const remove = [this](std::string_view what) {
+    return std::erase_if(fields_, [what](field const &entry) { return detail::iequals(entry.name, what); });
+  };
+
+  // What it views may be a field of this list, which removing moves over.
+  auto const aliased = std::ranges::any_of(
+      fields_, [name](field const &entry) { return views_into(name, entry.name) || views_into(name, entry.value); });
+
+  return aliased ? remove(std::string{name}) : remove(name);
 }
 
 std::optional<std::string_view> fields::find(std::string_view name) const noexcept {

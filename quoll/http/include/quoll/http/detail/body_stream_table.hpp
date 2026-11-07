@@ -43,9 +43,20 @@
 #include <quoll/http/status.hpp>
 
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
 namespace quoll::http::detail {
+
+// The member `head` of what a body_stream writes through, as a type, or nothing if there is no such thing to name.
+template <class Sink>
+[[nodiscard]] consteval auto head_member() noexcept {
+  if constexpr (requires { &Sink::head; }) {
+    return &Sink::head;
+  } else {
+    return nullptr;
+  }
+}
 
 // What a body_stream knows of what it writes through.
 struct body_stream_table {
@@ -61,6 +72,10 @@ inline constexpr body_stream_table body_stream_table_of{
         [](void *erased, http::status status, http::fields fields) {
           if constexpr (requires(Sink &target) { target.head(status, std::move(fields)); }) {
             static_cast<Sink *>(erased)->head(status, std::move(fields));
+          } else {
+            // One with another signature would lose the status and fields of what it wraps, with no one told.
+            static_assert(!std::is_member_function_pointer_v<decltype(detail::head_member<Sink>())>,
+                          "quoll::http::body_stream: a sink's head() takes an http::status and an http::fields");
           }
         },
     .type = async::detail::type_id_of<Sink>(),

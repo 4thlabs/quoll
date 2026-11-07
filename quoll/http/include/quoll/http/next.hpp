@@ -63,7 +63,8 @@ struct resolved_route;
  * Copied freely, but valid only for as long as the middleware's task, like what it returns: it points to the request's
  * state, so that work going on after the response has to finish before that, rather than keep it.
  *
- * Thread safety: its const functions may be called from any thread, as dispatch() may. What the routes and later
+ * Thread safety: its const functions may be called from any thread, as dispatch() may, but for router_answered() while
+ * what comes next runs on another. What the routes and later
  * middlewares do then is theirs to protect.
  */
 class next {

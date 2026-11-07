@@ -406,6 +406,9 @@ What a handler answers is replaced, and `on_handler_error` told, when its peer w
 a tunnel, which is not offered, answers 501; a 1xx, which is no final response, a `Content-Length` with no body, but to HEAD or
 as a 304, a body beside what writes one, and to HTTP/1.0 a `Transfer-Encoding` other than chunked, answer 500.
 
+An HTTP/1.1 request with no `Host` or with several, and an HTTP/1.0 one with several, answers 400, as RFC 9112 asks, as does a target
+with a fragment. HTTP/1.0 with a `Transfer-Encoding` ends the connection after its response.
+
 `Expect: 100-continue` itself is handled for you: a request whose body has not come gets
 `100 Continue`, then its body is read. With an [`http::body_reader`](streaming.md#reading-a-request),
 this waits for the handler to ask for the body, unless its response has a writer: see [Streaming](streaming.md#reading-a-request).

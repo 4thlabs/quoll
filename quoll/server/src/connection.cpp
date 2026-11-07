@@ -482,6 +482,25 @@ async::task<request_read> as_request_read(async::task<std::error_code> reading) 
   }
 }
 
+// RFC 9112, 3.2: an HTTP/1.1 request has one Host, and neither version has two: what is in front and what is behind
+// could otherwise read different authorities.
+[[nodiscard]] bool host_is_as_it_must(http::request const &head) noexcept {
+  auto const hosts =
+      std::ranges::count_if(head.fields, [](auto const &entry) { return http::detail::iequals(entry.name, "Host"); });
+
+  if (head.version == http::version::http_1_1 ? hosts != 1 : hosts > 1) {
+    return false;
+  }
+
+  // RFC 9110, 7.2: uri-host [ ":" port ], or nothing. Refuses what a proxy and what is behind it could split otherwise.
+  auto const host = head.fields.find("Host").value_or("");
+
+  return std::ranges::all_of(host, [](char const character) {
+    return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+           (character >= '0' && character <= '9') || std::string_view{"-._~%!$&'()*+,;=:[]"}.contains(character);
+  });
+}
+
 // A request, or its head alone when `100 Continue` is owed before the rest: its client waits for that before its body.
 // Nothing is owed if the body has come already, or if there is none. A body in pieces stays where it is: its handler
 // reads it, and asking for it is what `100 Continue` then says.
@@ -494,6 +513,10 @@ async::task<std::error_code> read_up_to_continue(paced_stream &stream, std::stri
   // Past its head, or at its end, as a framing it refuses: no handler sees what is at fault already.
   if (auto const failure = parser.failure()) {
     co_return failure;
+  }
+
+  if (!host_is_as_it_must(parser.head())) {
+    co_return http::error::bad_message;
   }
 
   auto const expected = expectation_of(parser.head());
@@ -727,9 +750,7 @@ void frame_in_pieces(http::response &response, http::version version, bool &keep
 // announced that nothing follows.
 void prepare_in_pieces(http::response &response, bool head, bool keep_alive) {
   if (head) {
-    response.fields.erase("Transfer-Encoding");
-    response.body.clear();
-    response.trailers.clear();
+    http::detail::keep_what_head_carries(response, true);
   }
 
   if (!keep_alive) {
@@ -737,9 +758,7 @@ void prepare_in_pieces(http::response &response, bool head, bool keep_alive) {
   }
 }
 
-// Ready to write. A response to HEAD has no body: it announces the length of the one it does not carry, with
-// Content-Length rather than chunked coding, whose terminating chunk would be read as the next response. The last
-// response of a connection says so.
+// Ready to write. The last response of a connection says so.
 void prepare(http::response &response, bool head, bool keep_alive) {
   if (response.body_writer) {
     prepare_in_pieces(response, head, keep_alive);
@@ -747,15 +766,7 @@ void prepare(http::response &response, bool head, bool keep_alive) {
   }
 
   if (head) {
-    if (response.fields.contains("Transfer-Encoding")) {
-      response.fields.erase("Transfer-Encoding");
-      response.fields.set("Content-Length", std::to_string(response.body.size()));
-    } else if (!response.body.empty() && !response.fields.contains("Content-Length")) {
-      response.fields.set("Content-Length", std::to_string(response.body.size()));
-    }
-
-    response.body.clear();
-    response.trailers.clear();
+    http::detail::keep_what_head_carries(response, false);
   }
 
   if (!keep_alive) {

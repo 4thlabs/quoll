@@ -88,9 +88,18 @@ namespace quoll::http::detail {
   return true;
 }
 
-// What a field value, a reason phrase or a request target must never contain: it would end the line early.
-[[nodiscard]] constexpr bool has_line_break(std::string_view text) noexcept {
-  return text.find_first_of(std::string_view{"\r\n\0", 3}) != std::string_view::npos;
+// RFC 9110, 5.5: what is invalid in a field value, or in a reason phrase: what is control, but for a tab, and a line
+// break or a NUL above all.
+[[nodiscard]] constexpr bool has_control(std::string_view text) noexcept {
+  for (auto const character : text) {
+    auto const byte = static_cast<unsigned char>(character);
+
+    if ((byte < 0x20 && character != '\t') || byte == 0x7F) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 [[nodiscard]] constexpr std::string_view trim(std::string_view text QUOLL_LIFETIMEBOUND) noexcept {

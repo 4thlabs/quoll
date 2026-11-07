@@ -94,6 +94,8 @@ struct route_segment {
     return "two parameters have the same name";
   case template_error::invalid_escape:
     return "invalid %-escape";
+  case template_error::dot_segment:
+    return "no request can reach a dot segment or a NUL";
   }
 
   return "valid";
@@ -401,7 +403,8 @@ void router::use(middleware wrapping) {
 
 detail::resolved_route router::resolve(request const &message) const {
   detail::resolved_route resolved;
-  auto const target = split_target(message.target);
+  // RFC 9112, 3.2: no request-target has a fragment, which would pass for part of the last segment or of the query.
+  auto const target = message.target.contains('#') ? std::nullopt : split_target(message.target);
   auto const segments = target ? decode_segments(target->path) : std::nullopt;
 
   if (!segments) {
