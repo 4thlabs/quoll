@@ -29,6 +29,8 @@ quoll_declare_compile_fail_tests(
   SOURCES
     tests/compile_fail/bad_escape.cpp
     tests/compile_fail/body_on_connect.cpp
+    tests/compile_fail/body_on_trace.cpp
+    tests/compile_fail/path_dot_segment.cpp
     tests/compile_fail/body_on_get.cpp
     tests/compile_fail/client_unused_scheme.cpp
     tests/compile_fail/endpoint_not_in_api.cpp
@@ -49,6 +51,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/same_route.cpp
     tests/compile_fail/same_status.cpp
     tests/compile_fail/with_body_on_connect.cpp
+    tests/compile_fail/with_body_on_trace.cpp
     tests/compile_fail/with_body_on_get.cpp
     tests/compile_fail/with_same_status.cpp
     tests/compile_fail/with_two_bodies.cpp

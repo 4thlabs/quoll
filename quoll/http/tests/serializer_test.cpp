@@ -608,7 +608,7 @@ TEST_CASE("What a peer would read differently is refused", "[http][serializer]")
     for (std::string_view const target : {"/a\tb",
                                           "/a\x7f"
                                           "b",
-                                          "/a\x01", "/a\xc3\xa9", "/a\x0b"}) {
+                                          "/a\x01", "/a\xc3\xa9", "/a\x0b", "/a#b"}) {
       auto invisible = plain;
 
       invisible.target = target;

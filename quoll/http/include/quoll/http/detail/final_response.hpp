@@ -54,7 +54,7 @@ void keep_what_head_carries(response &answer, bool in_pieces);
 // answers
 //   500;
 // - a body beside what writes one: neither would stand, and it answers 500, to HEAD too;
-// - a length that is invalid, or other than its body, which could not be written, answers 500, and invalid to HEAD too;
+// - a length that is invalid, or other than its body, which could not be written, answers 500, to HEAD too;
 // - a length with no body, but to HEAD or as a 304: its peer waits for that body, or reads the next response as it, and
 //   it answers 500.
 //

@@ -74,6 +74,8 @@ struct endpoint {
                 "quoll::rest::endpoint: a GET or HEAD endpoint has no body<> (fetch rejects one)");
   static_assert(detail::count_bodies(detail::type_list<Parts...>{}) == 0 || Method != http::verb::connect,
                 "quoll::rest::endpoint: a CONNECT endpoint has no body<> (what follows its head is the tunnel)");
+  static_assert(detail::count_bodies(detail::type_list<Parts...>{}) == 0 || Method != http::verb::trace,
+                "quoll::rest::endpoint: a TRACE endpoint has no body<> (RFC 9110, 9.3.8)");
   static_assert(detail::distinct_statuses(detail::type_list<Parts...>{}),
                 "quoll::rest::endpoint: two returns<> have the same status");
 

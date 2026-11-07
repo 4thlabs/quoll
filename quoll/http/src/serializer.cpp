@@ -66,7 +66,8 @@ void check_target(std::string_view target) {
     return byte <= 0x20 || byte >= 0x7F;
   };
 
-  if (target.empty() || std::ranges::any_of(target, invisible)) {
+  // RFC 9112, 3.2: no request-target has a fragment, and Quoll's own router refuses it.
+  if (target.empty() || target.contains('#') || std::ranges::any_of(target, invisible)) {
     throw std::invalid_argument{"quoll::http: invalid request target"};
   }
 }
@@ -444,16 +445,13 @@ char const *replace_what_would_mislead(response &answer, verb const method) {
     return "quoll::http::server: an invalid Content-Length";
   }
 
-  if (method == verb::head || answer.body_writer || answer.late_head_writer) {
-    return nullptr;
+  // To HEAD too, which carries what GET would.
+  if (!answer.body.empty() && length && *length != answer.body.size()) {
+    answer = status_response(status::internal_server_error);
+    return "quoll::http::server: a Content-Length other than its body";
   }
 
-  if (!answer.body.empty()) {
-    if (length && *length != answer.body.size()) {
-      answer = status_response(status::internal_server_error);
-      return "quoll::http::server: a Content-Length other than its body";
-    }
-
+  if (method == verb::head || answer.body_writer || answer.late_head_writer || !answer.body.empty()) {
     return nullptr;
   }
 
@@ -465,11 +463,7 @@ char const *replace_what_would_mislead(response &answer, verb const method) {
   return "quoll::http::server: a Content-Length with no body";
 }
 
-std::optional<std::uint64_t> announced_length(fields const &entries) {
-  auto const length = declared_length(entries);
-
-  return length;
-}
+std::optional<std::uint64_t> announced_length(fields const &entries) { return declared_length(entries); }
 
 streamed_framing serialize_streamed_head(request const &message, std::string &out) {
   auto rules = request_rules(message);

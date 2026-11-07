@@ -86,6 +86,11 @@ struct parser<Message>::impl {
         return {data.size(), error_};
       }
 
+      if (in_message_ && head_complete_ && framing_past_its_share(fed_before_)) {
+        error_ = error::header_too_large;
+        return {data.size(), error_};
+      }
+
       return {data.size(), {}};
     case HPE_PAUSED: {
       // Paused by on_message_complete: the message ends here.
@@ -190,6 +195,19 @@ struct parser<Message>::impl {
     reason_ = text;
     llhttp_set_error_reason(state, text);
     return HPE_USER;
+  }
+
+  // What a chunked body costs beyond its bytes: sizes, extensions, what a size's leading zeros add. It says nothing of
+  // the body, and a peer could send it without end, a chunk at a time, for free. A body of 1-byte chunks stays well
+  // within this.
+  [[nodiscard]] bool framing_past_its_share(std::uint64_t reached) const noexcept {
+    if ((state_.flags & F_CHUNKED) == 0) {
+      return false;
+    }
+
+    constexpr std::uint64_t per_body_byte = 8;
+
+    return reached - body_begin_ > 2 * std::uint64_t{limits_.max_header_size} + (per_body_byte + 1) * body_size_;
   }
 
   // Returns 0, or the code that stops llhttp. What is between two pieces counts as well, as `max_header_size` says: no
@@ -309,6 +327,8 @@ struct parser<Message>::impl {
     self_.in_trailers_ = true;
     // What a body or a chunk puts before the trailers is no separator.
     self_.piece_seen_ = false;
+    // As near as can be known here: what came with the head in this feed counts, which its share allows for.
+    self_.body_begin_ = self_.fed_before_;
 
     if (llhttp_get_http_major(state) != 1) {
       return self_.fail(state, error::bad_message, "unsupported HTTP version");
@@ -371,28 +391,6 @@ struct parser<Message>::impl {
     }
   }
 
-  static int on_chunk_header(llhttp_t *state) noexcept {
-    self(state).chunk_extension_begin_ = 0;
-    return 0;
-  }
-
-  // What says nothing of the body, and that a peer could send without end. By where it has reached rather than by what
-  // it says: an extension may say nothing, a `;` after a `;`.
-  static int on_chunk_extension(llhttp_t *state, char const *at, std::size_t length) noexcept {
-    auto &self_ = self(state);
-    auto const reached = self_.fed_before_ + static_cast<std::uint64_t>(at - self_.feed_begin_) + length;
-
-    if (self_.chunk_extension_begin_ == 0) {
-      self_.chunk_extension_begin_ = reached - length + 1;
-    }
-
-    if (reached + 1 - self_.chunk_extension_begin_ > self_.limits_.max_header_size) {
-      return self_.fail(state, error::header_too_large, "chunk extension too large");
-    }
-
-    return 0;
-  }
-
   static int on_body(llhttp_t *state, char const *at, std::size_t length) noexcept {
     auto &self_ = self(state);
 
@@ -402,6 +400,10 @@ struct parser<Message>::impl {
 
     if (self_.body_size_ > self_.body_limit()) {
       return self_.fail(state, error::body_too_large, "body too large");
+    }
+
+    if (self_.framing_past_its_share(self_.fed_before_ + static_cast<std::uint64_t>(at - self_.feed_begin_))) {
+      return self_.fail(state, error::header_too_large, "chunk framing too large");
     }
 
     self_.message_.body.append(at, length);
@@ -438,9 +440,6 @@ struct parser<Message>::impl {
     settings.on_header_value_complete = &on_header_value_complete;
     settings.on_headers_complete = &on_headers_complete;
     settings.on_body = &on_body;
-    settings.on_chunk_header = &on_chunk_header;
-    settings.on_chunk_extension_name = &on_chunk_extension;
-    settings.on_chunk_extension_value = &on_chunk_extension;
     settings.on_message_complete = &on_message_complete;
 
     if constexpr (is_request) {
@@ -469,8 +468,7 @@ struct parser<Message>::impl {
   std::uint64_t fed_before_ = 0;
   std::uint64_t last_piece_end_ = 0;
   bool piece_seen_ = false;
-  // Where the extensions of this chunk began, past one so that zero says none has: nothing was fed before a first one.
-  std::uint64_t chunk_extension_begin_ = 0;
+  std::uint64_t body_begin_ = 0;
   std::size_t field_count_ = 0;
   std::uint64_t body_size_ = 0;
   std::error_code error_;

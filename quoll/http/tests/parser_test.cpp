@@ -836,7 +836,7 @@ TEST_CASE("What goes around a value and in a chunk's extension counts against th
     REQUIRE(parser.feed(bytes(wire)).error == http::error::header_too_large);
   }
 
-  SECTION("extensions that say nothing") {
+  SECTION("extensions that say nothing, with no end") {
     auto const empties = GENERATE(as<std::string>{}, std::string(5000, ';'), [] {
       std::string pairs;
 
@@ -847,10 +847,41 @@ TEST_CASE("What goes around a value and in a chunk's extension counts against th
       return pairs;
     }());
     http::request_parser parser{limits};
-    auto const wire =
-        "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1;" + empties + "\r\na\r\n0\r\n\r\n";
+    auto const wire = "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1;" + empties;
 
-    REQUIRE(parser.feed(bytes(wire)).error);
+    REQUIRE(parser.feed(bytes(wire)).error == http::error::header_too_large);
+  }
+
+  SECTION("a size's leading zeros") {
+    http::request_parser parser{limits};
+    auto const wire = "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n" + std::string(100'000, '0') +
+                      "1\r\na\r\n0\r\n\r\n";
+
+    REQUIRE(parser.feed(bytes(wire)).error == http::error::header_too_large);
+  }
+
+  SECTION("extensions on chunk after chunk") {
+    http::request_parser parser{limits};
+    std::string wire = "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
+
+    for (auto chunk = 0; chunk < 100; ++chunk) {
+      wire += "1;" + std::string(900, 'e') + "\r\na\r\n";
+    }
+
+    REQUIRE(parser.feed(bytes(wire + "0\r\n\r\n")).error == http::error::header_too_large);
+  }
+
+  SECTION("a body of 1-byte chunks is no abuse") {
+    http::request_parser parser{limits};
+    std::string wire = "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
+
+    for (auto chunk = 0; chunk < 10'000; ++chunk) {
+      wire += "1\r\na\r\n";
+    }
+
+    REQUIRE_FALSE(parser.feed(bytes(wire + "0\r\n\r\n")).error);
+    REQUIRE(parser.done());
+    REQUIRE(parser.release().body.size() == 10'000);
   }
 
   SECTION("trailers are not charged for the body before them") {

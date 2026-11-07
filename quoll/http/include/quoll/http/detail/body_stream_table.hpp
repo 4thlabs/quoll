@@ -57,8 +57,15 @@ struct another_head {
 template <class Sink>
 struct both_heads : Sink, another_head {};
 
+// Nothing can derive from a final sink: only what can be named there is seen.
 template <class Sink>
-inline constexpr bool has_no_head = std::is_final_v<Sink> || requires { &both_heads<Sink>::head; };
+[[nodiscard]] consteval bool no_member_named_head() noexcept {
+  if constexpr (std::is_class_v<Sink> && !std::is_final_v<Sink>) {
+    return requires { &both_heads<Sink>::head; };
+  } else {
+    return !requires { &Sink::head; };
+  }
+}
 
 // What a body_stream knows of what it writes through.
 struct body_stream_table {
@@ -76,7 +83,7 @@ inline constexpr body_stream_table body_stream_table_of{
             static_cast<Sink *>(erased)->head(status, std::move(fields));
           } else {
             // One with another signature would lose the status and fields of what it wraps, with no one told.
-            static_assert(has_no_head<Sink>,
+            static_assert(no_member_named_head<Sink>(),
                           "quoll::http::body_stream: a sink's head() takes an http::status and an http::fields");
           }
         },

@@ -1586,6 +1586,7 @@ TEST_CASE("local_transport: a response answers as on a connection", "[http]") {
   REQUIRE(send(verb::get, "/short").status == http::status::internal_server_error);
   REQUIRE(send(verb::get, "/long").status == http::status::internal_server_error);
   REQUIRE(send(verb::get, "/whole-of-another-length").status == http::status::internal_server_error);
+  REQUIRE(send(verb::head, "/whole-of-another-length").status == http::status::internal_server_error);
   REQUIRE(send(verb::get, "/invalid-length").status == http::status::internal_server_error);
 
   auto const head = send(verb::head, "/chunked");
