@@ -43,9 +43,29 @@
 #include <quoll/http/status.hpp>
 
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
 namespace quoll::http::detail {
+
+// Whether a sink has a member named `head`, whatever it is: overloaded, a template or private. Naming it through what
+// also inherits one is then ambiguous.
+struct another_head {
+  int head;
+};
+
+template <class Sink>
+struct both_heads : Sink, another_head {};
+
+// Nothing can derive from a final sink: only what can be named there is seen.
+template <class Sink>
+[[nodiscard]] consteval bool no_member_named_head() noexcept {
+  if constexpr (std::is_class_v<Sink> && !std::is_final_v<Sink>) {
+    return requires { &both_heads<Sink>::head; };
+  } else {
+    return !requires { &Sink::head; };
+  }
+}
 
 // What a body_stream knows of what it writes through.
 struct body_stream_table {
@@ -61,6 +81,10 @@ inline constexpr body_stream_table body_stream_table_of{
         [](void *erased, http::status status, http::fields fields) {
           if constexpr (requires(Sink &target) { target.head(status, std::move(fields)); }) {
             static_cast<Sink *>(erased)->head(status, std::move(fields));
+          } else {
+            // One with another signature would lose the status and fields of what it wraps, with no one told.
+            static_assert(no_member_named_head<Sink>(),
+                          "quoll::http::body_stream: a sink's head() takes an http::status and an http::fields");
           }
         },
     .type = async::detail::type_id_of<Sink>(),

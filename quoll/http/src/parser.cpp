@@ -73,10 +73,24 @@ struct parser<Message>::impl {
       return {0, error_};
     }
 
+    feed_begin_ = data.data();
+
     auto const code = llhttp_execute(&state_, data.data(), data.size());
 
     switch (code) {
     case HPE_OK:
+      fed_before_ += data.size();
+
+      if (in_message_ && piece_seen_ && header_size_ + (fed_before_ - last_piece_end_) > limits_.max_header_size) {
+        error_ = error::header_too_large;
+        return {data.size(), error_};
+      }
+
+      if (in_message_ && head_complete_ && framing_past_its_share(fed_before_)) {
+        error_ = error::header_too_large;
+        return {data.size(), error_};
+      }
+
       return {data.size(), {}};
     case HPE_PAUSED: {
       // Paused by on_message_complete: the message ends here.
@@ -100,7 +114,7 @@ struct parser<Message>::impl {
   }
 
   [[nodiscard]] std::error_code finish() {
-    if (done_ || error_) {
+    if (error_) {
       return error_;
     }
 
@@ -183,9 +197,28 @@ struct parser<Message>::impl {
     return HPE_USER;
   }
 
-  // Returns 0, or the code that stops llhttp.
-  [[nodiscard]] int count_header(llhttp_t *state, std::size_t length) noexcept {
-    header_size_ += length;
+  // What a chunked body costs beyond its bytes: sizes, extensions, what a size's leading zeros add. It says nothing of
+  // the body, and a peer could send it without end, a chunk at a time, for free. A body of 1-byte chunks stays well
+  // within this.
+  [[nodiscard]] bool framing_past_its_share(std::uint64_t reached) const noexcept {
+    if ((state_.flags & F_CHUNKED) == 0) {
+      return false;
+    }
+
+    constexpr std::uint64_t per_body_byte = 8;
+
+    return reached - body_begin_ > 2 * std::uint64_t{limits_.max_header_size} + (per_body_byte + 1) * body_size_;
+  }
+
+  // Returns 0, or the code that stops llhttp. What is between two pieces counts as well, as `max_header_size` says: no
+  // callback sees the whitespace around a value, which a peer would otherwise send without end. feed() checks what has
+  // no piece after it yet.
+  [[nodiscard]] int count_header(llhttp_t *state, char const *at, std::size_t length) noexcept {
+    auto const reached = fed_before_ + static_cast<std::uint64_t>(at - feed_begin_);
+
+    header_size_ += length + (piece_seen_ ? reached - last_piece_end_ : 0);
+    piece_seen_ = true;
+    last_piece_end_ = reached + length;
 
     if (header_size_ > limits_.max_header_size) {
       return fail(state, error::header_too_large, "header too large");
@@ -208,6 +241,9 @@ struct parser<Message>::impl {
     self_.field_name_.clear();
     self_.field_value_.clear();
     self_.header_size_ = 0;
+    // What comes before its first piece counts too. A feed starts where a message ended.
+    self_.piece_seen_ = true;
+    self_.last_piece_end_ = self_.fed_before_;
     self_.field_count_ = 0;
     self_.body_size_ = 0;
     self_.in_message_ = true;
@@ -215,10 +251,15 @@ struct parser<Message>::impl {
     return 0;
   }
 
+  // Nothing of them is kept, but what is around them counts.
+  static int on_start_line_piece(llhttp_t *state, char const *at, std::size_t length) noexcept {
+    return self(state).count_header(state, at, length);
+  }
+
   static int on_url(llhttp_t *state, char const *at, std::size_t length) noexcept {
     auto &self_ = self(state);
 
-    if (auto const code = self_.count_header(state, length); code != 0) {
+    if (auto const code = self_.count_header(state, at, length); code != 0) {
       return code;
     }
 
@@ -232,7 +273,7 @@ struct parser<Message>::impl {
   static int on_status(llhttp_t *state, char const *at, std::size_t length) noexcept {
     auto &self_ = self(state);
 
-    if (auto const code = self_.count_header(state, length); code != 0) {
+    if (auto const code = self_.count_header(state, at, length); code != 0) {
       return code;
     }
 
@@ -246,7 +287,7 @@ struct parser<Message>::impl {
   static int on_header_field(llhttp_t *state, char const *at, std::size_t length) noexcept {
     auto &self_ = self(state);
 
-    if (auto const code = self_.count_header(state, length); code != 0) {
+    if (auto const code = self_.count_header(state, at, length); code != 0) {
       return code;
     }
 
@@ -257,7 +298,7 @@ struct parser<Message>::impl {
   static int on_header_value(llhttp_t *state, char const *at, std::size_t length) noexcept {
     auto &self_ = self(state);
 
-    if (auto const code = self_.count_header(state, length); code != 0) {
+    if (auto const code = self_.count_header(state, at, length); code != 0) {
       return code;
     }
 
@@ -265,14 +306,9 @@ struct parser<Message>::impl {
     return 0;
   }
 
-  // Called once per field, even when the value is empty. Counts the separators the data callbacks do not see
-  // (": " and CRLF), and the field itself.
+  // Called once per field, even when the value is empty.
   static int on_header_value_complete(llhttp_t *state) noexcept {
     auto &self_ = self(state);
-
-    if (auto const code = self_.count_header(state, 4); code != 0) {
-      return code;
-    }
 
     if (++self_.field_count_ > self_.limits_.max_field_count) {
       return self_.fail(state, error::header_too_large, "too many fields");
@@ -289,6 +325,10 @@ struct parser<Message>::impl {
     auto &self_ = self(state);
 
     self_.in_trailers_ = true;
+    // What a body or a chunk puts before the trailers is no separator.
+    self_.piece_seen_ = false;
+    // As near as can be known here: what came with the head in this feed counts, which its share allows for.
+    self_.body_begin_ = self_.fed_before_;
 
     if (llhttp_get_http_major(state) != 1) {
       return self_.fail(state, error::bad_message, "unsupported HTTP version");
@@ -318,6 +358,12 @@ struct parser<Message>::impl {
       return 0;
     } else {
       auto const code = llhttp_get_status_code(state);
+
+      // No status: serialize() would refuse it, and what asks would be given it.
+      if (code < 100) {
+        static_cast<void>(self_.fail(state, error::bad_message, "invalid status"));
+        return -1;
+      }
 
       self_.message_.status = static_cast<status>(code);
       self_.decide_streaming();
@@ -356,6 +402,10 @@ struct parser<Message>::impl {
       return self_.fail(state, error::body_too_large, "body too large");
     }
 
+    if (self_.framing_past_its_share(self_.fed_before_ + static_cast<std::uint64_t>(at - self_.feed_begin_))) {
+      return self_.fail(state, error::header_too_large, "chunk framing too large");
+    }
+
     self_.message_.body.append(at, length);
     return 0;
   }
@@ -366,8 +416,17 @@ struct parser<Message>::impl {
 
     self_.done_ = true;
     self_.in_message_ = false;
-    self_.keep_alive_ = llhttp_should_keep_alive(state) != 0;
+    // RFC 9112, 6.1: HTTP/1.0 with a Transfer-Encoding has a framing at fault, as what is between its peer and this may
+    // not know that field, and read other boundaries: nothing may follow it on this connection.
+    self_.keep_alive_ = llhttp_should_keep_alive(state) != 0 && !(state->http_major == 1 && state->http_minor == 0 &&
+                                                                  self_.message_.fields.contains("Transfer-Encoding"));
     self_.upgrade_ = llhttp_get_upgrade(state) != 0;
+
+    // llhttp sets this later for a 101 with no `Connection: upgrade`, which has switched all the same.
+    if constexpr (!is_request) {
+      self_.upgrade_ = self_.upgrade_ || state->status_code == 101;
+    }
+
     return HPE_PAUSED;
   }
 
@@ -375,6 +434,7 @@ struct parser<Message>::impl {
     llhttp_settings_t settings{};
 
     settings.on_message_begin = &on_message_begin;
+    settings.on_version = &on_start_line_piece;
     settings.on_header_field = &on_header_field;
     settings.on_header_value = &on_header_value;
     settings.on_header_value_complete = &on_header_value_complete;
@@ -383,6 +443,7 @@ struct parser<Message>::impl {
     settings.on_message_complete = &on_message_complete;
 
     if constexpr (is_request) {
+      settings.on_method = &on_start_line_piece;
       settings.on_url = &on_url;
     } else {
       settings.on_status = &on_status;
@@ -403,6 +464,11 @@ struct parser<Message>::impl {
   std::string field_name_;
   std::string field_value_;
   std::size_t header_size_ = 0;
+  char const *feed_begin_ = nullptr;
+  std::uint64_t fed_before_ = 0;
+  std::uint64_t last_piece_end_ = 0;
+  bool piece_seen_ = false;
+  std::uint64_t body_begin_ = 0;
   std::size_t field_count_ = 0;
   std::uint64_t body_size_ = 0;
   std::error_code error_;

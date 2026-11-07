@@ -744,3 +744,152 @@ TEST_CASE("Parser: body_received counts the body of the current message, and non
     REQUIRE(parser.body_received() == 2);
   }
 }
+
+TEST_CASE("HTTP/1.0 with a Transfer-Encoding ends the connection", "[http][parser]") {
+  http::request_parser parser;
+  std::string_view const wire = "POST / HTTP/1.0\r\nConnection: keep-alive\r\nTransfer-Encoding: chunked\r\n\r\n"
+                                "3\r\nabc\r\n0\r\n\r\n";
+
+  REQUIRE_FALSE(parser.feed(bytes(wire)).error);
+  REQUIRE(parser.done());
+  REQUIRE_FALSE(parser.keep_alive());
+
+  http::response_parser response;
+
+  REQUIRE_FALSE(response
+                    .feed(bytes("HTTP/1.0 200 OK\r\nConnection: keep-alive\r\nTransfer-Encoding: chunked\r\n\r\n"
+                                "0\r\n\r\n"))
+                    .error);
+  REQUIRE(response.done());
+  REQUIRE_FALSE(response.keep_alive());
+}
+
+TEST_CASE("A 101 is a switch, with or without Connection: upgrade", "[http][parser]") {
+  http::response_parser parser;
+
+  REQUIRE_FALSE(parser.feed(bytes("HTTP/1.1 101 Switching\r\n\r\n")).error);
+  REQUIRE(parser.done());
+  REQUIRE(parser.upgrade());
+}
+
+TEST_CASE("A stream ended with a whole message leaves the parser ready for another", "[http][parser]") {
+  http::request_parser parser;
+
+  REQUIRE_FALSE(parser.feed(bytes("GET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")).error);
+  REQUIRE(parser.done());
+  REQUIRE_FALSE(parser.finish());
+
+  (void)parser.release();
+
+  REQUIRE_FALSE(parser.feed(bytes("GET /b HTTP/1.1\r\nHost: x\r\n\r\n")).error);
+  REQUIRE(parser.done());
+  REQUIRE(parser.release().target == "/b");
+}
+
+TEST_CASE("A status below 100 is no status", "[http][parser]") {
+  auto const status = GENERATE(as<std::string>{}, "000", "099");
+  http::response_parser parser;
+  auto const wire = "HTTP/1.1 " + status + " X\r\nContent-Length: 99999999999\r\n\r\nabc";
+
+  REQUIRE(parser.feed(bytes(wire)).error == http::error::bad_message);
+}
+
+TEST_CASE("What goes around a value and in a chunk's extension counts against the limit", "[http][parser]") {
+  http::parse_limits limits;
+
+  limits.max_header_size = 1024;
+
+  SECTION("whitespace around a value") {
+    http::request_parser parser{limits};
+    auto const wire = "GET / HTTP/1.1\r\nX:" + std::string(5000, ' ') + "v\r\n\r\n";
+
+    REQUIRE(parser.feed(bytes(wire)).error == http::error::header_too_large);
+  }
+
+  SECTION("the same, a piece at a time") {
+    http::request_parser parser{limits};
+    auto const wire = "GET / HTTP/1.1\r\nX:" + std::string(5000, ' ') + "v\r\n\r\n";
+
+    REQUIRE(feed_bytewise(parser, wire).error == http::error::header_too_large);
+  }
+
+  SECTION("whitespace with nothing after it yet") {
+    http::request_parser parser{limits};
+    auto const wire = "GET / HTTP/1.1\r\nHost: x\r\nX:" + std::string(5000, ' ');
+
+    REQUIRE(parser.feed(bytes(wire)).error == http::error::header_too_large);
+  }
+
+  SECTION("whitespace before a first piece, and around the version") {
+    auto const wire = GENERATE(as<std::string>{}, "GET" + std::string(5000, ' ') + "/ HTTP/1.1\r\nHost: x\r\n\r\n",
+                               "GET /" + std::string(5000, ' ') + "HTTP/1.0\r\n\r\n");
+    http::request_parser parser{limits};
+
+    REQUIRE(parser.feed(bytes(wire)).error == http::error::header_too_large);
+  }
+
+  SECTION("a chunk's extension") {
+    http::request_parser parser{limits};
+    auto const wire = "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3;" + std::string(5000, 'e') +
+                      "\r\nabc\r\n0\r\n\r\n";
+
+    REQUIRE(parser.feed(bytes(wire)).error == http::error::header_too_large);
+  }
+
+  SECTION("extensions that say nothing, with no end") {
+    auto const empties = GENERATE(as<std::string>{}, std::string(5000, ';'), [] {
+      std::string pairs;
+
+      for (auto index = 0; index < 2500; ++index) {
+        pairs += "=;";
+      }
+
+      return pairs;
+    }());
+    http::request_parser parser{limits};
+    auto const wire = "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1;" + empties;
+
+    REQUIRE(parser.feed(bytes(wire)).error == http::error::header_too_large);
+  }
+
+  SECTION("a size's leading zeros") {
+    http::request_parser parser{limits};
+    auto const wire = "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n" + std::string(100'000, '0') +
+                      "1\r\na\r\n0\r\n\r\n";
+
+    REQUIRE(parser.feed(bytes(wire)).error == http::error::header_too_large);
+  }
+
+  SECTION("extensions on chunk after chunk") {
+    http::request_parser parser{limits};
+    std::string wire = "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
+
+    for (auto chunk = 0; chunk < 100; ++chunk) {
+      wire += "1;" + std::string(900, 'e') + "\r\na\r\n";
+    }
+
+    REQUIRE(parser.feed(bytes(wire + "0\r\n\r\n")).error == http::error::header_too_large);
+  }
+
+  SECTION("a body of 1-byte chunks is no abuse") {
+    http::request_parser parser{limits};
+    std::string wire = "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
+
+    for (auto chunk = 0; chunk < 10'000; ++chunk) {
+      wire += "1\r\na\r\n";
+    }
+
+    REQUIRE_FALSE(parser.feed(bytes(wire + "0\r\n\r\n")).error);
+    REQUIRE(parser.done());
+    REQUIRE(parser.release().body.size() == 10'000);
+  }
+
+  SECTION("trailers are not charged for the body before them") {
+    http::request_parser parser{limits};
+    auto const wire = "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1000\r\n" +
+                      std::string(4096, 'b') + "\r\n0\r\nX-Trailer: yes\r\n\r\n";
+
+    REQUIRE_FALSE(parser.feed(bytes(wire)).error);
+    REQUIRE(parser.done());
+  }
+}

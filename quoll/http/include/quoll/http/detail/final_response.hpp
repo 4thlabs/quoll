@@ -42,15 +42,21 @@
 
 namespace quoll::http::detail {
 
+// A response to HEAD has no body: it announces the length of the one it does not carry, with Content-Length rather than
+// chunked coding, whose terminating chunk would be read as the next response. In pieces, its length is only known if it
+// says so: no framing is announced that nothing follows.
+void keep_what_head_carries(response &answer, bool in_pieces);
+
 // A handler's answer to `method`, unless its peer would read it as something else, shared by what serves a router:
 //
 // - a 2xx to CONNECT is a tunnel, which is not offered, and answers 501;
 // - a 1xx is no final response: its peer goes on waiting for one, or reads a 101 as a switch of protocol, and it
-// answers 500;
+// answers
+//   500;
 // - a body beside what writes one: neither would stand, and it answers 500, to HEAD too;
+// - a length that is invalid, or other than its body, which could not be written, answers 500, to HEAD too;
 // - a length with no body, but to HEAD or as a 304: its peer waits for that body, or reads the next response as it, and
-// it
-//   answers 500.
+//   it answers 500.
 //
 // Returns what was wrong, for the application to be told, or nullptr.
 [[nodiscard]] char const *replace_what_would_mislead(response &answer, verb method);

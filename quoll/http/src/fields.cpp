@@ -39,21 +39,41 @@
 #include <quoll/http/detail/ascii.hpp>
 
 #include <algorithm>
+#include <functional>
 #include <string>
 #include <utility>
 
 namespace quoll::http {
 
+namespace {
+
+[[nodiscard]] bool views_into(std::string_view view, std::string const &text) noexcept {
+  std::less<char const *> const before;
+
+  return !before(view.data(), text.data()) && before(view.data(), text.data() + text.size() + 1);
+}
+
+// `name` views no field of `entries`, which removing moves over.
+template <class Entries>
+auto remove_named(Entries &entries, std::string_view name) noexcept {
+  return std::erase_if(entries, [name](field const &entry) { return detail::iequals(entry.name, name); });
+}
+
+} // namespace
+
 void fields::set(std::string_view name, std::string_view value) {
-  // Either may view a field of this list, which erase() moves or destroys.
+  // Either may view a field of this list, which removing moves or destroys.
   field entry{std::string{name}, std::string{value}};
 
-  erase(entry.name);
+  remove_named(fields_, entry.name);
   add(std::move(entry));
 }
 
-fields::size_type fields::erase(std::string_view name) noexcept {
-  return std::erase_if(fields_, [name](field const &entry) { return detail::iequals(entry.name, name); });
+fields::size_type fields::erase(std::string_view name) {
+  auto const aliased = std::ranges::any_of(
+      fields_, [name](field const &entry) { return views_into(name, entry.name) || views_into(name, entry.value); });
+
+  return aliased ? remove_named(fields_, std::string{name}) : remove_named(fields_, name);
 }
 
 std::optional<std::string_view> fields::find(std::string_view name) const noexcept {

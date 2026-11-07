@@ -38,6 +38,7 @@
 #define QUOLL_HTTP_DETAIL_ROUTE_TEMPLATE_HPP
 
 #include <quoll/http/detail/ascii.hpp>
+#include <quoll/http/detail/plain_segment.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -59,6 +60,7 @@ enum class template_error {
   rest_not_last,
   duplicate_name,
   invalid_escape,
+  dot_segment,
 };
 
 struct template_segment {
@@ -107,6 +109,23 @@ struct parsed_template {
   }
 
   return true;
+}
+
+// What http::detail::plain_segment says of a literal with valid escapes, at compile time too: no request could reach
+// one that fails, as what the router sees of it is refused.
+[[nodiscard]] constexpr bool plain_literal(std::string_view text) noexcept {
+  plain_text decoded;
+
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    if (text[index] == '%') {
+      decoded.feed(static_cast<char>(hex_value(text[index + 1]) * 16 + hex_value(text[index + 2])));
+      index += 2;
+    } else {
+      decoded.feed(text[index]);
+    }
+  }
+
+  return decoded.plain();
 }
 
 [[nodiscard]] constexpr template_error check_parameter(std::string_view segment) noexcept {
@@ -158,6 +177,10 @@ struct parsed_template {
     if (segment.find_first_of("{}") == std::string_view::npos) {
       if (!valid_escapes(segment)) {
         return fail(template_error::invalid_escape);
+      }
+
+      if (!plain_literal(segment)) {
+        return fail(template_error::dot_segment);
       }
 
       parsed.segments.push_back({segment_kind::literal, segment, {}});

@@ -552,3 +552,98 @@ TEST_CASE("A serialized request parses back to the same request", "[http][serial
   REQUIRE(parsed.fields.find("Content-Type") == "application/json");
   REQUIRE(parsed.fields.find("Content-Length") == "16");
 }
+
+TEST_CASE("What a peer would read differently is refused", "[http][serializer]") {
+  auto const refused = [](http::request const &message) {
+    std::string out;
+
+    REQUIRE_THROWS_AS(http::serialize(message, out), std::invalid_argument);
+  };
+
+  http::request plain;
+
+  plain.method = http::verb::post;
+  plain.target = "/";
+
+  SECTION("chunked applied twice, on one line or two") {
+    auto twice = plain;
+
+    twice.fields.add("Transfer-Encoding", "chunked, chunked");
+    refused(twice);
+
+    auto on_two_lines = plain;
+
+    on_two_lines.fields.add("Transfer-Encoding", "chunked");
+    on_two_lines.fields.add("Transfer-Encoding", "chunked");
+    refused(on_two_lines);
+  }
+
+  SECTION("but not what is quoted in a parameter of a coding") {
+    for (std::string_view const list : {R"(custom; p="a,chunked,b", chunked)", R"(custom; p="\",chunked", chunked)"}) {
+      auto quoted = plain;
+
+      quoted.fields.add("Transfer-Encoding", list);
+
+      std::string out;
+
+      REQUIRE_NOTHROW(http::serialize(quoted, out));
+    }
+
+    auto after = plain;
+
+    after.fields.add("Transfer-Encoding", R"(chunked, custom; p="a")");
+    refused(after);
+  }
+
+  SECTION("a Content-Length repeated, even with the same value") {
+    auto repeated = plain;
+
+    repeated.body = "abc";
+    repeated.fields.add("Content-Length", "3");
+    repeated.fields.add("Content-Length", "3");
+    refused(repeated);
+  }
+
+  SECTION("a target with what is not visible ASCII") {
+    for (std::string_view const target : {"/a\tb",
+                                          "/a\x7f"
+                                          "b",
+                                          "/a\x01", "/a\xc3\xa9", "/a\x0b", "/a#b"}) {
+      auto invisible = plain;
+
+      invisible.target = target;
+      refused(invisible);
+    }
+  }
+
+  SECTION("a control character in a field value, but for a tab") {
+    auto control = plain;
+
+    control.fields.add("X-Id", "\x01");
+    refused(control);
+
+    auto tab = plain;
+
+    tab.fields.add("X-Id", "a\tb");
+
+    std::string out;
+
+    REQUIRE_NOTHROW(http::serialize(tab, out));
+  }
+
+  SECTION("a body in a TRACE") {
+    auto trace = plain;
+
+    trace.method = http::verb::trace;
+    trace.body = "x";
+    refused(trace);
+  }
+}
+
+TEST_CASE("A Content-Length past 32 bits is one", "[http][serializer]") {
+  http::fields entries;
+
+  entries.add("Content-Length", "5000000000");
+
+  REQUIRE(http::detail::announced_length(entries) == 5'000'000'000U);
+}

@@ -49,6 +49,7 @@
 #include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <chrono>
 #include <concepts>
@@ -1492,4 +1493,132 @@ TEST_CASE("response_writer: a response goes on after its router", "[http][router
   }());
 
   REQUIRE(written == "first" + std::string(100, 'x'));
+}
+
+TEST_CASE("router: a target with a fragment answers 400", "[http][router]") {
+  http::router router;
+
+  router.get("/users/{id}", [](std::string id) {
+    http::response answer;
+
+    answer.body = id;
+    return answer;
+  });
+
+  REQUIRE(dispatch(router, verb::get, "/users/abc").body == "abc");
+  REQUIRE(dispatch(router, verb::get, "/users/abc#frag").status == http::status::bad_request);
+  REQUIRE(dispatch(router, verb::get, "/users/abc?x=1#frag").status == http::status::bad_request);
+}
+
+TEST_CASE("router: a route no request could reach is refused", "[http][router]") {
+  http::router router;
+  auto const nothing = [](http::request, http::route_match) -> task<http::response> { co_return http::response{}; };
+
+  for (std::string_view const path : {"/a/../b", "/a/./b", "/a/%2e%2e/b", "/a/x%2F..", "/a/%00"}) {
+    REQUIRE_THROWS_AS(router.add(verb::get, path, "dead", nothing), std::invalid_argument);
+  }
+}
+
+TEST_CASE("local_transport: a response answers as on a connection", "[http]") {
+  http::router router;
+
+  router.get("/nothing-of-its-length", [] {
+    http::response answer;
+
+    answer.fields.set("Content-Length", "5");
+    answer.body_writer = [](http::body_stream) -> quoll::async::task<> { co_return; };
+    return answer;
+  });
+  router.get("/short", [] {
+    http::response answer;
+
+    answer.fields.set("Content-Length", "100");
+    answer.body_writer = [](http::body_stream out) -> quoll::async::task<> { co_await out.write("short"); };
+    return answer;
+  });
+  router.get("/long", [] {
+    http::response answer;
+
+    answer.fields.set("Content-Length", "1");
+    answer.body_writer = [](http::body_stream out) -> quoll::async::task<> { co_await out.write("too long"); };
+    return answer;
+  });
+  router.get("/whole-of-another-length", [] {
+    http::response answer;
+
+    answer.fields.set("Content-Length", "5");
+    answer.body = "abc";
+    return answer;
+  });
+  router.get("/written-to-head", [] {
+    http::response answer;
+
+    answer.fields.set("Transfer-Encoding", "chunked");
+    answer.body_writer = [](http::body_stream out) -> quoll::async::task<> { co_await out.write("never"); };
+    return answer;
+  });
+  router.get("/invalid-length", [] {
+    http::response answer;
+
+    answer.fields.set("Content-Length", "abc");
+    return answer;
+  });
+  router.get("/chunked", [] {
+    http::response answer;
+
+    answer.fields.set("Transfer-Encoding", "chunked");
+    answer.trailers.set("X-Trailer", "yes");
+    answer.body = "whole";
+    return answer;
+  });
+
+  http::local_transport const transport{router};
+
+  auto const send = [&transport](verb method, std::string target) {
+    http::request message;
+
+    message.method = method;
+    message.target = std::move(target);
+    return quoll::test::run(transport.send(std::move(message))).value();
+  };
+
+  REQUIRE(send(verb::get, "/nothing-of-its-length").status == http::status::internal_server_error);
+  REQUIRE(send(verb::get, "/short").status == http::status::internal_server_error);
+  REQUIRE(send(verb::get, "/long").status == http::status::internal_server_error);
+  REQUIRE(send(verb::get, "/whole-of-another-length").status == http::status::internal_server_error);
+  REQUIRE(send(verb::head, "/whole-of-another-length").status == http::status::internal_server_error);
+  REQUIRE(send(verb::get, "/invalid-length").status == http::status::internal_server_error);
+
+  auto const head = send(verb::head, "/chunked");
+
+  REQUIRE(head.status == http::status::ok);
+  REQUIRE(head.body.empty());
+  REQUIRE(head.trailers.empty());
+  REQUIRE_FALSE(head.fields.contains("Transfer-Encoding"));
+  REQUIRE(head.fields.find("Content-Length") == "5");
+
+  // Its length is only known if it says so.
+  auto const written = send(verb::head, "/written-to-head");
+
+  REQUIRE_FALSE(written.fields.contains("Transfer-Encoding"));
+  REQUIRE_FALSE(written.fields.contains("Content-Length"));
+}
+
+TEST_CASE("local_transport: a body on what cannot have one is refused", "[http]") {
+  http::router router;
+  http::local_transport const transport{router};
+  auto const method = GENERATE(verb::trace, verb::connect);
+  auto const whole = GENERATE(true, false);
+  http::request message;
+
+  message.method = method;
+  message.target = method == verb::connect ? "x:1" : "/";
+
+  if (whole) {
+    message.body = "x";
+  } else {
+    message.body_writer = [](http::body_stream) -> quoll::async::task<> { co_return; };
+  }
+
+  REQUIRE_THROWS_AS(quoll::test::run(transport.send(std::move(message))), std::invalid_argument);
 }

@@ -156,6 +156,11 @@ async::task<response> local_transport::send_to(std::shared_ptr<router const> tar
   auto const method = message.method;
   auto const head = method == verb::head;
 
+  // As a request serialized refuses them.
+  if ((method == verb::trace || method == verb::connect) && (message.body_writer || !message.body.empty())) {
+    throw std::invalid_argument{"quoll::http: a body on a request that cannot have one"};
+  }
+
   // A handler reads what it is given: it is all there before it runs, as with `body`.
   if (message.body_writer) {
     co_await detail::write_whole_body(message);
@@ -192,7 +197,6 @@ async::task<response> local_transport::send_to(std::shared_ptr<router const> tar
     }
 
     failure = sink.failure();
-    (void)detail::replace_what_would_mislead(answer, method);
   }
 
   // A writer that made nothing of a write that failed, or that took a stop for an end, has no whole body: a task of its
@@ -205,10 +209,13 @@ async::task<response> local_transport::send_to(std::shared_ptr<router const> tar
     if ((co_await async::current_stop_token()).stop_requested()) {
       throw std::system_error{std::make_error_code(std::errc::operation_canceled), "quoll::http: stopped"};
     }
+
+    // As a connection answers what it has now, and a test sees what would fail there.
+    (void)detail::replace_what_would_mislead(answer, method);
   }
 
   if (head) {
-    answer.body.clear();
+    detail::keep_what_head_carries(answer, body_writer || late_head_writer);
   }
 
   co_return answer;

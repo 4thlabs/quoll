@@ -108,6 +108,7 @@ enum class path_error {
   rest_not_last,
   duplicate_name,
   invalid_escape,
+  dot_segment,
   too_many_parameters,
 };
 
@@ -165,6 +166,8 @@ struct path_template {
     return path_error::duplicate_name;
   case template_error::invalid_escape:
     return path_error::invalid_escape;
+  case template_error::dot_segment:
+    return path_error::dot_segment;
   }
 
   return path_error::none;

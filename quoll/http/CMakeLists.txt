@@ -38,7 +38,6 @@ quoll_declare_module(
     src/local_transport.cpp
     src/parser.cpp
     src/percent.cpp
-    src/plain_segment.cpp
     src/response_writer.cpp
     src/router.cpp
     src/serializer.cpp
@@ -65,6 +64,9 @@ quoll_declare_tests(
 quoll_declare_compile_fail_tests(
   SOURCES
     tests/compile_fail/router_body_reader_not_last.cpp
+    tests/compile_fail/router_dot_segment.cpp
+    tests/compile_fail/body_stream_wrong_head.cpp
+    tests/compile_fail/body_stream_overloaded_head.cpp
     tests/compile_fail/router_two_body_readers.cpp
     tests/compile_fail/router_too_few_parameters.cpp
     tests/compile_fail/router_unknown_type.cpp

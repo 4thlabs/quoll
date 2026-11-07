@@ -78,6 +78,11 @@ static_assert(parse_path("/files/{rest:path}/").error == path_error::rest_not_la
 static_assert(parse_path("/{id}/{id:int}").error == path_error::duplicate_name);
 static_assert(parse_path("/caf%zz").error == path_error::invalid_escape);
 static_assert(parse_path("/caf%C3%A9").error == path_error::none);
+static_assert(parse_path("/a/../b").error == path_error::dot_segment);
+static_assert(parse_path("/a/%2e%2E/b").error == path_error::dot_segment);
+static_assert(parse_path("/a/x%2F..").error == path_error::dot_segment);
+static_assert(parse_path("/a/%00").error == path_error::dot_segment);
+static_assert(parse_path("/a/..b").error == path_error::none);
 static_assert(parse_path("/{name:string}").params[0].kind == param_kind::string);
 
 static_assert(join_paths<"/api", "/users">().view() == "/api/users");

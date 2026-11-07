@@ -40,9 +40,11 @@
 
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/check.hpp>
+#include <quoll/http/detail/number.hpp>
 #include <quoll/http/detail/streamed_head.hpp>
 #include <quoll/http/detail/streamed_wire.hpp>
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cstddef>
@@ -56,13 +58,22 @@ namespace quoll::http {
 namespace detail {
 
 void check_target(std::string_view target) {
-  if (target.empty() || target.find(' ') != std::string_view::npos || has_line_break(target)) {
+  // RFC 9112, 3: a peer may split the start line on any whitespace, so that what is not visible ASCII could end the
+  // target early. Quoll's own parser refuses all of it.
+  auto const invisible = [](char const character) {
+    auto const byte = static_cast<unsigned char>(character);
+
+    return byte <= 0x20 || byte >= 0x7F;
+  };
+
+  // RFC 9112, 3.2: no request-target has a fragment, and Quoll's own router refuses it.
+  if (target.empty() || target.contains('#') || std::ranges::any_of(target, invisible)) {
     throw std::invalid_argument{"quoll::http: invalid request target"};
   }
 }
 
 void check_field(field const &entry) {
-  if (!is_token(entry.name) || has_line_break(entry.value)) {
+  if (!is_token(entry.name) || has_control(entry.value)) {
     throw std::invalid_argument{"quoll::http: invalid field " + entry.name};
   }
 }
@@ -84,7 +95,7 @@ void serialize_fields(fields const &entries, std::string &out) {
 
 // What the start line allows: the body framing rules of RFC 9110 / 9112 for this message.
 struct framing_rules {
-  // False for 1xx, 204 and 304 responses, and for a CONNECT request.
+  // False for 1xx, 204 and 304 responses, and for a CONNECT or a TRACE request.
   bool body_allowed = true;
   // False for 1xx and 204 responses.
   bool length_allowed = true;
@@ -97,6 +108,26 @@ struct framing_rules {
 };
 
 void reject(char const *what) { throw std::invalid_argument{std::string{"quoll::http: "} + what}; }
+
+// Where the first coding of a list ends: at a comma, or at its end. A comma in a quoted parameter is none (RFC
+// 9110, 5.6.4), a backslash there escaping what follows it.
+[[nodiscard]] std::size_t end_of_coding(std::string_view list) noexcept {
+  auto quoted = false;
+
+  for (std::size_t index = 0; index < list.size(); ++index) {
+    auto const character = list[index];
+
+    if (quoted && character == '\\') {
+      ++index;
+    } else if (character == '"') {
+      quoted = !quoted;
+    } else if (character == ',' && !quoted) {
+      return index;
+    }
+  }
+
+  return list.size();
+}
 
 // Transfer-Encoding fields form one list (RFC 9110, 5.3): true when its last coding is chunked, nothing when there is
 // no Transfer-Encoding at all.
@@ -114,19 +145,32 @@ void reject(char const *what) { throw std::invalid_argument{std::string{"quoll::
       reject("a tab in Transfer-Encoding");
     }
 
-    std::string_view const list = entry.value;
-    auto const last =
-        trim(list.substr(list.find_last_of(',') == std::string_view::npos ? 0 : list.find_last_of(',') + 1));
+    // RFC 9112, 7.1: chunked is applied once, and last, whichever line says so.
+    std::string_view list = entry.value;
 
-    chunked = iequals(last, "chunked");
+    while (true) {
+      auto const comma = end_of_coding(list);
+
+      if (chunked == true) {
+        reject("a transfer coding after chunked");
+      }
+
+      chunked = iequals(trim(list.substr(0, comma)), "chunked");
+
+      if (comma == list.size()) {
+        break;
+      }
+
+      list.remove_prefix(comma + 1);
+    }
   }
 
   return chunked;
 }
 
 // The value of the Content-Length fields, nothing when there is none.
-[[nodiscard]] std::optional<std::size_t> declared_length(fields const &entries) {
-  std::optional<std::size_t> length;
+[[nodiscard]] std::optional<std::uint64_t> declared_length(fields const &entries) {
+  std::optional<std::uint64_t> length;
 
   for (auto const &entry : entries) {
     if (!iequals(entry.name, "Content-Length")) {
@@ -137,16 +181,16 @@ void reject(char const *what) { throw std::invalid_argument{std::string{"quoll::
       reject("a tab in Content-Length");
     }
 
-    auto const text = trim(entry.value);
-    std::size_t value = 0;
-    auto const [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    auto const value = parse_number<std::uint64_t>(trim(entry.value));
 
-    if (text.empty() || error != std::errc{} || end != text.data() + text.size()) {
+    if (!value) {
       reject("invalid Content-Length");
     }
 
-    if (length && *length != value) {
-      reject("Content-Length fields disagree");
+    // RFC 9110, 8.6 lets a recipient reject them or merge them: a peer and what is before it may disagree, even on
+    // equal values, and Quoll's own parser refuses them.
+    if (length) {
+      reject("a repeated Content-Length");
     }
 
     length = value;
@@ -227,16 +271,8 @@ void serialize_framing(fields const &entries, std::string const &body, fields co
   if (checked.chunked) {
     out += "\r\n";
 
-    if (!body.empty()) {
-      append_hex(body.size(), out);
-      out += "\r\n";
-      out += body;
-      out += "\r\n";
-    }
-
-    out += "0\r\n";
-    serialize_fields(trailers, out);
-    out += "\r\n";
+    append_chunk(body, out);
+    append_last_chunk(trailers, out);
     return;
   }
 
@@ -266,7 +302,8 @@ namespace {
   rules.add_length = !message.body.empty() || method_has_body;
   rules.chunked_allowed = message.version != version::http_1_0;
   // What follows the head of a CONNECT is the tunnel, as a parser reads it: a body would reach the far end.
-  rules.body_allowed = message.method != verb::connect;
+  // RFC 9110, 9.3.8: a client must not send content in a TRACE.
+  rules.body_allowed = message.method != verb::connect && message.method != verb::trace;
   return rules;
 }
 
@@ -305,7 +342,7 @@ namespace {
     throw std::invalid_argument{"quoll::http: invalid status code"};
   }
 
-  if (has_line_break(message.reason)) {
+  if (has_control(message.reason)) {
     throw std::invalid_argument{"quoll::http: invalid reason phrase"};
   }
 
@@ -366,7 +403,19 @@ streamed_framing serialize_streamed_head(response const &message, std::string &o
   serialize_fields(message.fields, out);
   out += "\r\n";
 
-  return {.chunked = checked.chunked, .length = length ? std::optional<std::uint64_t>{*length} : std::nullopt};
+  return {.chunked = checked.chunked, .length = length};
+}
+
+void keep_what_head_carries(response &answer, bool in_pieces) {
+  if (in_pieces) {
+    answer.fields.erase("Transfer-Encoding");
+  } else if (answer.fields.erase("Transfer-Encoding") != 0 ||
+             (!answer.body.empty() && !answer.fields.contains("Content-Length"))) {
+    answer.fields.set("Content-Length", std::to_string(answer.body.size()));
+  }
+
+  answer.body.clear();
+  answer.trailers.clear();
 }
 
 char const *replace_what_would_mislead(response &answer, verb const method) {
@@ -387,17 +436,26 @@ char const *replace_what_would_mislead(response &answer, verb const method) {
     return "quoll::http::server: a body beside what writes one";
   }
 
-  if (method == verb::head || answer.body_writer || answer.late_head_writer || !answer.body.empty() ||
-      answer.status == status::not_modified) {
+  std::optional<std::uint64_t> length;
+
+  try {
+    length = declared_length(answer.fields);
+  } catch (std::invalid_argument const &) {
+    answer = status_response(status::internal_server_error);
+    return "quoll::http::server: an invalid Content-Length";
+  }
+
+  // To HEAD too, which carries what GET would.
+  if (!answer.body.empty() && length && *length != answer.body.size()) {
+    answer = status_response(status::internal_server_error);
+    return "quoll::http::server: a Content-Length other than its body";
+  }
+
+  if (method == verb::head || answer.body_writer || answer.late_head_writer || !answer.body.empty()) {
     return nullptr;
   }
 
-  try {
-    if (declared_length(answer.fields).value_or(0) == 0) {
-      return nullptr;
-    }
-  } catch (std::invalid_argument const &) {
-    // Written, it answers 500 anyway.
+  if (answer.status == status::not_modified || length.value_or(0) == 0) {
     return nullptr;
   }
 
@@ -405,17 +463,12 @@ char const *replace_what_would_mislead(response &answer, verb const method) {
   return "quoll::http::server: a Content-Length with no body";
 }
 
-std::optional<std::uint64_t> announced_length(fields const &entries) {
-  auto const length = declared_length(entries);
-
-  return length ? std::optional<std::uint64_t>{*length} : std::nullopt;
-}
+std::optional<std::uint64_t> announced_length(fields const &entries) { return declared_length(entries); }
 
 streamed_framing serialize_streamed_head(request const &message, std::string &out) {
   auto rules = request_rules(message);
 
-  // RFC 9110, 9.3.8: a client must not send content in a TRACE.
-  if (!rules.body_allowed || message.method == verb::trace || !message.body.empty()) {
+  if (!rules.body_allowed || !message.body.empty()) {
     reject("a body_writer on a request that cannot have one, or with a body");
   }
 
@@ -437,7 +490,7 @@ streamed_framing serialize_streamed_head(request const &message, std::string &ou
   serialize_fields(with_chunks, out);
   out += "\r\n";
 
-  return {.chunked = checked.chunked, .length = length ? std::optional<std::uint64_t>{*length} : std::nullopt};
+  return {.chunked = checked.chunked, .length = length};
 }
 
 streamed_wire::streamed_wire(std::string head, streamed_framing framing) noexcept
@@ -455,6 +508,7 @@ void streamed_wire::append_head() {
   if (!started_) {
     started_ = true;
     wire_ += head_;
+    std::string{}.swap(head_);
   }
 }
 
