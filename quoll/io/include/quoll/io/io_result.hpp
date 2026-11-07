@@ -46,7 +46,7 @@ namespace quoll::io {
  * @brief Outcome of a stream operation. A write may have transferred bytes even when `error` is set (cut short by
  * the peer leaving); a read never has (see ByteStream).
  */
-struct io_result {
+struct [[nodiscard]] io_result {
   std::error_code error;
   std::size_t transferred = 0;
 };

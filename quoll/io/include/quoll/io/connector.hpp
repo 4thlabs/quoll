@@ -48,7 +48,7 @@
 namespace quoll::io {
 
 /**
- * @brief Opens byte streams to remote hosts (TCP sockets, later TLS sessions, in-memory peers in tests).
+ * @brief Opens byte streams to remote hosts (TCP sockets, in-memory peers in tests; TLS sessions are TlsConnector's).
  *
  * `connect(host, port)` returns a task producing the connected stream, type-erased so that a client does not depend
  * on the transport. A failure to resolve or to connect is reported by the task's exception (std::system_error), and

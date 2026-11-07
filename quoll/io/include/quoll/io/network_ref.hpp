@@ -41,11 +41,14 @@
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_listener.hpp>
 #include <quoll/io/any_stream.hpp>
+#include <quoll/io/detail/keeping.hpp>
 #include <quoll/io/network.hpp>
 
 #include <concepts>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace quoll::io {
@@ -54,8 +57,9 @@ namespace quoll::io {
  * @brief Non-owning, type-erased reference to a Network; models Network itself. The service an executor of an I/O
  * loop offers: `executor.query<io::network_ref>()`.
  *
- * Trivially copyable and never allocates. The referenced network, usually the executor that answered the query, must
- * outlive the reference: io::connect() and io::listen() use it at once, from the task's own executor.
+ * Trivially copyable, and it allocates nothing but what a connection takes. The referenced network, usually the
+ * executor that answered the query, must outlive the reference: io::connect() and io::listen() use it at once, from the
+ * task's own executor.
  *
  * Thread safety: same as the referenced network.
  */
@@ -95,8 +99,12 @@ private:
 
   template <Network N>
   static constexpr vtable vtable_for{
-      [](void const *network, std::string host, std::uint16_t port) {
-        return static_cast<N const *>(network)->connect(std::move(host), port);
+      // At the call, as the network only has to outlive the reference. What it is given stays until its task has ended.
+      [](void const *network, std::string host, std::uint16_t port) -> async::task<any_stream> {
+        auto kept = std::make_unique<std::string>(std::move(host));
+        auto connecting = static_cast<N const *>(network)->connect(*kept, port);
+
+        return detail::keeping(std::move(kept), std::move(connecting));
       },
       [](void const *network, std::string address, std::uint16_t port) {
         return static_cast<N const *>(network)->listen(std::move(address), port);
@@ -109,6 +117,7 @@ private:
 };
 
 static_assert(Network<network_ref>);
+static_assert(std::is_trivially_copyable_v<network_ref>);
 
 } // namespace quoll::io
 

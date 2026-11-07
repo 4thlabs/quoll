@@ -34,15 +34,46 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_IO_DETAIL_TLS_SERVICE_HPP
-#define QUOLL_IO_DETAIL_TLS_SERVICE_HPP
+#ifndef QUOLL_IO_DETAIL_LISTENER_VTABLE_HPP
+#define QUOLL_IO_DETAIL_LISTENER_VTABLE_HPP
+
+#include <quoll/async/detail/type_id.hpp>
+#include <quoll/async/task.hpp>
+#include <quoll/io/any_stream.hpp>
+#include <quoll/io/bound_listener.hpp>
+#include <quoll/io/listener.hpp>
+
+#include <cstdint>
+#include <memory>
+#include <optional>
 
 namespace quoll::io::detail {
 
-// How async::detail::require_service() names the service, for an application that finds it missing: often, OpenSSL was
-// not there when the build was configured.
-inline constexpr char const *tls_service_name = "TLS network, which needs OpenSSL when Quoll is configured";
+struct listener_vtable {
+  async::task<any_stream> (*accept)(void *listener);
+  // Empty for a listener that is not a BoundListener.
+  std::optional<std::uint16_t> (*local_port)(void const *listener);
+  void (*destroy)(void *listener) noexcept;
+  async::detail::type_id type;
+};
+
+template <Listener L>
+inline constexpr listener_vtable listener_vtable_for{
+    [](void *listener) { return static_cast<L *>(listener)->accept(); },
+    [](void const *listener) -> std::optional<std::uint16_t> {
+      if constexpr (BoundListener<L>) {
+        return static_cast<L const *>(listener)->local_port();
+      } else {
+        return std::nullopt;
+      }
+    },
+    [](void *listener) noexcept {
+      // Owned from here: the unique_ptr frees the listener.
+      std::unique_ptr<L> const owned{static_cast<L *>(listener)};
+    },
+    async::detail::type_id_of<L>(),
+};
 
 } // namespace quoll::io::detail
 
-#endif // QUOLL_IO_DETAIL_TLS_SERVICE_HPP
+#endif // QUOLL_IO_DETAIL_LISTENER_VTABLE_HPP

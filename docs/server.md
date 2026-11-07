@@ -257,8 +257,8 @@ auto const peer = [](io::memory_stream stream) -> async::task<http::response> {
   std::string buffer;
   http::response_parser parser;
 
-  co_await io::write(stream, std::as_bytes(std::span{sent}));
-  co_await http::read(stream, buffer, parser);
+  (void)co_await io::write(stream, std::as_bytes(std::span{sent}));
+  (void)co_await http::read(stream, buffer, parser);
   co_return parser.release();
 };
 

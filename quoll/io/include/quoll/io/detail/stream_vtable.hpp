@@ -40,6 +40,7 @@
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/io/byte_stream.hpp>
+#include <quoll/io/detail/erasable_stream.hpp>
 #include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
 
@@ -48,48 +49,10 @@
 #include <memory>
 #include <new>
 #include <span>
-#include <system_error>
 #include <type_traits>
 #include <utility>
 
 namespace quoll::io::detail {
-
-template <class S>
-using read_awaitable_t = decltype(std::declval<S &>().read_some(std::declval<std::span<std::byte>>()));
-
-template <class S>
-using write_awaitable_t = decltype(std::declval<S &>().write_some(std::declval<std::span<std::byte const>>()));
-
-// What shutting down a stream that cannot is: an error, at once.
-struct shutdown_not_supported {
-  [[nodiscard]] bool await_ready() const noexcept { return true; }
-
-  [[nodiscard]] bool await_suspend(std::coroutine_handle<>, async::await_context const &) const noexcept {
-    return false;
-  }
-
-  [[nodiscard]] io_result await_resume() const noexcept {
-    return {std::make_error_code(std::errc::operation_not_supported), 0};
-  }
-};
-
-template <class S>
-struct shutdown_awaitable {
-  using type = shutdown_not_supported;
-};
-
-template <HalfClosableStream S>
-struct shutdown_awaitable<S> {
-  using type = decltype(std::declval<S &>().shutdown_send());
-};
-
-template <class S>
-using shutdown_awaitable_t = typename shutdown_awaitable<S>::type;
-
-// A stream whose operations return their awaitable by value: it can be built in a slot of the block.
-template <class S>
-concept erasable_stream = ByteStream<S> && std::is_object_v<read_awaitable_t<S>> &&
-                          std::is_object_v<write_awaitable_t<S>> && std::is_object_v<shutdown_awaitable_t<S>>;
 
 // An erased stream and room for the awaitables of its pending read, write and shutdown: allocated once with the stream,
 // so that operations never allocate.
