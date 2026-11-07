@@ -43,14 +43,14 @@
 
 namespace quoll::http::detail {
 
-bool closes_connection(fields const &message_fields) {
+bool connection_names(fields const &message_fields, std::string_view name) {
   for (auto const &entry : message_fields) {
     if (!iequals(entry.name, "Connection")) {
       continue;
     }
 
     for (auto const token : std::views::split(std::string_view{entry.value}, ',')) {
-      if (iequals(trim(std::string_view{token.begin(), token.end()}), "close")) {
+      if (iequals(trim(std::string_view{token.begin(), token.end()}), name)) {
         return true;
       }
     }
@@ -58,5 +58,7 @@ bool closes_connection(fields const &message_fields) {
 
   return false;
 }
+
+bool closes_connection(fields const &message_fields) { return connection_names(message_fields, "close"); }
 
 } // namespace quoll::http::detail

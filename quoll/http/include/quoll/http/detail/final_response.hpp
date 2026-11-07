@@ -38,6 +38,7 @@
 #define QUOLL_HTTP_DETAIL_FINAL_RESPONSE_HPP
 
 #include <quoll/http/response.hpp>
+#include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
 
 namespace quoll::http::detail {
@@ -46,6 +47,9 @@ namespace quoll::http::detail {
 // chunked coding, whose terminating chunk would be read as the next response. In pieces, its length is only known if it
 // says so: no framing is announced that nothing follows.
 void keep_what_head_carries(response &answer, bool in_pieces);
+
+// What is wrong with answering `method` with `code`, or nullptr: see below.
+[[nodiscard]] char const *status_would_mislead(status code, verb method) noexcept;
 
 // A handler's answer to `method`, unless its peer would read it as something else, shared by what serves a router:
 //

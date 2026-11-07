@@ -181,7 +181,9 @@ void append_hex(std::uint64_t value, std::string &out) {
          error == std::errc::too_many_symbolic_link_levels || error == std::errc::filename_too_long ||
          // A Unix socket, which macOS says with the last of these, or a device with no driver: no files.
          error == std::errc::no_such_device_or_address || error == std::errc::no_such_device ||
-         error == std::errc::operation_not_supported;
+         error == std::errc::operation_not_supported ||
+         // A name a file system refuses, as APFS does invalid UTF-8, and which a peer chose.
+         error == std::errc::illegal_byte_sequence || error == std::errc::invalid_argument;
 }
 
 // What a path opened to, with what it is.
@@ -206,7 +208,16 @@ struct opened_path {
     throw std::system_error{error, "quoll::http::static_files"};
   }
 
-  opened_path opened{std::make_shared<open_file>(descriptor)};
+  std::shared_ptr<open_file> file;
+
+  try {
+    file = std::make_shared<open_file>(descriptor);
+  } catch (...) {
+    ::close(descriptor);
+    throw;
+  }
+
+  opened_path opened{std::move(file)};
 
   if (::fstat(descriptor, &opened.status) != 0) {
     throw std::system_error{errno, std::generic_category(), "quoll::http::static_files"};
@@ -267,7 +278,7 @@ struct looked_up {
   auto const relative = resolved.lexically_relative(root);
 
   return std::ranges::none_of(relative, [](fs::path const &component) {
-    auto const name = component.native();
+    auto const &name = component.native();
 
     return name != "." && name.starts_with('.');
   });
@@ -572,7 +583,7 @@ struct conditions {
   }
 
   if (asked.if_unmodified_since) {
-    auto const since = parse_http_date(*asked.if_unmodified_since);
+    auto const since = parse_http_date(http::detail::trim(*asked.if_unmodified_since));
 
     return since && found.modified > *since;
   }
@@ -587,7 +598,7 @@ struct conditions {
   }
 
   if (asked.if_modified_since) {
-    auto const since = parse_http_date(*asked.if_modified_since);
+    auto const since = parse_http_date(http::detail::trim(*asked.if_modified_since));
 
     return since && found.modified <= *since;
   }
@@ -795,6 +806,9 @@ void forget_its_content(http::response &answer) {
 // The response for `found`, on what the routes answered.
 [[nodiscard]] http::response answer_with(http::response answer, found_file found, fs::path const &name,
                                          conditions const &asked, served const &state) {
+  // RFC 9110, 8.8.2: never in the future, from where it would answer 304 to every later version of the file.
+  found.modified = std::min(found.modified, std::time(nullptr));
+
   forget_its_content(answer);
   answer.fields.set("ETag", found.etag);
   answer.fields.set("Last-Modified", http_date(found.modified));

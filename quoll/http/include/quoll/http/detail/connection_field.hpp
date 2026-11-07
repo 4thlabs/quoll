@@ -39,10 +39,15 @@
 
 #include <quoll/http/fields.hpp>
 
+#include <string_view>
+
 namespace quoll::http::detail {
 
 // Whether a message says the connection closes after it: a `close` token in a Connection field.
 [[nodiscard]] bool closes_connection(fields const &message_fields);
+
+// Whether a Connection field of a message names `token`.
+[[nodiscard]] bool connection_names(fields const &message_fields, std::string_view token);
 
 } // namespace quoll::http::detail
 

@@ -750,20 +750,29 @@ async::task<http::response> respond(http::router const &router, http::request re
   co_return http::detail::status_response(http::status::internal_server_error);
 }
 
-// HTTP/1.0 has no chunks: whether this is such a response, which the framing it set has left.
-bool without_chunks(http::response &response, http::version version) {
-  if (version != http::version::http_1_0 && response.version != http::version::http_1_0) {
-    return false;
-  }
+// What goes to a peer, or as, HTTP/1.0.
+[[nodiscard]] bool speaks_http_1_0(http::response const &response, http::version version) noexcept {
+  return version == http::version::http_1_0 || response.version == http::version::http_1_0;
+}
 
+// HTTP/1.0 has no chunks.
+void drop_chunks(http::response &response) {
   response.fields.erase("Transfer-Encoding");
   response.trailers.clear();
-  return true;
+}
+
+// HTTP/1.0 closes unless told otherwise, so that one kept open must say so: its peer would read until the end of it.
+// Added to what the field says, as what else it names is hop by hop only as long as it does.
+void say_it_stays_open(http::response &response, http::version version, bool keep_alive) {
+  if (keep_alive && speaks_http_1_0(response, version) &&
+      !http::detail::connection_names(response.fields, "keep-alive")) {
+    response.fields.add("Connection", "keep-alive");
+  }
 }
 
 // Whether a coding other than chunks would go to HTTP/1.0, which has no way to say it: read as the content otherwise.
 [[nodiscard]] bool has_no_way_to_say_its_coding(http::response const &response, http::version version) {
-  if (version != http::version::http_1_0 && response.version != http::version::http_1_0) {
+  if (!speaks_http_1_0(response, version)) {
     return false;
   }
 
@@ -775,9 +784,26 @@ bool without_chunks(http::response &response, http::version version) {
 
 constexpr auto no_way_to_say_its_coding = "quoll::http::server: a coding other than chunks to HTTP/1.0";
 
+// A handler's answer, unless its peer would read it as something else, the application being told: what is left to
+// check once its status and fields are final.
+void replace_what_would_mislead(http::response &response, http::verb method, http::version version,
+                                connection_options const &options) {
+  auto const *wrong = http::detail::replace_what_would_mislead(response, method);
+
+  if (wrong == nullptr && has_no_way_to_say_its_coding(response, version)) {
+    wrong = no_way_to_say_its_coding;
+    response = http::detail::status_response(http::status::internal_server_error);
+  }
+
+  if (wrong != nullptr && options.on_handler_error) {
+    options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
+  }
+}
+
 // How a body of unknown length goes: on HTTP/1.0, nothing but the end of the connection ends it.
 void frame_in_pieces(http::response &response, http::version version, bool &keep_alive) {
-  if (without_chunks(response, version)) {
+  if (speaks_http_1_0(response, version)) {
+    drop_chunks(response);
     keep_alive = keep_alive && response.fields.contains("Content-Length");
   } else if (!response.fields.contains("Content-Length") && !response.fields.contains("Transfer-Encoding")) {
     response.fields.set("Transfer-Encoding", "chunked");
@@ -786,7 +812,9 @@ void frame_in_pieces(http::response &response, http::version version, bool &keep
 
 // Ready to write, with a body that comes in pieces. To HEAD, its length is only known if it says so: no framing is
 // announced that nothing follows.
-void prepare_in_pieces(http::response &response, bool head, bool keep_alive) {
+void prepare_in_pieces(http::response &response, bool head, bool keep_alive, http::version version) {
+  say_it_stays_open(response, version, keep_alive);
+
   if (head) {
     http::detail::keep_what_head_carries(response, true);
   }
@@ -797,11 +825,13 @@ void prepare_in_pieces(http::response &response, bool head, bool keep_alive) {
 }
 
 // Ready to write. The last response of a connection says so.
-void prepare(http::response &response, bool head, bool keep_alive) {
+void prepare(http::response &response, bool head, bool keep_alive, http::version version) {
   if (response.body_writer) {
-    prepare_in_pieces(response, head, keep_alive);
+    prepare_in_pieces(response, head, keep_alive, version);
     return;
   }
+
+  say_it_stays_open(response, version, keep_alive);
 
   if (head) {
     http::detail::keep_what_head_carries(response, false);
@@ -813,15 +843,20 @@ void prepare(http::response &response, bool head, bool keep_alive) {
 }
 
 // Writes the response, or a 500 in its place if it cannot be serialized (a handler built an invalid one).
-async::task<std::error_code> write_response(paced_stream &stream, http::response const &response, bool keep_alive) {
+async::task<std::error_code> write_response(paced_stream &stream, http::response const &response, bool keep_alive,
+                                            http::version version, connection_options const *options) {
   std::optional<async::task<std::error_code>> sending;
 
   try {
     sending.emplace(http::write(stream, response));
   } catch (std::invalid_argument const &) {
+    if (options != nullptr && options->on_handler_error) {
+      options->on_handler_error(std::current_exception());
+    }
+
     auto failed = http::detail::status_response(http::status::internal_server_error);
 
-    prepare(failed, false, keep_alive);
+    prepare(failed, false, keep_alive, version);
     sending.emplace(http::write(stream, failed));
   }
 
@@ -829,9 +864,10 @@ async::task<std::error_code> write_response(paced_stream &stream, http::response
 }
 
 // write_response(), with what stopped it as an error.
-async::task<std::error_code> send_response(paced_stream &stream, http::response const &response, bool keep_alive) {
+async::task<std::error_code> send_response(paced_stream &stream, http::response const &response, bool keep_alive,
+                                           http::version version, connection_options const *options = nullptr) {
   stream.writing().start_again();
-  co_return co_await stream.patiently_writing(write_response(stream, response, keep_alive));
+  co_return co_await stream.patiently_writing(write_response(stream, response, keep_alive, version, options));
 }
 
 // What writing a body throws through a writer, told apart from what a writer throws on its own by its type.
@@ -843,7 +879,7 @@ public:
 // What a body_writer writes through, a transfer taking as long as it keeps leaving, at the minimum rate or with a write
 // timeout per piece. The head goes with the first piece, so that a writer failing before its first byte can still be
 // answered. A write that fails or is cancelled may have left part of what it had, so that nothing can follow it on this
-// connection.
+// connection. Thread safety: one write at a time. What reads the request may run beside it, and shares what is atomic.
 class streamed_response {
 public:
   streamed_response(paced_stream &stream, std::string head, http::detail::streamed_framing framing) noexcept
@@ -905,11 +941,12 @@ private:
 };
 
 // In its place, while nothing has left.
-async::task<std::error_code> send_500(paced_stream &stream, bool keep_alive) {
-  auto failed = http::detail::status_response(http::status::internal_server_error);
+async::task<std::error_code> send_500(paced_stream &stream, bool keep_alive, http::version version,
+                                      http::status code = http::status::internal_server_error) {
+  auto failed = http::detail::status_response(code);
 
-  prepare(failed, false, keep_alive);
-  co_return co_await send_response(stream, failed, keep_alive);
+  prepare(failed, false, keep_alive, version);
+  co_return co_await send_response(stream, failed, keep_alive, version);
 }
 
 // Runs a response's writer through `sink`, and ends its body if it came out whole. What it returns says what is left to
@@ -917,6 +954,12 @@ async::task<std::error_code> send_500(paced_stream &stream, bool keep_alive) {
 enum class writer_end { whole, answer_500, cut };
 
 template <class Sink>
+  requires requires(Sink &sink, std::string_view piece, http::fields const &trailers) {
+    { sink.write(piece) } -> std::same_as<async::task<>>;
+    { sink.finish(trailers) } -> std::same_as<async::task<bool>>;
+    { sink.started() } -> std::same_as<bool>;
+    { sink.short_of_its_length() } -> std::same_as<bool>;
+  }
 async::task<writer_end> run_writer(http::body_writer writer, http::response &response, Sink &sink,
                                    connection_options const &options, streamed_body *request_body, bool &nothing_left) {
   auto const stop_token = co_await async::current_stop_token();
@@ -964,7 +1007,8 @@ async::task<writer_end> run_writer(http::body_writer writer, http::response &res
 // otherwise an end of connection for what cannot be whole, which its peer reads as a body cut short. To HEAD, its head
 // alone. `nothing_left` says that a failure is still free to answer otherwise.
 async::task<bool> send_streamed(paced_stream &stream, http::response &response, bool head, bool keep_alive,
-                                connection_options const &options, streamed_body *request_body, bool &nothing_left) {
+                                http::version version, connection_options const &options, streamed_body *request_body,
+                                bool &nothing_left) {
   std::string wire;
   std::optional<http::detail::streamed_framing> framing;
 
@@ -972,6 +1016,10 @@ async::task<bool> send_streamed(paced_stream &stream, http::response &response, 
     framing = http::detail::serialize_streamed_head(response, wire);
   } catch (std::invalid_argument const &) {
     framing.reset();
+
+    if (options.on_handler_error) {
+      options.on_handler_error(std::current_exception());
+    }
   }
 
   auto answer_500 = !framing;
@@ -998,18 +1046,19 @@ async::task<bool> send_streamed(paced_stream &stream, http::response &response, 
     co_return false;
   }
 
-  co_return !co_await send_500(stream, keep_alive);
+  co_return !co_await send_500(stream, keep_alive, version);
 }
 
 // What a route with an http::response_writer writes through: the handler gives its status and fields with its first
 // write, so that the head is only made then, and what depends on it. On a request whose body it reads, the connection
-// goes on only if it has read it all by then.
+// goes on only if it has read it all by then. Thread safety: none, as what writes a response takes turns with what
+// reads its request.
 class late_head_response {
 public:
-  late_head_response(paced_stream &stream, http::response &response, bool head, bool &keep_alive,
+  late_head_response(paced_stream &stream, http::response &response, http::verb method, bool &keep_alive,
                      streamed_body *request_body, http::version version, connection_options const &options) noexcept
-      : stream_(&stream), response_(&response), head_(head), keep_alive_(&keep_alive), request_body_(request_body),
-        version_(version), options_(&options) {}
+      : stream_(&stream), response_(&response), method_(method), head_(method == http::verb::head),
+        keep_alive_(&keep_alive), request_body_(request_body), version_(version), options_(&options) {}
 
   void head(http::status status, http::fields fields) {
     http::detail::merge_head(*response_, status, std::move(fields));
@@ -1038,6 +1087,9 @@ public:
   [[nodiscard]] bool wrote_nothing() const noexcept { return !head_tried_ && !sink_; }
 
   [[nodiscard]] bool head_failed() const noexcept { return head_failed_; }
+
+  // What answers in its place, if nothing has left.
+  [[nodiscard]] http::status answer_instead() const noexcept { return answer_instead_; }
 
   // Whether the connection goes on, by what the handler set, read and left to do.
   void decide_keep_alive() { *keep_alive_ = keeps_alive(); }
@@ -1082,8 +1134,14 @@ private:
   // Makes the head on a copy, so that a handler catching what this throws finds its response as it was: it may then end
   // without writing. Throws what a head that cannot leave throws, which answers 500, as nothing has left.
   void open() {
-    if (http::is_informational(response_->status)) {
-      throw std::logic_error{"quoll::http::server: a 1xx is no final response"};
+    // What it gives with its first write has not been through replace_what_would_mislead().
+    if (auto const *const wrong = http::detail::status_would_mislead(response_->status, method_); wrong != nullptr) {
+      // The same answer as to one known before it ran.
+      if (!http::is_informational(response_->status)) {
+        answer_instead_ = http::status::not_implemented;
+      }
+
+      throw std::logic_error{wrong};
     }
 
     if (has_no_way_to_say_its_coding(*response_, version_)) {
@@ -1103,7 +1161,7 @@ private:
       frame_in_pieces(made, version_, keep_alive);
     }
 
-    prepare_in_pieces(made, head_, keep_alive);
+    prepare_in_pieces(made, head_, keep_alive, version_);
 
     std::string wire;
     auto const framing = http::detail::serialize_streamed_head(made, wire);
@@ -1121,6 +1179,7 @@ private:
 
   paced_stream *stream_;
   http::response *response_;
+  http::verb method_;
   bool head_;
   bool *keep_alive_;
   streamed_body *request_body_;
@@ -1130,6 +1189,7 @@ private:
   std::optional<streamed_response> sink_;
   bool head_tried_ = false;
   bool head_failed_ = false;
+  http::status answer_instead_ = http::status::internal_server_error;
 };
 
 // A response whose handler writes it, up to whether the connection can go on, as send_streamed().
@@ -1139,7 +1199,7 @@ async::task<bool> send_written_by_handler(paced_stream &stream, http::response &
   stream.writing().start_again();
 
   auto const head = method == http::verb::head;
-  late_head_response sink{stream, response, head, keep_alive, request_body, version, options};
+  late_head_response sink{stream, response, method, keep_alive, request_body, version, options};
   auto const end = co_await run_writer(std::exchange(response.late_head_writer, nullptr), response, sink, options,
                                        request_body, nothing_left);
 
@@ -1154,7 +1214,7 @@ async::task<bool> send_written_by_handler(paced_stream &stream, http::response &
   }
 
   if (end == writer_end::answer_500) {
-    co_return !co_await send_500(stream, keep_alive);
+    co_return !co_await send_500(stream, keep_alive, version, sink.answer_instead());
   }
 
   if (end == writer_end::cut) {
@@ -1163,22 +1223,14 @@ async::task<bool> send_written_by_handler(paced_stream &stream, http::response &
 
   // It ended before any write: its response has what it set, and an empty body.
   if (sink.wrote_nothing()) {
-    if (auto const *const wrong = http::detail::replace_what_would_mislead(response, method);
-        wrong != nullptr && options.on_handler_error) {
-      options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
+    replace_what_would_mislead(response, method, version, options);
+
+    if (speaks_http_1_0(response, version)) {
+      drop_chunks(response);
     }
 
-    if (has_no_way_to_say_its_coding(response, version)) {
-      if (options.on_handler_error) {
-        options.on_handler_error(std::make_exception_ptr(std::logic_error{no_way_to_say_its_coding}));
-      }
-
-      co_return !co_await send_500(stream, keep_alive);
-    }
-
-    (void)without_chunks(response, version);
-    prepare(response, head, keep_alive);
-    co_return !co_await send_response(stream, response, keep_alive);
+    prepare(response, head, keep_alive, version);
+    co_return !co_await send_response(stream, response, keep_alive, version, &options);
   }
 
   co_return true;
@@ -1235,8 +1287,9 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
 
     auto rejected = http::detail::status_response(*answer);
 
-    prepare(rejected, false, false);
-    co_return co_await send_response(paced, rejected, false) ? connection_end::nothing_owed : connection_end::linger;
+    prepare(rejected, false, false, http::version::http_1_1);
+    co_return co_await send_response(paced, rejected, false, http::version::http_1_1) ? connection_end::nothing_owed
+                                                                                      : connection_end::linger;
   };
 
   for (;;) {
@@ -1294,30 +1347,19 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
     keep_alive = keep_alive && !http::detail::closes_connection(response.fields) && !options.drain.stop_requested();
 
     // After that line: what a handler asked of the connection stands, whatever replaces its answer.
-    if (auto const *const wrong = http::detail::replace_what_would_mislead(response, method);
-        wrong != nullptr && options.on_handler_error) {
-      options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
-    }
-
-    if (has_no_way_to_say_its_coding(response, version)) {
-      if (options.on_handler_error) {
-        options.on_handler_error(std::make_exception_ptr(std::logic_error{no_way_to_say_its_coding}));
-      }
-
-      response = http::detail::status_response(http::status::internal_server_error);
-    }
+    replace_what_would_mislead(response, method, version, options);
 
     auto const in_pieces = static_cast<bool>(response.body_writer);
     auto const written_by_handler = !in_pieces && response.late_head_writer;
 
     if (in_pieces && !head) {
       frame_in_pieces(response, version, keep_alive);
-    } else if (!in_pieces && !written_by_handler) {
-      (void)without_chunks(response, version);
+    } else if (!in_pieces && !written_by_handler && speaks_http_1_0(response, version)) {
+      drop_chunks(response);
     }
 
     if (!written_by_handler) {
-      prepare(response, head, keep_alive);
+      prepare(response, head, keep_alive, version);
     }
 
     if (in_pieces || written_by_handler) {
@@ -1339,7 +1381,7 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
         sent = co_await send_written_by_handler(paced, response, method, keep_alive, version, options, request_body,
                                                 nothing_left);
       } else {
-        sent = co_await send_streamed(paced, response, head, keep_alive, options, request_body, nothing_left);
+        sent = co_await send_streamed(paced, response, head, keep_alive, version, options, request_body, nothing_left);
       }
 
       if (!sent) {
@@ -1350,7 +1392,7 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
 
         co_return connection_end::nothing_owed;
       }
-    } else if (co_await send_response(paced, response, keep_alive)) {
+    } else if (co_await send_response(paced, response, keep_alive, version, &options)) {
       co_return connection_end::nothing_owed;
     }
 

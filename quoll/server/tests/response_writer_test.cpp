@@ -1433,3 +1433,108 @@ TEST_CASE("response_writer: a reason a middleware set goes with its status", "[s
 
   REQUIRE(answer_to(http::server{router}, get("/rows")).starts_with("HTTP/1.1 404 Not Found"));
 }
+
+TEST_CASE("server: HTTP/1.0 kept open says so", "[server]") {
+  http::router router;
+
+  router.get("/whole", [](http::request) {
+    http::response answer;
+
+    answer.body = "whole";
+    return answer;
+  });
+  router.get("/written", [](http::response_writer out) -> task<> {
+    out.fields.set("Content-Length", "7");
+    co_await out.write("written");
+  });
+
+  http::server const server{router};
+  auto const target = GENERATE(as<std::string>{}, "/whole", "/written");
+  auto const kept = answer_to(server, "GET " + target + " HTTP/1.0\r\nConnection: keep-alive\r\n\r\n");
+
+  REQUIRE(kept.contains("Connection: keep-alive"));
+  // Unless asked, it closes, as HTTP/1.0 does.
+  REQUIRE_FALSE(answer_to(server, "GET " + target + " HTTP/1.0\r\n\r\n").contains("keep-alive"));
+}
+
+TEST_CASE("server: HTTP/1.0 kept open says so of what answers in its place, and of what else it names", "[server]") {
+  http::router router;
+
+  router.get("/throws", [](http::request) {
+    http::response answer;
+
+    answer.body_writer = [](http::body_stream) -> task<> { throw std::runtime_error{"before anything left"}; };
+    answer.fields.set("Content-Length", "1");
+    return answer;
+  });
+  router.get("/invalid", [](http::request) {
+    http::response answer;
+
+    answer.fields.add("Not A Token", "x");
+    return answer;
+  });
+  router.get("/names-another", [](http::request) {
+    http::response answer;
+
+    answer.fields.set("Connection", "X-Internal");
+    answer.fields.set("X-Internal", "1");
+    return answer;
+  });
+
+  http::server const server{router};
+  auto const target = GENERATE(as<std::string>{}, "/throws", "/invalid");
+  auto const replaced = answer_to(server, "GET " + target + " HTTP/1.0\r\nConnection: keep-alive\r\n\r\n");
+
+  REQUIRE(replaced.contains(" 500 "));
+  REQUIRE(replaced.contains("Connection: keep-alive"));
+
+  auto const both = answer_to(server, "GET /names-another HTTP/1.0\r\nConnection: keep-alive\r\n\r\n");
+
+  REQUIRE(both.contains("Connection: X-Internal"));
+  REQUIRE(both.contains("Connection: keep-alive"));
+}
+
+TEST_CASE("server: what cannot be written is told, as what a handler throws", "[server]") {
+  http::router router;
+  auto told = 0;
+
+  router.get("/whole", [](http::request) {
+    http::response answer;
+
+    answer.fields.add("Not A Token", "x");
+    return answer;
+  });
+  router.get("/in-pieces", [](http::request) {
+    http::response answer;
+
+    answer.fields.add("Not A Token", "x");
+    answer.body_writer = [](http::body_stream) -> task<> { co_return; };
+    return answer;
+  });
+
+  http::server const server{router, {.connection = {.on_handler_error = [&told](std::exception_ptr) { ++told; }}}};
+  auto const target = GENERATE(as<std::string>{}, "/whole", "/in-pieces");
+
+  REQUIRE(answer_to(server, get(target)).starts_with("HTTP/1.1 500"));
+  REQUIRE(told == 1);
+}
+
+TEST_CASE("response_writer: a 2xx given with its first write to CONNECT is no tunnel", "[server]") {
+  http::router router;
+
+  router.use([](http::request request, http::next const &next) -> task<http::response> {
+    auto answer = co_await next(std::move(request));
+
+    answer.status = http::status::forbidden;
+    answer.late_head_writer = [](http::body_stream out) -> task<> {
+      out.head(http::status::created, {});
+      co_await out.write("tunnel");
+    };
+    co_return answer;
+  });
+
+  auto const answer = answer_to(http::server{router}, "CONNECT x:1 HTTP/1.1\r\nHost: x:1\r\n\r\n");
+
+  REQUIRE_FALSE(answer.contains(" 201 "));
+  REQUIRE(answer.contains(" 501 "));
+}
