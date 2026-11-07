@@ -1484,7 +1484,7 @@ TEST_CASE("response_writer: a response goes on after its router", "[http][router
 
   auto response = quoll::test::run(loop, answered());
   kept_sink sink{&written};
-  auto const writer = response.value().body_writer;
+  auto const writer = response.value().late_head_writer;
 
   (void)quoll::test::run(loop, [&]() -> task<int> {
     co_await writer(http::body_stream{sink});

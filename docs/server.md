@@ -403,12 +403,12 @@ On a stop request:
 | A `body_writer` throws                                | 500 if nothing has left, otherwise [a body cut short](streaming.md#writing-a-response) | ends once it has started |
 
 What a handler answers is replaced, and `on_handler_error` told, when its peer would read it as something else: a 2xx to CONNECT,
-a tunnel, which is not offered, answers 501; a 1xx, which is no final response, and a `Content-Length` with no body, but to HEAD or
-as a 304, answer 500.
+a tunnel, which is not offered, answers 501; a 1xx, which is no final response, a `Content-Length` with no body, but to HEAD or
+as a 304, a body beside what writes one, and to HTTP/1.0 a `Transfer-Encoding` other than chunked, answer 500.
 
 `Expect: 100-continue` itself is handled for you: a request whose body has not come gets
 `100 Continue`, then its body is read. With an [`http::body_reader`](streaming.md#reading-a-request),
-this waits for the handler to ask for the body.
+this waits for the handler to ask for the body, unless its response has a writer: see [Streaming](streaming.md#reading-a-request).
 
 ## TLS
 
