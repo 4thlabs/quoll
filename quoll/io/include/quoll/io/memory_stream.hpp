@@ -39,6 +39,7 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/detail/memory_channel.hpp>
@@ -65,7 +66,8 @@ namespace quoll::io {
  * Writes never wait (the pipe is unbounded) and a read waits until the peer writes or closes; the reader resumes
  * on its own executor. A stop request on the reader's await_context ends a waiting read with
  * `std::errc::operation_canceled`. Destroying an end closes it, and the peer's writes then fail with
- * `std::errc::broken_pipe`. An end must not be destroyed or moved while one of its reads is pending.
+ * `std::errc::broken_pipe`. An end must not be destroyed or moved while one of its reads is pending, and neither may
+ * the coroutine suspended on that read.
  *
  * Move-only. Thread safety: none; both ends, and the stop requests reaching their reads, are used from one thread.
  */
@@ -192,13 +194,20 @@ public:
   ~memory_stream() { release(); }
 
   /** @brief Reads the bytes the peer wrote, waiting for some if there are none yet. */
-  [[nodiscard]] read_awaitable read_some(std::span<std::byte> buffer) noexcept { return {inbound(), buffer}; }
+  [[nodiscard]] read_awaitable read_some(std::span<std::byte> buffer QUOLL_LIFETIMEBOUND) noexcept QUOLL_LIFETIMEBOUND {
+    return {inbound(), buffer};
+  }
 
   /** @brief Hands all of `data` to the peer. */
-  [[nodiscard]] write_awaitable write_some(std::span<std::byte const> data) noexcept { return {outbound(), data}; }
+  [[nodiscard]] write_awaitable
+  write_some(std::span<std::byte const> data QUOLL_LIFETIMEBOUND) noexcept QUOLL_LIFETIMEBOUND {
+    return {outbound(), data};
+  }
 
   /** @brief Stops sending, as close() does: see HalfClosableStream. */
-  [[nodiscard]] shutdown_awaitable shutdown_send() noexcept { return shutdown_awaitable{outbound()}; }
+  [[nodiscard]] shutdown_awaitable shutdown_send() noexcept QUOLL_LIFETIMEBOUND {
+    return shutdown_awaitable{outbound()};
+  }
 
   /**
    * @brief Closes the sending side: the peer reads what was already written, then `io::error::end_of_stream`.

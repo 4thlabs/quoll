@@ -47,6 +47,7 @@
 #include <concepts>
 #include <cstdint>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace quoll::io {
@@ -92,7 +93,7 @@ public:
 private:
   struct vtable {
     async::task<any_stream> (*connect_tls)(void const *network, std::string host, std::uint16_t port,
-                                           tls_client_options const &options);
+                                           tls_client_options options);
     any_listener (*listen_tls)(void const *network, std::string address, std::uint16_t port,
                                tls_server_options const &options);
     async::detail::type_id type;
@@ -100,8 +101,10 @@ private:
 
   template <TlsNetwork N>
   static constexpr vtable vtable_for{
-      [](void const *network, std::string host, std::uint16_t port, tls_client_options const &options) {
-        return static_cast<N const *>(network)->connect_tls(std::move(host), port, options);
+      // A coroutine, so that what it is given stays until its task has ended: it may refer to it.
+      [](void const *network, std::string host, std::uint16_t port,
+         tls_client_options options) -> async::task<any_stream> {
+        co_return co_await static_cast<N const *>(network)->connect_tls(host, port, options);
       },
       [](void const *network, std::string address, std::uint16_t port, tls_server_options const &options) {
         return static_cast<N const *>(network)->listen_tls(std::move(address), port, options);
@@ -114,6 +117,7 @@ private:
 };
 
 static_assert(TlsNetwork<tls_network_ref>);
+static_assert(std::is_trivially_copyable_v<tls_network_ref>);
 
 } // namespace quoll::io
 

@@ -46,6 +46,7 @@
 #include <concepts>
 #include <cstdint>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace quoll::io {
@@ -95,8 +96,9 @@ private:
 
   template <Network N>
   static constexpr vtable vtable_for{
-      [](void const *network, std::string host, std::uint16_t port) {
-        return static_cast<N const *>(network)->connect(std::move(host), port);
+      // A coroutine, so that `host` stays until its task has ended: it may take a view of it.
+      [](void const *network, std::string host, std::uint16_t port) -> async::task<any_stream> {
+        co_return co_await static_cast<N const *>(network)->connect(host, port);
       },
       [](void const *network, std::string address, std::uint16_t port) {
         return static_cast<N const *>(network)->listen(std::move(address), port);
@@ -109,6 +111,7 @@ private:
 };
 
 static_assert(Network<network_ref>);
+static_assert(std::is_trivially_copyable_v<network_ref>);
 
 } // namespace quoll::io
 

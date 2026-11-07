@@ -38,9 +38,11 @@
 #define QUOLL_IO_ANY_LISTENER_HPP
 
 #include <quoll/async/detail/type_id.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/bound_listener.hpp>
+#include <quoll/io/detail/listener_vtable.hpp>
 #include <quoll/io/listener.hpp>
 
 #include <cassert>
@@ -53,35 +55,6 @@
 
 namespace quoll::io {
 
-namespace detail {
-
-struct listener_vtable {
-  async::task<any_stream> (*accept)(void *listener);
-  // Empty for a listener that is not a BoundListener.
-  std::optional<std::uint16_t> (*local_port)(void const *listener);
-  void (*destroy)(void *listener) noexcept;
-  async::detail::type_id type;
-};
-
-template <Listener L>
-inline constexpr listener_vtable listener_vtable_for{
-    [](void *listener) { return static_cast<L *>(listener)->accept(); },
-    [](void const *listener) -> std::optional<std::uint16_t> {
-      if constexpr (BoundListener<L>) {
-        return static_cast<L const *>(listener)->local_port();
-      } else {
-        return std::nullopt;
-      }
-    },
-    [](void *listener) noexcept {
-      // Owned from here: the unique_ptr frees the listener.
-      std::unique_ptr<L> const owned{static_cast<L *>(listener)};
-    },
-    async::detail::type_id_of<L>(),
-};
-
-} // namespace detail
-
 /**
  * @brief Owning, type-erased Listener; models Listener itself.
  *
@@ -89,8 +62,8 @@ inline constexpr listener_vtable listener_vtable_for{
  * hands out (see io::listen). The listener is allocated once, when it is wrapped: a server has a few, for its whole
  * life, so a small buffer would buy nothing. Accepting allocates no more than the wrapped listener does.
  *
- * Move-only; it moves without moving the wrapped listener, so a pending accept is not disturbed. A moved-from
- * any_listener can only be assigned to or destroyed.
+ * Move-only; it moves without moving the wrapped listener, so a pending accept is not disturbed, but it must not be
+ * destroyed or assigned to with one pending. A moved-from any_listener can only be assigned to or destroyed.
  *
  * Thread safety: same as the wrapped listener.
  */
@@ -99,7 +72,8 @@ public:
   /** @brief Takes `listener` over. */
   // The exclusion comes first: it stops Listener<any_listener> from checking this constructor against itself.
   template <class L>
-    requires(!std::same_as<std::remove_cvref_t<L>, any_listener> && !std::is_lvalue_reference_v<L> && Listener<L>)
+    requires(!std::same_as<std::remove_cvref_t<L>, any_listener> && !std::is_lvalue_reference_v<L> && Listener<L> &&
+             std::move_constructible<L>)
   explicit any_listener(L &&listener)
       : listener_(std::make_unique<L>(std::move(listener)).release()), vtable_(&detail::listener_vtable_for<L>) {}
 
@@ -109,20 +83,12 @@ public:
   any_listener(any_listener &&other) noexcept
       : listener_(std::exchange(other.listener_, nullptr)), vtable_(std::exchange(other.vtable_, nullptr)) {}
 
-  any_listener &operator=(any_listener &&other) noexcept {
-    if (this != &other) {
-      reset();
-      listener_ = std::exchange(other.listener_, nullptr);
-      vtable_ = std::exchange(other.vtable_, nullptr);
-    }
-
-    return *this;
-  }
+  any_listener &operator=(any_listener &&other) noexcept;
 
   ~any_listener() { reset(); }
 
   /** @brief The next connection a peer opens. */
-  [[nodiscard]] async::task<any_stream> accept() {
+  [[nodiscard]] async::task<any_stream> accept() QUOLL_LIFETIMEBOUND {
     assert(vtable_ != nullptr && "any_listener used after being moved from");
     return vtable_->accept(listener_);
   }
@@ -143,14 +109,15 @@ public:
                                                                                  : nullptr;
   }
 
-private:
-  void reset() noexcept {
-    if (vtable_ != nullptr) {
-      vtable_->destroy(listener_);
-      vtable_ = nullptr;
-      listener_ = nullptr;
-    }
+  /** @copydoc target */
+  template <class L>
+  [[nodiscard]] L const *target() const noexcept {
+    return vtable_ != nullptr && vtable_->type == async::detail::type_id_of<L>() ? static_cast<L const *>(listener_)
+                                                                                 : nullptr;
   }
+
+private:
+  void reset() noexcept;
 
   void *listener_;
   detail::listener_vtable const *vtable_;

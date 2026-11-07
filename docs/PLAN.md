@@ -457,7 +457,7 @@ flowchart TB
 |---|---|---|
 | `executor` | where / when a coroutine resumes; `post(work_item &)` links an intrusive node, no allocation | thread pool, asio, browser event loop |
 | `byte_stream` | `read_some` / `write_some` on raw bytes (`any_stream`, no allocation per operation) | asio sockets, memory |
-| `connector` | `(host, port, tls) -> task<any_stream>` | asio (+ssl), memory |
+| `connector` | `connect(host, port) -> task<any_stream>`, and `connect_tls` beside it | asio (+ssl) |
 | `http_transport` | `request -> task<response>`, for platforms that do HTTP themselves | `quoll::client` over a connector, browser `fetch` |
 | `Renderer` | what the diff of a view changes: nodes, classes, attributes, listeners | the DOM, memory in tests |
 

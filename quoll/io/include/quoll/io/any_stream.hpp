@@ -40,6 +40,7 @@
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/async/detail/type_id.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/detail/stream_vtable.hpp>
 #include <quoll/io/half_closable_stream.hpp>
@@ -66,8 +67,9 @@ namespace quoll::io {
  * and writing never allocate.
  *
  * Move-only. Like the wrapped stream, it must not be moved or destroyed while one of its operations is pending, and
- * has at most one read and one write pending at a time. A moved-from any_stream can only be assigned to or
- * destroyed.
+ * has at most one read and one write pending at a time: an operation is pending from its call until it has completed,
+ * or until its awaitable goes, and starting another then throws std::logic_error. A moved-from any_stream can only be
+ * assigned to or destroyed.
  *
  * Thread safety: same as the wrapped stream.
  */
@@ -84,12 +86,7 @@ public:
     awaitable(awaitable &&other) noexcept
         : awaitable_(std::exchange(other.awaitable_, nullptr)), vtable_(other.vtable_), pending_(other.pending_) {}
 
-    ~awaitable() {
-      if (awaitable_ != nullptr) {
-        vtable_->destroy(awaitable_);
-        *pending_ = false;
-      }
-    }
+    ~awaitable() { finish(); }
 
     [[nodiscard]] bool await_ready() { return vtable_->ready(awaitable_); }
 
@@ -98,10 +95,35 @@ public:
       return vtable_->suspend(awaitable_, handle, context);
     }
 
-    [[nodiscard]] io_result await_resume() { return vtable_->resume(awaitable_); }
+    // The next operation may start as soon as this one has its result, whatever holds this object, and its slot is
+    // free by then.
+    [[nodiscard]] io_result await_resume() {
+      finish_on_exit const finished{*this};
+
+      return vtable_->resume(awaitable_);
+    }
 
   private:
     friend class any_stream;
+
+    struct finish_on_exit {
+      awaitable &operation;
+
+      explicit finish_on_exit(awaitable &finishing) noexcept : operation(finishing) {}
+
+      finish_on_exit(finish_on_exit const &) = delete;
+      finish_on_exit &operator=(finish_on_exit const &) = delete;
+
+      ~finish_on_exit() { operation.finish(); }
+    };
+
+    void finish() noexcept {
+      if (awaitable_ != nullptr) {
+        vtable_->destroy(awaitable_);
+        awaitable_ = nullptr;
+        *pending_ = false;
+      }
+    }
 
     awaitable(void *wrapped, detail::awaitable_vtable const &vtable, bool &pending) noexcept
         : awaitable_(wrapped), vtable_(&vtable), pending_(&pending) {}
@@ -115,7 +137,7 @@ public:
   // The exclusion comes first: it stops ByteStream<any_stream> from checking this constructor against itself.
   template <class S>
     requires(!std::same_as<std::remove_cvref_t<S>, any_stream> && !std::is_lvalue_reference_v<S> &&
-             detail::erasable_stream<S> && std::move_constructible<S>)
+             detail::ErasableStream<S> && std::move_constructible<S>)
   explicit any_stream(S &&stream) {
     using block = detail::stream_block<S>;
 
@@ -145,9 +167,9 @@ public:
   ~any_stream() { reset(); }
 
   /** @brief Reads with the wrapped stream. */
-  [[nodiscard]] awaitable read_some(std::span<std::byte> buffer) {
+  [[nodiscard]] awaitable read_some(std::span<std::byte> buffer QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
     assert(vtable_ != nullptr && "any_stream used after being moved from");
-    assert(!reading_ && !shutting_down_ && "any_stream: a read or a shutdown is already pending");
+    refuse_if(reading_ || shutting_down_);
 
     auto *const wrapped = vtable_->read_some(block_, buffer);
 
@@ -156,9 +178,9 @@ public:
   }
 
   /** @brief Writes with the wrapped stream. */
-  [[nodiscard]] awaitable write_some(std::span<std::byte const> data) {
+  [[nodiscard]] awaitable write_some(std::span<std::byte const> data QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
     assert(vtable_ != nullptr && "any_stream used after being moved from");
-    assert(!writing_ && !shutting_down_ && "any_stream: a write or a shutdown is already pending");
+    refuse_if(writing_ || shutting_down_);
 
     auto *const wrapped = vtable_->write_some(block_, data);
 
@@ -170,9 +192,9 @@ public:
    * @brief Stops sending, with the wrapped stream: see HalfClosableStream. A stream that is not one reports
    * `std::errc::operation_not_supported`, so that a caller goes on as it would with no way to do this.
    */
-  [[nodiscard]] awaitable shutdown_send() {
+  [[nodiscard]] awaitable shutdown_send() QUOLL_LIFETIMEBOUND {
     assert(vtable_ != nullptr && "any_stream used after being moved from");
-    assert(!reading_ && !writing_ && !shutting_down_ && "any_stream: an operation is still pending");
+    refuse_if(reading_ || writing_ || shutting_down_);
 
     auto *const wrapped = vtable_->shutdown_send(block_);
 
@@ -183,13 +205,21 @@ public:
   /** @brief The wrapped stream if its type is exactly `S`, otherwise `nullptr`. */
   template <class S>
   [[nodiscard]] S *target() noexcept {
-    return is<S>() ? &static_cast<detail::stream_block<S> *>(block_)->stream : nullptr;
+    if constexpr (ByteStream<S>) {
+      return is<S>() ? &static_cast<detail::stream_block<S> *>(block_)->stream : nullptr;
+    } else {
+      return nullptr;
+    }
   }
 
   /** @copydoc target */
   template <class S>
   [[nodiscard]] S const *target() const noexcept {
-    return is<S>() ? &static_cast<detail::stream_block<S> const *>(block_)->stream : nullptr;
+    if constexpr (ByteStream<S>) {
+      return is<S>() ? &static_cast<detail::stream_block<S> const *>(block_)->stream : nullptr;
+    } else {
+      return nullptr;
+    }
   }
 
 private:
@@ -208,34 +238,18 @@ private:
     return vtable_ != nullptr && vtable_->type == async::detail::type_id_of<S>();
   }
 
-  void take(any_stream &other) noexcept {
-    assert(!other.reading_ && !other.writing_ && !other.shutting_down_ &&
-           "any_stream moved while one of its operations is pending");
-
-    vtable_ = std::exchange(other.vtable_, nullptr);
-
-    if (vtable_ == nullptr) {
-      return;
-    }
-
-    if (vtable_->relocate != nullptr) {
-      block_ = vtable_->relocate(other.block_, storage_);
-    } else {
-      block_ = other.block_;
-    }
-
-    other.block_ = nullptr;
-  }
-
-  void reset() noexcept {
-    if (vtable_ != nullptr) {
-      assert(!reading_ && !writing_ && !shutting_down_ &&
-             "any_stream destroyed while one of its operations is pending");
-      vtable_->destroy(block_);
-      vtable_ = nullptr;
-      block_ = nullptr;
+  // An operation over a live one would build over its awaitable in the slot, with what is undefined in a build with no
+  // assert: not worth the branch it saves.
+  static void refuse_if(bool pending) {
+    if (pending) {
+      throw_pending();
     }
   }
+
+  [[noreturn]] static void throw_pending();
+
+  void take(any_stream &other) noexcept;
+  void reset() noexcept;
 
   alignas(std::max_align_t) std::byte storage_[in_place_size];
   void *block_ = nullptr;

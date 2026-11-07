@@ -52,6 +52,8 @@
 namespace quoll::io {
 
 /** @brief Connector opening its connections with io::connect() and io::connect_tls(): through the executor's network.
+ *
+ * Thread safety: it holds nothing, and a connection goes through the executor of the task that asks for it.
  */
 struct network_connector {
   [[nodiscard]] async::task<any_stream> connect(std::string host, std::uint16_t port) const {

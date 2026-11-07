@@ -1,3 +1,4 @@
+// expect: no matching
 //   ___              _ _
 //  / _ \ _   _  ___ | | |
 // | | | | | | |/ _ \| | |
@@ -34,15 +35,10 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_IO_DETAIL_TLS_SERVICE_HPP
-#define QUOLL_IO_DETAIL_TLS_SERVICE_HPP
+#include <quoll/io/any_stream.hpp>
+#include <quoll/io/memory_stream.hpp>
 
-namespace quoll::io::detail {
+#include <utility>
 
-// How async::detail::require_service() names the service, for an application that finds it missing: often, OpenSSL was
-// not there when the build was configured.
-inline constexpr char const *tls_service_name = "TLS network, which needs OpenSSL when Quoll is configured";
-
-} // namespace quoll::io::detail
-
-#endif // QUOLL_IO_DETAIL_TLS_SERVICE_HPP
+// It takes a stream over: one left behind would still be there to use.
+void wrap(quoll::io::memory_stream &stream) { quoll::io::any_stream const wrapped{stream}; }

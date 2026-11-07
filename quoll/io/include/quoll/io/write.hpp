@@ -50,7 +50,8 @@ namespace quoll::io {
 
 /**
  * @brief Writes all of `data`, with as many `write_some` as it takes. On error, `transferred` counts the bytes
- * written before it. `stream` and `data` must outlive the returned task.
+ * written before it. A stream that reports no error and no progress, or more than it was given, is such an error:
+ * `std::errc::io_error`. `stream` and `data` must outlive the returned task.
  */
 template <ByteStream Stream>
 [[nodiscard]] async::task<io_result> write(Stream &stream QUOLL_LIFETIMEBOUND,
@@ -60,15 +61,21 @@ template <ByteStream Stream>
   while (written < data.size()) {
     auto const result = co_await stream.write_some(data.subspan(written));
 
-    assert(result.transferred <= data.size() - written && "ByteStream::write_some() wrote more than it was given");
+    if (result.transferred > data.size() - written) {
+      co_return io_result{std::make_error_code(std::errc::io_error), written};
+    }
+
     written += result.transferred;
 
     if (result.error) {
       co_return io_result{result.error, written};
     }
 
-    // ByteStream contract: without an error, a write of non-empty data makes progress.
-    assert(result.transferred > 0 && "ByteStream::write_some() wrote nothing and reported no error");
+    // ByteStream contract: without an error, a write of non-empty data makes progress. One that breaks it would have
+    // this loop spin for ever, with nothing to stop it if the stream never suspends.
+    if (result.transferred == 0) {
+      co_return io_result{std::make_error_code(std::errc::io_error), written};
+    }
   }
 
   co_return io_result{{}, written};

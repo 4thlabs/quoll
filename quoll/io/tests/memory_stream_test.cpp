@@ -353,3 +353,105 @@ TEST_CASE("io::write writes every byte", "[io][write]") {
 
   REQUIRE(run(write_all(left, "lost"))->error == std::errc::broken_pipe);
 }
+
+namespace {
+
+// Takes at most `piece` bytes a write, and after `until` bytes answers `answer`: what io::write has to make of it.
+struct cutting_stream {
+  std::size_t piece;
+  std::size_t until;
+  io::io_result answer;
+  std::size_t written = 0;
+
+  [[nodiscard]] static task<io::io_result> done(io::io_result result) { co_return result; }
+
+  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte>) { return done({}); }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
+    if (written >= until) {
+      return done(answer);
+    }
+
+    auto const size = std::min({piece, data.size(), until - written});
+
+    written += size;
+    return done({{}, size});
+  }
+};
+
+} // namespace
+
+TEST_CASE("io::write: goes on until all has left, and counts what left before an error", "[io]") {
+  std::string_view const data = "0123456789";
+
+  SECTION("short writes") {
+    cutting_stream stream{.piece = 3, .until = 100, .answer = {}};
+    auto const result = run(io::write(stream, bytes(data)));
+
+    REQUIRE_FALSE(result->error);
+    REQUIRE(result->transferred == 10);
+    REQUIRE(stream.written == 10);
+  }
+
+  SECTION("an error part of the way") {
+    cutting_stream stream{.piece = 3, .until = 6, .answer = {std::make_error_code(std::errc::broken_pipe), 0}};
+    auto const result = run(io::write(stream, bytes(data)));
+
+    REQUIRE(result->error == std::errc::broken_pipe);
+    REQUIRE(result->transferred == 6);
+  }
+
+  SECTION("an error with bytes of its own") {
+    cutting_stream stream{.piece = 3, .until = 6, .answer = {std::make_error_code(std::errc::broken_pipe), 2}};
+    auto const result = run(io::write(stream, bytes(data)));
+
+    REQUIRE(result->error == std::errc::broken_pipe);
+    REQUIRE(result->transferred == 8);
+  }
+
+  SECTION("no error and no progress ends, in every build") {
+    cutting_stream stream{.piece = 3, .until = 6, .answer = {}};
+    auto const result = run(io::write(stream, bytes(data)));
+
+    REQUIRE(result->error == std::errc::io_error);
+    REQUIRE(result->transferred == 6);
+  }
+
+  SECTION("more than it was given is no count to trust") {
+    cutting_stream stream{.piece = 3, .until = 6, .answer = {{}, 100}};
+    auto const result = run(io::write(stream, bytes(data)));
+
+    REQUIRE(result->error == std::errc::io_error);
+    REQUIRE(result->transferred == 6);
+  }
+}
+
+TEST_CASE("memory_stream: a stop asked for already ends a read that would wait", "[io][memory_stream]") {
+  auto [left, right] = io::make_memory_stream_pair();
+  quoll::async::run_loop loop;
+  std::stop_source source;
+  std::optional<received> read;
+
+  source.request_stop();
+  co_spawn(loop.get_executor(), read_once(left),
+           overloaded{[&](received value) { read = std::move(value); }, [](std::exception_ptr) {}}, source.get_token());
+  loop.run();
+
+  REQUIRE(read);
+  REQUIRE(read->error == std::errc::operation_canceled);
+}
+
+TEST_CASE("memory_stream: a reader a little behind does not keep all that went through", "[io][memory_stream]") {
+  io::detail::memory_channel channel;
+  std::array<std::byte, 64> chunk{};
+
+  // A writer always ahead: the buffer never empties.
+  (void)channel.write(chunk);
+
+  for (auto round = 0; round < 1000; ++round) {
+    (void)channel.write(chunk);
+    (void)channel.read(chunk);
+  }
+
+  REQUIRE(channel.held() <= 4 * chunk.size());
+}
