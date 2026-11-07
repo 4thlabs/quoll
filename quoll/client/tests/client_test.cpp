@@ -3656,11 +3656,51 @@ private:
   std::string reply_;
 };
 
+// Nothing will come, its writes fail, and the connection stays open: a read beside it would wait for ever.
+class never_answers {
+public:
+  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte>) {
+    co_await async::detail::slots{0}.acquire();
+    co_return io::io_result{};
+  }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) {
+    co_return io::io_result{std::make_error_code(std::errc::io_error), 0};
+  }
+};
+
+struct never_answers_connector {
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    co_return io::any_stream{never_answers{}};
+  }
+};
+
+// Closed by the server while a write is on its way, which waits until it is stopped.
+class closing_during_a_write {
+public:
+  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte>) {
+    co_await async::yield();
+    co_return io::io_result{io::make_error_code(io::error::end_of_stream), 0};
+  }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) {
+    co_await async::detail::slots{0}.acquire();
+    co_return io::io_result{};
+  }
+};
+
+struct closing_during_a_write_connector {
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    co_return io::any_stream{closing_during_a_write{}};
+  }
+};
+
 } // namespace
 
 TEST_CASE("http::client: a server that answers and goes is heard, though the request could not leave", "[client]") {
   async::run_loop loop;
-  auto const gone = GENERATE(std::errc::broken_pipe, std::errc::connection_reset, std::errc::connection_aborted);
+  auto const gone = GENERATE(std::errc::broken_pipe, std::errc::connection_reset, std::errc::connection_aborted,
+                             std::errc::not_connected, std::errc::network_reset);
   std::string const refusal = "HTTP/1.1 413 Too Large\r\nContent-Length: 2\r\n\r\nno";
   http::client const client{failing_writes_connector{std::make_error_code(gone), refusal}, "example.com", 80};
 
@@ -3725,6 +3765,35 @@ TEST_CASE("http::client: what came of a server gone is what it says, a bad messa
 
   REQUIRE(quoll::test::run(loop, code_of(false)) == http::error::bad_message);
   REQUIRE(quoll::test::run(loop, code_of(true)) == http::error::bad_message);
+}
+
+TEST_CASE("http::client: a server closing during a write is what the caller hears, no cancellation", "[client]") {
+  async::run_loop loop;
+  http::client_options options;
+
+  options.response_timeout = {};
+
+  http::client const client{closing_during_a_write_connector{}, "example.com", 80, options};
+  auto const streamed = GENERATE(false, true);
+  auto request = make_request(verb::post, "/");
+
+  request.body_writer = [](http::body_stream out) -> task<> { co_await out.write("body"); };
+
+  auto const sending = [&]() -> task<std::error_code> {
+    try {
+      if (streamed) {
+        (void)co_await client.stream(std::move(request));
+      } else {
+        (void)co_await client.send(std::move(request));
+      }
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()) == io::error::end_of_stream);
 }
 
 TEST_CASE("http::client: a connection whose request could not leave is not kept", "[client]") {
@@ -3796,26 +3865,7 @@ TEST_CASE("http::client: a body that could not leave says so once the wait for a
 
   options.response_timeout = 3s;
 
-  // Nothing will come, and the connection stays open.
-  class never_answers {
-  public:
-    [[nodiscard]] task<io::io_result> read_some(std::span<std::byte>) {
-      co_await async::detail::slots{0}.acquire();
-      co_return io::io_result{};
-    }
-
-    [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) {
-      co_return io::io_result{std::make_error_code(std::errc::io_error), 0};
-    }
-  };
-
-  struct connector {
-    [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
-      co_return io::any_stream{never_answers{}};
-    }
-  };
-
-  http::client const client{connector{}, "example.com", 80, options};
+  http::client const client{never_answers_connector{}, "example.com", 80, options};
   auto const streamed = GENERATE(false, true);
   auto request = make_request(verb::post, "/");
 
@@ -3846,26 +3896,7 @@ TEST_CASE("http::client: a write that fails with the connection still open ends 
 
   options.response_timeout = {};
 
-  // Nothing will come: a read beside it would wait for ever.
-  class never_answers {
-  public:
-    [[nodiscard]] task<io::io_result> read_some(std::span<std::byte>) {
-      co_await async::detail::slots{0}.acquire();
-      co_return io::io_result{};
-    }
-
-    [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) {
-      co_return io::io_result{std::make_error_code(std::errc::io_error), 0};
-    }
-  };
-
-  struct connector {
-    [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
-      co_return io::any_stream{never_answers{}};
-    }
-  };
-
-  http::client const client{connector{}, "example.com", 80, options};
+  http::client const client{never_answers_connector{}, "example.com", 80, options};
   auto request = make_request(verb::post, "/");
 
   request.body_writer = [](http::body_stream out) -> task<> { co_await out.write("body"); };
@@ -4042,15 +4073,22 @@ TEST_CASE("http::client: a URL or a host that would not read as itself is refuse
   for (std::string_view const url :
        {"http://example.com/%2F%2Fother.example", "http://example.com/%2e//other.example", "http://example.com/%09/x",
         "http://example.com/%09", "http://example.com/%0A", "http://example.com/%2e%09%2e/admin",
-        "http://example.com/..%5Cadmin", "http://../x", "http://./", "http://.example.com/", "http://a..b/"}) {
+        "http://example.com/..%5Cadmin", "http://example.com/a/%09/b", "http://example.com/a/%2F/b",
+        "http://example.com/a/%5C/b", "http://example.com/a/%09", "http://example.com/a%00b", "http://example.com:0/",
+        "http://../x", "http://./", "http://.example.com/", "http://a..b/"}) {
     REQUIRE_THROWS_AS(http::client{std::string{url}}, std::invalid_argument);
   }
 
   REQUIRE_NOTHROW(http::client{"http://example.com./"});
+  REQUIRE_NOTHROW(http::client{"http://example.com/"});
+  REQUIRE_NOTHROW(http::client{"http://example.com/api/v1/"});
+  REQUIRE_NOTHROW(http::client{"http://example.com/a%20b"});
 
   async::run_loop loop;
   memory_server server{loop.get_executor(), answering({}), 0, {}, {}};
 
   REQUIRE_THROWS_AS((http::client{memory_connector{server}, "a..b", 80}), std::invalid_argument);
-  REQUIRE_THROWS_AS((http::client{memory_connector{server}, "example.com", 0}), std::invalid_argument);
+  // A connector may make nothing of a port: it is the connector's to read.
+  REQUIRE_NOTHROW(http::client{memory_connector{server}, "example.com", 0});
+  REQUIRE_THROWS_AS((http::client{memory_connector{server}, "example.com", 65536}), std::invalid_argument);
 }

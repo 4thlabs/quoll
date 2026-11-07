@@ -205,6 +205,9 @@ TEST_CASE("router: dot segments are refused, an encoded slash stays in its segme
   REQUIRE(dispatch(router, verb::get, "/files/%2E%2E/%2e%2e/etc").status == http::status::bad_request);
   REQUIRE(dispatch(router, verb::get, "/files/./a").status == http::status::bad_request);
   REQUIRE(dispatch(router, verb::get, "/users/a%00b").status == http::status::bad_request);
+  // A URL parser drops these: `..` to one.
+  REQUIRE(dispatch(router, verb::get, "/files/.%09./etc").status == http::status::bad_request);
+  REQUIRE(dispatch(router, verb::get, "/files/%0A..%0D/etc").status == http::status::bad_request);
   // In a {name} parameter, a character like any other.
   REQUIRE(dispatch(router, verb::get, "/users/a%2Fb").body == "users.get\na/b\n?");
   // In the rest of the path, it would read as a separator once joined.

@@ -339,16 +339,22 @@ void check_prefix(std::string_view path) {
     invalid_url("a path that would not read as itself");
   }
 
-  // With what comes after it: `/%09` alone reads as nothing, and before `/x` as another server.
-  auto const followed = std::string{path.ends_with('/') ? path.substr(0, path.size() - 1) : path} + '/';
+  // The escapes are valid: checked above.
+  auto const read = read_as_a_parser_does(path.ends_with('/') ? path.substr(0, path.size() - 1) : path);
 
-  if (!reads_as_itself(followed)) {
+  if (!read) {
+    invalid_url("a NUL in the path");
+  }
+
+  // With what comes after it: `/%09` alone reads as nothing, and before `/x` as another server.
+  auto const followed = *read + '/';
+
+  if (followed.contains("//") || remove_dot_segments(followed).starts_with("//")) {
     invalid_url("a path a proxy could read as another server");
   }
 
-  // The escapes are valid and there is no NUL: checked above. A segment of it is judged as a router does, an encoded
-  // slash included, on what a parser reads: `%2e%09%2e` is a dot segment to one.
-  if (!http::detail::plain_segment(*read_as_a_parser_does(path))) {
+  // A segment of it is judged as a router does, an encoded slash included.
+  if (!http::detail::plain_segment(followed)) {
     invalid_url("a dot segment in the path");
   }
 }
