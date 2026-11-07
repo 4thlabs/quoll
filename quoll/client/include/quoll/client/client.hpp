@@ -146,8 +146,9 @@ public:
    * @endcode
    *
    * @throws std::invalid_argument for another URL, but for one relative to the page in a browser, and for a path that
-   * would not read as itself (a character RFC 3986
-   * does not allow there, an invalid escape, a dot segment, encoded or not, a NUL, an empty segment).
+   * would not read as itself (a character RFC 3986 does not allow there, an invalid escape, a dot segment, encoded or
+   * not, a NUL, an empty segment, encoded or not, what a proxy could read as another server), and for a host with an
+   * empty label or port 0.
    */
   explicit client(std::string_view url, client_options options = {});
 
@@ -174,7 +175,8 @@ public:
    * `Port` is any integer rather than `std::uint16_t`, so that braces after a URL always mean its options: `{}` would
    * otherwise convert better to a port, and `{connector, "http://example.com", {}}` read its URL as a host.
    *
-   * @throws std::invalid_argument for a port out of 1 to 65535, and for a host that is neither a name (letters, digits,
+   * @throws std::invalid_argument for a port out of 0 to 65535, which is the connector's to read, and for a host that
+   * is neither a name (letters, digits,
    * `-`, `_` and dots), an IPv4 nor an IPv6 address: one with a port (`localhost:8080`), brackets, a zone index,
    * spaces...
    */
@@ -273,8 +275,7 @@ private:
 
   template <std::integral Port>
   [[nodiscard]] static std::uint16_t checked_port(Port port) {
-    // As in a URL: no port 0, which nothing listens on.
-    if (port == 0 || !std::in_range<std::uint16_t>(port)) {
+    if (!std::in_range<std::uint16_t>(port)) {
       throw std::invalid_argument{"quoll::http::client: the port is out of range"};
     }
 

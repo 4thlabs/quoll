@@ -67,7 +67,7 @@ of it on a server or a proxy resolving them.
 
 Anything else throws `std::invalid_argument` here: another URL, or a path that would not read as
 itself (an invalid escape, a dot segment, a NUL, an empty segment, what a proxy could read as another server...). So do a host
-with an empty label, as `a..b`, and port 0.
+with an empty label, as `a..b`, and a URL with port 0.
 
 To connect some other way, give a connector, anything modelling `io::Connector`, before the URL, or
 with a host and a port, which count as `http` for a redirect. An `https` URL needs an

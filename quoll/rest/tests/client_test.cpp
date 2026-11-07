@@ -362,6 +362,7 @@ TEST_CASE("client: a path parameter must stay a segment where the template puts 
   // A URL parser resolves dot segments: the request would reach another endpoint, with the credentials.
   REQUIRE_THROWS_AS((void)client.call<files::one>("..", std::nullopt, {}), std::invalid_argument);
   REQUIRE_THROWS_AS((void)client.call<files::one>(".", std::nullopt, {}), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<files::one>(".\t.", std::nullopt, {}), std::invalid_argument);
   REQUIRE_THROWS_AS((void)client.call<files::one>("", std::nullopt, {}), std::invalid_argument);
   REQUIRE_THROWS_AS((void)client.call<files::rest_of>("a/../../admin"), std::invalid_argument);
   // Encoding hides the slash from the client, not from a proxy that decodes it, nor from Quoll's router.

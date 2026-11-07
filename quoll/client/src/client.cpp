@@ -363,9 +363,10 @@ template <class T>
 }
 
 // For the handler of what failed around an upload, once both sides have ended. The same as for a whole body: gone with
-// no answer, its request could not leave.
+// no answer, its request could not leave. Not for a write that the read ending has stopped: the read says what
+// happened.
 [[noreturn]] void throw_what_ended(upload const &sending, std::system_error const &thrown) {
-  if (sending.failure() && peer_has_gone(thrown.code())) {
+  if (sending.failure() && answer_may_still_come(sending.failure()) && peer_has_gone(thrown.code())) {
     throw std::system_error{sending.failure(), "quoll::http::client: cannot send the body"};
   }
 
@@ -535,8 +536,8 @@ private:
   async::detail::slots *places_ = nullptr;
 };
 
-// A stop already asked for: no connection is taken or opened, as what it would be awaited under completes without a word
-// on it, and it would close having carried nothing.
+// A stop already asked for: no connection is taken or opened, as what it would be awaited under completes without a
+// word on it, and it would close having carried nothing.
 void throw_if_stopped(std::stop_token const &token) {
   if (token.stop_requested()) {
     throw std::system_error{std::make_error_code(std::errc::operation_canceled), "quoll::http::client: stopped"};
