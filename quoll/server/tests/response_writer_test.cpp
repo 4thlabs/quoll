@@ -1164,3 +1164,28 @@ TEST_CASE("response_writer: to HEAD through local_transport, its first write sen
   REQUIRE(answer.value().body.empty());
   REQUIRE_FALSE(went_on);
 }
+
+TEST_CASE("response_writer: writes made before they are awaited send one head", "[server]") {
+  http::router router;
+
+  router.use([](http::request request, http::next const &next) -> task<http::response> {
+    auto answer = co_await next(std::move(request));
+
+    answer.late_head_writer = [](http::body_stream out) -> task<> {
+      auto first = out.write("one");
+      auto second = out.write("two");
+
+      co_await std::move(first);
+      co_await std::move(second);
+    };
+    co_return answer;
+  });
+  router.get("/rows", [](http::response_writer) -> task<> { co_return; });
+
+  auto const answer = answer_to(http::server{router}, get("/rows"));
+  auto const first_head = answer.find("HTTP/1.1 200");
+
+  REQUIRE(first_head == 0);
+  REQUIRE(answer.find("HTTP/1.1", first_head + 1) == std::string::npos);
+  REQUIRE(answer.ends_with("3\r\none\r\n3\r\ntwo\r\n0\r\n\r\n"));
+}

@@ -997,6 +997,12 @@ private:
                              "quoll::http::response_writer: HEAD has no body"};
     }
 
+    // A write made before the one before it ran, as a task starts when awaited, finds what that one opened.
+    if (sink_) {
+      co_await sink_->write(piece);
+      co_return;
+    }
+
     open();
 
     if (head_) {
