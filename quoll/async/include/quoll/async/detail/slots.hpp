@@ -41,6 +41,7 @@
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/async/detail/synchronized.hpp>
 #include <quoll/async/executor_ref.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/work_item.hpp>
 
 #include <coroutine>
@@ -53,9 +54,9 @@ namespace quoll::async::detail {
 
 // A number of places taken and given back, what waits for one waiting its turn, first come, first served. A stop
 // request on what waits ends its wait with std::errc::operation_canceled. Thread safety: all of it from any thread, but
-// release() posts what waits to its own executor from that thread, so that an executor whose post() is not thread-safe
-// (a run_loop) keeps to its own thread. The slots outlive what waits, and a wait is not destroyed before it resumes,
-// like any suspended chain of tasks.
+// release() and a stop request post what waits to its own executor from their thread, so that with an executor whose
+// post() is not thread-safe (a run_loop) both keep to its own thread. The slots outlive what waits, and a wait is not
+// destroyed before it resumes, like any suspended chain of tasks.
 class slots {
 public:
   explicit slots(std::size_t capacity) : state_(queue{capacity, nullptr, nullptr}) {}
@@ -143,7 +144,7 @@ public:
   };
 
   /** @brief A place: at once if there is one, otherwise when release() gives it. */
-  [[nodiscard]] acquire_awaitable acquire() noexcept { return acquire_awaitable{*this}; }
+  [[nodiscard]] acquire_awaitable acquire() noexcept QUOLL_LIFETIMEBOUND { return acquire_awaitable{*this}; }
 
   /** @brief Gives a place back: to what waits first, if anything does. */
   void release() noexcept {

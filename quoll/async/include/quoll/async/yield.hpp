@@ -45,8 +45,8 @@
 
 namespace quoll::async {
 
-/** @brief Awaitable returned by yield(). */
-class yield_awaitable {
+/** @brief Awaitable returned by yield(). Thread safety: none, as what awaits it. */
+class [[nodiscard]] yield_awaitable {
 public:
   [[nodiscard]] bool await_ready() const noexcept { return false; }
 

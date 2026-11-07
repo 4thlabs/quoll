@@ -111,7 +111,7 @@ detached spawn_root(E executor, task<T> work, Handler handler, std::stop_token s
 template <Executor E, class T, CompletionHandler<T> Handler>
 void co_spawn(E const &executor, task<T> work, Handler handler, std::stop_token stop_token = {}) {
   static_assert(
-      !std::is_same_v<T, std::exception_ptr>,
+      !std::convertible_to<T, std::exception_ptr>,
       "quoll::async::co_spawn: a task of std::exception_ptr cannot be told apart from a failure by its handler");
 
   auto root = [&] {

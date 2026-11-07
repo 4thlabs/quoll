@@ -62,6 +62,8 @@ namespace quoll::async {
 template <class T = void>
 class [[nodiscard]] task {
   static_assert(std::is_void_v<T> || std::is_object_v<T>, "task<T>: T must be void or an object type");
+  static_assert(alignof(std::conditional_t<std::is_void_v<T>, char, T>) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__,
+                "task<T>: T must not be over-aligned, as its coroutine frame is not");
 
 public:
   using promise_type = detail::task_promise<T>;
@@ -83,14 +85,17 @@ public:
 
   ~task() { destroy(); }
 
+  /** @brief Always false: a task starts when awaited. */
   [[nodiscard]] bool await_ready() const noexcept { return false; }
 
+  /** @brief Starts the task on `context`, which resumes `continuation` when it ends. */
   [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> continuation,
                                                       await_context const &context) noexcept {
     handle_.promise().start(continuation, context);
     return handle_;
   }
 
+  /** @brief What the task returned, or rethrows what it threw. */
   T await_resume() { return handle_.promise().take(); }
 
 private:

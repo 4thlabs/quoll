@@ -37,6 +37,8 @@
 #ifndef QUOLL_ASYNC_DETACHED_HPP
 #define QUOLL_ASYNC_DETACHED_HPP
 
+#include <quoll/async/completion_handler.hpp>
+
 #include <exception>
 #include <system_error>
 
@@ -80,6 +82,9 @@ struct detached_t {
  * @endcode
  */
 inline constexpr detached_t detached{};
+
+static_assert(CompletionHandler<detached_t, void>);
+static_assert(CompletionHandler<detached_t, int>);
 
 } // namespace quoll::async
 

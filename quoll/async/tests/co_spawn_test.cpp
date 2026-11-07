@@ -420,6 +420,31 @@ int exit_status_of_detached(std::exception_ptr failure) {
 
 } // namespace
 
+TEST_CASE("co_spawn: a handler that throws ends the program", "[async]") {
+  auto const child = ::fork();
+
+  REQUIRE(child >= 0);
+
+  if (child == 0) {
+    std::set_terminate([] { ::_exit(42); });
+
+    async::run_loop loop;
+
+    async::co_spawn(
+        loop.get_executor(), []() -> task<int> { co_return 1; }(),
+        quoll::test::overloaded{[](int) { throw std::runtime_error{"from the handler"}; },
+                                [](std::exception_ptr const &) {}});
+    loop.run();
+    ::_exit(0);
+  }
+
+  int status = 0;
+
+  REQUIRE(::waitpid(child, &status, 0) == child);
+  REQUIRE(WIFEXITED(status));
+  REQUIRE(WEXITSTATUS(status) == 42);
+}
+
 TEST_CASE("detached: only a stop lets the program go on", "[async]") {
   REQUIRE(exit_status_of_detached(std::make_exception_ptr(std::runtime_error{"failure"})) == 42);
   // As asio reports one.
@@ -431,3 +456,35 @@ TEST_CASE("detached: only a stop lets the program go on", "[async]") {
 }
 
 #endif
+
+TEST_CASE("co_spawn: what the task holds is gone before its handler runs", "[async]") {
+  async::run_loop loop;
+  auto alive = false;
+  std::optional<bool> alive_in_handler;
+
+  struct presence {
+    bool *flag;
+
+    explicit presence(bool &alive) : flag(&alive) { *flag = true; }
+
+    presence(presence const &) = delete;
+    presence &operator=(presence const &) = delete;
+    presence(presence &&) = delete;
+    presence &operator=(presence &&) = delete;
+
+    ~presence() { *flag = false; }
+  };
+
+  auto const holding = [&alive]() -> task<int> {
+    presence const held{alive};
+
+    co_await async::yield();
+    co_return 1;
+  };
+
+  async::co_spawn(loop.get_executor(), holding(),
+                  quoll::test::overloaded{[&](int) { alive_in_handler = alive; }, [](std::exception_ptr const &) {}});
+  loop.run();
+
+  REQUIRE(alive_in_handler == false);
+}

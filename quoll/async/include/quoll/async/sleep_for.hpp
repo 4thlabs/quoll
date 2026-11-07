@@ -39,6 +39,7 @@
 
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/detail/require_service.hpp>
+#include <quoll/async/detail/saturated.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer_ref.hpp>
 
@@ -47,6 +48,19 @@
 
 namespace quoll::async {
 
+namespace detail {
+
+[[nodiscard]] inline task<> sleeping(std::chrono::nanoseconds duration) {
+  auto const timer =
+      detail::require_service<timer_ref>(co_await current_executor(), "quoll::async::sleep_for", "timer");
+
+  if (!co_await timer.wait_for(duration)) {
+    throw std::system_error{std::make_error_code(std::errc::operation_canceled), "quoll::async::sleep_for"};
+  }
+}
+
+} // namespace detail
+
 /**
  * @brief Suspends the task for `duration`, through the timer of the executor it runs on (as quoll::runtime provides
  * it).
@@ -54,13 +68,9 @@ namespace quoll::async {
  * A stop request ends the sleep with std::system_error (std::errc::operation_canceled). Throws std::logic_error if the
  * executor offers no timer.
  */
-[[nodiscard]] inline task<> sleep_for(std::chrono::nanoseconds duration) {
-  auto const timer =
-      detail::require_service<timer_ref>(co_await current_executor(), "quoll::async::sleep_for", "timer");
-
-  if (!co_await timer.wait_for(duration)) {
-    throw std::system_error{std::make_error_code(std::errc::operation_canceled), "quoll::async::sleep_for"};
-  }
+template <class Rep, class Period>
+[[nodiscard]] task<> sleep_for(std::chrono::duration<Rep, Period> duration) {
+  return detail::sleeping(detail::saturated(duration));
 }
 
 } // namespace quoll::async

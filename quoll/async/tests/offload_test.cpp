@@ -98,23 +98,21 @@ private:
   calling_offloader const *offloader_;
 };
 
+// What quoll::test::run() takes, offering that offloader.
+struct offering_context {
+  async::run_loop loop;
+  calling_offloader offloader;
+
+  [[nodiscard]] offering_executor get_executor() { return offering_executor{loop.get_executor(), offloader}; }
+
+  void run() { loop.run(); }
+};
+
 template <class T>
 T run_offering(task<T> work, int &calls) {
-  async::run_loop loop;
-  calling_offloader const offloader{&calls};
-  std::optional<T> value;
-  std::exception_ptr failure;
+  offering_context context{.loop = {}, .offloader = calling_offloader{&calls}};
 
-  co_spawn(offering_executor{loop.get_executor(), offloader}, std::move(work),
-           quoll::test::overloaded{[&](T result) { value = std::move(result); },
-                                   [&](std::exception_ptr error) { failure = std::move(error); }});
-  loop.run();
-
-  if (failure) {
-    std::rethrow_exception(failure);
-  }
-
-  return std::move(*value);
+  return std::move(*quoll::test::run(context, std::move(work)));
 }
 
 } // namespace
@@ -174,4 +172,35 @@ TEST_CASE("offload: through the executor's offloader, a value, nothing or a fail
     REQUIRE_THROWS_AS(run_offering(without(), calls), std::runtime_error);
     REQUIRE(calls == 2);
   }
+}
+
+TEST_CASE("offload: a stop requested before it starts cancels it, on an executor that offers nothing too", "[async]") {
+  async::run_loop loop;
+  std::stop_source stop;
+  auto ran = false;
+
+  auto const working = [&ran]() -> task<int> {
+    co_await async::offload([&ran] { ran = true; });
+    co_return 1;
+  };
+
+  stop.request_stop();
+  REQUIRE_THROWS_AS(quoll::test::run(loop, working(), stop.get_token()), std::system_error);
+  REQUIRE_FALSE(ran);
+}
+
+TEST_CASE("offload: it calls what it holds as what it holds", "[async]") {
+  struct two_ways {
+    int operator()() & { return 1; }
+
+    std::string operator()() && { return "moved"; }
+  };
+
+  static_assert(std::same_as<decltype(async::offload(two_ways{})), task<int>>);
+
+  async::run_loop loop;
+
+  auto const working = []() -> task<int> { co_return co_await async::offload(two_ways{}); };
+
+  REQUIRE(quoll::test::run(loop, working()) == 1);
 }

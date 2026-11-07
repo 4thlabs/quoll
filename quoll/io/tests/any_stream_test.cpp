@@ -40,6 +40,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/io.hpp>
+#include <quoll/test/allocations.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/test/run.hpp>
 
@@ -63,17 +64,21 @@
 #include <type_traits>
 #include <utility>
 
-// Counts the allocations of each thread, to check that operations on an any_stream make none. The replacement is
-// global to the test program, the count is per thread: threads of other tests do not show in it. The standard's
-// array and nothrow forms call this one; over-aligned allocations are not counted.
-namespace {
-
-constinit thread_local std::size_t allocations = 0;
-
-} // namespace
+// Counts the allocations of each thread, to check that operations on an any_stream make none, and fails one when a test
+// asks: see quoll::test::allocations.
+using quoll::test::allocations;
 
 void *operator new(std::size_t size) {
   ++allocations;
+
+  if (quoll::test::allocations_before_failing == 0) {
+    quoll::test::allocations_before_failing = -1;
+    throw std::bad_alloc{};
+  }
+
+  if (quoll::test::allocations_before_failing > 0) {
+    --quoll::test::allocations_before_failing;
+  }
 
   if (auto *const memory = std::malloc(size == 0 ? 1 : size)) {
     return memory;

@@ -40,8 +40,13 @@
 #include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/test/overloaded.hpp>
+#include <quoll/test/run.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+
+#include <algorithm>
+#include <cstdint>
+#include <limits>
 
 #include <exception>
 #include <memory>
@@ -199,4 +204,49 @@ TEST_CASE("co_spawn hands a failing post to the caller and destroys the task", "
   // The task never ran, its handler was not invoked, and its frame (holding a copy of the resource) is gone.
   REQUIRE_FALSE(handled);
   REQUIRE(resource.use_count() == 1);
+}
+
+namespace {
+
+[[gnu::noinline]] std::uintptr_t where_the_stack_is() {
+  volatile char here = 0;
+
+  return reinterpret_cast<std::uintptr_t>(&here);
+}
+
+} // namespace
+
+TEST_CASE("task: a long loop over tasks that do not suspend does not grow the stack", "[async]") {
+  std::uintptr_t lowest = std::numeric_limits<std::uintptr_t>::max();
+  std::uintptr_t highest = 0;
+
+  auto const immediate = [&]() -> quoll::async::task<int> {
+    auto const here = where_the_stack_is();
+
+    lowest = std::min(lowest, here);
+    highest = std::max(highest, here);
+    co_return 1;
+  };
+
+  constexpr auto rounds = 20'000;
+
+  auto const looping = [&]() -> quoll::async::task<long> {
+    long sum = 0;
+
+    for (auto round = 0; round < rounds; ++round) {
+      sum += co_await immediate();
+    }
+
+    co_return sum;
+  };
+
+  quoll::async::run_loop loop;
+
+  REQUIRE(quoll::test::run(loop, looping()) == rounds);
+
+// A sanitizer's frames make no tail calls: the program gets more stack, and a debug build there is what it is.
+#if !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
+  // A few frames, rather than one per round. A stack limit would only see this with many more rounds.
+  REQUIRE(highest - lowest < 16 * 1024);
+#endif
 }

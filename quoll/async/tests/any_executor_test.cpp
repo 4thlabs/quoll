@@ -177,3 +177,25 @@ TEST_CASE("a task finds the services of the executor it runs on", "[async][any_e
   REQUIRE(greeted == "from the executor");
   REQUIRE(quoll::test::run(greet()) == "none");
 }
+
+TEST_CASE("any_executor: what it holds in place moves whole, and one moved from can be assigned", "[async]") {
+  using in_place = greeting_executor<0>;
+
+  static_assert(async::detail::fits_in_place<in_place>());
+  static_assert(!async::detail::fits_in_place<big_executor>());
+
+  run_loop loop;
+  async::any_executor first{in_place{loop, std::string(100, 'a')}};
+  auto second = std::move(first);
+
+  REQUIRE(second.query<greeting>()->text == std::string(100, 'a'));
+
+  // Assigned after a move, as the class says it can be.
+  first = async::any_executor{big_executor{loop, "big"}}; // NOLINT(bugprone-use-after-move)
+
+  REQUIRE(first.query<greeting>()->text == "big");
+
+  first = std::move(second);
+
+  REQUIRE(first.query<greeting>()->text == std::string(100, 'a'));
+}

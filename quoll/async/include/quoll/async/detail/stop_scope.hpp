@@ -51,7 +51,7 @@ namespace quoll::async::detail {
 // Awaits a task under `stop_token` rather than the awaiter's, on the awaiter's executor. Movable until it suspends, so
 // that it can be co_await-ed as a temporary.
 template <class T>
-class stop_scope {
+class [[nodiscard]] stop_scope {
 public:
   stop_scope(task<T> work, std::stop_token stop_token) noexcept
       : work_(std::move(work)), stop_token_(std::move(stop_token)) {}

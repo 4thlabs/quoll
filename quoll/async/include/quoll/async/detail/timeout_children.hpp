@@ -37,7 +37,9 @@
 #ifndef QUOLL_ASYNC_DETAIL_TIMEOUT_CHILDREN_HPP
 #define QUOLL_ASYNC_DETAIL_TIMEOUT_CHILDREN_HPP
 
+#include <quoll/async/detail/stop_on_exit.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer_ref.hpp>
 
@@ -66,30 +68,15 @@ struct timeout_stop_forwarder {
   }
 };
 
-// Requests a stop at the end of its scope, however the scope ends.
-class stop_on_exit {
-public:
-  explicit stop_on_exit(std::stop_source &source) noexcept : source_(&source) {}
-
-  stop_on_exit(stop_on_exit const &) = delete;
-  stop_on_exit(stop_on_exit &&) = delete;
-  stop_on_exit &operator=(stop_on_exit const &) = delete;
-  stop_on_exit &operator=(stop_on_exit &&) = delete;
-
-  ~stop_on_exit() { source_->request_stop(); }
-
-private:
-  std::stop_source *source_;
-};
-
 template <class T>
-[[nodiscard]] task<T> timeout_work(task<T> work, timeout_state &state) {
+[[nodiscard]] task<T> timeout_work(task<T> work, timeout_state &state QUOLL_LIFETIMEBOUND) {
   stop_on_exit const stop_watchdog{state.watchdog};
 
   co_return co_await stop_scope<T>{std::move(work), state.work.get_token()};
 }
 
-[[nodiscard]] inline task<> timeout_watchdog(timer_ref timer, std::chrono::nanoseconds timeout, timeout_state &state) {
+[[nodiscard]] inline task<> timeout_watchdog(timer_ref timer, std::chrono::nanoseconds timeout,
+                                             timeout_state &state QUOLL_LIFETIMEBOUND) {
   stop_on_exit const stop_work{state.work};
 
   state.expired = co_await stop_scope<bool>{timer.wait_for(timeout), state.watchdog.get_token()};

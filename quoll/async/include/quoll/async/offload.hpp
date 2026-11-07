@@ -38,6 +38,7 @@
 #define QUOLL_ASYNC_OFFLOAD_HPP
 
 #include <quoll/async/current_executor.hpp>
+#include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/offloader_ref.hpp>
 #include <quoll/async/task.hpp>
 
@@ -45,6 +46,8 @@
 #include <exception>
 #include <functional>
 #include <optional>
+#include <stop_token>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 
@@ -61,16 +64,25 @@ namespace quoll::async {
  * Through the executor's async::offloader_ref, as quoll::runtime offers one. On an executor that offers none, which has
  * no loop to hold up or no other thread to go to (a thread pool, a browser's event loop), `work` runs right there.
  * `work` and what it refers to must not need the loop's thread: what it touches, nothing else touches until the task
- * completes. A stop request does not interrupt it once started.
+ * completes. A stop request cancels it before it starts, with
+ * std::system_error (std::errc::operation_canceled), on any executor, and does not interrupt it once started.
  */
-template <std::invocable F>
-[[nodiscard]] task<std::invoke_result_t<F>> offload(F work) {
-  using result = std::invoke_result_t<F>;
+template <class F>
+  requires std::invocable<F &>
+[[nodiscard]] task<std::invoke_result_t<F &>> offload(F work) {
+  using result = std::invoke_result_t<F &>;
 
   auto const executor = co_await current_executor();
   auto const offloader = executor.template query<offloader_ref>();
 
   if (!offloader) {
+    // As what an offloader does with what has not started.
+    std::stop_token const stop_token = co_await current_stop_token();
+
+    if (stop_token.stop_requested()) {
+      throw std::system_error{std::make_error_code(std::errc::operation_canceled), "quoll::async::offload"};
+    }
+
     co_return std::invoke(work);
   }
 

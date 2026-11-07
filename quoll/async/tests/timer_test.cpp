@@ -350,3 +350,26 @@ TEST_CASE("timer_ref::now() goes by the clock the timer waits by", "[async][time
 
   REQUIRE(quoll::test::run(time, time_of_a_wait(quoll::async::timer_ref{executor}, 3s)) == 3s);
 }
+
+TEST_CASE("timer: a duration too long for nanoseconds is no timeout that has expired", "[async][timer]") {
+  using quoll::async::detail::saturated;
+  using namespace std::chrono;
+
+  static_assert(saturated(seconds::max()) == nanoseconds::max());
+  static_assert(saturated(seconds::min()) == nanoseconds::min());
+  static_assert(saturated(seconds{1}) == nanoseconds{1'000'000'000});
+  static_assert(saturated(nanoseconds::max()) == nanoseconds::max());
+
+  quoll::test::virtual_time time;
+
+  auto const working = []() -> quoll::async::task<int> {
+    co_await quoll::async::sleep_for(hours{1});
+    co_return 1;
+  };
+
+  auto const bounded = [&]() -> quoll::async::task<int> {
+    co_return co_await quoll::async::with_timeout(seconds::max(), working());
+  };
+
+  REQUIRE(quoll::test::run(time, bounded()) == 1);
+}

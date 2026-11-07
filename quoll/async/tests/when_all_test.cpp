@@ -131,3 +131,72 @@ TEST_CASE("when_all rethrows after every child completed", "[async][when_all]") 
   REQUIRE(result);
   REQUIRE(*result);
 }
+
+namespace {
+
+quoll::async::task<int> throwing_at_once(int value) {
+  throw value;
+  co_return value;
+}
+
+quoll::async::task<int> throwing_after_a_turn(int value) {
+  co_await quoll::async::yield();
+  throw value;
+}
+
+struct move_throws {
+  move_throws() = default;
+
+  move_throws(move_throws const &) { throw std::runtime_error{"copied"}; }
+
+  move_throws(move_throws &&) { throw std::runtime_error{"moved"}; }
+
+  move_throws &operator=(move_throws const &) = delete;
+  move_throws &operator=(move_throws &&) = delete;
+  ~move_throws() = default;
+};
+
+quoll::async::task<move_throws> a_value_whose_move_throws() { co_return move_throws{}; }
+
+template <class Work>
+int thrown_by(Work work) {
+  try {
+    (void)run(std::move(work));
+  } catch (int const value) {
+    return value;
+  }
+
+  return 0;
+}
+
+} // namespace
+
+TEST_CASE("when_all: the first exception is what comes out", "[async][when_all]") {
+  // The one that throws while the others start.
+  REQUIRE(thrown_by(when_all(throwing_at_once(1), throwing_after_a_turn(2))) == 1);
+  // Whichever order they started in.
+  REQUIRE(thrown_by(when_all(throwing_after_a_turn(2), throwing_at_once(1))) == 1);
+  REQUIRE(thrown_by(when_all(throwing_at_once(1), throwing_at_once(2))) == 1);
+}
+
+TEST_CASE("when_all: a child throwing before it suspends leaves the others to end", "[async][when_all]") {
+  auto ended = false;
+
+  auto const other = [&ended]() -> task<int> {
+    co_await quoll::async::yield();
+    ended = true;
+    co_return 1;
+  };
+
+  REQUIRE(thrown_by(when_all(throwing_at_once(1), other())) == 1);
+  REQUIRE(ended);
+}
+
+TEST_CASE("when_all: a value whose move throws comes out as a failure", "[async][when_all]") {
+  auto const awaiting = []() -> task<int> {
+    (void)co_await when_all(a_value_whose_move_throws());
+    co_return 1;
+  };
+
+  REQUIRE_THROWS_AS(run(awaiting()), std::runtime_error);
+}

@@ -37,6 +37,8 @@
 #ifndef QUOLL_ASYNC_DETAIL_SYNCHRONIZED_HPP
 #define QUOLL_ASYNC_DETAIL_SYNCHRONIZED_HPP
 
+#include <quoll/async/detail/something_to_await.hpp>
+
 #include <concepts>
 #include <functional>
 #include <mutex>
@@ -44,10 +46,6 @@
 #include <utility>
 
 namespace quoll::async::detail {
-
-template <class T>
-concept SomethingToAwait =
-    requires(T &value) { value.await_ready(); } || requires(T &value) { value.operator co_await(); };
 
 /**
  * A value and the mutex that protects it, in one: the value is only given to a function, under the lock, so that no
