@@ -457,33 +457,38 @@ TEST_CASE("detached: only a stop lets the program go on", "[async]") {
 
 #endif
 
+namespace {
+
+task<int> holding_a_value(std::shared_ptr<int> held) {
+  co_await async::yield();
+  co_return *held;
+}
+
+task<> holding_nothing_to_return(std::shared_ptr<int> held) {
+  co_await async::yield();
+  *held = 2;
+}
+
+} // namespace
+
 TEST_CASE("co_spawn: what the task holds is gone before its handler runs", "[async]") {
   async::run_loop loop;
-  auto alive = false;
+  auto held = std::make_shared<int>(1);
+  std::weak_ptr<int> const watching = held;
   std::optional<bool> alive_in_handler;
 
-  struct presence {
-    bool *flag;
+  SECTION("with a value") {
+    async::co_spawn(loop.get_executor(), holding_a_value(std::move(held)),
+                    quoll::test::overloaded{[&](int) { alive_in_handler = !watching.expired(); },
+                                            [](std::exception_ptr const &) {}});
+  }
 
-    explicit presence(bool &alive) : flag(&alive) { *flag = true; }
+  SECTION("without") {
+    async::co_spawn(
+        loop.get_executor(), holding_nothing_to_return(std::move(held)),
+        quoll::test::overloaded{[&] { alive_in_handler = !watching.expired(); }, [](std::exception_ptr const &) {}});
+  }
 
-    presence(presence const &) = delete;
-    presence &operator=(presence const &) = delete;
-    presence(presence &&) = delete;
-    presence &operator=(presence &&) = delete;
-
-    ~presence() { *flag = false; }
-  };
-
-  auto const holding = [&alive]() -> task<int> {
-    presence const held{alive};
-
-    co_await async::yield();
-    co_return 1;
-  };
-
-  async::co_spawn(loop.get_executor(), holding(),
-                  quoll::test::overloaded{[&](int) { alive_in_handler = alive; }, [](std::exception_ptr const &) {}});
   loop.run();
 
   REQUIRE(alive_in_handler == false);

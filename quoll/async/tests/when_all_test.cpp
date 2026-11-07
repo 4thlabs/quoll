@@ -144,19 +144,29 @@ quoll::async::task<int> throwing_after_a_turn(int value) {
   throw value;
 }
 
-struct move_throws {
-  move_throws() = default;
+// Throws at the move it is told to: each of those a value goes through on its way out of when_all fails in turn.
+struct moves_counted {
+  static inline int before_throwing = -1;
 
-  move_throws(move_throws const &) { throw std::runtime_error{"copied"}; }
+  moves_counted() = default;
+  moves_counted(moves_counted const &) = delete;
+  moves_counted &operator=(moves_counted const &) = delete;
+  moves_counted &operator=(moves_counted &&) = delete;
+  ~moves_counted() = default;
 
-  move_throws(move_throws &&) { throw std::runtime_error{"moved"}; }
+  moves_counted(moves_counted &&) {
+    if (before_throwing == 0) {
+      before_throwing = -1;
+      throw std::runtime_error{"moved"};
+    }
 
-  move_throws &operator=(move_throws const &) = delete;
-  move_throws &operator=(move_throws &&) = delete;
-  ~move_throws() = default;
+    if (before_throwing > 0) {
+      --before_throwing;
+    }
+  }
 };
 
-quoll::async::task<move_throws> a_value_whose_move_throws() { co_return move_throws{}; }
+quoll::async::task<moves_counted> a_value_counting_its_moves() { co_return moves_counted{}; }
 
 template <class Work>
 int thrown_by(Work work) {
@@ -192,11 +202,29 @@ TEST_CASE("when_all: a child throwing before it suspends leaves the others to en
   REQUIRE(ended);
 }
 
-TEST_CASE("when_all: a value whose move throws comes out as a failure", "[async][when_all]") {
+TEST_CASE("when_all: a value whose move throws comes out as a failure, wherever it does", "[async][when_all]") {
   auto const awaiting = []() -> task<int> {
-    (void)co_await when_all(a_value_whose_move_throws());
+    (void)co_await when_all(a_value_counting_its_moves());
     co_return 1;
   };
 
-  REQUIRE_THROWS_AS(run(awaiting()), std::runtime_error);
+  auto failed = 0;
+
+  for (auto move = 0;; ++move) {
+    moves_counted::before_throwing = move;
+
+    try {
+      auto const result = run(awaiting());
+
+      REQUIRE(result == 1);
+      break;
+    } catch (std::runtime_error const &) {
+      ++failed;
+    }
+  }
+
+  moves_counted::before_throwing = -1;
+
+  // In the child, into its slot, and into what when_all gives.
+  REQUIRE(failed >= 3);
 }

@@ -28,6 +28,12 @@ if(NOT TARGET quoll_warnings)
 endif()
 
 #
+# Coroutines resuming each other grow the stack unless this is a tail call, which GCC only makes at -O2 by default: a
+# long loop over tasks that do not suspend would work in a Release build, and overflow in a Debug one.
+function(quoll_tail_calls target scope)
+  target_compile_options(${target} ${scope} $<$<CXX_COMPILER_ID:GNU>:-foptimize-sibling-calls>)
+endfunction()
+
 # Declare a module from its CMakeLists.txt (quoll/<module>/, or quoll/adapters/<module>/ for an adapter):
 #
 #   quoll_declare_module(NAME <module> [SOURCES <files>...] [DEPS <targets>...] [PRIVATE_DEPS <targets>...])
@@ -36,12 +42,6 @@ endif()
 # publishing every header under the include/ directory next to that CMakeLists.txt. With QUOLL_BUILD_TESTS and QUOLL_HEADER_CHECKS, each header is also compiled
 # alone in its own translation unit, which enforces the self-contained header rule.
 #
-# Coroutines resuming each other grow the stack unless this is a tail call, which GCC only makes at -O2 by default: a
-# long loop over tasks that do not suspend would work in a Release build, and overflow in a Debug one.
-function(quoll_tail_calls target scope)
-  target_compile_options(${target} ${scope} $<$<CXX_COMPILER_ID:GNU>:-foptimize-sibling-calls>)
-endfunction()
-
 function(quoll_declare_module)
   cmake_parse_arguments(PARSE_ARGV 0 QUOLL_MODULE "" "NAME" "SOURCES;DEPS;PRIVATE_DEPS")
 

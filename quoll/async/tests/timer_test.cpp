@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/any_executor.hpp>
+#include <quoll/async/detail/saturated.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/executor_ref.hpp>
 #include <quoll/async/run_loop.hpp>
@@ -50,8 +51,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <limits>
 #include <memory>
 #include <optional>
+#include <ratio>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
@@ -359,6 +362,11 @@ TEST_CASE("timer: a duration too long for nanoseconds is no timeout that has exp
   static_assert(saturated(seconds::min()) == nanoseconds::min());
   static_assert(saturated(seconds{1}) == nanoseconds{1'000'000'000});
   static_assert(saturated(nanoseconds::max()) == nanoseconds::max());
+  // Its own common type would overflow, or round up past the end.
+  REQUIRE(saturated(duration<float>{9223371776.F}) > nanoseconds::zero());
+  REQUIRE(saturated(duration<long long, std::ratio<3, 2'000'000'000>>{4'000'000'000'000'000'000}) >
+          nanoseconds{5'999'999'000'000'000'000});
+  REQUIRE(saturated(duration<double>{std::numeric_limits<double>::quiet_NaN()}) == nanoseconds::min());
 
   quoll::test::virtual_time time;
 

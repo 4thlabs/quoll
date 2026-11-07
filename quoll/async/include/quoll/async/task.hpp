@@ -62,8 +62,6 @@ namespace quoll::async {
 template <class T = void>
 class [[nodiscard]] task {
   static_assert(std::is_void_v<T> || std::is_object_v<T>, "task<T>: T must be void or an object type");
-  static_assert(alignof(std::conditional_t<std::is_void_v<T>, char, T>) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__,
-                "task<T>: T must not be over-aligned, as its coroutine frame is not");
 
 public:
   using promise_type = detail::task_promise<T>;

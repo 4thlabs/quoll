@@ -38,6 +38,7 @@
 #define QUOLL_ASYNC_DETAIL_SATURATED_HPP
 
 #include <chrono>
+#include <concepts>
 
 namespace quoll::async::detail {
 
@@ -46,19 +47,25 @@ namespace quoll::async::detail {
 template <class Rep, class Period>
 [[nodiscard]] constexpr std::chrono::nanoseconds saturated(std::chrono::duration<Rep, Period> duration) noexcept {
   using std::chrono::nanoseconds;
-  using wide = std::chrono::duration<long double, std::nano>;
 
-  auto const asked = std::chrono::duration_cast<wide>(duration);
+  if constexpr (std::same_as<std::chrono::duration<Rep, Period>, nanoseconds>) {
+    return duration;
+  } else {
+    using wide = std::chrono::duration<long double, std::nano>;
 
-  if (asked >= wide{nanoseconds::max()}) {
-    return nanoseconds::max();
+    auto const asked = std::chrono::duration_cast<wide>(duration).count();
+
+    if (asked >= static_cast<long double>(nanoseconds::max().count())) {
+      return nanoseconds::max();
+    }
+
+    // What is no number is no time to wait: not to be read as all the time there is.
+    if (!(asked > static_cast<long double>(nanoseconds::min().count()))) {
+      return nanoseconds::min();
+    }
+
+    return nanoseconds{static_cast<nanoseconds::rep>(asked)};
   }
-
-  if (asked <= wide{nanoseconds::min()}) {
-    return nanoseconds::min();
-  }
-
-  return std::chrono::duration_cast<nanoseconds>(duration);
 }
 
 } // namespace quoll::async::detail

@@ -47,6 +47,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <optional>
 
 #include <exception>
 #include <memory>
@@ -209,9 +210,7 @@ TEST_CASE("co_spawn hands a failing post to the caller and destroys the task", "
 namespace {
 
 [[gnu::noinline]] std::uintptr_t where_the_stack_is() {
-  volatile char here = 0;
-
-  return reinterpret_cast<std::uintptr_t>(&here);
+  return reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0));
 }
 
 } // namespace
@@ -249,4 +248,23 @@ TEST_CASE("task: a long loop over tasks that do not suspend does not grow the st
   // A few frames, rather than one per round. A stack limit would only see this with many more rounds.
   REQUIRE(highest - lowest < 16 * 1024);
 #endif
+}
+
+namespace {
+
+// A task of a type not yet complete, as a step holding the next one.
+struct step {
+  int value = 0;
+  std::optional<quoll::async::task<step>> next;
+};
+
+} // namespace
+
+TEST_CASE("task: of a type incomplete where it is named", "[async]") {
+  auto const making = []() -> quoll::async::task<step> { co_return step{.value = 1, .next = std::nullopt}; };
+  auto const reading = [&]() -> quoll::async::task<int> { co_return (co_await making()).value; };
+
+  quoll::async::run_loop loop;
+
+  REQUIRE(quoll::test::run(loop, reading()) == 1);
 }

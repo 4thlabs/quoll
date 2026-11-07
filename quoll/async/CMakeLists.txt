@@ -20,12 +20,13 @@ quoll_declare_tests(
     quoll::async
 )
 
-# What synchronized refuses, with what the compiler says.
+# What the module refuses, with what the compiler says.
 quoll_declare_compile_fail_tests(
   SOURCES
     tests/compile_fail/co_spawn_converts_to_exception_ptr.cpp
     tests/compile_fail/synchronized_await.cpp
     tests/compile_fail/synchronized_free_co_await.cpp
+    tests/compile_fail/synchronized_rvalue_co_await.cpp
     tests/compile_fail/task_explicit_conversion.cpp
     tests/compile_fail/task_over_aligned.cpp
     tests/compile_fail/synchronized_reference.cpp

@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detached.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/run_loop.hpp>
@@ -81,35 +82,32 @@ TEST_CASE("task_group: join ends with the last task", "[async]") {
   async::detail::task_group group;
   auto joined = false;
 
-  auto const joining = [&]() -> task<int> {
+  auto const joining = [&]() -> task<> {
     co_await group.join();
     joined = true;
-    co_return 1;
   };
 
   auto const running = [&]() -> task<int> {
     group.started();
     group.started();
-
-    auto const ended = [&group]() -> task<> {
-      co_await async::yield();
-      group.ended();
-    };
-
-    async::co_spawn(loop.get_executor(), ended(), [](auto &&...) noexcept {});
-    co_await async::yield();
+    async::co_spawn(loop.get_executor(), joining(), async::detached);
     co_await async::yield();
 
-    // One is left.
-    auto const waiting = !joined;
+    // It waits, for the two.
+    auto const waited_for_two = !joined;
+
+    group.ended();
+    co_await async::yield();
+
+    auto const waited_for_one = !joined;
     auto const live = group.live();
 
     group.ended();
-    co_return (waiting && live == 1) ? co_await joining() : 0;
+    co_await async::yield();
+    co_return waited_for_two &&waited_for_one &&live == 1 && joined ? 1 : 0;
   };
 
   REQUIRE(quoll::test::run(loop, running()) == 1);
-  REQUIRE(joined);
   REQUIRE(group.live() == 0);
 }
 

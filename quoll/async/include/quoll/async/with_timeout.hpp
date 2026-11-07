@@ -56,7 +56,7 @@
 namespace quoll::async {
 
 /**
- * @brief Runs `work`, and requests it to stop if it has not finished after `timeout`, through the timer of the executor
+ * @brief Runs `work`, and requests it to stop if it has not finished after `asked`, through the timer of the executor
  * it runs on (as quoll::runtime provides it).
  *
  * Returns what `work` returns and rethrows what it throws, with one exception: when the timeout has expired, its

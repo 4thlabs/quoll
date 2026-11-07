@@ -39,11 +39,13 @@
 
 namespace quoll::async::detail {
 
-// What a co_await would take, by any of the ways the language gives.
+// What a co_await would take, by any of the ways the language gives, as what a function returns too.
 template <class T>
-concept SomethingToAwait = requires(T &value) { value.await_ready(); } || requires(T &value) {
-  value.operator co_await();
-} || requires(T &value) { operator co_await(value); };
+concept SomethingToAwait =
+    requires(T &value) { value.await_ready(); } || requires(T &value) { value.operator co_await(); } ||
+    requires(T &&value) { static_cast<T &&>(value).operator co_await(); } ||
+    requires(T &value) { operator co_await(value); } ||
+    requires(T &&value) { operator co_await(static_cast<T &&>(value)); };
 
 } // namespace quoll::async::detail
 
