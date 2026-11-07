@@ -364,8 +364,23 @@ TEST_CASE("client: a path parameter must stay a segment where the template puts 
   REQUIRE_THROWS_AS((void)client.call<files::one>(".", std::nullopt, {}), std::invalid_argument);
   REQUIRE_THROWS_AS((void)client.call<files::one>("", std::nullopt, {}), std::invalid_argument);
   REQUIRE_THROWS_AS((void)client.call<files::rest_of>("a/../../admin"), std::invalid_argument);
+  // Encoding hides the slash from the client, not from a proxy that decodes it, nor from Quoll's router.
+  REQUIRE_THROWS_AS((void)client.call<files::one>("../admin", std::nullopt, {}), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<files::one>("a\\..", std::nullopt, {}), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<files::rest_of>("a\\..\\admin"), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<files::rest_of>("./x"), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<files::rest_of>("a/."), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<files::rest_of>("..\\x"), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<files::rest_of>(std::string{"a\0b", 3}), std::invalid_argument);
+  // The rest of a path goes out with its '/': under a template at the root, `//host/x` reads as another server.
+  REQUIRE_THROWS_AS((void)client.call<files::rest_of>("/host/x"), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<files::one>(std::string{"a\0b", 3}, std::nullopt, {}), std::invalid_argument);
   // Dots inside a name are fine.
   REQUIRE(run(client.call<files::one>("..a", std::nullopt, {})) == "..a|-");
+  // The rest of a path may be empty, where a single segment may not.
+  REQUIRE(run(client.call<files::rest_of>("")).empty());
+  // A slash in a parameter that is no dot segment goes encoded, and comes back as it was.
+  REQUIRE(run(client.call<files::one>("a/b", std::nullopt, {})) == "a/b|-");
 }
 
 TEST_CASE("client: a header value the server would read differently is refused", "[rest][client]") {

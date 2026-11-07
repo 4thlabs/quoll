@@ -38,6 +38,7 @@
 #include <quoll/rest/detail/client_response.hpp>
 
 #include <quoll/http/detail/ascii.hpp>
+#include <quoll/http/detail/plain_segment.hpp>
 #include <quoll/rest/json_codec.hpp>
 #include <quoll/rest/problem.hpp>
 
@@ -49,16 +50,9 @@
 namespace quoll::rest::detail {
 
 void check_path_text(std::string_view name, std::string_view text, bool rest_of_path) {
-  auto const invalid = [](std::string_view segment) { return segment == "." || segment == ".."; };
-  bool valid = rest_of_path || (!text.empty() && !invalid(text));
+  bool const in_place = rest_of_path ? !text.starts_with('/') : !text.empty();
 
-  if (rest_of_path) {
-    for (auto const segment : std::views::split(text, '/')) {
-      valid = valid && !invalid(std::string_view{segment.begin(), segment.end()});
-    }
-  }
-
-  if (!valid) {
+  if (!in_place || !http::detail::plain_segment(text)) {
     throw std::invalid_argument{"quoll::rest::client: invalid path parameter " + std::string{name}};
   }
 }
