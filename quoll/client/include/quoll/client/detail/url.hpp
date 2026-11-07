@@ -44,6 +44,9 @@
 
 namespace quoll::http::detail {
 
+// Throws std::invalid_argument for a target that does not start with a slash.
+void check_origin_form(std::string_view target);
+
 // The server an `http[s]://host[:port][/path]` URL names. The host is checked by host_field().
 struct origin {
   std::string host;
@@ -66,7 +69,7 @@ struct origin {
 // in origin form: no fragment, and dot segments resolved, unless it is a query alone, which keeps the path as it was
 // sent. Nothing when it names another scheme than `secure` says, another host or port than `host`, says nothing but a
 // fragment, holds what RFC 3986 does not allow in a reference, or leads to a path that, once decoded, starts with two
-// slashes, a slash and a backslash, or holds a NUL.
+// slashes or a slash and a backslash, whatever a URL parser drops and dot segments apart, or holds a NUL.
 [[nodiscard]] std::optional<std::string> resolve_location(std::string_view location, std::string_view host, bool secure,
                                                           std::string_view target);
 

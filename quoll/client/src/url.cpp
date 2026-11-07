@@ -69,14 +69,27 @@ namespace {
     return false;
   }
 
+  auto label_begun = false;
+
   for (auto const character : host) {
+    if (character == '.') {
+      // Between labels, with a last one that may end a name.
+      if (!label_begun) {
+        return false;
+      }
+
+      label_begun = false;
+      continue;
+    }
+
     auto const allowed = (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-                         (character >= '0' && character <= '9') || character == '-' || character == '_' ||
-                         character == '.';
+                         (character >= '0' && character <= '9') || character == '-' || character == '_';
 
     if (!allowed) {
       return false;
     }
+
+    label_begun = true;
   }
 
   return true;
@@ -251,37 +264,11 @@ split_authority(std::string_view authority QUOLL_LIFETIMEBOUND) noexcept {
          (character >= '0' && character <= '9') || std::string_view{"-._~!$&'()*+,;=:@/%"}.contains(character);
 }
 
-// A path to put before every target: it goes on the wire as it is written, so that it has to be what a server reads.
-void check_prefix(std::string_view path) {
-  if (!std::ranges::all_of(path, path_character) || !http::detail::valid_escapes(path) || path.contains("//")) {
-    invalid_url("a path that would not read as itself");
-  }
-
-  for (std::size_t start = 1; start < path.size();) {
-    auto const end = end_of(path, '/', start);
-
-    auto const decoded = http::detail::percent_decode(path.substr(start, end - start));
-
-    if (!decoded || !http::detail::plain_segment(*decoded)) {
-      invalid_url("a dot segment or a NUL in the path");
-    }
-
-    start = end + 1;
-  }
-}
-
 // A character RFC 3986 allows in a reference without its fragment, or `[` and `]`, which a query often holds as they
 // are, and which a path may not. A backslash is not one, which some clients read as a slash, and so is no way to reach
 // another server.
 [[nodiscard]] constexpr bool reference_character(char character) noexcept {
   return path_character(character) || character == '?' || character == '[' || character == ']';
-}
-
-// What a proxy or a framework would read as another server, or cut short, once it decodes the path of a target.
-[[nodiscard]] bool reads_as_itself(std::string_view path) {
-  auto const decoded = http::detail::percent_decode(path);
-
-  return decoded && !decoded->starts_with("//") && !decoded->starts_with("/\\") && !decoded->contains('\0');
 }
 
 // Whether `authority` names what the `Host` field `host` does. Credentials end up in the host, or in the port, and
@@ -323,19 +310,70 @@ void check_prefix(std::string_view path) {
   return result;
 }
 
+// What a proxy or a framework would read as another server, or cut short, once it decodes and normalizes the path of a
+// target: a URL parser drops a tab or a line break, a backslash reads as a slash, and dot segments go. A NUL ends it
+// there.
+[[nodiscard]] std::optional<std::string> read_as_a_parser_does(std::string_view path) {
+  auto decoded = http::detail::percent_decode(path);
+
+  if (!decoded || decoded->contains('\0')) {
+    return std::nullopt;
+  }
+
+  std::erase_if(*decoded,
+                [](char const character) { return character == '\t' || character == '\n' || character == '\r'; });
+  std::ranges::replace(*decoded, '\\', '/');
+
+  return decoded;
+}
+
+[[nodiscard]] bool reads_as_itself(std::string_view path) {
+  auto const read = read_as_a_parser_does(path);
+
+  return read && !read->starts_with("//") && !remove_dot_segments(*read).starts_with("//");
+}
+
+// A path to put before every target: it goes on the wire as it is written, so that it has to be what a server reads.
+void check_prefix(std::string_view path) {
+  if (!std::ranges::all_of(path, path_character) || !http::detail::valid_escapes(path) || path.contains("//")) {
+    invalid_url("a path that would not read as itself");
+  }
+
+  // With what comes after it: `/%09` alone reads as nothing, and before `/x` as another server.
+  auto const followed = std::string{path.ends_with('/') ? path.substr(0, path.size() - 1) : path} + '/';
+
+  if (!reads_as_itself(followed)) {
+    invalid_url("a path a proxy could read as another server");
+  }
+
+  // The escapes are valid and there is no NUL: checked above. A segment of it is judged as a router does, an encoded
+  // slash included, on what a parser reads: `%2e%09%2e` is a dot segment to one.
+  if (!http::detail::plain_segment(*read_as_a_parser_does(path))) {
+    invalid_url("a dot segment in the path");
+  }
+}
+
 } // namespace
 
+void check_origin_form(std::string_view target) {
+  if (!target.starts_with('/')) {
+    throw std::invalid_argument{"quoll::http::client: the target is not in origin form"};
+  }
+}
+
 origin parse_url(std::string_view url) {
-  constexpr std::string_view http = "http://";
-  constexpr std::string_view https = "https://";
+  constexpr std::string_view plain_scheme = "http://";
+  constexpr std::string_view tls_scheme = "https://";
 
-  auto const secure = url.size() >= https.size() && http::detail::iequals(url.substr(0, https.size()), https);
+  auto const secure =
+      url.size() >= tls_scheme.size() && http::detail::iequals(url.substr(0, tls_scheme.size()), tls_scheme);
 
-  if (!secure && (url.size() < http.size() || !http::detail::iequals(url.substr(0, http.size()), http))) {
+  if (!secure &&
+      (url.size() < plain_scheme.size() || !http::detail::iequals(url.substr(0, plain_scheme.size()), plain_scheme))) {
     invalid_url("the URL is not http[s]://host[:port][/path]");
   }
 
-  auto authority = url.substr(secure ? https.size() : http.size());
+  auto authority = url.substr(secure ? tls_scheme.size() : plain_scheme.size());
 
   if (authority.find_first_of("?#") != std::string_view::npos) {
     invalid_url("a query or a fragment is not part of a server's URL");
