@@ -605,7 +605,7 @@ rest::mount<bank::v1>(router, bank::auth_service{}, bank::users_service{}, bank:
 - Errors without a declared response:
   - 400 for an invalid argument or body, 415 for a wrong `Content-Type`, 401 for missing or rejected credentials.
   - `throw rest::http_error(status, detail)` answers that status as `application/problem+json`.
-  - Any other exception answers 500 without detail.
+  - Any other exception goes on, as from any handler: a connection answers 500 without detail and tells `on_handler_error`.
 - `mount` registers the routes in the sans-IO `quoll::http` router, which `quoll::server` feeds. Middlewares (logs, metrics,
   CORS, a rate limit, auth beyond the schemes) run around the chosen route with `router::use`, and read what routing found
   from `next`.

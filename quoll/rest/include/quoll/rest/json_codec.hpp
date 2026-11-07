@@ -40,9 +40,11 @@
 #include <quoll/rest/codec.hpp>
 #include <quoll/rest/decode_error.hpp>
 #include <quoll/rest/detail/json_read_options.hpp>
+#include <quoll/rest/detail/printable_text.hpp>
 
 #include <glaze/json/read.hpp>
 #include <glaze/json/write.hpp>
+#include <glaze/util/parse.hpp>
 
 #include <expected>
 #include <stdexcept>
@@ -51,6 +53,16 @@
 #include <type_traits>
 
 namespace quoll::rest {
+
+namespace detail {
+
+// Control characters as `\u00XX`: Glaze otherwise writes them as they are, which no reader accepts. Glaze only reads
+// this option from a type deriving from glz::opts.
+struct json_write_options : glz::opts {
+  bool escape_control_characters = true;
+};
+
+} // namespace detail
 
 /** @brief How a JSON codec treats a body that does not match its type exactly. */
 struct json_options {
@@ -65,9 +77,10 @@ struct json_options {
  * an enum to names, or describes a type that is not an aggregate. Empty `std::optional` fields are not written.
  *
  * Decoding is strict on what the type requires: every field that is not an `std::optional` (or another nullable type)
- * must be present, a value of the wrong type is an error, and so is anything but whitespace after the value. Unknown
- * keys are rejected unless `Options` ignores them, as a client of a third-party API does (lenient_json_codec). Decoded
- * types are default constructible.
+ * must be present, a value of the wrong type is an error, and so is anything but whitespace after the value. JSON has
+ * no NaN nor infinity: Glaze writes them as `null`, which only a nullable field reads back. Unknown keys are rejected
+ * unless `Options` ignores them, as a client of a third-party API does (lenient_json_codec). Decoded types are default
+ * constructible.
  *
  * Reflected types need external linkage: Glaze reads their field names through an `extern` object, which Clang
  * rejects for a type in an anonymous namespace.
@@ -77,13 +90,21 @@ class basic_json_codec {
 public:
   static constexpr std::string_view content_type = "application/json";
 
-  /** @throws std::invalid_argument for a value Glaze cannot write, e.g. an enum value without a name. */
+  /**
+   * @brief `value` as JSON, control characters escaped.
+   * @throws std::invalid_argument for a value Glaze cannot write, e.g. an enum value without a name, and for text that
+   * is not UTF-8, which no reader of the body would accept.
+   */
   template <class T>
   [[nodiscard]] std::string encode(T const &value) const {
     std::string body;
 
-    if (auto const error = glz::write_json(value, body)) {
+    if (auto const error = glz::write<write_options>(value, body)) {
       throw std::invalid_argument{"quoll::rest: cannot encode JSON: " + glz::format_error(error)};
+    }
+
+    if (!glz::validate_utf8(body.data(), body.size())) {
+      throw std::invalid_argument{"quoll::rest: cannot encode JSON: text that is not UTF-8"};
     }
 
     return body;
@@ -96,7 +117,8 @@ public:
     T value{};
 
     if (auto const error = glz::read<read_options>(value, body)) {
-      return std::unexpected{decode_error{glz::format_error(error, body)}};
+      // Glaze quotes the body, which came from anybody, and this goes back as text.
+      return std::unexpected{decode_error{detail::printable_text(glz::format_error(error, body))}};
     }
 
     return value;
@@ -104,6 +126,7 @@ public:
 
 private:
   static constexpr auto read_options = detail::make_json_read_options(Options.ignore_unknown_keys);
+  static constexpr detail::json_write_options write_options{};
 };
 
 /** @brief JSON codec of Quoll's own APIs: unknown keys are errors. */

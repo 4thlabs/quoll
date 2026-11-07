@@ -87,8 +87,8 @@ template <class T>
 
 template <class T>
 [[nodiscard]] std::string format_number(T value) {
-  // Enough for any 64-bit integer, and for the shortest round-trip form of a double.
-  std::array<char, 32> buffer{};
+  // Enough for any integer up to 128 bits, and for the shortest round-trip form of any standard floating-point type.
+  std::array<char, 64> buffer{};
   auto const written = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
 
   return {buffer.data(), written.ptr};

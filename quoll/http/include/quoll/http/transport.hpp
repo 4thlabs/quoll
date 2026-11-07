@@ -56,6 +56,8 @@ namespace quoll::http {
  * error) is reported by the task's exception (std::system_error), and a stop request on the awaiter's context
  * abandons the request, with `std::errc::operation_canceled`. A `request.body_writer` is for the transport to run: in
  * pieces over a connection, or to its end first for what has no use for them.
+ *
+ * The task owns what it needs: it does not refer to the transport, which may be gone by the time it runs.
  */
 template <class T>
 concept HttpTransport = requires(T const &transport, request message) {

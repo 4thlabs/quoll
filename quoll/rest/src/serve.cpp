@@ -36,8 +36,11 @@
 
 #include <quoll/rest/detail/serve.hpp>
 
+#include <quoll/rest/detail/printable_text.hpp>
 #include <quoll/rest/json_codec.hpp>
 #include <quoll/rest/problem.hpp>
+
+#include <glaze/util/parse.hpp>
 
 #include <string>
 #include <string_view>
@@ -46,6 +49,11 @@
 namespace quoll::rest::detail {
 
 http::response problem_response(http::status code, std::optional<std::string> detail) {
+  // It may quote what came from a peer, and an error has to get out.
+  if (detail && !glz::validate_utf8(detail->data(), detail->size())) {
+    detail = printable_text(std::move(*detail));
+  }
+
   auto const reason = http::reason_phrase(code);
   problem const body{
       .type = std::nullopt,
