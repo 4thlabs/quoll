@@ -28,6 +28,12 @@ if(NOT TARGET quoll_warnings)
 endif()
 
 #
+# Coroutines resuming each other grow the stack unless this is a tail call, which GCC only makes at -O2 by default: a
+# long loop over tasks that do not suspend would work in a Release build, and overflow in a Debug one.
+function(quoll_tail_calls target scope)
+  target_compile_options(${target} ${scope} $<$<CXX_COMPILER_ID:GNU>:-foptimize-sibling-calls>)
+endfunction()
+
 # Declare a module from its CMakeLists.txt (quoll/<module>/, or quoll/adapters/<module>/ for an adapter):
 #
 #   quoll_declare_module(NAME <module> [SOURCES <files>...] [DEPS <targets>...] [PRIVATE_DEPS <targets>...])
@@ -61,6 +67,8 @@ function(quoll_declare_module)
       set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     endif()
 
+    quoll_tail_calls(${target} PUBLIC)
+
     if(PROJECT_IS_TOP_LEVEL)
       target_link_libraries(${target} PRIVATE $<BUILD_INTERFACE:quoll_warnings>)
     endif()
@@ -71,6 +79,8 @@ function(quoll_declare_module)
       target_compile_options(${target} INTERFACE -fwasm-exceptions -mtail-call)
       target_link_options(${target} INTERFACE -fwasm-exceptions -mtail-call)
     endif()
+
+    quoll_tail_calls(${target} INTERFACE)
   endif()
 
   add_library(quoll::${QUOLL_MODULE_NAME} ALIAS ${target})

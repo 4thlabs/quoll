@@ -41,6 +41,7 @@
 #include <quoll/async/detail/context_promise.hpp>
 #include <quoll/async/detail/non_void.hpp>
 #include <quoll/async/detail/when_all_state.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 
 #include <coroutine>
@@ -98,14 +99,7 @@ public:
 
   when_all_runner(when_all_runner &&other) noexcept : handle_(std::exchange(other.handle_, {})) {}
 
-  when_all_runner &operator=(when_all_runner &&other) noexcept {
-    if (this != &other) {
-      destroy();
-      handle_ = std::exchange(other.handle_, {});
-    }
-
-    return *this;
-  }
+  when_all_runner &operator=(when_all_runner &&) = delete;
 
   ~when_all_runner() { destroy(); }
 
@@ -131,7 +125,8 @@ private:
 };
 
 template <class T>
-when_all_runner run_when_all_child(task<T> child, std::optional<non_void_t<T>> &slot, when_all_state &state) {
+when_all_runner run_when_all_child(task<T> child, std::optional<non_void_t<T>> &slot QUOLL_LIFETIMEBOUND,
+                                   when_all_state &state QUOLL_LIFETIMEBOUND) {
   try {
     if constexpr (std::is_void_v<T>) {
       co_await std::move(child);

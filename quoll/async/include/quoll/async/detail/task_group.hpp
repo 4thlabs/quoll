@@ -41,6 +41,7 @@
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/async/detail/synchronized.hpp>
 #include <quoll/async/executor_ref.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/work_item.hpp>
 
 #include <coroutine>
@@ -103,7 +104,7 @@ public:
     }
   }
 
-  [[nodiscard]] join_awaitable join() noexcept { return join_awaitable{*this}; }
+  [[nodiscard]] join_awaitable join() noexcept QUOLL_LIFETIMEBOUND { return join_awaitable{*this}; }
 
   // How many tasks run now, which others may change as soon as this returns.
   [[nodiscard]] std::size_t live() const {

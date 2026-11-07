@@ -56,7 +56,7 @@ namespace quoll::async::detail {
 
 // Holds the children, their results and the join state; awaited as an lvalue, as it cannot move.
 template <class... Ts>
-class when_all_awaiter {
+class [[nodiscard]] when_all_awaiter {
 public:
   explicit when_all_awaiter(task<Ts>... children) : children_(std::move(children)...) {}
 

@@ -75,14 +75,7 @@ public:
 
   detached(detached &&other) noexcept : handle_(std::exchange(other.handle_, {})) {}
 
-  detached &operator=(detached &&other) noexcept {
-    if (this != &other) {
-      destroy();
-      handle_ = std::exchange(other.handle_, {});
-    }
-
-    return *this;
-  }
+  detached &operator=(detached &&) = delete;
 
   ~detached() { destroy(); }
 

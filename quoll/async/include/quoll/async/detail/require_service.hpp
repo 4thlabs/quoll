@@ -41,17 +41,18 @@
 
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace quoll::async::detail {
 
 // The service `S` of the executor the awaiting task runs on, for the free functions built on it (`what` names it in the
 // error): a task on an executor that lacks it is a programming error.
 template <class S>
-[[nodiscard]] S require_service(executor_ref executor, char const *caller, char const *what) {
+[[nodiscard]] S require_service(executor_ref executor, std::string_view caller, std::string_view what) {
   auto found = executor.template query<S>();
 
   if (!found) {
-    throw std::logic_error{std::string{caller} + ": the executor offers no " + what +
+    throw std::logic_error{std::string{caller} + ": the executor offers no " + std::string{what} +
                            " (spawn the task on a runtime executor)"};
   }
 

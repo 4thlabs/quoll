@@ -41,13 +41,13 @@
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/executor_ref.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/work_item.hpp>
 
 #include <cassert>
 #include <concepts>
 #include <cstddef>
 #include <optional>
-#include <type_traits>
 #include <utility>
 
 namespace quoll::async {
@@ -68,6 +68,7 @@ namespace quoll::async {
 class any_executor {
 public:
   // The exclusions come first: they stop Executor<any_executor> from checking this constructor against itself.
+  /** @brief Holds a copy of `executor`. */
   template <class E>
     requires(!std::same_as<E, any_executor> && !std::same_as<E, executor_ref> && Executor<E>)
   explicit any_executor(E const &executor) : vtable_(&detail::executor_vtable_for<E>) {
@@ -117,9 +118,12 @@ public:
     return vtable_ != nullptr && vtable_->type == detail::type_id_of<E>() ? static_cast<E const *>(get()) : nullptr;
   }
 
-  /** @brief The service `S` offered by the wrapped executor, if it offers it (see service_list). */
+  /**
+   * @brief The service `S` offered by the wrapped executor, if it offers it (see service_list). It may refer to what
+   * this holds: valid while this lives and is not moved.
+   */
   template <class S>
-  [[nodiscard]] std::optional<S> query() const {
+  [[nodiscard]] std::optional<S> query() const QUOLL_LIFETIMEBOUND {
     assert(vtable_ != nullptr && "any_executor used after being moved from");
 
     std::optional<S> found;
@@ -187,9 +191,8 @@ private:
 static_assert(Executor<any_executor>);
 
 inline executor_ref::executor_ref(any_executor const &executor) noexcept
-    : executor_(executor.get()), vtable_(executor.vtable_) {
-  assert(vtable_ != nullptr && "executor_ref to an any_executor moved from");
-}
+    : executor_((assert(executor.vtable_ != nullptr && "executor_ref to an any_executor moved from"), executor.get())),
+      vtable_(executor.vtable_) {}
 
 } // namespace quoll::async
 

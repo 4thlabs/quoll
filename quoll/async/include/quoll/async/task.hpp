@@ -83,14 +83,17 @@ public:
 
   ~task() { destroy(); }
 
+  /** @brief Always false: a task starts when awaited. */
   [[nodiscard]] bool await_ready() const noexcept { return false; }
 
+  /** @brief Starts the task on `context`, which resumes `continuation` when it ends. */
   [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> continuation,
                                                       await_context const &context) noexcept {
     handle_.promise().start(continuation, context);
     return handle_;
   }
 
+  /** @brief What the task returned, or rethrows what it threw. */
   T await_resume() { return handle_.promise().take(); }
 
 private:

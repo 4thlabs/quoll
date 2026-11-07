@@ -52,7 +52,7 @@ namespace quoll::async::detail {
 class when_all_state {
 public:
   // One arrival per child, plus one for the parent once it has started them all.
-  explicit when_all_state(std::size_t children) noexcept : remaining_(children + 1) {}
+  explicit when_all_state(std::size_t children) : remaining_(children + 1) {}
 
   when_all_state(when_all_state const &) = delete;
   when_all_state(when_all_state &&) = delete;

@@ -46,8 +46,8 @@
 
 namespace quoll::async {
 
-/** @brief Awaitable returned by current_stop_token(). */
-class stop_token_awaitable {
+/** @brief Awaitable returned by current_stop_token(). Thread safety: none, as what awaits it. */
+class [[nodiscard]] stop_token_awaitable {
 public:
   [[nodiscard]] bool await_ready() const noexcept { return false; }
 

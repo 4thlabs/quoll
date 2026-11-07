@@ -131,3 +131,100 @@ TEST_CASE("when_all rethrows after every child completed", "[async][when_all]") 
   REQUIRE(result);
   REQUIRE(*result);
 }
+
+namespace {
+
+quoll::async::task<int> throwing_at_once(int value) {
+  throw value;
+  co_return value;
+}
+
+quoll::async::task<int> throwing_after_a_turn(int value) {
+  co_await quoll::async::yield();
+  throw value;
+}
+
+// Throws at the move it is told to: each of those a value goes through on its way out of when_all fails in turn.
+struct moves_counted {
+  static inline int before_throwing = -1;
+
+  moves_counted() = default;
+  moves_counted(moves_counted const &) = delete;
+  moves_counted &operator=(moves_counted const &) = delete;
+  moves_counted &operator=(moves_counted &&) = delete;
+  ~moves_counted() = default;
+
+  moves_counted(moves_counted &&) {
+    if (before_throwing == 0) {
+      before_throwing = -1;
+      throw std::runtime_error{"moved"};
+    }
+
+    if (before_throwing > 0) {
+      --before_throwing;
+    }
+  }
+};
+
+quoll::async::task<moves_counted> a_value_counting_its_moves() { co_return moves_counted{}; }
+
+template <class Work>
+int thrown_by(Work work) {
+  try {
+    (void)run(std::move(work));
+  } catch (int const value) {
+    return value;
+  }
+
+  return 0;
+}
+
+} // namespace
+
+TEST_CASE("when_all: the first exception is what comes out", "[async][when_all]") {
+  // The one that throws while the others start.
+  REQUIRE(thrown_by(when_all(throwing_at_once(1), throwing_after_a_turn(2))) == 1);
+  // Whichever order they started in.
+  REQUIRE(thrown_by(when_all(throwing_after_a_turn(2), throwing_at_once(1))) == 1);
+  REQUIRE(thrown_by(when_all(throwing_at_once(1), throwing_at_once(2))) == 1);
+}
+
+TEST_CASE("when_all: a child throwing before it suspends leaves the others to end", "[async][when_all]") {
+  auto ended = false;
+
+  auto const other = [&ended]() -> task<int> {
+    co_await quoll::async::yield();
+    ended = true;
+    co_return 1;
+  };
+
+  REQUIRE(thrown_by(when_all(throwing_at_once(1), other())) == 1);
+  REQUIRE(ended);
+}
+
+TEST_CASE("when_all: a value whose move throws comes out as a failure, wherever it does", "[async][when_all]") {
+  auto const awaiting = []() -> task<int> {
+    (void)co_await when_all(a_value_counting_its_moves());
+    co_return 1;
+  };
+
+  auto failed = 0;
+
+  for (auto move = 0;; ++move) {
+    moves_counted::before_throwing = move;
+
+    try {
+      auto const result = run(awaiting());
+
+      REQUIRE(result == 1);
+      break;
+    } catch (std::runtime_error const &) {
+      ++failed;
+    }
+  }
+
+  moves_counted::before_throwing = -1;
+
+  // In the child, into its slot, and into what when_all gives.
+  REQUIRE(failed >= 3);
+}

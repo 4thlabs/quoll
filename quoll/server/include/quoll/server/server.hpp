@@ -235,7 +235,7 @@ public:
    */
   template <async::Executor Executor, io::Listener Listener>
   [[nodiscard]] async::task<> serve(Executor executor, Listener listener) const {
-    return serve_on(async::any_executor{std::move(executor)}, io::any_listener{std::move(listener)});
+    return serve_on(async::any_executor{executor}, io::any_listener{std::move(listener)});
   }
 
   /**

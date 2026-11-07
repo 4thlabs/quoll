@@ -64,6 +64,7 @@ public:
   /** @brief Executor posting to a run_loop. Equal when they post to the same loop. */
   class executor {
   public:
+    /** @brief Queues `item`, resumed by run(). */
     void post(work_item &item) const noexcept { loop_->push(item); }
 
     [[nodiscard]] bool operator==(executor const &) const noexcept = default;
@@ -86,6 +87,7 @@ public:
 
   ~run_loop() { assert(head_ == nullptr && "run_loop destroyed with queued coroutines: run() it first"); }
 
+  /** @brief An executor posting to this loop, which must outlive it. */
   [[nodiscard]] executor get_executor() noexcept QUOLL_LIFETIMEBOUND { return executor{*this}; }
 
   /**

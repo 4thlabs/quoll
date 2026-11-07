@@ -43,7 +43,8 @@ namespace quoll::async::detail {
 using type_id = void const *;
 
 template <class T>
-inline constexpr char type_id_tag = 0;
+// Not const: a linker folding identical constants (--icf=all, -fmerge-all-constants) would give two types one address.
+inline char type_id_tag = 0; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 template <class T>
 [[nodiscard]] consteval type_id type_id_of() noexcept {

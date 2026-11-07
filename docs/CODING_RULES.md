@@ -8,7 +8,8 @@ guidelines and the C++ Core Guidelines.
 - Every header is self-contained (compiles when included alone) and includes what it uses, nothing more. Prefer
   `<iosfwd>` / forward declarations to heavy includes; no `<iostream>` in library headers.
 - No ODR violations: non-template free functions and out-of-class member definitions are `inline`, namespace-scope
-  constants are `inline constexpr`, no `static` or unnamed-namespace entities and no mutable global state in headers.
+  constants are `inline constexpr`, no `static` or unnamed-namespace entities and no mutable global state in headers, but for
+  `async::detail::type_id_tag`: only its address counts, which a linker folding identical constants would make the same.
 - Never `using namespace` at namespace scope in a header.
 - A module lives in `quoll/<module>/`, or in `quoll/adapters/<module>/` for an adapter (thread pool, asio...); paths
   below are relative to that directory.

@@ -46,8 +46,8 @@
 
 namespace quoll::async {
 
-/** @brief Awaitable returned by current_executor(). */
-class executor_awaitable {
+/** @brief Awaitable returned by current_executor(). Thread safety: none, as what awaits it. */
+class [[nodiscard]] executor_awaitable {
 public:
   [[nodiscard]] bool await_ready() const noexcept { return false; }
 

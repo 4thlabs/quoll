@@ -420,6 +420,31 @@ int exit_status_of_detached(std::exception_ptr failure) {
 
 } // namespace
 
+TEST_CASE("co_spawn: a handler that throws ends the program", "[async]") {
+  auto const child = ::fork();
+
+  REQUIRE(child >= 0);
+
+  if (child == 0) {
+    std::set_terminate([] { ::_exit(42); });
+
+    async::run_loop loop;
+
+    async::co_spawn(
+        loop.get_executor(), []() -> task<int> { co_return 1; }(),
+        quoll::test::overloaded{[](int) { throw std::runtime_error{"from the handler"}; },
+                                [](std::exception_ptr const &) {}});
+    loop.run();
+    ::_exit(0);
+  }
+
+  int status = 0;
+
+  REQUIRE(::waitpid(child, &status, 0) == child);
+  REQUIRE(WIFEXITED(status));
+  REQUIRE(WEXITSTATUS(status) == 42);
+}
+
 TEST_CASE("detached: only a stop lets the program go on", "[async]") {
   REQUIRE(exit_status_of_detached(std::make_exception_ptr(std::runtime_error{"failure"})) == 42);
   // As asio reports one.
@@ -431,3 +456,40 @@ TEST_CASE("detached: only a stop lets the program go on", "[async]") {
 }
 
 #endif
+
+namespace {
+
+task<int> holding_a_value(std::shared_ptr<int> held) {
+  co_await async::yield();
+  co_return *held;
+}
+
+task<> holding_nothing_to_return(std::shared_ptr<int> held) {
+  co_await async::yield();
+  *held = 2;
+}
+
+} // namespace
+
+TEST_CASE("co_spawn: what the task holds is gone before its handler runs", "[async]") {
+  async::run_loop loop;
+  auto held = std::make_shared<int>(1);
+  std::weak_ptr<int> const watching = held;
+  std::optional<bool> alive_in_handler;
+
+  SECTION("with a value") {
+    async::co_spawn(loop.get_executor(), holding_a_value(std::move(held)),
+                    quoll::test::overloaded{[&](int) { alive_in_handler = !watching.expired(); },
+                                            [](std::exception_ptr const &) {}});
+  }
+
+  SECTION("without") {
+    async::co_spawn(
+        loop.get_executor(), holding_nothing_to_return(std::move(held)),
+        quoll::test::overloaded{[&] { alive_in_handler = !watching.expired(); }, [](std::exception_ptr const &) {}});
+  }
+
+  loop.run();
+
+  REQUIRE(alive_in_handler == false);
+}

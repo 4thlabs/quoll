@@ -116,9 +116,12 @@ private:
 
 template <class T>
 class task_promise : public task_promise_base<T> {
+  static_assert(alignof(T) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__,
+                "task<T>: T must not be over-aligned, as its coroutine frame is not");
+
 public:
   template <class U = T>
-    requires std::constructible_from<T, U &&>
+    requires std::convertible_to<U &&, T>
   void return_value(U &&value) noexcept(std::is_nothrow_constructible_v<T, U &&>) {
     this->result_.template emplace<task_promise::value_index>(std::forward<U>(value));
   }

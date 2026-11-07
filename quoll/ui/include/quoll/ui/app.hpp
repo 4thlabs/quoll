@@ -106,8 +106,8 @@ class app {
 public:
   template <async::Executor E>
   app(E executor, R renderer, app_options options = {})
-      : renderer_(std::move(renderer)), core_(async::any_executor{std::move(executor)}, renderer_ref{renderer_},
-                                              &view_of, &component_, std::move(options)) {
+      : renderer_(std::move(renderer)),
+        core_(async::any_executor{executor}, renderer_ref{renderer_}, &view_of, &component_, std::move(options)) {
     detail::link_states(component_, {&core_, &detail::app_core::state_changed});
 
 #if defined(QUOLL_UI_HOT)

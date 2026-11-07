@@ -40,6 +40,7 @@
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/require_service.hpp>
+#include <quoll/async/detail/saturated.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer_ref.hpp>
@@ -55,7 +56,7 @@
 namespace quoll::async {
 
 /**
- * @brief Runs `work`, and requests it to stop if it has not finished after `timeout`, through the timer of the executor
+ * @brief Runs `work`, and requests it to stop if it has not finished after `asked`, through the timer of the executor
  * it runs on (as quoll::runtime provides it).
  *
  * Returns what `work` returns and rethrows what it throws, with one exception: when the timeout has expired, its
@@ -65,8 +66,9 @@ namespace quoll::async {
  * the awaiter stops `work` too, and stays an operation_canceled. Throws std::logic_error, before running `work`, if the
  * executor offers no timer.
  */
-template <class T>
-[[nodiscard]] task<T> with_timeout(std::chrono::nanoseconds timeout, task<T> work) {
+template <class Rep, class Period, class T>
+[[nodiscard]] task<T> with_timeout(std::chrono::duration<Rep, Period> asked, task<T> work) {
+  auto const timeout = detail::saturated(asked);
   auto const timer =
       detail::require_service<timer_ref>(co_await current_executor(), "quoll::async::with_timeout", "timer");
   auto const stop_token = co_await current_stop_token();

@@ -61,6 +61,7 @@ class any_executor;
 class executor_ref {
 public:
   // The exclusion comes first: it stops Executor<executor_ref> from checking this constructor against itself.
+  /** @brief References `executor`, which must outlive it. */
   template <class E>
     requires(!std::same_as<E, executor_ref> && !std::same_as<E, any_executor> && Executor<E>)
   explicit executor_ref(E const &executor) noexcept : executor_(&executor), vtable_(&detail::executor_vtable_for<E>) {}
