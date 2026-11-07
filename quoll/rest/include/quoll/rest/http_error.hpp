@@ -46,7 +46,8 @@ namespace quoll::rest {
 
 /**
  * @brief Thrown by a service to answer an error status its endpoint does not declare: the server sends it as a
- * problem with `detail` = what(), sent as it is to the client.
+ * problem with `detail` = what(), sent as it is to the client if it is UTF-8. With a status that is no error, it is a
+ * programming error, and goes on as any other exception does.
  */
 class http_error : public std::runtime_error {
 public:

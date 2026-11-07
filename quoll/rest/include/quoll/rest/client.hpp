@@ -70,15 +70,18 @@ using result = detail::call_result<Endpoint>;
  *   does not decode.
  * - `try_call<Endpoint>(arguments...)` returns a task of result<Endpoint>: a reply<Endpoint> holding the declared
  *   response received, or an unexpected_response.
- * - Transport failures (network, cancellation) are exceptions from both tasks (std::system_error).
+ * - Transport failures (network, cancellation) are exceptions from both tasks (std::system_error). Over a
+ *   http::local_transport, so is what a service throws, as there is no connection to answer 500.
  *
  * The arguments are those of the endpoint, in its order: path parameters (prefixes first), then the argument parts,
  * then the inherited ones; their types come from the endpoint, so braced lists convert (`{.limit = 20}`). They are
  * encoded into the request by the call: an invalid one throws std::invalid_argument there, before the task runs (a
- * path parameter that is empty or holds a NUL or a dot segment, a header value the server would read differently).
+ * path parameter that is empty or holds a NUL or a dot segment, the rest of a path starting with `/`, a query parameter
+ * holding a NUL, a number that is not finite, a header value or a credential the server would read differently).
  *
- * The task does not refer to the client: the request is built by the call, and the transport's task owns what it
- * needs. Thread safety: none (credentials() changes the client); calls on a const client may be concurrent.
+ * The task does not refer to the client: the request is built by the call, and the task of a transport owns what it
+ * needs, as http::HttpTransport asks. Thread safety: none (credentials() changes the client); calls on a const client
+ * may be concurrent.
  */
 template <class Api, http::HttpTransport Transport = ::quoll::http::client>
 class client : public detail::client_call_set<client<Api, Transport>, Api,
@@ -147,7 +150,8 @@ private:
   }
 
   [[nodiscard]] static std::string without_trailing_slash(std::string url) {
-    if (url.ends_with('/')) {
+    // One only: `http://example.com//` stays what http::client refuses.
+    if (url.ends_with('/') && !url.ends_with("//")) {
       url.pop_back();
     }
 

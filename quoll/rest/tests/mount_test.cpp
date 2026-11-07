@@ -34,21 +34,36 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/when_all.hpp>
+#include <quoll/async/with_timeout.hpp>
+#include <quoll/http/local_transport.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
+#include <quoll/io/memory_stream.hpp>
+#include <quoll/io/write.hpp>
 #include <quoll/rest.hpp>
+#include <quoll/server/server.hpp>
+#include <quoll/test/read_until_closed.hpp>
 #include <quoll/test/run.hpp>
+#include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstdint>
+#include <exception>
 #include <optional>
+#include <span>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
+#include <system_error>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -146,6 +161,14 @@ using api = rest::api<"/keys", ping, ping_query>;
 
 using v1 =
     rest::api<"/api/v1", auth::api, keys::api, rest::with<rest::security<rest::bearer_auth>, users::api, cards::api>>;
+
+using slow_one = rest::endpoint<"slow", verb::get, "/slow", rest::returns<std::string, status::ok, rest::text_codec>>;
+using two_schemes =
+    rest::endpoint<"both", verb::get, "/both", rest::security<rest::bearer_auth, rest::api_key<"X-Key">>,
+                   rest::returns<std::string, status::ok, rest::text_codec>>;
+using a_pair = rest::endpoint<"pair", verb::post, "/pair", rest::body<std::pair<std::string, int>>,
+                              rest::returns<std::string, status::ok, rest::text_codec>>;
+using slow_api = rest::api<"", slow_one, two_schemes, a_pair>;
 
 // Synchronous: returns the value itself.
 struct auth_service {
@@ -407,11 +430,234 @@ TEST_CASE("mount: errors thrown by services", "[rest][mount]") {
   REQUIRE(problem_of(conflict).detail == "name taken");
   REQUIRE(problem_of(conflict).title == "Conflict");
 
-  auto const failed = send(router, verb::get, "/api/v1/users/13");
+  // Anything else goes on, as from any handler: see the next case for what a connection makes of it.
+  REQUIRE_THROWS_AS(send(router, verb::get, "/api/v1/users/13"), std::runtime_error);
+}
 
-  REQUIRE(failed.status == http::status::internal_server_error);
-  REQUIRE_FALSE(problem_of(failed).detail.has_value());
-  REQUIRE(problem_of(failed).status == 500);
+TEST_CASE("mount: what a service throws answers 500, with nothing of it, and on_handler_error hears", "[rest][mount]") {
+  auto const router = make_router();
+  std::string told;
+  http::server const server{router, {.connection = {.on_handler_error = [&told](std::exception_ptr const &failure) {
+                                       try {
+                                         std::rethrow_exception(failure);
+                                       } catch (std::exception const &error) {
+                                         told = error.what();
+                                       }
+                                     }}}};
+  std::string const sent = "GET /api/v1/users/13 HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer valid\r\n"
+                           "Connection: close\r\n\r\n";
+  auto [client, ours] = quoll::io::make_memory_stream_pair();
+  auto const peer = [&sent](quoll::io::memory_stream to) -> task<std::string> {
+    (void)co_await quoll::io::write(to, std::as_bytes(std::span{sent}));
+    co_return co_await quoll::test::read_until_closed(to);
+  };
+  auto outcome =
+      quoll::test::run(quoll::async::when_all(server.serve_connection(std::move(ours)), peer(std::move(client))));
+  auto const &answer = std::get<1>(outcome.value());
+
+  REQUIRE(answer.starts_with("HTTP/1.1 500"));
+  REQUIRE(answer.find("internal details") == std::string::npos);
+  REQUIRE(told == "internal details that must not leak");
+}
+
+namespace {
+
+using namespace std::chrono_literals;
+
+// A second part of the api, for what does not go through make_router's services.
+struct waits {
+  task<std::string> operator()(slow_one) const {
+    co_await quoll::async::sleep_for(1h);
+    co_return "too late";
+  }
+
+  [[nodiscard]] std::string operator()(two_schemes) const { return "both"; }
+
+  [[nodiscard]] std::string operator()(a_pair, std::pair<std::string, int> value) const {
+    return value.first + std::to_string(value.second);
+  }
+};
+
+[[nodiscard]] http::router make_slow_router() {
+  http::router router;
+
+  rest::mount<slow_api>(
+      router, waits{},
+      rest::validators([](rest::credential<rest::bearer_auth> const &given) { return given.value == "valid"; },
+                       [](rest::credential<rest::api_key<"X-Key">> const &given) {
+                         if (given.value == "throws") {
+                           throw rest::http_error{status::forbidden, "not this one"};
+                         }
+
+                         return given.value == "valid";
+                       }));
+
+  return router;
+}
+
+} // namespace
+
+TEST_CASE("mount: a stop or a timeout goes through a route, not into a 500", "[rest][mount][timer]") {
+  auto const make_request = [] {
+    http::request request;
+
+    request.method = verb::get;
+    request.target = "/slow";
+    return request;
+  };
+
+  SECTION("a middleware timing a route out answers what it means") {
+    auto router = make_slow_router();
+
+    router.use([](http::request request, http::next const &next) -> task<http::response> {
+      try {
+        co_return co_await quoll::async::with_timeout(1s, next(std::move(request)));
+      } catch (std::system_error const &thrown) {
+        if (thrown.code() != std::errc::timed_out) {
+          throw;
+        }
+      }
+
+      http::response late;
+
+      late.status = status::gateway_timeout;
+      co_return late;
+    });
+
+    quoll::test::virtual_time time;
+
+    REQUIRE(quoll::test::run(time, router.dispatch(make_request())).value().status == status::gateway_timeout);
+    REQUIRE(time.now() == 1s);
+  }
+
+  SECTION("a stop reaches what waits for the route, and it is no failure of the route") {
+    auto const router = make_slow_router();
+    std::stop_source stop;
+    quoll::test::virtual_time time;
+
+    stop.request_stop();
+
+    auto const dispatching = [&]() -> task<std::error_code> {
+      try {
+        (void)co_await router.dispatch(make_request());
+      } catch (std::system_error const &thrown) {
+        co_return thrown.code();
+      }
+
+      co_return std::error_code{};
+    };
+
+    REQUIRE(quoll::test::run(time, dispatching(), stop.get_token()).value() == std::errc::operation_canceled);
+  }
+
+  SECTION("a typed client timing a call out hears the timeout") {
+    rest::client<slow_api, http::local_transport> const client{http::local_transport{make_slow_router()}};
+    quoll::test::virtual_time time;
+    auto const calling = [&]() -> task<std::error_code> {
+      try {
+        (void)co_await quoll::async::with_timeout(1s, client.call<slow_one>());
+      } catch (std::system_error const &thrown) {
+        co_return thrown.code();
+      }
+
+      co_return std::error_code{};
+    };
+
+    REQUIRE(quoll::test::run(time, calling()).value() == std::errc::timed_out);
+  }
+}
+
+TEST_CASE("mount: a route with two schemes wants both", "[rest][mount]") {
+  auto const router = make_slow_router();
+  auto const with_fields = [&](field_list const &fields) { return send(router, verb::get, "/both", fields); };
+
+  REQUIRE(with_fields({{"Authorization", "Bearer valid"}, {"X-Key", "valid"}}).body == "both");
+
+  auto const first_only = with_fields({{"Authorization", "Bearer valid"}});
+
+  REQUIRE(first_only.status == status::unauthorized);
+  REQUIRE(first_only.fields.find("WWW-Authenticate") == R"(ApiKey header="X-Key")");
+  REQUIRE(with_fields({{"X-Key", "valid"}}).status == status::unauthorized);
+  REQUIRE(with_fields({{"Authorization", "Bearer valid"}, {"X-Key", "wrong"}}).status == status::unauthorized);
+  // A validator's http_error is its answer.
+  REQUIRE(with_fields({{"Authorization", "Bearer valid"}, {"X-Key", "throws"}}).status == status::forbidden);
+}
+
+TEST_CASE("mount: a sole argument that is a std::pair stays one", "[rest][mount]") {
+  auto const router = make_slow_router();
+
+  REQUIRE(send(router, verb::post, "/pair", {{"Content-Type", "application/json"}}, R"({"a":1})").body == "a1");
+}
+
+TEST_CASE("mount: a credential that comes twice is none", "[rest][mount]") {
+  auto const router = make_router();
+
+  REQUIRE(send(router, verb::get, "/api/v1/users/42").status == status::ok);
+  REQUIRE(send(router, verb::get, "/api/v1/users/42",
+               {{"Authorization", "Bearer valid"}, {"Authorization", "Bearer forged"}})
+              .status == status::unauthorized);
+  REQUIRE(send(router, verb::get, "/api/v1/keys/ping", {{"X-Api-Key", "key"}, {"x-api-key", "forged"}}).status ==
+          status::unauthorized);
+  REQUIRE(send(router, verb::get, "/api/v1/keys/ping-query?key=key&key=forged", {}).status == status::unauthorized);
+}
+
+TEST_CASE("mount: a parameter that is not UTF-8 answers 400, without running the service", "[rest][mount]") {
+  auto const router = make_router();
+
+  REQUIRE(send(router, verb::get, "/api/v1/users?name=%ff").status == status::bad_request);
+  REQUIRE(send(router, verb::get, "/api/v1/users?name=caf%C3%A9").status == status::ok);
+
+  field_list const fields{{"Authorization", "Bearer valid"}, {"X-Request-Id", "\xff"}};
+
+  REQUIRE(send(router, verb::get, "/api/v1/users/1/cards", fields).status == status::bad_request);
+}
+
+TEST_CASE("text_codec: what is not UTF-8 is refused", "[rest]") {
+  rest::text_codec const text;
+
+  REQUIRE(text.decode<std::string>("caf\xC3\xA9") == "caf\xC3\xA9");
+  REQUIRE_FALSE(text.decode<std::string>("a\xffz").has_value());
+  REQUIRE_THROWS_AS((void)text.encode("a\xffz"), std::invalid_argument);
+  REQUIRE(text.encode("caf\xC3\xA9") == "caf\xC3\xA9");
+}
+
+TEST_CASE("mount: a problem gets out, whatever its detail quotes", "[rest][mount]") {
+  auto const quoting = rest::detail::problem_response(status::not_found, "no note a\xffz");
+  auto const french = rest::detail::problem_response(status::not_found, "pas de caf\xC3\xA9");
+
+  REQUIRE(problem_of(quoting).detail == "no note a?z");
+  REQUIRE(problem_of(french).detail == "pas de caf\xC3\xA9");
+}
+
+TEST_CASE("mount: a query is read by the route that declares one", "[rest][mount]") {
+  auto const router = make_router();
+
+  REQUIRE(send(router, verb::get, "/api/v1/users/42?utm=%zz").status == status::ok);
+  REQUIRE(problem_of(send(router, verb::get, "/api/v1/users?utm=%zz")).detail == "invalid query string");
+}
+
+TEST_CASE("mount: a repeated Content-Type is refused", "[rest][mount]") {
+  auto const router = make_router();
+
+  REQUIRE(problem_of(send(router, verb::post, "/api/v1/users",
+                          {{"Authorization", "Bearer valid"},
+                           {"Content-Type", "application/json"},
+                           {"Content-Type", "text/plain"}},
+                          R"({"name":"fine","email":"x"})"))
+              .detail == "repeated Content-Type");
+}
+
+TEST_CASE("mount: a body that cannot be read answers a problem that can", "[rest][mount]") {
+  auto const router = make_router();
+  field_list const fields{{"Authorization", "Bearer valid"}, {"Content-Type", "application/json"}};
+
+  for (std::string const body :
+       {std::string{"{\"name\":\x01}"}, std::string{"{\"name\":\xff\xfe}"}, std::string{"{\"name\":\0}", 10}}) {
+    auto const refused = send(router, verb::post, "/api/v1/users", fields, body);
+
+    REQUIRE(refused.status == status::bad_request);
+    REQUIRE(problem_of(refused).detail.has_value());
+  }
 }
 
 TEST_CASE("mount: a service returning nothing answers 204", "[rest][mount]") {
@@ -493,8 +739,8 @@ TEST_CASE("mount: what http_error answers", "[rest][mount]") {
 
   REQUIRE(static_cast<int>(teapot.status) == 418);
   REQUIRE_FALSE(problem_of(teapot).title.has_value());
-  // Not an error status: a programming error, answered as one.
-  REQUIRE(create("fine").status == http::status::internal_server_error);
+  // Not an error status: a programming error, which goes on as any other.
+  REQUIRE_THROWS_AS(create("fine"), rest::http_error);
 }
 
 TEST_CASE("mount: adds all the routes or none", "[rest][mount]") {

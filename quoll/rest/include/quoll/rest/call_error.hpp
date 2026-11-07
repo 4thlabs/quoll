@@ -37,9 +37,11 @@
 #ifndef QUOLL_REST_CALL_ERROR_HPP
 #define QUOLL_REST_CALL_ERROR_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/rest/unexpected_response.hpp>
 
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -56,16 +58,21 @@ namespace quoll::rest {
 class call_error : public std::runtime_error {
 public:
   call_error(unexpected_response failure, std::string const &detail)
-      : std::runtime_error(detail), failure_(std::move(failure)) {}
+      : std::runtime_error(detail), failure_(std::make_shared<unexpected_response const>(std::move(failure))) {}
+
+  // Copies and no moves: an exception does not throw on its way to a handler, and one moved from stays whole.
+  call_error(call_error const &) noexcept = default;
+  call_error &operator=(call_error const &) noexcept = default;
+  ~call_error() override = default;
 
   /** @brief The status of the response received. */
-  [[nodiscard]] http::status status() const noexcept { return failure_.response.status; }
+  [[nodiscard]] http::status status() const noexcept { return failure_->response.status; }
 
   /** @brief The response received, and why it is unexpected. */
-  [[nodiscard]] unexpected_response const &failure() const noexcept { return failure_; }
+  [[nodiscard]] unexpected_response const &failure() const noexcept QUOLL_LIFETIMEBOUND { return *failure_; }
 
 private:
-  unexpected_response failure_;
+  std::shared_ptr<unexpected_response const> failure_;
 };
 
 } // namespace quoll::rest

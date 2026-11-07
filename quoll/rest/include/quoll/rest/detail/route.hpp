@@ -37,18 +37,27 @@
 #ifndef QUOLL_REST_DETAIL_ROUTE_HPP
 #define QUOLL_REST_DETAIL_ROUTE_HPP
 
+#include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/verb.hpp>
+#include <quoll/rest/body.hpp>
 #include <quoll/rest/detail/checked_path.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/path_template.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
+#include <quoll/rest/header.hpp>
+#include <quoll/rest/query.hpp>
+#include <quoll/rest/security.hpp>
+
+#include <glaze/core/reflect.hpp>
 
 #include <array>
 #include <cstddef>
 #include <string_view>
+#include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace quoll::rest::detail {
 
@@ -76,6 +85,74 @@ struct security_schemes<type_list<Parts...>> {
   using type = concat_t<type_list<>, typename Parts::schemes...>;
 };
 
+// Where a part or a security scheme puts something of a request, by name.
+enum class named_place : unsigned char { nowhere, field, query };
+
+struct place_of_part {
+  named_place place = named_place::nowhere;
+  std::string_view name;
+};
+
+template <class Part>
+inline constexpr place_of_part place_of{};
+
+template <fixed_string Name, class T>
+inline constexpr place_of_part place_of<header<Name, T>>{named_place::field, Name.view()};
+
+template <fixed_string Name, class T>
+inline constexpr place_of_part place_of<query<Name, T>>{named_place::query, Name.view()};
+
+template <class T, class BodyCodec>
+inline constexpr place_of_part place_of<body<T, BodyCodec>>{named_place::field, "Content-Type"};
+
+template <>
+inline constexpr place_of_part place_of<bearer_auth>{named_place::field, "Authorization"};
+
+template <fixed_string Header>
+inline constexpr place_of_part place_of<api_key<Header>>{named_place::field, Header.view()};
+
+template <fixed_string Param>
+inline constexpr place_of_part place_of<api_key_query<Param>>{named_place::query, Param.view()};
+
+template <class Part>
+consteval void add_places(std::type_identity<Part>, std::vector<place_of_part> &places) {
+  places.push_back(place_of<Part>);
+}
+
+template <class Struct>
+consteval void add_places(std::type_identity<query_params<Struct>>, std::vector<place_of_part> &places) {
+  for (auto const name : glz::reflect<Struct>::keys) {
+    places.push_back({named_place::query, name});
+  }
+}
+
+// Whether no two of them ask for the same place: what comes twice is refused, so that a call could never succeed.
+template <class... Arguments, class... Schemes>
+[[nodiscard]] consteval bool distinct_places(type_list<Arguments...>, type_list<Schemes...>) {
+  std::vector<place_of_part> places;
+
+  (add_places(std::type_identity<Arguments>{}, places), ...);
+  (add_places(std::type_identity<Schemes>{}, places), ...);
+
+  for (std::size_t first = 0; first < places.size(); ++first) {
+    for (std::size_t second = first + 1; second < places.size(); ++second) {
+      if (places[first].place == named_place::nowhere || places[first].place != places[second].place) {
+        continue;
+      }
+
+      auto const same = places[first].place == named_place::field
+                            ? http::detail::iequals(places[first].name, places[second].name)
+                            : places[first].name == places[second].name;
+
+      if (same) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 // An endpoint as an api serves it: its full path (the prefixes of the apis around it, then its own path) and the
 // parts inherited from the with<> around it, which come after its own.
 template <class Endpoint, fixed_string Path, class Inherited>
@@ -102,6 +179,9 @@ struct route {
                                         typename part_argument_types<filter_t<is_argument_part, parts>>::type>>;
   using responses = filter_t<is_response_part, parts>;
   using schemes = typename security_schemes<filter_t<is_security_part, parts>>::type;
+
+  static_assert(distinct_places(filter_t<is_argument_part, parts>{}, schemes{}),
+                "quoll::rest::endpoint: it gets the same field or query parameter twice");
 
   static constexpr auto path_value = Path;
   static constexpr std::string_view path = path_value.view();

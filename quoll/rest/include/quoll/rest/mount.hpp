@@ -125,9 +125,11 @@ template <class... Args>
  * For each request: credentials (401 if missing or rejected, with the `WWW-Authenticate` challenge of the scheme:
  * `Bearer`, or `ApiKey header="X-Api-Key"` / `ApiKey query="key"` for keys, which have no registered scheme), then
  * the arguments (400 for an invalid or missing one, 415 for a body of another media type), then the service. A
- * service throwing http_error answers its status, anything else answers 500 without detail. A middleware of the router
- * runs outside of this: what it throws is no http_error, and it answers a problem by returning a response. These errors
- * are application/problem+json (problem).
+ * service or a validator throwing http_error with an error status answers it. These errors are
+ * application/problem+json (problem). Anything else it throws goes on as from any handler: a connection answers 500,
+ * with nothing of it, and tells `on_handler_error`, a stop or a timeout reaches what waits for it, and over a
+ * http::local_transport or a direct dispatch it reaches the caller. A middleware of the router runs outside of this:
+ * what it throws is no http_error, and it answers a problem by returning a response.
  *
  * Adds all the routes or none: @throws std::invalid_argument, leaving `router` as it was, for a route it already has.
  *

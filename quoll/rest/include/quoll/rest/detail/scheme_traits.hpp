@@ -41,6 +41,7 @@
 #include <quoll/http/fields.hpp>
 #include <quoll/rest/detail/join_strings.hpp>
 #include <quoll/rest/detail/query_string.hpp>
+#include <quoll/rest/detail/single_field.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/security.hpp>
 
@@ -50,6 +51,13 @@
 #include <vector>
 
 namespace quoll::rest::detail {
+
+// A credential the server reads back as it is, at the call: empty is none to it, parsers trim surrounding whitespace,
+// and a control character cannot go out.
+void check_credential_text(std::string_view text);
+
+// A credential in a query goes encoded, so that it reads back as it is: only empty is none to the server.
+void check_credential_in_query(std::string_view text);
 
 // Everything about a security scheme, for the server and the client alike:
 // - `key`: its key in a client's credentials, known at compile time;
@@ -66,7 +74,7 @@ struct scheme_traits<bearer_auth> {
 
   [[nodiscard]] static std::optional<std::string> find(http::fields const &fields, std::vector<query_entry> const &) {
     constexpr std::string_view scheme = "Bearer ";
-    auto const value = fields.find("Authorization");
+    auto const value = single_field(fields, "Authorization");
 
     if (!value || value->size() <= scheme.size() || !http::detail::iequals(value->substr(0, scheme.size()), scheme)) {
       return std::nullopt;
@@ -80,6 +88,7 @@ struct scheme_traits<bearer_auth> {
   [[nodiscard]] static std::string challenge() { return "Bearer"; }
 
   static void add(std::string const &value, http::fields &fields, std::string &) {
+    check_credential_text(value);
     fields.add("Authorization", "Bearer " + value);
   }
 };
@@ -89,14 +98,17 @@ struct scheme_traits<api_key<Header>> {
   static constexpr auto key = join_strings<"header:", Header>();
 
   [[nodiscard]] static std::optional<std::string> find(http::fields const &fields, std::vector<query_entry> const &) {
-    auto const value = fields.find(Header.view());
+    auto const value = single_field(fields, Header.view());
 
     return value && !value->empty() ? std::optional<std::string>{*value} : std::nullopt;
   }
 
   [[nodiscard]] static std::string challenge() { return "ApiKey header=\"" + std::string{Header.view()} + "\""; }
 
-  static void add(std::string const &value, http::fields &fields, std::string &) { fields.add(Header.view(), value); }
+  static void add(std::string const &value, http::fields &fields, std::string &) {
+    check_credential_text(value);
+    fields.add(Header.view(), value);
+  }
 };
 
 template <fixed_string Param>
@@ -106,12 +118,13 @@ struct scheme_traits<api_key_query<Param>> {
   [[nodiscard]] static std::optional<std::string> find(http::fields const &, std::vector<query_entry> const &query) {
     auto const texts = query_texts(query, Param.view());
 
-    return texts.empty() || texts.front().empty() ? std::nullopt : std::optional<std::string>{texts.front()};
+    return texts.size() != 1 || texts.front().empty() ? std::nullopt : std::optional<std::string>{texts.front()};
   }
 
   [[nodiscard]] static std::string challenge() { return "ApiKey query=\"" + std::string{Param.view()} + "\""; }
 
   static void add(std::string const &value, http::fields &, std::string &query) {
+    check_credential_in_query(value);
     append_query(query, Param.view(), value);
   }
 };

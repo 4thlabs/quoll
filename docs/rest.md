@@ -196,7 +196,7 @@ those inherited from `with<>` are answered by the server.
 ### What a request goes through
 
 Credentials first, then the arguments, then the service. These errors are
-`application/problem+json` (`rest::problem`, RFC 9457):
+`application/problem+json` (`rest::problem`, RFC 9457), but for a service's other exceptions:
 
 | What happens                        | Status                                                   | `detail`                                      |
 | ----------------------------------- | -------------------------------------------------------- | --------------------------------------------- |
@@ -204,10 +204,16 @@ Credentials first, then the arguments, then the service. These errors are
 | An invalid or missing argument      | 400                                                      | What is wrong                                 |
 | A body of another media type        | 415                                                      | `the body is <the media type of the codec>`   |
 | A service throws `rest::http_error` | Its status                                               | `what()`, sent as it is to the client         |
-| A service throws anything else      | 500                                                      | None                                          |
+| A service throws anything else      | 500, as from any handler; `on_handler_error` is told     | None                                          |
 
 A middleware of the router runs outside of this: what it throws is no `http_error`, and it answers a
-problem by returning a response.
+problem by returning a response. What a service throws goes through it, a stop or a timeout too. Over a
+`http::local_transport`, it reaches the caller, as there is no connection to answer.
+
+A service takes exactly the arguments of its endpoint, by value or by reference: one taking a narrower type, or
+them in another order, does not compile, and a generic parameter (`auto`) asks for a return type written out. A string
+parameter that is not UTF-8 answers 400, before the service runs. A validator takes a scheme alone: two taking the same one do not compile
+either, a generic one beside one written for it included. A credential that comes twice is none, and answers 401.
 
 ## Calling: `rest::client`
 
@@ -245,8 +251,9 @@ if (!maybe) {
 | An undeclared status, a body that does not decode | Throws `rest::call_error`, whose `what()` is the problem's detail if any | A `rest::unexpected_response`: the whole response, and why |
 | A failure of the transport                        | Throws `std::system_error`                                               | Throws `std::system_error`                                 |
 
-Arguments are encoded by the call: an invalid one (an empty path parameter, one holding a NUL or a dot segment, a
-header value the server would read differently) throws `std::invalid_argument` there, before the task runs.
+Arguments are encoded by the call: an invalid one (an empty path parameter, one holding a NUL or a dot segment, the
+rest of a path starting with `/`, a query parameter holding a NUL, a number that is not finite, a header value or a
+credential the server would read differently) throws `std::invalid_argument` there, before the task runs.
 
 `rest::call_error` is not an `http_error`: a service letting a failed call to another API escape
 answers 500, not that API's status.

@@ -211,7 +211,7 @@ rest::mount<api>(simple, users_service{});
 
 Its `listen` listens on a port and serves until a stop request. It listens through the network of
 the executor it runs on, so that it needs nothing else. It takes the loopback interface by default:
-ask for `0.0.0.0` or `::` to be reachable from outside.
+ask for `0.0.0.0` or `::` to be reachable from outside, and see [On the Internet](#on-the-internet) first.
 
 ```cpp
 http::server server{router};
@@ -414,9 +414,24 @@ An HTTP/1.1 request with no `Host` or with several, an HTTP/1.0 one with several
 `100 Continue`, then its body is read. With an [`http::body_reader`](streaming.md#reading-a-request),
 this waits for the handler to ask for the body, unless its response has a writer: see [Streaming](streaming.md#reading-a-request).
 
+## On the Internet
+
+Put a reverse proxy in front of a server open to the Internet, and keep the server on the loopback interface, its default, or
+a private one, so that nothing reaches it around the proxy. The server defends itself against what comes through, with its
+limits and its strict reading of a request, but leaves corners of the RFCs that touch neither security nor stability.
+
+A connection stays open for the next request when the proxy asks for it: HTTP/1.1 with no `Connection: close`, or HTTP/1.0
+with `Connection: keep-alive`, and a response of known length there. Keep the proxy's idle time below `idle_timeout`: the
+server otherwise closes a connection as the proxy reuses it, which the proxy reports as an error of its own, as it does for a
+connection past `max_connections`.
+
+A handler does not learn the client's address, with a proxy or without. A forwarded header, as `X-Forwarded-For`, is in
+`request.fields` as it came, and a client can write one: rely on it only if the proxy always replaces it.
+
 ## TLS
 
-A certificate and its key make it an HTTPS server. Both files are PEM, the certificate followed by its
+A certificate and its key make it an HTTPS server, which is for a network you trust or for the link behind a proxy, as
+[On the Internet](#on-the-internet) says. Both files are PEM, the certificate followed by its
 chain:
 
 ```cpp
