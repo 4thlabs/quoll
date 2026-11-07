@@ -43,6 +43,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -891,5 +892,26 @@ TEST_CASE("What goes around a value and in a chunk's extension counts against th
 
     REQUIRE_FALSE(parser.feed(bytes(wire)).error);
     REQUIRE(parser.done());
+  }
+}
+
+TEST_CASE("Parser: a limit as high as it goes leaves a chunked body alone", "[http][parser]") {
+  http::parse_limits const limits{.max_header_size = std::numeric_limits<std::size_t>::max()};
+  std::string_view const wire = "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n\r\n";
+
+  SECTION("at once, the check on a body") {
+    http::request_parser parser{limits};
+
+    REQUIRE_FALSE(parser.feed(bytes(wire)).error);
+    REQUIRE(parser.done());
+    REQUIRE(parser.release().body == "hi");
+  }
+
+  SECTION("a byte at a time, the check at the end of a piece") {
+    http::request_parser parser{limits};
+
+    REQUIRE_FALSE(feed_bytewise(parser, wire).error);
+    REQUIRE(parser.done());
+    REQUIRE(parser.release().body == "hi");
   }
 }

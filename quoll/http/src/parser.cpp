@@ -207,7 +207,11 @@ struct parser<Message>::impl {
 
     constexpr std::uint64_t per_body_byte = 8;
 
-    return reached - body_begin_ > 2 * std::uint64_t{limits_.max_header_size} + (per_body_byte + 1) * body_size_;
+    auto const framing = reached - body_begin_;
+    auto const for_the_body = (per_body_byte + 1) * body_size_;
+
+    // Twice the limit, divided rather than multiplied: a limit may be as high as it goes.
+    return framing > for_the_body && (framing - for_the_body - 1) / 2 >= limits_.max_header_size;
   }
 
   // Returns 0, or the code that stops llhttp. What is between two pieces counts as well, as `max_header_size` says: no

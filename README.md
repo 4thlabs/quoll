@@ -148,7 +148,7 @@ is in [Getting started](docs/getting-started.md).
 | Guide                                      | What it covers                                                                  |
 | ------------------------------------------ | ------------------------------------------------------------------------------- |
 | [Getting started](docs/getting-started.md) | Adding Quoll with CMake, a first server and client, how a program runs          |
-| [Server](docs/server.md)                   | Routes, handlers, middlewares, `listen` and `serve`, timeouts, shutdown, errors |
+| [Server](docs/server.md)                   | Routes, handlers, middlewares, `listen` and `serve`, timeouts, shutdown, errors, on the Internet |
 | [Client](docs/client.md)                   | `http::client`, URLs, keep-alive and retries, redirects, TLS, failures          |
 | [Streaming](docs/streaming.md)             | Reading and writing bodies in pieces, on both sides, and what ends them         |
 | [REST](docs/rest.md)                       | The contract, `mount`, `rest::client`, codecs, third-party APIs                 |
