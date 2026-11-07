@@ -70,7 +70,8 @@ using result = detail::call_result<Endpoint>;
  *   does not decode.
  * - `try_call<Endpoint>(arguments...)` returns a task of result<Endpoint>: a reply<Endpoint> holding the declared
  *   response received, or an unexpected_response.
- * - Transport failures (network, cancellation) are exceptions from both tasks (std::system_error).
+ * - Transport failures (network, cancellation) are exceptions from both tasks (std::system_error). Over a
+ *   http::local_transport, so is what a service throws, as there is no connection to answer 500.
  *
  * The arguments are those of the endpoint, in its order: path parameters (prefixes first), then the argument parts,
  * then the inherited ones; their types come from the endpoint, so braced lists convert (`{.limit = 20}`). They are

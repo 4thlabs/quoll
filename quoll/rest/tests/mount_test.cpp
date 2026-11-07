@@ -617,6 +617,8 @@ TEST_CASE("text_codec: what is not UTF-8 is refused", "[rest]") {
 
   REQUIRE(text.decode<std::string>("caf\xC3\xA9") == "caf\xC3\xA9");
   REQUIRE_FALSE(text.decode<std::string>("a\xffz").has_value());
+  REQUIRE_THROWS_AS((void)text.encode("a\xffz"), std::invalid_argument);
+  REQUIRE(text.encode("caf\xC3\xA9") == "caf\xC3\xA9");
 }
 
 TEST_CASE("mount: a problem gets out, whatever its detail quotes", "[rest][mount]") {
@@ -737,8 +739,8 @@ TEST_CASE("mount: what http_error answers", "[rest][mount]") {
 
   REQUIRE(static_cast<int>(teapot.status) == 418);
   REQUIRE_FALSE(problem_of(teapot).title.has_value());
-  // Not an error status: a programming error, answered as one.
-  REQUIRE(create("fine").status == http::status::internal_server_error);
+  // Not an error status: a programming error, which goes on as any other.
+  REQUIRE_THROWS_AS(create("fine"), rest::http_error);
 }
 
 TEST_CASE("mount: adds all the routes or none", "[rest][mount]") {

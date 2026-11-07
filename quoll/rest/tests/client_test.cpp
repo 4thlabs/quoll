@@ -52,6 +52,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -386,14 +387,19 @@ TEST_CASE("client: what the server would refuse or read otherwise is refused at 
   REQUIRE_THROWS_AS((void)client.call<named>(std::string{"a\0b", 3}), std::invalid_argument);
   REQUIRE_NOTHROW((void)client.call<named>("ab"));
 
-  // Empty, a server reads none; with a line break, it cannot go out.
+  // Empty, a server reads none; with a line break, a field cannot go out, where a query encodes it.
   for (std::string const refused : {"", "a\r\nb"}) {
     client.credentials<bearer_auth>(refused);
     client.credentials<api_key<"X-Key">>(refused);
     client.credentials<api_key_query<"key">>(refused);
     REQUIRE_THROWS_AS((void)client.call<closed_one>(), std::invalid_argument);
     REQUIRE_THROWS_AS((void)client.call<header_keyed>(), std::invalid_argument);
-    REQUIRE_THROWS_AS((void)client.call<query_keyed>(), std::invalid_argument);
+
+    if (refused.empty()) {
+      REQUIRE_THROWS_AS((void)client.call<query_keyed>(), std::invalid_argument);
+    } else {
+      REQUIRE_NOTHROW((void)client.call<query_keyed>());
+    }
   }
 
   client.credentials<bearer_auth>(" token");
@@ -402,6 +408,23 @@ TEST_CASE("client: what the server would refuse or read otherwise is refused at 
   REQUIRE_THROWS_AS((void)client.call<closed_one>(), std::invalid_argument);
   REQUIRE_THROWS_AS((void)client.call<header_keyed>(), std::invalid_argument);
   REQUIRE_THROWS_AS((void)client.call<query_keyed>(), std::invalid_argument);
+}
+
+TEST_CASE("client: what a server says reaches what() with no line or escape sequence of its own", "[rest][client]") {
+  http::response answer;
+
+  answer.status = http::status::internal_server_error;
+  answer.fields.add("Content-Type", rest::problem_content_type);
+  answer.body = R"({"detail":"caf\u00e9\u001b[2J\r\nFAKE LOG LINE"})";
+
+  rest::client<v1, canned_transport> const client{canned_transport{answer}};
+
+  try {
+    (void)run(client.call<users::get>(42));
+    FAIL("call returned");
+  } catch (rest::call_error const &error) {
+    REQUIRE(std::string_view{error.what()} == "caf\xC3\xA9?[2J??FAKE LOG LINE");
+  }
 }
 
 TEST_CASE("client: a base URL reads as for http::client", "[rest][client]") {

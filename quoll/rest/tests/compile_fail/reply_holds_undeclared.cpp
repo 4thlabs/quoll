@@ -1,4 +1,4 @@
-// expect: quoll::rest::reply
+// expect: quoll::rest::reply: the endpoint declares no response with this status
 //   ___              _ _
 //  / _ \ _   _  ___ | | |
 // | | | | | | |/ _ \| | |

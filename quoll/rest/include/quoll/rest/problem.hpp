@@ -47,7 +47,7 @@ namespace quoll::rest {
 inline constexpr std::string_view problem_content_type = "application/problem+json";
 
 /**
- * @brief An RFC 9457 problem, the body of the errors the server answers itself (400, 401, 415, 500, http_error).
+ * @brief An RFC 9457 problem, the body of the errors the server answers itself (400, 401, 415, http_error).
  *
  * Every member is optional, as in the RFC: an absent `type` means `about:blank`. A third-party API with errors of
  * another shape declares them with `returns<its_error, status>`.

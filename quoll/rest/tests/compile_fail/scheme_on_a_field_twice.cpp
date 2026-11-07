@@ -1,4 +1,4 @@
-// expect: quoll::rest::with: the endpoint gets the same field or query parameter twice
+// expect: quoll::rest::endpoint: it gets the same field or query parameter twice
 //   ___              _ _
 //  / _ \ _   _  ___ | | |
 // | | | | | | |/ _ \| | |

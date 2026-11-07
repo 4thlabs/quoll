@@ -37,33 +37,21 @@
 #include <quoll/rest/detail/scheme_traits.hpp>
 
 #include <quoll/http/detail/ascii.hpp>
-#include <quoll/rest/detail/single_field.hpp>
 
-#include <optional>
 #include <stdexcept>
 #include <string_view>
 
 namespace quoll::rest::detail {
 
-std::optional<std::string_view> single_field(http::fields const &fields, std::string_view name) noexcept {
-  std::optional<std::string_view> found;
-
-  for (auto const &field : fields) {
-    if (http::detail::iequals(field.name, name)) {
-      if (found) {
-        return std::nullopt;
-      }
-
-      found = field.value;
-    }
-  }
-
-  return found;
-}
-
 void check_credential_text(std::string_view text) {
   if (text.empty() || http::detail::trim(text) != text || http::detail::has_control(text)) {
     throw std::invalid_argument{"quoll::rest::client: a credential the server would read differently"};
+  }
+}
+
+void check_credential_in_query(std::string_view text) {
+  if (text.empty()) {
+    throw std::invalid_argument{"quoll::rest::client: a credential the server would read as none"};
   }
 }
 

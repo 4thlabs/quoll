@@ -44,18 +44,25 @@
 
 #include <concepts>
 #include <expected>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
 namespace quoll::rest {
 
-/** @brief Plain text bodies in UTF-8, as `std::string`, sent as they are, and refused when received in anything else.
- */
+/** @brief Plain text bodies in UTF-8, as `std::string`: anything else is refused, to send or received. */
 class text_codec {
 public:
   static constexpr std::string_view content_type = "text/plain; charset=utf-8";
 
-  [[nodiscard]] std::string encode(std::string const &value) const { return value; }
+  /** @throws std::invalid_argument for text that is not UTF-8, which its content type would misstate. */
+  [[nodiscard]] std::string encode(std::string const &value) const {
+    if (!glz::validate_utf8(value.data(), value.size())) {
+      throw std::invalid_argument{"quoll::rest: cannot encode text that is not UTF-8"};
+    }
+
+    return value;
+  }
 
   template <class T>
     requires std::same_as<T, std::string>

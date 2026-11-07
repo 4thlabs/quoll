@@ -50,10 +50,14 @@
 #include <quoll/rest/query.hpp>
 #include <quoll/rest/security.hpp>
 
+#include <glaze/core/reflect.hpp>
+
 #include <array>
 #include <cstddef>
 #include <string_view>
+#include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace quoll::rest::detail {
 
@@ -110,11 +114,25 @@ inline constexpr place_of_part place_of<api_key<Header>>{named_place::field, Hea
 template <fixed_string Param>
 inline constexpr place_of_part place_of<api_key_query<Param>>{named_place::query, Param.view()};
 
+template <class Part>
+consteval void add_places(std::type_identity<Part>, std::vector<place_of_part> &places) {
+  places.push_back(place_of<Part>);
+}
+
+template <class Struct>
+consteval void add_places(std::type_identity<query_params<Struct>>, std::vector<place_of_part> &places) {
+  for (auto const name : glz::reflect<Struct>::keys) {
+    places.push_back({named_place::query, name});
+  }
+}
+
 // Whether no two of them ask for the same place: what comes twice is refused, so that a call could never succeed.
 template <class... Arguments, class... Schemes>
 [[nodiscard]] consteval bool distinct_places(type_list<Arguments...>, type_list<Schemes...>) {
-  std::array<place_of_part, sizeof...(Arguments) + sizeof...(Schemes)> const places{place_of<Arguments>...,
-                                                                                    place_of<Schemes>...};
+  std::vector<place_of_part> places;
+
+  (add_places(std::type_identity<Arguments>{}, places), ...);
+  (add_places(std::type_identity<Schemes>{}, places), ...);
 
   for (std::size_t first = 0; first < places.size(); ++first) {
     for (std::size_t second = first + 1; second < places.size(); ++second) {
@@ -163,7 +181,7 @@ struct route {
   using schemes = typename security_schemes<filter_t<is_security_part, parts>>::type;
 
   static_assert(distinct_places(filter_t<is_argument_part, parts>{}, schemes{}),
-                "quoll::rest::with: the endpoint gets the same field or query parameter twice");
+                "quoll::rest::endpoint: it gets the same field or query parameter twice");
 
   static constexpr auto path_value = Path;
   static constexpr std::string_view path = path_value.view();

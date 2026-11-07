@@ -90,7 +90,7 @@ struct task_value<async::task<T>> {
   using type = T;
 };
 
-// An error the server answers itself, as an RFC 9457 problem; `detail` is sent as it is.
+// An error the server answers itself, as an RFC 9457 problem; `detail` is sent as it is, if it is UTF-8.
 [[nodiscard]] http::response problem_response(http::status code, std::optional<std::string> detail);
 
 template <class Scheme>
@@ -281,16 +281,17 @@ async::task<http::response> answer(mounted<Validators, Services...> &state, type
   }
 }
 
-// The answer to an http_error a service or a validator threw: its status if it is an error one, with the challenge
-// of the route's first scheme on a 401 (RFC 9110); otherwise 500, as for any other exception.
+// Whether an http_error is one: another status is a programming error, which goes on as any other exception.
+[[nodiscard]] constexpr bool answers_as_an_error(http::status status) noexcept {
+  auto const code = static_cast<int>(status);
+
+  return code >= 400 && code <= 599;
+}
+
+// The answer to an http_error a service or a validator threw: its status, with the challenge of the route's first
+// scheme on a 401 (RFC 9110).
 template <class Route>
 [[nodiscard]] http::response error_response(http_error const &error) {
-  auto const code = static_cast<int>(error.status());
-
-  if (code < 400 || code > 599) {
-    return problem_response(http::status::internal_server_error, std::nullopt);
-  }
-
   auto response = problem_response(error.status(), error.what());
 
   if constexpr (Route::schemes::size > 0) {
@@ -322,8 +323,8 @@ template <class... Parts>
 }
 
 // Serves a request routed to `Route`: credentials (401), arguments (400, 415), the service, its response. A service
-// throwing http_error answers its status. Anything else goes on, as from any handler: a connection answers 500 and
-// tells on_handler_error, and a stop or a timeout reaches what waits for it.
+// throwing http_error with an error status answers it. Anything else goes on, as from any handler: a connection answers
+// 500 and tells on_handler_error, and a stop or a timeout reaches what waits for it.
 template <class Route, class State>
 async::task<http::response> serve(std::shared_ptr<State> state, http::request request, http::route_match match) {
   try {
@@ -353,6 +354,10 @@ async::task<http::response> serve(std::shared_ptr<State> state, http::request re
 
     co_return co_await answer<Route>(*state, std::move(*arguments));
   } catch (http_error const &error) {
+    if (!answers_as_an_error(error.status())) {
+      throw;
+    }
+
     co_return error_response<Route>(error);
   }
 }

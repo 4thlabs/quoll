@@ -56,6 +56,9 @@ namespace quoll::rest::detail {
 // and a control character cannot go out.
 void check_credential_text(std::string_view text);
 
+// A credential in a query goes encoded, so that it reads back as it is: only empty is none to the server.
+void check_credential_in_query(std::string_view text);
+
 // Everything about a security scheme, for the server and the client alike:
 // - `key`: its key in a client's credentials, known at compile time;
 // - `find(fields, query)`: the credential a request carries, if any (an empty one is none);
@@ -121,7 +124,7 @@ struct scheme_traits<api_key_query<Param>> {
   [[nodiscard]] static std::string challenge() { return "ApiKey query=\"" + std::string{Param.view()} + "\""; }
 
   static void add(std::string const &value, http::fields &, std::string &query) {
-    check_credential_text(value);
+    check_credential_in_query(value);
     append_query(query, Param.view(), value);
   }
 };

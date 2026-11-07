@@ -57,12 +57,30 @@ void check_path_text(std::string_view name, std::string_view text, bool rest_of_
   }
 }
 
+namespace {
+
+// What a server says, on its way to a log or a terminal: no line of its own, and no escape sequence. Glaze has checked
+// that it is UTF-8, which stays.
+[[nodiscard]] std::string without_controls(std::string text) {
+  for (auto &character : text) {
+    auto const byte = static_cast<unsigned char>(character);
+
+    if (byte < 0x20 || byte == 0x7F) {
+      character = '?';
+    }
+  }
+
+  return text;
+}
+
+} // namespace
+
 std::string failure_detail(unexpected_response const &failure) {
   auto const content_type = failure.response.fields.find("Content-Type");
 
   if (content_type && http::detail::iequals(media_type(*content_type), problem_content_type)) {
     if (auto const decoded = lenient_json_codec{}.decode<problem>(failure.response.body); decoded && decoded->detail) {
-      return *decoded->detail;
+      return without_controls(*decoded->detail);
     }
   }
 
