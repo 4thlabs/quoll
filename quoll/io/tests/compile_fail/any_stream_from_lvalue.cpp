@@ -38,7 +38,5 @@
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/memory_stream.hpp>
 
-#include <utility>
-
 // It takes a stream over: one left behind would still be there to use.
 void wrap(quoll::io::memory_stream &stream) { quoll::io::any_stream const wrapped{stream}; }

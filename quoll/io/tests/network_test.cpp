@@ -381,3 +381,61 @@ TEST_CASE("any_listener: a listener replaced is gone, and it is seen from a cons
 
   REQUIRE(*second == 1);
 }
+
+namespace {
+
+// A network that takes what it needs at the call, as asio's does, and counts them.
+struct calling_network {
+  int *calls;
+
+  [[nodiscard]] static task<io::any_stream> connected() {
+    co_return io::any_stream{io::make_memory_stream_pair().first};
+  }
+
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    ++*calls;
+    return connected();
+  }
+
+  [[nodiscard]] task<io::any_stream> connect_tls(std::string, std::uint16_t, io::tls_client_options const &) const {
+    ++*calls;
+    return connected();
+  }
+
+  [[nodiscard]] io::any_listener listen(std::string, std::uint16_t) const {
+    static int accepts = 0;
+
+    return io::any_listener{idle_listener{&accepts}};
+  }
+
+  [[nodiscard]] io::any_listener listen_tls(std::string, std::uint16_t, io::tls_server_options const &) const {
+    static int accepts = 0;
+
+    return io::any_listener{idle_listener{&accepts}};
+  }
+};
+
+} // namespace
+
+TEST_CASE("network_ref and tls_network_ref: the network is used at the call, and may go before the task runs",
+          "[io][network]") {
+  auto calls = 0;
+
+  auto connecting = [&] {
+    calling_network const network{&calls};
+
+    return io::network_ref{network}.connect("example.com", 80);
+  }();
+
+  REQUIRE(calls == 1);
+  REQUIRE(quoll::test::run(std::move(connecting)).has_value());
+
+  auto encrypting = [&] {
+    calling_network const network{&calls};
+
+    return io::tls_network_ref{network}.connect_tls("example.com", 443, {});
+  }();
+
+  REQUIRE(calls == 2);
+  REQUIRE(quoll::test::run(std::move(encrypting)).has_value());
+}

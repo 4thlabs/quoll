@@ -66,8 +66,7 @@ namespace quoll::io {
  * Writes never wait (the pipe is unbounded) and a read waits until the peer writes or closes; the reader resumes
  * on its own executor. A stop request on the reader's await_context ends a waiting read with
  * `std::errc::operation_canceled`. Destroying an end closes it, and the peer's writes then fail with
- * `std::errc::broken_pipe`. An end must not be destroyed or moved while one of its reads is pending, and neither may
- * the coroutine suspended on that read.
+ * `std::errc::broken_pipe`. An end must not be destroyed or moved while one of its reads is pending.
  *
  * Move-only. Thread safety: none; both ends, and the stop requests reaching their reads, are used from one thread.
  */
@@ -85,13 +84,21 @@ public:
     // Moved into the awaiting coroutine before it suspends, when no stop callback is registered yet.
     read_awaitable(read_awaitable &&other) noexcept : channel_(other.channel_), buffer_(other.buffer_) {}
 
-    ~read_awaitable() = default;
+    // A coroutine suspended here may go, and the peer's next write must not then find it. One already woken is on its
+    // executor's queue, from where nothing can take it.
+    ~read_awaitable() {
+      if (suspended_) {
+        stop_callback_.reset();
+        channel_->end_wait();
+      }
+    }
 
     [[nodiscard]] bool await_ready() const noexcept { return buffer_.empty() || channel_->readable(); }
 
     void await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
       item_.handle = handle;
       channel_->wait(item_, context.executor);
+      suspended_ = true;
 
       // Invoked at once if stop was already requested.
       if (context.stop_token.stop_possible()) {
@@ -102,6 +109,7 @@ public:
     [[nodiscard]] io_result await_resume() noexcept {
       stop_callback_.reset();
       channel_->end_wait();
+      suspended_ = false;
 
       if (canceled_) {
         return {std::make_error_code(std::errc::operation_canceled), 0};
@@ -130,6 +138,7 @@ public:
     std::span<std::byte> buffer_;
     async::work_item item_;
     bool canceled_ = false;
+    bool suspended_ = false;
     std::optional<std::stop_callback<canceller>> stop_callback_;
   };
 

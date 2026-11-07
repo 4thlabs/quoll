@@ -520,10 +520,89 @@ TEST_CASE("any_stream: an operation over one still pending is refused", "[io][an
     auto const written = stream.write_some(buffer);
 
     REQUIRE_THROWS_AS((void)stream.write_some(buffer), std::logic_error);
+    REQUIRE_THROWS_AS((void)stream.shutdown_send(), std::logic_error);
     REQUIRE_NOTHROW((void)stream.read_some(buffer));
   }
 
+  {
+    auto const stopping = stream.shutdown_send();
+
+    REQUIRE_THROWS_AS((void)stream.read_some(buffer), std::logic_error);
+    REQUIRE_THROWS_AS((void)stream.write_some(buffer), std::logic_error);
+    REQUIRE_THROWS_AS((void)stream.shutdown_send(), std::logic_error);
+  }
+
   REQUIRE_NOTHROW((void)stream.read_some(buffer));
+}
+
+TEST_CASE("any_stream: an operation on one moved from is refused", "[io][any_stream]") {
+  std::array<std::byte, 4> buffer{};
+  io::any_stream stream{task_stream{}};
+  io::any_stream const moved{std::move(stream)};
+
+  // NOLINTBEGIN(bugprone-use-after-move): what is tested.
+  REQUIRE_THROWS_AS((void)stream.read_some(buffer), std::logic_error);
+  REQUIRE_THROWS_AS((void)stream.write_some(buffer), std::logic_error);
+  REQUIRE_THROWS_AS((void)stream.shutdown_send(), std::logic_error);
+  // NOLINTEND(bugprone-use-after-move)
+}
+
+TEST_CASE("any_stream: awaiting an operation twice is refused", "[io][any_stream]") {
+  std::array<std::byte, 4> buffer{};
+
+  auto const twice = [&]() -> task<bool> {
+    io::any_stream stream{task_stream{}};
+    auto read = stream.read_some(buffer);
+    auto const first = co_await read;
+
+    static_cast<void>(first);
+
+    try {
+      auto const second = co_await read;
+
+      static_cast<void>(second);
+    } catch (std::logic_error const &) {
+      co_return true;
+    }
+
+    co_return false;
+  };
+
+  REQUIRE(run(twice()) == true);
+}
+
+TEST_CASE("any_stream: an operation that throws leaves room for the next", "[io][any_stream]") {
+  struct throwing_stream {
+    [[nodiscard]] static task<io::io_result> failing() {
+      throw std::runtime_error{"on purpose"};
+      co_return io::io_result{};
+    }
+
+    [[nodiscard]] task<io::io_result> read_some(std::span<std::byte>) { return failing(); }
+
+    [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) { return failing(); }
+  };
+
+  std::array<std::byte, 4> buffer{};
+
+  auto const reading = [&]() -> task<int> {
+    io::any_stream stream{throwing_stream{}};
+    auto failures = 0;
+
+    for (auto attempt = 0; attempt < 2; ++attempt) {
+      try {
+        auto const read = co_await stream.read_some(buffer);
+
+        static_cast<void>(read);
+      } catch (std::runtime_error const &) {
+        ++failures;
+      }
+    }
+
+    co_return failures;
+  };
+
+  REQUIRE(run(reading()) == 2);
 }
 
 TEST_CASE("any_stream: target of what is no stream is nothing", "[io][any_stream]") {

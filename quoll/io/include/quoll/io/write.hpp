@@ -42,9 +42,9 @@
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/io_result.hpp>
 
-#include <cassert>
 #include <cstddef>
 #include <span>
+#include <system_error>
 
 namespace quoll::io {
 
@@ -62,7 +62,7 @@ template <ByteStream Stream>
     auto const result = co_await stream.write_some(data.subspan(written));
 
     if (result.transferred > data.size() - written) {
-      co_return io_result{std::make_error_code(std::errc::io_error), written};
+      co_return io_result{result.error ? result.error : std::make_error_code(std::errc::io_error), written};
     }
 
     written += result.transferred;

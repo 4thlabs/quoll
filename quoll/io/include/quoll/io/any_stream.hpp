@@ -42,6 +42,7 @@
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/io/byte_stream.hpp>
+#include <quoll/io/detail/erasable_stream.hpp>
 #include <quoll/io/detail/stream_vtable.hpp>
 #include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
@@ -68,8 +69,9 @@ namespace quoll::io {
  *
  * Move-only. Like the wrapped stream, it must not be moved or destroyed while one of its operations is pending, and
  * has at most one read and one write pending at a time: an operation is pending from its call until it has completed,
- * or until its awaitable goes, and starting another then throws std::logic_error. A moved-from any_stream can only be
- * assigned to or destroyed.
+ * or until its awaitable goes, and starting another then throws std::logic_error, as does awaiting one twice. A
+ * moved-from any_stream can only be assigned to or destroyed: an operation on it throws the same. Moving or destroying
+ * one with an operation pending terminates, as it has nothing to throw to and the awaitable would go on using it.
  *
  * Thread safety: same as the wrapped stream.
  */
@@ -88,7 +90,13 @@ public:
 
     ~awaitable() { finish(); }
 
-    [[nodiscard]] bool await_ready() { return vtable_->ready(awaitable_); }
+    [[nodiscard]] bool await_ready() {
+      if (awaitable_ == nullptr) {
+        throw_finished();
+      }
+
+      return vtable_->ready(awaitable_);
+    }
 
     [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle,
                                                         async::await_context const &context) {
@@ -168,8 +176,7 @@ public:
 
   /** @brief Reads with the wrapped stream. */
   [[nodiscard]] awaitable read_some(std::span<std::byte> buffer QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
-    assert(vtable_ != nullptr && "any_stream used after being moved from");
-    refuse_if(reading_ || shutting_down_);
+    refuse_if(vtable_ == nullptr || reading_ || shutting_down_);
 
     auto *const wrapped = vtable_->read_some(block_, buffer);
 
@@ -179,8 +186,7 @@ public:
 
   /** @brief Writes with the wrapped stream. */
   [[nodiscard]] awaitable write_some(std::span<std::byte const> data QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
-    assert(vtable_ != nullptr && "any_stream used after being moved from");
-    refuse_if(writing_ || shutting_down_);
+    refuse_if(vtable_ == nullptr || writing_ || shutting_down_);
 
     auto *const wrapped = vtable_->write_some(block_, data);
 
@@ -193,8 +199,7 @@ public:
    * `std::errc::operation_not_supported`, so that a caller goes on as it would with no way to do this.
    */
   [[nodiscard]] awaitable shutdown_send() QUOLL_LIFETIMEBOUND {
-    assert(vtable_ != nullptr && "any_stream used after being moved from");
-    refuse_if(reading_ || writing_ || shutting_down_);
+    refuse_if(vtable_ == nullptr || reading_ || writing_ || shutting_down_);
 
     auto *const wrapped = vtable_->shutdown_send(block_);
 
@@ -204,7 +209,7 @@ public:
 
   /** @brief The wrapped stream if its type is exactly `S`, otherwise `nullptr`. */
   template <class S>
-  [[nodiscard]] S *target() noexcept {
+  [[nodiscard]] S *target() noexcept QUOLL_LIFETIMEBOUND {
     if constexpr (ByteStream<S>) {
       return is<S>() ? &static_cast<detail::stream_block<S> *>(block_)->stream : nullptr;
     } else {
@@ -214,7 +219,7 @@ public:
 
   /** @copydoc target */
   template <class S>
-  [[nodiscard]] S const *target() const noexcept {
+  [[nodiscard]] S const *target() const noexcept QUOLL_LIFETIMEBOUND {
     if constexpr (ByteStream<S>) {
       return is<S>() ? &static_cast<detail::stream_block<S> const *>(block_)->stream : nullptr;
     } else {
@@ -238,15 +243,16 @@ private:
     return vtable_ != nullptr && vtable_->type == async::detail::type_id_of<S>();
   }
 
-  // An operation over a live one would build over its awaitable in the slot, with what is undefined in a build with no
-  // assert: not worth the branch it saves.
-  static void refuse_if(bool pending) {
-    if (pending) {
-      throw_pending();
+  // An operation over a live one would build over its awaitable in the slot, and one on a moved-from stream has no
+  // table to go through, undefined in a build with no assert: not worth the branch it saves.
+  static void refuse_if(bool refused) {
+    if (refused) {
+      throw_refused();
     }
   }
 
-  [[noreturn]] static void throw_pending();
+  [[noreturn]] static void throw_refused();
+  [[noreturn]] static void throw_finished();
 
   void take(any_stream &other) noexcept;
   void reset() noexcept;

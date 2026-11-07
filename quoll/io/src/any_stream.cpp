@@ -36,17 +36,25 @@
 
 #include <quoll/io/any_stream.hpp>
 
-#include <cassert>
+#include <exception>
 #include <stdexcept>
 #include <utility>
 
 namespace quoll::io {
 
-void any_stream::throw_pending() { throw std::logic_error{"quoll::io::any_stream: an operation is still pending"}; }
+void any_stream::throw_refused() {
+  throw std::logic_error{"quoll::io::any_stream: moved from, or an operation is still pending"};
+}
+
+void any_stream::throw_finished() {
+  throw std::logic_error{"quoll::io::any_stream: this operation has already completed"};
+}
 
 void any_stream::take(any_stream &other) noexcept {
-  assert(!other.reading_ && !other.writing_ && !other.shutting_down_ &&
-         "any_stream moved while one of its operations is pending");
+  // The awaitable would go on using what moves.
+  if (other.reading_ || other.writing_ || other.shutting_down_) {
+    std::terminate();
+  }
 
   vtable_ = std::exchange(other.vtable_, nullptr);
 
@@ -65,7 +73,11 @@ void any_stream::take(any_stream &other) noexcept {
 
 void any_stream::reset() noexcept {
   if (vtable_ != nullptr) {
-    assert(!reading_ && !writing_ && !shutting_down_ && "any_stream destroyed while one of its operations is pending");
+    // The awaitable would go on using what goes.
+    if (reading_ || writing_ || shutting_down_) {
+      std::terminate();
+    }
+
     vtable_->destroy(block_);
     vtable_ = nullptr;
     block_ = nullptr;

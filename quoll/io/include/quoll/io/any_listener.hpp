@@ -41,7 +41,6 @@
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_stream.hpp>
-#include <quoll/io/bound_listener.hpp>
 #include <quoll/io/detail/listener_vtable.hpp>
 #include <quoll/io/listener.hpp>
 
@@ -104,14 +103,14 @@ public:
 
   /** @brief The wrapped listener if its type is exactly `L`, otherwise `nullptr`. */
   template <class L>
-  [[nodiscard]] L *target() noexcept {
+  [[nodiscard]] L *target() noexcept QUOLL_LIFETIMEBOUND {
     return vtable_ != nullptr && vtable_->type == async::detail::type_id_of<L>() ? static_cast<L *>(listener_)
                                                                                  : nullptr;
   }
 
   /** @copydoc target */
   template <class L>
-  [[nodiscard]] L const *target() const noexcept {
+  [[nodiscard]] L const *target() const noexcept QUOLL_LIFETIMEBOUND {
     return vtable_ != nullptr && vtable_->type == async::detail::type_id_of<L>() ? static_cast<L const *>(listener_)
                                                                                  : nullptr;
   }

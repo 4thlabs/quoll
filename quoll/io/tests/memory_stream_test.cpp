@@ -41,11 +41,14 @@
 #include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/io.hpp>
+#include <quoll/io/detail/sound_read.hpp>
 #include <quoll/test/run.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
+#include <coroutine>
 #include <cstddef>
 #include <exception>
 #include <new>
@@ -417,6 +420,14 @@ TEST_CASE("io::write: goes on until all has left, and counts what left before an
     REQUIRE(result->transferred == 6);
   }
 
+  SECTION("an error with more than it was given stays that error") {
+    cutting_stream stream{.piece = 3, .until = 6, .answer = {std::make_error_code(std::errc::broken_pipe), 100}};
+    auto const result = run(io::write(stream, bytes(data)));
+
+    REQUIRE(result->error == std::errc::broken_pipe);
+    REQUIRE(result->transferred == 6);
+  }
+
   SECTION("more than it was given is no count to trust") {
     cutting_stream stream{.piece = 3, .until = 6, .answer = {{}, 100}};
     auto const result = run(io::write(stream, bytes(data)));
@@ -454,4 +465,37 @@ TEST_CASE("memory_stream: a reader a little behind does not keep all that went t
   }
 
   REQUIRE(channel.held() <= 4 * chunk.size());
+}
+
+TEST_CASE("memory_stream: a suspended read that goes leaves the peer nothing to find", "[io][memory_stream]") {
+  auto [left, right] = io::make_memory_stream_pair();
+  quoll::async::run_loop loop;
+  auto const executor = loop.get_executor();
+  std::array<std::byte, 4> buffer{};
+
+  {
+    auto read = left.read_some(buffer);
+
+    REQUIRE_FALSE(read.await_ready());
+    read.await_suspend(std::noop_coroutine(),
+                       quoll::async::await_context{.executor = quoll::async::executor_ref{executor}, .stop_token = {}});
+  }
+
+  // It would otherwise post the read that went, and another could not start.
+  REQUIRE(run(write_once(right, "late")));
+  loop.run();
+  REQUIRE(run(read_once(left))->text == "late");
+}
+
+TEST_CASE("io::detail::sound_read: what a stream reports is what can be trusted", "[io]") {
+  auto const io_error = std::make_error_code(std::errc::io_error);
+  auto const reset = std::make_error_code(std::errc::connection_reset);
+
+  REQUIRE(io::detail::sound_read({{}, 4}, 4).transferred == 4);
+  REQUIRE_FALSE(io::detail::sound_read({{}, 4}, 4).error);
+  REQUIRE(io::detail::sound_read({{}, 5}, 4).error == io_error);
+  REQUIRE(io::detail::sound_read({{}, 5}, 4).transferred == 0);
+  REQUIRE(io::detail::sound_read({{}, 0}, 4).error == io_error);
+  REQUIRE(io::detail::sound_read({reset, 3}, 4).error == reset);
+  REQUIRE(io::detail::sound_read({reset, 3}, 4).transferred == 0);
 }

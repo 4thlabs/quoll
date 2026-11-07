@@ -41,11 +41,13 @@
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_listener.hpp>
 #include <quoll/io/any_stream.hpp>
+#include <quoll/io/detail/keeping.hpp>
 #include <quoll/io/tls_network.hpp>
 #include <quoll/io/tls_options.hpp>
 
 #include <concepts>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -56,8 +58,9 @@ namespace quoll::io {
  * @brief Non-owning, type-erased reference to a TlsNetwork; models TlsNetwork itself. The service an executor of an I/O
  * loop built with a TLS library offers: `executor.query<io::tls_network_ref>()`.
  *
- * Trivially copyable and never allocates. The referenced network, usually the executor that answered the query, must
- * outlive the reference: io::connect_tls() and io::listen_tls() use it at once, from the task's own executor.
+ * Trivially copyable, and it allocates nothing but what a connection takes. The referenced network, usually the
+ * executor that answered the query, must outlive the reference: io::connect_tls() and io::listen_tls() use it at once,
+ * from the task's own executor.
  *
  * Thread safety: same as the referenced network.
  */
@@ -91,9 +94,14 @@ public:
   }
 
 private:
+  struct tls_connection_arguments {
+    std::string host;
+    tls_client_options options;
+  };
+
   struct vtable {
     async::task<any_stream> (*connect_tls)(void const *network, std::string host, std::uint16_t port,
-                                           tls_client_options options);
+                                           tls_client_options const &options);
     any_listener (*listen_tls)(void const *network, std::string address, std::uint16_t port,
                                tls_server_options const &options);
     async::detail::type_id type;
@@ -101,10 +109,13 @@ private:
 
   template <TlsNetwork N>
   static constexpr vtable vtable_for{
-      // A coroutine, so that what it is given stays until its task has ended: it may refer to it.
+      // At the call, as the network only has to outlive the reference. What it is given stays until its task has ended.
       [](void const *network, std::string host, std::uint16_t port,
-         tls_client_options options) -> async::task<any_stream> {
-        co_return co_await static_cast<N const *>(network)->connect_tls(host, port, options);
+         tls_client_options const &options) -> async::task<any_stream> {
+        auto kept = std::make_unique<tls_connection_arguments>(std::move(host), options);
+        auto connecting = static_cast<N const *>(network)->connect_tls(kept->host, port, kept->options);
+
+        return detail::keeping(std::move(kept), std::move(connecting));
       },
       [](void const *network, std::string address, std::uint16_t port, tls_server_options const &options) {
         return static_cast<N const *>(network)->listen_tls(std::move(address), port, options);
