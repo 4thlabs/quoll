@@ -39,6 +39,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#if __has_include(<stdfloat>)
+#include <stdfloat>
+#endif
+
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -119,4 +123,30 @@ TEST_CASE("param_traits: enums by name", "[rest][param]") {
   REQUIRE_FALSE(param_traits<sort_order>::from_text("ascending\""));
   REQUIRE_FALSE(param_traits<sort_order>::from_text("\\u0061scending"));
   REQUIRE_THROWS_AS(param_traits<sort_order>::to_text(static_cast<sort_order>(7)), std::invalid_argument);
+}
+
+// libc++ has no std::from_chars for a long double.
+#ifdef __GLIBCXX__
+TEST_CASE("param_traits: a floating-point number that fits no double reads back", "[rest]") {
+  auto const third = 1.0L / 3.0L;
+  auto const text = quoll::rest::param_traits<long double>::to_text(third);
+
+  REQUIRE(text.find('\0') == std::string::npos);
+  REQUIRE(quoll::rest::param_traits<long double>::from_text(text) == third);
+
+#ifdef __STDCPP_FLOAT128_T__
+  auto const quad = std::float128_t{1} / std::float128_t{3};
+  auto const quad_text = quoll::rest::param_traits<std::float128_t>::to_text(quad);
+
+  REQUIRE(quad_text.find('\0') == std::string::npos);
+  REQUIRE(quoll::rest::param_traits<std::float128_t>::from_text(quad_text) == quad);
+#endif
+}
+#endif
+
+TEST_CASE("param_traits: a number that is not finite has no text", "[rest]") {
+  REQUIRE_THROWS_AS(quoll::rest::param_traits<double>::to_text(std::numeric_limits<double>::infinity()),
+                    std::invalid_argument);
+  REQUIRE_THROWS_AS(quoll::rest::param_traits<float>::to_text(std::numeric_limits<float>::quiet_NaN()),
+                    std::invalid_argument);
 }

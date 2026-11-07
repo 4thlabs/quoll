@@ -99,13 +99,16 @@ public:
       : value_(make<detail::first_true(detail::with_status<Status, T>(responses{}))>(std::move(value))) {}
 
   /** @brief The status of the response held. */
-  [[nodiscard]] http::status status() const noexcept {
+  [[nodiscard]] http::status status() const {
     return std::visit([](auto const &held) { return std::decay_t<decltype(held)>::response::status; }, value_);
   }
 
   /** @brief Whether the response held has `Status`. */
   template <http::status Status>
-  [[nodiscard]] bool holds() const noexcept {
+  [[nodiscard]] bool holds() const {
+    // That Status is declared: a branch on another one would be dead, as get() would not compile.
+    static_cast<void>(status_index<Status>());
+
     return status() == Status;
   }
 

@@ -41,6 +41,7 @@
 #include <algorithm>
 #include <optional>
 #include <ranges>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -93,6 +94,11 @@ std::vector<std::string_view> query_texts(std::vector<query_entry> const &query,
 }
 
 void append_query(std::string &query, std::string_view name, std::string_view value) {
+  if (value.contains('\0')) {
+    throw std::invalid_argument{"quoll::rest::client: query parameter " + std::string{name} +
+                                " holds a NUL, which the server refuses"};
+  }
+
   query += query.empty() ? "" : "&";
   query += http::detail::percent_encode(name);
   query += '=';

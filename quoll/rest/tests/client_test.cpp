@@ -47,9 +47,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <limits>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -212,7 +215,27 @@ task<bool> completes(task<> work) {
 struct canned_transport {
   http::response answer;
 
-  [[nodiscard]] task<http::response> send(http::request) const { co_return answer; }
+  // The task owns what it needs, as HttpTransport asks.
+  [[nodiscard]] task<http::response> send(http::request) const { return answering(answer); }
+
+  [[nodiscard]] static task<http::response> answering(http::response answer) { co_return answer; }
+};
+
+// What it was asked, and an answer with no content.
+struct recording_transport {
+  std::shared_ptr<std::vector<http::request>> sent = std::make_shared<std::vector<http::request>>();
+
+  [[nodiscard]] task<http::response> send(http::request request) const { return recording(sent, std::move(request)); }
+
+  [[nodiscard]] static task<http::response> recording(std::shared_ptr<std::vector<http::request>> to,
+                                                      http::request request) {
+    to->push_back(std::move(request));
+
+    http::response answer;
+
+    answer.status = http::status::no_content;
+    co_return answer;
+  }
 };
 
 } // namespace
@@ -317,6 +340,78 @@ TEST_CASE("client: call throws call_error for any other outcome", "[rest][client
     REQUIRE(error.failure().reason == "declared response 404: read it with try_call");
   }
 }
+
+TEST_CASE("client: a credential goes to the endpoints that require it, and no other", "[rest][client]") {
+  using namespace quoll::rest;
+
+  using open_one = endpoint<"open", http::verb::get, "/open">;
+  using closed_one = endpoint<"closed", http::verb::get, "/closed", security<bearer_auth>>;
+  using keyed_one = endpoint<"keyed", http::verb::get, "/keyed", security<api_key_query<"key">>>;
+
+  recording_transport const transport;
+  rest::client<api<"", open_one, closed_one, keyed_one>, recording_transport> client{transport};
+
+  client.credentials<bearer_auth>("token");
+  client.credentials<api_key_query<"key">>("secret");
+  REQUIRE(run(completes(client.call<open_one>())));
+  REQUIRE(run(completes(client.call<closed_one>())));
+  REQUIRE(run(completes(client.call<keyed_one>())));
+
+  auto const &sent = *transport.sent;
+
+  REQUIRE(sent.size() == 3);
+  REQUIRE_FALSE(sent[0].fields.contains("Authorization"));
+  REQUIRE(sent[0].target == "/open");
+  REQUIRE(sent[1].fields.find("Authorization") == "Bearer token");
+  REQUIRE(sent[1].target == "/closed");
+  REQUIRE_FALSE(sent[2].fields.contains("Authorization"));
+  REQUIRE(sent[2].target == "/keyed?key=secret");
+}
+
+TEST_CASE("client: what the server would refuse or read otherwise is refused at the call", "[rest][client]") {
+  using namespace quoll::rest;
+
+  using numbered = endpoint<"numbered", http::verb::get, "/n", query<"d", double>>;
+  using named = endpoint<"named", http::verb::get, "/q", query<"q", std::string>>;
+  using closed_one = endpoint<"closed", http::verb::get, "/closed", security<bearer_auth>>;
+  using header_keyed = endpoint<"header", http::verb::get, "/h", security<api_key<"X-Key">>>;
+  using query_keyed = endpoint<"query", http::verb::get, "/k", security<api_key_query<"key">>>;
+
+  rest::client<api<"", numbered, named, closed_one, header_keyed, query_keyed>, recording_transport> client{
+      recording_transport{}};
+
+  REQUIRE_THROWS_AS((void)client.call<numbered>(std::numeric_limits<double>::quiet_NaN()), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<numbered>(std::numeric_limits<double>::infinity()), std::invalid_argument);
+  REQUIRE_NOTHROW((void)client.call<numbered>(1.5));
+  REQUIRE_THROWS_AS((void)client.call<named>(std::string{"a\0b", 3}), std::invalid_argument);
+  REQUIRE_NOTHROW((void)client.call<named>("ab"));
+
+  // Empty, a server reads none; with a line break, it cannot go out.
+  for (std::string const refused : {"", "a\r\nb"}) {
+    client.credentials<bearer_auth>(refused);
+    client.credentials<api_key<"X-Key">>(refused);
+    client.credentials<api_key_query<"key">>(refused);
+    REQUIRE_THROWS_AS((void)client.call<closed_one>(), std::invalid_argument);
+    REQUIRE_THROWS_AS((void)client.call<header_keyed>(), std::invalid_argument);
+    REQUIRE_THROWS_AS((void)client.call<query_keyed>(), std::invalid_argument);
+  }
+
+  client.credentials<bearer_auth>(" token");
+  client.credentials<api_key<"X-Key">>("key ");
+  client.credentials<api_key_query<"key">>(std::string{"a\0b", 3});
+  REQUIRE_THROWS_AS((void)client.call<closed_one>(), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<header_keyed>(), std::invalid_argument);
+  REQUIRE_THROWS_AS((void)client.call<query_keyed>(), std::invalid_argument);
+}
+
+TEST_CASE("client: a base URL reads as for http::client", "[rest][client]") {
+  REQUIRE_THROWS_AS((rest::client<v1>{"http://example.com//"}), std::invalid_argument);
+  REQUIRE_NOTHROW(rest::client<v1>{"http://example.com/"});
+  REQUIRE_NOTHROW(rest::client<v1>{"http://example.com/base/"});
+}
+
+static_assert(std::is_nothrow_copy_constructible_v<rest::call_error>,
+              "an exception does not throw on its way to a handler");
 
 TEST_CASE("client: credentials are sent to the endpoints that require them", "[rest][client]") {
   auto const router = make_router();

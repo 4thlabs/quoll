@@ -51,6 +51,7 @@
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/http_error.hpp>
+#include <quoll/rest/query.hpp>
 #include <quoll/rest/reply.hpp>
 #include <quoll/rest/security.hpp>
 #include <quoll/rest/validators.hpp>
@@ -100,10 +101,16 @@ template <class Scheme>
   return response;
 }
 
-// The validator taking the credentials of `Scheme`: the first one invocable with them.
+// The validator taking the credentials of `Scheme`: the one invocable with them.
 template <class Scheme, class... Validators>
 [[nodiscard]] consteval std::size_t validator_index(type_list<Validators...>) {
   return first_true(
+      std::array<bool, sizeof...(Validators)>{std::is_invocable_v<Validators &, credential<Scheme> const &>...});
+}
+
+template <class Scheme, class... Validators>
+[[nodiscard]] consteval std::size_t validator_count(type_list<Validators...>) {
+  return count_true(
       std::array<bool, sizeof...(Validators)>{std::is_invocable_v<Validators &, credential<Scheme> const &>...});
 }
 
@@ -113,6 +120,9 @@ async::task<bool> accepts(validator_set<Validators...> &set, credential<Scheme> 
 
   static_assert(index < sizeof...(Validators),
                 "quoll::rest::mount: no validator takes the credential<Scheme> of a scheme the api uses");
+  // Whichever came first would decide who gets in, a generic one in the place of the one written for the scheme.
+  static_assert(validator_count<Scheme>(type_list<Validators...>{}) == 1,
+                "quoll::rest::mount: more than one validator takes the credential<Scheme> of a scheme the api uses");
 
   auto &validator = std::get<index>(set.validators);
 
@@ -212,17 +222,28 @@ template <class Endpoint>
   }
 }
 
-// The service for an endpoint: the one invocable with it and its arguments.
+// An argument, while a service is looked for: it converts to `T`, and to nothing else. A service taking a narrower
+// type, or its arguments in another order, would otherwise compile and read wrong values.
+template <class T>
+struct exactly {
+  operator T &&() &&; // NOLINT(google-explicit-constructor)
+
+  template <class Other>
+    requires(!std::same_as<std::remove_cvref_t<Other>, T>)
+  operator Other() && = delete;
+};
+
+// The service for an endpoint: the one taking it and exactly its arguments, by value or by reference.
 template <class Endpoint, class... Arguments, class... Services>
 [[nodiscard]] consteval std::size_t service_index(std::tuple<Arguments...> const *, type_list<Services...>) {
   return first_true(
-      std::array<bool, sizeof...(Services)>{std::is_invocable_v<Services &, Endpoint, Arguments &&...>...});
+      std::array<bool, sizeof...(Services)>{std::is_invocable_v<Services &, Endpoint, exactly<Arguments>...>...});
 }
 
 template <class Endpoint, class... Arguments, class... Services>
 [[nodiscard]] consteval std::size_t service_count(std::tuple<Arguments...> const *, type_list<Services...>) {
   return count_true(
-      std::array<bool, sizeof...(Services)>{std::is_invocable_v<Services &, Endpoint, Arguments &&...>...});
+      std::array<bool, sizeof...(Services)>{std::is_invocable_v<Services &, Endpoint, exactly<Arguments>...>...});
 }
 
 template <class Route, class Validators, class... Services>
@@ -282,18 +303,42 @@ template <class Route>
   return response;
 }
 
+// Whether a route reads the query: a query it makes nothing of, however it is written, is none of its business.
+template <class Part>
+inline constexpr bool reads_the_query = false;
+
+template <fixed_string Name, class T>
+inline constexpr bool reads_the_query<query<Name, T>> = true;
+
+template <class Struct>
+inline constexpr bool reads_the_query<query_params<Struct>> = true;
+
+template <fixed_string Param>
+inline constexpr bool reads_the_query<api_key_query<Param>> = true;
+
+template <class... Parts>
+[[nodiscard]] consteval bool any_reads_the_query(type_list<Parts...>) {
+  return (reads_the_query<Parts> || ...);
+}
+
 // Serves a request routed to `Route`: credentials (401), arguments (400, 415), the service, its response. A service
-// throwing http_error answers its status, anything else 500 without detail.
+// throwing http_error answers its status. Anything else goes on, as from any handler: a connection answers 500 and
+// tells on_handler_error, and a stop or a timeout reaches what waits for it.
 template <class Route, class State>
 async::task<http::response> serve(std::shared_ptr<State> state, http::request request, http::route_match match) {
   try {
+    constexpr auto reads_query =
+        any_reads_the_query(typename Route::parts{}) || any_reads_the_query(typename Route::schemes{});
+
     // An invalid query string is reported after the credentials, which an api_key_query cannot then find.
-    auto const query = parse_query(match.query);
     std::vector<query_entry> const none;
+    auto const query = reads_query ? parse_query(match.query) : std::optional{none};
     request_input const input{request, match, query ? *query : none};
 
-    if (auto refused = co_await check_security(typename Route::schemes{}, state->validators, input)) {
-      co_return std::move(*refused);
+    if constexpr (Route::schemes::size > 0) {
+      if (auto refused = co_await check_security(typename Route::schemes{}, state->validators, input)) {
+        co_return std::move(*refused);
+      }
     }
 
     if (!query) {
@@ -309,8 +354,6 @@ async::task<http::response> serve(std::shared_ptr<State> state, http::request re
     co_return co_await answer<Route>(*state, std::move(*arguments));
   } catch (http_error const &error) {
     co_return error_response<Route>(error);
-  } catch (...) {
-    co_return problem_response(http::status::internal_server_error, std::nullopt);
   }
 }
 

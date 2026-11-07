@@ -68,8 +68,10 @@ struct canned_transport {
     response.status = status;
     response.body = body;
     response.fields.add("Content-Type", content_type);
-    co_return response;
+    return answering(std::move(response));
   }
+
+  [[nodiscard]] static quoll::async::task<http::response> answering(http::response response) { co_return response; }
 };
 
 static_assert(http::HttpTransport<canned_transport>);

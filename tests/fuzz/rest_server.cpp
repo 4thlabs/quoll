@@ -35,7 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // What a REST route decodes, past the HTTP parser: the first line is the target, the second the value of its header
-// fields, the rest the body. A route answers what it throws with a 500: the service never throws here, so a 500 is a
+// fields, the rest the body. A service never throws here, and what it would throw goes on, so a 500 is a
 // bug in the decoding.
 
 #include <quoll/fuzz/api.hpp>

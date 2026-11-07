@@ -61,6 +61,8 @@ struct api_key {
 template <fixed_string Param>
 struct api_key_query {
   static_assert(!Param.view().empty(), "quoll::rest::api_key_query: the name is empty");
+  // It goes in a challenge's quoted string too, as it is.
+  static_assert(http::detail::is_token(Param.view()), "quoll::rest::api_key_query: the name is not a valid token");
 
   using scheme_category = detail::security_scheme;
 

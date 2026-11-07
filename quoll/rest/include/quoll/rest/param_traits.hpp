@@ -41,8 +41,10 @@
 
 #include <glaze/core/reflect.hpp>
 #include <glaze/json/read.hpp>
+#include <glaze/util/parse.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <concepts>
 #include <optional>
 #include <stdexcept>
@@ -76,11 +78,20 @@ struct param_traits<T> {
   }
 };
 
-/** @brief Finite floating-point numbers, in their shortest form that reads back to the same value; not `nan` or `inf`.
+/**
+ * @brief Finite floating-point numbers, in their shortest form that reads back to the same value.
+ *
+ * `to_text` throws std::invalid_argument on `nan` or `inf`, which `from_text` refuses.
  */
 template <std::floating_point T>
 struct param_traits<T> {
-  [[nodiscard]] static std::string to_text(T value) { return http::detail::format_number(value); }
+  [[nodiscard]] static std::string to_text(T value) {
+    if (!std::isfinite(value)) {
+      throw std::invalid_argument{"quoll::rest: a parameter that is not a finite number"};
+    }
+
+    return http::detail::format_number(value);
+  }
 
   [[nodiscard]] static std::optional<T> from_text(std::string_view text) noexcept {
     return http::detail::parse_number<T>(text);
@@ -97,12 +108,21 @@ struct param_traits<bool> {
   }
 };
 
-/** @brief Any text, as it is. */
+/**
+ * @brief Any text, as it is, but that `from_text` refuses what is not UTF-8: a service could not echo it in a JSON
+ * response, and would have run for nothing.
+ */
 template <>
 struct param_traits<std::string> {
   [[nodiscard]] static std::string to_text(std::string const &value) { return value; }
 
-  [[nodiscard]] static std::optional<std::string> from_text(std::string_view text) { return std::string{text}; }
+  [[nodiscard]] static std::optional<std::string> from_text(std::string_view text) {
+    if (!glz::validate_utf8(text.data(), text.size())) {
+      return std::nullopt;
+    }
+
+    return std::string{text};
+  }
 };
 
 /** @brief Enums by the names their `glz::meta` gives them. */

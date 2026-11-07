@@ -46,6 +46,7 @@
 #include <quoll/rest/detail/fields_of.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/query_string.hpp>
+#include <quoll/rest/detail/single_field.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/header.hpp>
@@ -235,6 +236,11 @@ template <class T, class BodyCodec>
   constexpr BodyCodec codec;
   auto const content_type = input.request.fields.find("Content-Type");
 
+  // Which one counts is what a proxy in front may read otherwise.
+  if (content_type && !single_field(input.request.fields, "Content-Type")) {
+    return std::unexpected{argument_error{http::status::bad_request, "repeated Content-Type"}};
+  }
+
   if (!content_type && input.request.body.empty()) {
     return std::unexpected{argument_error{http::status::bad_request, "missing body"}};
   }
@@ -305,7 +311,13 @@ decode_all(type_list<First, Sources...>, request_input const &input) {
     return std::unexpected{std::move(*error)};
   }
 
-  return std::apply([](auto &...value) { return std::tuple{std::move(*value)...}; }, values);
+  // Named: a sole std::pair would otherwise deduce a tuple of its two members.
+  return std::apply(
+      [](auto &...value) {
+        return std::tuple<typename source_value<First>::type, typename source_value<Sources>::type...>{
+            std::move(*value)...};
+      },
+      values);
 }
 
 // The arguments of a route, decoded from a request: path parameters, then the argument parts in order.

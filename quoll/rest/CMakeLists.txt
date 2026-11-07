@@ -3,7 +3,9 @@ quoll_declare_module(
   SOURCES
     src/arguments.cpp
     src/client.cpp
+    src/printable_text.cpp
     src/query_string.cpp
+    src/scheme_traits.cpp
     src/serve.cpp
   DEPS
     quoll::client
@@ -22,6 +24,7 @@ quoll_declare_tests(
     tests/path_template_test.cpp
   DEPS
     quoll::rest
+    quoll::server
 )
 
 # What the contract, mount and the client refuse at compile time, with the message the user gets.
@@ -38,6 +41,15 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/mount_no_services_at_all.cpp
     tests/compile_fail/mount_no_validator.cpp
     tests/compile_fail/mount_two_services.cpp
+    tests/compile_fail/mount_service_narrower.cpp
+    tests/compile_fail/mount_service_other_order.cpp
+    tests/compile_fail/mount_generic_validator.cpp
+    tests/compile_fail/scheme_twice.cpp
+    tests/compile_fail/scheme_on_a_field_twice.cpp
+    tests/compile_fail/query_twice.cpp
+    tests/compile_fail/header_beside_a_body.cpp
+    tests/compile_fail/reply_holds_undeclared.cpp
+    tests/compile_fail/api_key_query_name.cpp
     tests/compile_fail/mount_two_validators.cpp
     tests/compile_fail/mount_wrong_return.cpp
     tests/compile_fail/not_a_part.cpp

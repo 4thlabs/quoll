@@ -40,6 +40,8 @@
 #include <quoll/rest/codec.hpp>
 #include <quoll/rest/decode_error.hpp>
 
+#include <glaze/util/parse.hpp>
+
 #include <concepts>
 #include <expected>
 #include <string>
@@ -47,7 +49,8 @@
 
 namespace quoll::rest {
 
-/** @brief Plain text bodies, as `std::string`, sent and received as they are. */
+/** @brief Plain text bodies in UTF-8, as `std::string`, sent as they are, and refused when received in anything else.
+ */
 class text_codec {
 public:
   static constexpr std::string_view content_type = "text/plain; charset=utf-8";
@@ -57,6 +60,10 @@ public:
   template <class T>
     requires std::same_as<T, std::string>
   [[nodiscard]] std::expected<T, decode_error> decode(std::string_view body) const {
+    if (!glz::validate_utf8(body.data(), body.size())) {
+      return std::unexpected{decode_error{"text that is not UTF-8"}};
+    }
+
     return std::string{body};
   }
 };
