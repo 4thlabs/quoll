@@ -108,6 +108,26 @@ struct framing_rules {
 
 void reject(char const *what) { throw std::invalid_argument{std::string{"quoll::http: "} + what}; }
 
+// Where the first coding of a list ends: at a comma, or at its end. A comma in a quoted parameter is none (RFC
+// 9110, 5.6.4), a backslash there escaping what follows it.
+[[nodiscard]] std::size_t end_of_coding(std::string_view list) noexcept {
+  auto quoted = false;
+
+  for (std::size_t index = 0; index < list.size(); ++index) {
+    auto const character = list[index];
+
+    if (quoted && character == '\\') {
+      ++index;
+    } else if (character == '"') {
+      quoted = !quoted;
+    } else if (character == ',' && !quoted) {
+      return index;
+    }
+  }
+
+  return list.size();
+}
+
 // Transfer-Encoding fields form one list (RFC 9110, 5.3): true when its last coding is chunked, nothing when there is
 // no Transfer-Encoding at all.
 [[nodiscard]] std::optional<bool> last_coding_is_chunked(fields const &entries) {
@@ -128,7 +148,7 @@ void reject(char const *what) { throw std::invalid_argument{std::string{"quoll::
     std::string_view list = entry.value;
 
     while (true) {
-      auto const comma = list.find(',');
+      auto const comma = end_of_coding(list);
 
       if (chunked == true) {
         reject("a transfer coding after chunked");
@@ -136,7 +156,7 @@ void reject(char const *what) { throw std::invalid_argument{std::string{"quoll::
 
       chunked = iequals(trim(list.substr(0, comma)), "chunked");
 
-      if (comma == std::string_view::npos) {
+      if (comma == list.size()) {
         break;
       }
 

@@ -578,6 +578,23 @@ TEST_CASE("What a peer would read differently is refused", "[http][serializer]")
     refused(on_two_lines);
   }
 
+  SECTION("but not what is quoted in a parameter of a coding") {
+    for (std::string_view const list : {R"(custom; p="a,chunked,b", chunked)", R"(custom; p="\",chunked", chunked)"}) {
+      auto quoted = plain;
+
+      quoted.fields.add("Transfer-Encoding", list);
+
+      std::string out;
+
+      REQUIRE_NOTHROW(http::serialize(quoted, out));
+    }
+
+    auto after = plain;
+
+    after.fields.add("Transfer-Encoding", R"(chunked, custom; p="a")");
+    refused(after);
+  }
+
   SECTION("a Content-Length repeated, even with the same value") {
     auto repeated = plain;
 
