@@ -68,7 +68,7 @@ private:
 /**
  * @brief The body of a message, a piece at a time, for what cannot or need not hold it whole in memory.
  *
- * A handler gets one by taking it as its last parameter, which makes its route read the request as it goes:
+ * A handler gets one by taking it after its path parameters, which makes its route read the request as it goes:
  *
  * @code
  * router.post("/users/{id}/avatar", [](std::int64_t id, http::body_reader body) -> task<http::response> {

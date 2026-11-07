@@ -396,6 +396,20 @@ TEST_CASE("A message takes designated initializers, whichever members they name"
 
 #pragma GCC diagnostic pop
 
+TEST_CASE("A response with a writer goes in pieces", "[http][serializer]") {
+  http::response response;
+  std::string out;
+
+  response.late_head_writer = [](http::body_stream) -> quoll::async::task<> { co_return; };
+
+  REQUIRE_THROWS_AS(http::serialize(response, out), std::invalid_argument);
+
+  response.late_head_writer = nullptr;
+  response.body_writer = [](http::body_stream) -> quoll::async::task<> { co_return; };
+
+  REQUIRE_THROWS_AS(http::serialize(response, out), std::invalid_argument);
+}
+
 TEST_CASE("A request with a body_writer goes in pieces", "[http][serializer]") {
   http::request request;
 

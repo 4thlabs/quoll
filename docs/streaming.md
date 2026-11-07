@@ -43,7 +43,7 @@ handed over.
 | When                                      | What happens                                                                                                                                                                                                                                                                                     |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | The handler leaves some of it unread      | The connection closes after its response. A body that had all come with its head leaves it open.                                                                                                                                                                                                 |
-| `Expect: 100-continue`                    | `100 Continue` leaves at the handler's first `read()`, so that a handler refusing the request saves the upload. A failure while it leaves is a failure of that `read()`.                                                                                                                         |
+| `Expect: 100-continue`                    | `100 Continue` leaves at the handler's first `read()`, so that a handler refusing the request saves the upload. A writer may read as it writes, so that it leaves before one starts, unless the status set is 300 or more, or a `body_writer` does not run to HEAD: nothing invites a body then, and reading it fails at once. |
 | The peer goes quiet or too slow           | `read_timeout` and `min_read_rate` apply as in [Server](server.md#connection_options), across the pieces: a transfer takes as long as it keeps coming at the minimum rate. Past it, `read()` throws, and the request answers 408.                                                                |
 | The body is too large                     | Past `limits.max_streamed_body_size`, 1 GiB by default: a length that announces it is refused before the handler runs, otherwise `read()` throws. Either way, the request answers 413.                                                                                                           |
 | The body is cut short or the stream fails | `read()` throws `std::system_error`, and goes on throwing. The request is then answered as one refused as it is read would be, whatever the handler made of it, as it could not know what the connection can still carry.                                                                        |
@@ -96,7 +96,9 @@ middleware has therefore returned by then: it does not see the status, catch wha
 to the fields, which the handler's replace by name, but for `Set-Cookie` and `Vary`, which add up.
 What it throws before its first `write` answers 500, and after it cuts the connection. If it ends without writing, its response has
 an empty body. To HEAD, it runs up to its first `write`, which sends the head and throws `std::errc::operation_canceled`. A route may
-read as it writes, with `(http::body_reader in, http::response_writer out)`.
+read as it writes, with `(http::body_reader in, http::response_writer out)`. With `Expect: 100-continue`, `100 Continue` leaves
+before it starts, so that such a route invites its body even if it goes on to answer without it. A middleware finds such a handler in `response.late_head_writer`, which a
+`response.body_writer` it sets replaces, and it runs once.
 
 To build a response ahead of time, or to write from a middleware, `response.body_writer` writes the body through an
 `http::body_stream`, once the handler has ended:
@@ -142,8 +144,7 @@ router.post("/echo", [](http::body_reader body) {
 });
 ```
 
-With `Expect: 100-continue`, such a writer writes and reads in turn, as `100 Continue` and a piece must
-not leave at once.
+With `Expect: 100-continue`, `100 Continue` leaves before such a writer starts.
 
 | When                                          | What happens                                                                                                                                                                                     |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

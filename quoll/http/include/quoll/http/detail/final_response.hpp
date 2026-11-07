@@ -47,6 +47,7 @@ namespace quoll::http::detail {
 // - a 2xx to CONNECT is a tunnel, which is not offered, and answers 501;
 // - a 1xx is no final response: its peer goes on waiting for one, or reads a 101 as a switch of protocol, and it
 // answers 500;
+// - a body beside what writes one: neither would stand, and it answers 500, to HEAD too;
 // - a length with no body, but to HEAD or as a 304: its peer waits for that body, or reads the next response as it, and
 // it
 //   answers 500.
