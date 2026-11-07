@@ -35,10 +35,6 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::mount: no validator takes the credential<Scheme>
-//
-// A security scheme without its validator.
-
 #include <quoll/http/router.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
