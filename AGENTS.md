@@ -145,10 +145,11 @@ its last commit, Codex has finished on it, and all it found on the PR is answere
 is not taken, its threads then resolved.
 
 What a review finds is fixed if valid: a bug, a break of a rule or a decision, a missing test, or one that does not execute what
-it claims. A detail may be let go for a stated reason, and needs no new push: naming, layout and wording with no consequence, and
-in samples and the sample's Vite plugin a bug that normal use does not meet, but for undefined behaviour, lifetimes and data
+it claims. A detail may be let go for a stated reason, and needs no new push: naming, layout and wording with no consequence,
+in samples and the sample's Vite plugin a bug that normal use does not meet, and in the HTTP protocol an RFC corner that touches
+neither security nor stability (`docs/PLAN.md`, Decided), but for undefined behaviour, lifetimes and data
 races, which are always fixed. A finding that is wrong says why. When it is unclear which of these a point is, for one saying it
-is a bug in particular, the maintainer decides.
+is a bug in particular, the maintainer decides; such an RFC corner, even labelled a bug, needs no decision of theirs.
 
 If Codex has not completed a review of the last commit 30 minutes after the push or the opening of the PR, whichever is later,
 comment `@codex review`; 30 minutes later, the maintainer decides, who alone can lift the protection.
