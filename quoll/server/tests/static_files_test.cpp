@@ -1167,12 +1167,18 @@ TEST_CASE("static_files: a date in a condition, with what a field may have aroun
   auto with = make_request("/assets/hello.txt");
 
   with.fields.add("If-Modified-Since", date + " ");
-  REQUIRE(ask(served.router, std::move(with)).status == status::not_modified);
+
+  auto const unchanged = ask(served.router, std::move(with));
+
+  REQUIRE(unchanged.status == status::not_modified);
 
   auto earlier = make_request("/assets/hello.txt");
 
   earlier.fields.add("If-Unmodified-Since", "Sun, 06 Nov 1994 08:49:37 GMT ");
-  REQUIRE(ask(served.router, std::move(earlier)).status == status::precondition_failed);
+
+  auto const changed = ask(served.router, std::move(earlier));
+
+  REQUIRE(changed.status == status::precondition_failed);
 }
 
 TEST_CASE("static_files: a file from the future is not said to be", "[server][static]") {
