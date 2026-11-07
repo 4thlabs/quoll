@@ -48,15 +48,17 @@
 
 namespace quoll::http::detail {
 
-// The member `head` of what a body_stream writes through, as a type, or nothing if there is no such thing to name.
+// Whether a sink has a member named `head`, whatever it is: overloaded, a template or private. Naming it through what
+// also inherits one is then ambiguous.
+struct another_head {
+  int head;
+};
+
 template <class Sink>
-[[nodiscard]] consteval auto head_member() noexcept {
-  if constexpr (requires { &Sink::head; }) {
-    return &Sink::head;
-  } else {
-    return nullptr;
-  }
-}
+struct both_heads : Sink, another_head {};
+
+template <class Sink>
+inline constexpr bool has_no_head = std::is_final_v<Sink> || requires { &both_heads<Sink>::head; };
 
 // What a body_stream knows of what it writes through.
 struct body_stream_table {
@@ -74,7 +76,7 @@ inline constexpr body_stream_table body_stream_table_of{
             static_cast<Sink *>(erased)->head(status, std::move(fields));
           } else {
             // One with another signature would lose the status and fields of what it wraps, with no one told.
-            static_assert(!std::is_member_function_pointer_v<decltype(detail::head_member<Sink>())>,
+            static_assert(has_no_head<Sink>,
                           "quoll::http::body_stream: a sink's head() takes an http::status and an http::fields");
           }
         },

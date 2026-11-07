@@ -38,6 +38,7 @@
 #define QUOLL_HTTP_DETAIL_ROUTE_TEMPLATE_HPP
 
 #include <quoll/http/detail/ascii.hpp>
+#include <quoll/http/detail/plain_segment.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -110,48 +111,21 @@ struct parsed_template {
   return true;
 }
 
-[[nodiscard]] constexpr int hex_digit_value(char digit) noexcept {
-  if (digit >= '0' && digit <= '9') {
-    return digit - '0';
-  }
-
-  return digit >= 'a' && digit <= 'f' ? digit - 'a' + 10 : digit - 'A' + 10;
-}
-
 // What http::detail::plain_segment says of a literal with valid escapes, at compile time too: no request could reach
 // one that fails, as what the router sees of it is refused.
 [[nodiscard]] constexpr bool plain_literal(std::string_view text) noexcept {
-  std::size_t size = 0;
-  std::size_t dots = 0;
-  auto const is_dot_segment = [&] { return size == dots && (size == 1 || size == 2); };
+  plain_text decoded;
 
   for (std::size_t index = 0; index < text.size(); ++index) {
-    auto character = text[index];
-
-    if (character == '%') {
-      character = static_cast<char>(hex_digit_value(text[index + 1]) * 16 + hex_digit_value(text[index + 2]));
+    if (text[index] == '%') {
+      decoded.feed(static_cast<char>(hex_value(text[index + 1]) * 16 + hex_value(text[index + 2])));
       index += 2;
+    } else {
+      decoded.feed(text[index]);
     }
-
-    if (character == '\0') {
-      return false;
-    }
-
-    if (character == '/' || character == '\\') {
-      if (is_dot_segment()) {
-        return false;
-      }
-
-      size = 0;
-      dots = 0;
-      continue;
-    }
-
-    ++size;
-    dots += character == '.' ? 1 : 0;
   }
 
-  return !is_dot_segment();
+  return decoded.plain();
 }
 
 [[nodiscard]] constexpr template_error check_parameter(std::string_view segment) noexcept {

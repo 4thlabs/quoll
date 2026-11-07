@@ -372,17 +372,21 @@ struct parser<Message>::impl {
   }
 
   static int on_chunk_header(llhttp_t *state) noexcept {
-    self(state).chunk_extension_size_ = 0;
+    self(state).chunk_extension_begin_ = 0;
     return 0;
   }
 
-  // What says nothing of the body, and that a peer could send without end.
-  static int on_chunk_extension(llhttp_t *state, char const *, std::size_t length) noexcept {
+  // What says nothing of the body, and that a peer could send without end. By where it has reached rather than by what
+  // it says: an extension may say nothing, a `;` after a `;`.
+  static int on_chunk_extension(llhttp_t *state, char const *at, std::size_t length) noexcept {
     auto &self_ = self(state);
+    auto const reached = self_.fed_before_ + static_cast<std::uint64_t>(at - self_.feed_begin_) + length;
 
-    self_.chunk_extension_size_ += length;
+    if (self_.chunk_extension_begin_ == 0) {
+      self_.chunk_extension_begin_ = reached - length + 1;
+    }
 
-    if (self_.chunk_extension_size_ > self_.limits_.max_header_size) {
+    if (reached + 1 - self_.chunk_extension_begin_ > self_.limits_.max_header_size) {
       return self_.fail(state, error::header_too_large, "chunk extension too large");
     }
 
@@ -465,7 +469,8 @@ struct parser<Message>::impl {
   std::uint64_t fed_before_ = 0;
   std::uint64_t last_piece_end_ = 0;
   bool piece_seen_ = false;
-  std::size_t chunk_extension_size_ = 0;
+  // Where the extensions of this chunk began, past one so that zero says none has: nothing was fed before a first one.
+  std::uint64_t chunk_extension_begin_ = 0;
   std::size_t field_count_ = 0;
   std::uint64_t body_size_ = 0;
   std::error_code error_;

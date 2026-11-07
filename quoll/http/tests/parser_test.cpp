@@ -836,6 +836,23 @@ TEST_CASE("What goes around a value and in a chunk's extension counts against th
     REQUIRE(parser.feed(bytes(wire)).error == http::error::header_too_large);
   }
 
+  SECTION("extensions that say nothing") {
+    auto const empties = GENERATE(as<std::string>{}, std::string(5000, ';'), [] {
+      std::string pairs;
+
+      for (auto index = 0; index < 2500; ++index) {
+        pairs += "=;";
+      }
+
+      return pairs;
+    }());
+    http::request_parser parser{limits};
+    auto const wire =
+        "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1;" + empties + "\r\na\r\n0\r\n\r\n";
+
+    REQUIRE(parser.feed(bytes(wire)).error);
+  }
+
   SECTION("trailers are not charged for the body before them") {
     http::request_parser parser{limits};
     auto const wire = "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1000\r\n" +

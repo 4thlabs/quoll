@@ -482,6 +482,50 @@ async::task<request_read> as_request_read(async::task<std::error_code> reading) 
   }
 }
 
+// RFC 9110, 7.2: uri-host [ ":" port ], or nothing. What a proxy and what is behind it could split otherwise is
+// refused: a comma, which is how a proxy may merge two lines, as a second port or a bracket left open.
+[[nodiscard]] bool reads_as_a_host(std::string_view text) noexcept {
+  auto const name_character = [](char const character) {
+    return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+           (character >= '0' && character <= '9') || std::string_view{"-._~%!$&'()*+;="}.contains(character);
+  };
+  auto const digit = [](char const character) { return character >= '0' && character <= '9'; };
+
+  std::string_view host = text;
+  std::string_view port;
+
+  if (text.starts_with('[')) {
+    auto const end = text.find(']');
+
+    if (end == std::string_view::npos) {
+      return false;
+    }
+
+    auto const inside = text.substr(1, end - 1);
+
+    if (!std::ranges::all_of(inside, [](char const character) {
+          return std::string_view{"0123456789abcdefABCDEF:.vV-._~!$&'()*+;="}.contains(character);
+        })) {
+      return false;
+    }
+
+    auto const rest = text.substr(end + 1);
+
+    if (!rest.empty() && !rest.starts_with(':')) {
+      return false;
+    }
+
+    return std::ranges::all_of(rest.empty() ? rest : rest.substr(1), digit);
+  }
+
+  if (auto const colon = text.find(':'); colon != std::string_view::npos) {
+    host = text.substr(0, colon);
+    port = text.substr(colon + 1);
+  }
+
+  return std::ranges::all_of(host, name_character) && std::ranges::all_of(port, digit);
+}
+
 // RFC 9112, 3.2: an HTTP/1.1 request has one Host, and neither version has two: what is in front and what is behind
 // could otherwise read different authorities.
 [[nodiscard]] bool host_is_as_it_must(http::request const &head) noexcept {
@@ -492,13 +536,7 @@ async::task<request_read> as_request_read(async::task<std::error_code> reading) 
     return false;
   }
 
-  // RFC 9110, 7.2: uri-host [ ":" port ], or nothing. Refuses what a proxy and what is behind it could split otherwise.
-  auto const host = head.fields.find("Host").value_or("");
-
-  return std::ranges::all_of(host, [](char const character) {
-    return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-           (character >= '0' && character <= '9') || std::string_view{"-._~%!$&'()*+,;=:[]"}.contains(character);
-  });
+  return reads_as_a_host(http::detail::trim(head.fields.find("Host").value_or("")));
 }
 
 // A request, or its head alone when `100 Continue` is owed before the rest: its client waits for that before its body.

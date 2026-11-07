@@ -34,31 +34,19 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/http/detail/plain_segment.hpp>
+// expect: a sink's head() takes an http::status and an http::fields
+
+// None of them takes what it is given, and what it wraps would lose its status and fields, with no one told.
+
+#include <quoll/async/task.hpp>
+#include <quoll/http/body_stream.hpp>
 
 #include <string_view>
 
-namespace quoll::http::detail {
+struct wrapping {
+  quoll::async::task<> write(std::string_view);
+  void head(int);
+  void head(char const *);
+};
 
-bool plain_segment(std::string_view decoded) noexcept {
-  if (decoded.contains('\0')) {
-    return false;
-  }
-
-  while (true) {
-    auto const separator = decoded.find_first_of("/\\");
-    auto const part = decoded.substr(0, separator);
-
-    if (part == "." || part == "..") {
-      return false;
-    }
-
-    if (separator == std::string_view::npos) {
-      return true;
-    }
-
-    decoded.remove_prefix(separator + 1);
-  }
-}
-
-} // namespace quoll::http::detail
+void use(wrapping &sink) { quoll::http::body_stream{sink}.head(quoll::http::status::ok, {}); }
