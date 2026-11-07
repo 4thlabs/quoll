@@ -631,6 +631,31 @@ TEST_CASE("static_files: a later middleware's own 404 has answered", "[server][s
   REQUIRE(ask(served.router, "/assets/page.html").status == status::ok);
 }
 
+TEST_CASE("static_files: a handler a later middleware gave the 404 goes with it", "[server][static]") {
+  site served;
+  auto ran = false;
+
+  served.router.use([&ran](http::request request, http::next const &next) -> task<http::response> {
+    auto response = co_await next(std::move(request));
+
+    if (response.status == status::not_found) {
+      response.late_head_writer = [&ran](http::body_stream out) -> task<> {
+        ran = true;
+        co_await out.write("a page of its own");
+      };
+    }
+
+    co_return response;
+  });
+
+  // A redirect has no writer of its own to replace it.
+  auto const redirected = ask(served.router, "/assets/docs");
+
+  REQUIRE(redirected.status == status::moved_permanently);
+  REQUIRE_FALSE(redirected.body.contains("a page"));
+  REQUIRE_FALSE(ran);
+}
+
 TEST_CASE("static_files: what a later middleware made of the 404 goes with it", "[server][static]") {
   site served;
 

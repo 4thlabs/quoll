@@ -167,16 +167,19 @@ async::task<response> local_transport::send_to(std::shared_ptr<router const> tar
   // As a connection answers, and a test here has its failure in hand.
   (void)detail::replace_what_would_mislead(answer, method);
 
-  auto const in_pieces = static_cast<bool>(answer.body_writer);
   auto const body_writer = std::exchange(answer.body_writer, nullptr);
   auto const late_head_writer = std::exchange(answer.late_head_writer, nullptr);
+  auto ran = false;
 
-  if (in_pieces && !head) {
+  if (body_writer && !head) {
     body_sink sink{answer.body, std::nullopt};
 
+    ran = true;
     co_await body_writer(body_stream{sink});
-  } else if (!in_pieces && late_head_writer) {
+  } else if (!body_writer && late_head_writer) {
     written_by_handler sink{answer, head};
+
+    ran = true;
 
     try {
       co_await late_head_writer(body_stream{sink});
@@ -188,7 +191,7 @@ async::task<response> local_transport::send_to(std::shared_ptr<router const> tar
   }
 
   // A writer that took a stop for an end has no whole body.
-  if (in_pieces || late_head_writer) {
+  if (ran) {
     if ((co_await async::current_stop_token()).stop_requested()) {
       throw std::system_error{std::make_error_code(std::errc::operation_canceled), "quoll::http: stopped"};
     }

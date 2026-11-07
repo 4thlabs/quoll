@@ -784,6 +784,7 @@ void forget_its_content(http::response &answer) {
   answer.body.clear();
   answer.trailers.clear();
   answer.body_writer = nullptr;
+  answer.late_head_writer = nullptr;
 
   for (auto const name : {"Content-Type", "Content-Length", "Content-Encoding", "Content-Range", "Content-Language",
                           "Content-Disposition", "Content-Location", "Transfer-Encoding", "Trailer"}) {

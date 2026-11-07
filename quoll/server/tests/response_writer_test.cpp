@@ -52,6 +52,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <exception>
@@ -559,25 +560,43 @@ TEST_CASE("response_writer: a body read whole by its first write leaves the conn
   REQUIRE(answer.ends_with("next"));
 }
 
-TEST_CASE("response_writer: to HEAD, what asks for a body gets no 100 Continue after the head", "[server]") {
+TEST_CASE("response_writer: to HEAD, what asks for a body gets 100 Continue first, as it may read before it writes",
+          "[server]") {
   http::router router;
+  auto read = false;
 
-  router.get("/rows", [](http::body_reader in, http::response_writer out) -> task<> {
-    try {
-      co_await out.write("never sent");
-    } catch (std::system_error const &) {
-      // Reads on, once its body was refused.
-    }
-
-    (void)co_await in.read();
+  router.get("/rows", [&read](http::body_reader in, http::response_writer out) -> task<> {
+    read = (co_await in.read()).has_value();
+    co_await out.write("never sent");
   });
 
-  auto const answer = answer_to(
-      http::server{router},
-      "HEAD /rows HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n");
+  auto const body_after_continue = [&router]() -> std::string {
+    virtual_time time;
+    auto [client, ours] = io::make_memory_stream_pair();
+    std::string const head =
+        "HEAD /rows HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n";
 
-  REQUIRE(answer.starts_with("HTTP/1.1 200"));
-  REQUIRE(answer.find("100 Continue") == std::string::npos);
+    auto const peer = [&head](io::memory_stream to) -> task<std::string> {
+      (void)co_await io::write(to, std::as_bytes(std::span{head}));
+
+      // Sends its body once told to.
+      std::array<char, 64> interim;
+      auto const got = co_await to.read_some(std::as_writable_bytes(std::span{interim}));
+      std::string const body = "hello";
+
+      (void)co_await io::write(to, std::as_bytes(std::span{body}));
+      co_return std::string(interim.data(), got.transferred) + co_await read_until_closed(to);
+    };
+
+    auto outcome = quoll::test::run(
+        time, async::when_all(http::server{router}.serve_connection(std::move(ours)), peer(std::move(client))));
+
+    return std::move(std::get<1>(outcome.value()));
+  }();
+
+  REQUIRE(body_after_continue.starts_with("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200"));
+  REQUIRE_FALSE(body_after_continue.contains("never sent"));
+  REQUIRE(read);
 }
 
 TEST_CASE("response_writer: a drain that began while it waited closes the connection", "[server][timer]") {
@@ -1188,4 +1207,52 @@ TEST_CASE("response_writer: writes made before they are awaited send one head", 
   REQUIRE(first_head == 0);
   REQUIRE(answer.find("HTTP/1.1", first_head + 1) == std::string::npos);
   REQUIRE(answer.ends_with("3\r\none\r\n3\r\ntwo\r\n0\r\n\r\n"));
+}
+
+TEST_CASE("server: a refusal already decided invites no body", "[server]") {
+  http::router router;
+  auto ran = false;
+
+  router.use([](http::request request, http::next const &next) -> task<http::response> {
+    auto answer = co_await next(std::move(request));
+
+    answer.status = http::status::unauthorized;
+    answer.body_writer = [](http::body_stream out) -> task<> { co_await out.write("no"); };
+    answer.late_head_writer = nullptr;
+    co_return answer;
+  });
+  router.post("/upload", [&ran](http::body_reader) {
+    ran = true;
+    return http::response{};
+  });
+
+  auto const answer = answer_to(http::server{router}, "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n"
+                                                      "Expect: 100-continue\r\nConnection: close\r\n\r\n");
+
+  REQUIRE(ran);
+  REQUIRE(answer.starts_with("HTTP/1.1 401"));
+  REQUIRE_FALSE(answer.contains("100 Continue"));
+}
+
+TEST_CASE("server: to HTTP/1.0, another coding than chunks answers 500 rather than pass for the content", "[server]") {
+  http::router router;
+
+  router.get("/whole", [] {
+    http::response answer;
+
+    answer.fields.set("Transfer-Encoding", "gzip, chunked");
+    answer.body = "gzipped";
+    return answer;
+  });
+  router.get("/written", [](http::response_writer out) -> task<> {
+    out.fields.set("Transfer-Encoding", "gzip, chunked");
+    co_await out.write("gzipped");
+  });
+
+  http::server const server{router};
+  auto const target = GENERATE(as<std::string>{}, "/whole", "/written");
+  auto const answer = answer_to(server, "GET " + target + " HTTP/1.0\r\nHost: x\r\n\r\n");
+
+  REQUIRE(answer.contains(" 500 "));
+  REQUIRE_FALSE(answer.contains("gzipped"));
 }

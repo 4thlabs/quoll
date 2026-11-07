@@ -40,6 +40,7 @@
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/http/detail/body_stream_table.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/status.hpp>
 
@@ -50,29 +51,6 @@
 #include <utility>
 
 namespace quoll::http {
-
-namespace detail {
-
-// What a body_stream knows of what it writes through.
-struct body_stream_table {
-  async::task<> (*write)(void *, std::string_view);
-  void (*head)(void *, http::status, http::fields);
-  async::detail::type_id type;
-};
-
-template <class Sink>
-inline constexpr body_stream_table body_stream_table_of{
-    .write = [](void *erased, std::string_view piece) { return static_cast<Sink *>(erased)->write(piece); },
-    .head =
-        [](void *erased, http::status status, http::fields fields) {
-          if constexpr (requires(Sink &target) { target.head(status, std::move(fields)); }) {
-            static_cast<Sink *>(erased)->head(status, std::move(fields));
-          }
-        },
-    .type = async::detail::type_id_of<Sink>(),
-};
-
-} // namespace detail
 
 /**
  * @brief Where a body_writer writes the body of a message, a piece at a time.

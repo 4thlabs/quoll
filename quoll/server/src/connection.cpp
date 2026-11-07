@@ -577,7 +577,7 @@ public:
     // What a read cut short leaves is no new piece.
     piece_.clear();
 
-    if (continue_owed_.exchange(false)) {
+    if (std::exchange(continue_owed_, false)) {
       co_await send_continue();
       stream_->reading().start_again();
     }
@@ -619,22 +619,21 @@ public:
   // says whether one is owed, which a handler would not know to wait for. So such a route invites its body even if it
   // goes on to answer without it.
   [[nodiscard]] async::task<std::error_code> continue_before_writing() {
-    if (!continue_owed_.exchange(false)) {
+    if (!std::exchange(continue_owed_, false)) {
       co_return std::error_code{};
     }
 
     auto const sent = co_await write_continue(*stream_);
 
-    if (sent) {
-      failure_ = request_read{sent};
+    if (!sent) {
+      stream_->reading().start_again();
     }
 
-    stream_->reading().start_again();
     co_return sent;
   }
 
-  // The final response is leaving: an interim one can no longer come before it.
-  void response_started() noexcept { continue_owed_ = false; }
+  // The answer is a refusal, with no use for a body: none is invited.
+  void no_continue() noexcept { continue_owed_ = false; }
 
   // Whether the request has been read whole, and the next one can follow it. For what writes as this reads, which may
   // be on another thread, and so cannot ask the parser.
@@ -658,8 +657,8 @@ private:
   http::request_parser *parser_;
   std::string piece_;
   std::optional<request_read> failure_;
-  // Both directions come here: a response may leave as the request is read.
-  std::atomic<bool> continue_owed_;
+  bool continue_owed_;
+  // What writes asks it as this reads, which may be on another thread.
   std::atomic<bool> read_to_its_end_;
   bool stopped_ = false;
 };
@@ -689,10 +688,17 @@ async::task<http::response> respond(http::router const &router, http::request re
   co_return http::detail::status_response(http::status::internal_server_error);
 }
 
-// HTTP/1.0 has no chunks: whether this is such a response, which the framing it set has left.
+// HTTP/1.0 has no chunks: whether this is such a response, which the framing it set has left. Another coding has no way
+// to reach it: as a response of that version, it is refused where it is serialized, rather than read as the content.
 bool without_chunks(http::response &response, http::version version) {
   if (version != http::version::http_1_0 && response.version != http::version::http_1_0) {
     return false;
+  }
+
+  if (auto const coding = response.fields.find("Transfer-Encoding");
+      coding && !http::detail::iequals(*coding, "chunked")) {
+    response.version = http::version::http_1_0;
+    return true;
   }
 
   response.fields.erase("Transfer-Encoding");
@@ -783,9 +789,8 @@ public:
 // connection.
 class streamed_response {
 public:
-  streamed_response(paced_stream &stream, std::string head, http::detail::streamed_framing framing,
-                    streamed_body *request_body) noexcept
-      : stream_(&stream), request_body_(request_body), wire_(std::move(head), framing) {}
+  streamed_response(paced_stream &stream, std::string head, http::detail::streamed_framing framing) noexcept
+      : stream_(&stream), wire_(std::move(head), framing) {}
 
   [[nodiscard]] async::task<> write(std::string_view piece) {
     if (failed_) {
@@ -798,7 +803,6 @@ public:
       throw std::length_error{"quoll::http::server: a body_writer wrote more than its Content-Length"};
     }
 
-    response_starts();
     stream_->writing().next_piece();
 
     // An empty piece sends what is held back: a stream announces itself before its first data.
@@ -813,7 +817,6 @@ public:
       co_return false;
     }
 
-    response_starts();
     stream_->writing().next_piece();
 
     auto const bytes = wire_.end(trailers);
@@ -832,12 +835,6 @@ public:
   [[nodiscard]] bool short_of_its_length() const noexcept { return !failed_ && wire_.short_of_its_length(); }
 
 private:
-  void response_starts() {
-    if (!wire_.started() && request_body_ != nullptr) {
-      request_body_->response_started();
-    }
-  }
-
   [[nodiscard]] async::task<> send(std::string_view bytes) {
     if (auto const sent = co_await stream_->write_all(std::as_bytes(std::span{bytes}))) {
       failed_ = true;
@@ -846,7 +843,6 @@ private:
   }
 
   paced_stream *stream_;
-  streamed_body *request_body_;
   http::detail::streamed_wire wire_;
   bool failed_ = false;
 };
@@ -930,7 +926,7 @@ async::task<bool> send_streamed(paced_stream &stream, http::response &response, 
   }
 
   if (framing) {
-    streamed_response sink{stream, std::move(wire), *framing, request_body};
+    streamed_response sink{stream, std::move(wire), *framing};
     auto const end = co_await run_writer(std::exchange(response.body_writer, nullptr), response, sink, options,
                                          request_body, nothing_left);
 
@@ -1008,10 +1004,6 @@ private:
     if (head_) {
       head_tried_ = true;
 
-      if (request_body_ != nullptr) {
-        request_body_->response_started();
-      }
-
       if (auto const sent = co_await stream_->write_all(std::as_bytes(std::span{wire_}))) {
         head_failed_ = true;
         throw body_not_written{sent, "quoll::http::response_writer: cannot write the head"};
@@ -1062,7 +1054,7 @@ private:
     if (head_) {
       wire_ = std::move(wire);
     } else {
-      sink_.emplace(*stream_, std::move(wire), framing, request_body_);
+      sink_.emplace(*stream_, std::move(wire), framing);
     }
   }
 
@@ -1252,9 +1244,10 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
     }
 
     if (in_pieces || written_by_handler) {
-      // To HEAD, no body is invited: what runs may read as it writes, and it waits for what never comes.
-      if (body && head) {
-        body->response_started();
+      // What runs may read as it writes. A status it has already refused with invites no body, and a writer that does
+      // not run to HEAD reads nothing.
+      if (body && in_pieces && (head || static_cast<std::uint16_t>(response.status) >= 300)) {
+        body->no_continue();
       } else if (body) {
         if (auto const sent = co_await body->continue_before_writing()) {
           co_return connection_end::nothing_owed;

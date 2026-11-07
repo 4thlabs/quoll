@@ -62,6 +62,7 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace quoll::http::detail {
 
@@ -263,6 +264,12 @@ template <class Request>
   }
 }
 
+// What is kept of a parameter: nothing of the writer, made when the handler runs, for the indices to stay those of the
+// parameters.
+template <class Parameter>
+using kept_parameter =
+    std::conditional_t<is_response_writer<Parameter>, std::monostate, std::remove_cvref_t<Parameter>>;
+
 // What a handler writing through an http::response_writer is given, read once by the route and kept as it is, so that a
 // view stays on what it refers to, until its task ends.
 template <class Stored, class... Parameters>
@@ -270,7 +277,7 @@ struct writing_frame {
   // Nothing for a handler that takes no request: its body would stay in memory for as long as it writes.
   Stored message;
   route_match match;
-  std::tuple<std::optional<std::remove_cvref_t<Parameters>>...> values{};
+  std::tuple<std::optional<kept_parameter<Parameters>>...> values{};
   // A writer may be copied, and a second run would find what the first moved away.
   std::atomic_flag started{};
 };
@@ -311,7 +318,7 @@ template <class F, class Request, class... Parameters, std::size_t... Index>
   auto frame = std::make_shared<writing_frame<stored_request<Request>, Parameters...>>(
       keeping<Request>(std::move(message)), std::move(match));
   auto const read = [&]<class T, std::size_t At>() {
-    if constexpr (!std::same_as<T, response_writer>) {
+    if constexpr (!is_response_writer<T>) {
       std::get<At>(frame->values) = read_parameter<T, At>(frame->match);
     }
   };
