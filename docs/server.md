@@ -414,9 +414,17 @@ An HTTP/1.1 request with no `Host` or with several, an HTTP/1.0 one with several
 `100 Continue`, then its body is read. With an [`http::body_reader`](streaming.md#reading-a-request),
 this waits for the handler to ask for the body, unless its response has a writer: see [Streaming](streaming.md#reading-a-request).
 
+## On the Internet
+
+Put a reverse proxy in front of a server open to the Internet, speaking HTTP/1.1 to it: over HTTP/1.0, every request takes a
+new connection. The server defends itself against what comes through, with its limits and its strict reading of a request,
+but leaves corners of the RFCs that touch neither security nor stability. It reads no forwarded header yet, so a handler
+does not learn the client's address.
+
 ## TLS
 
-A certificate and its key make it an HTTPS server. Both files are PEM, the certificate followed by its
+A certificate and its key make it an HTTPS server, which is for a network you trust or for the link behind a proxy, as
+[On the Internet](#on-the-internet) says. Both files are PEM, the certificate followed by its
 chain:
 
 ```cpp

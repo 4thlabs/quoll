@@ -1,6 +1,6 @@
 # Quoll — plan
 
-Last update: 2026-11-06. The [roadmap](#roadmap) says what comes next, and is the reference for the order of the work.
+Last update: 2026-11-07. The [roadmap](#roadmap) says what comes next, and is the reference for the order of the work.
 
 ## Target
 
@@ -35,7 +35,7 @@ What shows it, rather than an argument, with no public announcement before step 
   names, which then only fails when strict decoding meets it, at run time.
 - A demo people run themselves, in one binary. To settle: which. Proposed: an explorer over DuckDB, which opens a CSV and shows
   results as they arrive. DuckDB has an interface of its own, so that this stays a demo and not a product.
-- The framework's site, written with Quoll, served by Quoll, with its source in view.
+- The framework's site, written with Quoll, served by Quoll behind a reverse proxy, with its source in view.
 - A page saying what is guaranteed (the nightly fuzzing, ASan, UBSan and TSan) and what is not (see
   [step 2](#step-2-client-and-server-security-and-completeness)), as "C++ exposed to the Internet" is the first objection.
 
@@ -96,9 +96,10 @@ which nothing checks either.
 
 ### Step 2: client and server, security and completeness
 
-Quoll may be exposed directly, without a reverse proxy (decided on 2026-11-05). `Expect: 100-continue` is done, with a body
-too large refused at its head, and so is ending a connection: it stops sending first (`io::HalfClosableStream`), which a TLS
-peer reads as its closing message, and after the last response what still comes is read and dropped (`lingering_timeout`,
+Exposure to the Internet goes through a reverse proxy (decided on 2026-11-07, see [Decided](#decided)), what was built for a
+direct exposure stays, and RFC corners that touch neither security nor stability are not guaranteed. `Expect: 100-continue` is
+done, with a body too large refused at its head, and so is ending a connection: it stops sending first
+(`io::HalfClosableStream`), which a TLS peer reads as its closing message, and after the last response what still comes is read and dropped (`lingering_timeout`,
 `lingering_time`). `100 Continue` is sent without asking the router, so that a request to a route that does not exist
 still sends its body: to look at with streaming. A client closes its TLS connections without that message.
 
@@ -131,8 +132,8 @@ What stays out of reach: the lifetimes of coroutines remain mostly documented ru
 the task outlives the line it was made on), a use after move across functions or through a member goes unseen, and a
 lambda can still capture by reference what dies before it.
 
-*Done when:* the question above is settled and what it brings is done, the fuzz targets run in CI with no open crash, the
-limits, the shutdown and the features are tested, and the reliability points are in place or dropped with a reason.
+*Done when:* the fuzz targets run in CI with no open crash, the limits, the shutdown and the features are tested, and the
+reliability points are in place or dropped with a reason.
 
 ### Step 3: streaming *(done)*
 
@@ -315,6 +316,13 @@ changes only what the harness shows. Candidates:
 
 ## Decided
 
+- **Exposure to the Internet goes through a reverse proxy** (2026-11-07), replacing "Quoll may be exposed directly" of
+  2026-11-05, as each review of the HTTP code kept finding more corners of the protocol. The server still defends itself: what
+  a review finds is fixed, as `AGENTS.md` says, but for an RFC corner that touches neither security nor stability, as a less
+  exact status, which the PR notes and lets go. Security and stability take in a crash, undefined behaviour, a data race,
+  request smuggling, header injection, credentials going to another host, leaving a directory, a limit guarding memory and
+  time, and a connection or a request stuck for ever, among others. What a proxy in front asks of Quoll is under
+  [Open questions](#open-questions).
 - Who it is for first (2026-11-06): C++ programs that lack a web interface, then new web applications, as
   [Positioning](#positioning) says.
 - Authentication, then an ORM (2026-11-06), come after the `quoll` command and before desktop and mobile, which are secondary:
@@ -369,8 +377,6 @@ changes only what the harness shows. Candidates:
 - **The same WASM everywhere** (2026-11-04): web and PWA first, then a webview shell on desktop and mobile.
 - **Quoll drives the tools** (2026-11-04), through a `quoll` command: Vite becomes an internal detail. Replaces a
   development driven by Vite and a release driven by CMake.
-- **Quoll may be exposed directly** (2026-11-05), without a reverse proxy: "on sait jamais". What this asks of the server is in
-  step 2.
 - **The UI DSL has several outputs** (2026-11-05), as it only knows a `Renderer`: the DOM through WASM, and HTML, for pages
   generated ahead of time or sent by a server, which also settles the search engines. `to_html` came ahead of step 6, for
   the framework's site to be written with it.
@@ -721,6 +727,12 @@ For now this is a plugin of the sample `samples/ui_notes`, driven by Vite; [step
 Decision: **B** (2026-11-02).
 
 ## Open questions
+
+To settle before authentication:
+
+- **What a reverse proxy forwards.** How a handler learns the client's address and the original scheme and host: rate limiting
+  and the redirects and cookies of authentication need them, and Quoll reads no forwarded header yet. To trust one only from a
+  configured proxy, as a client can write it too.
 
 Kept for later by the maintainer, at the end of the plan if the need comes (2026-11-05):
 
