@@ -782,36 +782,51 @@ TEST_CASE("static_files: a double slash at the end is no directory", "[server][s
 
 TEST_CASE("static_files: out of descriptors is no missing file", "[server][static]") {
   site const served;
-  rlimit const before = [] {
-    rlimit current{};
 
-    REQUIRE(::getrlimit(RLIMIT_NOFILE, &current) == 0);
-    return current;
-  }();
-  rlimit lower = before;
+  // Undone however this ends: every later test of the program shares what it takes.
+  struct out_of_descriptors {
+    rlimit before{};
+    std::vector<int> taken;
 
-  lower.rlim_cur = 64;
-  REQUIRE(::setrlimit(RLIMIT_NOFILE, &lower) == 0);
+    out_of_descriptors() {
+      ::getrlimit(RLIMIT_NOFILE, &before);
 
-  std::vector<int> taken;
+      auto lower = before;
 
-  for (auto descriptor = ::open("/dev/null", O_RDONLY); descriptor >= 0; descriptor = ::open("/dev/null", O_RDONLY)) {
-    taken.push_back(descriptor);
-  }
+      lower.rlim_cur = 64;
+      ::setrlimit(RLIMIT_NOFILE, &lower);
+
+      for (auto descriptor = ::open("/dev/null", O_RDONLY); descriptor >= 0;
+           descriptor = ::open("/dev/null", O_RDONLY)) {
+        taken.push_back(descriptor);
+      }
+    }
+
+    out_of_descriptors(out_of_descriptors const &) = delete;
+    out_of_descriptors &operator=(out_of_descriptors const &) = delete;
+    out_of_descriptors(out_of_descriptors &&) = delete;
+    out_of_descriptors &operator=(out_of_descriptors &&) = delete;
+
+    ~out_of_descriptors() {
+      for (auto const descriptor : taken) {
+        ::close(descriptor);
+      }
+
+      ::setrlimit(RLIMIT_NOFILE, &before);
+    }
+  };
 
   auto outcome = std::string{"no failure"};
 
-  try {
-    outcome = std::to_string(static_cast<int>(ask(served.router, "/assets/hello.txt").status));
-  } catch (std::system_error const &thrown) {
-    outcome = thrown.code() == std::errc::too_many_files_open ? "out of descriptors" : "another failure";
-  }
+  {
+    out_of_descriptors const none_left;
 
-  for (auto const descriptor : taken) {
-    ::close(descriptor);
+    try {
+      outcome = std::to_string(static_cast<int>(ask(served.router, "/assets/hello.txt").status));
+    } catch (std::system_error const &thrown) {
+      outcome = thrown.code() == std::errc::too_many_files_open ? "out of descriptors" : "another failure";
+    }
   }
-
-  ::setrlimit(RLIMIT_NOFILE, &before);
 
   REQUIRE(outcome == "out of descriptors");
 }
@@ -1143,3 +1158,43 @@ TEST_CASE("static_files: what is neither a file nor a directory is not even open
 }
 
 #endif
+
+TEST_CASE("static_files: a date in a condition, with what a field may have around it", "[server][static]") {
+  site served;
+
+  auto const first = ask(served.router, "/assets/hello.txt");
+  auto const date = std::string{first.fields.find("Last-Modified").value()};
+  auto with = make_request("/assets/hello.txt");
+
+  with.fields.add("If-Modified-Since", date + " ");
+
+  auto const unchanged = ask(served.router, std::move(with));
+
+  REQUIRE(unchanged.status == status::not_modified);
+
+  auto earlier = make_request("/assets/hello.txt");
+
+  earlier.fields.add("If-Unmodified-Since", "Sun, 06 Nov 1994 08:49:37 GMT ");
+
+  auto const changed = ask(served.router, std::move(earlier));
+
+  REQUIRE(changed.status == status::precondition_failed);
+}
+
+TEST_CASE("static_files: a file from the future is not said to be", "[server][static]") {
+  site served;
+
+  std::filesystem::last_write_time(served.directory.path() / "hello.txt",
+                                   std::filesystem::file_time_type::clock::now() + std::chrono::hours{24 * 365});
+
+  auto const answer = ask(served.router, "/assets/hello.txt");
+  auto const date = std::string{answer.fields.find("Last-Modified").value()};
+  auto const next_year = [] {
+    auto const in_a_year = std::time(nullptr) + std::time_t{366} * 24 * 3600;
+
+    return 1900 + std::gmtime(&in_a_year)->tm_year;
+  }();
+
+  REQUIRE(answer.status == status::ok);
+  REQUIRE_FALSE(date.contains(std::to_string(next_year)));
+}

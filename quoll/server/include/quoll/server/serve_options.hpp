@@ -55,9 +55,8 @@ struct serve_options {
 
   /**
    * @brief How many connections the server serves at once, those of server::serve_connection() included, which it never
-   * refuses. Past it, a new
-   * connection is accepted and closed at once, without a word, which keeps the accept queue moving. Zero: no limit, up
-   * to what the system allows.
+   * refuses. Past it, a new connection is accepted and closed at once, without a word, which keeps the accept queue
+   * moving. Zero: no limit but what the system allows.
    */
   std::size_t max_connections = 10'000;
 

@@ -42,6 +42,7 @@
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/router.hpp>
+#include <quoll/http/verb.hpp>
 #include <quoll/io/any_listener.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/byte_stream.hpp>
@@ -212,9 +213,8 @@ public:
    * finish, within `shutdown_timeout`, past which they are stopped.
    *
    * Accepting stops with `std::errc::operation_canceled`. Another accept failure goes to `on_accept_error`. By default
-   * it is skipped when it concerns one connection only, retried after 100 ms when the system ran out of something (file
-   * descriptors, memory) and it has a timer to wait with, and rethrown otherwise; a rethrow ends the accept loop, not
-   * the connections already served.
+   * it is skipped when it concerns one connection only, retried after 100 ms when the network is in trouble or the
+   * system ran out of something (file descriptors, memory) and it has a timer to wait with, and rethrown otherwise.
    *
    * However the accept loop ends (a stop request, a failure, an exception from `on_accept_error`), the connections it
    * spawned end as above, and the task completes once they have ended, then rethrows the failure if there was one.

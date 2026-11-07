@@ -48,6 +48,7 @@
 #include <quoll/server/detail/serve_connection.hpp>
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <exception>
@@ -78,6 +79,30 @@ namespace {
   return error == std::errc::connection_aborted || error == std::errc::connection_reset;
 }
 
+// What accept(2) may report of a connection on its way, as the network going down or a firewall refusing it. Not the
+// listening socket's, so that it does not end a server, but it may last, so that it is not to try again at once either.
+[[nodiscard]] bool network_trouble(std::error_code error) noexcept {
+  if (error == std::errc::network_down || error == std::errc::network_unreachable ||
+      error == std::errc::host_unreachable || error == std::errc::protocol_error ||
+      error == std::errc::no_protocol_option || error == std::errc::operation_not_permitted) {
+    return true;
+  }
+
+#if defined(EHOSTDOWN)
+  if (error == std::error_condition{EHOSTDOWN, std::generic_category()}) {
+    return true;
+  }
+#endif
+
+#if defined(ENONET)
+  if (error == std::error_condition{ENONET, std::generic_category()}) {
+    return true;
+  }
+#endif
+
+  return false;
+}
+
 [[nodiscard]] bool out_of_resources(std::error_code error) noexcept {
   return error == std::errc::too_many_files_open || error == std::errc::too_many_files_open_in_system ||
          error == std::errc::no_buffer_space || error == std::errc::not_enough_memory;
@@ -90,7 +115,7 @@ async::task<bool> accept_again(std::error_code error) {
     co_return true;
   }
 
-  if (!out_of_resources(error)) {
+  if (!out_of_resources(error) && !network_trouble(error)) {
     co_return false;
   }
 
@@ -230,6 +255,13 @@ async::task<> serve_accepting(async::any_executor executor, io::any_listener lis
 
       try {
         again = accept_error ? co_await accept_error(error) : co_await accept_again(error);
+      } catch (std::system_error const &thrown) {
+        // A stop during the wait it suggests: as a stop at any other moment, no failure.
+        if (thrown.code() != std::errc::operation_canceled || !stop_token.stop_requested()) {
+          ending = std::current_exception();
+        }
+
+        break;
       } catch (...) {
         ending = std::current_exception();
         break;
@@ -262,6 +294,10 @@ async::task<> serve_accepting(async::any_executor executor, io::any_listener lis
   }
 
   shared->drain.request_stop();
+
+  // Closed now rather than with this frame: the system would go on completing connections no one will accept, whose
+  // peers would wait until it goes, where they would be refused at once.
+  { [[maybe_unused]] auto const closed = std::move(listener); }
 
   try {
     co_await wind_down(*shared, connections_stop);

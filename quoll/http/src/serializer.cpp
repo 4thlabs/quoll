@@ -418,17 +418,20 @@ void keep_what_head_carries(response &answer, bool in_pieces) {
   answer.trailers.clear();
 }
 
-char const *replace_what_would_mislead(response &answer, verb const method) {
-  auto const code = static_cast<std::uint16_t>(answer.status);
+char const *status_would_mislead(status code, verb method) noexcept {
+  auto const number = static_cast<std::uint16_t>(code);
 
-  if (method == verb::connect && code >= 200 && code < 300) {
-    answer = status_response(status::not_implemented);
+  if (method == verb::connect && number >= 200 && number < 300) {
     return "quoll::http::server: a 2xx to CONNECT would be a tunnel, which is not offered";
   }
 
-  if (is_informational(answer.status)) {
-    answer = status_response(status::internal_server_error);
-    return "quoll::http::server: a 1xx is no final response";
+  return is_informational(code) ? "quoll::http::server: a 1xx is no final response" : nullptr;
+}
+
+char const *replace_what_would_mislead(response &answer, verb const method) {
+  if (auto const *const wrong = status_would_mislead(answer.status, method); wrong != nullptr) {
+    answer = status_response(is_informational(answer.status) ? status::internal_server_error : status::not_implemented);
+    return wrong;
   }
 
   if (!answer.body.empty() && (answer.body_writer || answer.late_head_writer)) {

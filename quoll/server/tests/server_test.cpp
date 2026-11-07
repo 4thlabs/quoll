@@ -60,6 +60,7 @@
 #include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <chrono>
 #include <coroutine>
@@ -913,4 +914,176 @@ TEST_CASE("http::server: a stream given directly takes a place, and is never ref
   REQUIRE(second.value().value().body == "done");
   REQUIRE_FALSE(refused.value().has_value());
   REQUIRE(most == 2);
+}
+
+namespace {
+
+// A listener that says when it is gone.
+struct watched_listener {
+  std::shared_ptr<bool> closed;
+  std::deque<io::any_stream> streams;
+
+  struct closing {
+    std::shared_ptr<bool> flag;
+
+    closing(closing const &) = delete;
+    closing &operator=(closing const &) = delete;
+    closing(closing &&) = default;
+    closing &operator=(closing &&) = default;
+
+    explicit closing(std::shared_ptr<bool> watched) : flag(std::move(watched)) {}
+
+    ~closing() {
+      if (flag) {
+        *flag = true;
+      }
+    }
+  } goes_with_it;
+
+  task<io::any_stream> accept() {
+    if (!streams.empty()) {
+      auto stream = std::move(streams.front());
+
+      streams.pop_front();
+      co_return stream;
+    }
+
+    co_await wait_for_stop{};
+    throw std::system_error{std::make_error_code(std::errc::operation_canceled), "watched_listener"};
+  }
+};
+
+static_assert(io::Listener<watched_listener>);
+
+} // namespace
+
+TEST_CASE("serve: a stop closes the listener at once, with a request still under way", "[server][timer]") {
+  using namespace std::chrono_literals;
+
+  quoll::test::virtual_time time;
+  http::router router;
+  auto answered = false;
+
+  router.get("/slow", [&answered](http::request) -> task<http::response> {
+    co_await quoll::async::sleep_for(10s);
+    answered = true;
+    co_return http::response{};
+  });
+
+  auto closed = std::make_shared<bool>(false);
+  auto [client, ours] = io::make_memory_stream_pair();
+  watched_listener listener{closed, {}, watched_listener::closing{closed}};
+
+  listener.streams.emplace_back(std::move(ours));
+
+  std::stop_source stop;
+  std::optional<bool> closed_while_under_way;
+
+  auto const stopping = [&]() -> task<int> {
+    co_await quoll::async::sleep_for(1s);
+    stop.request_stop();
+    co_await quoll::async::sleep_for(1s);
+    closed_while_under_way = *closed && !answered;
+    co_return 1;
+  };
+
+  std::string const sent = "GET /slow HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+
+  auto const peer = [&sent](io::memory_stream to) -> task<int> {
+    (void)co_await io::write(to, std::as_bytes(std::span{sent}));
+
+    std::array<char, 256> chunk;
+
+    while (true) {
+      auto const read = co_await to.read_some(std::as_writable_bytes(std::span{chunk}));
+
+      if (read.error || read.transferred == 0) {
+        co_return 1;
+      }
+    }
+  };
+
+  quoll::async::co_spawn(time.get_executor(), http::server{router}.serve(std::move(listener)),
+                         overloaded{[] {}, [](std::exception_ptr) {}}, stop.get_token());
+  quoll::async::co_spawn(time.get_executor(), stopping(), overloaded{[](int) {}, [](std::exception_ptr) {}});
+  quoll::async::co_spawn(time.get_executor(), peer(std::move(client)),
+                         overloaded{[](int) {}, [](std::exception_ptr) {}});
+  time.run();
+
+  REQUIRE(closed_while_under_way == true);
+  REQUIRE(answered);
+}
+
+TEST_CASE("serve: what the network says of one connection does not end a server, nor spin", "[server][timer]") {
+  using namespace std::chrono_literals;
+
+  auto const failure = GENERATE(std::errc::network_down, std::errc::network_unreachable, std::errc::host_unreachable,
+                                std::errc::protocol_error, std::errc::operation_not_permitted);
+
+  quoll::test::virtual_time time;
+  http::router router;
+  std::stop_source stop;
+  canned_listener listener;
+  auto [client, ours] = io::make_memory_stream_pair();
+  std::optional<std::string> received;
+  bool done = false;
+  std::chrono::nanoseconds received_at{};
+
+  router.get("/after", [](http::request) {
+    http::response answer;
+
+    answer.body = "after";
+    return answer;
+  });
+
+  listener.failures = {std::make_error_code(failure)};
+  listener.streams.emplace_back(std::move(ours));
+  quoll::async::co_spawn(time.get_executor(), http::server{router}.serve(std::move(listener)),
+                         overloaded{[] {}, [](std::exception_ptr) {}}, stop.get_token());
+  quoll::async::co_spawn(time.get_executor(), get(std::move(client), "/after", done),
+                         overloaded{[&](std::string answer) {
+                                      received = std::move(answer);
+                                      received_at = time.get_executor().now();
+                                      stop.request_stop();
+                                    },
+                                    [](std::exception_ptr) {}});
+  time.run();
+
+  REQUIRE(received == "after");
+  // It waited before it tried again.
+  REQUIRE(received_at >= 100ms);
+}
+
+TEST_CASE("serve: a stop during the wait of on_accept_error is no failure", "[server][timer]") {
+  using namespace std::chrono_literals;
+
+  quoll::test::virtual_time time;
+  http::router router;
+  std::stop_source stop;
+  canned_listener listener;
+  quoll::http::serve_options options;
+  std::exception_ptr failure;
+  auto ended = false;
+
+  listener.failures = {std::make_error_code(std::errc::too_many_files_open)};
+  options.on_accept_error = [](std::error_code) -> task<bool> {
+    co_await quoll::async::sleep_for(1h);
+    co_return true;
+  };
+
+  auto const stopping = [&stop]() -> task<int> {
+    co_await quoll::async::sleep_for(1s);
+    stop.request_stop();
+    co_return 1;
+  };
+
+  quoll::async::co_spawn(
+      time.get_executor(), http::server{router, std::move(options)}.serve(std::move(listener)),
+      overloaded{[&ended] { ended = true; }, [&failure](std::exception_ptr error) { failure = error; }},
+      stop.get_token());
+  quoll::async::co_spawn(time.get_executor(), stopping(), overloaded{[](int) {}, [](std::exception_ptr) {}});
+  time.run();
+
+  REQUIRE(ended);
+  REQUIRE_FALSE(failure);
 }
