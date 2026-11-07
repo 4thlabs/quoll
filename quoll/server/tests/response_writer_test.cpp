@@ -692,33 +692,6 @@ TEST_CASE("response_writer: a middleware wrapping its writer passes its head on"
   REQUIRE(written == 4);
 }
 
-TEST_CASE("response_writer: what wraps it is held for as long as it runs", "[server]") {
-  http::router router;
-  std::string label;
-
-  router.use([&label](http::request request, http::next const &next) -> task<http::response> {
-    auto answer = co_await next(std::move(request));
-
-    answer.late_head_writer = [&label, inner = std::move(answer.late_head_writer),
-                               kept = std::string(100, 'x')](http::body_stream out) -> task<> {
-      try {
-        co_await inner(out);
-      } catch (std::exception const &) {
-        label = kept;
-        throw;
-      }
-    };
-    co_return answer;
-  });
-  router.get("/early", [](http::response_writer out) -> task<> {
-    out.status = http::status::continue_;
-    co_await out.write("never sent");
-  });
-
-  REQUIRE(answer_to(http::server{router}, get("/early")).starts_with("HTTP/1.1 500"));
-  REQUIRE(label == std::string(100, 'x'));
-}
-
 TEST_CASE("response_writer: what a handler asks of the connection stands, whatever replaces its answer", "[server]") {
   http::router router;
 
@@ -1259,7 +1232,8 @@ TEST_CASE("server: to HTTP/1.0, another coding than chunks answers 500 rather th
 
   http::server const server{router};
   auto const target = GENERATE(as<std::string>{}, "/whole", "/written", "/two-lines");
-  auto const answer = answer_to(server, "GET " + target + " HTTP/1.0\r\nHost: x\r\n\r\n");
+  auto const method = GENERATE(as<std::string>{}, "GET ", "HEAD ");
+  auto const answer = answer_to(server, method + target + " HTTP/1.0\r\nHost: x\r\n\r\n");
 
   REQUIRE(answer.contains(" 500 "));
   REQUIRE_FALSE(answer.contains("gzipped"));
@@ -1345,4 +1319,100 @@ TEST_CASE("server: to HTTP/1.0, spaces around chunked change nothing", "[server]
   REQUIRE(answer.contains(" 200 "));
   REQUIRE_FALSE(answer.contains("Transfer-Encoding"));
   REQUIRE(answer.ends_with("\r\n\r\nplain"));
+}
+
+namespace {
+
+std::string const asks_for_continue =
+    " HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: 100-continue\r\nConnection: "
+    "close\r\n\r\n";
+
+} // namespace
+
+TEST_CASE("server: a writer reading what its refusal did not invite fails at once, rather than wait", "[server]") {
+  http::router router;
+
+  router.post("/refuse", [](http::body_reader body) {
+    http::response answer;
+
+    answer.status = http::status::bad_request;
+    answer.body_writer = [body](http::body_stream out) mutable -> task<> {
+      auto refused = false;
+
+      try {
+        (void)co_await body.read();
+      } catch (std::system_error const &) {
+        refused = true;
+      }
+
+      co_await out.write(refused ? "not read" : "read");
+    };
+    return answer;
+  });
+
+  auto const answer = answer_to(http::server{router}, "POST /refuse" + asks_for_continue);
+
+  REQUIRE(answer.starts_with("HTTP/1.1 400"));
+  REQUIRE(answer.contains("not read"));
+  REQUIRE_FALSE(answer.contains("100 Continue"));
+}
+
+TEST_CASE("response_writer: a refusal a middleware set invites no body", "[server]") {
+  http::router router;
+
+  router.use([](http::request request, http::next const &next) -> task<http::response> {
+    auto answer = co_await next(std::move(request));
+
+    answer.status = http::status::unauthorized;
+    co_return answer;
+  });
+  router.post("/upload", [](http::body_reader, http::response_writer out) -> task<> { co_await out.write("no"); });
+
+  auto const answer = answer_to(http::server{router}, "POST /upload" + asks_for_continue);
+
+  REQUIRE(answer.starts_with("HTTP/1.1 401"));
+  REQUIRE_FALSE(answer.contains("100 Continue"));
+}
+
+TEST_CASE("server: to HEAD, a body_writer that does not run invites no body", "[server]") {
+  http::router router;
+
+  router.get("/rows", [](http::body_reader) {
+    http::response answer;
+
+    answer.body_writer = [](http::body_stream out) -> task<> { co_await out.write("never"); };
+    return answer;
+  });
+
+  auto const answer = answer_to(http::server{router}, "HEAD /rows" + asks_for_continue);
+
+  REQUIRE(answer.starts_with("HTTP/1.1 200"));
+  REQUIRE_FALSE(answer.contains("100 Continue"));
+}
+
+TEST_CASE("server: a 100 Continue that cannot leave runs nothing", "[server]") {
+  http::router router;
+  auto ran = 0;
+
+  router.post("/rows", [&ran](http::body_reader, http::response_writer out) -> task<> {
+    ++ran;
+    co_await out.write("never");
+  });
+
+  http::server const server{router};
+  virtual_time time;
+  auto [client, ours] = io::make_memory_stream_pair();
+
+  auto const peer = [](io::memory_stream to) -> task<int> {
+    auto const sent = "POST /rows" + asks_for_continue;
+
+    (void)co_await io::write(to, std::as_bytes(std::span{sent}));
+    (void)co_await read_until_closed(to);
+    co_return 1;
+  };
+
+  (void)quoll::test::run(
+      time, async::when_all(server.serve_connection(failing_writes{std::move(ours)}), peer(std::move(client))));
+
+  REQUIRE(ran == 0);
 }

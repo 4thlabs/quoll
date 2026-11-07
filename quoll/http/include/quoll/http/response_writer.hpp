@@ -85,7 +85,7 @@ namespace quoll::http {
  *
  * It may read as it writes, one write and one read at a time, from two tasks on as many threads as its executor has.
  * With `Expect: 100-continue`, `100 Continue` leaves before it starts, so that such a route invites its body even if it
- * goes on to answer without it.
+ * goes on to answer without it, unless a status of 300 or more is already set: reading then fails at once.
  *
  * Moved, not copied. Take it by value, or pass it on by reference: it does not outlive the handler's task, and write()
  * on one moved from throws std::logic_error. Thread safety: one write() at a time.

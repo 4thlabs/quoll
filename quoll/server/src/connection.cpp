@@ -577,9 +577,16 @@ public:
     // What a read cut short leaves is no new piece.
     piece_.clear();
 
-    if (std::exchange(continue_owed_, false)) {
-      co_await send_continue();
-      stream_->reading().start_again();
+    if (no_body_invited_) {
+      throw body_not_read{std::make_error_code(std::errc::operation_not_permitted),
+                          "quoll::http::server: its answer invited no body"};
+    }
+
+    if (continue_owed_) {
+      if (auto const failed = co_await continue_before_writing()) {
+        failure_ = request_read{failed};
+        throw body_not_read{failed, "quoll::http::server: cannot ask for the body"};
+      }
     }
 
     stream_->reading().next_piece();
@@ -615,25 +622,26 @@ public:
 
   [[nodiscard]] std::optional<request_read> const &failure() const noexcept { return failure_; }
 
-  // Before what may write as this reads, `100 Continue` has left, if owed: it must not leave beside a piece, and a peer
-  // says whether one is owed, which a handler would not know to wait for. So such a route invites its body even if it
-  // goes on to answer without it.
+  // `100 Continue`, if owed, before what may write as this reads: it must not leave beside a piece, and a peer says
+  // whether one is owed, which a handler would not know to wait for. So such a route invites its body even if it goes
+  // on to answer without it. What fails here leaves a stream nothing more can be written to, stopped or not.
   [[nodiscard]] async::task<std::error_code> continue_before_writing() {
     if (!std::exchange(continue_owed_, false)) {
       co_return std::error_code{};
     }
 
-    auto const sent = co_await write_continue(*stream_);
+    auto const failed = co_await write_continue(*stream_);
 
-    if (!sent) {
+    if (!failed) {
       stream_->reading().start_again();
     }
 
-    co_return sent;
+    co_return failed;
   }
 
-  // The answer is a refusal, with no use for a body: none is invited.
-  void no_continue() noexcept { continue_owed_ = false; }
+  // The answer has no use for a body, and invites none: reading then fails at once, rather than wait for what a peer
+  // honouring its `Expect` will not send.
+  void no_continue() noexcept { no_body_invited_ = std::exchange(continue_owed_, false); }
 
   // Whether the request has been read whole, and the next one can follow it. For what writes as this reads, which may
   // be on another thread, and so cannot ask the parser.
@@ -644,20 +652,13 @@ private:
     return parser.done() && parser.keep_alive() && !parser.upgrade();
   }
 
-  // Stopped or not, a `100 Continue` that did not leave whole leaves a stream nothing more can be written to.
-  async::task<> send_continue() {
-    if (auto const sent = co_await write_continue(*stream_)) {
-      failure_ = request_read{sent};
-      throw body_not_read{sent, "quoll::http::server: cannot ask for the body"};
-    }
-  }
-
   paced_stream *stream_;
   std::string *buffer_;
   http::request_parser *parser_;
   std::string piece_;
   std::optional<request_read> failure_;
   bool continue_owed_;
+  bool no_body_invited_ = false;
   // What writes asks it as this reads, which may be on another thread.
   std::atomic<bool> read_to_its_end_;
   bool stopped_ = false;
@@ -688,27 +689,30 @@ async::task<http::response> respond(http::router const &router, http::request re
   co_return http::detail::status_response(http::status::internal_server_error);
 }
 
-// HTTP/1.0 has no chunks: whether this is such a response, which the framing it set has left. Another coding has no way
-// to reach it: as a response of that version, it is refused where it is serialized, rather than read as the content.
+// HTTP/1.0 has no chunks: whether this is such a response, which the framing it set has left.
 bool without_chunks(http::response &response, http::version version) {
   if (version != http::version::http_1_0 && response.version != http::version::http_1_0) {
     return false;
-  }
-
-  auto const another_coding = std::ranges::any_of(response.fields, [](auto const &entry) {
-    return http::detail::iequals(entry.name, "Transfer-Encoding") &&
-           !http::detail::iequals(http::detail::trim(entry.value), "chunked");
-  });
-
-  if (another_coding) {
-    response.version = http::version::http_1_0;
-    return true;
   }
 
   response.fields.erase("Transfer-Encoding");
   response.trailers.clear();
   return true;
 }
+
+// Whether a coding other than chunks would go to HTTP/1.0, which has no way to say it: read as the content otherwise.
+[[nodiscard]] bool has_no_way_to_say_its_coding(http::response const &response, http::version version) {
+  if (version != http::version::http_1_0 && response.version != http::version::http_1_0) {
+    return false;
+  }
+
+  return std::ranges::any_of(response.fields, [](auto const &entry) {
+    return http::detail::iequals(entry.name, "Transfer-Encoding") &&
+           !http::detail::iequals(http::detail::trim(entry.value), "chunked");
+  });
+}
+
+constexpr auto no_way_to_say_its_coding = "quoll::http::server: a coding other than chunks to HTTP/1.0";
 
 // How a body of unknown length goes: on HTTP/1.0, nothing but the end of the connection ends it.
 void frame_in_pieces(http::response &response, http::version version, bool &keep_alive) {
@@ -1033,6 +1037,10 @@ private:
       throw std::logic_error{"quoll::http::server: a 1xx is no final response"};
     }
 
+    if (has_no_way_to_say_its_coding(*response_, version_)) {
+      throw std::logic_error{no_way_to_say_its_coding};
+    }
+
     auto keep_alive = keeps_alive();
     http::response made;
 
@@ -1109,6 +1117,14 @@ async::task<bool> send_written_by_handler(paced_stream &stream, http::response &
     if (auto const *const wrong = http::detail::replace_what_would_mislead(response, method);
         wrong != nullptr && options.on_handler_error) {
       options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
+    }
+
+    if (has_no_way_to_say_its_coding(response, version)) {
+      if (options.on_handler_error) {
+        options.on_handler_error(std::make_exception_ptr(std::logic_error{no_way_to_say_its_coding}));
+      }
+
+      co_return !co_await send_500(stream, keep_alive);
     }
 
     (void)without_chunks(response, version);
@@ -1234,6 +1250,14 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
       options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
     }
 
+    if (has_no_way_to_say_its_coding(response, version)) {
+      if (options.on_handler_error) {
+        options.on_handler_error(std::make_exception_ptr(std::logic_error{no_way_to_say_its_coding}));
+      }
+
+      response = http::detail::status_response(http::status::internal_server_error);
+    }
+
     auto const in_pieces = static_cast<bool>(response.body_writer);
     auto const written_by_handler = !in_pieces && response.late_head_writer;
 
@@ -1248,12 +1272,12 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
     }
 
     if (in_pieces || written_by_handler) {
-      // What runs may read as it writes. A status it has already refused with invites no body, and a writer that does
-      // not run to HEAD reads nothing.
-      if (body && in_pieces && (head || static_cast<std::uint16_t>(response.status) >= 300)) {
+      // What runs may read as it writes. A status of refusal already set invites no body, nor does a writer that does
+      // not run to HEAD.
+      if (body && ((in_pieces && head) || static_cast<std::uint16_t>(response.status) >= 300)) {
         body->no_continue();
       } else if (body) {
-        if (auto const sent = co_await body->continue_before_writing()) {
+        if (auto const failed = co_await body->continue_before_writing()) {
           co_return connection_end::nothing_owed;
         }
       }
