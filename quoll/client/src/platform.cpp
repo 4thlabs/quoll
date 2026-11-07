@@ -37,7 +37,7 @@
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/detail/require_service.hpp>
-#include <quoll/client/client.hpp>
+#include <quoll/client/detail/client_backend.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/http/detail/check.hpp>
 #include <quoll/http/detail/write_whole_body.hpp>
@@ -70,9 +70,7 @@ struct platform_state {
 // What send() and stream() ask of a request before anything runs: as a connection does, and what only a URL has to
 // fear.
 void make_ready(platform_state const &state, http::request &request) {
-  if (!request.target.starts_with('/')) {
-    throw std::invalid_argument{"quoll::http::client: the target is not in origin form"};
-  }
+  check_origin_form(request.target);
 
   using enum http::verb;
 
@@ -84,15 +82,9 @@ void make_ready(platform_state const &state, http::request &request) {
 
   request.target.insert(0, state.prefix);
 
-  // The URL goes to JavaScript up to its first NUL, the rest of the target lost.
-  if (request.target.find('\0') != std::string::npos) {
-    throw std::invalid_argument{"quoll::http::client: a NUL in the target"};
-  }
-
-  // Alone, a target is the URL: `//host/path` or `/\\host/path` would leave the page's origin, and a URL parser drops
-  // tabs.
-  if (state.origin.empty() && (request.target.starts_with("//") || request.target.starts_with("/\\") ||
-                               request.target.find('\t') != std::string::npos)) {
+  // Alone, a target is the URL: `//host/path` or `/\\host/path` would leave the page's origin. What a URL parser drops,
+  // a tab or a line break, is refused by check_target() below.
+  if (state.origin.empty() && (request.target.starts_with("//") || request.target.starts_with("/\\"))) {
     throw std::invalid_argument{"quoll::http::client: a target that could leave the page's origin"};
   }
 

@@ -39,6 +39,7 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/client/client_options.hpp>
+#include <quoll/client/detail/client_backend.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/http/detail/number.hpp>
 #include <quoll/http/request.hpp>
@@ -59,35 +60,6 @@
 #include <utility>
 
 namespace quoll::http {
-
-namespace detail {
-
-// A connector, whichever it is: the core owns it through this.
-struct connector_handle {
-  std::shared_ptr<void const> connector;
-  async::task<io::any_stream> (*open)(void const *connector, std::string const &host, std::uint16_t port, bool secure,
-                                      io::tls_client_options const &tls);
-};
-
-// What a client does, compiled once: over a connector, or through the platform of the executor.
-struct client_operations {
-  async::task<http::response> (*send)(std::shared_ptr<void> const &state, http::request request);
-  async::task<http::streamed_response> (*stream)(std::shared_ptr<void> const &state, http::request request);
-};
-
-struct client_backend {
-  std::shared_ptr<void> state;
-  client_operations const *operations;
-};
-
-[[nodiscard]] client_backend make_client_backend(connector_handle connector, std::string host, std::uint16_t port,
-                                                 bool secure, std::string prefix, client_options const &options);
-
-// A client from `url` through the executor's http::platform_ref: what a client from a URL is in a build for Emscripten.
-// Compiled in every build, in a source of its own, so that it runs in the native sanitizers' tests too.
-[[nodiscard]] client_backend make_platform_backend(std::string_view url, client_options const &options);
-
-} // namespace detail
 
 /**
  * @brief HttpTransport speaking HTTP/1.1 to one server, over the byte streams of a connector: by default the network
@@ -174,8 +146,9 @@ public:
    * @endcode
    *
    * @throws std::invalid_argument for another URL, but for one relative to the page in a browser, and for a path that
-   * would not read as itself (a character RFC 3986
-   * does not allow there, an invalid escape, a dot segment, encoded or not, a NUL, an empty segment).
+   * would not read as itself (a character RFC 3986 does not allow there, an invalid escape, a dot segment, encoded or
+   * not, a NUL, an empty segment, encoded or not, what a proxy could read as another server), and for a host with an
+   * empty label or port 0.
    */
   explicit client(std::string_view url, client_options options = {});
 
@@ -202,8 +175,10 @@ public:
    * `Port` is any integer rather than `std::uint16_t`, so that braces after a URL always mean its options: `{}` would
    * otherwise convert better to a port, and `{connector, "http://example.com", {}}` read its URL as a host.
    *
-   * @throws std::invalid_argument for a port out of range, and for a host that is neither a name (letters, digits, `-`,
-   * `_` and dots), an IPv4 nor an IPv6 address: one with a port (`localhost:8080`), brackets, a zone index, spaces...
+   * @throws std::invalid_argument for a port out of 0 to 65535, which is the connector's to read, and for a host that
+   * is neither a name (letters, digits,
+   * `-`, `_` and dots), an IPv4 nor an IPv6 address: one with a port (`localhost:8080`), brackets, a zone index,
+   * spaces...
    */
   template <io::Connector Connector, std::integral Port>
     requires(!http::detail::is_any_of<Port, bool, char, wchar_t, char8_t, char16_t, char32_t>)

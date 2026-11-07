@@ -38,6 +38,7 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/detached.hpp>
+#include <quoll/async/detail/slots.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/sleep_for.hpp>
@@ -77,6 +78,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 
 #include <chrono>
 #include <cstddef>
@@ -1605,6 +1607,11 @@ TEST_CASE("http::client: where a Location leads", "[client]") {
   for (std::string_view const refused : {"",
                                          "/a[b]/c",
                                          "/%2F/other.example/g",
+                                         "/%2e//other.example/g",
+                                         "/%2e%2e//other.example",
+                                         "/%09/other.example",
+                                         "/%2e/%2fother.example",
+                                         "/%5C/other.example",
                                          "/%2f%2fother.example",
                                          "/%5Cother.example",
                                          "/a%00b",
@@ -3608,4 +3615,480 @@ TEST_CASE("http::client: an upload holds its place in max_connections until it h
 
   REQUIRE(quoll::test::run(loop, sending()) == 3);
   REQUIRE(order == std::vector<std::string>{"upload begins", "upload ends", "the other answered"});
+}
+
+namespace {
+
+// A stream whose writes fail with `failure`, and whose reads give `reply`, then its end.
+class failing_writes {
+public:
+  failing_writes(std::error_code failure, std::string reply) : failure_(failure), reply_(std::move(reply)) {}
+
+  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte> buffer) {
+    if (reply_.empty()) {
+      co_return io::io_result{io::make_error_code(io::error::end_of_stream), 0};
+    }
+
+    auto const size = std::min(buffer.size(), reply_.size());
+
+    std::memcpy(buffer.data(), reply_.data(), size);
+    reply_.erase(0, size);
+    co_return io::io_result{{}, size};
+  }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) { co_return io::io_result{failure_, 0}; }
+
+private:
+  std::error_code failure_;
+  std::string reply_;
+};
+
+class failing_writes_connector {
+public:
+  failing_writes_connector(std::error_code failure, std::string reply) : failure_(failure), reply_(std::move(reply)) {}
+
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    co_return io::any_stream{failing_writes{failure_, reply_}};
+  }
+
+private:
+  std::error_code failure_;
+  std::string reply_;
+};
+
+// Nothing will come, its writes fail, and the connection stays open: a read beside it would wait for ever.
+class never_answers {
+public:
+  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte>) {
+    co_await async::detail::slots{0}.acquire();
+    co_return io::io_result{};
+  }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) {
+    co_return io::io_result{std::make_error_code(std::errc::io_error), 0};
+  }
+};
+
+struct never_answers_connector {
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    co_return io::any_stream{never_answers{}};
+  }
+};
+
+// Closed by the server while a write is on its way, which waits until it is stopped.
+class closing_during_a_write {
+public:
+  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte>) {
+    co_await async::yield();
+    co_return io::io_result{io::make_error_code(io::error::end_of_stream), 0};
+  }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) {
+    co_await async::detail::slots{0}.acquire();
+    co_return io::io_result{};
+  }
+};
+
+struct closing_during_a_write_connector {
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    co_return io::any_stream{closing_during_a_write{}};
+  }
+};
+
+} // namespace
+
+TEST_CASE("http::client: a server that answers and goes is heard, though the request could not leave", "[client]") {
+  async::run_loop loop;
+  auto const gone = GENERATE(std::errc::broken_pipe, std::errc::connection_reset, std::errc::connection_aborted,
+                             std::errc::not_connected, std::errc::network_reset);
+  std::string const refusal = "HTTP/1.1 413 Too Large\r\nContent-Length: 2\r\n\r\nno";
+  http::client const client{failing_writes_connector{std::make_error_code(gone), refusal}, "example.com", 80};
+
+  auto const sending = [&]() -> task<int> {
+    auto const whole = co_await client.send(make_request(verb::post, "/", "body"));
+    auto stream = co_await client.stream(make_request(verb::post, "/", "body"));
+    auto const piece = co_await stream.body.read();
+
+    co_return static_cast<int>(whole.status) * 1000 + static_cast<int>(stream.status) + (piece == "no" ? 1000000 : 0);
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()) == 1'000'000 + 413 * 1000 + 413);
+}
+
+TEST_CASE("http::client: a server that goes with no answer says the request could not leave", "[client]") {
+  async::run_loop loop;
+  http::client const client{failing_writes_connector{std::make_error_code(std::errc::broken_pipe), ""}, "example.com",
+                            80};
+
+  auto const code_of = [](auto work) -> task<std::error_code> {
+    try {
+      co_await std::move(work);
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  auto const whole = [&]() -> task<> { (void)co_await client.send(make_request(verb::post, "/", "body")); };
+  auto const streamed = [&]() -> task<> { (void)co_await client.stream(make_request(verb::post, "/", "body")); };
+  auto const in_pieces = [&]() -> task<> {
+    auto request = make_request(verb::post, "/");
+
+    request.body_writer = [](http::body_stream out) -> task<> { co_await out.write("body"); };
+    (void)co_await client.send(std::move(request));
+  };
+
+  REQUIRE(quoll::test::run(loop, code_of(whole())) == std::errc::broken_pipe);
+  REQUIRE(quoll::test::run(loop, code_of(streamed())) == std::errc::broken_pipe);
+  REQUIRE(quoll::test::run(loop, code_of(in_pieces())) == std::errc::broken_pipe);
+}
+
+TEST_CASE("http::client: what came of a server gone is what it says, a bad message rather than a write", "[client]") {
+  async::run_loop loop;
+  http::client const client{failing_writes_connector{std::make_error_code(std::errc::broken_pipe), "not http\r\n\r\n"},
+                            "example.com", 80};
+
+  auto const code_of = [&](bool streamed) -> task<std::error_code> {
+    try {
+      if (streamed) {
+        (void)co_await client.stream(make_request(verb::post, "/", "body"));
+      } else {
+        (void)co_await client.send(make_request(verb::post, "/", "body"));
+      }
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  REQUIRE(quoll::test::run(loop, code_of(false)) == http::error::bad_message);
+  REQUIRE(quoll::test::run(loop, code_of(true)) == http::error::bad_message);
+}
+
+TEST_CASE("http::client: a server closing during a write is what the caller hears, no cancellation", "[client]") {
+  async::run_loop loop;
+  http::client_options options;
+
+  options.response_timeout = {};
+
+  http::client const client{closing_during_a_write_connector{}, "example.com", 80, options};
+  auto const streamed = GENERATE(false, true);
+  auto request = make_request(verb::post, "/");
+
+  request.body_writer = [](http::body_stream out) -> task<> { co_await out.write("body"); };
+
+  auto const sending = [&]() -> task<std::error_code> {
+    try {
+      if (streamed) {
+        (void)co_await client.stream(std::move(request));
+      } else {
+        (void)co_await client.send(std::move(request));
+      }
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()) == io::error::end_of_stream);
+}
+
+TEST_CASE("http::client: a connection whose request could not leave is not kept", "[client]") {
+  async::run_loop loop;
+  auto connections = std::make_shared<int>(0);
+
+  // Its first write fails, and it answers it all the same: kept, it would serve the next request.
+  class failing_once {
+  public:
+    [[nodiscard]] task<io::io_result> read_some(std::span<std::byte> buffer) {
+      if (replies_ == 0) {
+        co_return io::io_result{io::make_error_code(io::error::end_of_stream), 0};
+      }
+
+      std::string_view const reply = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+
+      --replies_;
+      std::memcpy(buffer.data(), reply.data(), reply.size());
+      co_return io::io_result{{}, reply.size()};
+    }
+
+    [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> bytes) {
+      if (std::exchange(first_write_, false)) {
+        co_return io::io_result{std::make_error_code(std::errc::broken_pipe), 0};
+      }
+
+      ++replies_;
+      co_return io::io_result{{}, bytes.size()};
+    }
+
+  private:
+    int replies_ = 1;
+    bool first_write_ = true;
+  };
+
+  struct counting {
+    std::shared_ptr<int> count;
+
+    [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+      ++*count;
+      co_return io::any_stream{failing_once{}};
+    }
+  };
+
+  http::client const client{counting{connections}, "example.com", 80};
+  auto const streamed = GENERATE(false, true);
+
+  auto const twice = [&]() -> task<int> {
+    for (auto request = 0; request < 2; ++request) {
+      if (streamed) {
+        auto response = co_await client.stream(make_request(verb::get, "/"));
+
+        while (co_await response.body.read()) {
+        }
+      } else {
+        (void)co_await client.send(make_request(verb::get, "/"));
+      }
+    }
+
+    co_return *connections;
+  };
+
+  REQUIRE(quoll::test::run(loop, twice()) == 2);
+}
+
+TEST_CASE("http::client: a body that could not leave says so once the wait for an answer is over", "[client][timer]") {
+  virtual_time time;
+  http::client_options options;
+
+  options.response_timeout = 3s;
+
+  http::client const client{never_answers_connector{}, "example.com", 80, options};
+  auto const streamed = GENERATE(false, true);
+  auto request = make_request(verb::post, "/");
+
+  request.body_writer = [](http::body_stream out) -> task<> { co_await out.write("body"); };
+
+  auto const sending = [&]() -> task<std::error_code> {
+    try {
+      if (streamed) {
+        (void)co_await client.stream(std::move(request));
+      } else {
+        (void)co_await client.send(std::move(request));
+      }
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  REQUIRE(quoll::test::run(time, sending()) == std::errc::io_error);
+  REQUIRE(time.now() == 3s);
+}
+
+TEST_CASE("http::client: a write that fails with the connection still open ends the request, with no timer",
+          "[client]") {
+  async::run_loop loop;
+  http::client_options options;
+
+  options.response_timeout = {};
+
+  http::client const client{never_answers_connector{}, "example.com", 80, options};
+  auto request = make_request(verb::post, "/");
+
+  request.body_writer = [](http::body_stream out) -> task<> { co_await out.write("body"); };
+
+  auto const sending = [&]() -> task<std::error_code> {
+    try {
+      (void)co_await client.send(std::move(request));
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()) == std::errc::io_error);
+}
+
+TEST_CASE("http::client: a kept connection torn down goes again, however the socket says so", "[client]") {
+  async::run_loop loop;
+  auto served = 0;
+  auto const router = make_router();
+  memory_server server{loop.get_executor(),
+                       [&](io::memory_stream stream) {
+                         return ++served == 1 ? answer(std::move(stream),
+                                                       {"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"}, false)
+                                              : quoll::http::server{router}.serve_connection(std::move(stream));
+                       },
+                       0,
+                       {},
+                       {}};
+  auto const sending = [&]() -> task<std::string> {
+    http::client const client{resetting_connector{server}, "example.com", 80};
+
+    (void)co_await client.send(make_request(verb::get, "/"));
+
+    // For the server to have closed it, so that the write fails rather than the read.
+    for (auto turn = 0; turn < 32; ++turn) {
+      co_await async::yield();
+    }
+
+    co_return (co_await client.send(make_request(verb::get, "/hello"))).body;
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()) == "hello");
+  REQUIRE(served == 2);
+}
+
+TEST_CASE("http::client: a stale connection leaves those given back since it was taken", "[client]") {
+  async::run_loop loop;
+  auto served = 0;
+  auto const router = make_router();
+
+  // Answers once, reads a second request, and only then closes, some turns later.
+  auto const going_late = [](io::memory_stream stream) -> task<> {
+    std::string buffer;
+    http::request_parser first;
+
+    (void)co_await http::read(stream, buffer, first);
+
+    std::string const reply = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{reply}));
+
+    http::request_parser second;
+
+    (void)co_await http::read(stream, buffer, second);
+
+    for (auto turn = 0; turn < 256; ++turn) {
+      co_await async::yield();
+    }
+  };
+
+  memory_server server{loop.get_executor(),
+                       [&](io::memory_stream stream) {
+                         return ++served == 1 ? going_late(std::move(stream))
+                                              : quoll::http::server{router}.serve_connection(std::move(stream));
+                       },
+                       0,
+                       {},
+                       {}};
+  auto const streamed = GENERATE(false, true);
+  auto const fetch = [streamed](http::client const &client, std::string target) -> task<int> {
+    if (streamed) {
+      auto response = co_await client.stream(make_request(verb::get, target));
+
+      while (co_await response.body.read()) {
+      }
+    } else {
+      (void)co_await client.send(make_request(verb::get, target));
+    }
+
+    co_return 0;
+  };
+  auto const sending = [&]() -> task<int> {
+    http::client const client{memory_connector{server}, "example.com", 80};
+
+    (void)co_await fetch(client, "/");
+    // One finds its connection closed long after the other, on a new one, has given it back.
+    auto [late, quick] = co_await async::when_all(fetch(client, "/hello"), fetch(client, "/hello"));
+
+    static_cast<void>(late);
+    static_cast<void>(quick);
+
+    // Two are kept: the one given back, and the late one's new one.
+    auto [third, fourth] = co_await async::when_all(fetch(client, "/hello"), fetch(client, "/hello"));
+
+    static_cast<void>(third);
+    static_cast<void>(fourth);
+    co_return server.connections;
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()) == 3);
+}
+
+TEST_CASE("http::client: a request stopped already leaves a kept connection alone", "[client]") {
+  async::run_loop loop;
+  auto const router = make_router();
+  memory_server server{
+      loop.get_executor(),
+      [&router](io::memory_stream stream) { return quoll::http::server{router}.serve_connection(std::move(stream)); },
+      0,
+      {},
+      {}};
+  std::stop_source stopped;
+
+  stopped.request_stop();
+
+  auto const stopped_with = [&](auto request) -> task<std::error_code> {
+    try {
+      co_await async::detail::stop_scope<void>{std::move(request), stopped.get_token()};
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  auto const sending = [&]() -> task<int> {
+    http::client const client{memory_connector{server}, "example.com", 80};
+
+    (void)co_await client.send(make_request(verb::get, "/hello"));
+
+    auto const whole = [&](http::request request) -> task<> { (void)co_await client.send(std::move(request)); };
+    auto const streaming = [&](http::request request) -> task<> { (void)co_await client.stream(std::move(request)); };
+    auto const get_whole = co_await stopped_with(whole(make_request(verb::get, "/hello")));
+    auto const get_streaming = co_await stopped_with(streaming(make_request(verb::get, "/hello")));
+
+    REQUIRE(get_whole == std::errc::operation_canceled);
+    REQUIRE(get_streaming == std::errc::operation_canceled);
+
+    (void)co_await client.send(make_request(verb::get, "/hello"));
+    co_return server.connections;
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()) == 1);
+
+  // Nor does a request that would have opened one, whatever it is.
+  auto const opening = [&]() -> task<int> {
+    http::client const client{memory_connector{server}, "example.com", 80};
+    auto const whole = [&](http::request request) -> task<> { (void)co_await client.send(std::move(request)); };
+    auto const streaming = [&](http::request request) -> task<> { (void)co_await client.stream(std::move(request)); };
+    auto const post_whole = co_await stopped_with(whole(make_request(verb::post, "/hello", "body")));
+    auto const post_streaming = co_await stopped_with(streaming(make_request(verb::post, "/hello", "body")));
+
+    REQUIRE(post_whole == std::errc::operation_canceled);
+    REQUIRE(post_streaming == std::errc::operation_canceled);
+    co_return server.connections;
+  };
+
+  REQUIRE(quoll::test::run(loop, opening()) == 1);
+}
+
+TEST_CASE("http::client: a URL or a host that would not read as itself is refused", "[client]") {
+  for (std::string_view const url :
+       {"http://example.com/%2F%2Fother.example", "http://example.com/%2e//other.example", "http://example.com/%09/x",
+        "http://example.com/%09", "http://example.com/%0A", "http://example.com/%2e%09%2e/admin",
+        "http://example.com/..%5Cadmin", "http://example.com/a/%09/b", "http://example.com/a/%2F/b",
+        "http://example.com/a/%5C/b", "http://example.com/a/%09", "http://example.com/a%00b", "http://example.com:0/",
+        "http://../x", "http://./", "http://.example.com/", "http://a..b/"}) {
+    REQUIRE_THROWS_AS(http::client{std::string{url}}, std::invalid_argument);
+  }
+
+  REQUIRE_NOTHROW(http::client{"http://example.com./"});
+  REQUIRE_NOTHROW(http::client{"http://example.com/"});
+  REQUIRE_NOTHROW(http::client{"http://example.com/api/v1/"});
+  REQUIRE_NOTHROW(http::client{"http://example.com/a%20b"});
+
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), answering({}), 0, {}, {}};
+
+  REQUIRE_THROWS_AS((http::client{memory_connector{server}, "a..b", 80}), std::invalid_argument);
+  // A connector may make nothing of a port: it is the connector's to read.
+  REQUIRE_NOTHROW(http::client{memory_connector{server}, "example.com", 0});
+  REQUIRE_THROWS_AS((http::client{memory_connector{server}, "example.com", 65536}), std::invalid_argument);
 }

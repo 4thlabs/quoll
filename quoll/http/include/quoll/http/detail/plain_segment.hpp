@@ -44,10 +44,15 @@ namespace quoll::http::detail {
 
 // What decoded text comes to, a character at a time: no NUL, which C APIs would stop at, and no `.` or `..` part,
 // whether alone or behind a slash the encoding hides (`..%2Fetc`, `a%5C..`), which a handler joining it to a directory
-// would follow. One rule for the router, a base URL, a typed client's path parameters, and at compile time for a route.
+// would follow. What a URL parser drops counts for nothing: `.%09.` is `..` to one. One rule for the router, a base
+// URL, a typed client's path parameters, and at compile time for a route.
 class plain_text {
 public:
   constexpr void feed(char const character) noexcept {
+    if (character == '\t' || character == '\n' || character == '\r') {
+      return;
+    }
+
     if (character == '\0') {
       plain_ = false;
     } else if (character == '/' || character == '\\') {
