@@ -149,7 +149,7 @@ it claims. A detail may be let go for a stated reason, and needs no new push: na
 in samples and the sample's Vite plugin a bug that normal use does not meet, and in the HTTP protocol an RFC corner that touches
 neither security nor stability (`docs/PLAN.md`, Decided), but for undefined behaviour, lifetimes and data
 races, which are always fixed. A finding that is wrong says why. When it is unclear which of these a point is, for one saying it
-is a bug in particular, the maintainer decides.
+is a bug in particular, the maintainer decides; such an RFC corner, even labelled a bug, needs no decision of theirs.
 
 If Codex has not completed a review of the last commit 30 minutes after the push or the opening of the PR, whichever is later,
 comment `@codex review`; 30 minutes later, the maintainer decides, who alone can lift the protection.

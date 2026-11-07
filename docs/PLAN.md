@@ -37,7 +37,8 @@ What shows it, rather than an argument, with no public announcement before step 
   results as they arrive. DuckDB has an interface of its own, so that this stays a demo and not a product.
 - The framework's site, written with Quoll, served by Quoll behind a reverse proxy, with its source in view.
 - A page saying what is guaranteed (the nightly fuzzing, ASan, UBSan and TSan) and what is not (see
-  [step 2](#step-2-client-and-server-security-and-completeness)), as "C++ exposed to the Internet" is the first objection.
+  [step 2](#step-2-client-and-server-security-and-completeness)), as "C++ exposed to the Internet" is the first objection: the answer
+  is a reverse proxy in front, and a server that still defends itself.
 
 The figures to lead with are those of size, build time and memory (see [Done](#done)). Not the rate:
 [nginx is ahead of Quoll](BENCHMARKS.md#beside-other-servers), and performance comes last on the roadmap.
@@ -99,8 +100,8 @@ which nothing checks either.
 Exposure to the Internet goes through a reverse proxy (decided on 2026-11-07, see [Decided](#decided)), what was built for a
 direct exposure stays, and RFC corners that touch neither security nor stability are not guaranteed. `Expect: 100-continue` is
 done, with a body too large refused at its head, and so is ending a connection: it stops sending first
-(`io::HalfClosableStream`), which a TLS peer reads as its closing message, and after the last response what still comes is read and dropped (`lingering_timeout`,
-`lingering_time`). `100 Continue` is sent without asking the router, so that a request to a route that does not exist
+(`io::HalfClosableStream`), which a TLS peer reads as its closing message, and after the last response what still comes is
+read and dropped (`lingering_timeout`, `lingering_time`). `100 Continue` is sent without asking the router, so that a request to a route that does not exist
 still sends its body: to look at with streaming. A client closes its TLS connections without that message.
 
 - Limits and shutdown: graceful shutdown, a connection limit and a wait when out of file descriptors are done
@@ -242,7 +243,8 @@ it, and has its test and its guide.
 ### Step 8: authentication *(maintainer merges)*
 
 Before the ORM, as the first programs [Positioning](#positioning) aims at often have no SQL database, and need to sign in as
-soon as they listen beyond their machine. Sessions go through a store of their own (memory, a file), which the ORM implements
+soon as they listen beyond their machine. It first settles what a reverse proxy forwards, under
+[Open questions](#open-questions), for its redirects and cookies. Sessions go through a store of their own (memory, a file), which the ORM implements
 once it exists. A new module, as it needs cryptography that `quoll::rest` and `quoll::server` do not have and must not bring to
 WASM builds.
 
@@ -732,7 +734,8 @@ To settle before authentication:
 
 - **What a reverse proxy forwards.** How a handler learns the client's address and the original scheme and host: rate limiting
   and the redirects and cookies of authentication need them, and Quoll reads no forwarded header yet. To trust one only from a
-  configured proxy, as a client can write it too.
+  configured proxy, as a client can write it too, which needs the peer address of a connection, that no stream, listener or
+  request carries today.
 
 Kept for later by the maintainer, at the end of the plan if the need comes (2026-11-05):
 
