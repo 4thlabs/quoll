@@ -115,7 +115,8 @@ Across a `co_await`, a callback or a completion handler, the caller's statement 
   callback) is declared after it.
 - A member whose destruction runs code (closing connections, cancelling tasks, notifying observers, firing callbacks) may
   re-enter the object while it dies: the members declared after it are already gone, and those code paths read them.
-  Follow what that destruction calls; an explicit destructor that clears or moves out the members in a safe order fixes it.
+  Follow what that destruction calls, and remember that with shared ownership the object dies with its last owner, which may
+  be another member. An explicit destructor that clears and moves out the members in a safe order fixes it.
 - A `std::jthread` or a task joined in a destructor uses the members declared before it.
 - Do not rely on the order in which coroutine parameters are destroyed, which compilers do not share: put what must outlive the
   task and the task in one struct whose member order says it.
@@ -167,9 +168,11 @@ Two shapes make the destruction pass's bugs impossible to write:
 - **A registration is a token.** What registers returns an object whose destructor unregisters, as `std::stop_callback`
   does, and whoever registered keeps it as a member. Destroying the awaitable, the task or the owner then unregisters on
   every path.
-- **What calls back goes first.** A member whose destruction may call back into the object is declared last, so that it is
-  destroyed first, while everything else is alive. Where that order cannot hold, an explicit destructor empties it first,
-  after clearing the lookups a callback could reach.
+- **What calls back is taken apart first, on purpose.** When a member's destruction may call back into the object, an
+  explicit destructor first clears what a callback could reach (lookups, registrations), then moves that member out into a
+  local and destroys it there, while the object is still whole. Declaring it last is not enough: a callback may look it up
+  while it is half destroyed, shared ownership moves the real destruction to whichever owner goes last, and the next edit
+  that reorders the members brings the bug back without a sound.
 
 Each real finding gets a test that fails without the fix, under ASan or TSan when it is about memory or threads. For a
 registration, the test destroys the object at every state it can be registered in (each suspension point of a coroutine, in
