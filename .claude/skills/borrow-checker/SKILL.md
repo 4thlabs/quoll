@@ -83,6 +83,9 @@ Across a `co_await`, a callback or a completion handler, the caller's statement 
 
 - Members die in reverse order of declaration: a member whose destructor uses another (a thread, a task, a timer, a registered
   callback) is declared after it.
+- A member whose destruction runs code (closing connections, cancelling tasks, notifying observers, firing callbacks) may
+  re-enter the object while it dies: the members declared after it are already gone, and those code paths read them.
+  Follow what that destruction calls; an explicit destructor that clears or moves out the members in a safe order fixes it.
 - A `std::jthread` or a task joined in a destructor uses the members declared before it.
 - Do not rely on the order in which coroutine parameters are destroyed, which compilers do not share: put what must outlive the
   task and the task in one struct whose member order says it.
