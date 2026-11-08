@@ -31,23 +31,36 @@ url=$(sed -n 's/^fake GitHub on //p' "$log")
 [ -n "$url" ] || fail "the fake did not start"
 
 # A repository and its open issues, through a scope; the fake refuses a request without the User-Agent the
-# program's interceptor adds.
+# program's interceptor adds, answers 503 to the first request for issues, which its retry sends again, and lists the
+# issues only for the query the program sends.
 QUOLL_GITHUB_URL=$url "$program" 4thlabs/quoll >"$out" 2>&1 || fail "4thlabs/quoll failed"
 grep -q '^4thlabs/quoll: 42 stars, 2 open issues$' "$out" || fail "no repository"
 grep -q '^  #7 SSE (ada)$' "$out" || fail "no issue"
+grep -q '^  #9 WebSocket (grace) \[pull request\]$' "$out" || fail "no pull request"
 
-# A repository that is not there: GitHub's error, declared, through try_call.
+# GitHub's errors, declared, through try_call.
 if QUOLL_GITHUB_URL=$url "$program" 4thlabs/nothing >"$out" 2>&1; then
   fail "a missing repository succeeded"
 fi
 grep -q '^not found: Not Found$' "$out" || fail "no error for a missing repository"
 
-# The account of a token, and none without one.
+if QUOLL_GITHUB_URL=$url "$program" 4thlabs/private >"$out" 2>&1; then
+  fail "a private repository succeeded"
+fi
+grep -q '^forbidden: Resource not accessible$' "$out" || fail "no error for a private repository"
+
+# The account of a token, a token refused with GitHub's body, and none at all.
 QUOLL_GITHUB_URL=$url GITHUB_TOKEN=test-token "$program" me >"$out" 2>&1 || fail "me failed"
 grep -q '^ada (Ada Lovelace)$' "$out" || fail "no account"
+
+if QUOLL_GITHUB_URL=$url GITHUB_TOKEN=wrong "$program" me >"$out" 2>&1; then
+  fail "me succeeded with a wrong token"
+fi
+grep -q '^the token is refused: Bad credentials$' "$out" || fail "no error for a wrong token"
 
 if QUOLL_GITHUB_URL=$url "$program" me >"$out" 2>&1; then
   fail "me succeeded without a token"
 fi
+grep -q '^no token: set GITHUB_TOKEN$' "$out" || fail "no error without a token"
 
 echo "quoll_github against the fake GitHub: as expected"

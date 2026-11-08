@@ -16,6 +16,7 @@
     <a href="docs/client.md">Client</a> ·
     <a href="docs/streaming.md">Streaming</a> ·
     <a href="docs/rest.md">REST</a> ·
+    <a href="docs/command-line.md">Command line</a> ·
     <a href="docs/runtimes.md">Runtimes</a> ·
     <a href="docs/ui.md">UI</a> ·
     <a href="docs/performance.md">Performance</a> ·

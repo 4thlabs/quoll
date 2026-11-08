@@ -11,6 +11,13 @@ endif()
 if(EMSCRIPTEN)
   target_link_options(quoll_github PRIVATE -sENVIRONMENT=node -sALLOW_MEMORY_GROWTH
                       "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/node_env.js")
+
+  # Run in Node through fetch against a fake GitHub Node serves, as against_fake.sh does natively.
+  if(QUOLL_BUILD_TESTS)
+    add_test(NAME github_through_fetch COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
+                                               ${CMAKE_CURRENT_SOURCE_DIR}/against_fake.mjs $<TARGET_FILE:quoll_github>)
+  endif()
+
   return()
 endif()
 

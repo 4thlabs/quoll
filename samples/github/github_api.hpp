@@ -67,11 +67,17 @@ struct account {
   std::string login;
 };
 
+// What GitHub adds to an issue that is a pull request: it lists both as issues.
+struct pull_request_link {
+  std::string url;
+};
+
 struct issue {
   std::int64_t number = 0;
   std::string title;
   std::string state;
   account user;
+  std::optional<pull_request_link> pull_request;
 };
 
 // What GitHub answers on an error, whatever its status.
@@ -111,10 +117,12 @@ using answers = rest::returns<T, Status, rest::lenient_json_codec>;
 
 namespace repos {
 
-using get =
-    rest::endpoint<"repos.get", http::verb::get, "/", answers<repository>, answers<error, http::status::not_found>>;
+// 403: a token without access, or the rate limit of a caller without one (60 requests an hour).
+using get = rest::endpoint<"repos.get", http::verb::get, "/", answers<repository>,
+                           answers<error, http::status::not_found>, answers<error, http::status::forbidden>>;
 using issues = rest::endpoint<"repos.issues", http::verb::get, "/issues", rest::query_params<issue_filter>,
-                              answers<std::vector<issue>>, answers<error, http::status::not_found>>;
+                              answers<std::vector<issue>>, answers<error, http::status::not_found>,
+                              answers<error, http::status::forbidden>>;
 
 using api = rest::api<"/repos/{owner}/{repo}", get, issues>;
 
@@ -124,7 +132,7 @@ namespace users {
 
 // The account the token belongs to.
 using me = rest::endpoint<"users.me", http::verb::get, "/user", rest::security<rest::bearer_auth>, answers<github::me>,
-                          answers<error, http::status::unauthorized>>;
+                          answers<error, http::status::unauthorized>, answers<error, http::status::forbidden>>;
 
 } // namespace users
 

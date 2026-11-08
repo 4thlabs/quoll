@@ -79,13 +79,24 @@ async::task<http::response> as_github_asks(http::request &&request, rest::next c
   return send(std::move(request));
 }
 
+// Read in main, before the runtime runs anything.
 [[nodiscard]] std::optional<std::string> from_environment(char const *name) {
-  // NOLINTNEXTLINE(concurrency-mt-unsafe): read once, before anything runs.
   if (auto const *value = std::getenv(name); value != nullptr && *value != '\0') {
     return std::string{value};
   }
 
   return std::nullopt;
+}
+
+// An answer the contract does not declare: its status, why, and what GitHub said, if anything.
+void report(rest::unexpected_response const &unexpected) {
+  std::cerr << "unexpected answer, " << static_cast<int>(unexpected.response.status) << ": " << unexpected.reason;
+
+  if (!unexpected.response.body.empty()) {
+    std::cerr << ": " << unexpected.response.body;
+  }
+
+  std::cerr << '\n';
 }
 
 async::task<int> show_repository(github_client client, std::string owner, std::string name) {
@@ -94,8 +105,7 @@ async::task<int> show_repository(github_client client, std::string owner, std::s
   auto const found = co_await repository.try_call<github::repos::get>();
 
   if (!found) {
-    std::cerr << "unexpected answer, " << static_cast<int>(found.error().response.status) << ": "
-              << found.error().reason << '\n';
+    report(found.error());
     co_return 1;
   }
 
@@ -104,23 +114,43 @@ async::task<int> show_repository(github_client client, std::string owner, std::s
     co_return 1;
   }
 
+  if (found->holds<http::status::forbidden>()) {
+    std::cerr << "forbidden: " << found->get<http::status::forbidden>().message << '\n';
+    co_return 1;
+  }
+
   auto const &shown = found->get<http::status::ok>();
 
   std::cout << shown.full_name << ": " << shown.stars << " stars, " << shown.open_issues_count << " open issues\n";
   std::cout << shown.description.value_or("(no description)") << '\n' << shown.html_url << '\n';
 
+  // GitHub lists pull requests among the issues: marked as such.
   for (auto const &open : co_await repository.call<github::repos::issues>({.state = "open", .per_page = 5})) {
-    std::cout << "  #" << open.number << ' ' << open.title << " (" << open.user.login << ")\n";
+    std::cout << "  #" << open.number << ' ' << open.title << " (" << open.user.login << ")"
+              << (open.pull_request ? " [pull request]" : "") << '\n';
   }
 
   co_return 0;
 }
 
-async::task<int> show_me(github_client client) {
+async::task<int> show_me(github_client client, bool with_token) {
+  if (!with_token) {
+    std::cerr << "no token: set GITHUB_TOKEN\n";
+    co_return 1;
+  }
+
   auto const answer = co_await client.try_call<github::users::me>();
 
-  if (!answer || !answer->holds<http::status::ok>()) {
-    std::cerr << "no account for this token: set GITHUB_TOKEN\n";
+  if (!answer) {
+    report(answer.error());
+    co_return 1;
+  }
+
+  if (!answer->holds<http::status::ok>()) {
+    auto const &refused = answer->holds<http::status::unauthorized>() ? answer->get<http::status::unauthorized>()
+                                                                      : answer->get<http::status::forbidden>();
+
+    std::cerr << "the token is refused: " << refused.message << '\n';
     co_return 1;
   }
 
@@ -130,23 +160,32 @@ async::task<int> show_me(github_client client) {
   co_return 0;
 }
 
-async::task<int> run(std::vector<std::string> arguments) {
-  if (arguments.size() != 1) {
+// What the program is given: its arguments, and what it read from its environment.
+struct given {
+  std::vector<std::string> arguments;
+  std::string url;
+  std::optional<std::string> token;
+};
+
+async::task<int> run(given what) {
+  if (what.arguments.size() != 1) {
     std::cerr << "usage: quoll_github <owner>/<repo> | me\n";
     co_return 2;
   }
 
-  github_client client{from_environment("QUOLL_GITHUB_URL").value_or("https://api.github.com")};
+  github_client client{std::move(what.url)};
 
   client.use(as_github_asks);
   client.use(rest::retry{.attempts = 3});
 
-  if (auto token = from_environment("GITHUB_TOKEN")) {
-    client.credentials<rest::bearer_auth>(std::move(*token));
+  if (what.token) {
+    client.credentials<rest::bearer_auth>(*what.token);
   }
 
+  auto const &arguments = what.arguments;
+
   if (arguments[0] == "me") {
-    co_return co_await show_me(client);
+    co_return co_await show_me(client, what.token.has_value());
   }
 
   auto const slash = arguments[0].find('/');
@@ -196,7 +235,11 @@ struct record_status {
 int main(int argc, char **argv) {
   quoll::runtime runtime;
 
-  co_spawn(runtime.get_executor(), run(std::vector<std::string>(argv + 1, argv + argc)), record_status{});
+  given what{.arguments = std::vector<std::string>(argv + 1, argv + argc),
+             .url = from_environment("QUOLL_GITHUB_URL").value_or("https://api.github.com"),
+             .token = from_environment("GITHUB_TOKEN")};
+
+  co_spawn(runtime.get_executor(), run(std::move(what)), record_status{});
   runtime.run();
   return exit_status;
 }

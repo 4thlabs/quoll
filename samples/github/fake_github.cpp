@@ -34,8 +34,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// A fake GitHub for the test of quoll_github: the same contract, served with what the test expects, and refusing a
-// request without the User-Agent GitHub asks for, as GitHub does.
+// A fake GitHub for the test of quoll_github: the same contract, served with what the test expects, answering as GitHub
+// does what the program has to cope with: a request without the User-Agent GitHub asks for refused, a token refused
+// with GitHub's error body, a private repository, a 503 once, which the program's retry sends again.
 //
 //   quoll_fake_github [port]     prints its URL once it listens, on port 0 one the system picks
 
@@ -54,6 +55,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -65,7 +67,16 @@ namespace http = quoll::http;
 namespace rest = quoll::rest;
 
 struct github_service {
+  // The first request for issues is answered 503: the program's retry has to send it again. The runtime runs one
+  // thread.
+  std::shared_ptr<int> issues_asked = std::make_shared<int>(0);
+
   rest::reply<github::repos::get> operator()(github::repos::get, std::string owner, std::string repo) const {
+    if (owner == "4thlabs" && repo == "private") {
+      return rest::respond<http::status::forbidden>(
+          github::error{.message = "Resource not accessible", .documentation_url = {}});
+    }
+
     if (owner != "4thlabs" || repo != "quoll") {
       return rest::respond<http::status::not_found>(github::error{.message = "Not Found", .documentation_url = {}});
     }
@@ -79,23 +90,42 @@ struct github_service {
 
   std::vector<github::issue> operator()(github::repos::issues, std::string, std::string,
                                         github::issue_filter filter) const {
-    if (filter.state.value_or("open") != "open") {
+    if (++*issues_asked == 1) {
+      throw rest::http_error{http::status::service_unavailable, "busy"};
+    }
+
+    // What the program asks for, or nothing: its query reaches here.
+    if (filter.state != "open" || filter.per_page != 5) {
       return {};
     }
 
-    return {{.number = 7, .title = "SSE", .state = "open", .user = {.login = "ada"}},
-            {.number = 9, .title = "WebSocket", .state = "open", .user = {.login = "grace"}}};
+    return {{.number = 7, .title = "SSE", .state = "open", .user = {.login = "ada"}, .pull_request = {}},
+            {.number = 9,
+             .title = "WebSocket",
+             .state = "open",
+             .user = {.login = "grace"},
+             .pull_request = github::pull_request_link{.url = "https://api.github.com/repos/4thlabs/quoll/pulls/9"}}};
   }
 
   github::me operator()(github::users::me) const { return {.login = "ada", .name = "Ada Lovelace"}; }
 };
 
+// GitHub's checks, before the contract's: a User-Agent on every request, and the token of /user, refused with
+// GitHub's own body rather than the problem a validator answers.
 async::task<http::response> as_github_wants(http::request &&request, http::next const &next) {
-  if (!request.fields.contains("User-Agent")) {
-    http::response refused;
+  http::response refused;
 
+  refused.fields.add("Content-Type", "application/json; charset=utf-8");
+
+  if (!request.fields.contains("User-Agent")) {
     refused.status = http::status::forbidden;
-    refused.body = "Request forbidden by administrative rules. Please make sure your request has a User-Agent header";
+    refused.body = R"({"message":"Request forbidden by administrative rules: a User-Agent header is required"})";
+    co_return refused;
+  }
+
+  if (next.path() == "/user" && request.fields.find("Authorization") != "Bearer test-token") {
+    refused.status = http::status::unauthorized;
+    refused.body = R"({"message":"Bad credentials","documentation_url":"https://docs.github.com/rest"})";
     co_return refused;
   }
 
@@ -106,9 +136,9 @@ async::task<> serve(std::uint16_t port) {
   http::router router;
 
   router.use(as_github_wants);
-  rest::mount<github::api>(
-      router, github_service{},
-      rest::validators([](rest::credential<rest::bearer_auth> const &token) { return token.value == "test-token"; }));
+  rest::mount<github::api>(router, github_service{},
+                           // The middleware above has checked it already, answering as GitHub does.
+                           rest::validators([](rest::credential<rest::bearer_auth> const &) { return true; }));
 
   auto listener = co_await quoll::io::listen(port);
 
