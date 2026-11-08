@@ -58,7 +58,8 @@ over TCP, over `fetch`, and through OpenSSL). A first `quoll::ui` with its DOM r
 levels of hot reload, in the sample `ui_notes`. In CI: `clang-tidy`, the standard library's checks, Apple Clang on macOS, Codex's review and a protected `main`.
 
 Client and server (step 2): the reviews of each module, a runtime on several threads with a strand per connection, a
-coroutine frame destroyed only once it will not resume again, which a program cannot break, and every night nine fuzz targets,
+coroutine frame destroyed only once it will not resume again, which a program reaches no way of breaking through
+`co_await` and `co_spawn`, and debug builds assert, and every night nine fuzz targets,
 a mixed load under TSan and under ASan with UBSan, and `clang-tidy` with its analyzer, with no crash open.
 
 Streaming (step 3): a body in pieces on the server, the client and browser `fetch`, a minimum rate, static files. 32 GiB each way
@@ -143,12 +144,13 @@ lambda can still capture by reference what dies before it.
 *Done when:* the fuzz targets run in CI with no open crash, the limits, the shutdown and the features are tested, and the
 reliability points are in place or dropped with a reason.
 
-Done on 2026-11-08, with what the reviews of each module found fixed (#97 to #108), and since: `quoll::runtime` on several
+Done on 2026-11-08, with what the reviews of each module found fixed (#97 to #108, but #102, which records the reverse
+proxy), and since: `quoll::runtime` on several
 threads with a strand per connection (#110); a coroutine frame destroyed only once it will not resume again, asserted by
 the task's promise, and a task a program cannot start itself nor await by name (#112, #116); the thread pool gone (#115);
 every night, a mixed load under TSan and under ASan with UBSan (#113), and the fuzz of how a connection unfolds (#114), with
-`clang-tidy` and its analyzer, green again with #117. All three ran on main by hand on 2026-11-08, after these merged,
-with no crash.
+`clang-tidy` and its analyzer, green again with #117. Run on main by hand on 2026-11-08, with no crash: the fuzz after
+#116, the load and `clang-tidy` after #117.
 
 ### Step 3: streaming *(done)*
 
@@ -210,7 +212,8 @@ The DSL and a runtime, with no UI.
   components come this way; those tied to React cannot.
 - A trial on a real screen of an application, chosen with the maintainer at the start of this step.
 
-*Done when:* that screen runs with the base components and a JavaScript library called from C++, with what it lacks listed.
+*Done when:* that screen runs with the base components and a JavaScript library loaded on demand, called from C++ and
+calling back, mounted and unmounted, with what it lacks listed.
 
 ### Step 7: the `quoll` command, driving Vite *(maintainer merges the first pull request)*
 
@@ -282,7 +285,7 @@ WASM builds.
 - Cookies and what they ask: expiry, revocation, CSRF.
 - What it parses from outside, tokens among them, is fuzzed.
 
-*Done when:* a sample signs in through a real provider, from a page too, its sessions survive a restart through a file, and
+*Done when:* a sample signs in through a real provider, from a page too, and with a local account and its password, its sessions survive a restart through a file, and
 expiry and revocation are tested, with its guide.
 
 ### Step 9: an ORM *(maintainer merges)*
@@ -340,6 +343,12 @@ changes only what the harness shows. Candidates:
 
 ## Decided
 
+- **Using the JavaScript libraries a page needs is a requirement of the UI** (2026-11-07), whatever form it takes: see step
+  6.
+- **`samples/github` is step 4's real API** (2026-11-07), and a client of Docker over a Unix socket comes later, in no step
+  yet.
+- **A local account with a password** (2026-11-07) joins OIDC and a shared secret in step 8, against the "no store of
+  passwords" proposed before.
 - **The thread pool and `serve(executor, listener)` go** (decided on 2026-11-07, done on 2026-11-08). Several threads come
   from the asio runtime (`runtime_options::threads`, a strand per connection), `async::run_loop` is the runtime of one thread
   without asio, for tests and as an example, and blocking work goes through `async::offload`. With them goes the question of

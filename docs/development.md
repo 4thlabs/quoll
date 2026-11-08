@@ -26,6 +26,7 @@ Dependencies come from CPM. Set `CPM_SOURCE_CACHE` to keep them between builds.
 | `QUOLL_UI_HOT`        | OFF             | `quoll::ui`: literals replaced while the program runs |
 | `QUOLL_BENCH`         | OFF             | `tests/bench`, without the tests                      |
 | `QUOLL_FUZZ`          | OFF             | `tests/fuzz`, with Clang                              |
+| `QUOLL_LOAD`          | OFF             | `tests/load`, under a sanitizer's flags               |
 
 ## Tests
 
@@ -73,6 +74,14 @@ CC=clang-19 CXX=clang++-19 cmake -B build-fuzz -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build-fuzz --target quoll_fuzzers -j"$(nproc)"
 tests/fuzz/run.sh build-fuzz 60
 
+# A mixed load on a server and its clients, each on several threads, under TSan, as load.yml runs it every night.
+# GCC 13's TSan needs `sudo sysctl vm.mmap_rnd_bits=28` where it is higher.
+cmake -B build-load -DCMAKE_BUILD_TYPE=Debug -DQUOLL_LOAD=ON -DQUOLL_BUILD_TESTS=OFF -DQUOLL_BUILD_SAMPLES=OFF \
+  "-DCMAKE_C_FLAGS=-fsanitize=thread -fno-omit-frame-pointer" \
+  "-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer -O1"
+cmake --build build-load --target quoll_load -j"$(nproc)"
+build-load/tests/load/quoll_load 30
+
 # What it costs: see performance.md
 cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -DQUOLL_BENCH=ON -DQUOLL_BUILD_TESTS=OFF
 cmake --build build-bench --target quoll_bench -j"$(nproc)"
@@ -96,9 +105,9 @@ quoll/
 ├── client/     # http::client
 ├── rest/       # contracts, mount, client, codecs
 ├── ui/         # the UI prototype
-└── adapters/   # threads, asio, emscripten, runtime
+└── adapters/   # asio, emscripten, runtime
 samples/        # notes (native), ui_notes (Emscripten)
-tests/          # the test program, its helpers, fuzz/, bench/
+tests/          # the test program, its helpers, fuzz/, bench/, load/
 docs/           # these guides, the plan, the rules
 ```
 
@@ -131,8 +140,8 @@ Every pull request and push to `main` goes through `.github/workflows/ci.yml`:
 | macOS                   | Build and tests with Apple Clang, header checks                          |
 | clang-format            | Every `.hpp` and `.cpp`, with `clang-format-18`                          |
 
-Fuzzing (`fuzz.yml`), the benchmark (`bench.yml`) and all of `clang-tidy` (`clang-tidy.yml`) run every night, and on a pull
-request touching them.
+Fuzzing (`fuzz.yml`), the benchmark (`bench.yml`), a mixed load under TSan and under ASan with UBSan (`load.yml`) and
+all of `clang-tidy` (`clang-tidy.yml`) run every night, and on a pull request touching them.
 `codex-review.yml` sets the status `Codex`, once Codex has finished reviewing the last commit.
 
 ## Contributing
