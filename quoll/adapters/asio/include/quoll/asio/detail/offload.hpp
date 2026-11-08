@@ -60,7 +60,8 @@ namespace quoll::asio::detail {
 // this is no place for what wants to scale.
 class offload_threads : public ::asio::execution_context::service {
 public:
-  using key_type = offload_threads;
+  // An id of its own, rather than its type: asio finds a service by it without RTTI too.
+  static inline ::asio::execution_context::id id;
 
   explicit offload_threads(::asio::execution_context &context) : service(context) {}
 

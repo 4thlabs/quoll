@@ -40,14 +40,19 @@ quoll_declare_module(
 # saying so. ON makes it required; OFF goes without.
 set(QUOLL_TLS AUTO CACHE STRING "TLS through OpenSSL: AUTO uses it when found, ON requires it, OFF goes without")
 set_property(CACHE QUOLL_TLS PROPERTY STRINGS AUTO ON OFF)
+string(TOUPPER "${QUOLL_TLS}" quoll_tls)
 
-if(QUOLL_TLS STREQUAL "ON")
+if(NOT quoll_tls MATCHES "^(AUTO|ON|OFF)$")
+  message(FATAL_ERROR "QUOLL_TLS is AUTO, ON or OFF, not ${QUOLL_TLS}")
+endif()
+
+if(quoll_tls STREQUAL "ON")
   find_package(OpenSSL REQUIRED)
-elseif(QUOLL_TLS STREQUAL "AUTO")
+elseif(quoll_tls STREQUAL "AUTO")
   find_package(OpenSSL QUIET)
 endif()
 
-if(OpenSSL_FOUND AND NOT QUOLL_TLS STREQUAL "OFF")
+if(OpenSSL_FOUND AND NOT quoll_tls STREQUAL "OFF")
   message(STATUS "Quoll: TLS through OpenSSL ${OPENSSL_VERSION}")
   target_link_libraries(quoll_asio PUBLIC OpenSSL::SSL OpenSSL::Crypto)
   target_compile_definitions(quoll_asio PUBLIC QUOLL_ASIO_TLS)
@@ -72,10 +77,12 @@ if(QUOLL_BUILD_TESTS AND QUOLL_HEADER_CHECKS)
 endif()
 
 # The certificates of the TLS tests.
-add_library(quoll_asio_test_tls INTERFACE)
-target_compile_definitions(quoll_asio_test_tls INTERFACE
-  "QUOLL_TEST_TLS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/tls\""
-)
+if(QUOLL_BUILD_TESTS)
+  add_library(quoll_asio_test_tls INTERFACE)
+  target_compile_definitions(quoll_asio_test_tls INTERFACE
+    "QUOLL_TEST_TLS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/tls\""
+  )
+endif()
 
 quoll_declare_tests(
   SOURCES

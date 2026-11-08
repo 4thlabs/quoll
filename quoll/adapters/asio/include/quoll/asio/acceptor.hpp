@@ -78,7 +78,12 @@ public:
   [[nodiscard]] ::asio::ip::tcp::acceptor &socket() noexcept { return checked_state().acceptor; }
 
 private:
-  [[nodiscard]] detail::acceptor_state &checked_state() const noexcept {
+  [[nodiscard]] detail::acceptor_state &checked_state() noexcept {
+    assert(state_ && "acceptor used after being moved from");
+    return *state_;
+  }
+
+  [[nodiscard]] detail::acceptor_state const &checked_state() const noexcept {
     assert(state_ && "acceptor used after being moved from");
     return *state_;
   }
