@@ -177,7 +177,8 @@ The DSL and a runtime, with no UI.
 - On the client: `scope<Api>(prefix arguments...)`, and interceptors around `send` (retry, token refresh on 401).
 - Third-party APIs, as [the REST DSL](#rest-dsl-contract-server-client) describes: renamed fields, unknown fields, error
   bodies of any shape, codecs. A contract alone, with no Quoll server in the program.
-- A sample and a guide for a command-line program.
+- A sample and a guide for a command-line program: `samples/github`, GitHub's API as the real one, as decided on
+  2026-11-07. A client of Docker over a Unix socket comes later, in no step yet.
 - After this, and optional: an OpenAPI document generated from the DSL, to document an API or for third-party clients,
   and a generator of contracts from existing documents.
 
@@ -203,8 +204,10 @@ The DSL and a runtime, with no UI.
 - Two siblings with the same key: only caught by an `assert`, on the render after, which a real error should replace. A state
   changed on an app never started leaves a render pending, which nothing waits for.
 - Hydration, then pages sent by a server: see [UI DSL](#ui-dsl). `to_html` is there; a `value` on a `select` selects nothing yet.
-- Using the JavaScript libraries a page needs (charts, maps, editors and the like): calling them from C++ and mounting
-  what they render, a requirement whatever form the UI takes.
+- Using the JavaScript libraries a page needs (charts, maps, editors, a terminal), a requirement whatever form the UI
+  takes, said on 2026-11-07: a node the reconciler leaves alone, a lifecycle with an unmount, calls both ways, bytes passed
+  without a copy where it counts, npm packages through the Vite build, loaded on demand. Plain DOM libraries and web
+  components come this way; those tied to React cannot.
 - A trial on a real screen of an application, chosen with the maintainer at the start of this step.
 
 *Done when:* that screen runs with the base components and a JavaScript library called from C++, with what it lacks listed.
@@ -264,8 +267,9 @@ soon as they listen beyond their machine. It first settles what a reverse proxy 
 once it exists. A new module, as it needs cryptography that `quoll::rest` and `quoll::server` do not have and must not bring to
 WASM builds.
 
-- Proposed: signing in through an OIDC provider and sessions, and a shared secret in a program's configuration for a machine on a
-  closed network, with no store of passwords, the most exposed part, at the start.
+- Signing in through an OIDC provider and sessions, a shared secret in a program's configuration for a machine on a
+  closed network, and a local account with a password, decided on 2026-11-07 against the "no store of passwords" proposed
+  before: its hashing is part of the cryptography to settle below.
 - Cryptography: nothing in Quoll hashes, signs or draws secure random numbers. OIDC needs ID tokens checked against the
   provider's keys, a nonce and PKCE, and session ids from a secure source. **To settle at its start:** OpenSSL, as TLS uses, or
   something else, and what a build with `QUOLL_TLS` off does. None of it written by hand.
