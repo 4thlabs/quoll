@@ -181,15 +181,27 @@ decode_source(std::type_identity<path_source<Path, Index>>, request_input const 
   return std::move(*value);
 }
 
-template <fixed_string Name, class T>
-[[nodiscard]] std::expected<T, argument_error> decode_source(std::type_identity<query<Name, T>>,
-                                                             request_input const &input) {
-  return from_texts<T>("query parameter", Name.view(), query_texts(input.query, Name.view()));
+// Calls `add(text)` for each text of a query or header value: every element of a vector, the value of an optional
+// that has one, the value itself otherwise.
+template <class T, class Add>
+void for_each_text(T const &value, Add &&add) {
+  if constexpr (is_vector<T>::value) {
+    for (auto const &element : value) {
+      add(param_traits<typename T::value_type>::to_text(element));
+    }
+  } else if constexpr (is_optional<T>::value) {
+    if (value) {
+      add(param_traits<typename T::value_type>::to_text(*value));
+    }
+  } else {
+    add(param_traits<T>::to_text(value));
+  }
 }
 
+// The fields of `Struct` from the `name=value` entries of a query or a form, each as a parameter is (see from_texts).
 template <class Struct>
-[[nodiscard]] std::expected<Struct, argument_error> decode_source(std::type_identity<query_params<Struct>>,
-                                                                  request_input const &input) {
+[[nodiscard]] std::expected<Struct, argument_error> decode_fields(std::string_view what,
+                                                                  std::vector<query_entry> const &entries) {
   Struct value{};
   std::optional<argument_error> error;
 
@@ -198,8 +210,7 @@ template <class Struct>
       return;
     }
 
-    auto decoded =
-        from_texts<std::remove_cvref_t<decltype(field)>>("query parameter", name, query_texts(input.query, name));
+    auto decoded = from_texts<std::remove_cvref_t<decltype(field)>>(what, name, query_texts(entries, name));
 
     if (!decoded) {
       error = std::move(decoded.error());
@@ -214,6 +225,26 @@ template <class Struct>
   }
 
   return value;
+}
+
+// Appends the fields of `value` to a query string or a form under construction, each as a parameter is.
+template <class Struct>
+void append_fields(std::string &out, Struct const &value, std::string_view what) {
+  for_each_field(value, [&](std::string_view name, auto const &field) {
+    for_each_text(field, [&](std::string const &text) { append_query(out, name, text, what); });
+  });
+}
+
+template <fixed_string Name, class T>
+[[nodiscard]] std::expected<T, argument_error> decode_source(std::type_identity<query<Name, T>>,
+                                                             request_input const &input) {
+  return from_texts<T>("query parameter", Name.view(), query_texts(input.query, Name.view()));
+}
+
+template <class Struct>
+[[nodiscard]] std::expected<Struct, argument_error> decode_source(std::type_identity<query_params<Struct>>,
+                                                                  request_input const &input) {
+  return decode_fields<Struct>("query parameter", input.query);
 }
 
 // The elements of a list header: its field lines, each split at commas, as RFC 9110 lets a sender or a proxy combine

@@ -42,7 +42,6 @@
 
 #include <concepts>
 #include <cstddef>
-#include <cstring>
 #include <expected>
 #include <string>
 #include <string_view>
@@ -50,25 +49,24 @@
 
 namespace quoll::rest {
 
+namespace detail {
+
+[[nodiscard]] std::vector<std::byte> bytes_of(std::string_view body);
+
+} // namespace detail
+
 /**
  * @brief Bodies as they are, `application/octet-stream`: a `std::vector<std::byte>`, or a `std::string` holding
- * bytes rather than text. A file, an image, what an API returns raw.
+ * bytes rather than text. A body of another media type (an image sent as `image/png`) takes a codec of its own, with
+ * its content type: a codec has one.
  */
 class bytes_codec {
 public:
   static constexpr std::string_view content_type = "application/octet-stream";
 
-  [[nodiscard]] std::string encode(std::vector<std::byte> const &value) const {
-    std::string body(value.size(), '\0');
+  [[nodiscard]] std::string encode(std::vector<std::byte> const &value) const;
 
-    if (!value.empty()) {
-      std::memcpy(body.data(), value.data(), value.size());
-    }
-
-    return body;
-  }
-
-  [[nodiscard]] std::string encode(std::string const &value) const { return value; }
+  [[nodiscard]] std::string encode(std::string const &value) const;
 
   /** @brief The bytes of `body`: any body decodes. */
   template <class T>
@@ -77,13 +75,7 @@ public:
     if constexpr (std::same_as<T, std::string>) {
       return std::string{body};
     } else {
-      std::vector<std::byte> bytes(body.size());
-
-      if (!body.empty()) {
-        std::memcpy(bytes.data(), body.data(), body.size());
-      }
-
-      return bytes;
+      return detail::bytes_of(body);
     }
   }
 };

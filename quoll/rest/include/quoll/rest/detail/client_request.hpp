@@ -79,23 +79,6 @@ struct request_draft {
   http::request request;
 };
 
-// Calls `add(text)` for each text of a query or header value: every element of a vector, the value of an optional
-// that has one, the value itself otherwise.
-template <class T, class Add>
-void for_each_text(T const &value, Add &&add) {
-  if constexpr (is_vector<T>::value) {
-    for (auto const &element : value) {
-      add(param_traits<typename T::value_type>::to_text(element));
-    }
-  } else if constexpr (is_optional<T>::value) {
-    if (value) {
-      add(param_traits<typename T::value_type>::to_text(*value));
-    }
-  } else {
-    add(param_traits<T>::to_text(value));
-  }
-}
-
 template <fixed_string Name, class T>
 void add_part(std::type_identity<query<Name, T>>, T const &value, request_draft &draft) {
   for_each_text(value, [&](std::string const &text) { append_query(draft.query, Name.view(), text); });
@@ -103,9 +86,7 @@ void add_part(std::type_identity<query<Name, T>>, T const &value, request_draft 
 
 template <class Struct>
 void add_part(std::type_identity<query_params<Struct>>, Struct const &value, request_draft &draft) {
-  for_each_field(value, [&](std::string_view name, auto const &field) {
-    for_each_text(field, [&](std::string const &text) { append_query(draft.query, name, text); });
-  });
+  append_fields(draft.query, value, "quoll::rest::client: query parameter");
 }
 
 // A header value the server reads back as it is: no surrounding whitespace, which parsers trim, and in a list header

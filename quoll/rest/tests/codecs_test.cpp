@@ -36,6 +36,7 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/http/local_transport.hpp>
+#include <quoll/http/request.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
@@ -47,6 +48,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -76,7 +78,11 @@ using namespace quoll::rest;
 using reversed = endpoint<"uploads.reversed", verb::post, "/reversed", body<login, form_codec>,
                           returns<std::vector<std::byte>, status::ok, bytes_codec>>;
 
-using api = rest::api<"/uploads", reversed>;
+// Bytes in, their count out.
+using counted = endpoint<"uploads.counted", verb::post, "/counted", body<std::vector<std::byte>, bytes_codec>,
+                         returns<std::string, status::ok, text_codec>>;
+
+using api = rest::api<"/uploads", reversed, counted>;
 } // namespace uploads
 
 struct uploads_service {
@@ -90,6 +96,8 @@ struct uploads_service {
     std::ranges::reverse(bytes);
     return bytes;
   }
+
+  std::string operator()(uploads::counted, std::vector<std::byte> bytes) const { return std::to_string(bytes.size()); }
 };
 
 } // namespace codecs_test
@@ -139,13 +147,43 @@ TEST_CASE("form_codec: fields by name, encoded as a query is, and decoded back",
           login{.username = "Ada Lovelace", .age = std::nullopt, .tag = {}});
 }
 
+TEST_CASE("form_codec: an optional without a value is left out", "[rest][codec]") {
+  REQUIRE(rest::form_codec{}.encode(login{.username = "Ada"}) == "username=Ada");
+}
+
 TEST_CASE("form_codec: a form that does not decode is a decode_error", "[rest][codec]") {
   rest::form_codec const codec;
 
-  REQUIRE_FALSE(codec.decode<login>("age=36").has_value());
-  REQUIRE_FALSE(codec.decode<login>("username=%zz").has_value());
-  REQUIRE_FALSE(codec.decode<login>("username=Ada&age=old").has_value());
-  REQUIRE(codec.decode<login>("username=%zz").error().message == "a form that is not URL-encoded");
+  REQUIRE(codec.decode<login>("age=36").error().message == "missing form field username");
+  REQUIRE(codec.decode<login>("username=a&username=b").error().message == "form field username is repeated");
+  REQUIRE(codec.decode<login>("username=Ada&age=old").error().message == "invalid form field age");
+  REQUIRE(codec.decode<login>("username=%zz").error().message == "a form that is not URL-encoded, or holds a NUL");
+  REQUIRE(codec.decode<login>("username=a%00b").error().message == "a form that is not URL-encoded, or holds a NUL");
+}
+
+TEST_CASE("form_codec: a form of too many fields is refused before it is parsed", "[rest][codec]") {
+  rest::form_codec const codec;
+  std::string body = "username=Ada";
+
+  for (std::size_t field = 1; field < rest::form_codec::max_fields; ++field) {
+    body += "&x=1";
+  }
+
+  REQUIRE(codec.decode<login>(body).has_value());
+
+  body += "&x=1";
+
+  REQUIRE(codec.decode<login>(body).error().message == "a form of more than 1000 fields");
+}
+
+TEST_CASE("form_codec: a field holding a NUL is not encoded, and says it is a form's", "[rest][codec]") {
+  try {
+    (void)rest::form_codec{}.encode(login{.username = std::string{"a\0b", 3}});
+    FAIL("encoded");
+  } catch (std::invalid_argument const &error) {
+    REQUIRE(std::string{error.what()} ==
+            "quoll::rest::form_codec: field username holds a NUL, which the server refuses");
+  }
 }
 
 TEST_CASE("form_codec and bytes_codec: a form sent, bytes answered, through a server", "[rest][codec]") {
@@ -157,4 +195,26 @@ TEST_CASE("form_codec and bytes_codec: a form sent, bytes answered, through a se
   auto const answer = quoll::test::run(client.call<uploads::reversed>({.username = "Ada"}));
 
   REQUIRE(answer.value() == bytes_of("adA"));
+  REQUIRE(quoll::test::run(client.call<uploads::counted>(bytes_of(std::string_view{"a\0b", 3}))).value() == "3");
+}
+
+TEST_CASE("form_codec: a server answers 400 to a form that does not decode, 415 to another media type",
+          "[rest][codec]") {
+  http::router router;
+
+  rest::mount<uploads::api>(router, uploads_service{});
+
+  auto const answer = [&](std::string_view content_type, std::string body) {
+    http::request request;
+
+    request.method = http::verb::post;
+    request.target = "/uploads/reversed";
+    request.fields.add("Content-Type", content_type);
+    request.body = std::move(body);
+    return quoll::test::run(router.dispatch(std::move(request))).value().status;
+  };
+
+  REQUIRE(answer("application/x-www-form-urlencoded", "age=36") == http::status::bad_request);
+  REQUIRE(answer("application/json", R"({"username":"Ada"})") == http::status::unsupported_media_type);
+  REQUIRE(answer("application/x-www-form-urlencoded; charset=utf-8", "username=Ada") == http::status::ok);
 }

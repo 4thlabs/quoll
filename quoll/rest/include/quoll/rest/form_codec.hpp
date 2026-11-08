@@ -40,23 +40,25 @@
 #include <quoll/rest/codec.hpp>
 #include <quoll/rest/decode_error.hpp>
 #include <quoll/rest/detail/arguments.hpp>
-#include <quoll/rest/detail/client_request.hpp>
-#include <quoll/rest/detail/fields_of.hpp>
+#include <quoll/rest/detail/fields_by_name.hpp>
 #include <quoll/rest/detail/query_string.hpp>
 
+#include <algorithm>
+#include <cstddef>
 #include <expected>
-#include <optional>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 
 namespace quoll::rest {
 
 /**
- * @brief Bodies of a form, `application/x-www-form-urlencoded`: the fields of an aggregate by name, each converted as
+ * @brief Bodies of a form, `application/x-www-form-urlencoded`: the fields of a struct by name, each converted as
  * a query parameter is (see param_traits). A vector repeats its name, an optional without a value is left out, and
- * anything else is required. What a browser's form sends, and many APIs take (an OAuth token endpoint).
+ * anything else is required, once. What a browser's form sends, and many APIs take (an OAuth token endpoint).
+ *
+ * The struct is an aggregate, or a type a `glz::meta` describes as an object, which also renames its fields. A form
+ * of more than max_fields `name=value` pairs is refused before it is parsed, as a body may be far larger than a query.
  *
  * @code
  * struct login {
@@ -71,54 +73,54 @@ class form_codec {
 public:
   static constexpr std::string_view content_type = "application/x-www-form-urlencoded";
 
-  template <class T>
-    requires std::is_aggregate_v<T>
+  /** @brief The most `name=value` pairs a form decodes. */
+  static constexpr std::size_t max_fields = 1000;
+
+  /** @throws std::invalid_argument for a field holding a NUL, which a server refuses. */
+  template <detail::FieldsByName T>
   [[nodiscard]] std::string encode(T const &value) const {
     std::string body;
 
-    detail::for_each_field(value, [&](std::string_view name, auto const &field) {
-      detail::for_each_text(field, [&](std::string const &text) { detail::append_query(body, name, text); });
-    });
-
+    detail::append_fields(body, value, "quoll::rest::form_codec: field");
     return body;
   }
 
-  /** @brief The form `body` holds, or a decode_error for one that is not URL-encoded or misses a required field. */
-  template <class T>
-    requires std::is_aggregate_v<T>
+  /**
+   * @brief The form `body` holds, or a decode_error for one that has too many fields, is not URL-encoded, holds a
+   * NUL, misses a required field or repeats one that is not a vector.
+   */
+  template <detail::FieldsByName T>
   [[nodiscard]] std::expected<T, decode_error> decode(std::string_view body) const {
+    if (static_cast<std::size_t>(std::ranges::count(body, '&')) >= max_fields) {
+      return std::unexpected{decode_error{"a form of more than " + std::to_string(max_fields) + " fields"}};
+    }
+
     auto const entries = detail::parse_query(body);
 
     if (!entries) {
-      return std::unexpected{decode_error{"a form that is not URL-encoded"}};
+      return std::unexpected{decode_error{"a form that is not URL-encoded, or holds a NUL"}};
     }
 
-    T value{};
-    std::optional<decode_error> error;
+    auto decoded = detail::decode_fields<T>("form field", *entries);
 
-    detail::for_each_field(value, [&](std::string_view name, auto &field) {
-      if (error) {
-        return;
-      }
-
-      auto decoded = detail::from_texts<std::remove_cvref_t<decltype(field)>>("form field", name,
-                                                                              detail::query_texts(*entries, name));
-
-      if (!decoded) {
-        error = decode_error{std::move(decoded.error().detail)};
-        return;
-      }
-
-      field = std::move(*decoded);
-    });
-
-    if (error) {
-      return std::unexpected{std::move(*error)};
+    if (!decoded) {
+      return std::unexpected{decode_error{std::move(decoded.error().detail)}};
     }
 
-    return value;
+    return std::move(*decoded);
   }
 };
+
+namespace detail {
+
+// A struct to check form_codec against rest::Codec with.
+struct form_codec_model {
+  std::string name;
+};
+
+} // namespace detail
+
+static_assert(Codec<form_codec, detail::form_codec_model>);
 
 } // namespace quoll::rest
 

@@ -2,6 +2,7 @@ quoll_declare_module(
   NAME rest
   SOURCES
     src/arguments.cpp
+    src/bytes_codec.cpp
     src/client.cpp
     src/next.cpp
     src/param_traits.cpp

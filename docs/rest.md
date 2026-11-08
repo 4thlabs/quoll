@@ -341,7 +341,8 @@ using ping = rest::endpoint<"ping", verb::get, "/ping", rest::returns<std::strin
 ```
 
 A form takes the fields of a struct by name, as `query_params<>` does: a vector repeats its name, an `std::optional`
-without a value is left out, anything else is required. It is what a browser's form sends, and what many APIs take, as
+without a value is left out, anything else is required, once. The struct is an aggregate, or a type described by a
+`glz::meta` as below, and a form of more than 1000 fields is refused. It is what a browser's form sends, and what many APIs take, as
 an OAuth token endpoint does:
 
 ```cpp
@@ -350,8 +351,12 @@ struct token_request {
   std::string refresh_token;
 };
 
+struct token_response {
+  std::string access_token;
+};
+
 using token = rest::endpoint<"token", verb::post, "/oauth/token", rest::body<token_request, rest::form_codec>,
-                             rest::returns<tokens, status::ok, rest::lenient_json_codec>>;
+                             rest::returns<token_response, status::ok, rest::lenient_json_codec>>;
 using avatar = rest::endpoint<"avatar", verb::get, "/avatar",
                               rest::returns<std::vector<std::byte>, status::ok, rest::bytes_codec>>;
 ```
