@@ -112,8 +112,8 @@ still sends its body: to look at with streaming. A client closes its TLS connect
     takes by reference lives in a frame of the router until its task ends, so that a reference is no longer a trap. Dropped,
     as measured: `[[clang::coro_return_type, clang::coro_lifetimebound]]` on `async::task`, as it refuses any function
     returning a task that is no coroutine, which `std::function` and `std::invoke` are, and they cannot be annotated.
-  - Done: `async::detail::synchronized<T>`, a mutex holding its data, in `connection_pool`, `task_group`, `thread_pool` and the
-    asio `runtime`. It takes a function rather than handing out a guard, and refuses one returning a reference or something to
+  - Done: `async::detail::synchronized<T>`, a mutex holding its data, in `connection_pool`, `task_group` and the asio
+    `runtime`. It takes a function rather than handing out a guard, and refuses one returning a reference or something to
     await. Clang's `-Wthread-safety` was compared and dropped, as measured: it needs a mutex of our own, annotated, as
     libstdc++'s `std::mutex` is not, it warns on correct code without it, and only Clang checks it.
   - Dropped, as measured: `cppcoreguidelines-avoid-capturing-lambda-coroutines` in `clang-tidy`. Of its 90 findings, 89 are in
@@ -318,6 +318,11 @@ changes only what the harness shows. Candidates:
 
 ## Decided
 
+- **The thread pool and `serve(executor, listener)` go** (decided on 2026-11-07, done on 2026-11-08). Several threads come
+  from the asio runtime (`runtime_options::threads`, a strand per connection), `async::run_loop` is the runtime of one thread
+  without asio, for tests and as an example, and blocking work goes through `async::offload`. With them goes the question of
+  timeouts on connections served on a pool, which had no timer. What its tests checked of `quoll::async` across threads runs
+  on asio's own thread pool.
 - **Exposure to the Internet goes through a reverse proxy** (2026-11-07), replacing "Quoll may be exposed directly" of
   2026-11-05, as each review of the HTTP code kept finding more corners of the protocol. The server still defends itself: what
   a review finds is fixed, as `AGENTS.md` says, but for an RFC corner that touches neither security nor stability, as a less
@@ -431,7 +436,6 @@ flowchart TB
   end
 
   subgraph adapters["Adapters"]
-    pool["quoll::threads<br/>thread_pool"]
     asio["quoll::asio<br/>executor, tcp_stream, connector, TLS"]
     emscripten["quoll::emscripten<br/>event loop executor, fetch, dom_renderer"]
   end
@@ -454,7 +458,7 @@ flowchart TB
   ui -.-> renderer
   async -.-> executor
 
-  executor -.-> pool & asio & emscripten
+  executor -.-> asio & emscripten
   stream -.-> asio
   connector -.-> asio
   transport -.-> emscripten
@@ -463,7 +467,7 @@ flowchart TB
 
 | Concept | Meaning | Implemented by |
 |---|---|---|
-| `executor` | where / when a coroutine resumes; `post(work_item &)` links an intrusive node, no allocation | thread pool, asio, browser event loop |
+| `executor` | where / when a coroutine resumes; `post(work_item &)` links an intrusive node, no allocation | asio, browser event loop, `run_loop` |
 | `byte_stream` | `read_some` / `write_some` on raw bytes (`any_stream`, no allocation per operation) | asio sockets, memory |
 | `connector` | `connect(host, port) -> task<any_stream>`, and `connect_tls` beside it | asio (+ssl) |
 | `http_transport` | `request -> task<response>`, for platforms that do HTTP themselves | `quoll::client` over a connector, browser `fetch` |
@@ -712,11 +716,11 @@ For now this is a plugin of the sample `samples/ui_notes`, driven by Vite; [step
   server in the browser (WASI later).
 - **Threads are optional.** The core (`async`, `http`, `rest`, `ui`) must not require `std::thread`, `std::jthread` or
   blocking waits; threads live in the adapters: the asio runtime on several threads (`runtime_options::threads`, each
-  executor a strand, each connection on one of its own, through `async::strands_ref`), and the thread pool. Never
-  `sync_wait` on the browser main thread.
+  executor a strand, each connection on one of its own, through `async::strands_ref`), and its threads for blocking work.
+  Never `sync_wait` on the browser main thread.
 - **Exceptions**: build with `-fwasm-exceptions`; keep hot paths on error codes / `results`.
-- Every module builds under Emscripten in CI and runs its tests there (headless Node runner), except the thread pool
-  tests: the CI build has no pthreads.
+- Every module builds under Emscripten in CI and runs its tests there (headless Node runner), but `quoll::asio`, which
+  is native.
 
 ## HTTP layer
 
@@ -740,11 +744,6 @@ To settle before authentication:
   request carries today.
 
 Kept for later by the maintainer, at the end of the plan if the need comes (2026-11-05):
-
-- **Timeouts when connections run on a thread pool.** `serve(pool.get_executor(), listener, router)` leaves the sockets to
-  asio and runs the handlers on the pool, which has no timer: `read_timeout`, `write_timeout` and `idle_timeout` do not apply,
-  so that a slow peer can hold a connection. `serve` could hand them the timer of its accept loop. `quoll::runtime` has none of
-  this: everything there runs on asio, and a thread pool alone serves no HTTP, as it has no network.
 
 - **A middleware for a path prefix**, `router.use("/api", ...)`: for now, it tests `next.path()`.
 

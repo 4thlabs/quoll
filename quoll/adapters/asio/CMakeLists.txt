@@ -87,6 +87,7 @@ endif()
 quoll_declare_tests(
   SOURCES
     tests/asio_test.cpp
+    tests/threads_test.cpp
     tests/tls_test.cpp
   DEPS
     quoll_asio_test_tls
@@ -95,5 +96,4 @@ quoll_declare_tests(
     quoll::http
     quoll::rest
     quoll::server
-    quoll::threads
 )

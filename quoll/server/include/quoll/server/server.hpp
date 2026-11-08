@@ -229,17 +229,6 @@ public:
   }
 
   /**
-   * @brief serve() with each connection as a task of its own on `executor`: a thread pool or a strand, for instance,
-   * while the accept loop stays on its I/O loop. serve() alone puts each on a strand of its own where the executor
-   * runs several threads; this one keeps them all on `executor`. An executor without a timer, as a thread pool has
-   * none, leaves the timeouts of `connection` without effect, and a slow peer can hold its connection.
-   */
-  template <async::Executor Executor, io::Listener Listener>
-  [[nodiscard]] async::task<> serve(Executor executor, Listener listener) const {
-    return serve_on(async::any_executor{executor}, io::any_listener{std::move(listener)});
-  }
-
-  /**
    * @brief Serves the requests of one connection with the router, one after the other, until the connection ends.
    *
    * Each request goes to the router; its response is written back before the next request is read (pipelined requests
@@ -277,7 +266,6 @@ public:
 
 private:
   [[nodiscard]] http::router &open_routes();
-  [[nodiscard]] async::task<> serve_on(async::any_executor executor, io::any_listener listener) const;
 
   std::shared_ptr<detail::server_state> state_;
 };

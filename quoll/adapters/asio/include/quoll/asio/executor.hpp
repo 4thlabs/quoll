@@ -87,7 +87,7 @@ enum class object_strands : bool { shared, own };
 /**
  * @brief Executor resuming coroutines on an asio executor: an io_context, a strand, any_io_executor.
  *
- * post() hands asio a small function object resuming the work item. Unlike run_loop and the thread pool, asio
+ * post() hands asio a small function object resuming the work item. Unlike run_loop, asio
  * allocates it (from a per-thread cache once warm), so post() may throw std::bad_alloc; see async::Executor.
  * Equal when the asio executors are.
  *

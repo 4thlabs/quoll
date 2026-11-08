@@ -51,7 +51,7 @@ namespace quoll::http {
  * @brief Settings of a http::client.
  *
  * The timeouts end the request with std::system_error (std::errc::timed_out). Zero disables one. They need the timer of
- * the executor that sends, as quoll::runtime provides it: on an executor without one (a thread pool), they do not
+ * the executor that sends, as quoll::runtime provides it: on an executor without one (run_loop), they do not
  * apply.
  */
 struct client_options {

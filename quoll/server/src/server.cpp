@@ -216,12 +216,12 @@ async::task<> wind_down(shared_options &shared, std::stop_source &connections_st
                            stop_past_deadline(*timer, timeout, deadline.get_token(), connections_stop));
 }
 
-// Each connection a task of its own on `executor`, or with `own_strands`, on a strand of its own where the executor
-// makes them: a runtime on several threads.
+// Each connection a task of its own on `executor`, or on a strand of its own where the executor makes them: a runtime
+// on several threads.
 async::task<> serve_accepting(async::any_executor executor, io::any_listener listener,
-                              std::shared_ptr<server_state> state, bool own_strands) {
+                              std::shared_ptr<server_state> state) {
   // Once: what the executor offers does not change.
-  auto const strands = own_strands ? executor.query<async::strands_ref>() : std::nullopt;
+  auto const strands = executor.query<async::strands_ref>();
 
   state->serving.store(true);
 
@@ -329,7 +329,7 @@ async::task<> serve_accepting_here(io::any_listener listener, std::shared_ptr<se
   // A copy, held by each connection: their frames end after serve() resumes.
   async::any_executor executor{co_await async::current_executor()};
 
-  co_await serve_accepting(std::move(executor), std::move(listener), std::move(state), true);
+  co_await serve_accepting(std::move(executor), std::move(listener), std::move(state));
 }
 
 [[nodiscard]] async::task<> listen_and_serve(std::shared_ptr<server_state> state, std::uint16_t port,
@@ -393,10 +393,6 @@ async::task<> server::listen(std::uint16_t port, listen_options where) const {
 
 async::task<> server::serve(io::any_listener listener) const {
   return detail::serve_accepting_here(std::move(listener), state_);
-}
-
-async::task<> server::serve_on(async::any_executor executor, io::any_listener listener) const {
-  return detail::serve_accepting(std::move(executor), std::move(listener), state_, false);
 }
 
 async::task<> server::serve_connection(io::any_stream stream) const {

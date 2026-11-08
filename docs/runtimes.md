@@ -4,11 +4,10 @@ Quoll's core does no I/O and has no loop of its own. An adapter brings those: wh
 network, the timer and TLS they use. A task asks the executor it runs on for what it needs, so that
 `http::server`, `http::client` and `async::sleep_for` take none of it as arguments.
 
-| Adapter             | Where tasks run               | Network | Timer | TLS             | Builds on                         |
-| ------------------- | ----------------------------- | ------- | ----- | --------------- | --------------------------------- |
-| `quoll::asio`       | An I/O loop, on one thread    | Yes     | Yes   | With OpenSSL    | Native                            |
-| `quoll::threads`    | A fixed set of worker threads | No      | No    | No              | Native                            |
-| `quoll::emscripten` | The JavaScript event loop     | No      | Yes   | `fetch` does it | Emscripten: browser, Worker, Node |
+| Adapter             | Where tasks run                    | Network | Timer | TLS             | Builds on                         |
+| ------------------- | ---------------------------------- | ------- | ----- | --------------- | --------------------------------- |
+| `quoll::asio`       | An I/O loop, on one thread or more | Yes     | Yes   | With OpenSSL    | Native                            |
+| `quoll::emscripten` | The JavaScript event loop          | No      | Yes   | `fetch` does it | Emscripten: browser, Worker, Node |
 
 An operation that needs what its executor does not offer says so: `async::sleep_for`,
 `async::with_timeout`, `io::listen` and `io::connect` throw `std::logic_error`. The timeouts in the options
@@ -21,7 +20,6 @@ namespace async = quoll::async;
 namespace http = quoll::http;
 namespace io = quoll::io;
 namespace rest = quoll::rest;
-namespace threads = quoll::threads;
 ```
 
 `quoll::asio` and `quoll::emscripten` keep their full names, as `asio::` and `quoll::emscripten::` are what they adapt.
@@ -97,7 +95,7 @@ gives what it returns or throws. `http::static_files` reads through it.
 auto const size = co_await async::offload([&] { return std::filesystem::file_size(path); });
 ```
 
-On an executor that offers no such thing, as a thread pool and a browser's event loop do not, the work runs right there. A
+On an executor that offers no such thing, as `async::run_loop` and a browser's event loop do not, the work runs right there. A
 stop request cancels what has not started, in line behind other work too, and does not interrupt what has. Two threads do this
 work, and a call stuck on a dead mount holds one until it returns, and the end of the runtime with it.
 
@@ -118,39 +116,6 @@ not be the same class:
 Quoll fetches asio 1.38.2 unless an `asio::asio` target exists before it. TLS goes through `asio::ssl`
 and OpenSSL, as `QUOLL_TLS` says when configuring. Without it, what needs TLS throws `std::logic_error`
 at run time.
-
-## The thread pool
-
-`threads::thread_pool` resumes coroutines on a fixed set of worker threads, concurrently. Its
-executor offers no network and no timer, so that it serves no HTTP alone, and `sleep_for` throws there.
-It holds work for the CPU:
-
-```cpp
-threads::thread_pool pool{4};
-
-async::co_spawn(pool.get_executor(), crunch(), async::detached);
-```
-
-The pool's destructor lets the workers resume what is queued, then joins them. Every post has to happen
-before that starts: a coroutine woken from outside the pool must have been resumed by then. A handler
-may also run there, with the accept loop and the sockets on the runtime:
-
-```cpp
-auto listener = co_await io::listen(8080);
-
-http::server server{router};
-
-co_await server.serve(pool.get_executor(), std::move(listener));
-```
-
-> [!WARNING]
-> On such an executor, the timeouts of `connection_options` do not apply, as it has no timer, and a slow
-> peer can hold its connection. `shutdown_timeout` then stops requests at once. A handler's own
-> `async::with_timeout` throws `std::logic_error`, which answers 500. Handlers run concurrently too, so
-> that what they share is theirs to protect. This is an
-> [open question](PLAN.md#open-questions) of the roadmap.
-
-`quoll::threads` does not run under WebAssembly: its headers compile there, with nothing to link.
 
 ## Emscripten
 

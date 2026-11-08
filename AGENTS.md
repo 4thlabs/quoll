@@ -30,8 +30,7 @@ takes over a `Listener` or listens on a port, `static_files`, a middleware),
 `http[s]://` URL), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `http::client` by default, and the
 contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates; and the codecs: `json_codec` on
 Glaze, `text_codec`, `param_traits`), `quoll::ui` (a prototype: elements, decorators, `state`, `to_html`, `app` and the `Renderer`
-concept), the adapters `quoll::threads` (thread pool executor; its tests do not run under
-WASM), `quoll::asio` (asio executor offering the network, a timer, threads for blocking work and TLS, `tcp_stream`, `tls_stream`, connector and acceptors,
+concept), the adapters `quoll::asio` (asio executor offering the network, a timer, threads for blocking work and TLS, `tcp_stream`, `tls_stream`, connector and acceptors,
 `runtime`; native only, its runtime hides asio from a program, its streams and acceptors need standalone asio, TLS needs OpenSSL) and `quoll::emscripten` (JavaScript event loop executor offering
 a timer, the browser's `fetch` as the `http::platform_ref` a client from a URL goes through, `dom_renderer` and `mount`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`),
 and
@@ -78,7 +77,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
   This creates the target `quoll_<module>`, a static library, or `INTERFACE` without `SOURCES`, alias `quoll::<module>`, exported as `quoll::<module>`
   by `find_package(quoll)`. Modules are added in dependency order in the root `CMakeLists.txt`.
-- Adapters (thread pool, asio, later Emscripten, webview...) are modules like the others, grouped under
+- Adapters (asio, Emscripten, later a webview...) are modules like the others, grouped under
   `quoll/adapters/<adapter>/` (added by `quoll/adapters/CMakeLists.txt`) rather than at the root. Only the directory
   changes: the target stays `quoll::<adapter>` and the headers `<quoll/<adapter>/...>`.
   `quoll/adapters/runtime/` is no adapter: it picks the build's one (`QUOLL_RUNTIME`, asio natively), whose
@@ -118,7 +117,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 - Compiled libraries, with templates over what an application provides in headers. C++23 minimum (GCC ≥ 13, Clang ≥ 19, Apple Clang ≥ 21). CMake, dependencies
   via CPM.
 - WASM is a first-class target: core modules never require threads or blocking waits.
-- Adapters: thread pool (`quoll::threads`), asio (`quoll::asio`), Emscripten (`quoll::emscripten`: event loop, `fetch`, the
+- Adapters: asio (`quoll::asio`), Emscripten (`quoll::emscripten`: event loop, `fetch`, the
   DOM); planned: a webview shell.
 
 ## Related projects

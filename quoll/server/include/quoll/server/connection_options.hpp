@@ -51,7 +51,7 @@ namespace quoll::http {
  * @brief How serve_connection() reads requests and reports what its handlers throw.
  *
  * The timeouts protect a server from peers that are slow or gone. Zero disables one. They need the timer of the
- * connection's executor, as quoll::runtime provides it: on an executor without one (a thread pool), they do not apply.
+ * connection's executor, as quoll::runtime provides it: on an executor without one (run_loop), they do not apply.
  * The time a handler or a middleware takes is not limited: it is the application's to bound, with async::with_timeout.
  */
 struct connection_options {
