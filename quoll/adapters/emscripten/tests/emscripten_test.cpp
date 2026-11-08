@@ -341,6 +341,26 @@ TEST_CASE("emscripten executor resumes coroutines on the event loop", "[emscript
   REQUIRE(quoll::emscripten::executor{} == quoll::emscripten::executor{});
 }
 
+TEST_CASE("emscripten executor calls an item's run in place of resuming it", "[emscripten]") {
+  struct counted : quoll::async::work_item {
+    int runs = 0;
+  };
+
+  counted item;
+
+  item.run = [](quoll::async::work_item &self) noexcept { ++static_cast<counted &>(self).runs; };
+  quoll::emscripten::executor{}.post(item);
+
+  // A microtask: not run inline, and run once the event loop gets back control.
+  REQUIRE(item.runs == 0);
+
+  for (auto turns = 0; item.runs == 0 && turns < 1000; ++turns) {
+    emscripten_sleep(1);
+  }
+
+  REQUIRE(item.runs == 1);
+}
+
 TEST_CASE("http::client through fetch: a client GET, end to end", "[emscripten][http]") {
   test_server const server;
   auto const response = run(get(http::client{server.url()}));

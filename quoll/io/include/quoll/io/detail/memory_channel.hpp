@@ -45,19 +45,43 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <span>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace quoll::io::detail {
 
 // One direction of a memory_stream pair: the bytes written by one end, waiting for the other end to read them, and
 // the reader suspended until some arrive.
+//
+// A reader is woken through an item of the channel's own, never through the one in the reader's frame: a queue cannot
+// take an item back, and the frame may be destroyed before its turn comes. While queued, that item keeps the channel
+// alive, and when it runs it resumes the reader only if one that was woken is still there.
+//
+// The executor the wake was queued on has to run it: a read that comes after one gone while woken is resumed through
+// that wake, queued again on its own executor. An executor that is no longer run, or drops a queued item without
+// running it (an asio io_context destroyed with handlers pending), leaves later reads of that end waiting and the
+// channel holding itself, so the pipe leaks: as with the coroutine frames such an executor leaves behind, run it until
+// it is empty first.
 class memory_channel {
 public:
+  memory_channel() noexcept {
+    wake_.run = &run_wake;
+    wake_.channel = this;
+  }
+
+  // The item it queues points back to it.
+  memory_channel(memory_channel const &) = delete;
+  memory_channel &operator=(memory_channel const &) = delete;
+  memory_channel(memory_channel &&) = delete;
+  memory_channel &operator=(memory_channel &&) = delete;
+  ~memory_channel() = default;
+
   // A read is suspended, or woken and not resumed yet.
-  [[nodiscard]] bool has_reader() const noexcept { return reading_; }
+  [[nodiscard]] bool has_reader() const noexcept { return owner_ != nullptr; }
 
   // What it keeps, read or not: for a test.
   [[nodiscard]] std::size_t held() const noexcept { return bytes_.size(); }
@@ -123,32 +147,30 @@ public:
     wake();
   }
 
-  // The reading end is gone: writing fails from now on.
-  void detach_reader() noexcept {
-    reader_alive_ = false;
-    reader_ = nullptr;
-    reading_ = false;
-  }
+  // The reading end is gone: writing fails from now on. A read still pending breaks the rules, which memory_stream
+  // asserts; it is left as it is.
+  void detach_reader() noexcept { reader_alive_ = false; }
 
-  void wait(async::work_item &reader, async::executor_ref executor) noexcept {
-    assert(!reading_ && "memory_stream: a read is already pending");
+  // `owner` owns this channel: a copy of it keeps the channel alive while its wake is queued.
+  void wait(async::work_item &reader, async::executor_ref executor, std::shared_ptr<memory_channel> owner) noexcept {
+    assert(owner_ == nullptr && "memory_stream: a read is already pending");
     reader_ = &reader;
     executor_.emplace(executor);
-    reading_ = true;
+    owner_ = std::move(owner);
+    woken_ = false;
   }
 
-  // The read that waited is woken, on its executor's queue, and has not resumed yet.
-  [[nodiscard]] bool woken() const noexcept { return reading_ && reader_ == nullptr; }
-
-  // The read that waited has resumed.
+  // The read that waited has resumed, or is gone, woken or not: a wake still queued then finds no one.
   void end_wait() noexcept {
     reader_ = nullptr;
-    reading_ = false;
+    owner_.reset();
+    woken_ = false;
+    queued_for_reader_ = false;
   }
 
   // Resumes the suspended read without bytes. False when there is none, or when it was already woken.
   [[nodiscard]] bool cancel() {
-    if (reader_ == nullptr) {
+    if (reader_ == nullptr || woken_) {
       return false;
     }
 
@@ -157,21 +179,75 @@ public:
   }
 
 private:
-  // The reader is forgotten only once posted: if post throws, it can still be woken later.
+  struct wake_item : async::work_item {
+    memory_channel *channel = nullptr;
+  };
+
+  // The reader is marked woken only once its wake is queued: if post throws, it can still be woken later. The item is
+  // in one queue at a time: queued for a reader that went, it queues itself again for the next one, if woken by the
+  // time it runs, on that reader's executor.
   void wake() {
-    if (reader_ != nullptr) {
-      executor_->post(*reader_);
-      reader_ = nullptr;
+    if (reader_ == nullptr || woken_) {
+      return;
     }
+
+    if (!queued_) {
+      queue();
+    }
+
+    woken_ = true;
+  }
+
+  // Only while a reader is there, whose owner and executor are alive.
+  void queue() {
+    queued_keep_ = owner_;
+
+    try {
+      executor_->post(wake_);
+    } catch (...) {
+      queued_keep_.reset();
+      throw;
+    }
+
+    queued_ = true;
+    queued_for_reader_ = true;
+  }
+
+  // What the resumed reader lets escape goes on to the executor's caller, as from any coroutine.
+  static void run_wake(async::work_item &item) {
+    auto &self = *static_cast<wake_item &>(item).channel;
+
+    // The channel lives until this returns, though both ends and the reader may have gone.
+    auto const keep = std::move(self.queued_keep_);
+
+    self.queued_ = false;
+
+    if (self.reader_ == nullptr || !self.woken_) {
+      return;
+    }
+
+    // A reader that came after the one this was queued for resumes on its own executor. That post cannot report a
+    // failure from here, and ends the program then, as an Executor says.
+    if (!self.queued_for_reader_) {
+      self.queue();
+      return;
+    }
+
+    async::execute(*std::exchange(self.reader_, nullptr));
   }
 
   std::vector<std::byte> bytes_;
   std::size_t offset_ = 0;
   bool closed_ = false;
   bool reader_alive_ = true;
-  bool reading_ = false;
+  bool woken_ = false;
+  bool queued_ = false;
+  bool queued_for_reader_ = false;
   async::work_item *reader_ = nullptr;
   std::optional<async::executor_ref> executor_;
+  std::shared_ptr<memory_channel> owner_;
+  wake_item wake_;
+  std::shared_ptr<memory_channel> queued_keep_;
 };
 
 } // namespace quoll::io::detail

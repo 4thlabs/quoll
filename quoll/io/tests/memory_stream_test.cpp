@@ -42,6 +42,7 @@
 #include <quoll/async/yield.hpp>
 #include <quoll/io.hpp>
 #include <quoll/io/detail/sound_read.hpp>
+#include <quoll/test/probe.hpp>
 #include <quoll/test/run.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -485,6 +486,167 @@ TEST_CASE("memory_stream: a suspended read that goes leaves the peer nothing to 
   REQUIRE(run(write_once(right, "late")));
   loop.run();
   REQUIRE(run(read_once(left))->text == "late");
+}
+
+TEST_CASE("memory_stream: a read woken then gone leaves its wake nothing to resume", "[io][memory_stream]") {
+  auto [left, right] = io::make_memory_stream_pair();
+  quoll::async::run_loop loop;
+  auto const executor = loop.get_executor();
+  quoll::test::probe reader;
+  std::array<std::byte, 4> buffer{};
+
+  {
+    auto read = left.read_some(buffer);
+
+    REQUIRE_FALSE(read.await_ready());
+    read.await_suspend(reader.handle(),
+                       quoll::async::await_context{.executor = quoll::async::executor_ref{executor}, .stop_token = {}});
+
+    // Queues the wake; the read goes before the loop runs it, which ended the program.
+    REQUIRE(run(write_once(right, "late")));
+  }
+
+  loop.run();
+
+  REQUIRE_FALSE(reader.resumed());
+  REQUIRE(run(read_once(left))->text == "late");
+}
+
+TEST_CASE("memory_stream: a wake queued for a read that went resumes the next one only once that one is woken",
+          "[io][memory_stream]") {
+  auto [left, right] = io::make_memory_stream_pair();
+  quoll::async::run_loop loop;
+  auto const executor = loop.get_executor();
+  quoll::test::probe gone;
+  quoll::test::probe next;
+  std::array<std::byte, 4> first{};
+  std::array<std::byte, 4> second{};
+  std::stop_source source;
+
+  {
+    auto read = left.read_some(first);
+
+    read.await_suspend(gone.handle(), quoll::async::await_context{.executor = quoll::async::executor_ref{executor},
+                                                                  .stop_token = source.get_token()});
+    source.request_stop();
+  }
+
+  auto read = left.read_some(second);
+
+  REQUIRE_FALSE(read.await_ready());
+  read.await_suspend(next.handle(),
+                     quoll::async::await_context{.executor = quoll::async::executor_ref{executor}, .stop_token = {}});
+
+  SECTION("woken after the wake ran") {
+    REQUIRE(loop.run() == 1);
+    REQUIRE_FALSE(next.resumed());
+
+    REQUIRE(run(write_once(right, "own")));
+    REQUIRE(loop.run() == 1);
+  }
+
+  SECTION("woken before the wake ran: it queues itself again for this read") {
+    REQUIRE(run(write_once(right, "own")));
+    REQUIRE(loop.run() == 2);
+  }
+
+  REQUIRE_FALSE(gone.resumed());
+  REQUIRE(next.resumed());
+
+  auto const result = read.await_resume();
+
+  REQUIRE(!result.error);
+  REQUIRE(std::string_view{reinterpret_cast<char const *>(second.data()), result.transferred} == "own");
+}
+
+TEST_CASE("memory_stream: the next read resumes on its own executor, not on the one the wake was queued on",
+          "[io][memory_stream]") {
+  auto [left, right] = io::make_memory_stream_pair();
+  quoll::async::run_loop first_loop;
+  quoll::async::run_loop second_loop;
+  auto const first_executor = first_loop.get_executor();
+  auto const second_executor = second_loop.get_executor();
+  quoll::test::probe gone;
+  quoll::test::probe next;
+  std::array<std::byte, 4> first{};
+  std::array<std::byte, 4> second{};
+  std::stop_source source;
+
+  {
+    auto read = left.read_some(first);
+
+    read.await_suspend(gone.handle(),
+                       quoll::async::await_context{.executor = quoll::async::executor_ref{first_executor},
+                                                   .stop_token = source.get_token()});
+    source.request_stop();
+  }
+
+  auto read = left.read_some(second);
+
+  read.await_suspend(next.handle(), quoll::async::await_context{.executor = quoll::async::executor_ref{second_executor},
+                                                                .stop_token = {}});
+  REQUIRE(run(write_once(right, "own")));
+
+  REQUIRE(first_loop.run() == 1);
+  REQUIRE_FALSE(next.resumed());
+  REQUIRE(second_loop.run() == 1);
+  REQUIRE(next.resumed());
+  REQUIRE(read.await_resume().transferred == 3);
+}
+
+TEST_CASE("memory_stream: a wake queued for a read that went touches nothing of that read, its executor included",
+          "[io][memory_stream]") {
+  auto [left, right] = io::make_memory_stream_pair();
+  quoll::async::run_loop loop;
+  quoll::test::probe gone;
+  quoll::test::probe next;
+  std::array<std::byte, 4> first{};
+  std::array<std::byte, 4> second{};
+  std::stop_source source;
+
+  {
+    // The executor an await_context refers to lives in the frame of the coroutine that awaits, and goes with it.
+    auto const executor = loop.get_executor();
+    auto read = left.read_some(first);
+
+    read.await_suspend(gone.handle(), quoll::async::await_context{.executor = quoll::async::executor_ref{executor},
+                                                                  .stop_token = source.get_token()});
+    source.request_stop();
+  }
+
+  auto const executor = loop.get_executor();
+  auto read = left.read_some(second);
+
+  read.await_suspend(next.handle(),
+                     quoll::async::await_context{.executor = quoll::async::executor_ref{executor}, .stop_token = {}});
+  REQUIRE(run(write_once(right, "own")));
+
+  // Under ASan, a look at the executor of the read that went would be reported here.
+  loop.run();
+
+  REQUIRE_FALSE(gone.resumed());
+  REQUIRE(next.resumed());
+  REQUIRE(read.await_resume().transferred == 3);
+}
+
+TEST_CASE("memory_stream: a queued wake keeps the pipe, both ends and the read gone", "[io][memory_stream]") {
+  quoll::async::run_loop loop;
+  auto const executor = loop.get_executor();
+  quoll::test::probe reader;
+  std::array<std::byte, 4> buffer{};
+
+  {
+    auto [left, right] = io::make_memory_stream_pair();
+    auto read = left.read_some(buffer);
+
+    read.await_suspend(reader.handle(),
+                       quoll::async::await_context{.executor = quoll::async::executor_ref{executor}, .stop_token = {}});
+    REQUIRE(run(write_once(right, "late")));
+  }
+
+  // Under ASan, a wake reaching a pipe that went would be reported here.
+  REQUIRE(loop.run() == 1);
+  REQUIRE_FALSE(reader.resumed());
 }
 
 TEST_CASE("io::detail::sound_read: what a stream reports is what can be trusted", "[io]") {

@@ -47,7 +47,8 @@
 namespace quoll::async {
 
 /**
- * @brief Single-threaded execution context: a FIFO of coroutines resumed by run().
+ * @brief Single-threaded execution context: a FIFO of work items, coroutines to resume or functions to call, run by
+ * run().
  *
  * The FIFO links the posted work items: posting never allocates and never throws.
  *
@@ -64,7 +65,7 @@ public:
   /** @brief Executor posting to a run_loop. Equal when they post to the same loop. */
   class executor {
   public:
-    /** @brief Queues `item`, resumed by run(). */
+    /** @brief Queues `item`, run by run(). */
     void post(work_item &item) const noexcept { loop_->push(item); }
 
     [[nodiscard]] bool operator==(executor const &) const noexcept = default;
@@ -91,11 +92,11 @@ public:
   [[nodiscard]] executor get_executor() noexcept QUOLL_LIFETIMEBOUND { return executor{*this}; }
 
   /**
-   * @brief Resumes queued coroutines, including the ones they post, until the queue is empty.
-   * @return The number of coroutines resumed.
+   * @brief Runs queued items, including the ones they post, until the queue is empty.
+   * @return The number of items run: coroutines resumed and functions called, one of which may resume nothing.
    */
   std::size_t run() {
-    std::size_t resumed = 0;
+    std::size_t ran = 0;
 
     while (head_ != nullptr) {
       auto *const item = head_;
@@ -106,14 +107,11 @@ public:
         tail_ = nullptr;
       }
 
-      // Read before resuming: the item may live in the frame the coroutine destroys.
-      auto const handle = item->handle;
-
-      handle.resume();
-      ++resumed;
+      execute(*item);
+      ++ran;
     }
 
-    return resumed;
+    return ran;
   }
 
 private:

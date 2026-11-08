@@ -68,7 +68,7 @@ class executor {
 public:
   using services = async::service_list<async::timer_ref, http::platform_ref>;
 
-  /** @brief Resumes `item.handle` in a microtask; `item` stays alive and unchanged until then. */
+  /** @brief Runs `item` in a microtask, with async::execute(); `item` stays alive and unchanged until then. */
   void post(async::work_item &item) const noexcept { detail::quoll_emscripten_post(&resume, &item); }
 
   /** @brief Completes with true once `duration` has elapsed, with false on a stop request (see async::Timer). */
@@ -87,13 +87,8 @@ public:
   [[nodiscard]] bool operator==(executor const &) const noexcept = default;
 
 private:
-  // Run by the microtask: the item, owned by the suspended coroutine, is alive until then. Its handle is read before
-  // the coroutine runs, as the coroutine may destroy the item.
-  static void resume(void *item) noexcept {
-    auto const handle = static_cast<async::work_item *>(item)->handle;
-
-    handle.resume();
-  }
+  // Run by the microtask: the item, owned by what posted it, is alive until then.
+  static void resume(void *item) noexcept { async::execute(*static_cast<async::work_item *>(item)); }
 };
 
 static_assert(async::Executor<executor>);

@@ -37,6 +37,7 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/test/overloaded.hpp>
 
@@ -106,4 +107,19 @@ TEST_CASE("run_loop executors are equal when they post to the same loop", "[asyn
 
   REQUIRE(loop.get_executor() == loop.get_executor());
   REQUIRE_FALSE(loop.get_executor() == other.get_executor());
+}
+
+TEST_CASE("run_loop calls an item's run in place of resuming it", "[async][run_loop]") {
+  struct counted : quoll::async::work_item {
+    int runs = 0;
+  };
+
+  quoll::async::run_loop loop;
+  counted item;
+
+  item.run = [](quoll::async::work_item &self) noexcept { ++static_cast<counted &>(self).runs; };
+  loop.get_executor().post(item);
+
+  REQUIRE(loop.run() == 1);
+  REQUIRE(item.runs == 1);
 }

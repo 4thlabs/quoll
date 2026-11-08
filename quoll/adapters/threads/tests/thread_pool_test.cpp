@@ -39,6 +39,7 @@
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/threads.hpp>
@@ -288,4 +289,23 @@ TEST_CASE("thread_pool executors are equal when they post to the same pool", "[t
 
   REQUIRE(pool.get_executor() == pool.get_executor());
   REQUIRE_FALSE(pool.get_executor() == other.get_executor());
+}
+
+TEST_CASE("thread_pool calls an item's run in place of resuming it", "[threads][thread_pool]") {
+  struct signalled : quoll::async::work_item {
+    std::promise<std::thread::id> ran;
+  };
+
+  // Before the pool, which joins its worker as it goes: the worker may still be returning from `run` once the value is
+  // set.
+  signalled item;
+  auto ran = item.ran.get_future();
+  thread_pool pool{1};
+
+  item.run = [](quoll::async::work_item &self) noexcept {
+    static_cast<signalled &>(self).ran.set_value(std::this_thread::get_id());
+  };
+  pool.get_executor().post(item);
+
+  REQUIRE(ran.get() != std::this_thread::get_id());
 }

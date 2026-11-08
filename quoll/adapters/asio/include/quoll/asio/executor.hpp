@@ -180,8 +180,7 @@ private:
   struct resumer {
     async::work_item *item;
 
-    // The handle is read before the coroutine runs: it may destroy the item.
-    void operator()() const { item->handle.resume(); }
+    void operator()() const { async::execute(*item); }
   };
 
   AsioExecutor inner_;

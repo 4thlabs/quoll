@@ -50,6 +50,7 @@
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
+#include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/client/client.hpp>
 #include <quoll/http/body_reader.hpp>
@@ -557,6 +558,21 @@ TEST_CASE("asio executors are equal when their asio executors are", "[asio]") {
 
   REQUIRE(quoll::asio::executor{context.get_executor()} == quoll::asio::executor{context.get_executor()});
   REQUIRE_FALSE(quoll::asio::executor{context.get_executor()} == quoll::asio::executor{other.get_executor()});
+}
+
+TEST_CASE("asio executors call an item's run in place of resuming it", "[asio]") {
+  struct counted : quoll::async::work_item {
+    int runs = 0;
+  };
+
+  ::asio::io_context context;
+  counted item;
+
+  item.run = [](quoll::async::work_item &self) noexcept { ++static_cast<counted &>(self).runs; };
+  quoll::asio::executor{context.get_executor()}.post(item);
+
+  REQUIRE(context.run() == 1);
+  REQUIRE(item.runs == 1);
 }
 
 TEST_CASE("asio: a client GET over TCP, end to end", "[asio][http]") {

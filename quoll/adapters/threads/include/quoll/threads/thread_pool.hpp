@@ -43,7 +43,6 @@
 #include <quoll/async/work_item.hpp>
 
 #include <atomic>
-#include <coroutine>
 #include <cstddef>
 #include <cstdint>
 #include <stop_token>
@@ -115,7 +114,7 @@ public:
 
 private:
   void push(async::work_item &item) noexcept;
-  [[nodiscard]] std::coroutine_handle<> pop();
+  [[nodiscard]] async::work_item *pop();
   void work(std::stop_token const &token);
   void stop() noexcept;
 

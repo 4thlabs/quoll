@@ -108,24 +108,21 @@ void thread_pool::push(async::work_item &item) noexcept {
   epoch_.notify_one();
 }
 
-// The next coroutine to resume, or a null handle when nothing is queued.
-std::coroutine_handle<> thread_pool::pop() {
-  return ready_.with([this](async::work_item *&ready) -> std::coroutine_handle<> {
+// The next item to run, or null when nothing is queued. Out of the queue, it is this worker's alone.
+async::work_item *thread_pool::pop() {
+  return ready_.with([this](async::work_item *&ready) -> async::work_item * {
     if (ready == nullptr) {
       ready = reverse(incoming_.exchange(nullptr));
     }
 
     if (ready == nullptr) {
-      return {};
+      return nullptr;
     }
 
     auto *const item = ready;
 
     ready = item->next;
-
-    // Read before resuming: the item may live in the frame the coroutine
-    // destroys.
-    return item->handle;
+    return item;
   });
 }
 
@@ -135,8 +132,8 @@ void thread_pool::work(std::stop_token const &token) {
     // epoch, so wait() does not miss it.
     auto const seen = epoch_.load();
 
-    if (auto const handle = pop()) {
-      handle.resume();
+    if (auto *const item = pop()) {
+      async::execute(*item);
       continue;
     }
 

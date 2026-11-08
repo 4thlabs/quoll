@@ -42,17 +42,39 @@
 namespace quoll::async {
 
 /**
- * @brief A coroutine to resume, that an executor links into its queue instead of allocating.
+ * @brief What an executor runs, linked into its queue instead of allocated: a coroutine to resume, or a function to
+ * call.
  *
- * Owned by the code that suspends the coroutine, usually its awaitable (which lives in the coroutine frame), and
- * lent to the executor by `post`. Until the executor has resumed `handle`, the item keeps a stable address, is not
- * modified, and is in no other queue: post it at most once per suspension. The executor reads `handle` before
- * resuming it, as the resumed coroutine may destroy the item; `next` belongs to the executor.
+ * Owned by the code that queues it, usually an awaitable living in the coroutine frame, and lent to the executor by
+ * `post`. Until the executor has run it, the item keeps a stable address, is not modified, and is in no other queue:
+ * post it at most once at a time. The executor runs it with execute(), which reads what it needs before running it,
+ * as running it may destroy the item; `next` belongs to the executor.
+ *
+ * `run`, when set, is called in place of resuming `handle`. A queue cannot take an item back, so whatever may be
+ * destroyed before its turn comes (a coroutine frame, while it is suspended) posts an item that outlives it instead,
+ * whose `run` looks at that time whether there is still something to resume: see io::memory_stream.
  */
 struct work_item {
   std::coroutine_handle<> handle;
   work_item *next = nullptr;
+  void (*run)(work_item &item) = nullptr;
 };
+
+/**
+ * @brief Runs `item` as an executor does: calls `item.run` when it is set, otherwise resumes `item.handle`. What a
+ * resumed coroutine lets escape goes on to the executor's caller.
+ */
+inline void execute(work_item &item) {
+  if (auto *const run = item.run) {
+    run(item);
+    return;
+  }
+
+  // Read before resuming: the item may live in the frame the coroutine destroys.
+  auto const handle = item.handle;
+
+  handle.resume();
+}
 
 } // namespace quoll::async
 

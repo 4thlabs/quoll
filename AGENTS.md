@@ -84,7 +84,8 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   `quoll_main_tests()` in `tests/CMakeLists.txt`).
   Helpers shared by the tests of every module live in `tests/support/quoll/test/` (`quoll::test::run` runs a
   task on a run_loop or a `virtual_time`, whose timer jumps to the next deadline instead of waiting;
-  `quoll::test::memory_renderer`, `quoll::test::overloaded`, `quoll::test::check`): use them rather than copying them into a test file.
+  `quoll::test::memory_renderer`, `quoll::test::overloaded`, `quoll::test::check`, `quoll::test::probe`, a coroutine
+  standing in for one destroyed while an awaitable driven by hand is registered): use them rather than copying them into a test file.
 - What must not compile (the compile-time checks of an API, `static_assert` messages included) is tested too: one source
   per case under `tests/compile_fail/`, starting with `// expect: <message>`, declared with
   `quoll_declare_compile_fail_tests(SOURCES ... DEPS ...)`. Each becomes a ctest `compile_fail.<case>` that compiles it

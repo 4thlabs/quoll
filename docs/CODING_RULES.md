@@ -70,6 +70,13 @@ guidelines and the C++ Core Guidelines.
 - What outlives a call owns what it needs: the public API keeps no reference a user has to keep alive, even at the cost of a
   copy. The exceptions are `_ref` wrappers, views, and what an operation acts on, as a stream or the object of a member
   (`http::read(stream, ...)`, `router.dispatch()`). The fast path goes behind it, in `detail`.
+- A registration is undone on every path: a work item in a waiter list, a callback in a timer or a stop token, `this`
+  in a scheduled task. What registers is, or returns, a member whose destructor unregisters, as `std::stop_callback`
+  is. A queue cannot take an item back, so what may be destroyed before its turn comes (a coroutine frame, while it
+  is suspended) never posts a pointer to itself: it posts an item that outlives it, whose `run` looks at that time
+  whether there is still something to resume (`io::memory_stream`; `yield`, `task_group`, the asio operations and the
+  Emscripten fetch still post their frame's item, a known gap). A test destroys it in each state it can be registered
+  in, `quoll::test::probe` standing for the coroutine.
 - Non-owning parameters as `std::string_view` / `std::span`; ownership through values or `std::unique_ptr`. No raw
   owning pointers, no `new` / `delete`. Throw by value, catch by `const&`.
 - A handle on shared state whose copies are the same object (`http::client`, `http::server`) has copies and no moves, so that

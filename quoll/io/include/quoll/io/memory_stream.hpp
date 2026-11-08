@@ -50,7 +50,6 @@
 #include <cassert>
 #include <coroutine>
 #include <cstddef>
-#include <exception>
 #include <memory>
 #include <optional>
 #include <span>
@@ -67,7 +66,8 @@ namespace quoll::io {
  * Writes never wait (the pipe is unbounded) and a read waits until the peer writes or closes; the reader resumes
  * on its own executor. A stop request on the reader's await_context ends a waiting read with
  * `std::errc::operation_canceled`. Destroying an end closes it, and the peer's writes then fail with
- * `std::errc::broken_pipe`. An end must not be destroyed or moved while one of its reads is pending.
+ * `std::errc::broken_pipe`. An end must not be destroyed or moved while one of its reads is pending. Each executor a
+ * read waited on is run until its queue is empty: the wake it got may serve a later read.
  *
  * Move-only. Thread safety: none; both ends, and the stop requests reaching their reads, are used from one thread.
  */
@@ -83,22 +83,16 @@ public:
     read_awaitable &operator=(read_awaitable &&) = delete;
 
     // Moved into the awaiting coroutine before it suspends, when no stop callback is registered yet.
-    read_awaitable(read_awaitable &&other) noexcept : channel_(other.channel_), buffer_(other.buffer_) {}
+    read_awaitable(read_awaitable &&other) noexcept : channel_(std::move(other.channel_)), buffer_(other.buffer_) {}
 
-    // A coroutine suspended here may go, and the peer's next write must not then find it. One already woken is on its
-    // executor's queue, from where nothing can take it: it would resume a frame that is gone, so this ends the program
-    // now rather than then.
+    // A coroutine suspended here may go, woken or not: the channel's wake, queued on the executor, then finds no
+    // reader, and the peer's next write none either.
     ~read_awaitable() {
       if (!suspended_) {
         return;
       }
 
       stop_callback_.reset();
-
-      if (channel_->woken()) {
-        std::terminate();
-      }
-
       channel_->end_wait();
     }
 
@@ -106,7 +100,7 @@ public:
 
     void await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
       item_.handle = handle;
-      channel_->wait(item_, context.executor);
+      channel_->wait(item_, context.executor, channel_);
       suspended_ = true;
 
       // Invoked at once if stop was already requested.
@@ -140,10 +134,11 @@ public:
       }
     };
 
-    read_awaitable(detail::memory_channel &channel, std::span<std::byte> buffer) noexcept
-        : channel_(&channel), buffer_(buffer) {}
+    // Holds the pipe: a read never outlives what it uses.
+    read_awaitable(std::shared_ptr<detail::memory_channel> channel, std::span<std::byte> buffer) noexcept
+        : channel_(std::move(channel)), buffer_(buffer) {}
 
-    detail::memory_channel *channel_;
+    std::shared_ptr<detail::memory_channel> channel_;
     std::span<std::byte> buffer_;
     async::work_item item_;
     bool canceled_ = false;
@@ -213,7 +208,7 @@ public:
 
   /** @brief Reads the bytes the peer wrote, waiting for some if there are none yet. */
   [[nodiscard]] read_awaitable read_some(std::span<std::byte> buffer QUOLL_LIFETIMEBOUND) noexcept QUOLL_LIFETIMEBOUND {
-    return {inbound(), buffer};
+    return {std::shared_ptr<detail::memory_channel>{channels_, &inbound()}, buffer};
   }
 
   /** @brief Hands all of `data` to the peer. */
