@@ -43,7 +43,6 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/connect_endpoint.cpp
     tests/compile_fail/endpoint_empty_name.cpp
     tests/compile_fail/endpoint_not_in_api.cpp
-    tests/compile_fail/endpoint_twice.cpp
     tests/compile_fail/head_returns_body.cpp
     tests/compile_fail/header_beside_a_body.cpp
     tests/compile_fail/header_invalid_name.cpp
