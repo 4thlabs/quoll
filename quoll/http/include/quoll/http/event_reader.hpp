@@ -39,7 +39,7 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/http/event_parser.hpp>
-#include <quoll/http/fields.hpp>
+#include <quoll/http/is_event_stream.hpp>
 #include <quoll/http/response_body.hpp>
 #include <quoll/http/server_sent_event.hpp>
 
@@ -52,9 +52,6 @@
 #include <string>
 
 namespace quoll::http {
-
-/** @brief Whether `fields` say the body is a `text/event-stream`, as its media type, case aside, parameters aside. */
-[[nodiscard]] bool is_event_stream(fields const &fields);
 
 /**
  * @brief Reads the events of a `text/event-stream` response as they come, natively and through a browser's `fetch`.
@@ -76,8 +73,8 @@ namespace quoll::http {
  * The status and the `Content-Type` are for the caller to check, which knows what else it accepts. When the stream
  * ends, next() gives nothing, and last_event_id() and retry() say how to ask for the rest: it does not connect again
  * on its own. A read that fails, or an event larger than it holds, throws from next() (see response_body and
- * event_parser), and reading ends there: the reader lets go of the body, which closes the connection once no other copy
- * of it is left, and every next() after throws the same.
+ * event_parser), and reading ends there, as it does on a stop request or a timeout around it: the reader lets go of the
+ * body, which closes the connection once no other copy of it is left, and every next() after throws the same.
  *
  * Moved, not copied: copies would share the body, not the events read from it. What it reads lives with the task of
  * next() too, so that the reader may be moved, or go, while one is pending. Thread safety: one next() at a time, a
@@ -113,7 +110,7 @@ private:
     response_body body;
     event_parser parser;
     // Atomic: a second next() from another thread is misuse it reports, not a race of its own.
-    std::atomic<bool> reading = false;
+    std::atomic<bool> busy = false;
     // What ended the reading for good, thrown again by every next() after; the body is let go then.
     std::exception_ptr failure;
   };

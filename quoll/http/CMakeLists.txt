@@ -39,6 +39,7 @@ quoll_declare_module(
     src/event_writer.cpp
     src/fields.cpp
     src/format_event.cpp
+    src/is_event_stream.cpp
     src/local_transport.cpp
     src/one_at_a_time.cpp
     src/parser.cpp

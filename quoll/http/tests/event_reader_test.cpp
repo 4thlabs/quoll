@@ -39,6 +39,7 @@
 #include <quoll/http/error.hpp>
 #include <quoll/http/event_reader.hpp>
 #include <quoll/http/fields.hpp>
+#include <quoll/http/is_event_stream.hpp>
 #include <quoll/http/response_body.hpp>
 #include <quoll/http/server_sent_event.hpp>
 #include <quoll/test/run.hpp>

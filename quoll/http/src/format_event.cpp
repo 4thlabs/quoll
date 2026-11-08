@@ -92,7 +92,7 @@ std::string format_event(server_sent_event const &event) {
   auto const lines = 1 + static_cast<std::size_t>(std::ranges::count_if(
                              event.data, [](char character) { return character == '\n' || character == '\r'; }));
 
-  out.reserve(event.type.size() + event.id.value_or("").size() + event.data.size() + (8 * lines) + 16);
+  out.reserve(event.type.size() + (event.id ? event.id->size() : 0) + event.data.size() + (8 * lines) + 16);
 
   if (!event.type.empty() && event.type != "message") {
     append_field(out, "event", event.type);

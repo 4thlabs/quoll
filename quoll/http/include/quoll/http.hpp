@@ -45,6 +45,7 @@
 #include <quoll/http/event_writer.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/format_event.hpp>
+#include <quoll/http/is_event_stream.hpp>
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/next.hpp>
 #include <quoll/http/parser.hpp>

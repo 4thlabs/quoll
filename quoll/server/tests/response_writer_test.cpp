@@ -1772,6 +1772,25 @@ TEST_CASE("event_writer: after a failed operation, the next fails the same, not 
   REQUIRE(outcome == "first;failed");
 }
 
+TEST_CASE("event_writer: a Content-Type and an X-Accel-Buffering of the handler stay", "[server][sse]") {
+  http::router router;
+
+  router.get("/feed", [](http::response_writer out) -> task<> {
+    out.fields.set("Content-Type", "text/event-stream; charset=utf-8");
+    out.fields.set("X-Accel-Buffering", "yes");
+
+    http::event_writer events{std::move(out)};
+
+    co_await events.send({.data = "x"});
+  });
+
+  auto const answer = answer_to(http::server{router}, get("/feed"));
+
+  REQUIRE(answer.find("Content-Type: text/event-stream; charset=utf-8\r\n") != std::string::npos);
+  REQUIRE(answer.find("X-Accel-Buffering: yes\r\n") != std::string::npos);
+  REQUIRE(answer.find("X-Accel-Buffering: no") == std::string::npos);
+}
+
 TEST_CASE("event_writer: a Cache-Control of a middleware stays", "[server][sse]") {
   http::router router;
 

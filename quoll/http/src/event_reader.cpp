@@ -34,7 +34,6 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/one_at_a_time.hpp>
 #include <quoll/http/event_reader.hpp>
 
@@ -61,7 +60,7 @@ async::task<std::optional<server_sent_event>> event_reader::read_next(std::share
     co_return std::nullopt;
   }
 
-  detail::one_at_a_time const operation{reading->reading, "quoll::http::event_reader: next() while another is pending"};
+  detail::one_at_a_time const operation{reading->busy, "quoll::http::event_reader: next() while another is pending"};
 
   if (reading->failure) {
     std::rethrow_exception(reading->failure);
@@ -87,18 +86,6 @@ async::task<std::optional<server_sent_event>> event_reader::read_next(std::share
     reading->body = response_body{};
     throw;
   }
-}
-
-bool is_event_stream(fields const &fields) {
-  auto media_type = fields.find("Content-Type").value_or("");
-
-  media_type = media_type.substr(0, media_type.find(';'));
-
-  while (!media_type.empty() && (media_type.back() == ' ' || media_type.back() == '\t')) {
-    media_type.remove_suffix(1);
-  }
-
-  return detail::iequals(media_type, "text/event-stream");
 }
 
 } // namespace quoll::http
