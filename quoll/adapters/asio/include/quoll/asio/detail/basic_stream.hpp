@@ -79,6 +79,8 @@ struct stream_state {
   // Set once TLS's closing message has been made, for it to go once, whatever becomes of its write or of the socket's
   // shutdown after it. Read and written on the stream's executor only, in the initiations.
   bool closing_sent = false;
+  // Set once the socket has stopped sending: a second shutdown fails on some systems (macOS), where it changes nothing.
+  bool sending_shut = false;
 };
 
 template <class Stream>

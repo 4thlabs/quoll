@@ -180,7 +180,11 @@ private:
     auto const [closed] = co_await detail::make_operation<>(state.write, [&state](auto handler) {
       std::error_code shutdown;
 
-      state.stream.next_layer().shutdown(::asio::ip::tcp::socket::shutdown_send, shutdown);
+      if (!state.sending_shut) {
+        state.stream.next_layer().shutdown(::asio::ip::tcp::socket::shutdown_send, shutdown);
+        state.sending_shut = !shutdown;
+      }
+
       std::move(handler)(shutdown);
     });
 

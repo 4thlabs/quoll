@@ -668,12 +668,10 @@ TEST_CASE("TLS: an acceptor moved while its accept is pending still accepts", "[
   std::exception_ptr failure;
 
   auto const work = [&]() -> task<std::string> {
-    auto accepting = acceptor.accept();
-    // Its state and its context are bound at the call.
-    quoll::asio::tls_acceptor const moved{std::move(acceptor)};
+    std::optional<quoll::asio::tls_acceptor> moved;
 
     auto const serving = [&]() -> task<> {
-      auto stream = co_await std::move(accepting);
+      auto stream = co_await acceptor.accept();
       std::array<char, 16> received{};
 
       (void)co_await stream.read_some(std::as_writable_bytes(std::span{received}));
@@ -684,6 +682,9 @@ TEST_CASE("TLS: an acceptor moved while its accept is pending still accepts", "[
     };
 
     auto const calling = [&]() -> task<std::string> {
+      // The accept has started, and waits: the acceptor moves under it, before anyone connects.
+      moved.emplace(std::move(acceptor));
+
       auto stream = co_await io::connect_tls("127.0.0.1", port, trusting_the_authority().tls);
       std::string_view const ping = "ping";
       std::array<char, 16> received{};
@@ -698,7 +699,6 @@ TEST_CASE("TLS: an acceptor moved while its accept is pending still accepts", "[
     auto [served, reply] = co_await when_all(serving(), calling());
 
     static_cast<void>(served);
-    static_cast<void>(moved);
     co_return reply;
   };
 
