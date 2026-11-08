@@ -313,7 +313,8 @@ It sets `Content-Type: text/event-stream` and `X-Accel-Buffering: no`, unless th
 to pass each event on as it comes. A status and other fields, a `Cache-Control: no-store` say, go on the
 `response_writer` before it is given, with nothing written through it yet: it throws `std::logic_error`
 otherwise. `open()` sends the head at once, so that a client sees the stream before there is anything to
-say; otherwise it leaves with the first event.
+say; otherwise it leaves with the first event. Like the `response_writer`, it does not outlive the
+handler: a stream that others feed is a handler waiting for what they post, which it writes itself.
 
 `http::event_reader` reads them on the client, natively and in a browser alike, as a streamed `fetch`
 there, which takes headers where `EventSource` does not:
@@ -321,12 +322,11 @@ there, which takes headers where `EventSource` does not:
 ```cpp
 auto response = co_await client.stream(request);
 
-if (response.status != http::status::ok ||
-    !response.fields.find("Content-Type").value_or("").starts_with("text/event-stream")) {
+if (response.status != http::status::ok || !http::is_event_stream(response.fields)) {
   co_return;   // a login page answering 200, say
 }
 
-http::event_reader events{response.body};
+http::event_reader events{std::move(response.body)};
 
 while (auto const event = co_await events.next()) {
   show(event->type, event->data);

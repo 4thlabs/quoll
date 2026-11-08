@@ -36,7 +36,9 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/async/yield.hpp>
+#include <quoll/http/error.hpp>
 #include <quoll/http/event_reader.hpp>
+#include <quoll/http/fields.hpp>
 #include <quoll/http/response_body.hpp>
 #include <quoll/http/server_sent_event.hpp>
 #include <quoll/test/run.hpp>
@@ -48,6 +50,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -110,4 +113,42 @@ TEST_CASE("event_reader: events read a byte a piece, cut in a field and in a CRL
   REQUIRE(got->last_event_id == "7");
   // A piece a byte, and the end.
   REQUIRE(source->reads() == text.size() + 1);
+}
+
+TEST_CASE("event_reader: a failure lets the body go, and comes again", "[http][sse]") {
+  auto source = std::make_shared<byte_source>("data: " + std::string(64, 'x') + "\n\n");
+  http::event_reader events{http::response_body{source}, 16};
+
+  auto const failure = [&events]() -> async::task<std::error_code> {
+    try {
+      static_cast<void>(co_await events.next());
+    } catch (std::system_error const &failed) {
+      co_return failed.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  REQUIRE(quoll::test::run(failure()) == http::error::event_too_large);
+  // Only the test holds the source now: the reader let its body go.
+  REQUIRE(source.use_count() == 1);
+  REQUIRE(quoll::test::run(failure()) == http::error::event_too_large);
+}
+
+TEST_CASE("is_event_stream: the media type, case and parameters aside", "[http][sse]") {
+  auto const with = [](std::string_view type) {
+    http::fields fields;
+
+    fields.set("Content-Type", type);
+    return http::is_event_stream(fields);
+  };
+
+  REQUIRE(with("text/event-stream"));
+  REQUIRE(with("Text/Event-Stream"));
+  REQUIRE(with("text/event-stream; charset=utf-8"));
+  REQUIRE(with("text/event-stream ;charset=utf-8"));
+  REQUIRE_FALSE(with("text/html"));
+  REQUIRE_FALSE(with("text/event-streams"));
+  REQUIRE_FALSE(with(""));
+  REQUIRE_FALSE(http::is_event_stream(http::fields{}));
 }

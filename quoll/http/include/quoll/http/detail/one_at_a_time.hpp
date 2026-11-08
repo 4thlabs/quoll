@@ -42,7 +42,8 @@
 namespace quoll::http::detail {
 
 // Holds `flag` up for the length of one operation, in the frame of its task, so that it comes down on every way out, a
-// throw or the frame destroyed included. A second operation meanwhile throws std::logic_error with `message`.
+// throw included: a frame is not destroyed while it waits (see async::task). A second operation meanwhile throws
+// std::logic_error with `message`.
 class one_at_a_time {
 public:
   one_at_a_time(std::atomic<bool> &flag, char const *message);

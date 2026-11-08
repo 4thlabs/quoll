@@ -78,7 +78,10 @@ namespace quoll::http {
  * send() completes, as with response_writer::write(), and a peer gone makes it throw, which ends the handler.
  *
  * Moved, not copied, as the response_writer it holds: one moved from throws std::logic_error when asked anything. An
- * operation takes what it writes through when it is called, so that the writer may move, or go, before it ends.
+ * operation takes what it writes through when it is called, so that the writer may move, or go, before it ends, within
+ * the handler. Like the response_writer, it does not outlive the handler's task: what it writes through is the
+ * connection's, which goes with the response. A stream that others feed (a hub of subscribers) is a handler that waits
+ * for what they post, and writes it itself.
  * One operation at a time, a comment to keep the stream alive included: one asked for while another is pending throws
  * std::logic_error from its task, in every build, rather than write over it.
  */

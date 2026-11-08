@@ -4200,19 +4200,19 @@ TEST_CASE("event_reader: moved, or gone, while a next() waits, the read goes on"
   auto const reading = [&]() -> task<std::optional<http::server_sent_event>> {
     http::client const client{memory_connector{server}, "example.com", 80};
     auto response = co_await client.stream(make_request(verb::get, "/later"));
-    std::optional<http::event_reader> events{std::in_place, response.body};
+    std::optional<http::event_reader> events{std::in_place, std::move(response.body)};
     auto pending = events->next();
-    std::optional<http::event_reader> moved;
 
-    // The read waits for the server while the reader is moved, and the first one goes.
-    auto const move_away = [](std::optional<http::event_reader> &from,
-                              std::optional<http::event_reader> &to) -> task<> {
-      to.emplace(std::move(*from));
+    // The read waits for the server while the reader is moved, then goes, the only one: the task alone holds what it
+    // reads.
+    auto const move_away = [](std::optional<http::event_reader> &from) -> task<> {
+      { auto const gone = std::move(*from); }
+
       from.reset();
       co_return;
     };
 
-    auto [event, nothing] = co_await async::when_all(std::move(pending), move_away(events, moved));
+    auto [event, nothing] = co_await async::when_all(std::move(pending), move_away(events));
 
     static_cast<void>(nothing);
     co_return event;

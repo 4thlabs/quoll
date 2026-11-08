@@ -34,11 +34,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/one_at_a_time.hpp>
 #include <quoll/http/event_reader.hpp>
 
-#include <stdexcept>
+#include <exception>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace quoll::http {
@@ -61,19 +63,42 @@ async::task<std::optional<server_sent_event>> event_reader::read_next(std::share
 
   detail::one_at_a_time const operation{reading->reading, "quoll::http::event_reader: next() while another is pending"};
 
-  for (;;) {
-    if (auto event = reading->parser.next()) {
-      co_return event;
-    }
-
-    auto const piece = co_await reading->body.read();
-
-    if (!piece) {
-      co_return std::nullopt;
-    }
-
-    reading->parser.feed(*piece);
+  if (reading->failure) {
+    std::rethrow_exception(reading->failure);
   }
+
+  try {
+    for (;;) {
+      if (auto event = reading->parser.next()) {
+        co_return event;
+      }
+
+      auto const piece = co_await reading->body.read();
+
+      if (!piece) {
+        co_return std::nullopt;
+      }
+
+      reading->parser.feed(*piece);
+    }
+  } catch (...) {
+    // Reading ends here: the connection is not held for a stream nobody reads.
+    reading->failure = std::current_exception();
+    reading->body = response_body{};
+    throw;
+  }
+}
+
+bool is_event_stream(fields const &fields) {
+  auto media_type = fields.find("Content-Type").value_or("");
+
+  media_type = media_type.substr(0, media_type.find(';'));
+
+  while (!media_type.empty() && (media_type.back() == ' ' || media_type.back() == '\t')) {
+    media_type.remove_suffix(1);
+  }
+
+  return detail::iequals(media_type, "text/event-stream");
 }
 
 } // namespace quoll::http

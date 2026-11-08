@@ -106,8 +106,6 @@ void check_written_again(http::server_sent_event const &event, outcome const &re
   quoll::fuzz::require(parser.last_event_id() == event.id.value_or(""));
 }
 
-} // namespace
-
 // Every event written again in order, into one parser: the same events, the id carried from one to the next and its
 // resets included.
 void check_stream_written_again(outcome const &read) {
@@ -128,6 +126,8 @@ void check_stream_written_again(outcome const &read) {
 
   quoll::fuzz::require(again == read.events);
 }
+
+} // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size) {
   if (size == 0) {
