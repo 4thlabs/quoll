@@ -97,7 +97,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   reach through `co_await` and `co_spawn`), is tested too: a hidden
   Catch2 case (`[.assert]`) that breaks it, declared with `quoll_declare_assert_tests(NAME ... CASE ... EXPECT ...)`. Each
   becomes a ctest `assert.<name>` that runs it alone and passes only when the program ends with the assertion's text, which
-  the case's name must not hold (native debug builds only).
+  the case's name must not hold (native builds; a build without assertions says so and passes).
 - `tests/fuzz/`: one libFuzzer target per source, built with `QUOLL_FUZZ` (Clang, under ASan and UBSan) rather than in
   `quoll_tests`, its seeds in `corpus/<target>/`. An input that crashed one joins its seeds, with a test of the fix.
 - `tests/bench/`: `quoll_bench`, built with `QUOLL_BENCH`, measures requests per second, latency and allocations, its figures in
