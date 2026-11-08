@@ -37,7 +37,6 @@
 #ifndef QUOLL_REST_DETAIL_SCHEME_TRAITS_HPP
 #define QUOLL_REST_DETAIL_SCHEME_TRAITS_HPP
 
-#include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/rest/detail/join_strings.hpp>
 #include <quoll/rest/detail/query_string.hpp>
@@ -72,25 +71,12 @@ template <>
 struct scheme_traits<bearer_auth> {
   static constexpr auto key = fixed_string{"bearer"};
 
-  [[nodiscard]] static std::optional<std::string> find(http::fields const &fields, std::vector<query_entry> const &) {
-    constexpr std::string_view scheme = "Bearer ";
-    auto const value = single_field(fields, "Authorization");
+  [[nodiscard]] static std::optional<std::string> find(http::fields const &fields,
+                                                       std::vector<query_entry> const &query);
 
-    if (!value || value->size() <= scheme.size() || !http::detail::iequals(value->substr(0, scheme.size()), scheme)) {
-      return std::nullopt;
-    }
+  [[nodiscard]] static std::string challenge();
 
-    auto const token = http::detail::trim(value->substr(scheme.size()));
-
-    return token.empty() ? std::nullopt : std::optional<std::string>{token};
-  }
-
-  [[nodiscard]] static std::string challenge() { return "Bearer"; }
-
-  static void add(std::string const &value, http::fields &fields, std::string &) {
-    check_credential_text(value);
-    fields.add("Authorization", "Bearer " + value);
-  }
+  static void add(std::string_view value, http::fields &fields, std::string &query);
 };
 
 template <fixed_string Header>
@@ -105,7 +91,7 @@ struct scheme_traits<api_key<Header>> {
 
   [[nodiscard]] static std::string challenge() { return "ApiKey header=\"" + std::string{Header.view()} + "\""; }
 
-  static void add(std::string const &value, http::fields &fields, std::string &) {
+  static void add(std::string_view value, http::fields &fields, std::string &) {
     check_credential_text(value);
     fields.add(Header.view(), value);
   }
@@ -123,7 +109,7 @@ struct scheme_traits<api_key_query<Param>> {
 
   [[nodiscard]] static std::string challenge() { return "ApiKey query=\"" + std::string{Param.view()} + "\""; }
 
-  static void add(std::string const &value, http::fields &, std::string &query) {
+  static void add(std::string_view value, http::fields &, std::string &query) {
     check_credential_in_query(value);
     append_query(query, Param.view(), value);
   }

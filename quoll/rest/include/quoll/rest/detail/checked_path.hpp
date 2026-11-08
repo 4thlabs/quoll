@@ -58,6 +58,8 @@ struct checked_path {
   static_assert(parsed.error != path_error::duplicate_name, "quoll::rest: two path parameters have the same name");
   static_assert(parsed.error != path_error::invalid_escape, "quoll::rest: invalid %-escape in a path");
   static_assert(parsed.error != path_error::dot_segment, "quoll::rest: no request can reach a dot segment or a NUL");
+  static_assert(parsed.error != path_error::invalid_character,
+                "quoll::rest: a path holds what a target cannot: a space, '?', '#', a control or a byte past ASCII");
   static_assert(parsed.error != path_error::too_many_parameters, "quoll::rest: too many path parameters");
 
   static constexpr bool valid = parsed.error == path_error::none;

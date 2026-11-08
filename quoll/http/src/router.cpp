@@ -96,6 +96,8 @@ struct route_segment {
     return "invalid %-escape";
   case template_error::dot_segment:
     return "no request can reach a dot segment or a NUL";
+  case template_error::empty_type:
+    return "a parameter's type is empty after ':'";
   }
 
   return "valid";

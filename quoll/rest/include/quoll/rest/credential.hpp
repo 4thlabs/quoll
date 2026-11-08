@@ -47,6 +47,7 @@ namespace quoll::rest {
  */
 template <class Scheme>
 struct credential {
+  /** @brief The key or the token, as the request carries it. */
   std::string value;
 };
 

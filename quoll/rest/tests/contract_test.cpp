@@ -34,9 +34,12 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/http/local_transport.hpp>
+#include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
+#include <quoll/test/run.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -45,6 +48,7 @@
 #include <optional>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 // The bank API of docs/PLAN.md. Reflected types need external linkage (see json_codec).
@@ -187,4 +191,67 @@ TEST_CASE("rest contract: endpoints are routed under their prefixes", "[rest][co
   REQUIRE(v1::route<users::list>::endpoint::name == "users.list");
   REQUIRE(v1::route<users::create>::endpoint::method == verb::post);
   REQUIRE(v1::prefix == "/api/v1");
+}
+
+namespace contract_test_routes {
+
+using namespace quoll::rest;
+using quoll::http::status;
+using quoll::http::verb;
+
+// A parameter and the rest of a path, in one place: the router tells them apart, and so does the api.
+using one = endpoint<"one", verb::get, "/x/{a}", returns<std::string, status::ok, text_codec>>;
+using rest_of = endpoint<"rest_of", verb::get, "/x/{b:path}", returns<std::string, status::ok, text_codec>>;
+// The same status twice is refused; two responses of one type tell theirs with respond<>.
+using made = endpoint<"made", verb::post, "/made", body<std::string, text_codec>,
+                      returns<std::string, status::ok, text_codec>, returns<std::string, status::created, text_codec>>;
+// A first response with no body.
+using accepted = endpoint<"accepted", verb::post, "/accepted", returns<void, status::accepted>>;
+// A prefix with a parameter: its argument comes first.
+using owned = endpoint<"owned", verb::get, "/items/{item:int}", returns<std::string, status::ok, text_codec>>;
+
+using api = quoll::rest::api<"", one, rest_of, made, accepted, quoll::rest::api<"/orgs/{org}", owned>>;
+
+struct service {
+  [[nodiscard]] std::string operator()(one, std::string a) const { return "one " + a; }
+
+  [[nodiscard]] std::string operator()(rest_of, std::string b) const { return "rest " + b; }
+
+  [[nodiscard]] reply<made> operator()(made, std::string text) const {
+    if (text == "new") {
+      return respond<status::created>(std::string{"created"});
+    }
+
+    return respond<status::ok>(std::string{"kept"});
+  }
+
+  void operator()(accepted) const {}
+
+  [[nodiscard]] std::string operator()(owned, std::string org, int item) const {
+    return org + "/" + std::to_string(item);
+  }
+};
+
+} // namespace contract_test_routes
+
+TEST_CASE("contract: what users write runs, through mount and a client", "[rest][contract]") {
+  namespace routes = contract_test_routes;
+
+  quoll::http::router router;
+
+  quoll::rest::mount<routes::api>(router, routes::service{});
+
+  quoll::rest::client<routes::api, quoll::http::local_transport> const client{quoll::http::local_transport{router}};
+  auto const run = [](auto work) { return std::move(quoll::test::run(std::move(work)).value()); };
+
+  REQUIRE(run(client.call<routes::one>("1")) == "one 1");
+  REQUIRE(run(client.call<routes::rest_of>("1/2")) == "rest 1/2");
+
+  auto const created = run(client.try_call<routes::made>("new"));
+
+  REQUIRE(created->holds<quoll::http::status::created>());
+  REQUIRE(created->get<quoll::http::status::created>() == "created");
+  REQUIRE(run(client.call<routes::made>("old")) == "kept");
+  REQUIRE(run(client.try_call<routes::accepted>())->holds<quoll::http::status::accepted>());
+  REQUIRE(run(client.call<routes::owned>("acme", 7)) == "acme/7");
 }

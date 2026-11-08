@@ -37,6 +37,7 @@
 #ifndef QUOLL_REST_DETAIL_ARGUMENTS_HPP
 #define QUOLL_REST_DETAIL_ARGUMENTS_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/router.hpp>
@@ -150,11 +151,12 @@ template <class T>
   }
 }
 
-[[nodiscard]] std::vector<std::string_view> header_texts(http::fields const &fields, std::string_view name);
+[[nodiscard]] std::vector<std::string_view> header_texts(http::fields const &fields QUOLL_LIFETIMEBOUND,
+                                                         std::string_view name);
 
 // The media type of a Content-Type value, without its parameters: "application/json; charset=utf-8" gives
 // "application/json".
-[[nodiscard]] std::string_view media_type(std::string_view content_type) noexcept;
+[[nodiscard]] std::string_view media_type(std::string_view content_type QUOLL_LIFETIMEBOUND) noexcept;
 
 // A path parameter of the route's template, by index.
 template <fixed_string Path, std::size_t Index>
@@ -233,7 +235,7 @@ template <fixed_string Name, class T>
 template <class T, class BodyCodec>
 [[nodiscard]] std::expected<T, argument_error> decode_source(std::type_identity<body<T, BodyCodec>>,
                                                              request_input const &input) {
-  constexpr BodyCodec codec;
+  BodyCodec const codec{};
   auto const content_type = input.request.fields.find("Content-Type");
 
   // Which one counts is what a proxy in front may read otherwise.

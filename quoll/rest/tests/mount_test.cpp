@@ -651,7 +651,7 @@ TEST_CASE("mount: a body that cannot be read answers a problem that can", "[rest
   auto const router = make_router();
   field_list const fields{{"Authorization", "Bearer valid"}, {"Content-Type", "application/json"}};
 
-  for (std::string const body :
+  for (std::string const &body :
        {std::string{"{\"name\":\x01}"}, std::string{"{\"name\":\xff\xfe}"}, std::string{"{\"name\":\0}", 10}}) {
     auto const refused = send(router, verb::post, "/api/v1/users", fields, body);
 

@@ -39,9 +39,32 @@
 #include <quoll/http/detail/ascii.hpp>
 
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace quoll::rest::detail {
+
+std::optional<std::string> scheme_traits<bearer_auth>::find(http::fields const &fields,
+                                                            std::vector<query_entry> const &) {
+  constexpr std::string_view scheme = "Bearer ";
+  auto const value = single_field(fields, "Authorization");
+
+  if (!value || value->size() <= scheme.size() || !http::detail::iequals(value->substr(0, scheme.size()), scheme)) {
+    return std::nullopt;
+  }
+
+  auto const token = http::detail::trim(value->substr(scheme.size()));
+
+  return token.empty() ? std::nullopt : std::optional<std::string>{token};
+}
+
+std::string scheme_traits<bearer_auth>::challenge() { return "Bearer"; }
+
+void scheme_traits<bearer_auth>::add(std::string_view value, http::fields &fields, std::string &) {
+  check_credential_text(value);
+  fields.add("Authorization", "Bearer " + std::string{value});
+}
 
 void check_credential_text(std::string_view text) {
   if (text.empty() || http::detail::trim(text) != text || http::detail::has_control(text)) {

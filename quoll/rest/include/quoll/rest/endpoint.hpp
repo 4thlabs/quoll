@@ -55,8 +55,8 @@ namespace quoll::rest {
  * - `Path` is a template with typed parameters, each a whole segment: `/users/{id:int64}`; the types are `int`,
  *   `int64`, `uint`, `uint64`, `double`, `bool`, `string` (the default, `{id}`) and `path` (the rest of the path,
  *   last). It is checked at compile time.
- * - `Parts`: query<>, query_params<>, header<>, at most one body<> (none on GET or HEAD), returns<> (one per status),
- *   security<>.
+ * - `Parts`: query<>, query_params<>, header<>, at most one body<> (none on GET, HEAD or TRACE), returns<> (one per
+ *   status, none with a body on HEAD), security<>. CONNECT is no operation of an API.
  *
  * The arguments of the endpoint, the same for a client's `call` and for the service, are its path parameters
  * (prefixes first, see api<>), then the argument parts in order, then the parts inherited from with<>.
@@ -72,12 +72,14 @@ struct endpoint {
   static_assert(detail::count_bodies(detail::type_list<Parts...>{}) == 0 ||
                     (Method != http::verb::get && Method != http::verb::head),
                 "quoll::rest::endpoint: a GET or HEAD endpoint has no body<> (fetch rejects one)");
-  static_assert(detail::count_bodies(detail::type_list<Parts...>{}) == 0 || Method != http::verb::connect,
-                "quoll::rest::endpoint: a CONNECT endpoint has no body<> (what follows its head is the tunnel)");
   static_assert(detail::count_bodies(detail::type_list<Parts...>{}) == 0 || Method != http::verb::trace,
                 "quoll::rest::endpoint: a TRACE endpoint has no body<> (RFC 9110, 9.3.8)");
   static_assert(detail::distinct_statuses(detail::type_list<Parts...>{}),
                 "quoll::rest::endpoint: two returns<> have the same status");
+  static_assert(Method != http::verb::connect,
+                "quoll::rest::endpoint: CONNECT is no operation of an API (what follows its head is a tunnel)");
+  static_assert(Method != http::verb::head || !detail::any_body_response(detail::type_list<Parts...>{}),
+                "quoll::rest::endpoint: a response to HEAD has no body");
 
   using contract_category = detail::endpoint_category;
   using parts = detail::type_list<Parts...>;

@@ -61,6 +61,7 @@ enum class template_error {
   duplicate_name,
   invalid_escape,
   dot_segment,
+  empty_type,
 };
 
 struct template_segment {
@@ -193,6 +194,10 @@ struct parsed_template {
       auto const colon = find_char(inside, ':');
       auto const name = inside.substr(0, colon);
       auto const type = colon == std::string_view::npos ? std::string_view{} : inside.substr(colon + 1);
+
+      if (colon != std::string_view::npos && type.empty()) {
+        return fail(template_error::empty_type);
+      }
 
       if (name.empty() || !std::ranges::all_of(name, is_name_char)) {
         return fail(template_error::invalid_name);

@@ -54,7 +54,7 @@ namespace quoll::rest {
  * not match the type: bodies come from the network.
  */
 template <class C, class T>
-concept Codec = requires(C const &codec, T const &value, std::string_view body) {
+concept Codec = std::default_initializable<C> && requires(C const &codec, T const &value, std::string_view body) {
   { codec.content_type } -> std::convertible_to<std::string_view>;
   { codec.encode(value) } -> std::same_as<std::string>;
   { codec.template decode<T>(body) } -> std::same_as<std::expected<T, decode_error>>;

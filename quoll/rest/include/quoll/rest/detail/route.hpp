@@ -54,6 +54,7 @@
 
 #include <array>
 #include <cstddef>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -168,8 +169,6 @@ struct route {
   static_assert(count_bodies(parts{}) == 0 ||
                     (Endpoint::method != http::verb::get && Endpoint::method != http::verb::head),
                 "quoll::rest::with: a GET or HEAD endpoint gets a body<> (fetch rejects one)");
-  static_assert(count_bodies(parts{}) == 0 || Endpoint::method != http::verb::connect,
-                "quoll::rest::with: a CONNECT endpoint gets a body<> (what follows its head is the tunnel)");
   static_assert(count_bodies(parts{}) == 0 || Endpoint::method != http::verb::trace,
                 "quoll::rest::with: a TRACE endpoint gets a body<> (RFC 9110, 9.3.8)");
   static_assert(distinct_statuses(parts{}), "quoll::rest::with: the endpoint gets two returns<> with the same status");
@@ -187,40 +186,56 @@ struct route {
   static constexpr std::string_view path = path_value.view();
 };
 
-// Whether two operations would be routed alike: same method, and same path once the parameter names are ignored.
+// A literal of a checked template, as the router compares it: decoded.
+[[nodiscard]] consteval std::string decoded_literal(std::string_view literal) {
+  std::string decoded;
+
+  for (std::size_t index = 0; index < literal.size(); ++index) {
+    if (literal[index] != '%') {
+      decoded += literal[index];
+      continue;
+    }
+
+    decoded += static_cast<char>(http::detail::hex_value(literal[index + 1]) * 16 +
+                                 http::detail::hex_value(literal[index + 2]));
+    index += 2;
+  }
+
+  return decoded;
+}
+
+// Whether two operations would be routed alike: the same method, and the router's same shape, the same decoded
+// literals and the same kind of parameter in each place, whatever the names: `/a` and `/%61` are one, `{name}` and
+// `{name:path}` two.
 [[nodiscard]] consteval bool same_operation(http::verb first_method, std::string_view first, http::verb second_method,
                                             std::string_view second) {
   if (first_method != second_method) {
     return false;
   }
 
-  std::size_t left = 0;
-  std::size_t right = 0;
+  auto const left = http::detail::parse_template(first);
+  auto const right = http::detail::parse_template(second);
 
-  while (left < first.size() && right < second.size()) {
-    if (first[left] == '{' && second[right] == '{') {
-      auto const first_close = http::detail::find_char(first, '}', left);
-      auto const second_close = http::detail::find_char(second, '}', right);
+  // A template that is wrong has its own static_assert: it compares as different.
+  if (left.error != http::detail::template_error::none || right.error != http::detail::template_error::none ||
+      left.segments.size() != right.segments.size()) {
+    return false;
+  }
 
-      // Checked templates have their braces; an unbalanced one compares as different rather than wrapping around.
-      if (first_close == std::string_view::npos || second_close == std::string_view::npos) {
-        return false;
-      }
+  for (std::size_t index = 0; index < left.segments.size(); ++index) {
+    auto const &one = left.segments[index];
+    auto const &other = right.segments[index];
 
-      left = first_close + 1;
-      right = second_close + 1;
-      continue;
-    }
-
-    if (first[left] != second[right]) {
+    if (one.kind != other.kind) {
       return false;
     }
 
-    ++left;
-    ++right;
+    if (one.kind == http::detail::segment_kind::literal && decoded_literal(one.text) != decoded_literal(other.text)) {
+      return false;
+    }
   }
 
-  return left == first.size() && right == second.size();
+  return true;
 }
 
 template <class... Routes>

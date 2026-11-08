@@ -41,7 +41,6 @@
 
 #include <glaze/core/reflect.hpp>
 #include <glaze/json/read.hpp>
-#include <glaze/util/parse.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -116,13 +115,7 @@ template <>
 struct param_traits<std::string> {
   [[nodiscard]] static std::string to_text(std::string const &value) { return value; }
 
-  [[nodiscard]] static std::optional<std::string> from_text(std::string_view text) {
-    if (!glz::validate_utf8(text.data(), text.size())) {
-      return std::nullopt;
-    }
-
-    return std::string{text};
-  }
+  [[nodiscard]] static std::optional<std::string> from_text(std::string_view text);
 };
 
 /** @brief Enums by the names their `glz::meta` gives them. */

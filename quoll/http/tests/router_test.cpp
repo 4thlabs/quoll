@@ -50,6 +50,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
 #include <concepts>
@@ -230,6 +231,7 @@ TEST_CASE("router: an invalid template throws", "[http][router]") {
   REQUIRE_THROWS_AS(router.add(verb::get, "/users/x{id}", "x", echo), std::invalid_argument);
   REQUIRE_THROWS_AS(router.add(verb::get, "/users/{id", "x", echo), std::invalid_argument);
   REQUIRE_THROWS_AS(router.add(verb::get, "/users/{}", "x", echo), std::invalid_argument);
+  REQUIRE_THROWS_WITH(router.add(verb::get, "/users/{id:}", "x", echo), Catch::Matchers::ContainsSubstring("empty"));
   REQUIRE_THROWS_AS(router.add(verb::get, "/users/{:int}", "x", echo), std::invalid_argument);
   REQUIRE_THROWS_AS(router.add(verb::get, "/x/{a{b}", "x", echo), std::invalid_argument);
   REQUIRE_THROWS_AS(router.add(verb::get, "/x/{a}b}", "x", echo), std::invalid_argument);
