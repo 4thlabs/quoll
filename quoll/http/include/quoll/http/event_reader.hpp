@@ -45,6 +45,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -72,12 +73,13 @@ namespace quoll::http {
  * on its own. A read that fails, or an event larger than it holds, throws from next() (see response_body and
  * event_parser), and reading ends there.
  *
- * Moved, not copied: copies would share the body, not the events read from it. Thread safety: one next() at a time.
+ * Moved, not copied: copies would share the body, not the events read from it. What it reads lives with the task of
+ * next() too, so that the reader may be moved, or go, while one is pending. Thread safety: one next() at a time.
  */
 class event_reader {
 public:
   /** @brief Reads `body`, an event holding at most `max_event_size` bytes (see event_parser). */
-  explicit event_reader(response_body body, std::size_t max_event_size = event_parser::default_max_event_size) noexcept;
+  explicit event_reader(response_body body, std::size_t max_event_size = event_parser::default_max_event_size);
 
   event_reader(event_reader const &) = delete;
   event_reader &operator=(event_reader const &) = delete;
@@ -85,20 +87,30 @@ public:
   event_reader &operator=(event_reader &&) noexcept = default;
   ~event_reader() = default;
 
-  /** @brief The next event, or nothing once the stream has ended. */
-  [[nodiscard]] async::task<std::optional<server_sent_event>> next() QUOLL_LIFETIMEBOUND;
+  /**
+   * @brief The next event, or nothing once the stream has ended, or on a reader moved from.
+   *
+   * @throws std::logic_error, from the task, while another next() is pending.
+   */
+  [[nodiscard]] async::task<std::optional<server_sent_event>> next() const;
 
   /** @brief The ID of the last event the stream ended, empty if none: `Last-Event-ID`, to connect again. */
-  [[nodiscard]] std::string const &last_event_id() const noexcept QUOLL_LIFETIMEBOUND {
-    return parser_.last_event_id();
-  }
+  [[nodiscard]] std::string const &last_event_id() const noexcept QUOLL_LIFETIMEBOUND;
 
   /** @brief How long the stream asked to wait before connecting again, if it did. */
-  [[nodiscard]] std::optional<std::chrono::milliseconds> retry() const noexcept { return parser_.retry(); }
+  [[nodiscard]] std::optional<std::chrono::milliseconds> retry() const noexcept;
 
 private:
-  response_body body_;
-  event_parser parser_;
+  struct state {
+    response_body body;
+    event_parser parser;
+    bool reading = false;
+  };
+
+  [[nodiscard]] static async::task<std::optional<server_sent_event>> read_next(std::shared_ptr<state> reading);
+
+  // Null once moved from.
+  std::shared_ptr<state> state_;
 };
 
 } // namespace quoll::http

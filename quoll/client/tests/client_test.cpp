@@ -4119,6 +4119,18 @@ http::router make_event_router() {
       co_await out.write(std::string_view{&piece, 1});
     }
   });
+  router.get("/later", [](http::response_writer out) -> task<> {
+    http::event_writer events{std::move(out)};
+
+    co_await events.open();
+
+    // Long enough for the reader to wait, and be moved meanwhile.
+    for (int turn = 0; turn < 16; ++turn) {
+      co_await async::yield();
+    }
+
+    co_await events.send({.data = "later"});
+  });
   router.get("/large", [](http::response_writer out) -> task<> {
     http::event_writer events{std::move(out)};
 
@@ -4197,4 +4209,64 @@ TEST_CASE("event_reader: an event larger than it holds fails the reading", "[cli
   REQUIRE(got);
   REQUIRE(got->events.empty());
   REQUIRE(got->error == http::error::event_too_large);
+}
+
+TEST_CASE("event_reader: moved, or gone, while a next() waits, the read goes on", "[client][sse]") {
+  auto const router = make_event_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const reading = [&]() -> task<std::optional<http::server_sent_event>> {
+    http::client const client{memory_connector{server}, "example.com", 80};
+    auto response = co_await client.stream(make_request(verb::get, "/later"));
+    std::optional<http::event_reader> events{std::in_place, response.body};
+    auto pending = events->next();
+    std::optional<http::event_reader> moved;
+
+    // The read waits for the server while the reader is moved, and the first one goes.
+    auto const move_away = [](std::optional<http::event_reader> &from,
+                              std::optional<http::event_reader> &to) -> task<> {
+      to.emplace(std::move(*from));
+      from.reset();
+      co_return;
+    };
+
+    auto [event, nothing] = co_await async::when_all(std::move(pending), move_away(events, moved));
+
+    static_cast<void>(nothing);
+    co_return event;
+  };
+
+  auto const got = quoll::test::run(loop, reading());
+
+  REQUIRE(got);
+  REQUIRE(*got == http::server_sent_event{.data = "later"});
+}
+
+TEST_CASE("event_reader: a second next() while one waits is refused", "[client][sse]") {
+  auto const router = make_event_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const reading = [&]() -> task<bool> {
+    http::client const client{memory_connector{server}, "example.com", 80};
+    auto response = co_await client.stream(make_request(verb::get, "/later"));
+    http::event_reader const events{response.body};
+
+    auto const second = [](http::event_reader const &reader) -> task<bool> {
+      try {
+        static_cast<void>(co_await reader.next());
+      } catch (std::logic_error const &) {
+        co_return true;
+      }
+
+      co_return false;
+    };
+
+    auto [first, refused] = co_await async::when_all(events.next(), second(events));
+
+    co_return first == http::server_sent_event{.data = "later"} && refused;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == true);
 }

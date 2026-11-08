@@ -36,26 +36,69 @@
 
 #include <quoll/http/event_reader.hpp>
 
+#include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace quoll::http {
 
-event_reader::event_reader(response_body body, std::size_t max_event_size) noexcept
-    : body_(std::move(body)), parser_(max_event_size) {}
+namespace {
 
-async::task<std::optional<server_sent_event>> event_reader::next() {
+// What a reader moved from reports.
+std::string const no_event_id;
+
+} // namespace
+
+event_reader::event_reader(response_body body, std::size_t max_event_size)
+    : state_(std::make_shared<state>(std::move(body), event_parser{max_event_size})) {}
+
+async::task<std::optional<server_sent_event>> event_reader::next() const { return read_next(state_); }
+
+std::string const &event_reader::last_event_id() const noexcept {
+  return state_ ? state_->parser.last_event_id() : no_event_id;
+}
+
+std::optional<std::chrono::milliseconds> event_reader::retry() const noexcept {
+  return state_ ? state_->parser.retry() : std::nullopt;
+}
+
+async::task<std::optional<server_sent_event>> event_reader::read_next(std::shared_ptr<state> reading) {
+  if (!reading) {
+    co_return std::nullopt;
+  }
+
+  if (reading->reading) {
+    throw std::logic_error{"quoll::http::event_reader: next() while another is pending"};
+  }
+
+  // Cleared on every way out, a throw or the frame destroyed while it waits included.
+  reading->reading = true;
+
+  struct done {
+    explicit done(state *reader) noexcept : of(reader) {}
+
+    done(done const &) = delete;
+    done &operator=(done const &) = delete;
+    done(done &&) = delete;
+    done &operator=(done &&) = delete;
+
+    ~done() { of->reading = false; }
+
+    state *of;
+  } const clear{reading.get()};
+
   for (;;) {
-    if (auto event = parser_.next()) {
+    if (auto event = reading->parser.next()) {
       co_return event;
     }
 
-    auto const piece = co_await body_.read();
+    auto const piece = co_await reading->body.read();
 
     if (!piece) {
       co_return std::nullopt;
     }
 
-    parser_.feed(*piece);
+    reading->parser.feed(*piece);
   }
 }
 
