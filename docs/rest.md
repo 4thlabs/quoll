@@ -489,9 +489,41 @@ async::task<> show_stars() {
 }
 ```
 
-An API's full support is [step 4 of the roadmap](PLAN.md#step-4-rest-from-a-command-line-program), and
-[scopes](#scopes), [interceptors](#interceptors) and the form and bytes [codecs](#codecs) are there. Not yet: an
-enumerator for the values an enum does not know, and an OpenAPI document generated from a contract.
+An API's full support is [step 4 of the roadmap](PLAN.md#step-4-rest-from-a-command-line-program-done), and
+[scopes](#scopes), [interceptors](#interceptors), the form and bytes [codecs](#codecs) and an enumerator for the values
+an enum does not know are there. Not yet: an OpenAPI document generated from a contract.
+
+### Values an enum does not know
+
+An API adds values to its enums over time, and a response holding a new one should still decode. A field of type
+`rest::open_enum<E>` reads a name of `E` as its enumerator, and keeps any other as it came:
+
+```cpp
+enum class issue_state { open, closed };
+
+template <>
+struct glz::meta<issue_state> {   // before the first use of the enum, as always
+  using enum issue_state;
+  static constexpr auto value = glz::enumerate(open, closed);
+};
+
+struct issue {
+  std::string title;
+  rest::open_enum<issue_state> state;   // "merged" kept as it came
+};
+
+if (found.state == issue_state::open) {
+  // ...
+}
+
+std::cout << found.state.name() << '\n';   // "merged"
+```
+
+`known()` gives the enumerator, if the name is one of the enum's. A name kept is written back as it came, so that what
+a program reads and sends again is unchanged. It is a string in JSON, the strict codec included, and a name as a query
+or header parameter. An enumerator the `glz::meta` has no name for (a cast, or `E{}` when no enumerator is 0) is not
+`known()`, and writing it fails, as for the enum. Only that field is open: the enum itself stays strict, a key of a map included, and a
+contract of Quoll's own server that takes the enum refuses a name it does not know with 400.
 
 A larger example, a contract with its server and client over TCP, is in
 [`samples/notes`](../samples/notes). A command-line program calling GitHub's API, natively and through `fetch` in
