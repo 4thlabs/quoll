@@ -31,11 +31,19 @@ endif()
 # cmake/QuollHelpers.cmake. The tests rely on those assertions.
 option(QUOLL_BENCH "Build the benchmark program, tests/bench" OFF)
 
+# A mixed load on a server and its clients, each on several threads (tests/load), for a sanitizer to watch: build it with
+# the sanitizer's flags. With the library's assertions, which QUOLL_BENCH turns off.
+option(QUOLL_LOAD "Build the load program, tests/load" OFF)
+
 # Fuzz targets (tests/fuzz), with Clang: everything is instrumented, so that libFuzzer sees Quoll's branches and its dependencies'.
 option(QUOLL_FUZZ "Build the fuzz targets, with Clang's libFuzzer under ASan and UBSan" OFF)
 
 if(QUOLL_BENCH AND QUOLL_BUILD_TESTS)
   message(FATAL_ERROR "QUOLL_BENCH goes without the tests, which need the assertions it turns off: -DQUOLL_BUILD_TESTS=OFF")
+endif()
+
+if(QUOLL_BENCH AND QUOLL_LOAD)
+  message(FATAL_ERROR "QUOLL_LOAD needs the assertions QUOLL_BENCH turns off: build them apart")
 endif()
 
 if(QUOLL_BENCH AND QUOLL_FUZZ)
@@ -87,6 +95,10 @@ endif()
 
 if(QUOLL_BENCH)
   add_subdirectory(tests/bench)
+endif()
+
+if(QUOLL_LOAD)
+  add_subdirectory(tests/load)
 endif()
 
 if(QUOLL_INSTALL)
