@@ -50,6 +50,7 @@
 #include <cassert>
 #include <coroutine>
 #include <cstddef>
+#include <exception>
 #include <memory>
 #include <optional>
 #include <span>
@@ -66,8 +67,7 @@ namespace quoll::io {
  * Writes never wait (the pipe is unbounded) and a read waits until the peer writes or closes; the reader resumes
  * on its own executor. A stop request on the reader's await_context ends a waiting read with
  * `std::errc::operation_canceled`. Destroying an end closes it, and the peer's writes then fail with
- * `std::errc::broken_pipe`. An end must not be destroyed or moved while one of its reads is pending, nor a read
- * destroyed while it waits.
+ * `std::errc::broken_pipe`. An end must not be destroyed or moved while one of its reads is pending.
  *
  * Move-only. Thread safety: none; both ends, and the stop requests reaching their reads, are used from one thread.
  */
@@ -85,21 +85,21 @@ public:
     // Moved into the awaiting coroutine before it suspends, when no stop callback is registered yet.
     read_awaitable(read_awaitable &&other) noexcept : channel_(other.channel_), buffer_(other.buffer_) {}
 
-    // A read resumes before it goes: a task's frame is destroyed only after that (see async::task), and so is the slot
-    // of an any_stream. One destroyed while it waits breaks the rules, which debug builds assert. A release build still
-    // takes it off the channel when no wake is queued for it, but cannot take back one that is.
+    // A coroutine suspended here may go, and the peer's next write must not then find it. One already woken is on its
+    // executor's queue, from where nothing can take it: it would resume a frame that is gone, so this ends the program
+    // now rather than then.
     ~read_awaitable() {
-      assert(!suspended_ && "memory_stream: a read destroyed while it waits");
-
       if (!suspended_) {
         return;
       }
 
       stop_callback_.reset();
 
-      if (!channel_->woken()) {
-        channel_->end_wait();
+      if (channel_->woken()) {
+        std::terminate();
       }
+
+      channel_->end_wait();
     }
 
     [[nodiscard]] bool await_ready() const noexcept { return buffer_.empty() || channel_->readable(); }

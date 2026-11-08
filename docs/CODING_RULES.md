@@ -75,8 +75,8 @@ guidelines and the C++ Core Guidelines.
   What an awaitable in it registers (its work item in an executor's queue, an I/O handler, a stop callback) is undone as it
   resumes or is cancelled, and never outlives the frame. `task` asserts it in debug builds, which run the tests. A program
   can break it only by starting a task by hand, through `await_suspend`, in an awaitable of its own: such code destroys a
-  task it started only once it has completed, as Quoll's roots do. Nothing destroys an awaitable while it waits, tests
-  included: one driven by hand is resumed first. A released root that never resumes leaks its frame, as do those a loop
+  task it started only once it has completed, as Quoll's roots do. Quoll's own code destroys no awaitable while it
+  waits; one a test destroys by hand undoes what it can, as a `memory_stream` read not yet woken does. A released root that never resumes leaks its frame, as do those a loop
   destroyed with work pending leaves. What is not a frame, as an object holding a timer or a stop callback, unregisters in
   its destructor, as `std::stop_callback` does.
 - Non-owning parameters as `std::string_view` / `std::span`; ownership through values or `std::unique_ptr`. No raw
