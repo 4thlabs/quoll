@@ -36,8 +36,10 @@
 
 #include <quoll/rest/retry.hpp>
 
+#include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/http/error.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
@@ -75,19 +77,38 @@ namespace {
          status == http::status::gateway_timeout;
 }
 
+// What may pass on another try: the network (a reset, a refused connection, a timeout, a connection ended in the
+// middle of a message), not what a message is (too large, too many redirects), nor a stop request.
+[[nodiscard]] bool may_pass(std::error_code const &code) {
+  if (code == std::errc::operation_canceled) {
+    return false;
+  }
+
+  if (code.category() == http::http_category()) {
+    return code == http::error::partial_message;
+  }
+
+  return true;
+}
+
 // By value: the interceptor that started it may go before it ends.
 async::task<http::response> retrying(int attempts, std::chrono::milliseconds delay, http::request message, next send) {
   auto wait = delay;
 
   for (int attempt = 1;; ++attempt) {
+    // A stop request ends the call between attempts too, whatever the transport makes of it.
+    if (attempt > 1 && (co_await async::current_stop_token()).stop_requested()) {
+      throw std::system_error{std::make_error_code(std::errc::operation_canceled)};
+    }
+
     auto const last = attempt >= attempts;
     std::optional<http::response> response;
 
     try {
       response = co_await send(last ? std::move(message) : message);
     } catch (std::system_error const &error) {
-      // A stop request ends the call, as does what failed on the last attempt.
-      if (last || error.code() == std::errc::operation_canceled) {
+      // What failed on the last attempt ends the call, as does what another try would not change.
+      if (last || !may_pass(error.code())) {
         throw;
       }
     }

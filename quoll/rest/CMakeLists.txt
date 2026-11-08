@@ -78,6 +78,10 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/query_type.cpp
     tests/compile_fail/reply_holds_undeclared.cpp
     tests/compile_fail/reply_without_returns.cpp
+    tests/compile_fail/scope_arguments.cpp
+    tests/compile_fail/scope_empty_api.cpp
+    tests/compile_fail/scope_not_nested.cpp
+    tests/compile_fail/scoped_scope_not_nested.cpp
     tests/compile_fail/returns_body_on_no_content.cpp
     tests/compile_fail/returns_informational.cpp
     tests/compile_fail/same_name.cpp

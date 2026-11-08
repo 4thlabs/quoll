@@ -42,7 +42,6 @@
 #include <quoll/rest/detail/type_list.hpp>
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <string_view>
 #include <tuple>
@@ -76,35 +75,44 @@ struct drop_front<Count, std::tuple<Types...>, std::index_sequence<Index...>> {
 // `Scope` and of its own, not those of the apis nested in it. They come first in the endpoint's arguments.
 template <class Api, class Scope, class Endpoint>
 inline constexpr std::size_t prefix_arity =
-    checked_path<Api::template route<Endpoint>::path_value>::parsed.size -
-    checked_path<Scope::template route<Endpoint>::path_value>::parsed.size + parameters_in(Scope::prefix);
+    checked_path<Api::template route<Endpoint>::path_value>::parsed.size + parameters_in(Scope::prefix) -
+    checked_path<Scope::template route<Endpoint>::path_value>::parsed.size;
 
-// Whether every endpoint of a scope has as many: they share the prefixes above it, unless an endpoint of it is also
-// elsewhere in the api, which find_route_t refuses.
-template <class Api, class Scope, class... Routes>
-[[nodiscard]] consteval bool same_prefix_arity(type_list<Routes...>) {
-  constexpr std::array arities{prefix_arity<Api, Scope, typename Routes::endpoint>...};
-
-  for (auto const arity : arities) {
-    if (arity != arities[0]) {
-      return false;
-    }
-  }
-
-  return true;
+// Whether every endpoint of `Inner` is one of `Outer`, once: an api nested in it, rather than a sibling whose prefixes
+// differ, whose arguments a scope would then fix wrongly.
+template <class Outer, class... Routes>
+[[nodiscard]] consteval bool nested_in(type_list<Routes...>) {
+  return ((matching_routes<typename Routes::endpoint, typename Outer::routes>::type::size == 1) && ...);
 }
+
+// What a scope fixes, computed only for an api nested in the client's: for another, what it would compute fails with
+// messages of its own, beside the static_assert that says why.
+template <bool Nested, class Api, class Scope>
+struct scope_prefix {
+  static constexpr std::size_t arity = 0;
+  using type = std::tuple<>;
+};
+
+template <class Api, class Scope>
+struct scope_prefix<true, Api, Scope> {
+  using first_endpoint = typename front<typename Scope::routes>::type::endpoint;
+
+  static constexpr std::size_t arity = prefix_arity<Api, Scope, first_endpoint>;
+  using type = typename take_front<arity, typename Api::template route<first_endpoint>::arguments>::type;
+};
 
 // `Api` as a scope of it sees it: the endpoints of `Scope` alone, their prefixes' parameters fixed. client_calls reads
 // the routes and their arguments from it, as from an api.
 template <class Api, class Scope>
 struct scope_view {
   static_assert(Scope::routes::size != 0, "quoll::rest::client::scope: the api has no endpoint");
-  static_assert(same_prefix_arity<Api, Scope>(typename Scope::routes{}),
-                "quoll::rest::client::scope: the endpoints of the api do not share the prefixes above it");
 
-  using first_endpoint = typename front<typename Scope::routes>::type::endpoint;
+  static constexpr bool nested = Scope::routes::size != 0 && nested_in<Api>(typename Scope::routes{});
 
-  static constexpr std::size_t arity = prefix_arity<Api, Scope, first_endpoint>;
+  static_assert(Scope::routes::size == 0 || nested,
+                "quoll::rest::client::scope: the api is not nested in the client's");
+
+  static constexpr std::size_t arity = scope_prefix<nested, Api, Scope>::arity;
 
   template <class Endpoint>
   struct scoped_route {
@@ -126,7 +134,7 @@ struct scope_view {
   using routes = typename scoped_routes<typename Scope::routes>::type;
 
   // The values a scope holds, of the types its endpoints take them as.
-  using prefix = typename take_front<arity, typename Api::template route<first_endpoint>::arguments>::type;
+  using prefix = typename scope_prefix<nested, Api, Scope>::type;
 };
 
 } // namespace quoll::rest::detail

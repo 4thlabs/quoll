@@ -88,6 +88,9 @@ public:
    */
   template <class Inner, class... More>
   [[nodiscard]] scoped_client<Client, Inner> scope(More... more) const {
+    static_assert(detail::nested_in<Scope>(typename Inner::routes{}),
+                  "quoll::rest::scoped_client::scope: the api is not nested in the scope's");
+
     using inner = typename scoped_client<Client, Inner>::prefix_type;
 
     static_assert(std::tuple_size_v<prefix_type> + sizeof...(More) == std::tuple_size_v<inner>,

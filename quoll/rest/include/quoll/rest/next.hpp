@@ -85,6 +85,11 @@ struct interception {
  */
 class next {
 public:
+  // A handle on shared state: copies and no moves, so that one moved from stays usable rather than hold a null pointer.
+  next(next const &) = default;
+  next &operator=(next const &) = default;
+  ~next() = default;
+
   /** @brief The response to `message`. What a later interceptor or the transport throws comes out of the task. */
   [[nodiscard]] async::task<http::response> operator()(http::request message) const;
 

@@ -47,15 +47,16 @@
 namespace quoll::rest {
 
 async::task<http::response> next::operator()(http::request message) const {
+  // The transport's task owns what it needs: no frame of this one around it.
+  if (position_ == through_->interceptors.size()) {
+    return through_->send(std::move(message));
+  }
+
   return send_from(through_, position_, std::move(message));
 }
 
 async::task<http::response> next::send_from(std::shared_ptr<detail::interception const> through, std::size_t position,
                                             http::request message) {
-  if (position == through->interceptors.size()) {
-    co_return co_await through->send(std::move(message));
-  }
-
   // In this frame, as the interceptor may take both by reference: they live until its task ends.
   next const following{through, position + 1};
   auto const &wrapping = through->interceptors[position];

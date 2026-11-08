@@ -34,7 +34,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/http/error.hpp>
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
@@ -53,6 +55,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -595,6 +598,7 @@ struct scripted_transport {
   struct state {
     std::vector<http::status> script;
     int failing = 0;
+    std::error_code failing_with = std::make_error_code(std::errc::connection_reset);
     int sent = 0;
   };
 
@@ -607,7 +611,7 @@ struct scripted_transport {
 
     if (shared->failing > 0) {
       --shared->failing;
-      throw std::system_error{std::make_error_code(std::errc::connection_reset)};
+      throw std::system_error{shared->failing_with};
     }
 
     http::response answer;
@@ -769,4 +773,68 @@ TEST_CASE("retry: waits between attempts, twice as long each time", "[rest][clie
   REQUIRE(quoll::test::run(time, completes(client.call<users::remove>(1))).value());
   REQUIRE(transport.shared->sent == 3);
   REQUIRE(time.now() == std::chrono::milliseconds{300});
+}
+
+TEST_CASE("retry: an error of the message itself is not sent again", "[rest][client]") {
+  scripted_transport const transport;
+  rest::client<v1, scripted_transport> client{transport};
+
+  client.use(rest::retry{.attempts = 3, .delay = std::chrono::milliseconds::zero()});
+  transport.shared->failing = 3;
+  transport.shared->failing_with = http::error::body_too_large;
+
+  REQUIRE_THROWS_AS(run(completes(client.call<users::remove>(1))), std::system_error);
+  REQUIRE(transport.shared->sent == 1);
+
+  // A connection ended in the middle of the response is the network's: sent again.
+  transport.shared->failing = 1;
+  transport.shared->failing_with = http::error::partial_message;
+  transport.shared->sent = 0;
+
+  REQUIRE(run(completes(client.call<users::remove>(1))));
+  REQUIRE(transport.shared->sent == 2);
+}
+
+TEST_CASE("retry: a stop request ends the call between attempts, whatever the transport makes of it",
+          "[rest][client]") {
+  scripted_transport const transport;
+  rest::client<v1, scripted_transport> client{transport};
+  quoll::async::run_loop loop;
+  std::stop_source stop;
+
+  client.use(rest::retry{.attempts = 3, .delay = std::chrono::milliseconds::zero()});
+  transport.shared->script = {http::status::service_unavailable, http::status::service_unavailable};
+  stop.request_stop();
+
+  // The transport answers 503 even so: retry sees the stop before sending again.
+  REQUIRE_THROWS_AS(quoll::test::run(loop, completes(client.call<users::remove>(1)), stop.get_token()),
+                    std::system_error);
+  REQUIRE(transport.shared->sent == 1);
+}
+
+TEST_CASE("client: a scope keeps the credentials and interceptors the client had when it was made", "[rest][client]") {
+  recording_transport const transport;
+  rest::client<v1, recording_transport> client{transport};
+  int earlier = 0;
+  int later = 0;
+
+  client.credentials<rest::bearer_auth>("first");
+  client.use([&earlier](http::request &&request, rest::next const &send) {
+    ++earlier;
+    return send(std::move(request));
+  });
+
+  auto const users_only = client.scope<users::api>();
+
+  client.credentials<rest::bearer_auth>("second");
+  client.use([&later](http::request &&request, rest::next const &send) {
+    ++later;
+    return send(std::move(request));
+  });
+
+  REQUIRE(run(completes(users_only.call<users::remove>(1))));
+  REQUIRE(transport.sent->back().fields.find("Authorization") == "Bearer first");
+  REQUIRE(earlier == 1);
+  REQUIRE(later == 0);
+  REQUIRE(&client.transport() == &users_only.client().transport());
 }

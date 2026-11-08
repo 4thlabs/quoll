@@ -105,8 +105,7 @@ public:
   template <class Endpoint>
   using arguments = detail::arguments_of<Api, Endpoint>;
 
-  explicit client(Transport transport) noexcept(std::is_nothrow_move_constructible_v<Transport>)
-      : transport_(std::move(transport)) {}
+  explicit client(Transport transport) : transport_(std::make_shared<Transport const>(std::move(transport))) {}
 
   /**
    * @brief A client of the server at `base_url`, through a transport built from it: with the default one, a connection
@@ -120,7 +119,7 @@ public:
    */
   explicit client(std::string base_url)
     requires std::constructible_from<Transport, std::string>
-      : transport_(without_trailing_slash(std::move(base_url))) {}
+      : transport_(std::make_shared<Transport const>(without_trailing_slash(std::move(base_url)))) {}
 
   /**
    * @brief A client of the server at `base_url`, as above, with the options of its transport, if it has any.
@@ -132,7 +131,8 @@ public:
   template <class T = Transport>
   client(std::string base_url, typename T::options_type options)
     requires std::constructible_from<T, std::string, typename T::options_type>
-      : transport_(without_trailing_slash(std::move(base_url)), std::move(options)) {}
+      : transport_(std::make_shared<Transport const>(without_trailing_slash(std::move(base_url)), std::move(options))) {
+  }
 
   /** @brief The credential sent, from now on, to the endpoints that require `Scheme`. */
   template <class Scheme>
@@ -147,28 +147,17 @@ public:
    * @brief Wraps every request the client sends from now on, inside the interceptors added before: `wrapping` gets the
    * request and what sends it on (the next interceptor, then the transport), and returns the response.
    *
-   * A copy of the client, a scope of it included, shares the interceptors it had; one added after to either is its own.
-   * The transport is copied once for them, so that a call keeps what it sends through until its task ends.
+   * A copy of the client shares the interceptors it had, and one added after to either is its own; a scope keeps those
+   * the client had when it was made. A call keeps what it sends through until its task ends.
    *
    * @code
    * api.use(quoll::rest::retry{.attempts = 3});
-   * api.use([&tokens](quoll::http::request request, quoll::rest::next const &send) ->
-   * quoll::async::task<quoll::http::response> { auto response = co_await send(request);
-   *
-   *   if (response.status == quoll::http::status::unauthorized) {
-   *     request.fields.set("Authorization", "Bearer " + co_await tokens.refresh());
-   *     response = co_await send(std::move(request));
-   *   }
-   *
-   *   co_return response;
-   * });
+   * api.use(refresh_on_401);   // an interceptor of the program's: see docs/rest.md
    * @endcode
    *
    * @throws std::invalid_argument for an empty interceptor.
    */
-  void use(interceptor wrapping)
-    requires std::copy_constructible<Transport>
-  {
+  void use(interceptor wrapping) {
     if (!wrapping) {
       throw std::invalid_argument{"quoll::rest::client::use: an empty interceptor"};
     }
@@ -177,7 +166,7 @@ public:
         interception_
             ? std::make_shared<detail::interception>(*interception_)
             : std::make_shared<detail::interception>(detail::interception{
-                  {}, [transport = transport_](http::request message) { return transport.send(std::move(message)); }});
+                  {}, [transport = transport_](http::request message) { return transport->send(std::move(message)); }});
 
     grown->interceptors.push_back(std::move(wrapping));
     interception_ = std::move(grown);
@@ -185,7 +174,8 @@ public:
 
   /**
    * @brief The endpoints of `Scope`, an api nested in this one, with `prefix`, the parameters of the prefixes above
-   * them in order, fixed: those of `Scope`'s own prefix included. It keeps a copy of this client as it is now.
+   * them in order, fixed: those of `Scope`'s own prefix included. It keeps a copy of this client as it is now:
+   * credentials and interceptors given to the client after do not reach it.
    *
    * @code
    * auto repo = github.scope<github::repos::api>("4thlabs", "quoll");   // api<"/repos/{owner}/{repo}", ...>
@@ -202,7 +192,7 @@ public:
   }
 
   /** @brief The transport the client sends its requests with. */
-  [[nodiscard]] Transport const &transport() const noexcept QUOLL_LIFETIMEBOUND { return transport_; }
+  [[nodiscard]] Transport const &transport() const noexcept QUOLL_LIFETIMEBOUND { return *transport_; }
 
 private:
   template <class, class, class>
@@ -214,7 +204,7 @@ private:
   // Through the interceptors, if any: the transport alone otherwise, as before any was added.
   [[nodiscard]] async::task<http::response> send(http::request message) const {
     if (!interception_) {
-      return transport_.send(std::move(message));
+      return transport_->send(std::move(message));
     }
 
     return detail::send_through(interception_, std::move(message));
@@ -243,7 +233,8 @@ private:
     return url;
   }
 
-  Transport transport_;
+  // Shared by its copies and its interceptors: sent with through const functions only, as an http::HttpTransport is.
+  std::shared_ptr<Transport const> transport_;
   detail::credential_map credentials_;
   // Null until use(): a client with no interceptor sends straight through its transport.
   std::shared_ptr<detail::interception const> interception_;

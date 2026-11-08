@@ -320,8 +320,8 @@ client.use([&tokens](http::request &&request, rest::next const &send) -> async::
 OPTIONS and TRACE, without a `body_writer`. A stop request ends the call at once. Its wait needs the executor's timer,
 which `quoll::runtime` has; a `delay` of zero waits for nothing.
 
-A copy of the client, a scope included, shares the interceptors it had; one added after to either is its own. The
-transport is copied once for them, so that it has to be copyable, as `http::client` and `http::local_transport` are.
+A copy of the client shares the interceptors it had, and one added after to either is its own. A scope keeps those the
+client had when it was made, and takes none of its own: make the scope from a client that has them.
 
 ## Codecs
 

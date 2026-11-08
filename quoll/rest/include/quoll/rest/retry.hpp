@@ -48,11 +48,13 @@ namespace quoll::rest {
 
 /**
  * @brief An interceptor (see client::use) sending a request again when it may have failed on the way rather than
- * at the server: after a network error, or a 502, 503 or 504. Up to `attempts` in all, waiting `delay` before the
- * second, then twice as long each time.
+ * at the server: after a network error (a reset, a refused connection, a timeout, a connection ended in the middle of
+ * the response), or a 502, 503 or 504. An error of the message itself (too large, too many redirects) is no reason. Up
+ * to `attempts` in all, waiting `delay` before the second, then twice as long each time.
  *
  * Only a request that may be sent twice with the same effect is: GET, HEAD, PUT, DELETE, OPTIONS and TRACE (RFC 9110,
- * 9.2.2), with no `body_writer`, which runs once. A stop request is no failure: it ends the call at once. The wait
+ * 9.2.2), with no `body_writer`, which runs once. A stop request is no failure: it ends the call, between attempts
+ * too. The wait
  * needs the timer of the executor that calls (see async::sleep_for); with a `delay` of zero, there is none.
  *
  * @code
