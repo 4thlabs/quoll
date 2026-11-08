@@ -605,6 +605,36 @@ TEST_CASE("any_stream: an operation that throws leaves room for the next", "[io]
   REQUIRE(run(reading()) == 2);
 }
 
+TEST_CASE("any_stream: a read reports what can be trusted, whoever reads", "[io][any_stream]") {
+  struct misreporting_stream {
+    io::io_result answer;
+
+    [[nodiscard]] static task<io::io_result> done(io::io_result result) { co_return result; }
+
+    [[nodiscard]] task<io::io_result> read_some(std::span<std::byte>) { return done(answer); }
+
+    [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) { return done(answer); }
+  };
+
+  std::array<std::byte, 4> buffer{};
+
+  auto const reading = [&](io::io_result answer) -> task<io::io_result> {
+    io::any_stream stream{misreporting_stream{answer}};
+
+    co_return co_await stream.read_some(buffer);
+  };
+
+  auto const past = run(reading({{}, 5}));
+  auto const nothing = run(reading({{}, 0}));
+  auto const fine = run(reading({{}, 4}));
+
+  REQUIRE(past->error == std::errc::io_error);
+  REQUIRE(past->transferred == 0);
+  REQUIRE(nothing->error == std::errc::io_error);
+  REQUIRE_FALSE(fine->error);
+  REQUIRE(fine->transferred == 4);
+}
+
 TEST_CASE("any_stream: target of what is no stream is nothing", "[io][any_stream]") {
   io::any_stream stream{task_stream{}};
   auto const &same = stream;

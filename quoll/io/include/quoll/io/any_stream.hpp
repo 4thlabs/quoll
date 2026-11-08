@@ -43,6 +43,7 @@
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/detail/erasable_stream.hpp>
+#include <quoll/io/detail/sound_read.hpp>
 #include <quoll/io/detail/stream_vtable.hpp>
 #include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
@@ -86,7 +87,8 @@ public:
 
     // The wrapped awaitable stays where it was built: only the handle on it moves.
     awaitable(awaitable &&other) noexcept
-        : awaitable_(std::exchange(other.awaitable_, nullptr)), vtable_(other.vtable_), pending_(other.pending_) {}
+        : awaitable_(std::exchange(other.awaitable_, nullptr)), vtable_(other.vtable_), pending_(other.pending_),
+          asked_(other.asked_) {}
 
     ~awaitable() { finish(); }
 
@@ -104,11 +106,12 @@ public:
     }
 
     // The next operation may start as soon as this one has its result, whatever holds this object, and its slot is
-    // free by then.
+    // free by then. A read reports what can be trusted, for every reader at once: see detail::sound_read.
     [[nodiscard]] io_result await_resume() {
       finish_on_exit const finished{*this};
+      auto const result = vtable_->resume(awaitable_);
 
-      return vtable_->resume(awaitable_);
+      return asked_ == not_a_read ? result : detail::sound_read(result, asked_);
     }
 
   private:
@@ -133,12 +136,16 @@ public:
       }
     }
 
-    awaitable(void *wrapped, detail::awaitable_vtable const &vtable, bool &pending) noexcept
-        : awaitable_(wrapped), vtable_(&vtable), pending_(&pending) {}
+    static constexpr std::size_t not_a_read = static_cast<std::size_t>(-1);
+
+    awaitable(void *wrapped, detail::awaitable_vtable const &vtable, bool &pending,
+              std::size_t asked = not_a_read) noexcept
+        : awaitable_(wrapped), vtable_(&vtable), pending_(&pending), asked_(asked) {}
 
     void *awaitable_;
     detail::awaitable_vtable const *vtable_;
     bool *pending_;
+    std::size_t asked_;
   };
 
   /** @brief Takes `stream` over. */
@@ -181,7 +188,7 @@ public:
     auto *const wrapped = vtable_->read_some(block_, buffer);
 
     reading_ = true;
-    return awaitable{wrapped, *vtable_->read, reading_};
+    return awaitable{wrapped, *vtable_->read, reading_, buffer.size()};
   }
 
   /** @brief Writes with the wrapped stream. */

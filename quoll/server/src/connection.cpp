@@ -65,7 +65,6 @@
 #include <quoll/http/write.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/byte_stream.hpp>
-#include <quoll/io/detail/sound_read.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/io_result.hpp>
 #include <quoll/io/write.hpp>
@@ -144,8 +143,7 @@ async::task<waited> wait_for_request(io::any_stream &stream, std::string &buffer
   std::array<char, 4096> chunk;
 
   while (buffer.empty()) {
-    auto const received =
-        io::detail::sound_read(co_await stream.read_some(std::as_writable_bytes(std::span{chunk})), chunk.size());
+    auto const received = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
 
     if (received.error) {
       auto const ended = received.error == std::errc::operation_canceled || received.error == io::error::end_of_stream;

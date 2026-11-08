@@ -137,6 +137,9 @@ public:
     reading_ = true;
   }
 
+  // The read that waited is woken, on its executor's queue, and has not resumed yet.
+  [[nodiscard]] bool woken() const noexcept { return reading_ && reader_ == nullptr; }
+
   // The read that waited has resumed.
   void end_wait() noexcept {
     reader_ = nullptr;

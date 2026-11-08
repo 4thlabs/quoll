@@ -48,8 +48,7 @@ namespace quoll::io {
 /**
  * @brief A ByteStream that can stop sending and go on reading.
  *
- * `shutdown_send()` returns a ContextAwaitable resuming with an io_result, which any_stream makes
- * `std::errc::operation_not_supported` over a stream that is not one: the peer then reads what was sent, and
+ * `shutdown_send()` returns a ContextAwaitable resuming with an io_result: the peer then reads what was sent, and
  * `io::error::end_of_stream`. Reading still works, and nothing may be written afterwards. No read or write may be
  * pending while it runs.
  *
