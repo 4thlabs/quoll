@@ -45,7 +45,9 @@
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/io/network_ref.hpp>
+#if defined(QUOLL_ASIO_TLS)
 #include <quoll/io/tls_network_ref.hpp>
+#endif
 
 #include <memory>
 #include <stop_token>
@@ -111,7 +113,7 @@ public:
     /** @brief The timer of the runtime's loop, as long-lived as the runtime. */
     [[nodiscard]] async::timer_ref query(async::service_tag<async::timer_ref>) const;
 
-    /** @brief What runs blocking work away from the loop: valid while this lives. */
+    /** @brief What runs blocking work away from the loop, as long-lived as the runtime. */
     [[nodiscard]] async::offloader_ref query(async::service_tag<async::offloader_ref>) const;
 
 #if defined(QUOLL_ASIO_TLS)

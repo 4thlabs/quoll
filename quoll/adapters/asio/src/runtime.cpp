@@ -193,6 +193,7 @@ public:
 
   // The last executor is gone: the signals no longer have a task to stop, and would keep the loop running. Posted while
   // the guard still holds the loop, which then runs this before it ends, and before the runtime can go.
+  // Under memory pressure, a post that throws std::bad_alloc here ends the program, as a destructor cannot report it.
   ~work_token() {
     ::asio::post(state_->context, [shared = state_] {
       if (shared->idle() && shared->signals) {

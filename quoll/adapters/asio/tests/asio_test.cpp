@@ -77,6 +77,7 @@
 #include <quoll/test/run_task.hpp>
 #include <quoll/threads/thread_pool.hpp>
 
+#include <asio/any_io_executor.hpp>
 #include <asio/buffer.hpp>
 #include <asio/error.hpp>
 #include <asio/executor_work_guard.hpp>
@@ -85,6 +86,7 @@
 #include <asio/ip/tcp.hpp>
 
 #include <asio/post.hpp>
+#include <asio/strand.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -109,8 +111,10 @@
 #include <stdexcept>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <thread>
+#include <type_traits>
 #include <utility>
 
 // The contract of the REST calls over TCP. Not in the unnamed namespace: Glaze reflects types with external linkage.
@@ -931,6 +935,100 @@ TEST_CASE("asio: a stop request abandons a request waiting for its response", "[
 
   REQUIRE(error);
   REQUIRE(*error == std::errc::operation_canceled);
+}
+
+TEST_CASE("asio: a stream moved before its shutdown runs keeps it, and refuses what would follow", "[asio]") {
+  ::asio::io_context context;
+  auto listening = listen(context);
+  tcp::socket client{context};
+
+  client.connect(listening.local_endpoint());
+
+  auto server = listening.accept();
+  quoll::asio::tcp_stream stream{std::move(client)};
+  std::optional<std::pair<io::io_result, io::io_result>> results;
+  std::exception_ptr failure;
+
+  auto const work = [&]() -> task<std::pair<io::io_result, io::io_result>> {
+    // Its state is bound at the call: the stream may move before the task runs.
+    auto stopping = stream.shutdown_send();
+    quoll::asio::tcp_stream moved{std::move(stream)};
+    auto const stopped = co_await std::move(stopping);
+    std::array<std::byte, 4> const data{};
+    auto const written = co_await moved.write_some(data);
+
+    co_return std::pair{stopped, written};
+  };
+
+  spawn(context, work(), results, failure);
+  run(context, failure);
+
+  std::array<char, 4> received{};
+  std::error_code ended;
+
+  static_cast<void>(server.read_some(::asio::buffer(received), ended));
+
+  REQUIRE(results);
+  REQUIRE_FALSE(results->first.error);
+  REQUIRE(results->second.error == std::errc::broken_pipe);
+  REQUIRE(ended == ::asio::error::eof);
+}
+
+TEST_CASE("asio: the executor over a strand, its loop run by two threads", "[asio]") {
+  ::asio::io_context context;
+  auto const strand = ::asio::make_strand(context);
+  quoll::asio::executor<std::remove_cvref_t<decltype(strand)>> const executor{strand};
+  std::optional<std::string> answer;
+  std::exception_ptr failure;
+
+  // What it opens and accepts runs one handler at a time, on two threads: TSan sees it if not.
+  auto const work = [&]() -> task<std::string> {
+    auto listener = executor.listen("127.0.0.1", 0);
+    auto const port = listener.local_port().value();
+
+    auto const serving = [&]() -> task<> {
+      auto stream = co_await listener.accept();
+      std::array<char, 8> received{};
+
+      (void)co_await stream.read_some(std::as_writable_bytes(std::span{received}));
+
+      std::string_view const reply = "pong";
+
+      (void)co_await io::write(stream, std::as_bytes(std::span{reply}));
+    };
+
+    auto const calling = [&]() -> task<std::string> {
+      auto stream = co_await executor.connect("127.0.0.1", port);
+      std::string_view const ping = "ping";
+      std::array<char, 8> received{};
+
+      (void)co_await io::write(stream, std::as_bytes(std::span{ping}));
+
+      auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{received}));
+
+      co_return std::string{received.data(), read.transferred};
+    };
+
+    auto [served, reply] = co_await quoll::async::when_all(serving(), calling());
+
+    static_cast<void>(served);
+    co_return reply;
+  };
+
+  co_spawn(executor, work(),
+           overloaded{[&](std::string value) { answer = std::move(value); },
+                      [&](std::exception_ptr error) { failure = std::move(error); }});
+
+  std::thread other{[&context] { context.run(); }};
+
+  context.run();
+  other.join();
+
+  if (failure) {
+    std::rethrow_exception(failure);
+  }
+
+  REQUIRE(answer == "pong");
 }
 
 TEST_CASE("asio::runtime runs a task to its end", "[asio][runtime]") {

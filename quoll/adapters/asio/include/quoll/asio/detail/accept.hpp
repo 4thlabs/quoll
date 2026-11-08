@@ -40,6 +40,7 @@
 #include <quoll/asio/detail/cancellation.hpp>
 #include <quoll/asio/detail/io_error.hpp>
 #include <quoll/asio/detail/operation.hpp>
+#include <quoll/asio/detail/socket_options.hpp>
 #include <quoll/asio/tcp_stream.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_stream.hpp>
@@ -60,15 +61,6 @@ struct acceptor_state {
   ::asio::ip::tcp::acceptor acceptor;
   std::shared_ptr<cancellation> cancel;
 };
-
-// What an HTTP response in several writes would otherwise wait for: the last of them, too small to fill a packet, stays
-// until the peer acknowledges the one before, which it delays, by 40 ms on Linux. A socket refusing this works all the
-// same.
-inline void disable_nagle(::asio::ip::tcp::socket &socket) noexcept {
-  std::error_code ignored;
-
-  socket.set_option(::asio::ip::tcp::no_delay{true}, ignored);
-}
 
 inline async::task<::asio::ip::tcp::socket> accept_socket(acceptor_state &state) {
   // Accepted into a socket of its own: the operation's values are default constructible, a socket is not.

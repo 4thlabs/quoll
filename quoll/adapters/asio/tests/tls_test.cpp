@@ -48,6 +48,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace {
@@ -77,6 +78,14 @@ http::request make_request(http::verb method, std::string target, std::string bo
 
 #if defined(QUOLL_ASIO_TLS)
 
+#include <asio/io_context.hpp>
+#include <asio/ip/address_v4.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/ssl/context.hpp>
+#include <asio/ssl/verify_mode.hpp>
+#include <quoll/asio/executor.hpp>
+#include <quoll/asio/tls_acceptor.hpp>
+#include <quoll/asio/tls_stream.hpp>
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
@@ -551,7 +560,24 @@ TEST_CASE("TLS: a client closing its side gets TLS's closing message back", "[tl
 
     // The server has answered once this has come: the connection is then waiting for the next request.
     (void)co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
-    (void)co_await stream.shutdown_send();
+
+    auto const closed = co_await stream.shutdown_send();
+
+    if (closed.error) {
+      co_return closed.error;
+    }
+
+    // Once: a second closing message would follow the socket's own end, and nothing goes after it.
+    auto const again = co_await stream.shutdown_send();
+
+    if (again.error) {
+      co_return again.error;
+    }
+
+    if (auto const after = co_await stream.write_some(std::as_bytes(std::span{request}));
+        after.error != std::errc::broken_pipe) {
+      co_return std::make_error_code(std::errc::protocol_error);
+    }
 
     for (;;) {
       auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
@@ -563,6 +589,129 @@ TEST_CASE("TLS: a client closing its side gets TLS's closing message back", "[tl
   };
 
   REQUIRE(run_task(with_server<std::error_code>(server_certificate(), call)) == io::error::end_of_stream);
+}
+
+TEST_CASE("TLS: a stream moved before its handshake and its shutdown run keeps them", "[tls][asio]") {
+  ::asio::io_context context;
+  quoll::asio::tls_acceptor acceptor{
+      ::asio::ip::tcp::acceptor{context, ::asio::ip::tcp::endpoint{::asio::ip::address_v4::loopback(), 0}},
+      server_certificate()};
+  ::asio::ip::tcp::endpoint const endpoint{::asio::ip::address_v4::loopback(), acceptor.local_port()};
+  ::asio::ssl::context client_context{::asio::ssl::context::tls_client};
+  std::optional<std::pair<std::error_code, std::error_code>> outcome;
+  std::exception_ptr failure;
+
+  client_context.set_verify_mode(::asio::ssl::verify_none);
+
+  auto const work = [&]() -> task<std::pair<std::error_code, std::error_code>> {
+    // The server gets the client's closing message as the end of the stream.
+    auto const serving = [&]() -> task<std::error_code> {
+      auto stream = co_await acceptor.accept();
+      std::array<char, 64> received{};
+
+      for (;;) {
+        auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{received}));
+
+        if (read.error) {
+          co_return read.error;
+        }
+      }
+    };
+
+    auto const calling = [&]() -> task<std::error_code> {
+      ::asio::ip::tcp::socket socket{context};
+
+      socket.connect(endpoint);
+
+      quoll::asio::tls_stream stream{quoll::asio::tls_stream::session_type{std::move(socket), client_context}};
+      // Each binds the stream's state at the call: it may move before the task runs.
+      auto shaking = stream.handshake(quoll::asio::tls_stream::session_type::client);
+      quoll::asio::tls_stream moved{std::move(stream)};
+
+      if (auto const error = co_await std::move(shaking)) {
+        co_return error;
+      }
+
+      auto stopping = moved.shutdown_send();
+      quoll::asio::tls_stream const again{std::move(moved)};
+
+      co_return (co_await std::move(stopping)).error;
+    };
+
+    auto [server, client] = co_await when_all(serving(), calling());
+
+    co_return std::pair{server, client};
+  };
+
+  quoll::async::co_spawn(
+      quoll::asio::executor{context.get_executor()}, work(),
+      quoll::test::overloaded{[&](std::pair<std::error_code, std::error_code> value) { outcome = value; },
+                              [&](std::exception_ptr error) { failure = std::move(error); }});
+  context.run();
+
+  if (failure) {
+    std::rethrow_exception(failure);
+  }
+
+  REQUIRE(outcome);
+  REQUIRE(outcome->first == io::error::end_of_stream);
+  REQUIRE_FALSE(outcome->second);
+}
+
+TEST_CASE("TLS: an acceptor moved while its accept is pending still accepts", "[tls][asio]") {
+  ::asio::io_context context;
+  quoll::asio::tls_acceptor acceptor{
+      ::asio::ip::tcp::acceptor{context, ::asio::ip::tcp::endpoint{::asio::ip::address_v4::loopback(), 0}},
+      server_certificate()};
+  auto const port = acceptor.local_port();
+  std::optional<std::string> answer;
+  std::exception_ptr failure;
+
+  auto const work = [&]() -> task<std::string> {
+    std::optional<quoll::asio::tls_acceptor> moved;
+
+    auto const serving = [&]() -> task<> {
+      auto stream = co_await acceptor.accept();
+      std::array<char, 16> received{};
+
+      (void)co_await stream.read_some(std::as_writable_bytes(std::span{received}));
+
+      std::string_view const reply = "pong";
+
+      (void)co_await io::write(stream, std::as_bytes(std::span{reply}));
+    };
+
+    auto const calling = [&]() -> task<std::string> {
+      // The accept has started, and waits: the acceptor moves under it, before anyone connects.
+      moved.emplace(std::move(acceptor));
+
+      auto stream = co_await io::connect_tls("127.0.0.1", port, trusting_the_authority().tls);
+      std::string_view const ping = "ping";
+      std::array<char, 16> received{};
+
+      (void)co_await io::write(stream, std::as_bytes(std::span{ping}));
+
+      auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{received}));
+
+      co_return std::string{received.data(), read.transferred};
+    };
+
+    auto [served, reply] = co_await when_all(serving(), calling());
+
+    static_cast<void>(served);
+    co_return reply;
+  };
+
+  quoll::async::co_spawn(quoll::asio::executor{context.get_executor()}, work(),
+                         quoll::test::overloaded{[&](std::string value) { answer = std::move(value); },
+                                                 [&](std::exception_ptr error) { failure = std::move(error); }});
+  context.run();
+
+  if (failure) {
+    std::rethrow_exception(failure);
+  }
+
+  REQUIRE(answer == "pong");
 }
 
 TEST_CASE("TLS: a client still sending a refused body gets its answer and the end of it", "[tls][asio][runtime]") {

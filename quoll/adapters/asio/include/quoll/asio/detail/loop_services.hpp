@@ -41,7 +41,9 @@
 #include <quoll/async/service.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/io/network_ref.hpp>
+#if defined(QUOLL_ASIO_TLS)
 #include <quoll/io/tls_network_ref.hpp>
+#endif
 
 namespace quoll::asio::detail {
 

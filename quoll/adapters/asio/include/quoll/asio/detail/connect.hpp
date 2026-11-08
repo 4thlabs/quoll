@@ -40,6 +40,7 @@
 #include <quoll/asio/detail/cancellation.hpp>
 #include <quoll/asio/detail/io_error.hpp>
 #include <quoll/asio/detail/operation.hpp>
+#include <quoll/asio/detail/socket_options.hpp>
 #include <quoll/asio/tcp_stream.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_stream.hpp>
@@ -131,10 +132,7 @@ inline async::task<::asio::ip::tcp::socket> connect_socket(::asio::any_io_execut
                             "quoll::asio::connector: cannot connect to " + host + ":" + service};
   }
 
-  // As in accept.hpp, for a request in several writes.
-  std::error_code ignored;
-
-  socket.set_option(::asio::ip::tcp::no_delay{true}, ignored);
+  disable_nagle(socket);
   co_return socket;
 }
 

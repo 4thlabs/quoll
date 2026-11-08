@@ -57,9 +57,11 @@
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/network.hpp>
 #include <quoll/io/network_ref.hpp>
+#if defined(QUOLL_ASIO_TLS)
 #include <quoll/io/tls_network.hpp>
 #include <quoll/io/tls_network_ref.hpp>
 #include <quoll/io/tls_options.hpp>
+#endif
 
 #include <asio/any_io_executor.hpp>
 #include <asio/execution/outstanding_work.hpp>
@@ -89,6 +91,10 @@ namespace quoll::asio {
  * is the timer of its execution context (async::Timer), for async::sleep_for() and async::with_timeout(), and, when
  * built with OpenSSL (see QUOLL_TLS), its TLS network (io::TlsNetwork), for io::connect_tls() and io::listen_tls(). And
  * what runs blocking work away from the loop (async::Offloader), for async::offload().
+ *
+ * Its sockets, timers and the cancellation of their operations need an asio executor running one handler at a time: an
+ * io_context run by one thread, or a strand, as quoll::asio::runtime has it. Over a strand, every connection that
+ * listen() accepts shares the acceptor's strand.
  *
  * Thread safety: post() may be called from any thread, as asio's post can.
  */
