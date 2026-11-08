@@ -189,11 +189,17 @@ std::optional<server_sent_event> event_parser::take_line(std::string_view line) 
     append_text(data_, value);
     data_.push_back('\n');
   } else if (field == "id") {
-    // Ignored, as one holding a NUL, when too long: what a browser keeps, a stream does not fail on.
+    // Ignored, as one holding a NUL, when too long once read: what a browser keeps, a stream does not fail on, and
+    // what is kept, format_event writes again. Too long as it came, it is not even read.
     if (!value.contains('\0') && value.size() <= max_id_size) {
-      id_buffer_.clear();
-      append_text(id_buffer_, value);
-      id_changed_ = true;
+      std::string read;
+
+      append_text(read, value);
+
+      if (read.size() <= max_id_size) {
+        id_buffer_ = std::move(read);
+        id_changed_ = true;
+      }
     }
   } else if (field == "retry") {
     if (auto const delay = retry_value(value)) {

@@ -170,6 +170,12 @@ TEST_CASE("event_parser: an id longer than max_id_size is ignored, the stream go
 
   REQUIRE(parser.next() == event("b", longest));
   REQUIRE(parser.last_event_id() == longest);
+  REQUIRE_FALSE(parser.next());
+
+  // Short as it came, too long once read: 342 bytes, 1026 with U+FFFD for each.
+  parser.feed("id: " + std::string(342, '\xFF') + "\ndata: c\n\n");
+
+  REQUIRE(parser.next() == event("c", longest));
 }
 
 TEST_CASE("event_parser: a BOM still to come, then a CR", "[http][sse]") {

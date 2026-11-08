@@ -100,8 +100,9 @@ public:
   [[nodiscard]] std::optional<server_sent_event> next();
 
   /**
-   * @brief The most an `id` field holds, as it came: http::max_event_id_size, 1 KiB. A longer one is ignored, as one
-   * holding a NUL is, as each event carries a copy, and it goes back in a header.
+   * @brief The most an `id` field holds once read, U+FFFD in place of what is not UTF-8: http::max_event_id_size,
+   * 1 KiB. A longer one is ignored, as one holding a NUL is, the last ID staying, as each event carries a copy, and it
+   * goes back in a header.
    */
   static constexpr std::size_t max_id_size = max_event_id_size;
 
