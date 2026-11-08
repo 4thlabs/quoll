@@ -84,11 +84,13 @@ http::request make_request(http::verb method, std::string target, std::string bo
 #include <asio/ssl/context.hpp>
 #include <asio/ssl/verify_mode.hpp>
 #include <quoll/asio/executor.hpp>
+#include <quoll/asio/runtime.hpp>
 #include <quoll/asio/tls_acceptor.hpp>
 #include <quoll/asio/tls_stream.hpp>
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
+#include <quoll/async/runtime_options.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/http/body_reader.hpp>
 #include <quoll/http/body_stream.hpp>
@@ -104,6 +106,7 @@ http::request make_request(http::verb method, std::string target, std::string bo
 #include <quoll/test/overloaded.hpp>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <exception>
 #include <functional>
@@ -363,6 +366,71 @@ TEST_CASE("TLS: a client calls a server, checking its certificate against an aut
 
 TEST_CASE("TLS: http::server serves over TLS with a certificate", "[tls][asio][runtime][server]") {
   REQUIRE(run_task(listen_and_get(free_port())) == "hello");
+}
+
+TEST_CASE("TLS: http::server and its clients on a runtime of four threads", "[tls][asio][runtime][threads][server]") {
+  quoll::asio::runtime runtime{quoll::async::runtime_options{.threads = 4}};
+  auto const port = free_port();
+  constexpr int clients = 8;
+  constexpr int requests = 4;
+  std::stop_source server_stop;
+  std::atomic<int> right{0};
+  std::atomic<int> ended{0};
+  std::atomic<int> failures{0};
+
+  co_spawn(runtime.get_executor(), http::server{make_router()}.listen(port, {.tls = server_certificate()}),
+           quoll::test::overloaded{[] {}, [&failures](std::exception_ptr) { ++failures; }}, server_stop.get_token());
+
+  auto const calling = [](std::string url) -> task<int> {
+    // Until the server listens: it starts on another thread.
+    for (int attempt = 0;; ++attempt) {
+      try {
+        http::client const client{url, trusting_the_authority()};
+        int counted = 0;
+
+        for (int request = 0; request < requests; ++request) {
+          auto const hello = co_await client.send(make_request(http::verb::get, "/hello"));
+
+          counted += hello.body == "hello" ? 1 : 0;
+
+          auto const echoed = co_await client.send(make_request(http::verb::post, "/echo", "ping"));
+
+          counted += echoed.body == "ping" ? 1 : 0;
+        }
+
+        co_return counted;
+      } catch (std::system_error const &) {
+        if (attempt == 50) {
+          throw;
+        }
+      }
+
+      co_await quoll::async::sleep_for(20ms);
+    }
+  };
+
+  for (int client = 0; client < clients; ++client) {
+    co_spawn(runtime.get_executor(), calling("https://127.0.0.1:" + std::to_string(port)),
+             quoll::test::overloaded{[&](int counted) {
+                                       right += counted;
+
+                                       if (++ended == clients) {
+                                         server_stop.request_stop();
+                                       }
+                                     },
+                                     [&](std::exception_ptr) {
+                                       ++failures;
+
+                                       if (++ended == clients) {
+                                         server_stop.request_stop();
+                                       }
+                                     }});
+  }
+
+  runtime.run();
+
+  REQUIRE(failures == 0);
+  REQUIRE(right == clients * requests * 2);
 }
 
 TEST_CASE("TLS: the server is reached by its name", "[tls][asio][runtime]") {

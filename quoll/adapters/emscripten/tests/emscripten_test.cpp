@@ -39,6 +39,7 @@
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/lifetimebound.hpp>
+#include <quoll/async/runtime_options.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer_ref.hpp>
@@ -47,6 +48,7 @@
 #include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/emscripten.hpp>
+#include <quoll/emscripten/runtime.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/platform_ref.hpp>
 #include <quoll/http/request.hpp>
@@ -1368,4 +1370,30 @@ TEST_CASE("http::client through fetch: the status text counts toward the head's 
   REQUIRE_FALSE(run(error_of(http::client{server.url(), {.limits = {.max_header_size = fields + 2}}})));
   REQUIRE(run(error_of(http::client{server.url(), {.limits = {.max_header_size = fields + 1}}})) ==
           http::error::header_too_large);
+}
+
+TEST_CASE("emscripten::runtime takes the options of every runtime, and runs its tasks", "[emscripten]") {
+  // Four asked for: the browser runs one, and the build has no threads to tell apart.
+  quoll::emscripten::runtime runtime{quoll::async::runtime_options{.threads = 4}};
+  auto const answer = []() -> task<int> {
+    co_await quoll::async::yield();
+    co_return 42;
+  };
+
+  std::optional<int> result;
+
+  co_spawn(runtime.get_executor(), answer(),
+           overloaded{[&result](int value) { result = value; }, [](std::exception_ptr) {}});
+  runtime.run();
+
+  // run() returns at once, and the browser's loop runs the task from then on.
+  REQUIRE_FALSE(result);
+
+  auto const start = emscripten_get_now();
+
+  while (!result && emscripten_get_now() - start < 10'000.0) {
+    emscripten_sleep(1);
+  }
+
+  REQUIRE(result == 42);
 }

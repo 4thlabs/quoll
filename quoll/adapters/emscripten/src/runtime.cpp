@@ -38,6 +38,8 @@
 
 namespace quoll::emscripten {
 
+runtime::runtime(async::runtime_options options) noexcept { static_cast<void>(options); }
+
 runtime::executor runtime::get_executor() noexcept { return {}; }
 
 std::stop_token runtime::get_stop_token() noexcept { return {}; }

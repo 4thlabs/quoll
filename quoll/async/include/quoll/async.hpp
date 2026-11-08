@@ -53,8 +53,11 @@
 #include <quoll/async/offloader.hpp>
 #include <quoll/async/offloader_ref.hpp>
 #include <quoll/async/run_loop.hpp>
+#include <quoll/async/runtime_options.hpp>
 #include <quoll/async/service.hpp>
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/strands.hpp>
+#include <quoll/async/strands_ref.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer.hpp>
 #include <quoll/async/timer_ref.hpp>

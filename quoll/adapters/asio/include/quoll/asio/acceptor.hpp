@@ -42,11 +42,13 @@
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/bound_listener.hpp>
 
+#include <asio/any_io_executor.hpp>
 #include <asio/ip/tcp.hpp>
 
 #include <cassert>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace quoll::asio {
@@ -57,7 +59,8 @@ namespace quoll::asio {
  * Takes a listening acceptor over. Each accepted connection is a tcp_stream on the acceptor's executor, handed over as
  * an io::any_stream. A failure to accept throws std::system_error from the task, with asio's error code; a stop
  * request, from any thread, abandons the wait, with `std::errc::operation_canceled`. The executor runs one handler at
- * a time (an io_context run by one thread, or a strand).
+ * a time (an io_context run by one thread, or a strand). On an io_context run by several threads, as
+ * `runtime.context()` may be, give it a strand, and `socket_strands` for each connection's own.
  *
  * Move-only; the acceptor lives on the heap, so moving it is allowed while an accept is pending. Destroying it, or its
  * io_context, is not. One accept at a time. Thread safety: none, like the acceptor.
@@ -66,7 +69,15 @@ class acceptor {
 public:
   /** @brief Takes a listening acceptor over. */
   explicit acceptor(::asio::ip::tcp::acceptor listening)
-      : state_(std::make_unique<detail::acceptor_state>(std::move(listening))) {}
+      : state_(std::make_unique<detail::acceptor_state>(std::move(listening), std::nullopt)) {}
+
+  /**
+   * @brief Takes a listening acceptor over, and puts each accepted socket on a strand of its own, made from
+   * `socket_strands`, if any: for a context run by several threads, where the acceptor's own strand would otherwise be
+   * every connection's.
+   */
+  acceptor(::asio::ip::tcp::acceptor listening, std::optional<::asio::any_io_executor> socket_strands)
+      : state_(std::make_unique<detail::acceptor_state>(std::move(listening), std::move(socket_strands))) {}
 
   /** @brief The next connection a peer opens. */
   [[nodiscard]] async::task<io::any_stream> accept() { return detail::accept(checked_state()); }
