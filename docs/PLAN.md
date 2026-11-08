@@ -1,6 +1,6 @@
 # Quoll — plan
 
-Last update: 2026-11-07. The [roadmap](#roadmap) says what comes next, and is the reference for the order of the work.
+Last update: 2026-11-08. The [roadmap](#roadmap) says what comes next, and is the reference for the order of the work.
 
 ## Target
 
@@ -37,7 +37,7 @@ What shows it, rather than an argument, with no public announcement before step 
   results as they arrive. DuckDB has an interface of its own, so that this stays a demo and not a product.
 - The framework's site, written with Quoll, served by Quoll behind a reverse proxy, with its source in view.
 - A page saying what is guaranteed (the nightly fuzzing, ASan, UBSan and TSan) and what is not (see
-  [step 2](#step-2-client-and-server-security-and-completeness)), as "C++ exposed to the Internet" is the first objection: the answer
+  [step 2](#step-2-client-and-server-security-and-completeness-done)), as "C++ exposed to the Internet" is the first objection: the answer
   is a reverse proxy in front, and a server that still defends itself.
 
 The figures to lead with are those of size, build time and memory (see [Done](#done)). Not the rate:
@@ -56,6 +56,10 @@ decide. Steps marked *(maintainer merges)* are big architecture changes.
 `async`, `io`, `http`, `client`, `server` and `rest`, with timeouts by default and TLS (a client GET and a REST client
 over TCP, over `fetch`, and through OpenSSL). A first `quoll::ui` with its DOM renderer, Tailwind through Vite, and two
 levels of hot reload, in the sample `ui_notes`. In CI: `clang-tidy`, the standard library's checks, Apple Clang on macOS, Codex's review and a protected `main`.
+
+Client and server (step 2): the reviews of each module, a runtime on several threads with a strand per connection, a
+coroutine frame destroyed only once it will not resume again, which a program cannot break, and every night nine fuzz targets,
+a mixed load under TSan and under ASan with UBSan, and `clang-tidy` with its analyzer, with no crash open.
 
 Streaming (step 3): a body in pieces on the server, the client and browser `fetch`, a minimum rate, static files. 32 GiB each way
 through a process that never holds more than 10.3 MiB, checked every night at 1 GiB.
@@ -127,7 +131,7 @@ still sends its body: to look at with streaming. A client closes its TLS connect
 - What a handler answers is replaced when its peer would read it as something else, through a connection as through
   `local_transport`: a 2xx to CONNECT, a tunnel, which is not offered, answers 501; a 1xx, and a `Content-Length` with no body, but
   to HEAD or as a 304, answer 500.
-- The first nightly fuzz run, on 2026-11-06, found nothing: five minutes on each of the seven targets, from 225,000 to 12 million runs.
+- The first nightly fuzz run, on 2026-11-06, found nothing: five minutes on each of the seven targets of then, from 225,000 to 12 million runs.
 - Features: middlewares (`router::use`) and routes whose handler takes the path's parameters, checked at compile time
   (`router::get`...), a path prefix in the base URL, a connection limit per transport and client redirects, are done. A client's `response_timeout` applies per attempt, so a deadline over the whole `send` if that proves
   confusing.
@@ -143,7 +147,8 @@ Done on 2026-11-08, with what the reviews of each module found fixed (#97 to #10
 threads with a strand per connection (#110); a coroutine frame destroyed only once it will not resume again, asserted by
 the task's promise, and a task a program cannot start itself nor await by name (#112, #116); the thread pool gone (#115);
 every night, a mixed load under TSan and under ASan with UBSan (#113), and the fuzz of how a connection unfolds (#114), with
-`clang-tidy` and its analyzer (#117). No crash is open.
+`clang-tidy` and its analyzer, green again with #117. All three ran on main by hand on 2026-11-08, after these merged,
+with no crash.
 
 ### Step 3: streaming *(done)*
 
@@ -202,7 +207,7 @@ The DSL and a runtime, with no UI.
   what they render, a requirement whatever form the UI takes.
 - A trial on a real screen of an application, chosen with the maintainer at the start of this step.
 
-*Done when:* that screen runs with the base components, with what it lacks listed.
+*Done when:* that screen runs with the base components and a JavaScript library called from C++, with what it lacks listed.
 
 ### Step 7: the `quoll` command, driving Vite *(maintainer merges the first pull request)*
 
