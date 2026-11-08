@@ -3,9 +3,11 @@ quoll_declare_module(
   SOURCES
     src/arguments.cpp
     src/client.cpp
+    src/next.cpp
     src/param_traits.cpp
     src/printable_text.cpp
     src/query_string.cpp
+    src/retry.cpp
     src/scheme_traits.cpp
     src/serve.cpp
     src/single_field.cpp

@@ -50,12 +50,15 @@
 #include <quoll/rest/http_error.hpp>
 #include <quoll/rest/json_codec.hpp>
 #include <quoll/rest/mount.hpp>
+#include <quoll/rest/next.hpp>
 #include <quoll/rest/param_traits.hpp>
 #include <quoll/rest/parameter.hpp>
 #include <quoll/rest/problem.hpp>
 #include <quoll/rest/query.hpp>
 #include <quoll/rest/reply.hpp>
+#include <quoll/rest/retry.hpp>
 #include <quoll/rest/returns.hpp>
+#include <quoll/rest/scoped_client.hpp>
 #include <quoll/rest/security.hpp>
 #include <quoll/rest/text_codec.hpp>
 #include <quoll/rest/unexpected_response.hpp>

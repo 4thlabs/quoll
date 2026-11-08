@@ -40,14 +40,20 @@
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/client/client.hpp>
+#include <quoll/http/request.hpp>
+#include <quoll/http/response.hpp>
 #include <quoll/http/transport.hpp>
 #include <quoll/rest/call_error.hpp>
 #include <quoll/rest/detail/client_calls.hpp>
 #include <quoll/rest/detail/client_request.hpp>
 #include <quoll/rest/detail/client_response.hpp>
 #include <quoll/rest/detail/type_list.hpp>
+#include <quoll/rest/next.hpp>
+#include <quoll/rest/scoped_client.hpp>
 
 #include <concepts>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -80,14 +86,21 @@ using result = detail::call_result<Endpoint>;
  * path parameter that is empty or holds a NUL or a dot segment, the rest of a path starting with `/`, a query parameter
  * holding a NUL, a number that is not finite, a header value or a credential the server would read differently).
  *
+ * Interceptors added with use() wrap what it sends, for call and try_call alike: a retry (rest::retry), a token
+ * refreshed on a 401. scope() gives the endpoints of an api nested in this one, with the parameters of the prefixes
+ * above them fixed.
+ *
  * The task does not refer to the client: the request is built by the call, and the task of a transport owns what it
- * needs, as http::HttpTransport asks. Thread safety: none (credentials() changes the client); calls on a const client
- * may be concurrent.
+ * needs, as http::HttpTransport asks, as do the interceptors'. Thread safety: none (credentials() and use() change the
+ * client); calls on a const client may be concurrent.
  */
 template <class Api, http::HttpTransport Transport = ::quoll::http::client>
 class client : public detail::client_call_set<client<Api, Transport>, Api,
                                               std::make_index_sequence<detail::max_arity(typename Api::routes{}) + 1>> {
 public:
+  /** @brief The contract it calls. */
+  using api_type = Api;
+
   /** @brief The arguments of a call to `Endpoint`, as a tuple. */
   template <class Endpoint>
   using arguments = detail::arguments_of<Api, Endpoint>;
@@ -130,6 +143,64 @@ public:
     credentials_.insert_or_assign(std::string{detail::scheme_traits<Scheme>::key.view()}, std::move(value));
   }
 
+  /**
+   * @brief Wraps every request the client sends from now on, inside the interceptors added before: `wrapping` gets the
+   * request and what sends it on (the next interceptor, then the transport), and returns the response.
+   *
+   * A copy of the client, a scope of it included, shares the interceptors it had; one added after to either is its own.
+   * The transport is copied once for them, so that a call keeps what it sends through until its task ends.
+   *
+   * @code
+   * api.use(quoll::rest::retry{.attempts = 3});
+   * api.use([&tokens](quoll::http::request request, quoll::rest::next const &send) ->
+   * quoll::async::task<quoll::http::response> { auto response = co_await send(request);
+   *
+   *   if (response.status == quoll::http::status::unauthorized) {
+   *     request.fields.set("Authorization", "Bearer " + co_await tokens.refresh());
+   *     response = co_await send(std::move(request));
+   *   }
+   *
+   *   co_return response;
+   * });
+   * @endcode
+   *
+   * @throws std::invalid_argument for an empty interceptor.
+   */
+  void use(interceptor wrapping)
+    requires std::copy_constructible<Transport>
+  {
+    if (!wrapping) {
+      throw std::invalid_argument{"quoll::rest::client::use: an empty interceptor"};
+    }
+
+    auto grown =
+        interception_
+            ? std::make_shared<detail::interception>(*interception_)
+            : std::make_shared<detail::interception>(detail::interception{
+                  {}, [transport = transport_](http::request message) { return transport.send(std::move(message)); }});
+
+    grown->interceptors.push_back(std::move(wrapping));
+    interception_ = std::move(grown);
+  }
+
+  /**
+   * @brief The endpoints of `Scope`, an api nested in this one, with `prefix`, the parameters of the prefixes above
+   * them in order, fixed: those of `Scope`'s own prefix included. It keeps a copy of this client as it is now.
+   *
+   * @code
+   * auto repo = github.scope<github::repos::api>("4thlabs", "quoll");   // api<"/repos/{owner}/{repo}", ...>
+   * @endcode
+   */
+  template <class Scope, class... Prefix>
+  [[nodiscard]] scoped_client<client, Scope> scope(Prefix... prefix) const {
+    using fixed = typename scoped_client<client, Scope>::prefix_type;
+
+    static_assert(sizeof...(Prefix) == std::tuple_size_v<fixed>,
+                  "quoll::rest::client::scope: as many arguments as the prefixes above the api have parameters");
+
+    return {*this, fixed{std::move(prefix)...}};
+  }
+
   /** @brief The transport the client sends its requests with. */
   [[nodiscard]] Transport const &transport() const noexcept QUOLL_LIFETIMEBOUND { return transport_; }
 
@@ -137,18 +208,30 @@ private:
   template <class, class, class>
   friend struct detail::client_calls;
 
+  template <class, class>
+  friend class scoped_client;
+
+  // Through the interceptors, if any: the transport alone otherwise, as before any was added.
+  [[nodiscard]] async::task<http::response> send(http::request message) const {
+    if (!interception_) {
+      return transport_.send(std::move(message));
+    }
+
+    return detail::send_through(interception_, std::move(message));
+  }
+
   template <class Endpoint>
   [[nodiscard]] async::task<typename detail::call_value<Endpoint>::type> call_with(arguments<Endpoint> args) const {
     using route = typename Api::template route<Endpoint>;
 
-    return detail::receive_value<route>(transport_.send(detail::build_request<route>(args, credentials_)));
+    return detail::receive_value<route>(send(detail::build_request<route>(args, credentials_)));
   }
 
   template <class Endpoint>
   [[nodiscard]] async::task<result<Endpoint>> try_call_with(arguments<Endpoint> args) const {
     using route = typename Api::template route<Endpoint>;
 
-    return detail::receive<route>(transport_.send(detail::build_request<route>(args, credentials_)));
+    return detail::receive<route>(send(detail::build_request<route>(args, credentials_)));
   }
 
   [[nodiscard]] static std::string without_trailing_slash(std::string url) {
@@ -162,6 +245,8 @@ private:
 
   Transport transport_;
   detail::credential_map credentials_;
+  // Null until use(): a client with no interceptor sends straight through its transport.
+  std::shared_ptr<detail::interception const> interception_;
 };
 
 } // namespace quoll::rest

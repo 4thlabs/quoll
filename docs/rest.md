@@ -274,6 +274,55 @@ rest::client<users::api, http::local_transport> client{http::local_transport{rou
 user const found = co_await client.call<users::get>(42);
 ```
 
+### Scopes
+
+`scope<Api>(...)` gives the endpoints of an api nested in the client's, with the parameters of the prefixes above
+them fixed, its own prefix's included. A scope of a scope fixes what the prefixes between them add:
+
+```cpp
+namespace repos {
+using issues = rest::endpoint<"issues.list", verb::get, "/issues", rest::query<"state", std::optional<std::string>>,
+                              rest::returns<std::vector<issue>>>;
+
+using api = rest::api<"/repos/{owner}/{repo}", issues>;
+} // namespace repos
+
+auto const quoll = client.scope<repos::api>("4thlabs", "quoll");
+auto const open = co_await quoll.call<repos::issues>("open");
+```
+
+A scope keeps a copy of the client as it was: its transport, which an `http::client` shares, its credentials and
+its interceptors. Credentials or interceptors given to the client after do not reach it.
+
+### Interceptors
+
+`use(...)` wraps every request the client sends from then on, for `call` and `try_call` alike. An interceptor gets the
+request and what sends it on, the next interceptor then the transport, and returns the response: it may change the
+request, send it again, or answer without sending it. The first one added is the outermost.
+
+```cpp
+client.use(rest::retry{.attempts = 3, .delay = 200ms});
+
+client.use([&tokens](http::request &&request, rest::next const &send) -> async::task<http::response> {
+  auto response = co_await send(request);
+
+  if (response.status == http::status::unauthorized) {
+    request.fields.set("Authorization", "Bearer " + co_await tokens.refresh());
+    response = co_await send(std::move(request));
+  }
+
+  co_return response;
+});
+```
+
+`rest::retry` sends a request again after a network error, a 502, a 503 or a 504, up to `attempts` in all, waiting
+`delay`, then twice as long each time. Only what may be sent twice with the same effect is: GET, HEAD, PUT, DELETE,
+OPTIONS and TRACE, without a `body_writer`. A stop request ends the call at once. Its wait needs the executor's timer,
+which `quoll::runtime` has; a `delay` of zero waits for nothing.
+
+A copy of the client, a scope included, shares the interceptors it had; one added after to either is its own. The
+transport is copied once for them, so that it has to be copyable, as `http::client` and `http::local_transport` are.
+
 ## Codecs
 
 A codec encodes values into bodies and decodes bodies back, for one media type. `body<>` and `returns<>`
@@ -417,10 +466,9 @@ async::task<> show_stars() {
 }
 ```
 
-An API's full support is [step 4 of the roadmap](PLAN.md#step-4-rest-from-a-command-line-program). Not
-there yet: `scope<Api>(...)` to fix the arguments of a prefix, interceptors around `send` (retry, token
-refresh on 401), form and bytes codecs, an enumerator for the values an enum does not know, and an
-OpenAPI document generated from a contract.
+An API's full support is [step 4 of the roadmap](PLAN.md#step-4-rest-from-a-command-line-program), and
+[scopes](#scopes) and [interceptors](#interceptors) are there. Not yet: form and bytes codecs, an enumerator for the
+values an enum does not know, and an OpenAPI document generated from a contract.
 
 A larger example, a contract with its server and client over TCP, is in
 [`samples/notes`](../samples/notes).
