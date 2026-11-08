@@ -128,6 +128,35 @@ function(quoll_declare_tests)
 endfunction()
 
 #
+# Declare what a debug build of a module asserts, from its CMakeLists.txt: an invariant only code speaking the library's
+# own protocol can break, out of a caller's reach.
+#
+#   quoll_declare_assert_tests(NAME <name> CASE <test case> EXPECT <text>)
+#
+# <test case> is a hidden Catch2 case ([.assert]) of the module's tests that breaks it. A ctest named assert.<name> runs
+# it alone and passes when the program ends with <text>, taken literally, in its output: text of the assertion's message
+# that the case's name does not hold, as Catch2 prints the name of a case failing for another reason. Native debug
+# builds only. Does nothing unless QUOLL_BUILD_TESTS is ON.
+#
+function(quoll_declare_assert_tests)
+  if(NOT QUOLL_BUILD_TESTS)
+    return()
+  endif()
+
+  cmake_parse_arguments(PARSE_ARGV 0 QUOLL_ASSERT "" "NAME;CASE;EXPECT" "")
+
+  string(FIND "${QUOLL_ASSERT_CASE}" "${QUOLL_ASSERT_EXPECT}" position)
+
+  if(NOT position EQUAL -1)
+    message(FATAL_ERROR "assert.${QUOLL_ASSERT_NAME}: '${QUOLL_ASSERT_EXPECT}' is in the case's name too")
+  endif()
+
+  set_property(GLOBAL APPEND PROPERTY QUOLL_ASSERT_TESTS "${QUOLL_ASSERT_NAME}")
+  set_property(GLOBAL PROPERTY "QUOLL_ASSERT_CASE:${QUOLL_ASSERT_NAME}" "${QUOLL_ASSERT_CASE}")
+  set_property(GLOBAL PROPERTY "QUOLL_ASSERT_EXPECT:${QUOLL_ASSERT_NAME}" "${QUOLL_ASSERT_EXPECT}")
+endfunction()
+
+#
 # Declare sources that must not compile, from a module's CMakeLists.txt: the compile-time checks of its API.
 #
 #   quoll_declare_compile_fail_tests(SOURCES <files>... [DEPS <targets>...])
@@ -224,36 +253,34 @@ function(quoll_main_tests)
   # Not next to the other tests using ports: one of them relies on a port just freed staying unused.
   set_tests_properties(quoll PROPERTIES RESOURCE_LOCK quoll_ports)
 
-  # What a debug build asserts: each hidden case ([.assert]) runs alone, in a process the assertion ends, and passes on
-  # its message (QuollExpectAssert.cmake), which the case's name does not hold: Catch2 prints the name of a case that
-  # fails otherwise. Native builds whose assertions are compiled in only: Debug for a multi-config generator, whose
-  # CMAKE_BUILD_TYPE is empty, and any type but the optimized ones otherwise.
+  # What a debug build asserts (quoll_declare_assert_tests): each case runs alone, in a process the assertion ends.
+  # Native builds whose assertions are compiled in only: Debug for a multi-config generator, whose CMAKE_BUILD_TYPE is
+  # empty, and otherwise any build whose flags do not define NDEBUG, whatever the case of its type.
+  get_property(asserted GLOBAL PROPERTY QUOLL_ASSERT_TESTS)
   get_property(multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+  string(TOUPPER "${CMAKE_BUILD_TYPE}" build_type)
+  set(configurations "")
+  set(compiled_flags "${CMAKE_CXX_FLAGS}")
 
   if(multi_config)
     set(configurations CONFIGURATIONS Debug)
   else()
-    set(configurations "")
+    string(APPEND compiled_flags " ${CMAKE_CXX_FLAGS_${build_type}}")
   endif()
 
-  if(NOT EMSCRIPTEN AND (multi_config OR NOT CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$"))
-    set(asserted
-        "task_destroyed_while_it_runs|task: destroying one that runs is asserted|still pointing into its frame"
-        "memory_stream_read_destroyed_while_it_waits|memory_stream: destroying a read that waits is asserted|a read destroyed while it waits"
+  if(EMSCRIPTEN OR compiled_flags MATCHES "NDEBUG")
+    return()
+  endif()
+
+  foreach(name IN LISTS asserted)
+    get_property(test_case GLOBAL PROPERTY "QUOLL_ASSERT_CASE:${name}")
+    get_property(message GLOBAL PROPERTY "QUOLL_ASSERT_EXPECT:${name}")
+    add_test(
+      NAME assert.${name} ${configurations}
+      COMMAND ${CMAKE_COMMAND} "-DQUOLL_TESTS=$<TARGET_FILE:quoll_tests>" "-DQUOLL_CASE=${test_case}"
+              "-DQUOLL_EXPECT=${message}" -P ${QUOLL_CMAKE_DIR}/QuollExpectAssert.cmake
     )
-
-    foreach(entry IN LISTS asserted)
-      string(REPLACE "|" ";" fields "${entry}")
-      list(GET fields 0 name)
-      list(GET fields 1 test_case)
-      list(GET fields 2 message)
-      add_test(
-        NAME assert.${name} ${configurations}
-        COMMAND ${CMAKE_COMMAND} "-DQUOLL_TESTS=$<TARGET_FILE:quoll_tests>" "-DQUOLL_CASE=${test_case}"
-                "-DQUOLL_EXPECT=${message}" -P ${QUOLL_CMAKE_DIR}/QuollExpectAssert.cmake
-      )
-    endforeach()
-  endif()
+  endforeach()
 endfunction()
 
 #
