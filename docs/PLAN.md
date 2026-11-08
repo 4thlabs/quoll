@@ -321,6 +321,11 @@ changes only what the harness shows. Candidates:
 
 ## Decided
 
+- **A coroutine frame is destroyed only once it will not resume again** (2026-11-08): by a root as it ends, or by its awaiter
+  once the task has completed, which `task` asserts in debug builds. What an awaitable registers from its frame needs nothing
+  undone when the frame goes, and a work item stays a coroutine to resume. Chosen over giving a work item a function to run,
+  so that an awaitable could be destroyed while queued (PR #111, not merged): that case was reached only by a test destroying
+  a suspended awaitable by hand.
 - **Exposure to the Internet goes through a reverse proxy** (2026-11-07), replacing "Quoll may be exposed directly" of
   2026-11-05, as each review of the HTTP code kept finding more corners of the protocol. The server still defends itself: what
   a review finds is fixed, as `AGENTS.md` says, but for an RFC corner that touches neither security nor stability, as a less

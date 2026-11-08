@@ -46,7 +46,11 @@ owned elsewhere, `this` captured by a scheduled task.
 |---|---|---|---|
 
 The last column is the one reviews leave empty. For a coroutine awaitable it means: the frame is destroyed while suspended,
-by a parent that stops, a task dropped or a test tearing down. "Nothing destroys it while registered" is a hope, not an entry.
+by a parent that stops, a task dropped or a test tearing down. "Nothing destroys it while registered" is a hope, not an entry,
+unless the code enforces it. In Quoll it does for a frame: one is destroyed only once it will not resume again, which
+`async::task` asserts (`docs/CODING_RULES.md`), so an awaitable that lives in a task's frame enters "the frame outlives it".
+The column stays open for everything else: the I/O object, the channel or the timer the awaitable registered with, destroyed
+while it is registered.
 
 **Destruction order.** List the members in the order they are destroyed (reverse of declaration, after the destructor's
 body), and for each one what its destruction runs: a joined thread, a cancelled task, closed connections, notified observers,
@@ -90,7 +94,9 @@ Across a `co_await`, a callback or a completion handler, the caller's statement 
   while the closure dies: pass what it needs as parameters instead.
 - **Children:** a task started on a local, or given a reference to one, that runs after the parent leaves its scope.
 - **Destroyed while suspended:** every awaitable whose `await_suspend` registers something has a row in the registrations
-  table of the destruction pass; its last column is the question here. A defaulted destructor leaves a dangling entry.
+  table of the destruction pass; its last column is the question here. A defaulted destructor leaves a dangling entry. In
+  Quoll, a task's frame is not destroyed while suspended (see the destruction pass): the question moves to what the
+  awaitable registered with.
 
 ### 3. Is the owner changed while a borrow is alive?
 
@@ -160,7 +166,9 @@ In this order of preference:
 1. **Own it:** copy or move into what outlives the call. A copy costs less than a crash.
 2. **Make the API refuse it:** a type, an `&&`-qualifier, a deleted overload, a `static_assert`, so that misuse does not
    compile.
-3. **Check it in every build:** throw on a misuse that types cannot express.
+3. **Check it in every build:** throw on a misuse that types cannot express. An invariant that only the library's own code
+   can break, out of a caller's reach, is asserted instead, and debug builds run the tests: a task's frame destroyed
+   while it runs is one.
 4. **Say it:** a name or a view type that says it does not own, the lifetime in the doc comment, and the lifetimebound
    attribute (`[[clang::lifetimebound]]`, behind the project's macro where compilers lack it) on what returns a reference into
    `*this` or a parameter.

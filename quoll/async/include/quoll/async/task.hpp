@@ -41,6 +41,7 @@
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/async/detail/task_promise.hpp>
 
+#include <cassert>
 #include <coroutine>
 #include <type_traits>
 #include <utility>
@@ -56,6 +57,9 @@ namespace quoll::async {
  * run a task from outside a coroutine.
  *
  * Owns its coroutine frame: move-only, and destroying a task that never ran destroys the frame without running it.
+ * A task that started is destroyed only once it has completed: its awaiter, suspended until then, is the only one
+ * holding it, and Quoll destroys no suspended frame. What its awaitables registered (a work item in a queue, an I/O
+ * handler, a stop callback) therefore never outlives the frame. Debug builds assert it.
  *
  * Thread safety: none; a task is awaited once, by one coroutine.
  */
@@ -103,6 +107,8 @@ private:
 
   void destroy() noexcept {
     if (handle_) {
+      assert((!handle_.promise().continuation() || handle_.done()) &&
+             "quoll::async::task: destroyed while it runs, with what it registered still pointing into its frame");
       handle_.destroy();
     }
   }
