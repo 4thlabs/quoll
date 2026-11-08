@@ -34,6 +34,8 @@ quoll_declare_module(
     src/body_reader.cpp
     src/connection_field.cpp
     src/error.cpp
+    src/event_parser.cpp
+    src/format_event.cpp
     src/fields.cpp
     src/local_transport.cpp
     src/parser.cpp
@@ -41,6 +43,7 @@ quoll_declare_module(
     src/response_writer.cpp
     src/router.cpp
     src/serializer.cpp
+    src/utf8.cpp
   DEPS
     quoll::io
   PRIVATE_DEPS
@@ -49,7 +52,9 @@ quoll_declare_module(
 
 quoll_declare_tests(
   SOURCES
+    tests/event_parser_test.cpp
     tests/fields_test.cpp
+    tests/format_event_test.cpp
     tests/parser_test.cpp
     tests/percent_test.cpp
     tests/router_test.cpp

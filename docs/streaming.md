@@ -290,6 +290,47 @@ writer at its next `write()`, which throws.
 
 See [`http::client` in a browser](runtimes.md#httpclient-in-a-browser) for what else `fetch` changes.
 
+## Server-sent events
+
+A `text/event-stream` body is a stream of events, which a server writes and a client reads in pieces, as
+any other. `http::format_event` writes one, and `http::event_parser` reads them as the pieces come, as a
+browser does:
+
+```cpp
+router.get("/feed", [](http::response_writer out) -> async::task<> {
+  out.fields.set("Content-Type", "text/event-stream");
+  out.fields.set("Cache-Control", "no-store");
+  co_await out.write(http::format_event({.type = "add", .data = R"({"id":7})", .id = "7"}));
+});
+```
+
+```cpp
+http::event_parser events;
+
+while (auto const piece = co_await response.body.read()) {
+  events.feed(*piece);
+
+  while (auto const event = events.next()) {
+    show(event->type, event->data);
+  }
+}
+```
+
+An event has a `type`, `"message"` unless the stream names another, its `data`, the lines of its `data`
+fields joined with LF, and an `id`, the last event ID the stream set: what a client sends back as
+`Last-Event-ID` when it connects again. `events.last_event_id()` gives it too, once its event has ended,
+so that an event cut short is asked for again. `events.retry()` gives how long the stream asks it to wait first, at most a day.
+`http::format_retry` writes that, and `http::format_comment` a comment, which keeps a quiet stream from
+looking dead to a proxy.
+
+| When                                      | What happens                                                                                                                                          |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lines end with CRLF, LF or CR             | All the same, even split between two pieces, and a BOM at the start is skipped.                                                                       |
+| Text is not UTF-8                         | Read with U+FFFD in its place, as a browser does. `format_event` throws `std::invalid_argument` for it.                                               |
+| An event is larger than the parser holds  | 1 MiB by default, its data and type, and the line being read: `next()` throws `http::error::event_too_large`, and so do it and `feed()` from then on. |
+| The stream ends in the middle of an event | That event is not one, as for a browser.                                                                                                              |
+| A type or an id holds a line break        | `format_event` throws `std::invalid_argument`, as the line would end there. So does a NUL in an id.                                                   |
+
 ## In a test
 
 `http::local_transport` has no `stream()`. It runs a `request.body_writer` to its end before the handler,

@@ -65,6 +65,8 @@ public:
       return "unsupported HTTP expectation";
     case error::too_many_redirects:
       return "too many HTTP redirects";
+    case error::event_too_large:
+      return "server-sent event too large";
     }
     return "unknown quoll.http error";
   }
