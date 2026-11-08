@@ -34,8 +34,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// An exchange of the client unfolding as the input says: the first byte tells how many of the next ones are the script
-// of the stream (quoll/fuzz/unfolding.hpp), the rest is what the server answers. A request with a body written in
+// An exchange of the client unfolding as the input says: the first byte tells how many bytes after the second are the
+// script of the stream (quoll/fuzz/unfolding.hpp), the second what the two requests are, the rest is what the server
+// answers. A request with a body written in
 // pieces reads the response as it writes, a timeout ends what hangs, and a step may stop the exchange as a whole.
 // Under ASan and UBSan, every send must end, with a response or an error.
 
@@ -56,13 +57,11 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <exception>
 #include <span>
 #include <stop_token>
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <utility>
 
 namespace {
 
@@ -111,13 +110,14 @@ http::request make_request(std::uint8_t kind) {
 } // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size) {
-  if (size == 0) {
+  if (size < 2) {
     return 0;
   }
 
-  auto const script_size = std::min<std::size_t>(data[0], size - 1);
-  quoll::fuzz::script steps{std::span{data + 1, script_size}};
-  auto const answer = quoll::fuzz::as_text(data + 1 + script_size, size - 1 - script_size);
+  auto const kinds = data[1];
+  auto const script_size = std::min<std::size_t>(data[0], size - 2);
+  quoll::fuzz::script steps{std::span{data + 2, script_size}};
+  auto const answer = quoll::fuzz::as_text(data + 2 + script_size, size - 2 - script_size);
   std::stop_source stop;
 
   steps.stop_with(stop);
@@ -132,13 +132,13 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
   quoll::test::virtual_time time;
   http::client const client{unfolding_connector{&steps, answer}, "fuzz.example", 80, options};
 
-  // Two sends, the second taking the connection the first kept, if any: their kinds from the first byte.
+  // Two sends, the second taking the connection the first kept, if any: their kinds from the second byte.
   for (unsigned send = 0; send < 2; ++send) {
     try {
-      quoll::fuzz::require(
-          quoll::test::run(time, client.send(make_request(static_cast<std::uint8_t>(data[0] >> (2U * send)))),
-                           stop.get_token())
-              .has_value());
+      quoll::fuzz::require(quoll::test::run(time,
+                                            client.send(make_request(static_cast<std::uint8_t>(kinds >> (2U * send)))),
+                                            stop.get_token())
+                               .has_value());
     } catch (std::system_error const &) {
       // What a stream failing, a timeout or a stop ends a send with.
     }

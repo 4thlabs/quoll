@@ -40,6 +40,7 @@
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/executor_ref.hpp>
 #include <quoll/async/work_item.hpp>
+#include <quoll/fuzz/support.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
@@ -94,10 +95,12 @@ private:
 // turn of the loop, fail, hang until a stop request ends them, or ask for a stop first.
 enum class unfolding : std::uint8_t { at_once, later, failing, hanging };
 
-// A stream whose reads give `input` and whose writes are taken and dropped, unfolding as its script says: in pieces of
-// any size, now or later, failing or hanging. What the code over it does on the way out of each state (a timeout firing
-// on a hanging read, a stop in the middle of a write, a reset while it reads and writes at once) is what this reaches,
-// under the sanitizers. Single-threaded, as virtual_time runs it.
+// A stream whose reads give `input` and whose writes are taken and dropped, unfolding as its script says: a read or a
+// write in a piece of any size, now or later, or failing; any operation hanging until a stop, a timeout's or a step's,
+// ends it, as a socket's pending operation ends. One completing now or later completes, stop or not. What the code over
+// it does on the way out of each state (a timeout firing on a hanging read or write, a stop while it reads and writes
+// at once, a reset in the middle of a response) is what this reaches, under the sanitizers. Single-threaded, as
+// virtual_time runs it.
 class unfolding_stream {
 public:
   class [[nodiscard]] awaitable {
@@ -118,15 +121,11 @@ public:
     void await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
       item_.handle = handle;
 
-      if (how_ == unfolding::hanging && context.stop_token.stop_possible()) {
-        // Invoked at once if stop was already requested; it never resumes inline, as it posts.
+      if (how_ == unfolding::hanging) {
+        // Only a stop ends it, invoked at once if one was already requested, and it never resumes inline, as it posts.
+        // A hang no stop reaches leaves the run unfinished: that is a finding.
         stop_callback_.emplace(context.stop_token, canceller{this, context.executor});
         return;
-      }
-
-      // A hang nothing could end would hang the run: it fails instead.
-      if (how_ == unfolding::hanging) {
-        result_ = {std::make_error_code(std::errc::connection_reset), 0};
       }
 
       context.executor.post(item_);
@@ -171,11 +170,7 @@ public:
       return {{io::error::end_of_stream, 0}, step.how};
     }
 
-    auto const count = std::min({buffer.size(), input_.size(), step.size});
-
-    std::memcpy(buffer.data(), input_.data(), count);
-    input_.remove_prefix(count);
-    return {{{}, count}, step.how};
+    return {{{}, take_input(input_, buffer, step.size)}, step.how};
   }
 
   [[nodiscard]] awaitable write_some(std::span<std::byte const> data) {

@@ -27,8 +27,9 @@ jobs:
   fuzz:
     name: fuzz
     runs-on: ubuntu-24.04
-    # Five minutes a target at night, in parallel, the build, and a slow mirror when the packages change.
-    timeout-minutes: 30
+    # Five minutes a target at night, as many at a time as the runner has cores (nine targets on four: three rounds), the
+    # build, and a slow mirror when the packages change.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
