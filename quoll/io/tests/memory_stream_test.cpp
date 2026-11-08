@@ -629,6 +629,46 @@ TEST_CASE("memory_stream: a wake queued for a read that went touches nothing of 
   REQUIRE(read.await_resume().transferred == 3);
 }
 
+TEST_CASE("memory_stream: a wake that cannot be queued again for the next read leaves it to be woken later",
+          "[io][memory_stream]") {
+  auto [left, right] = io::make_memory_stream_pair();
+  quoll::async::run_loop loop;
+  auto const executor = loop.get_executor();
+  bool failing = false;
+  flaky_executor const flaky{loop.get_executor(), &failing};
+  quoll::test::probe gone;
+  quoll::test::probe next;
+  std::array<std::byte, 8> first{};
+  std::array<std::byte, 8> second{};
+  std::stop_source source;
+
+  {
+    auto read = left.read_some(first);
+
+    read.await_suspend(gone.handle(), quoll::async::await_context{.executor = quoll::async::executor_ref{executor},
+                                                                  .stop_token = source.get_token()});
+    source.request_stop();
+  }
+
+  auto read = left.read_some(second);
+
+  read.await_suspend(next.handle(),
+                     quoll::async::await_context{.executor = quoll::async::executor_ref{flaky}, .stop_token = {}});
+  REQUIRE(run(write_once(right, "one")));
+
+  // The wake queued for the read that went runs, and cannot queue itself again for this one.
+  failing = true;
+  REQUIRE_THROWS_AS(loop.run(), std::bad_alloc);
+  REQUIRE_FALSE(next.resumed());
+
+  failing = false;
+  REQUIRE(run(write_once(right, "two")));
+  loop.run();
+
+  REQUIRE(next.resumed());
+  REQUIRE(read.await_resume().transferred == 6);
+}
+
 TEST_CASE("memory_stream: a queued wake keeps the pipe, both ends and the read gone", "[io][memory_stream]") {
   quoll::async::run_loop loop;
   auto const executor = loop.get_executor();

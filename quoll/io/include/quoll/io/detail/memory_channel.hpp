@@ -226,10 +226,17 @@ private:
       return;
     }
 
-    // A reader that came after the one this was queued for resumes on its own executor. That post cannot report a
-    // failure from here, and ends the program then, as an Executor says.
+    // A reader that came after the one this was queued for resumes on its own executor. If that post throws, the
+    // reader is no longer woken, so that the next write, close or stop queues its wake again, and the exception goes on
+    // to the executor's caller.
     if (!self.queued_for_reader_) {
-      self.queue();
+      try {
+        self.queue();
+      } catch (...) {
+        self.woken_ = false;
+        throw;
+      }
+
       return;
     }
 
