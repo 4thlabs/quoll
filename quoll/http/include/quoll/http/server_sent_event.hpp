@@ -50,9 +50,10 @@ inline constexpr std::size_t max_event_id_size = 1024;
  * @brief An event of a `text/event-stream` body (Server-Sent Events, HTML Living Standard 9.2).
  *
  * As read by http::event_parser: `type` is `"message"` unless the stream named another, and `id` is the last event ID
- * the stream set, that of this event or of one before it, none if it set none or reset it. As written by
- * format_event: a `"message"` type, or an empty one, is not written, as a reader defaults to `"message"`, and an `id`
- * is written only if set: an empty one resets the reader's last event ID, and reads back as none.
+ * the stream set, that of this event or of one before it: none if it never set one, empty once it reset it. As written
+ * by format_event: a `"message"` type, or an empty one, is not written, as a reader defaults to `"message"`, and an
+ * `id` is written only if set, an empty one resetting the reader's last event ID. So events read, written again in
+ * order, read back the same.
  */
 struct server_sent_event {
   /** @brief The type of the event: `"message"`, or what an `event` field named. */

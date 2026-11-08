@@ -137,8 +137,8 @@ std::optional<server_sent_event> event_parser::next() {
       position_ = 0;
       scanned_ = buffer_.size();
 
-      // A large piece once read leaves no large buffer behind, for the life of a stream.
-      if (buffer_.empty() && buffer_.capacity() > kept_capacity) {
+      // A large piece once read leaves no large buffer behind, for the life of a stream, a line it cut included.
+      if (buffer_.capacity() > std::max(kept_capacity, 2 * buffer_.size())) {
         buffer_.shrink_to_fit();
       }
 
@@ -191,14 +191,19 @@ std::optional<server_sent_event> event_parser::take_line(std::string_view line) 
   } else if (field == "id") {
     // Ignored, as one holding a NUL, when too long once read: what a browser keeps, a stream does not fail on, and
     // what is kept, format_event writes again. Too long as it came, it is not even read.
-    if (!value.contains('\0') && value.size() <= max_id_size) {
-      std::string read;
-
-      append_text(read, value);
-
-      if (read.size() <= max_id_size) {
-        id_buffer_ = std::move(read);
+    if (!value.contains('\0') && value.size() <= max_event_id_size) {
+      if (detail::is_utf8(value)) {
+        id_buffer_.assign(value);
         id_changed_ = true;
+      } else {
+        std::string read;
+
+        detail::append_repaired_utf8(read, value);
+
+        if (read.size() <= max_event_id_size) {
+          id_buffer_ = std::move(read);
+          id_changed_ = true;
+        }
       }
     }
   } else if (field == "retry") {
@@ -217,6 +222,7 @@ std::optional<server_sent_event> event_parser::dispatch() {
   if (id_changed_) {
     last_event_id_ = id_buffer_;
     id_changed_ = false;
+    id_set_ = true;
   }
 
   if (data_.empty()) {
@@ -234,7 +240,7 @@ std::optional<server_sent_event> event_parser::dispatch() {
     event.type = std::exchange(type_, {});
   }
 
-  if (!last_event_id_.empty()) {
+  if (id_set_) {
     event.id = last_event_id_;
   }
 

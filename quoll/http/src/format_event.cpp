@@ -123,7 +123,8 @@ std::string format_retry(std::chrono::milliseconds delay) {
 
   std::string out = "retry: " + std::to_string(delay.count());
 
-  out.append("\n\n");
+  // No blank line: it would end the event being written, its id and type, if one were written in pieces around it.
+  out.push_back('\n');
   return out;
 }
 

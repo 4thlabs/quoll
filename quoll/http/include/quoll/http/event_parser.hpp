@@ -79,7 +79,13 @@ public:
   /** @brief A parser holding at most default_max_event_size bytes of an event. */
   event_parser() noexcept = default;
 
-  /** @brief A parser holding at most `max_event_size` bytes of an event, against a peer that never ends one. */
+  /**
+   * @brief A parser holding at most `max_event_size` bytes of an event, against a peer that never ends one.
+   *
+   * An `id` field holds at most http::max_event_id_size once read, U+FFFD in place of what is not UTF-8: a longer one
+   * is ignored, as one holding a NUL is, the last ID staying, as each event carries a copy, and it goes back in a
+   * header. Its line counts as any other: below about 1 KiB, a `max_event_size` fails on an id format_event writes.
+   */
   explicit event_parser(std::size_t max_event_size) noexcept : max_event_size_(max_event_size) {}
 
   /**
@@ -98,13 +104,6 @@ public:
    * more than the most it may, and on every call after.
    */
   [[nodiscard]] std::optional<server_sent_event> next();
-
-  /**
-   * @brief The most an `id` field holds once read, U+FFFD in place of what is not UTF-8: http::max_event_id_size,
-   * 1 KiB. A longer one is ignored, as one holding a NUL is, the last ID staying, as each event carries a copy, and it
-   * goes back in a header.
-   */
-  static constexpr std::size_t max_id_size = max_event_id_size;
 
   /**
    * @brief The ID of the last event the stream ended, empty if none: what `Last-Event-ID` sends when connecting again.
@@ -147,6 +146,8 @@ private:
   std::string id_buffer_;
   // Whether an id field came since the last blank line: only then is it copied.
   bool id_changed_ = false;
+  // Whether one came before a blank line: events then carry the last ID, empty once reset.
+  bool id_set_ = false;
   std::string last_event_id_;
   std::optional<std::chrono::milliseconds> retry_;
 };

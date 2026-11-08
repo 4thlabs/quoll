@@ -110,7 +110,7 @@ TEST_CASE("format_event: what a reader would read otherwise is refused", "[http]
 }
 
 TEST_CASE("format_retry and format_comment: read, and dispatching nothing", "[http][sse]") {
-  REQUIRE(http::format_retry(1500ms) == "retry: 1500\n\n");
+  REQUIRE(http::format_retry(1500ms) == "retry: 1500\n");
   REQUIRE(http::format_comment() == ":\n");
   REQUIRE(http::format_comment("keep alive") == ": keep alive\n");
   REQUIRE_THROWS_AS(http::format_retry(-1ms), std::invalid_argument);
@@ -123,4 +123,11 @@ TEST_CASE("format_retry and format_comment: read, and dispatching nothing", "[ht
 
   REQUIRE(parser.next() == http::server_sent_event{.data = "x"});
   REQUIRE(parser.retry() == 1500ms);
+  REQUIRE_FALSE(parser.next());
+
+  // A longer time than a reader takes reads as the most it takes.
+  parser.feed(http::format_retry(48h));
+
+  REQUIRE_FALSE(parser.next());
+  REQUIRE(parser.retry() == http::event_parser::max_retry);
 }

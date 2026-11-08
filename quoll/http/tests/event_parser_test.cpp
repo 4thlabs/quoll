@@ -86,7 +86,8 @@ TEST_CASE("event_parser: the examples of the standard, whole and a byte at a tim
 
   REQUIRE(events_of("data: YHOO\ndata: +2\ndata: 10\n\n", piece) == std::vector{event("YHOO\n+2\n10")});
   REQUIRE(events_of(": test stream\n\ndata: first event\nid: 1\n\ndata:second event\nid\n\ndata:  third event\n\n",
-                    piece) == std::vector{event("first event", "1"), event("second event"), event(" third event")});
+                    piece) ==
+          std::vector{event("first event", "1"), event("second event", ""), event(" third event", "")});
   REQUIRE(events_of("data\n\ndata\ndata\n\ndata:", piece) == std::vector{event(""), event("\n")});
   REQUIRE(events_of("data:test\n\ndata: test\n\n", piece) == std::vector{event("test"), event("test")});
 }
@@ -137,7 +138,8 @@ TEST_CASE("event_parser: the last event ID stays until the stream sets another",
 
   parser.feed("id\ndata: d\n\n");
 
-  REQUIRE(parser.next() == event("d"));
+  // Reset: empty, which written again resets a reader too.
+  REQUIRE(parser.next() == event("d", ""));
   REQUIRE(parser.last_event_id().empty());
 }
 
@@ -157,9 +159,9 @@ TEST_CASE("event_parser: an id counts once its event has ended", "[http][sse]") 
   REQUIRE(parser.last_event_id() == "5");
 }
 
-TEST_CASE("event_parser: an id longer than max_id_size is ignored, the stream goes on", "[http][sse]") {
+TEST_CASE("event_parser: an id longer than max_event_id_size is ignored, the stream goes on", "[http][sse]") {
   http::event_parser parser;
-  std::string const longest(http::event_parser::max_id_size, 'i');
+  std::string const longest(http::max_event_id_size, 'i');
 
   parser.feed("id: " + longest + "\ndata: a\n\n");
 
@@ -354,6 +356,19 @@ TEST_CASE("event_parser: an event larger than the most it holds fails, and goes 
 
     // 6 bytes, 18 once read.
     parser.feed("data: \xFF\xFF\xFF\xFF\xFF\xFF\n\n");
+
+    REQUIRE(throws_too_large(parser));
+  }
+
+  SECTION("the default, 1 MiB") {
+    http::event_parser parser;
+
+    parser.feed("data: " + std::string(http::event_parser::default_max_event_size - 6, 'x') + "\n\n");
+
+    REQUIRE(parser.next());
+    REQUIRE_FALSE(parser.next());
+
+    parser.feed("data: " + std::string(http::event_parser::default_max_event_size - 5, 'x'));
 
     REQUIRE(throws_too_large(parser));
   }
