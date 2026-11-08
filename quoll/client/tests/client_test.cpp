@@ -4251,9 +4251,9 @@ TEST_CASE("event_reader: a second next() while one waits is refused", "[client][
   auto const reading = [&]() -> task<bool> {
     http::client const client{memory_connector{server}, "example.com", 80};
     auto response = co_await client.stream(make_request(verb::get, "/later"));
-    http::event_reader const events{response.body};
+    http::event_reader events{response.body};
 
-    auto const second = [](http::event_reader const &reader) -> task<bool> {
+    auto const second = [](http::event_reader &reader) -> task<bool> {
       try {
         static_cast<void>(co_await reader.next());
       } catch (std::logic_error const &) {
@@ -4266,6 +4266,98 @@ TEST_CASE("event_reader: a second next() while one waits is refused", "[client][
     auto [first, refused] = co_await async::when_all(events.next(), second(events));
 
     co_return first == http::server_sent_event{.data = "later"} && refused;
+  };
+
+  REQUIRE(quoll::test::run(loop, reading()) == true);
+}
+
+TEST_CASE("event_reader: after a failure, next() fails the same, not as one pending", "[client][sse]") {
+  auto const router = make_event_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  SECTION("an event too large") {
+    auto const reading = [&]() -> task<int> {
+      http::client const client{memory_connector{server}, "example.com", 80};
+      auto response = co_await client.stream(make_request(verb::get, "/large"));
+      http::event_reader events{response.body, 64};
+      int too_large = 0;
+
+      for (int attempt = 0; attempt < 2; ++attempt) {
+        try {
+          static_cast<void>(co_await events.next());
+        } catch (std::system_error const &failure) {
+          too_large += failure.code() == http::error::event_too_large ? 1 : 0;
+        }
+      }
+
+      co_return too_large;
+    };
+
+    REQUIRE(quoll::test::run(loop, reading()) == 2);
+  }
+
+  SECTION("a stop request while it waits") {
+    auto const reading = [&]() -> task<std::string> {
+      http::client const client{memory_connector{server}, "example.com", 80};
+      auto response = co_await client.stream(make_request(verb::get, "/later"));
+      http::event_reader events{response.body};
+      std::stop_source stop;
+      std::exception_ptr first;
+      bool finished = false;
+
+      co_spawn(co_await async::current_executor(), events.next(),
+               quoll::test::overloaded{[&finished](std::optional<http::server_sent_event>) { finished = true; },
+                                       [&first, &finished](std::exception_ptr error) {
+                                         first = std::move(error);
+                                         finished = true;
+                                       }},
+               stop.get_token());
+      co_await async::yield();
+      stop.request_stop();
+
+      while (!finished) {
+        co_await async::yield();
+      }
+
+      if (!first) {
+        co_return "not stopped";
+      }
+
+      // The flag is down again: the second fails as the reading does, not as one pending.
+      try {
+        static_cast<void>(co_await events.next());
+      } catch (std::logic_error const &) {
+        co_return "pending";
+      } catch (std::system_error const &) {
+        co_return "ended";
+      }
+
+      co_return "read";
+    };
+
+    REQUIRE(quoll::test::run(loop, reading()) == "ended");
+  }
+}
+
+TEST_CASE("event_reader: one moved from reads nothing, and has no id nor retry", "[client][sse]") {
+  auto const router = make_event_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+
+  auto const reading = [&]() -> task<bool> {
+    http::client const client{memory_connector{server}, "example.com", 80};
+    auto response = co_await client.stream(make_request(verb::get, "/events"));
+    http::event_reader events{response.body};
+    auto const first = co_await events.next();
+    auto moved = std::move(events);
+
+    // NOLINTBEGIN(bugprone-use-after-move,clang-analyzer-cplusplus.Move): what is tested.
+    auto const nothing = co_await events.next();
+    bool const empty = !nothing && events.last_event_id().empty() && !events.retry();
+    // NOLINTEND(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
+
+    co_return first &&empty &&moved.last_event_id() == "1" && moved.retry() == 2s;
   };
 
   REQUIRE(quoll::test::run(loop, reading()) == true);

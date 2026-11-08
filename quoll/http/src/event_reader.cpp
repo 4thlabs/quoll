@@ -42,21 +42,12 @@
 
 namespace quoll::http {
 
-namespace {
-
-// What a reader moved from reports.
-std::string const no_event_id;
-
-} // namespace
-
 event_reader::event_reader(response_body body, std::size_t max_event_size)
     : state_(std::make_shared<state>(std::move(body), event_parser{max_event_size})) {}
 
-async::task<std::optional<server_sent_event>> event_reader::next() const { return read_next(state_); }
+async::task<std::optional<server_sent_event>> event_reader::next() { return read_next(state_); }
 
-std::string const &event_reader::last_event_id() const noexcept {
-  return state_ ? state_->parser.last_event_id() : no_event_id;
-}
+std::string event_reader::last_event_id() const { return state_ ? state_->parser.last_event_id() : std::string{}; }
 
 std::optional<std::chrono::milliseconds> event_reader::retry() const noexcept {
   return state_ ? state_->parser.retry() : std::nullopt;
@@ -67,13 +58,11 @@ async::task<std::optional<server_sent_event>> event_reader::read_next(std::share
     co_return std::nullopt;
   }
 
-  if (reading->reading) {
+  if (reading->reading.exchange(true)) {
     throw std::logic_error{"quoll::http::event_reader: next() while another is pending"};
   }
 
   // Cleared on every way out, a throw or the frame destroyed while it waits included.
-  reading->reading = true;
-
   struct done {
     explicit done(state *reader) noexcept : of(reader) {}
 

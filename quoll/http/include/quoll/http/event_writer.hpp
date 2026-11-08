@@ -63,11 +63,11 @@ namespace quoll::http {
  * });
  * @endcode
  *
- * It sets `Content-Type: text/event-stream` and `X-Accel-Buffering: no`, which tells a proxy such as nginx to pass
- * each event on as it comes rather than hold them. A `Cache-Control` is left to the handler or a middleware: set here,
- * it would replace a middleware's. Status and other fields are set on the response_writer before it is given, with
- * nothing written through it yet. The head leaves with open(), or the first event: open() at once lets a client see
- * the stream before there is anything to say.
+ * It sets `Content-Type: text/event-stream`, unless the handler set one, and `X-Accel-Buffering: no`, which tells a
+ * proxy such as nginx to pass each event on as it comes rather than hold them. A `Cache-Control` is left to the handler
+ * or a middleware: set here, it would replace a middleware's. Status and other fields are set on the response_writer
+ * before it is given, with nothing written through it yet. The head leaves with open(), or the first event: open() at
+ * once lets a client see the stream before there is anything to say.
  *
  * Stopping a server waits for a stream as for any request under way, up to its `shutdown_timeout`, then stops what the
  * handler awaits: a stream that waits for changes ends then, not before.
@@ -76,14 +76,15 @@ namespace quoll::http {
  * comment() more often than that, every 15 seconds say, which also keeps a proxy from closing it. An event goes when
  * send() completes, as with response_writer::write(), and a peer gone makes it throw, which ends the handler.
  *
- * Moved, not copied, as the response_writer it holds. Thread safety: one operation at a time, as for response_writer.
+ * Moved, not copied, as the response_writer it holds: one moved from throws std::logic_error from what it is asked.
+ * Thread safety: one operation at a time, as for response_writer.
  */
 class event_writer {
 public:
   /**
    * @brief Writes through `out`, whose fields it completes.
    *
-   * @throws std::logic_error for a response_writer whose head has left, or moved from: its fields would do nothing.
+   * @throws std::logic_error for a response_writer whose head is given, or moved from: its fields would do nothing.
    */
   explicit event_writer(response_writer out);
 
@@ -114,6 +115,8 @@ public:
 private:
   // `text` lives in the frame until it has left.
   [[nodiscard]] async::task<> write(std::string text) QUOLL_LIFETIMEBOUND;
+
+  void check_writable() const;
 
   response_writer out_;
 };

@@ -44,15 +44,22 @@
 namespace quoll::http {
 
 event_writer::event_writer(response_writer out) : out_(std::move(out)) {
-  if (!out_.writable() || out_.head_sent()) {
-    throw std::logic_error{"quoll::http::event_writer: a response_writer whose head has left, or moved from"};
+  if (!out_.writable() || out_.head_given()) {
+    throw std::logic_error{"quoll::http::event_writer: a response_writer whose head is given, or moved from"};
   }
 
-  out_.fields.set("Content-Type", "text/event-stream");
+  // A handler's own, with a charset say, stays.
+  if (!out_.fields.contains("Content-Type")) {
+    out_.fields.set("Content-Type", "text/event-stream");
+  }
+
   out_.fields.set("X-Accel-Buffering", "no");
 }
 
-async::task<> event_writer::open() { return out_.write(std::string_view{}); }
+async::task<> event_writer::open() {
+  check_writable();
+  return out_.write(std::string_view{});
+}
 
 async::task<> event_writer::send(server_sent_event const &event) { return write(format_event(event)); }
 
@@ -60,6 +67,15 @@ async::task<> event_writer::retry(std::chrono::milliseconds delay) { return writ
 
 async::task<> event_writer::comment(std::string_view text) { return write(format_comment(text)); }
 
-async::task<> event_writer::write(std::string text) { co_await out_.write(text); }
+async::task<> event_writer::write(std::string text) {
+  check_writable();
+  co_await out_.write(text);
+}
+
+void event_writer::check_writable() const {
+  if (!out_.writable()) {
+    throw std::logic_error{"quoll::http::event_writer: used once moved from"};
+  }
+}
 
 } // namespace quoll::http

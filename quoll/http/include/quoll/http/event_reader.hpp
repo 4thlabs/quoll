@@ -43,6 +43,7 @@
 #include <quoll/http/response_body.hpp>
 #include <quoll/http/server_sent_event.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <memory>
@@ -57,7 +58,8 @@ namespace quoll::http {
  * @code
  * auto response = co_await client.stream(request);
  *
- * if (response.status != http::status::ok) {
+ * if (response.status != http::status::ok ||
+ *     !response.fields.find("Content-Type").value_or("").starts_with("text/event-stream")) {
  *   co_return;
  * }
  *
@@ -92,10 +94,10 @@ public:
    *
    * @throws std::logic_error, from the task, while another next() is pending.
    */
-  [[nodiscard]] async::task<std::optional<server_sent_event>> next() const;
+  [[nodiscard]] async::task<std::optional<server_sent_event>> next();
 
-  /** @brief The ID of the last event the stream ended, empty if none: `Last-Event-ID`, to connect again. */
-  [[nodiscard]] std::string const &last_event_id() const noexcept QUOLL_LIFETIMEBOUND;
+  /** @brief The ID of the last event the stream ended, empty if none: `Last-Event-ID`, to connect again. A copy. */
+  [[nodiscard]] std::string last_event_id() const;
 
   /** @brief How long the stream asked to wait before connecting again, if it did. */
   [[nodiscard]] std::optional<std::chrono::milliseconds> retry() const noexcept;
@@ -104,7 +106,8 @@ private:
   struct state {
     response_body body;
     event_parser parser;
-    bool reading = false;
+    // Atomic: a second next() from another thread is misuse it reports, not a race of its own.
+    std::atomic<bool> reading = false;
   };
 
   [[nodiscard]] static async::task<std::optional<server_sent_event>> read_next(std::shared_ptr<state> reading);

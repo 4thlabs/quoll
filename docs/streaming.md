@@ -309,7 +309,7 @@ router.get("/feed", [](http::response_writer out) -> async::task<> {
 });
 ```
 
-It sets `Content-Type: text/event-stream` and `X-Accel-Buffering: no`, which tells a proxy such as nginx
+It sets `Content-Type: text/event-stream`, unless the handler set one, and `X-Accel-Buffering: no`, which tells a proxy such as nginx
 to pass each event on as it comes. A status and other fields, a `Cache-Control: no-store` say, go on the
 `response_writer` before it is given, with nothing written through it yet: it throws `std::logic_error`
 otherwise. `open()` sends the head at once, so that a client sees the stream before there is anything to
@@ -321,8 +321,9 @@ there, which takes headers where `EventSource` does not:
 ```cpp
 auto response = co_await client.stream(request);
 
-if (response.status != http::status::ok) {
-  co_return;
+if (response.status != http::status::ok ||
+    !response.fields.find("Content-Type").value_or("").starts_with("text/event-stream")) {
+  co_return;   // a login page answering 200, say
 }
 
 http::event_reader events{response.body};
