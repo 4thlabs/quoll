@@ -39,7 +39,7 @@
 
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
-#include <quoll/io/memory_stream.hpp>
+#include <quoll/io/byte_stream.hpp>
 
 #include <array>
 #include <span>
@@ -47,8 +47,9 @@
 
 namespace quoll::test {
 
-// What a peer reads until the other side closes, as it arrives.
-inline async::task<std::string> read_until_closed(io::memory_stream &stream QUOLL_LIFETIMEBOUND) {
+// What a peer reads until the other side closes, or a read fails, as it arrives.
+template <io::ByteStream Stream>
+async::task<std::string> read_until_closed(Stream &stream QUOLL_LIFETIMEBOUND) {
   std::string received;
   std::array<char, 256> chunk;
 

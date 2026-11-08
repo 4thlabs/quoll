@@ -59,7 +59,7 @@ jobs:
       - name: Configure
         run: >-
           cmake -B build -DCMAKE_BUILD_TYPE=Debug -DQUOLL_LOAD=ON -DQUOLL_BUILD_TESTS=OFF -DQUOLL_BUILD_SAMPLES=OFF
-          -DQUOLL_TLS=OFF
+          -DQUOLL_TLS=ON
           "-DCMAKE_C_FLAGS=${{ matrix.sanitizer.flags }} -fno-omit-frame-pointer"
           "-DCMAKE_CXX_FLAGS=${{ matrix.sanitizer.flags }} -fno-omit-frame-pointer -O1"
         env:

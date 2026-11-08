@@ -39,20 +39,24 @@
 //
 //   quoll_load [seconds] [threads] [clients]      10 s, 4 threads a side and 16 clients by default
 //
-// Well-formed requests get what they ask for, or the run fails. The rest (a request stopped while it runs, a peer gone
-// in mid-request, a header or a body past the limits, a request that is no HTTP, a peer that stalls) only has to end,
-// as the server answers or cuts it: what matters there is what a sanitizer reports, which fails the run too.
+// Each scenario checks what it gets: a well-formed request its answer, over TCP and over TLS when the build has it; a
+// request past a limit, or one that stalls, the status the server owes it. A request stopped while it runs and a peer
+// gone in mid-request only have to end. A wrong answer, a scenario taking more than 10 s, a connection the server saw
+// end on anything but a stream error, or a sanitizer's report fails the run.
 //
 // Build it with -DQUOLL_LOAD=ON -DQUOLL_BUILD_TESTS=OFF and a sanitizer's flags.
 
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/current_executor.hpp>
 #include <quoll/async/detached.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/runtime_options.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/client/client.hpp>
+#include <quoll/client/client_options.hpp>
 #include <quoll/http/body_reader.hpp>
 #include <quoll/http/body_stream.hpp>
 #include <quoll/http/request.hpp>
@@ -64,11 +68,14 @@
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/connect.hpp>
 #include <quoll/io/listen.hpp>
+#include <quoll/io/listen_tls.hpp>
+#include <quoll/io/tls_network_ref.hpp>
 #include <quoll/io/write.hpp>
 #include <quoll/runtime.hpp>
 #include <quoll/server/serve_options.hpp>
 #include <quoll/server/server.hpp>
 #include <quoll/test/overloaded.hpp>
+#include <quoll/test/read_until_closed.hpp>
 
 #include <array>
 #include <atomic>
@@ -101,6 +108,20 @@ using steady_clock = std::chrono::steady_clock;
 
 constexpr std::size_t piece_size = 4096;
 constexpr int pieces = 32;
+
+// The first few lines that say what went wrong, each written at once, as one failure repeated would fill the log and
+// threads writing piece by piece would mix theirs.
+class reporter {
+public:
+  void operator()(std::string_view who, std::string_view what) {
+    if (++reported_ <= 20) {
+      std::cerr << (std::string{"unexpected, "} + std::string{who} + ": " + std::string{what} + "\n");
+    }
+  }
+
+private:
+  std::atomic<int> reported_{0};
+};
 
 http::router make_router() {
   http::router router;
@@ -141,8 +162,16 @@ http::router make_router() {
   return router;
 }
 
+// How the server's connections ended, when not as they should.
+struct server_outcomes {
+  // A stream error: a peer gone or reset, a handshake refused. What the abusive scenarios cause.
+  std::atomic<std::uint64_t> stream_errors{0};
+  // Anything else: what the load is there to find.
+  std::atomic<std::uint64_t> failures{0};
+};
+
 // Short limits and timeouts: what goes past them comes often, and the server ends soon after its clients.
-http::serve_options server_options(std::atomic<std::uint64_t> &connection_errors) {
+http::serve_options server_options(server_outcomes &outcomes, reporter &report) {
   http::serve_options options;
 
   options.connection.limits.max_header_size = std::size_t{8} * 1024;
@@ -151,16 +180,28 @@ http::serve_options server_options(std::atomic<std::uint64_t> &connection_errors
   options.connection.idle_timeout = 2s;
   options.connection.lingering_timeout = 200ms;
   options.shutdown_timeout = 2s;
-  options.on_connection_error = [&connection_errors](std::exception_ptr) { ++connection_errors; };
+  options.on_connection_error = [&outcomes, &report](std::exception_ptr const &error) {
+    try {
+      std::rethrow_exception(error);
+    } catch (std::system_error const &) {
+      ++outcomes.stream_errors;
+    } catch (std::exception const &failure) {
+      ++outcomes.failures;
+      report("the server", failure.what());
+    } catch (...) {
+      ++outcomes.failures;
+      report("the server", "an exception of no standard type");
+    }
+  };
   return options;
 }
 
-// The server, on a runtime of its own and threads of its own.
+// The server, on a runtime of its own and threads of its own: over TCP, and over TLS when the build has it.
 class server_thread {
 public:
-  explicit server_thread(std::size_t threads)
-      : threads_(threads), thread_([this](std::stop_token stop) { run(std::move(stop)); }) {
-    port_ = port_promise_.get_future().get();
+  server_thread(std::size_t threads, reporter &report)
+      : threads_(threads), report_(&report), thread_([this](std::stop_token stop) { run(std::move(stop)); }) {
+    ports_ = ports_promise_.get_future().get();
   }
 
   server_thread(server_thread const &) = delete;
@@ -169,7 +210,10 @@ public:
   server_thread &operator=(server_thread &&) = delete;
   ~server_thread() = default;
 
-  [[nodiscard]] std::uint16_t port() const noexcept { return port_; }
+  [[nodiscard]] std::uint16_t port() const noexcept { return ports_.first; }
+
+  // 0 without TLS in this build.
+  [[nodiscard]] std::uint16_t secure_port() const noexcept { return ports_.second; }
 
   // Stops the server and waits for its connections to end, within its shutdown timeout.
   void finish() {
@@ -178,21 +222,37 @@ public:
   }
 
   // Read once finish() has returned.
-  [[nodiscard]] std::uint64_t connection_errors() const noexcept { return connection_errors_.load(); }
+  [[nodiscard]] server_outcomes const &outcomes() const noexcept { return outcomes_; }
 
 private:
   task<> serve() {
     std::optional<io::any_listener> listener;
+    std::optional<io::any_listener> secure_listener;
 
     try {
       listener.emplace(co_await io::listen(0));
+
+      // Asked rather than caught: anything else that fails to set TLS up is a failure.
+      if ((co_await async::current_executor()).query<io::tls_network_ref>()) {
+        secure_listener.emplace(
+            co_await io::listen_tls(0, {.certificate_file = std::string{QUOLL_LOAD_TLS_DIR} + "/server.pem",
+                                        .private_key_file = std::string{QUOLL_LOAD_TLS_DIR} + "/server-key.pem"}));
+      }
     } catch (...) {
-      port_promise_.set_exception(std::current_exception());
+      ports_promise_.set_exception(std::current_exception());
       co_return;
     }
 
-    port_promise_.set_value(listener->local_port().value());
-    co_await http::server{make_router(), server_options(connection_errors_)}.serve(std::move(*listener));
+    ports_promise_.set_value(
+        {listener->local_port().value(), secure_listener ? secure_listener->local_port().value() : std::uint16_t{0}});
+
+    http::server const server{make_router(), server_options(outcomes_, *report_)};
+
+    if (secure_listener) {
+      co_await async::when_all(server.serve(std::move(*listener)), server.serve(std::move(*secure_listener)));
+    } else {
+      co_await server.serve(std::move(*listener));
+    }
   }
 
   void run(std::stop_token stop) {
@@ -203,9 +263,10 @@ private:
   }
 
   std::size_t threads_;
-  std::promise<std::uint16_t> port_promise_;
-  std::uint16_t port_ = 0;
-  std::atomic<std::uint64_t> connection_errors_{0};
+  reporter *report_;
+  std::promise<std::pair<std::uint16_t, std::uint16_t>> ports_promise_;
+  std::pair<std::uint16_t, std::uint16_t> ports_{};
+  server_outcomes outcomes_;
   // Last: its thread uses the rest.
   std::jthread thread_;
 };
@@ -221,24 +282,35 @@ enum class scenario : std::uint8_t {
   oversized_body,
   malformed,
   stalled,
+  secure,
+  secure_garbage,
 };
 
-constexpr std::array<std::string_view, 10> scenario_names{
-    "GET, kept alive",       "POST, 100-continue", "streamed both ways", "handler throws", "stopped in mid-request",
-    "peer gone mid-request", "header too large",   "body too large",     "no HTTP",        "peer stalls"};
+constexpr std::array<std::string_view, 12> scenario_names{
+    "GET, kept alive", "POST, 100-continue", "streamed both ways", "handler throws",
+    "stopped mid-way", "peer gone mid-way",  "header too large",   "body too large",
+    "no HTTP",         "peer stalls",        "TLS, kept alive",    "no TLS on TLS"};
+
+static_assert(scenario_names.size() == static_cast<std::size_t>(scenario::secure_garbage) + 1,
+              "quoll_load: a name for each scenario");
+
+[[nodiscard]] constexpr bool needs_tls(scenario which) noexcept {
+  return which == scenario::secure || which == scenario::secure_garbage;
+}
 
 // The order a client takes them in: mostly well-formed requests, as the others take longer (a peer stalling waits out
 // the server's read timeout) and would otherwise fill the run.
 constexpr std::array turns{scenario::get,     scenario::expect_continue,
-                           scenario::stream,  scenario::get,
+                           scenario::stream,  scenario::secure,
                            scenario::stopped, scenario::stream,
                            scenario::failing, scenario::get,
                            scenario::cut,     scenario::expect_continue,
-                           scenario::get,     scenario::oversized_header,
+                           scenario::secure,  scenario::oversized_header,
                            scenario::stream,  scenario::get,
                            scenario::stopped, scenario::oversized_body,
                            scenario::get,     scenario::malformed,
-                           scenario::stream,  scenario::stalled};
+                           scenario::secure,  scenario::stalled,
+                           scenario::get,     scenario::secure_garbage};
 
 // Shared by the clients' threads.
 struct tally {
@@ -248,16 +320,16 @@ struct tally {
   };
 
   std::array<counts, scenario_names.size()> by_scenario{};
-  std::atomic<int> reported{0};
 
   [[nodiscard]] counts &of(scenario which) noexcept { return by_scenario.at(static_cast<std::size_t>(which)); }
+};
 
-  // The first few, as one failing scenario would otherwise fill the log.
-  void report(scenario which, std::string_view what) {
-    if (++reported <= 20) {
-      std::cerr << "unexpected, " << scenario_names.at(static_cast<std::size_t>(which)) << ": " << what << '\n';
-    }
-  }
+// What a client talks to: the server's ports, and a client kept for each, as a program keeps its connections.
+struct peers {
+  http::client const &plain;
+  http::client const *secure;
+  std::uint16_t port;
+  std::uint16_t secure_port;
 };
 
 http::request make_request(http::verb method, std::string target, std::string body = {}) {
@@ -269,48 +341,51 @@ http::request make_request(http::verb method, std::string target, std::string bo
   return request;
 }
 
-task<> read_until_closed(io::any_stream &stream QUOLL_LIFETIMEBOUND) {
-  std::array<std::byte, 4096> buffer{};
+// What came back on a connection of its own, and whether the server closed it within a second.
+struct raw_answer {
+  std::string received;
+  bool closed = false;
+};
 
-  while (true) {
-    auto const result = co_await stream.read_some(buffer);
-
-    if (result.error || result.transferred == 0) {
-      co_return;
-    }
-  }
-}
-
-// Sends `data` on a connection of its own, waits `pause`, then reads what comes back until the server closes, or for
-// a second at most, unless `listen` is false: a peer that stops listening is part of the load too.
-task<bool> send_raw(std::uint16_t port, std::string data, std::chrono::milliseconds pause, bool listen) {
+// Sends `data` on a connection of its own, waits `pause`, then reads what comes back until the server closes, for a
+// second at most, unless `listen` is false: a peer that stops listening is part of the load too.
+task<raw_answer> send_raw(std::uint16_t port, std::string data, std::chrono::milliseconds pause, bool listen) {
   auto stream = co_await io::connect("127.0.0.1", port);
 
-  // Whether all of it left does not matter: the server may cut the connection first.
+  // Whether all of it left does not matter: the server may answer and close first.
   static_cast<void>(co_await io::write(stream, std::as_bytes(std::span{data})));
 
   if (pause > 0ms) {
     co_await async::sleep_for(pause);
   }
 
+  raw_answer answer;
+
   if (!listen) {
-    co_return true;
+    co_return answer;
   }
 
   try {
-    co_await async::with_timeout(1s, read_until_closed(stream));
-  } catch (std::system_error const &) {
-    // Timed out: the server keeps a connection it may keep.
+    answer.received = co_await async::with_timeout(1s, quoll::test::read_until_closed(stream));
+    answer.closed = true;
+  } catch (std::system_error const &error) {
+    if (error.code() != std::errc::timed_out) {
+      throw;
+    }
   }
 
-  co_return true;
+  co_return answer;
 }
 
-// True when the scenario got what it should: for a well-formed request, its answer; for the others, that it ended.
-task<bool> run_scenario(scenario which, http::client const &client QUOLL_LIFETIMEBOUND, std::uint16_t port) {
+[[nodiscard]] bool answered(raw_answer const &answer, std::string_view status) {
+  return answer.received.starts_with("HTTP/1.1 " + std::string{status});
+}
+
+// True when the scenario got what it should.
+task<bool> run_scenario(scenario which, peers const &to QUOLL_LIFETIMEBOUND) {
   switch (which) {
   case scenario::get: {
-    auto const response = co_await client.send(make_request(http::verb::get, "/hello"));
+    auto const response = co_await to.plain.send(make_request(http::verb::get, "/hello"));
 
     co_return response.status == http::status::ok &&response.body == "hello";
   }
@@ -320,7 +395,7 @@ task<bool> run_scenario(scenario which, http::client const &client QUOLL_LIFETIM
 
     request.fields.add("Expect", "100-continue");
 
-    auto const response = co_await client.send(std::move(request));
+    auto const response = co_await to.plain.send(std::move(request));
 
     co_return response.status == http::status::ok &&response.body == body;
   }
@@ -335,65 +410,100 @@ task<bool> run_scenario(scenario which, http::client const &client QUOLL_LIFETIM
       }
     };
 
-    auto const response = co_await client.send(std::move(request));
+    auto const response = co_await to.plain.send(std::move(request));
 
     co_return response.status == http::status::ok &&response.body.size() == piece_size *pieces;
   }
   case scenario::failing: {
-    auto const response = co_await client.send(make_request(http::verb::get, "/throws"));
+    auto const response = co_await to.plain.send(make_request(http::verb::get, "/throws"));
 
     co_return response.status == http::status::internal_server_error;
   }
   case scenario::stopped: {
     try {
-      auto const response = co_await async::with_timeout(10ms, client.send(make_request(http::verb::get, "/slow")));
+      auto const response = co_await async::with_timeout(10ms, to.plain.send(make_request(http::verb::get, "/slow")));
 
       co_return response.status == http::status::ok;
     } catch (std::system_error const &error) {
       co_return error.code() == std::errc::timed_out;
     }
   }
-  case scenario::cut:
-    co_return co_await send_raw(
-        port, "POST /echo HTTP/1.1\r\nHost: load\r\nContent-Length: 100000\r\n\r\n" + std::string(1000, 'c'), 0ms,
+  case scenario::cut: {
+    auto const answer = co_await send_raw(
+        to.port, "POST /echo HTTP/1.1\r\nHost: load\r\nContent-Length: 100000\r\n\r\n" + std::string(1000, 'c'), 0ms,
         false);
+
+    co_return answer.received.empty();
+  }
   case scenario::oversized_header:
-    co_return co_await send_raw(
-        port, "GET /hello HTTP/1.1\r\nHost: load\r\nX-Large: " + std::string(std::size_t{16} * 1024, 'h') + "\r\n\r\n",
-        0ms, true);
+    co_return answered(co_await send_raw(to.port,
+                                         "GET /hello HTTP/1.1\r\nHost: load\r\nX-Large: " +
+                                             std::string(std::size_t{16} * 1024, 'h') + "\r\n\r\n",
+                                         0ms, true),
+                       "431");
   case scenario::oversized_body:
-    co_return co_await send_raw(port,
-                                "POST /echo HTTP/1.1\r\nHost: load\r\nContent-Length: 10485760\r\n\r\n" +
-                                    std::string(std::size_t{64} * 1024, 'b'),
-                                0ms, true);
+    co_return answered(co_await send_raw(to.port,
+                                         "POST /echo HTTP/1.1\r\nHost: load\r\nContent-Length: 10485760\r\n\r\n" +
+                                             std::string(std::size_t{64} * 1024, 'b'),
+                                         0ms, true),
+                       "413");
   case scenario::malformed:
-    co_return co_await send_raw(port, "NOT HTTP AT ALL\r\n\r\n", 0ms, true);
-  case scenario::stalled:
-    // Longer than the server's read timeout.
-    co_return co_await send_raw(port, "GET /hello HTTP/1.1\r\nHo", 700ms, true);
+    co_return answered(co_await send_raw(to.port, "NOT HTTP AT ALL\r\n\r\n", 0ms, true), "400");
+  case scenario::stalled: {
+    // Longer than the server's read timeout, which answers 408 and closes.
+    auto const answer = co_await send_raw(to.port, "GET /hello HTTP/1.1\r\nHo", 700ms, true);
+
+    co_return answered(answer, "408") && answer.closed;
+  }
+  case scenario::secure: {
+    auto const hello = co_await to.secure->send(make_request(http::verb::get, "/hello"));
+    auto const echoed = co_await to.secure->send(make_request(http::verb::post, "/echo", "over TLS"));
+
+    co_return hello.body == "hello" && echoed.body == "over TLS";
+  }
+  case scenario::secure_garbage:
+    // Plain HTTP to the TLS port: the handshake fails, and the server closes.
+    co_return (co_await send_raw(to.secure_port, "GET /hello HTTP/1.1\r\nHost: load\r\n\r\n", 0ms, true)).closed;
   }
 
   co_return false;
 }
 
-// Runs the scenarios in turn, from `first`, until `deadline`, over one client kept for the well-formed requests.
-task<> client_loop(std::uint16_t port, std::size_t first, steady_clock::time_point deadline,
-                   tally &counted QUOLL_LIFETIMEBOUND) {
-  http::client const client{"http://127.0.0.1:" + std::to_string(port)};
+// Runs the scenarios in turn, from `first`, until `deadline`, each within 10 s, over clients kept for the well-formed
+// requests. Without TLS in this build, its scenarios are left out.
+task<> client_loop(std::uint16_t port, std::uint16_t secure_port, std::size_t first, steady_clock::time_point deadline,
+                   tally &counted QUOLL_LIFETIMEBOUND, reporter &report QUOLL_LIFETIMEBOUND) {
+  http::client const plain{"http://127.0.0.1:" + std::to_string(port)};
+  std::optional<http::client> secure;
+
+  if (secure_port != 0) {
+    http::client_options options;
+
+    options.tls.ca_file = std::string{QUOLL_LOAD_TLS_DIR} + "/ca.pem";
+    secure.emplace("https://127.0.0.1:" + std::to_string(secure_port), std::move(options));
+  }
+
+  peers const to{plain, secure ? &*secure : nullptr, port, secure_port};
 
   for (auto turn = first; steady_clock::now() < deadline; ++turn) {
     auto const which = turns.at(turn % turns.size());
+
+    if (needs_tls(which) && secure_port == 0) {
+      continue;
+    }
+
     auto &counts = counted.of(which);
+    auto const name = scenario_names.at(static_cast<std::size_t>(which));
 
     try {
-      if (co_await run_scenario(which, client, port)) {
+      if (co_await async::with_timeout(10s, run_scenario(which, to))) {
         ++counts.done;
         continue;
       }
 
-      counted.report(which, "a wrong answer");
+      report(name, "a wrong answer");
     } catch (std::exception const &error) {
-      counted.report(which, error.what());
+      report(name, error.what());
     }
 
     ++counts.unexpected;
@@ -407,50 +517,62 @@ int main(int argc, char **argv) {
     auto const seconds = argc > 1 ? std::stoi(argv[1]) : 10;
     auto const threads = argc > 2 ? std::stoul(argv[2]) : 4;
     auto const clients = argc > 3 ? std::stoul(argv[3]) : 16;
+    reporter report;
     tally counted;
     std::atomic<int> client_failures{0};
-    std::uint64_t connection_errors = 0;
+    std::uint64_t stream_errors = 0;
+    std::uint64_t server_failures = 0;
+    bool with_tls = false;
 
     {
-      server_thread server{threads};
+      server_thread server{threads, report};
       quoll::runtime runtime{async::runtime_options{.threads = threads}};
       auto const deadline = steady_clock::now() + std::chrono::seconds{seconds};
 
+      with_tls = server.secure_port() != 0;
+
       for (std::size_t client = 0; client < clients; ++client) {
-        co_spawn(runtime.get_executor(), client_loop(server.port(), client, deadline, counted),
+        co_spawn(runtime.get_executor(),
+                 client_loop(server.port(), server.secure_port(), client, deadline, counted, report),
                  quoll::test::overloaded{[] {},
-                                         [&client_failures](std::exception_ptr const &error) {
+                                         [&client_failures, &report](std::exception_ptr const &error) {
                                            ++client_failures;
 
                                            try {
                                              std::rethrow_exception(error);
                                            } catch (std::exception const &failure) {
-                                             std::cerr << "a client ended: " << failure.what() << '\n';
+                                             report("a client", failure.what());
+                                           } catch (...) {
+                                             report("a client", "an exception of no standard type");
                                            }
                                          }});
       }
 
       runtime.run();
       server.finish();
-      connection_errors = server.connection_errors();
+      stream_errors = server.outcomes().stream_errors;
+      server_failures = server.outcomes().failures;
     }
 
-    bool failed = client_failures > 0;
+    bool failed = client_failures > 0 || server_failures > 0;
 
     std::cout << std::left << std::setw(24) << "scenario" << std::right << std::setw(10) << "done" << std::setw(12)
               << "unexpected\n";
 
     for (std::size_t index = 0; index < scenario_names.size(); ++index) {
       auto const &counts = counted.by_scenario.at(index);
+      auto const left_out = needs_tls(static_cast<scenario>(index)) && !with_tls;
 
       std::cout << std::left << std::setw(24) << scenario_names.at(index) << std::right << std::setw(10)
-                << counts.done.load() << std::setw(11) << counts.unexpected.load() << '\n';
+                << counts.done.load() << std::setw(11) << counts.unexpected.load() << (left_out ? "  (no TLS)" : "")
+                << '\n';
 
       // Each scenario has to have run, and as it should.
-      failed = failed || counts.done == 0 || counts.unexpected > 0;
+      failed = failed || (!left_out && counts.done == 0) || counts.unexpected > 0;
     }
 
-    std::cout << "connections the server saw end on an error: " << connection_errors << '\n';
+    std::cout << "connections the server saw end on a stream error: " << stream_errors
+              << ", on anything else: " << server_failures << '\n';
     return failed ? 1 : 0;
   } catch (std::exception const &error) {
     std::cerr << "quoll_load: " << error.what() << '\n';

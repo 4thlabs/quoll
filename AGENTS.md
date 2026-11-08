@@ -56,8 +56,10 @@ emcmake cmake -B build-wasm && cmake --build build-wasm -j"$(nproc)" && ctest --
 run-clang-tidy-19 -p build -quiet "$PWD/(quoll|samples)/.*\.cpp$"   # needs a Clang build; all of it, as every night: a PR leaves the analyzer out of the tests
 cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -DQUOLL_BENCH=ON -DQUOLL_BUILD_TESTS=OFF && cmake --build build-bench --target quoll_bench -j"$(nproc)" \
   && build-bench/tests/bench/quoll_bench tcp   # what it costs: docs/BENCHMARKS.md
-cmake -B build-load -DQUOLL_LOAD=ON -DQUOLL_BUILD_TESTS=OFF -DQUOLL_BUILD_SAMPLES=OFF -DCMAKE_C_FLAGS=-fsanitize=thread "-DCMAKE_CXX_FLAGS=-fsanitize=thread -O1" \
-  && cmake --build build-load --target quoll_load -j"$(nproc)" && build-load/tests/load/quoll_load 30   # a load under TSan
+# A load under TSan, as load.yml runs it. GCC 13's TSan needs `sudo sysctl vm.mmap_rnd_bits=28` where it is higher.
+cmake -B build-load -DCMAKE_BUILD_TYPE=Debug -DQUOLL_LOAD=ON -DQUOLL_BUILD_TESTS=OFF -DQUOLL_BUILD_SAMPLES=OFF \
+  "-DCMAKE_C_FLAGS=-fsanitize=thread -fno-omit-frame-pointer" "-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer -O1" \
+  && cmake --build build-load --target quoll_load -j"$(nproc)" && build-load/tests/load/quoll_load 30
 CC=clang-19 CXX=clang++-19 cmake -B build-fuzz -DCMAKE_BUILD_TYPE=RelWithDebInfo -DQUOLL_FUZZ=ON -DQUOLL_BUILD_TESTS=OFF -DQUOLL_BUILD_SAMPLES=OFF \
   && cmake --build build-fuzz --target quoll_fuzzers -j"$(nproc)" && tests/fuzz/run.sh build-fuzz 60   # libFuzzer, 60 s a target
 ```
@@ -98,7 +100,8 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   the budgets in its source, GCC 13's, which do not depend on the machine. A change that raises one says why.
 - `tests/load/`: `quoll_load`, built with `QUOLL_LOAD`, a mixed load on a server and its clients, each on a runtime of several
   threads: well-formed requests, stops, peers gone in mid-request, past the limits or stalling. `load.yml` runs it every night
-  under TSan and under ASan with UBSan, and on a PR touching it only; a sanitizer's report or a wrong answer fails it.
+  under TSan and under ASan with UBSan, and on a PR touching it only; a sanitizer's report or a wrong answer fails it. CI
+  compiles it, so that a change to what it uses breaks the PR rather than the night.
 - `samples/<sample>/`: small programs using Quoll, built when `QUOLL_BUILD_SAMPLES` is ON (default when top-level).
   `samples/notes` (native): a REST contract, its server and its client over TCP; with tests ON, the ctest
   `notes_round_trip` runs them against each other. `samples/ui_notes` (Emscripten): the same contract in a browser.
