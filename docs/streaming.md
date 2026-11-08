@@ -309,10 +309,11 @@ router.get("/feed", [](http::response_writer out) -> async::task<> {
 });
 ```
 
-It sets `Content-Type: text/event-stream` and `X-Accel-Buffering: no`, unless the handler set them, which tells a proxy such as nginx
-to pass each event on as it comes. A status and other fields, a `Cache-Control: no-store` say, go on the
-`response_writer` before it is given, with nothing written through it yet: it throws `std::logic_error`
-otherwise. `open()` sends the head at once, so that a client sees the stream before there is anything to
+It sets `Content-Type: text/event-stream`, and `X-Accel-Buffering: no`, which tells a proxy such as nginx
+to pass each event on as it comes, both unless the handler set them: a middleware's are replaced, as a
+handler's fields replace them, as a stream needs them. A status and other fields, a `Cache-Control:
+no-store` say, go on the `response_writer` before it is given, with nothing written through it yet: it
+throws `std::logic_error` otherwise, and leaves it to the handler. `open()` sends the head at once, so that a client sees the stream before there is anything to
 say; otherwise it leaves with the first event. Like the `response_writer`, it does not outlive the
 handler: a stream that others feed is a handler waiting for what they post, which it writes itself.
 

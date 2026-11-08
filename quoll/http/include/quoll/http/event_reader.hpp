@@ -78,7 +78,9 @@ class one_at_a_time;
  * on its own. A read that fails, or an event larger than it holds, throws from next() (see response_body and
  * event_parser), and reading ends there, as it does on a stop request or a timeout around it: the reader lets go of the
  * body, which closes the connection once no other copy of it is left, and every next() after throws the same, as the
- * body gave it: `operation_canceled` for a timeout around next(), which the caller saw as `timed_out`.
+ * body gave it: `operation_canceled` for a timeout around next(), which the caller saw as `timed_out`. To notice a
+ * stream gone quiet and keep reading, rely on the transport's own timeout instead,
+ * http::client_options::response_timeout, which a server's comments keep from running out.
  *
  * Moved, not copied: copies would share the body, not the events read from it. What it reads lives with the task of
  * next() too, so that the reader may be moved, or go, while one is pending. Thread safety: one next() at a time, a
