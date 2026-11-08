@@ -37,7 +37,6 @@
 #ifndef QUOLL_HTTP_EVENT_WRITER_HPP
 #define QUOLL_HTTP_EVENT_WRITER_HPP
 
-#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/response_writer.hpp>
 #include <quoll/http/server_sent_event.hpp>
@@ -78,7 +77,8 @@ namespace quoll::http {
  * comment() more often than that, every 15 seconds say, which also keeps a proxy from closing it. An event goes when
  * send() completes, as with response_writer::write(), and a peer gone makes it throw, which ends the handler.
  *
- * Moved, not copied, as the response_writer it holds: one moved from throws std::logic_error from what it is asked.
+ * Moved, not copied, as the response_writer it holds: one moved from throws std::logic_error when asked anything. An
+ * operation takes what it writes through when it is called, so that the writer may move, or go, before it ends.
  * One operation at a time, a comment to keep the stream alive included: one asked for while another is pending throws
  * std::logic_error from its task, in every build, rather than write over it.
  */
@@ -91,40 +91,52 @@ public:
    */
   explicit event_writer(response_writer out);
 
+  event_writer(event_writer const &) = delete;
+  event_writer &operator=(event_writer const &) = delete;
+  event_writer(event_writer &&) noexcept = default;
+  event_writer &operator=(event_writer &&) noexcept = default;
+  ~event_writer() = default;
+
   /** @brief Sends the head now, before any event. */
-  [[nodiscard]] async::task<> open() QUOLL_LIFETIMEBOUND;
+  [[nodiscard]] async::task<> open();
 
   /**
    * @brief Sends `event` (see http::format_event).
    *
    * @throws std::invalid_argument, before the task runs, for an event format_event refuses.
    */
-  [[nodiscard]] async::task<> send(server_sent_event const &event) QUOLL_LIFETIMEBOUND;
+  [[nodiscard]] async::task<> send(server_sent_event const &event);
 
   /**
    * @brief Asks the client to wait `delay` before connecting again once the stream has ended (see format_retry).
    *
    * @throws std::invalid_argument, before the task runs, for a negative delay.
    */
-  [[nodiscard]] async::task<> retry(std::chrono::milliseconds delay) QUOLL_LIFETIMEBOUND;
+  [[nodiscard]] async::task<> retry(std::chrono::milliseconds delay);
 
   /**
    * @brief A comment, which a client ignores: what keeps a quiet stream alive (see format_comment).
    *
    * @throws std::invalid_argument, before the task runs, for text that is not UTF-8 or holds a line break.
    */
-  [[nodiscard]] async::task<> comment(std::string_view text = {}) QUOLL_LIFETIMEBOUND;
+  [[nodiscard]] async::task<> comment(std::string_view text = {});
 
 private:
+  // What each operation's task holds too, from the call on, so that the writer may move, or go, before it ends.
+  struct state {
+    response_writer out;
+    // Up while an operation is pending, so that a second one throws rather than write over the first.
+    std::atomic<bool> busy = false;
+  };
+
+  // The state, or std::logic_error for a writer moved from.
+  [[nodiscard]] std::shared_ptr<state> checked() const;
+
   // `text` lives in the frame until it has left.
-  [[nodiscard]] async::task<> write(std::string text) QUOLL_LIFETIMEBOUND;
+  [[nodiscard]] static async::task<> write(std::shared_ptr<state> writing, std::string text);
 
-  void check_writable() const;
-
-  response_writer out_;
-  // Up while an operation is pending, so that a second one throws rather than write over the first. Held by each
-  // operation's task as well, so that the writer may move while one waits.
-  std::shared_ptr<std::atomic<bool>> busy_ = std::make_shared<std::atomic<bool>>(false);
+  // Null once moved from.
+  std::shared_ptr<state> state_;
 };
 
 } // namespace quoll::http

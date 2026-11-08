@@ -1701,6 +1701,77 @@ TEST_CASE("event_writer: an operation while another is pending throws, and leave
   REQUIRE(sent == "data: first\n\n: after\n");
 }
 
+TEST_CASE("event_writer: moved, or gone, once an operation is asked, the operation goes on", "[server][sse]") {
+  std::string sent;
+  slow_sink sink{&sent};
+  http::body_stream out{sink};
+
+  auto const writing = [&out]() -> task<bool> {
+    std::optional<http::event_writer> events{std::in_place, http::response_writer{out}};
+    auto asked = events->send({.data = "asked"});
+    auto moved = std::move(*events);
+
+    events.reset();
+    co_await std::move(asked);
+
+    // And while one waits.
+    auto const move_away = [](http::event_writer &from) -> task<> {
+      auto const gone = std::move(from);
+
+      co_return;
+    };
+
+    co_await async::when_all(moved.send({.data = "waiting"}), move_away(moved));
+    co_return true;
+  };
+
+  REQUIRE(quoll::test::run(writing()));
+  REQUIRE(sent == "data: asked\n\ndata: waiting\n\n");
+}
+
+TEST_CASE("event_writer: one moved from refuses what it is asked, at once", "[server][sse]") {
+  std::string sent;
+  slow_sink sink{&sent};
+  http::body_stream out{sink};
+  http::event_writer events{http::response_writer{out}};
+  auto const moved = std::move(events);
+
+  // NOLINTBEGIN(bugprone-use-after-move,clang-analyzer-cplusplus.Move): what is tested.
+  REQUIRE_THROWS_AS(events.open(), std::logic_error);
+  REQUIRE_THROWS_AS(events.send({.data = "x"}), std::logic_error);
+  REQUIRE_THROWS_AS(events.retry(std::chrono::seconds{1}), std::logic_error);
+  REQUIRE_THROWS_AS(events.comment(), std::logic_error);
+  // NOLINTEND(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
+}
+
+TEST_CASE("event_writer: after a failed operation, the next fails the same, not as one pending", "[server][sse]") {
+  http::router router;
+  std::string outcome;
+
+  router.get("/feed", [&outcome](http::response_writer out) -> task<> {
+    http::event_writer events{std::move(out)};
+
+    // To HEAD, the first write sends the head and throws operation_canceled.
+    try {
+      co_await events.open();
+    } catch (std::system_error const &) {
+      outcome += "first;";
+    }
+
+    try {
+      co_await events.comment();
+    } catch (std::logic_error const &) {
+      outcome += "pending";
+    } catch (std::system_error const &) {
+      outcome += "failed";
+    }
+  });
+
+  static_cast<void>(answer_to(http::server{router}, "HEAD /feed HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+
+  REQUIRE(outcome == "first;failed");
+}
+
 TEST_CASE("event_writer: a Cache-Control of a middleware stays", "[server][sse]") {
   http::router router;
 

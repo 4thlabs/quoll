@@ -38,7 +38,6 @@
 #define QUOLL_HTTP_DETAIL_ONE_AT_A_TIME_HPP
 
 #include <atomic>
-#include <stdexcept>
 
 namespace quoll::http::detail {
 
@@ -46,18 +45,14 @@ namespace quoll::http::detail {
 // throw or the frame destroyed included. A second operation meanwhile throws std::logic_error with `message`.
 class one_at_a_time {
 public:
-  one_at_a_time(std::atomic<bool> &flag, char const *message) : flag_(&flag) {
-    if (flag.exchange(true)) {
-      throw std::logic_error{message};
-    }
-  }
+  one_at_a_time(std::atomic<bool> &flag, char const *message);
 
   one_at_a_time(one_at_a_time const &) = delete;
   one_at_a_time &operator=(one_at_a_time const &) = delete;
   one_at_a_time(one_at_a_time &&) = delete;
   one_at_a_time &operator=(one_at_a_time &&) = delete;
 
-  ~one_at_a_time() { flag_->store(false); }
+  ~one_at_a_time();
 
 private:
   std::atomic<bool> *flag_;

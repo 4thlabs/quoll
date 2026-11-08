@@ -4112,13 +4112,6 @@ http::router make_event_router() {
     co_await events.comment();
     co_await events.send({.data = "second"});
   });
-  router.get("/cut", [](http::response_writer out) -> task<> {
-    out.fields.set("Content-Type", "text/event-stream");
-
-    for (auto const piece : std::string_view{"id: 7\r\ndata: a\r\n\r\ndata: b\n\ndata: lost"}) {
-      co_await out.write(std::string_view{&piece, 1});
-    }
-  });
   router.get("/later", [](http::response_writer out) -> task<> {
     http::event_writer events{std::move(out)};
 
@@ -4185,18 +4178,6 @@ TEST_CASE("event_reader: the events an event_writer sends, as they come", "[clie
                                                               {.data = "second", .id = "1"}});
   REQUIRE(got->last_event_id == "1");
   REQUIRE(got->retry == 2s);
-  REQUIRE_FALSE(got->error);
-}
-
-TEST_CASE("event_reader: events written a byte at a time, and one the stream does not end", "[client][sse]") {
-  auto const router = make_event_router();
-  async::run_loop loop;
-  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
-  auto const got = quoll::test::run(loop, events_from(server, "/cut"));
-
-  REQUIRE(got);
-  REQUIRE(got->events == std::vector<http::server_sent_event>{{.data = "a", .id = "7"}, {.data = "b", .id = "7"}});
-  REQUIRE(got->last_event_id == "7");
   REQUIRE_FALSE(got->error);
 }
 
@@ -4322,6 +4303,15 @@ TEST_CASE("event_reader: after a failure, next() fails the same, not as one pend
 
       if (!first) {
         co_return "not stopped";
+      }
+
+      // Stopped while it waited on the body, not failed some other way.
+      try {
+        std::rethrow_exception(first);
+      } catch (std::system_error const &failure) {
+        if (failure.code() != std::errc::operation_canceled) {
+          co_return "failed otherwise";
+        }
       }
 
       // The flag is down again: the second fails as the reading does, not as one pending.

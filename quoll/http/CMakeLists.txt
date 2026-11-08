@@ -40,6 +40,7 @@ quoll_declare_module(
     src/fields.cpp
     src/format_event.cpp
     src/local_transport.cpp
+    src/one_at_a_time.cpp
     src/parser.cpp
     src/percent.cpp
     src/response_writer.cpp

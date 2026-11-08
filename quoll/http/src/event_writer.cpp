@@ -46,45 +46,57 @@
 
 namespace quoll::http {
 
-event_writer::event_writer(response_writer out) : out_(std::move(out)) {
-  if (!out_.writable() || out_.head_given()) {
+event_writer::event_writer(response_writer out) {
+  if (!out.writable() || out.head_given()) {
     throw std::logic_error{"quoll::http::event_writer: a response_writer whose head is given, or moved from"};
   }
 
   // A handler's own, a charset say, stays.
-  if (!out_.fields.contains("Content-Type")) {
-    out_.fields.set("Content-Type", "text/event-stream");
+  if (!out.fields.contains("Content-Type")) {
+    out.fields.set("Content-Type", "text/event-stream");
   }
 
-  if (!out_.fields.contains("X-Accel-Buffering")) {
-    out_.fields.set("X-Accel-Buffering", "no");
+  if (!out.fields.contains("X-Accel-Buffering")) {
+    out.fields.set("X-Accel-Buffering", "no");
   }
+
+  state_ = std::make_shared<state>(std::move(out));
 }
 
 // An empty piece sends the head.
-async::task<> event_writer::open() { return write(std::string{}); }
+async::task<> event_writer::open() { return write(checked(), std::string{}); }
 
-async::task<> event_writer::send(server_sent_event const &event) { return write(format_event(event)); }
+async::task<> event_writer::send(server_sent_event const &event) {
+  auto writing = checked();
 
-async::task<> event_writer::retry(std::chrono::milliseconds delay) { return write(format_retry(delay)); }
-
-async::task<> event_writer::comment(std::string_view text) { return write(format_comment(text)); }
-
-async::task<> event_writer::write(std::string text) {
-  check_writable();
-
-  // The task's own: `this` is not used once it waits, as the writer may move meanwhile.
-  auto const busy = busy_;
-
-  detail::one_at_a_time const operation{*busy, "quoll::http::event_writer: an operation while another is pending"};
-
-  co_await out_.write(text);
+  return write(std::move(writing), format_event(event));
 }
 
-void event_writer::check_writable() const {
-  if (!out_.writable()) {
+async::task<> event_writer::retry(std::chrono::milliseconds delay) {
+  auto writing = checked();
+
+  return write(std::move(writing), format_retry(delay));
+}
+
+async::task<> event_writer::comment(std::string_view text) {
+  auto writing = checked();
+
+  return write(std::move(writing), format_comment(text));
+}
+
+std::shared_ptr<event_writer::state> event_writer::checked() const {
+  if (!state_) {
     throw std::logic_error{"quoll::http::event_writer: used once moved from"};
   }
+
+  return state_;
+}
+
+async::task<> event_writer::write(std::shared_ptr<state> writing, std::string text) {
+  detail::one_at_a_time const operation{writing->busy,
+                                        "quoll::http::event_writer: an operation while another is pending"};
+
+  co_await writing->out.write(text);
 }
 
 } // namespace quoll::http
