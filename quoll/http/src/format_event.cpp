@@ -40,6 +40,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace quoll::http {
 
@@ -85,6 +86,9 @@ std::string format_event(server_sent_event const &event) {
   }
 
   std::string out;
+
+  // Mostly one allocation: the fields' names and line ends, about a byte in eight of data, and the rest.
+  out.reserve(event.type.size() + (event.id ? event.id->size() : 0) + event.data.size() + (event.data.size() / 8) + 32);
 
   if (!event.type.empty() && event.type != "message") {
     append_field(out, "event", event.type);

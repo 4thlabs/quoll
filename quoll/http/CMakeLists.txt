@@ -35,9 +35,13 @@ quoll_declare_module(
     src/connection_field.cpp
     src/error.cpp
     src/event_parser.cpp
+    src/event_reader.cpp
+    src/event_writer.cpp
     src/fields.cpp
     src/format_event.cpp
+    src/is_event_stream.cpp
     src/local_transport.cpp
+    src/one_at_a_time.cpp
     src/parser.cpp
     src/percent.cpp
     src/response_writer.cpp
@@ -53,6 +57,7 @@ quoll_declare_module(
 quoll_declare_tests(
   SOURCES
     tests/event_parser_test.cpp
+    tests/event_reader_test.cpp
     tests/fields_test.cpp
     tests/format_event_test.cpp
     tests/parser_test.cpp

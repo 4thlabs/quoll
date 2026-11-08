@@ -1,0 +1,137 @@
+//   ___              _ _
+//  / _ \ _   _  ___ | | |
+// | | | | | | |/ _ \| | |
+// | |_| | |_| | (_) | | |
+//  \__\_\\__,_|\___/|_|_|
+//
+// BSD 3-Clause License
+//
+// Copyright (c) 2026, Thomas Gourgues (thomas.gourgues@gmail.com)
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#ifndef QUOLL_HTTP_EVENT_READER_HPP
+#define QUOLL_HTTP_EVENT_READER_HPP
+
+#include <quoll/async/task.hpp>
+#include <quoll/http/event_parser.hpp>
+#include <quoll/http/response_body.hpp>
+#include <quoll/http/server_sent_event.hpp>
+
+#include <atomic>
+#include <chrono>
+#include <cstddef>
+#include <exception>
+#include <memory>
+#include <optional>
+#include <string>
+
+namespace quoll::http {
+
+namespace detail {
+class one_at_a_time;
+} // namespace detail
+
+/**
+ * @brief Reads the events of a `text/event-stream` response as they come, natively and through a browser's `fetch`.
+ *
+ * @code
+ * auto response = co_await client.stream(request);
+ *
+ * if (response.status != http::status::ok || !http::is_event_stream(response.fields)) {
+ *   co_return;
+ * }
+ *
+ * http::event_reader events{std::move(response.body)};
+ *
+ * while (auto const event = co_await events.next()) {
+ *   show(event->type, event->data);
+ * }
+ * @endcode
+ *
+ * The status and the `Content-Type` are for the caller to check, which knows what else it accepts. When the stream
+ * ends, next() gives nothing, and last_event_id() and retry() say how to ask for the rest: it does not connect again
+ * on its own. A read that fails, or an event larger than it holds, throws from next() (see response_body and
+ * event_parser), and reading ends there, as it does on a stop request or a timeout around it: the reader lets go of the
+ * body, which closes the connection once no other copy of it is left, and every next() after throws the same, as the
+ * body gave it: `operation_canceled` for a timeout around next(), which the caller saw as `timed_out`. To notice a
+ * stream gone quiet and keep reading, rely on the transport's own timeout instead,
+ * http::client_options::response_timeout, which a server's comments keep from running out.
+ *
+ * Moved, not copied: copies would share the body, not the events read from it. What it reads lives with the task of
+ * next() too, so that the reader may be moved, or go, while one is pending. Thread safety: one next() at a time, a
+ * second throws; last_event_id() and retry() not while one is pending, from another thread, as it changes what they
+ * read.
+ */
+class event_reader {
+public:
+  /** @brief Reads `body`, an event holding at most `max_event_size` bytes (see event_parser). */
+  explicit event_reader(response_body body, std::size_t max_event_size = event_parser::default_max_event_size);
+
+  event_reader(event_reader const &) = delete;
+  event_reader &operator=(event_reader const &) = delete;
+  event_reader(event_reader &&) noexcept = default;
+  event_reader &operator=(event_reader &&) noexcept = default;
+  ~event_reader() = default;
+
+  /**
+   * @brief The next event, or nothing once the stream has ended.
+   *
+   * @throws std::logic_error for a reader moved from, or while another next() is pending, asked and not yet over: so
+   * that events come in the order they were asked for.
+   */
+  [[nodiscard]] async::task<std::optional<server_sent_event>> next();
+
+  /**
+   * @brief The ID the last complete event carried, empty if none: `Last-Event-ID`, to connect again, so that one the
+   * stream was cut in comes again. A copy.
+   */
+  [[nodiscard]] std::string last_event_id() const;
+
+  /** @brief How long the stream asked to wait before connecting again, if it did. */
+  [[nodiscard]] std::optional<std::chrono::milliseconds> retry() const noexcept;
+
+private:
+  struct state {
+    response_body body;
+    event_parser parser;
+    // Atomic: a second next() from another thread is misuse it reports, not a race of its own.
+    std::atomic<bool> busy = false;
+    // What ended the reading for good, thrown again by every next() after; the body is let go then.
+    std::exception_ptr failure;
+  };
+
+  [[nodiscard]] static async::task<std::optional<server_sent_event>> read_next(std::shared_ptr<state> reading,
+                                                                               detail::one_at_a_time turn);
+
+  // Null once moved from.
+  std::shared_ptr<state> state_;
+};
+
+} // namespace quoll::http
+
+#endif // QUOLL_HTTP_EVENT_READER_HPP

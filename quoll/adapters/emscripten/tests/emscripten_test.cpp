@@ -49,11 +49,13 @@
 #include <quoll/async/yield.hpp>
 #include <quoll/emscripten.hpp>
 #include <quoll/emscripten/runtime.hpp>
+#include <quoll/http/event_reader.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/platform_ref.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/response_body.hpp>
+#include <quoll/http/server_sent_event.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/streamed_response.hpp>
 #include <quoll/http/transport.hpp>
@@ -828,6 +830,30 @@ TEST_CASE("http::client through fetch: stream completes before the body, and han
 
   quoll_test_server_end();
   REQUIRE(run(next_piece(response.body)) == std::nullopt);
+}
+
+TEST_CASE("event_reader through fetch: events as they come, written in the middle of a field and of a CRLF",
+          "[emscripten][stream][sse]") {
+  test_server const server;
+  auto const response = run(stream_target(http::client{server.url()}, "/open"));
+  http::event_reader events{response.body};
+
+  server_writes("id: 1\ndata: first\n\n");
+  REQUIRE(run(events.next()) == http::server_sent_event{.data = "first", .id = "1"});
+
+  // Written in the middle of a field, and of a CRLF: how fetch hands them over is its own, the parser's tests cut
+  // every input a byte at a time.
+  server_writes("event: add\r\ndata: sec");
+  emscripten_sleep(20);
+  server_writes("ond\r");
+  emscripten_sleep(20);
+  server_writes("\n\r\n");
+  REQUIRE(run(events.next()) == http::server_sent_event{.type = "add", .data = "second", .id = "1"});
+
+  server_writes("data: lost");
+  quoll_test_server_end();
+  REQUIRE(run(events.next()) == std::nullopt);
+  REQUIRE(events.last_event_id() == "1");
 }
 
 TEST_CASE("http::client through fetch: stream gives several pieces, none larger than what was written at once",

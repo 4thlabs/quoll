@@ -115,6 +115,15 @@ public:
    */
   [[nodiscard]] async::task<> write(std::string_view piece QUOLL_LIFETIMEBOUND);
 
+  /**
+   * @brief Whether the head is given, with a first write(): changing its status and fields then does nothing. It may
+   * not have left the connection yet.
+   */
+  [[nodiscard]] bool head_given() const noexcept { return head_given_; }
+
+  /** @brief Whether it writes somewhere: false once moved from. */
+  [[nodiscard]] bool writable() const noexcept { return out_.has_value(); }
+
 private:
   void give_head();
 

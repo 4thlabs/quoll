@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/http/detail/utf8.hpp>
 #include <quoll/http/event_parser.hpp>
 #include <quoll/http/format_event.hpp>
 #include <quoll/http/server_sent_event.hpp>
@@ -41,6 +42,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <initializer_list>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -130,4 +132,34 @@ TEST_CASE("format_retry and format_comment: read, and dispatching nothing", "[ht
 
   REQUIRE_FALSE(parser.next());
   REQUIRE(parser.retry() == http::event_parser::max_retry);
+}
+
+TEST_CASE("utf8: the bounds of the Encoding Standard, checked and repaired", "[http][sse]") {
+  using quoll::http::detail::append_repaired_utf8;
+  using quoll::http::detail::is_utf8;
+
+  auto const repaired = [](std::string_view text) {
+    std::string out;
+
+    append_repaired_utf8(out, text);
+    return out;
+  };
+
+  // The last code point, and one past it; an overlong four-byte form; leads that never start one.
+  REQUIRE(is_utf8("\xF4\x8F\xBF\xBF"));
+  REQUIRE_FALSE(is_utf8("\xF4\x90\x80\x80"));
+  REQUIRE_FALSE(is_utf8("\xF0\x8F\xBF\xBF"));
+  REQUIRE(is_utf8("\xF0\x90\x80\x80"));
+
+  for (auto const *const lead : {"\xC0", "\xC1", "\xF5", "\xFF"}) {
+    REQUIRE_FALSE(is_utf8(lead));
+    REQUIRE(repaired(lead) == "\uFFFD");
+  }
+
+  // A maximal subpart a U+FFFD: F4 then 90 is none, so each byte is one.
+  REQUIRE(repaired("\xF4\x90\x80\x80") == "\uFFFD\uFFFD\uFFFD\uFFFD");
+  // Cut at the end of the text: one for what came.
+  REQUIRE(repaired("a\xF0\x9F\x98") == "a\uFFFD");
+  REQUIRE_FALSE(is_utf8("a\xF0\x9F\x98"));
+  REQUIRE(repaired("\xE2\x82\xAC") == "\xE2\x82\xAC");
 }
