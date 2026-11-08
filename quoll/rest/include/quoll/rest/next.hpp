@@ -64,9 +64,10 @@ using interceptor = std::function<async::task<http::response>(http::request &&, 
 namespace detail {
 
 // What a client's interceptors send through: shared by its copies and their calls, immutable once built, so that a call
-// keeps it until its task ends, as an http::HttpTransport's task owns what it needs.
+// keeps it until its task ends, as an http::HttpTransport's task owns what it needs. Each interceptor is shared too, so
+// that one added to a copy leaves those before it the same objects, with the state they keep.
 struct interception {
-  std::vector<interceptor> interceptors;
+  std::vector<std::shared_ptr<interceptor const>> interceptors;
   // The client's transport, a copy of its own.
   std::function<async::task<http::response>(http::request)> send;
 };

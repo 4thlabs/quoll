@@ -59,7 +59,7 @@ async::task<http::response> next::send_from(std::shared_ptr<detail::interception
                                             http::request message) {
   // In this frame, as the interceptor may take both by reference: they live until its task ends.
   next const following{through, position + 1};
-  auto const &wrapping = through->interceptors[position];
+  auto const &wrapping = *through->interceptors[position];
 
   co_return co_await wrapping(std::move(message), following);
 }

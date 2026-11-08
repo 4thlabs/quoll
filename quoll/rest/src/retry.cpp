@@ -105,7 +105,8 @@ async::task<http::response> retrying(int attempts, std::chrono::milliseconds del
     std::optional<http::response> response;
 
     try {
-      response = co_await send(last ? std::move(message) : message);
+      // A copy each time, the last one too: the loop owns the request until it ends.
+      response = co_await send(message);
     } catch (std::system_error const &error) {
       // What failed on the last attempt ends the call, as does what another try would not change.
       if (last || !may_pass(error.code())) {

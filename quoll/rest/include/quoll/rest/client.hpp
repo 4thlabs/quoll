@@ -168,7 +168,7 @@ public:
             : std::make_shared<detail::interception>(detail::interception{
                   {}, [transport = transport_](http::request message) { return transport->send(std::move(message)); }});
 
-    grown->interceptors.push_back(std::move(wrapping));
+    grown->interceptors.push_back(std::make_shared<interceptor const>(std::move(wrapping)));
     interception_ = std::move(grown);
   }
 

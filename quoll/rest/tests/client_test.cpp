@@ -812,6 +812,26 @@ TEST_CASE("retry: a stop request ends the call between attempts, whatever the tr
   REQUIRE(transport.shared->sent == 1);
 }
 
+TEST_CASE("client: an interceptor stays one object, with its state, once a copy adds another", "[rest][client]") {
+  scripted_transport const transport;
+  rest::client<v1, scripted_transport> client{transport};
+  auto const counted = std::make_shared<int>(0);
+
+  // Its count is its own, held by value: shared only if the interceptor itself is.
+  client.use([count = 0, counted](http::request &&request, rest::next const &send) mutable {
+    *counted = ++count;
+    return send(std::move(request));
+  });
+
+  auto copy = client;
+
+  copy.use([](http::request &&request, rest::next const &send) { return send(std::move(request)); });
+
+  REQUIRE(run(completes(client.call<users::remove>(1))));
+  REQUIRE(run(completes(copy.call<users::remove>(1))));
+  REQUIRE(*counted == 2);
+}
+
 TEST_CASE("client: a scope keeps the credentials and interceptors the client had when it was made", "[rest][client]") {
   recording_transport const transport;
   rest::client<v1, recording_transport> client{transport};
