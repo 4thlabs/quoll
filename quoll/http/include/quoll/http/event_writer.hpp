@@ -64,7 +64,8 @@ namespace quoll::http {
  * });
  * @endcode
  *
- * It sets `Content-Type: text/event-stream` and `X-Accel-Buffering: no`, unless the handler set them, which tells a
+ * It sets `Content-Type: text/event-stream` and `X-Accel-Buffering: no`, unless the handler set them, a middleware's
+ * replaced as a handler's field replaces one, as a stream needs them, which tells a
  * proxy such as nginx to pass each event on as it comes rather than hold them. A `Cache-Control` is left to the handler
  * or a middleware: set here, it would replace a middleware's. Status and other fields are set on the response_writer
  * before it is given, with nothing written through it yet. The head leaves with open(), or the first event: open() at
@@ -83,7 +84,9 @@ namespace quoll::http {
  * connection's, which goes with the response. A stream that others feed (a hub of subscribers) is a handler that waits
  * for what they post, and writes it itself.
  * One operation at a time, a comment to keep the stream alive included: one asked for while another is pending throws
- * std::logic_error from its task, in every build, rather than write over it.
+ * std::logic_error when it is asked, in every build, so that events leave in the order they were asked for. Thread
+ * safety: operations from tasks on other threads are reported so, not raced, as the flag is atomic; what they write
+ * through is the connection's, one write at a time.
  */
 class event_writer {
 public:
@@ -132,11 +135,14 @@ private:
     std::atomic<bool> busy = false;
   };
 
+  // The flag of one operation, taken when it is asked, in its order, and let down when its task ends, run or not.
+  class operation;
+
   // The state, or std::logic_error for a writer moved from.
   [[nodiscard]] std::shared_ptr<state> checked() const;
 
   // `text` lives in the frame until it has left.
-  [[nodiscard]] static async::task<> write(std::shared_ptr<state> writing, std::string text);
+  [[nodiscard]] static async::task<> write(operation writing, std::string text);
 
   // Null once moved from.
   std::shared_ptr<state> state_;

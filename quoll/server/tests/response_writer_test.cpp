@@ -1701,6 +1701,35 @@ TEST_CASE("event_writer: an operation while another is pending throws, and leave
   REQUIRE(sent == "data: first\n\n: after\n");
 }
 
+TEST_CASE("event_writer: operations leave in the order asked; one dropped unrun frees the next", "[server][sse]") {
+  std::string sent;
+  slow_sink sink{&sent};
+  http::body_stream out{sink};
+
+  auto const writing = [&out]() -> task<bool> {
+    http::event_writer events{http::response_writer{out}};
+    auto first = events.send({.data = "1", .id = "1"});
+    bool refused = false;
+
+    // Asked while the first is pending, though it has not run: refused, rather than leave before it.
+    try {
+      static_cast<void>(events.send({.data = "2", .id = "2"}));
+    } catch (std::logic_error const &) {
+      refused = true;
+    }
+
+    co_await std::move(first);
+
+    { auto const dropped = events.comment("never"); }
+
+    co_await events.send({.data = "3"});
+    co_return refused;
+  };
+
+  REQUIRE(quoll::test::run(writing()) == true);
+  REQUIRE(sent == "id: 1\ndata: 1\n\ndata: 3\n\n");
+}
+
 TEST_CASE("event_writer: moved, or gone, once an operation is asked, the operation goes on", "[server][sse]") {
   std::string sent;
   slow_sink sink{&sent};

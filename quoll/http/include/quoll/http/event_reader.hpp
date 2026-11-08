@@ -39,7 +39,6 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/http/event_parser.hpp>
-#include <quoll/http/is_event_stream.hpp>
 #include <quoll/http/response_body.hpp>
 #include <quoll/http/server_sent_event.hpp>
 
@@ -93,9 +92,9 @@ public:
   ~event_reader() = default;
 
   /**
-   * @brief The next event, or nothing once the stream has ended, or on a reader moved from.
+   * @brief The next event, or nothing once the stream has ended.
    *
-   * @throws std::logic_error, from the task, while another next() is pending.
+   * @throws std::logic_error for a reader moved from, and from the task while another next() is pending.
    */
   [[nodiscard]] async::task<std::optional<server_sent_event>> next();
 

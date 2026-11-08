@@ -37,12 +37,13 @@
 #include <quoll/http/detail/one_at_a_time.hpp>
 
 #include <stdexcept>
+#include <string>
 
 namespace quoll::http::detail {
 
-one_at_a_time::one_at_a_time(std::atomic<bool> &flag, char const *message) : flag_(&flag) {
+one_at_a_time::one_at_a_time(std::atomic<bool> &flag, std::string_view message) : flag_(&flag) {
   if (flag.exchange(true)) {
-    throw std::logic_error{message};
+    throw std::logic_error{std::string{message}};
   }
 }
 

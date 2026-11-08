@@ -42,15 +42,9 @@
 namespace quoll::http {
 
 bool is_event_stream(fields const &fields) {
-  auto media_type = fields.find("Content-Type").value_or("");
+  auto const value = fields.find("Content-Type").value_or("");
 
-  media_type = media_type.substr(0, media_type.find(';'));
-
-  while (!media_type.empty() && (media_type.back() == ' ' || media_type.back() == '\t')) {
-    media_type.remove_suffix(1);
-  }
-
-  return detail::iequals(media_type, "text/event-stream");
+  return detail::iequals(detail::trim(value.substr(0, value.find(';'))), "text/event-stream");
 }
 
 } // namespace quoll::http

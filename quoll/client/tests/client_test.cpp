@@ -4330,7 +4330,7 @@ TEST_CASE("event_reader: after a failure, next() fails the same, not as one pend
   }
 }
 
-TEST_CASE("event_reader: one moved from reads nothing, and has no id nor retry", "[client][sse]") {
+TEST_CASE("event_reader: one moved from refuses next(), and has no id nor retry", "[client][sse]") {
   auto const router = make_event_router();
   async::run_loop loop;
   memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
@@ -4343,8 +4343,15 @@ TEST_CASE("event_reader: one moved from reads nothing, and has no id nor retry",
     auto moved = std::move(events);
 
     // NOLINTBEGIN(bugprone-use-after-move,clang-analyzer-cplusplus.Move): what is tested.
-    auto const nothing = co_await events.next();
-    bool const empty = !nothing && events.last_event_id().empty() && !events.retry();
+    bool refused = false;
+
+    try {
+      static_cast<void>(events.next());
+    } catch (std::logic_error const &) {
+      refused = true;
+    }
+
+    bool const empty = refused && events.last_event_id().empty() && !events.retry();
     // NOLINTEND(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
 
     bool const kept = moved.last_event_id() == "1" && moved.retry() == 2s;

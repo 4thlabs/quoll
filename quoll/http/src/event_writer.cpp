@@ -34,7 +34,6 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/http/detail/one_at_a_time.hpp>
 #include <quoll/http/event_writer.hpp>
 #include <quoll/http/format_event.hpp>
 
@@ -63,25 +62,63 @@ event_writer::event_writer(response_writer out) {
   state_ = std::make_shared<state>(std::move(out));
 }
 
+class event_writer::operation {
+public:
+  explicit operation(std::shared_ptr<state> of) : of_(std::move(of)) {
+    if (of_->busy.exchange(true)) {
+      of_.reset();
+      throw std::logic_error{"quoll::http::event_writer: an operation while another is pending"};
+    }
+  }
+
+  operation(operation const &) = delete;
+  operation &operator=(operation const &) = delete;
+
+  operation(operation &&other) noexcept : of_(std::move(other.of_)) {}
+
+  operation &operator=(operation &&) = delete;
+
+  ~operation() {
+    if (of_) {
+      of_->busy.store(false);
+    }
+  }
+
+  [[nodiscard]] response_writer &out() const noexcept { return of_->out; }
+
+private:
+  std::shared_ptr<state> of_;
+};
+
 // An empty piece sends the head.
-async::task<> event_writer::open() { return write(checked(), std::string{}); }
+async::task<> event_writer::open() {
+  operation asked{checked()};
+
+  return write(std::move(asked), std::string{});
+}
 
 async::task<> event_writer::send(server_sent_event const &event) {
   auto writing = checked();
+  auto text = format_event(event);
+  operation asked{std::move(writing)};
 
-  return write(std::move(writing), format_event(event));
+  return write(std::move(asked), std::move(text));
 }
 
 async::task<> event_writer::retry(std::chrono::milliseconds delay) {
   auto writing = checked();
+  auto text = format_retry(delay);
+  operation asked{std::move(writing)};
 
-  return write(std::move(writing), format_retry(delay));
+  return write(std::move(asked), std::move(text));
 }
 
 async::task<> event_writer::comment(std::string_view text) {
   auto writing = checked();
+  auto formatted = format_comment(text);
+  operation asked{std::move(writing)};
 
-  return write(std::move(writing), format_comment(text));
+  return write(std::move(asked), std::move(formatted));
 }
 
 std::shared_ptr<event_writer::state> event_writer::checked() const {
@@ -92,11 +129,7 @@ std::shared_ptr<event_writer::state> event_writer::checked() const {
   return state_;
 }
 
-async::task<> event_writer::write(std::shared_ptr<state> writing, std::string text) {
-  detail::one_at_a_time const operation{writing->busy,
-                                        "quoll::http::event_writer: an operation while another is pending"};
-
-  co_await writing->out.write(text);
-}
+// `writing` holds the flag from the call: a parameter, destroyed with the frame whether the task ran or not.
+async::task<> event_writer::write(operation writing, std::string text) { co_await writing.out().write(text); }
 
 } // namespace quoll::http

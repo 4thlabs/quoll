@@ -37,7 +37,10 @@
 #ifndef QUOLL_HTTP_DETAIL_ONE_AT_A_TIME_HPP
 #define QUOLL_HTTP_DETAIL_ONE_AT_A_TIME_HPP
 
+#include <quoll/async/lifetimebound.hpp>
+
 #include <atomic>
+#include <string_view>
 
 namespace quoll::http::detail {
 
@@ -46,7 +49,7 @@ namespace quoll::http::detail {
 // std::logic_error with `message`.
 class one_at_a_time {
 public:
-  one_at_a_time(std::atomic<bool> &flag, char const *message);
+  one_at_a_time(std::atomic<bool> &flag QUOLL_LIFETIMEBOUND, std::string_view message);
 
   one_at_a_time(one_at_a_time const &) = delete;
   one_at_a_time &operator=(one_at_a_time const &) = delete;

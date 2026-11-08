@@ -37,7 +37,6 @@
 #include <quoll/http/detail/utf8.hpp>
 #include <quoll/http/format_event.hpp>
 
-#include <algorithm>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -88,11 +87,8 @@ std::string format_event(server_sent_event const &event) {
 
   std::string out;
 
-  // One allocation: each line of data takes its field's name, a space and a line end, at most 8 bytes more.
-  auto const lines = 1 + static_cast<std::size_t>(std::ranges::count_if(
-                             event.data, [](char character) { return character == '\n' || character == '\r'; }));
-
-  out.reserve(event.type.size() + (event.id ? event.id->size() : 0) + event.data.size() + (8 * lines) + 16);
+  // Mostly one allocation: the fields' names and line ends, about a byte in eight of data, and the rest.
+  out.reserve(event.type.size() + (event.id ? event.id->size() : 0) + event.data.size() + (event.data.size() / 8) + 32);
 
   if (!event.type.empty() && event.type != "message") {
     append_field(out, "event", event.type);

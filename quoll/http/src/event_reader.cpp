@@ -38,8 +38,9 @@
 #include <quoll/http/event_reader.hpp>
 
 #include <exception>
+#include <stdexcept>
 #include <string>
-#include <string_view>
+#include <system_error>
 #include <utility>
 
 namespace quoll::http {
@@ -47,7 +48,13 @@ namespace quoll::http {
 event_reader::event_reader(response_body body, std::size_t max_event_size)
     : state_(std::make_shared<state>(std::move(body), event_parser{max_event_size})) {}
 
-async::task<std::optional<server_sent_event>> event_reader::next() { return read_next(state_); }
+async::task<std::optional<server_sent_event>> event_reader::next() {
+  if (!state_) {
+    throw std::logic_error{"quoll::http::event_reader: next() once moved from"};
+  }
+
+  return read_next(state_);
+}
 
 std::string event_reader::last_event_id() const { return state_ ? state_->parser.last_event_id() : std::string{}; }
 
@@ -56,10 +63,6 @@ std::optional<std::chrono::milliseconds> event_reader::retry() const noexcept {
 }
 
 async::task<std::optional<server_sent_event>> event_reader::read_next(std::shared_ptr<state> reading) {
-  if (!reading) {
-    co_return std::nullopt;
-  }
-
   detail::one_at_a_time const operation{reading->busy, "quoll::http::event_reader: next() while another is pending"};
 
   if (reading->failure) {
@@ -80,8 +83,10 @@ async::task<std::optional<server_sent_event>> event_reader::read_next(std::share
 
       reading->parser.feed(*piece);
     }
-  } catch (...) {
-    // Reading ends here: the connection is not held for a stream nobody reads.
+  } catch (std::system_error const &) {
+    // A read that failed, a stop, a timeout or an event too large: reading ends here, and the connection is not held
+    // for a stream nobody reads. A misuse, a second read of the body from elsewhere say, is the caller's, and ends
+    // nothing.
     reading->failure = std::current_exception();
     reading->body = response_body{};
     throw;

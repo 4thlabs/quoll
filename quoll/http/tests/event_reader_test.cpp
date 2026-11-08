@@ -34,6 +34,8 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/http/error.hpp>
@@ -49,6 +51,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -68,6 +71,11 @@ public:
   [[nodiscard]] async::task<std::optional<std::string_view>> read() {
     co_await async::yield();
     ++reads_;
+
+    // As a transport's body does: a stop ends the read.
+    if ((co_await async::current_stop_token()).stop_requested()) {
+      throw std::system_error{std::make_error_code(std::errc::operation_canceled)};
+    }
 
     if (at_ == text_.size()) {
       co_return std::nullopt;
@@ -152,4 +160,26 @@ TEST_CASE("is_event_stream: the media type, case and parameters aside", "[http][
   REQUIRE_FALSE(with("text/event-streams"));
   REQUIRE_FALSE(with(""));
   REQUIRE_FALSE(http::is_event_stream(http::fields{}));
+}
+
+TEST_CASE("event_reader: a stop request ends the reading, and lets the body go", "[http][sse]") {
+  auto source = std::make_shared<byte_source>("data: a\n\n");
+  http::event_reader events{http::response_body{source}};
+  std::stop_source stop;
+  async::run_loop loop;
+
+  stop.request_stop();
+
+  auto const read = [&events]() -> async::task<std::error_code> {
+    try {
+      static_cast<void>(co_await events.next());
+    } catch (std::system_error const &failed) {
+      co_return failed.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  REQUIRE(quoll::test::run(loop, read(), stop.get_token()) == std::errc::operation_canceled);
+  REQUIRE(source.use_count() == 1);
 }
