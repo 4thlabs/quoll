@@ -106,7 +106,7 @@ quoll/
 ├── rest/       # contracts, mount, client, codecs
 ├── ui/         # the UI prototype
 └── adapters/   # asio, emscripten, runtime
-samples/        # notes (native), ui_notes (Emscripten)
+samples/        # notes (native), ui_notes (Emscripten), github (both)
 tests/          # the test program, its helpers, fuzz/, bench/, load/
 docs/           # these guides, the plan, the rules
 ```

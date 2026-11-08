@@ -295,3 +295,5 @@ cares can check `co_await async::current_stop_token()` to tell them apart.
 - [REST](rest.md), for an API described once.
 - [Streaming](streaming.md), for bodies that do not fit in memory.
 - [`samples/notes`](../samples/notes): a REST contract, its server and its client over TCP.
+- [`samples/github`](../samples/github): a command-line program calling GitHub's API, natively and in Node: see
+  [A command-line program](command-line.md).
