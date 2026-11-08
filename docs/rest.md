@@ -494,4 +494,5 @@ An API's full support is [step 4 of the roadmap](PLAN.md#step-4-rest-from-a-comm
 enumerator for the values an enum does not know, and an OpenAPI document generated from a contract.
 
 A larger example, a contract with its server and client over TCP, is in
-[`samples/notes`](../samples/notes).
+[`samples/notes`](../samples/notes). A command-line program calling GitHub's API, natively and through `fetch` in
+Node, with a scope, interceptors and a token, is in [`samples/github`](../samples/github).
