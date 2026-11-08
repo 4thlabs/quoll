@@ -20,6 +20,13 @@ quoll_declare_tests(
     quoll::async
 )
 
+# What a debug build of the module asserts.
+quoll_declare_assert_tests(
+  NAME task_destroyed_while_it_runs
+  CASE "task: destroying one that runs is asserted"
+  EXPECT "still pointing into its frame"
+)
+
 # What the module refuses, with what the compiler says.
 quoll_declare_compile_fail_tests(
   SOURCES

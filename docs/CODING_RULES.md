@@ -70,6 +70,16 @@ guidelines and the C++ Core Guidelines.
 - What outlives a call owns what it needs: the public API keeps no reference a user has to keep alive, even at the cost of a
   copy. The exceptions are `_ref` wrappers, views, and what an operation acts on, as a stream or the object of a member
   (`http::read(stream, ...)`, `router.dispatch()`). The fast path goes behind it, in `detail`.
+- A coroutine frame is destroyed only once it will not resume again: by a root (`co_spawn`'s, `when_all`'s) as it ends,
+  or before it starts when its start cannot be posted, or by its awaiter, through `async::task`, once it has completed.
+  What an awaitable in it registers (its work item in an executor's queue, an I/O handler, a stop callback) is undone as it
+  resumes or is cancelled, and never outlives the frame. A task's promise asserts it in debug builds, which run the
+  tests, whatever destroys the frame. A program
+  never starts a task itself, through `await_suspend`: it awaits it with `co_await`, or runs it with `co_spawn`, and
+  combines tasks through what Quoll offers (`when_all`, `with_timeout`). Quoll's own code destroys no awaitable while it
+  waits; one a test destroys by hand undoes what it can, as a `memory_stream` read not yet woken does. A released root that never resumes leaks its frame, as do those a loop
+  destroyed with work pending leaves. What is not a frame, as an object holding a timer or a stop callback, unregisters in
+  its destructor, as `std::stop_callback` does.
 - Non-owning parameters as `std::string_view` / `std::span`; ownership through values or `std::unique_ptr`. No raw
   owning pointers, no `new` / `delete`. Throw by value, catch by `const&`.
 - A handle on shared state whose copies are the same object (`http::client`, `http::server`) has copies and no moves, so that

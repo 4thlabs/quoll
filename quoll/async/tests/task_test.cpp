@@ -34,7 +34,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/await_context.hpp>
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/executor_ref.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/work_item.hpp>
@@ -45,7 +47,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <coroutine>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 #include <optional>
 
@@ -267,4 +271,36 @@ TEST_CASE("task: of a type incomplete where it is named", "[async]") {
   quoll::async::run_loop loop;
 
   REQUIRE(quoll::test::run(loop, reading()) == 1);
+}
+
+namespace {
+
+// Suspends for ever: nothing resumes it.
+struct never_resumed {
+  [[nodiscard]] bool await_ready() const noexcept { return false; }
+
+  void await_suspend(std::coroutine_handle<>, quoll::async::await_context const &) const noexcept {}
+
+  void await_resume() const noexcept {}
+};
+
+task<> waits_for_ever() { co_await never_resumed{}; }
+
+} // namespace
+
+// Hidden: the ctest assert.task_destroyed_while_it_runs runs it alone, in a debug build, and passes on the assertion's
+// message, as the program ends there.
+TEST_CASE("task: destroying one that runs is asserted", "[.assert]") {
+#if defined(NDEBUG)
+  // What the ctest takes for a build with nothing to check, however NDEBUG came to be defined.
+  std::puts("quoll: assertions are compiled out");
+#else
+  run_loop loop;
+  auto const executor = loop.get_executor();
+  // Before the task: its frame keeps the address of what it was started with.
+  quoll::async::await_context const context{.executor = quoll::async::executor_ref{executor}, .stop_token = {}};
+  auto running = waits_for_ever();
+
+  running.await_suspend(std::noop_coroutine(), context).resume();
+#endif
 }

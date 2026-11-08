@@ -49,7 +49,7 @@ goes through OpenSSL.
 ```bash
 cmake -B build
 cmake --build build -j"$(nproc)"
-ctest --test-dir build -j"$(nproc)"   # "quoll" (every test case), compile_fail.<case>, and the samples' tests
+ctest --test-dir build -j"$(nproc)"   # "quoll" (every test case but the hidden ones), compile_fail.<case>, assert.<name>, the samples' tests
 ./build/tests/quoll_tests "[tag]"     # Catch2 filters
 emcmake cmake -B build-wasm && cmake --build build-wasm -j"$(nproc)" && ctest --test-dir build-wasm   # runs under node
 run-clang-tidy-19 -p build -quiet "$PWD/(quoll|samples)/.*\.cpp$"   # needs a Clang build; all of it, as every night: a PR leaves the analyzer out of the tests
@@ -92,6 +92,11 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   per case under `tests/compile_fail/`, starting with `// expect: <message>`, declared with
   `quoll_declare_compile_fail_tests(SOURCES ... DEPS ...)`. Each becomes a ctest `compile_fail.<case>` that compiles it
   and passes only when the compilation fails with that message, taken literally (native builds only).
+- What a debug build asserts, an invariant out of a caller's reach (a task destroyed while it runs, which a program cannot
+  reach through `co_await` and `co_spawn`), is tested too: a hidden
+  Catch2 case (`[.assert]`) that breaks it, declared with `quoll_declare_assert_tests(NAME ... CASE ... EXPECT ...)`. Each
+  becomes a ctest `assert.<name>` that runs it alone and passes only when the program ends with the assertion's text, which
+  the case's name must not hold (native builds; a build without assertions says so and passes).
 - `tests/fuzz/`: one libFuzzer target per source, built with `QUOLL_FUZZ` (Clang, under ASan and UBSan) rather than in
   `quoll_tests`, its seeds in `corpus/<target>/`. An input that crashed one joins its seeds, with a test of the fix.
 - `tests/bench/`: `quoll_bench`, built with `QUOLL_BENCH`, measures requests per second, latency and allocations, its figures in

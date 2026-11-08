@@ -128,6 +128,36 @@ function(quoll_declare_tests)
 endfunction()
 
 #
+# Declare what a debug build of a module asserts, from its CMakeLists.txt: an invariant only code speaking the library's
+# own protocol can break, out of a caller's reach.
+#
+#   quoll_declare_assert_tests(NAME <name> CASE <test case> EXPECT <text>)
+#
+# <test case> is a hidden Catch2 case ([.assert]) of the module's tests that breaks it, and prints
+# "quoll: assertions are compiled out" instead when NDEBUG is defined. A ctest named assert.<name> runs it alone and
+# passes when the program ends on an assertion with <text>, taken literally, in its output: text of the assertion's
+# message that the case's name does not hold, as Catch2 prints the name of a case failing for another reason. Native
+# builds only. Does nothing unless QUOLL_BUILD_TESTS is ON.
+#
+function(quoll_declare_assert_tests)
+  if(NOT QUOLL_BUILD_TESTS)
+    return()
+  endif()
+
+  cmake_parse_arguments(PARSE_ARGV 0 QUOLL_ASSERT "" "NAME;CASE;EXPECT" "")
+
+  string(FIND "${QUOLL_ASSERT_CASE}" "${QUOLL_ASSERT_EXPECT}" position)
+
+  if(NOT position EQUAL -1)
+    message(FATAL_ERROR "assert.${QUOLL_ASSERT_NAME}: '${QUOLL_ASSERT_EXPECT}' is in the case's name too")
+  endif()
+
+  set_property(GLOBAL APPEND PROPERTY QUOLL_ASSERT_TESTS "${QUOLL_ASSERT_NAME}")
+  set_property(GLOBAL PROPERTY "QUOLL_ASSERT_CASE:${QUOLL_ASSERT_NAME}" "${QUOLL_ASSERT_CASE}")
+  set_property(GLOBAL PROPERTY "QUOLL_ASSERT_EXPECT:${QUOLL_ASSERT_NAME}" "${QUOLL_ASSERT_EXPECT}")
+endfunction()
+
+#
 # Declare sources that must not compile, from a module's CMakeLists.txt: the compile-time checks of its API.
 #
 #   quoll_declare_compile_fail_tests(SOURCES <files>... [DEPS <targets>...])
@@ -223,6 +253,22 @@ function(quoll_main_tests)
   add_test(NAME quoll COMMAND quoll_tests)
   # Not next to the other tests using ports: one of them relies on a port just freed staying unused.
   set_tests_properties(quoll PROPERTIES RESOURCE_LOCK quoll_ports)
+
+  # What a debug build asserts (quoll_declare_assert_tests): each case runs alone, in a process the assertion ends.
+  # Native builds only. A case built without assertions says so, however NDEBUG came to be defined, and passes.
+  if(NOT EMSCRIPTEN)
+    get_property(asserted GLOBAL PROPERTY QUOLL_ASSERT_TESTS)
+
+    foreach(name IN LISTS asserted)
+      get_property(test_case GLOBAL PROPERTY "QUOLL_ASSERT_CASE:${name}")
+      get_property(expected GLOBAL PROPERTY "QUOLL_ASSERT_EXPECT:${name}")
+      add_test(
+        NAME assert.${name}
+        COMMAND ${CMAKE_COMMAND} "-DQUOLL_TESTS=$<TARGET_FILE:quoll_tests>" "-DQUOLL_CASE=${test_case}"
+                "-DQUOLL_EXPECT=${expected}" -P ${QUOLL_CMAKE_DIR}/QuollExpectAssert.cmake
+      )
+    endforeach()
+  endif()
 endfunction()
 
 #
