@@ -37,29 +37,32 @@
 #ifndef QUOLL_HTTP_DETAIL_ONE_AT_A_TIME_HPP
 #define QUOLL_HTTP_DETAIL_ONE_AT_A_TIME_HPP
 
-#include <quoll/async/lifetimebound.hpp>
-
 #include <atomic>
+#include <memory>
 #include <string_view>
 
 namespace quoll::http::detail {
 
-// Holds `flag` up for the length of one operation, in the frame of its task, so that it comes down on every way out, a
-// throw included: a frame is not destroyed while it waits (see async::task). A second operation meanwhile throws
-// std::logic_error with `message`.
+// The turn of one operation of an object that allows one at a time: taken when the operation is asked, held by its task
+// as a parameter, so that it is given back when the frame goes, whether the task ran or was dropped. Asked while
+// another holds it: std::logic_error with `message`, so that operations run in the order they were asked.
+//
+// Thread safety: the flag is atomic, taken by an exchange, so that an operation asked from another thread is refused
+// rather than raced; the flag keeps what holds it alive, an aliasing pointer into its state.
 class one_at_a_time {
 public:
-  one_at_a_time(std::atomic<bool> &flag QUOLL_LIFETIMEBOUND, std::string_view message);
+  one_at_a_time(std::shared_ptr<std::atomic<bool>> flag, std::string_view message);
 
   one_at_a_time(one_at_a_time const &) = delete;
   one_at_a_time &operator=(one_at_a_time const &) = delete;
-  one_at_a_time(one_at_a_time &&) = delete;
+  one_at_a_time(one_at_a_time &&other) noexcept;
   one_at_a_time &operator=(one_at_a_time &&) = delete;
 
   ~one_at_a_time();
 
 private:
-  std::atomic<bool> *flag_;
+  // Null once moved from.
+  std::shared_ptr<std::atomic<bool>> flag_;
 };
 
 } // namespace quoll::http::detail

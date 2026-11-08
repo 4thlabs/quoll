@@ -53,7 +53,10 @@ async::task<std::optional<server_sent_event>> event_reader::next() {
     throw std::logic_error{"quoll::http::event_reader: next() once moved from"};
   }
 
-  return read_next(state_);
+  detail::one_at_a_time turn{std::shared_ptr<std::atomic<bool>>{state_, &state_->busy},
+                             "quoll::http::event_reader: next() while another is pending"};
+
+  return read_next(state_, std::move(turn));
 }
 
 std::string event_reader::last_event_id() const { return state_ ? state_->parser.last_event_id() : std::string{}; }
@@ -62,9 +65,8 @@ std::optional<std::chrono::milliseconds> event_reader::retry() const noexcept {
   return state_ ? state_->parser.retry() : std::nullopt;
 }
 
-async::task<std::optional<server_sent_event>> event_reader::read_next(std::shared_ptr<state> reading) {
-  detail::one_at_a_time const operation{reading->busy, "quoll::http::event_reader: next() while another is pending"};
-
+async::task<std::optional<server_sent_event>> event_reader::read_next(std::shared_ptr<state> reading,
+                                                                      detail::one_at_a_time turn) {
   if (reading->failure) {
     std::rethrow_exception(reading->failure);
   }

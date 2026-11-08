@@ -49,6 +49,10 @@
 
 namespace quoll::http {
 
+namespace detail {
+class one_at_a_time;
+} // namespace detail
+
 /**
  * @brief Writes a `text/event-stream` response, an event at a time, through the response_writer of a handler.
  *
@@ -64,9 +68,9 @@ namespace quoll::http {
  * });
  * @endcode
  *
- * It sets `Content-Type: text/event-stream` and `X-Accel-Buffering: no`, unless the handler set them, a middleware's
- * replaced as a handler's field replaces one, as a stream needs them, which tells a
- * proxy such as nginx to pass each event on as it comes rather than hold them. A `Cache-Control` is left to the handler
+ * It sets `Content-Type: text/event-stream`, and `X-Accel-Buffering: no`, which tells a proxy such as nginx to pass
+ * each event on as it comes rather than hold them, both unless the handler set them: a middleware's are replaced, as a
+ * handler's fields replace them, as a stream needs them. A `Cache-Control` is left to the handler
  * or a middleware: set here, it would replace a middleware's. Status and other fields are set on the response_writer
  * before it is given, with nothing written through it yet. The head leaves with open(), or the first event: open() at
  * once lets a client see the stream before there is anything to say.
@@ -135,14 +139,12 @@ private:
     std::atomic<bool> busy = false;
   };
 
-  // The flag of one operation, taken when it is asked, in its order, and let down when its task ends, run or not.
-  class operation;
+  // `text` written, its turn taken now: std::logic_error for a writer moved from, or while another is pending.
+  [[nodiscard]] async::task<> ask(std::string text) const;
 
-  // The state, or std::logic_error for a writer moved from.
-  [[nodiscard]] std::shared_ptr<state> checked() const;
-
-  // `text` lives in the frame until it has left.
-  [[nodiscard]] static async::task<> write(operation writing, std::string text);
+  // `text` lives in the frame until it has left; `turn` until the frame goes.
+  [[nodiscard]] static async::task<> write(std::shared_ptr<state> writing, detail::one_at_a_time turn,
+                                           std::string text);
 
   // Null once moved from.
   std::shared_ptr<state> state_;

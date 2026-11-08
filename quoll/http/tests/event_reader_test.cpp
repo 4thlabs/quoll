@@ -36,7 +36,9 @@
 
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/run_loop.hpp>
+#include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/with_timeout.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/event_reader.hpp>
@@ -45,12 +47,16 @@
 #include <quoll/http/response_body.hpp>
 #include <quoll/http/server_sent_event.hpp>
 #include <quoll/test/run.hpp>
+#include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+
+#include <chrono>
 
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -182,4 +188,71 @@ TEST_CASE("event_reader: a stop request ends the reading, and lets the body go",
 
   REQUIRE(quoll::test::run(loop, read(), stop.get_token()) == std::errc::operation_canceled);
   REQUIRE(source.use_count() == 1);
+}
+
+TEST_CASE("event_reader: a next() asked while another is, not yet awaited, is refused; one dropped frees it",
+          "[http][sse]") {
+  auto source = std::make_shared<byte_source>("data: a\n\ndata: b\n\n");
+  http::event_reader events{http::response_body{source}};
+
+  auto const reading = [&events]() -> async::task<bool> {
+    auto first = events.next();
+    bool refused = false;
+
+    try {
+      static_cast<void>(events.next());
+    } catch (std::logic_error const &) {
+      refused = true;
+    }
+
+    { auto const dropped = std::move(first); }
+
+    // Its turn given back unrun: the next one reads the first event.
+    auto const event = co_await events.next();
+
+    co_return refused &&event == http::server_sent_event{.data = "a"};
+  };
+
+  REQUIRE(quoll::test::run(reading()) == true);
+}
+
+namespace {
+
+// A body that never says anything.
+class silent_source {
+public:
+  [[nodiscard]] async::task<std::optional<std::string_view>> read() {
+    co_await async::sleep_for(std::chrono::hours{24});
+    co_return std::nullopt;
+  }
+};
+
+} // namespace
+
+TEST_CASE("event_reader: a timeout around next() ends the reading", "[http][sse][timer]") {
+  using namespace std::chrono_literals;
+
+  quoll::test::virtual_time time;
+  http::event_reader events{http::response_body{std::make_shared<silent_source>()}};
+
+  auto const reading = [&events]() -> async::task<std::string> {
+    std::string seen;
+
+    try {
+      static_cast<void>(co_await async::with_timeout(1s, events.next()));
+    } catch (std::system_error const &failed) {
+      seen += failed.code() == std::errc::timed_out ? "timed out;" : "other;";
+    }
+
+    // Ended, as the body's reading is once cut: the same failure, not a wait.
+    try {
+      static_cast<void>(co_await events.next());
+    } catch (std::system_error const &) {
+      seen += "ended";
+    }
+
+    co_return seen;
+  };
+
+  REQUIRE(quoll::test::run(time, reading()) == "timed out;ended");
 }

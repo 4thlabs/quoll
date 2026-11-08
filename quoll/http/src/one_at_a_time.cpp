@@ -38,15 +38,24 @@
 
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace quoll::http::detail {
 
-one_at_a_time::one_at_a_time(std::atomic<bool> &flag, std::string_view message) : flag_(&flag) {
-  if (flag.exchange(true)) {
+one_at_a_time::one_at_a_time(std::shared_ptr<std::atomic<bool>> flag, std::string_view message) {
+  if (flag->exchange(true)) {
     throw std::logic_error{std::string{message}};
   }
+
+  flag_ = std::move(flag);
 }
 
-one_at_a_time::~one_at_a_time() { flag_->store(false); }
+one_at_a_time::one_at_a_time(one_at_a_time &&other) noexcept : flag_(std::move(other.flag_)) {}
+
+one_at_a_time::~one_at_a_time() {
+  if (flag_) {
+    flag_->store(false);
+  }
+}
 
 } // namespace quoll::http::detail

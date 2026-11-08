@@ -52,6 +52,10 @@
 
 namespace quoll::http {
 
+namespace detail {
+class one_at_a_time;
+} // namespace detail
+
 /**
  * @brief Reads the events of a `text/event-stream` response as they come, natively and through a browser's `fetch`.
  *
@@ -94,11 +98,15 @@ public:
   /**
    * @brief The next event, or nothing once the stream has ended.
    *
-   * @throws std::logic_error for a reader moved from, and from the task while another next() is pending.
+   * @throws std::logic_error for a reader moved from, or while another next() is pending, asked and not yet over: so
+   * that events come in the order they were asked for.
    */
   [[nodiscard]] async::task<std::optional<server_sent_event>> next();
 
-  /** @brief The ID of the last event the stream ended, empty if none: `Last-Event-ID`, to connect again. A copy. */
+  /**
+   * @brief The ID the last complete event carried, empty if none: `Last-Event-ID`, to connect again, so that one the
+   * stream was cut in comes again. A copy.
+   */
   [[nodiscard]] std::string last_event_id() const;
 
   /** @brief How long the stream asked to wait before connecting again, if it did. */
@@ -114,7 +122,8 @@ private:
     std::exception_ptr failure;
   };
 
-  [[nodiscard]] static async::task<std::optional<server_sent_event>> read_next(std::shared_ptr<state> reading);
+  [[nodiscard]] static async::task<std::optional<server_sent_event>> read_next(std::shared_ptr<state> reading,
+                                                                               detail::one_at_a_time turn);
 
   // Null once moved from.
   std::shared_ptr<state> state_;
