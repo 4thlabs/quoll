@@ -62,7 +62,7 @@ namespace quoll::async {
  * @endcode
  *
  * Through the executor's async::offloader_ref, as quoll::runtime offers one. On an executor that offers none, which has
- * no loop to hold up or no other thread to go to (a thread pool, a browser's event loop), `work` runs right there.
+ * no loop to hold up or no other thread to go to (run_loop, a browser's event loop), `work` runs right there.
  * `work` and what it refers to must not need the loop's thread: what it touches, nothing else touches until the task
  * completes. A stop request cancels it before it starts, with
  * std::system_error (std::errc::operation_canceled), on any executor, and does not interrupt it once started.

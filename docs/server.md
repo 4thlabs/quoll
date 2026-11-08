@@ -306,8 +306,8 @@ Lingering is there because closing with the peer's bytes unread would reset the 
 destroy the response before the peer reads it.
 
 Zero disables a timeout, and a negative one has already expired. Timeouts need the timer of the
-connection's executor, which `quoll::runtime` provides: see
-[thread pools](runtimes.md#the-thread-pool).
+connection's executor, which `quoll::runtime` provides: on one without a timer, as `async::run_loop`,
+they do not apply.
 
 The minimum rates make one rule of slow links and slow peers. At the rate or above, a transfer has all
 the time it needs, 8 MiB in a minute included. A silence still ends it within the timeout, whatever came

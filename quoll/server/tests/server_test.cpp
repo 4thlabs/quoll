@@ -585,9 +585,7 @@ TEST_CASE("serve: connections are served concurrently", "[server]") {
   std::optional<std::string> first;
   std::optional<std::string> second;
 
-  // The connections on an executor of their own: here the same loop, named.
-  quoll::async::co_spawn(loop.get_executor(),
-                         quoll::http::server{router}.serve(loop.get_executor(), std::move(listener)),
+  quoll::async::co_spawn(loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
                          overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
   quoll::async::co_spawn(loop.get_executor(), get_after(std::move(first_client), "/one", second_done, first_done),
                          overloaded{[&](std::string body) {

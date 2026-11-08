@@ -2,9 +2,8 @@
 
 include(CMakeFindDependencyMacro)
 
-# quoll::threads and quoll::asio (and quoll::runtime, natively, through it) link Threads::Threads: only looked for when one
-# of them may be used.
-if(NOT quoll_FIND_COMPONENTS OR "threads" IN_LIST quoll_FIND_COMPONENTS OR "asio" IN_LIST quoll_FIND_COMPONENTS
+# quoll::asio (and quoll::runtime, natively, through it) links Threads::Threads: only looked for when it may be used.
+if(NOT quoll_FIND_COMPONENTS OR "asio" IN_LIST quoll_FIND_COMPONENTS
    OR ("runtime" IN_LIST quoll_FIND_COMPONENTS AND NOT EMSCRIPTEN))
   find_dependency(Threads)
 endif()

@@ -120,7 +120,7 @@ find_package(quoll REQUIRED COMPONENTS rest runtime server)
 | `quoll::rest`                                        | Contracts, `rest::mount`, `rest::client`, codecs                                      |
 | `quoll::ui`                                          | The [UI prototype](ui.md)                                                             |
 | `quoll::runtime`                                     | `quoll::runtime`, the loop a program runs on: see [Runtimes](runtimes.md)      |
-| `quoll::asio`, `quoll::threads`, `quoll::emscripten` | The adapters, which a program rarely names: see [Runtimes](runtimes.md)               |
+| `quoll::asio`, `quoll::emscripten`                  | The adapters, which a program rarely names: see [Runtimes](runtimes.md)               |
 
 `quoll::server` and `quoll::client` are libraries of their own, so that a program links only what it uses, and
 their names are in the namespace `quoll::http`.

@@ -87,7 +87,7 @@ enum class object_strands : bool { shared, own };
 /**
  * @brief Executor resuming coroutines on an asio executor: an io_context, a strand, any_io_executor.
  *
- * post() hands asio a small function object resuming the work item. Unlike run_loop and the thread pool, asio
+ * post() hands asio a small function object resuming the work item. Unlike run_loop, asio
  * allocates it (from a per-thread cache once warm), so post() may throw std::bad_alloc; see async::Executor.
  * Equal when the asio executors are.
  *
@@ -99,10 +99,11 @@ enum class object_strands : bool { shared, own };
  *
  * Its sockets, timers and the cancellation of their operations need an asio executor running one handler at a time: an
  * io_context run by one thread, or a strand. Over a strand, every connection that listen() accepts shares the
- * acceptor's. Over an io_context run by several threads, `inner` is a strand as well, as the tasks this executor runs
- * need one handler at a time too, a server's connections included: this executor offers no strands for them to run
- * on (async::strands_ref). Ask for a strand per object then, for its sockets, acceptors and timers.
- * quoll::asio::runtime gives each connection a strand of its own.
+ * acceptor's. Over an io_context or a thread pool run by several threads, ask for a strand per object
+ * (object_strands::own), for its sockets, acceptors and timers. Its tasks then run on any of the threads, as
+ * quoll::async allows, a server's connections included: this executor offers them no strand of their own
+ * (async::strands_ref), and what a connection does beside itself, reading while it writes, may run on two threads at
+ * once, which the server allows. quoll::asio::runtime gives each connection a strand of its own.
  *
  * Thread safety: post() may be called from any thread, as asio's post can.
  */
