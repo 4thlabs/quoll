@@ -3293,3 +3293,33 @@ TEST_CASE("serve_connection: Host as RFC 9112 says, or 400", "[server]") {
   REQUIRE(answer_to("GET / HTTP/1.0\r\n\r\n").contains(" 200 "));
   REQUIRE(answer_to("GET / HTTP/1.0\r\nHost: a\r\nHost: b\r\n\r\n").contains(" 400 "));
 }
+
+namespace {
+
+// A stream reporting what it did not do, without ever suspending.
+struct misreporting_stream {
+  quoll::io::io_result answer;
+
+  [[nodiscard]] static quoll::async::task<quoll::io::io_result> done(quoll::io::io_result result) { co_return result; }
+
+  [[nodiscard]] quoll::async::task<quoll::io::io_result> read_some(std::span<std::byte>) { return done(answer); }
+
+  [[nodiscard]] quoll::async::task<quoll::io::io_result> write_some(std::span<std::byte const>) { return done(answer); }
+};
+
+} // namespace
+
+TEST_CASE("serve_connection: a stream reporting what it did not do ends the connection rather than loop", "[server]") {
+  auto const size = GENERATE(std::size_t{0}, std::size_t{1} << 30U);
+  quoll::http::router router;
+
+  router.get("/", [] { return quoll::http::response{}; });
+
+  quoll::http::server const server{router};
+  auto const served = [&]() -> quoll::async::task<bool> {
+    co_await server.serve_connection(quoll::io::any_stream{misreporting_stream{{{}, size}}});
+    co_return true;
+  };
+
+  REQUIRE(quoll::test::run(served()) == true);
+}

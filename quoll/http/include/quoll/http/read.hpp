@@ -42,6 +42,7 @@
 #include <quoll/http/error.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/io/byte_stream.hpp>
+#include <quoll/io/detail/sound_read.hpp>
 #include <quoll/io/error.hpp>
 
 #include <array>
@@ -83,10 +84,9 @@ template <io::ByteStream Stream, class Message, std::predicate Reached>
       co_return failure;
     }
 
-    auto const received = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+    auto const received =
+        io::detail::sound_read(co_await stream.read_some(std::as_writable_bytes(std::span{chunk})), chunk.size());
 
-    assert((!received.error || received.transferred == 0) && "ByteStream::read_some() returned bytes with an error");
-    assert((received.error || received.transferred > 0) && "ByteStream::read_some() read nothing without an error");
     buffer.append(chunk.data(), received.transferred);
 
     if (received.error == io::error::end_of_stream) {

@@ -51,8 +51,10 @@
 #include <concepts>
 #include <coroutine>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <memory>
 #include <new>
 #include <optional>
 #include <span>
@@ -396,4 +398,286 @@ TEST_CASE("any_stream: target() recovers the wrapped stream by its exact type", 
 
   REQUIRE(read);
   REQUIRE(read->error == io::error::end_of_stream);
+}
+
+namespace {
+
+// A stream whose operations are tasks, as those of a socket with TLS are, and that counts the frames alive: an
+// awaitable destroyed twice, or not at all, shows here, and under ASan.
+struct task_stream {
+  std::shared_ptr<int> frames = std::make_shared<int>(0);
+
+  struct frame_count {
+    std::shared_ptr<int> count;
+
+    explicit frame_count(std::shared_ptr<int> counted) : count(std::move(counted)) { ++*count; }
+
+    frame_count(frame_count const &) = delete;
+    frame_count &operator=(frame_count const &) = delete;
+
+    ~frame_count() { --*count; }
+  };
+
+  [[nodiscard]] static task<io::io_result> reading(std::shared_ptr<int> counted, std::size_t size) {
+    frame_count const alive{std::move(counted)};
+
+    co_return io::io_result{{}, size};
+  }
+
+  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte> buffer) { return reading(frames, buffer.size()); }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) { return reading(frames, data.size()); }
+};
+
+static_assert(io::ByteStream<task_stream>);
+
+// Over-aligned, so that it cannot be held in place.
+struct alignas(64) aligned_stream {
+  [[nodiscard]] static task<io::io_result> done() { co_return io::io_result{{}, 1}; }
+
+  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte>) { return done(); }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) { return done(); }
+};
+
+// Counts how many of it are gone.
+struct counted_stream {
+  std::shared_ptr<int> gone;
+
+  counted_stream(counted_stream const &) = delete;
+  counted_stream &operator=(counted_stream const &) = delete;
+
+  counted_stream(counted_stream &&other) noexcept : gone(std::move(other.gone)) {}
+
+  counted_stream &operator=(counted_stream &&) = delete;
+
+  explicit counted_stream(std::shared_ptr<int> counter) : gone(std::move(counter)) {}
+
+  ~counted_stream() {
+    if (gone) {
+      ++*gone;
+    }
+  }
+
+  [[nodiscard]] static task<io::io_result> done() { co_return io::io_result{{}, 1}; }
+
+  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte>) { return done(); }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) { return done(); }
+};
+
+} // namespace
+
+TEST_CASE("any_stream: an operation that has completed leaves room for the next, in one expression",
+          "[io][any_stream]") {
+  auto const frames = std::make_shared<int>(0);
+  std::array<std::byte, 4> buffer{};
+
+  auto const reading = [&]() -> task<std::size_t> {
+    io::any_stream stream{task_stream{frames}};
+    auto const read_twice =
+        (co_await stream.read_some(buffer)).transferred + (co_await stream.read_some(buffer)).transferred;
+    auto const write_twice =
+        (co_await stream.write_some(buffer)).transferred + (co_await stream.write_some(buffer)).transferred;
+
+    co_return read_twice + write_twice;
+  };
+
+  REQUIRE(run(reading()) == 16);
+  REQUIRE(*frames == 0);
+}
+
+TEST_CASE("any_stream: an awaitable held past its end leaves room for the next", "[io][any_stream]") {
+  auto const frames = std::make_shared<int>(0);
+  std::array<std::byte, 4> buffer{};
+
+  auto const reading = [&]() -> task<std::size_t> {
+    io::any_stream stream{task_stream{frames}};
+    auto first = stream.read_some(buffer);
+    auto const one = co_await first;
+    auto second = stream.read_some(buffer);
+    auto const two = co_await second;
+
+    co_return one.transferred + two.transferred;
+  };
+
+  REQUIRE(run(reading()) == 8);
+  REQUIRE(*frames == 0);
+}
+
+TEST_CASE("any_stream: an operation over one still pending is refused", "[io][any_stream]") {
+  std::array<std::byte, 4> buffer{};
+  io::any_stream stream{task_stream{}};
+
+  {
+    auto const read = stream.read_some(buffer);
+
+    REQUIRE_THROWS_AS((void)stream.read_some(buffer), std::logic_error);
+    REQUIRE_THROWS_AS((void)stream.shutdown_send(), std::logic_error);
+  }
+
+  {
+    auto const written = stream.write_some(buffer);
+
+    REQUIRE_THROWS_AS((void)stream.write_some(buffer), std::logic_error);
+    REQUIRE_THROWS_AS((void)stream.shutdown_send(), std::logic_error);
+    REQUIRE_NOTHROW((void)stream.read_some(buffer));
+  }
+
+  {
+    auto const stopping = stream.shutdown_send();
+
+    REQUIRE_THROWS_AS((void)stream.read_some(buffer), std::logic_error);
+    REQUIRE_THROWS_AS((void)stream.write_some(buffer), std::logic_error);
+    REQUIRE_THROWS_AS((void)stream.shutdown_send(), std::logic_error);
+  }
+
+  REQUIRE_NOTHROW((void)stream.read_some(buffer));
+}
+
+TEST_CASE("any_stream: an operation on one moved from is refused", "[io][any_stream]") {
+  std::array<std::byte, 4> buffer{};
+  io::any_stream stream{task_stream{}};
+  io::any_stream const moved{std::move(stream)};
+
+  // NOLINTBEGIN(bugprone-use-after-move): what is tested.
+  REQUIRE_THROWS_AS((void)stream.read_some(buffer), std::logic_error);
+  REQUIRE_THROWS_AS((void)stream.write_some(buffer), std::logic_error);
+  REQUIRE_THROWS_AS((void)stream.shutdown_send(), std::logic_error);
+  // NOLINTEND(bugprone-use-after-move)
+}
+
+TEST_CASE("any_stream: awaiting an operation twice is refused", "[io][any_stream]") {
+  std::array<std::byte, 4> buffer{};
+
+  auto const twice = [&]() -> task<bool> {
+    io::any_stream stream{task_stream{}};
+    auto read = stream.read_some(buffer);
+    auto const first = co_await read;
+
+    static_cast<void>(first);
+
+    try {
+      auto const second = co_await read;
+
+      static_cast<void>(second);
+    } catch (std::logic_error const &) {
+      co_return true;
+    }
+
+    co_return false;
+  };
+
+  REQUIRE(run(twice()) == true);
+}
+
+TEST_CASE("any_stream: an operation that throws leaves room for the next", "[io][any_stream]") {
+  struct throwing_stream {
+    [[nodiscard]] static task<io::io_result> failing() {
+      throw std::runtime_error{"on purpose"};
+      co_return io::io_result{};
+    }
+
+    [[nodiscard]] task<io::io_result> read_some(std::span<std::byte>) { return failing(); }
+
+    [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) { return failing(); }
+  };
+
+  std::array<std::byte, 4> buffer{};
+
+  auto const reading = [&]() -> task<int> {
+    io::any_stream stream{throwing_stream{}};
+    auto failures = 0;
+
+    for (auto attempt = 0; attempt < 2; ++attempt) {
+      try {
+        auto const read = co_await stream.read_some(buffer);
+
+        static_cast<void>(read);
+      } catch (std::runtime_error const &) {
+        ++failures;
+      }
+    }
+
+    co_return failures;
+  };
+
+  REQUIRE(run(reading()) == 2);
+}
+
+TEST_CASE("any_stream: a read reports what can be trusted, whoever reads", "[io][any_stream]") {
+  struct misreporting_stream {
+    io::io_result answer;
+
+    [[nodiscard]] static task<io::io_result> done(io::io_result result) { co_return result; }
+
+    [[nodiscard]] task<io::io_result> read_some(std::span<std::byte>) { return done(answer); }
+
+    [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) { return done(answer); }
+  };
+
+  std::array<std::byte, 4> buffer{};
+
+  auto const reading = [&](io::io_result answer) -> task<io::io_result> {
+    io::any_stream stream{misreporting_stream{answer}};
+
+    co_return co_await stream.read_some(buffer);
+  };
+
+  auto const past = run(reading({{}, 5}));
+  auto const nothing = run(reading({{}, 0}));
+  auto const fine = run(reading({{}, 4}));
+
+  REQUIRE(past->error == std::errc::io_error);
+  REQUIRE(past->transferred == 0);
+  REQUIRE(nothing->error == std::errc::io_error);
+  REQUIRE_FALSE(fine->error);
+  REQUIRE(fine->transferred == 4);
+}
+
+TEST_CASE("any_stream: target of what is no stream is nothing", "[io][any_stream]") {
+  io::any_stream stream{task_stream{}};
+  auto const &same = stream;
+
+  REQUIRE(stream.target<int>() == nullptr);
+  REQUIRE(same.target<int>() == nullptr);
+  REQUIRE(stream.target<task_stream>() != nullptr);
+}
+
+TEST_CASE("any_stream: an over-aligned stream is held where it can be", "[io][any_stream]") {
+  io::any_stream stream{aligned_stream{}};
+  std::array<std::byte, 1> buffer{};
+
+  REQUIRE(reinterpret_cast<std::uintptr_t>(stream.target<aligned_stream>()) % alignof(aligned_stream) == 0);
+
+  auto const reading = [&]() -> task<std::size_t> { co_return (co_await stream.read_some(buffer)).transferred; };
+
+  REQUIRE(run(reading()) == 1);
+}
+
+TEST_CASE("any_stream: a stream replaced is gone, and only it", "[io][any_stream]") {
+  auto const first = std::make_shared<int>(0);
+  auto const second = std::make_shared<int>(0);
+
+  {
+    io::any_stream stream{counted_stream{first}};
+
+    REQUIRE(*first == 0);
+    stream = io::any_stream{counted_stream{second}};
+    REQUIRE(*first == 1);
+    REQUIRE(*second == 0);
+  }
+
+  REQUIRE(*first == 1);
+  REQUIRE(*second == 1);
+}
+
+TEST_CASE("io::error: says what it is", "[io]") {
+  auto const code = std::make_error_code(std::errc::io_error);
+  std::error_code const ended = io::error::end_of_stream;
+
+  REQUIRE(std::string_view{ended.category().name()} == "quoll.io");
+  REQUIRE_FALSE(ended.message().empty());
+  REQUIRE(ended.category().message(-1) == "unknown quoll.io error");
+  REQUIRE(ended != code);
 }

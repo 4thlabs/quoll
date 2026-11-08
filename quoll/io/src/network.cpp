@@ -41,7 +41,6 @@
 
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/detail/require_service.hpp>
-#include <quoll/io/detail/tls_service.hpp>
 #include <quoll/io/network_ref.hpp>
 #include <quoll/io/tls_network_ref.hpp>
 
@@ -49,6 +48,14 @@
 #include <utility>
 
 namespace quoll::io {
+
+namespace {
+
+// How async::detail::require_service() names the service, for an application that finds it missing: often, OpenSSL was
+// not there when the build was configured.
+constexpr char const *tls_service_name = "TLS network, which needs OpenSSL when Quoll is configured";
+
+} // namespace
 
 async::task<any_stream> connect(std::string host, std::uint16_t port) {
   auto const network =
@@ -58,8 +65,8 @@ async::task<any_stream> connect(std::string host, std::uint16_t port) {
 }
 
 async::task<any_stream> connect_tls(std::string host, std::uint16_t port, tls_client_options options) {
-  auto const network = async::detail::require_service<tls_network_ref>(
-      co_await async::current_executor(), "quoll::io::connect_tls", detail::tls_service_name);
+  auto const network = async::detail::require_service<tls_network_ref>(co_await async::current_executor(),
+                                                                       "quoll::io::connect_tls", tls_service_name);
 
   co_return co_await network.connect_tls(std::move(host), port, options);
 }
@@ -76,8 +83,8 @@ async::task<any_listener> listen_tls(std::uint16_t port, tls_server_options opti
     throw std::invalid_argument{"quoll::io::listen_tls: both a certificate and its private key are needed"};
   }
 
-  auto const network = async::detail::require_service<tls_network_ref>(
-      co_await async::current_executor(), "quoll::io::listen_tls", detail::tls_service_name);
+  auto const network = async::detail::require_service<tls_network_ref>(co_await async::current_executor(),
+                                                                       "quoll::io::listen_tls", tls_service_name);
 
   co_return network.listen_tls(std::move(address), port, options);
 }

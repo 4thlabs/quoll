@@ -39,6 +39,7 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/detail/memory_channel.hpp>
@@ -49,6 +50,7 @@
 #include <cassert>
 #include <coroutine>
 #include <cstddef>
+#include <exception>
 #include <memory>
 #include <optional>
 #include <span>
@@ -83,13 +85,29 @@ public:
     // Moved into the awaiting coroutine before it suspends, when no stop callback is registered yet.
     read_awaitable(read_awaitable &&other) noexcept : channel_(other.channel_), buffer_(other.buffer_) {}
 
-    ~read_awaitable() = default;
+    // A coroutine suspended here may go, and the peer's next write must not then find it. One already woken is on its
+    // executor's queue, from where nothing can take it: it would resume a frame that is gone, so this ends the program
+    // now rather than then.
+    ~read_awaitable() {
+      if (!suspended_) {
+        return;
+      }
+
+      stop_callback_.reset();
+
+      if (channel_->woken()) {
+        std::terminate();
+      }
+
+      channel_->end_wait();
+    }
 
     [[nodiscard]] bool await_ready() const noexcept { return buffer_.empty() || channel_->readable(); }
 
     void await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
       item_.handle = handle;
       channel_->wait(item_, context.executor);
+      suspended_ = true;
 
       // Invoked at once if stop was already requested.
       if (context.stop_token.stop_possible()) {
@@ -100,6 +118,7 @@ public:
     [[nodiscard]] io_result await_resume() noexcept {
       stop_callback_.reset();
       channel_->end_wait();
+      suspended_ = false;
 
       if (canceled_) {
         return {std::make_error_code(std::errc::operation_canceled), 0};
@@ -128,6 +147,7 @@ public:
     std::span<std::byte> buffer_;
     async::work_item item_;
     bool canceled_ = false;
+    bool suspended_ = false;
     std::optional<std::stop_callback<canceller>> stop_callback_;
   };
 
@@ -192,13 +212,20 @@ public:
   ~memory_stream() { release(); }
 
   /** @brief Reads the bytes the peer wrote, waiting for some if there are none yet. */
-  [[nodiscard]] read_awaitable read_some(std::span<std::byte> buffer) noexcept { return {inbound(), buffer}; }
+  [[nodiscard]] read_awaitable read_some(std::span<std::byte> buffer QUOLL_LIFETIMEBOUND) noexcept QUOLL_LIFETIMEBOUND {
+    return {inbound(), buffer};
+  }
 
   /** @brief Hands all of `data` to the peer. */
-  [[nodiscard]] write_awaitable write_some(std::span<std::byte const> data) noexcept { return {outbound(), data}; }
+  [[nodiscard]] write_awaitable
+  write_some(std::span<std::byte const> data QUOLL_LIFETIMEBOUND) noexcept QUOLL_LIFETIMEBOUND {
+    return {outbound(), data};
+  }
 
   /** @brief Stops sending, as close() does: see HalfClosableStream. */
-  [[nodiscard]] shutdown_awaitable shutdown_send() noexcept { return shutdown_awaitable{outbound()}; }
+  [[nodiscard]] shutdown_awaitable shutdown_send() noexcept QUOLL_LIFETIMEBOUND {
+    return shutdown_awaitable{outbound()};
+  }
 
   /**
    * @brief Closes the sending side: the peer reads what was already written, then `io::error::end_of_stream`.

@@ -59,6 +59,9 @@ public:
   // A read is suspended, or woken and not resumed yet.
   [[nodiscard]] bool has_reader() const noexcept { return reading_; }
 
+  // What it keeps, read or not: for a test.
+  [[nodiscard]] std::size_t held() const noexcept { return bytes_.size(); }
+
   // Something to read now: bytes, or the end of the stream.
   [[nodiscard]] bool readable() const noexcept { return offset_ < bytes_.size() || closed_; }
 
@@ -80,8 +83,12 @@ public:
     std::copy_n(bytes_.begin() + static_cast<std::ptrdiff_t>(offset_), count, buffer.begin());
     offset_ += count;
 
+    // Past half, too: a reader always a little behind would otherwise keep all that ever went through.
     if (offset_ == bytes_.size()) {
       bytes_.clear();
+      offset_ = 0;
+    } else if (offset_ > bytes_.size() / 2) {
+      bytes_.erase(bytes_.begin(), bytes_.begin() + static_cast<std::ptrdiff_t>(offset_));
       offset_ = 0;
     }
 
@@ -129,6 +136,9 @@ public:
     executor_.emplace(executor);
     reading_ = true;
   }
+
+  // The read that waited is woken, on its executor's queue, and has not resumed yet.
+  [[nodiscard]] bool woken() const noexcept { return reading_ && reader_ == nullptr; }
 
   // The read that waited has resumed.
   void end_wait() noexcept {

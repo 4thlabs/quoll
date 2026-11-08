@@ -56,6 +56,7 @@
 #include <quoll/test/run.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -679,4 +680,32 @@ TEST_CASE("http over a stream: a failure past a head comes after it, however the
 
   REQUIRE(out);
   REQUIRE(out->error == http::error::bad_message);
+}
+
+namespace {
+
+// A stream reporting what it did not do.
+struct misreporting_stream {
+  quoll::io::io_result answer;
+
+  [[nodiscard]] static quoll::async::task<quoll::io::io_result> done(quoll::io::io_result result) { co_return result; }
+
+  [[nodiscard]] quoll::async::task<quoll::io::io_result> read_some(std::span<std::byte>) { return done(answer); }
+
+  [[nodiscard]] quoll::async::task<quoll::io::io_result> write_some(std::span<std::byte const>) { return done(answer); }
+};
+
+} // namespace
+
+TEST_CASE("http::read: a stream reporting what it did not do fails, rather than loop or read past its buffer",
+          "[http]") {
+  auto const size = GENERATE(std::size_t{0}, std::size_t{1} << 30U);
+  misreporting_stream stream{{{}, size}};
+  std::string buffer;
+  quoll::http::request_parser parser;
+  auto const error = quoll::test::run(quoll::http::read(stream, buffer, parser));
+
+  REQUIRE(error.has_value());
+  REQUIRE(*error == std::errc::io_error);
+  REQUIRE(buffer.empty());
 }

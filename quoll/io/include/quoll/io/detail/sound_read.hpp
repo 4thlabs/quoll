@@ -34,15 +34,20 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_IO_DETAIL_TLS_SERVICE_HPP
-#define QUOLL_IO_DETAIL_TLS_SERVICE_HPP
+#ifndef QUOLL_IO_DETAIL_SOUND_READ_HPP
+#define QUOLL_IO_DETAIL_SOUND_READ_HPP
+
+#include <quoll/io/io_result.hpp>
+
+#include <cstddef>
 
 namespace quoll::io::detail {
 
-// How async::detail::require_service() names the service, for an application that finds it missing: often, OpenSSL was
-// not there when the build was configured.
-inline constexpr char const *tls_service_name = "TLS network, which needs OpenSSL when Quoll is configured";
+// What a ByteStream reading into `asked` bytes may be trusted to have done, for what appends what it read: more than
+// that would read past its buffer, and no error with no progress would have it loop for ever, with nothing to stop it
+// if the stream never suspends. Such a stream reads as `std::errc::io_error`, and a read with an error has no bytes.
+[[nodiscard]] io_result sound_read(io_result read, std::size_t asked) noexcept;
 
 } // namespace quoll::io::detail
 
-#endif // QUOLL_IO_DETAIL_TLS_SERVICE_HPP
+#endif // QUOLL_IO_DETAIL_SOUND_READ_HPP
