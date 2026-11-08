@@ -7,6 +7,8 @@ set -eu
 
 fake=$1
 program=$2
+# A token of the caller's would change what the program does.
+unset GITHUB_TOKEN
 log=$(mktemp)
 out=$(mktemp)
 "$fake" 0 >"$log" 2>&1 &
@@ -48,6 +50,10 @@ if QUOLL_GITHUB_URL=$url "$program" 4thlabs/private >"$out" 2>&1; then
   fail "a private repository succeeded"
 fi
 grep -q '^forbidden: Resource not accessible$' "$out" || fail "no error for a private repository"
+
+# The token goes to every request, where GitHub takes it, not only to /user: a private repository, with access.
+QUOLL_GITHUB_URL=$url GITHUB_TOKEN=test-token "$program" 4thlabs/private >"$out" 2>&1 || fail "4thlabs/private failed"
+grep -q '^4thlabs/private: 1 stars, 0 open issues$' "$out" || fail "no private repository with a token"
 
 # The account of a token, a token refused with GitHub's body, and none at all.
 QUOLL_GITHUB_URL=$url GITHUB_TOKEN=test-token "$program" me >"$out" 2>&1 || fail "me failed"

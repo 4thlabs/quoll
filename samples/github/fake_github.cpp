@@ -123,10 +123,22 @@ async::task<http::response> as_github_wants(http::request &&request, http::next 
     co_return refused;
   }
 
-  if (next.path() == "/user" && request.fields.find("Authorization") != "Bearer test-token") {
+  auto const authorized = request.fields.find("Authorization") == "Bearer test-token";
+
+  if (next.path() == "/user" && !authorized) {
     refused.status = http::status::unauthorized;
     refused.body = R"({"message":"Bad credentials","documentation_url":"https://docs.github.com/rest"})";
     co_return refused;
+  }
+
+  // A private repository, for a token with access: no endpoint of the contract sees who calls.
+  if (next.path() == "/repos/4thlabs/private" && authorized) {
+    http::response granted;
+
+    granted.fields.add("Content-Type", "application/json; charset=utf-8");
+    granted.body = R"({"full_name":"4thlabs/private","stargazers_count":1,"open_issues_count":0,)"
+                   R"("html_url":"https://github.com/4thlabs/private"})";
+    co_return granted;
   }
 
   co_return co_await next(std::move(request));

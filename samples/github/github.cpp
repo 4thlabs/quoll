@@ -179,7 +179,16 @@ async::task<int> run(given what) {
   client.use(rest::retry{.attempts = 3});
 
   if (what.token) {
+    // /user requires it, as the contract declares; GitHub takes it on every request (a private repository, a higher
+    // limit), where the contract declares no scheme, as it is optional there: an interceptor adds it to the others.
     client.credentials<rest::bearer_auth>(*what.token);
+    client.use([authorization = "Bearer " + *what.token](http::request &&request, rest::next const &send) {
+      if (!request.fields.contains("Authorization")) {
+        request.fields.set("Authorization", authorization);
+      }
+
+      return send(std::move(request));
+    });
   }
 
   auto const &arguments = what.arguments;

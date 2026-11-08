@@ -22,6 +22,21 @@ const server = http.createServer((request, response) => {
     return answer(response, 403, { message: 'a User-Agent header is required' });
   }
 
+  if (url.pathname === '/repos/4thlabs/private') {
+    if (request.headers.authorization !== 'Bearer test-token') {
+      return answer(response, 403, { message: 'Resource not accessible' });
+    }
+
+    return answer(response, 200, {
+      full_name: '4thlabs/private', stargazers_count: 1, open_issues_count: 0, html_url: 'https://github.com/4thlabs/private',
+    });
+  }
+
+  if (url.pathname === '/repos/4thlabs/private/issues') {
+    return answer(response, request.headers.authorization === 'Bearer test-token' ? 200 : 403,
+                  request.headers.authorization === 'Bearer test-token' ? [] : { message: 'Resource not accessible' });
+  }
+
   if (url.pathname === '/repos/4thlabs/quoll') {
     return answer(response, 200, {
       full_name: '4thlabs/quoll',
@@ -89,6 +104,10 @@ expect(outcome.code === 0 && outcome.out.includes('4thlabs/quoll: 42 stars, 2 op
 
 outcome = await call(['4thlabs/nothing']);
 expect(outcome.code === 1 && outcome.out.includes('not found: Not Found'), 'a missing repository', outcome);
+
+outcome = await call(['4thlabs/private'], { GITHUB_TOKEN: 'test-token' });
+expect(outcome.code === 0 && outcome.out.includes('4thlabs/private: 1 stars, 0 open issues'),
+       'a private repository, with a token', outcome);
 
 outcome = await call(['me'], { GITHUB_TOKEN: 'test-token' });
 expect(outcome.code === 0 && outcome.out.includes('ada (Ada Lovelace)'), 'the account of a token', outcome);
