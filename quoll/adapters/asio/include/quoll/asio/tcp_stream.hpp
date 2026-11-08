@@ -70,10 +70,16 @@ public:
   /** @brief Takes a connected socket over. */
   explicit tcp_stream(::asio::ip::tcp::socket socket) : basic_stream(std::move(socket)) {}
 
-  /** @brief Stops sending: see io::HalfClosableStream. */
-  [[nodiscard]] async::task<io::io_result> shutdown_send() {
-    auto &state = checked_state();
+  /** @brief Stops sending: see io::HalfClosableStream. A write after it fails, with `std::errc::broken_pipe` from the
+   * socket. */
+  [[nodiscard]] async::task<io::io_result> shutdown_send() { return shut_down(checked_state()); }
 
+  /** @brief The socket, for its options, shutdown() and close(). */
+  [[nodiscard]] ::asio::ip::tcp::socket &socket() noexcept { return checked_state().stream; }
+
+private:
+  // On the state, bound at the call: the stream may move before its task runs.
+  static async::task<io::io_result> shut_down(detail::stream_state<::asio::ip::tcp::socket> &state) {
     auto const [error] = co_await detail::make_operation<>(state.write, [&state](auto handler) {
       std::error_code shutdown;
 
@@ -83,9 +89,6 @@ public:
 
     co_return io::io_result{detail::to_io_error(error), 0};
   }
-
-  /** @brief The socket, for its options, shutdown() and close(). */
-  [[nodiscard]] ::asio::ip::tcp::socket &socket() noexcept { return checked_state().stream; }
 };
 
 static_assert(async::ContextAwaitable<tcp_stream::read_awaitable>);

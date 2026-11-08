@@ -123,26 +123,47 @@ public:
 
   /** @brief Negotiates the session: as a client, this checks the server. Before any read or write. */
   [[nodiscard]] async::task<std::error_code> handshake(session_type::handshake_type type) {
-    auto &state = checked_state();
+    return shake_hands(checked_state(), type);
+  }
 
+  /**
+   * @brief Sends TLS's closing message and stops sending: see io::HalfClosableStream. What the peer sends can still be
+   * read. Reports `std::errc::not_connected` for a session that cannot send it, before the end of its handshake. The
+   * message goes once: a second call, after one that was stopped or failed, only shuts the socket down, and a write
+   * after it fails, as the socket refuses it.
+   */
+  [[nodiscard]] async::task<io::io_result> shutdown_send() { return shut_down(checked_state()); }
+
+  /** @brief The session, for what OpenSSL offers. */
+  [[nodiscard]] session_type &session() noexcept { return checked_state().stream; }
+
+private:
+  // On the state, bound at the call: the stream may move before its task runs.
+  static async::task<std::error_code> shake_hands(detail::stream_state<session_type> &state,
+                                                  session_type::handshake_type type) {
     auto const [error] = co_await detail::make_operation<>(
         state.read, [&state, type](auto handler) { state.stream.async_handshake(type, std::move(handler)); });
 
     co_return detail::to_io_error(error);
   }
 
-  /**
-   * @brief Sends TLS's closing message and stops sending: see io::HalfClosableStream. What the peer sends can still be
-   * read. Reports `std::errc::not_connected` for a session that cannot send it, before the end of its handshake.
-   */
-  [[nodiscard]] async::task<io::io_result> shutdown_send() {
-    auto &state = checked_state();
+  static async::task<io::io_result> shut_down(detail::stream_state<session_type> &state) {
     std::optional<std::string> message;
 
     // On the executor of the session, like everything touching it.
     auto const [error, written] =
         co_await detail::make_operation<std::size_t>(state.write, [&state, &message](auto handler) {
+          // Once: a second closing message would follow the first, or half of it.
+          if (state.closing_sent) {
+            std::move(handler)(std::error_code{}, std::size_t{0});
+            return;
+          }
+
           message = detail::closing_message(state.stream.native_handle());
+
+          if (message) {
+            state.closing_sent = true;
+          }
 
           if (!message) {
             std::move(handler)(std::make_error_code(std::errc::not_connected), std::size_t{0});
@@ -165,9 +186,6 @@ public:
 
     co_return io::io_result{detail::to_io_error(closed), 0};
   }
-
-  /** @brief The session, for what OpenSSL offers. */
-  [[nodiscard]] session_type &session() noexcept { return checked_state().stream; }
 };
 
 static_assert(async::ContextAwaitable<tls_stream::read_awaitable>);

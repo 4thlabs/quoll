@@ -41,7 +41,6 @@
 #include <quoll/asio/detail/io_error.hpp>
 #include <quoll/asio/detail/operation.hpp>
 #include <quoll/async/await_context.hpp>
-#include <quoll/async/context_awaitable.hpp>
 #include <quoll/io/io_result.hpp>
 
 #include <asio/any_io_executor.hpp>
@@ -52,6 +51,7 @@
 #include <cstddef>
 #include <memory>
 #include <span>
+#include <system_error>
 #include <utility>
 
 namespace quoll::asio::detail {
@@ -76,6 +76,9 @@ struct stream_state {
   // Share the ownership of `cancellations`.
   std::shared_ptr<cancellation> read;
   std::shared_ptr<cancellation> write;
+  // Set once TLS's closing message has been made, for it to go once, whatever becomes of its write or of the socket's
+  // shutdown after it. Read and written on the stream's executor only, in the initiations.
+  bool closing_sent = false;
 };
 
 template <class Stream>
@@ -178,7 +181,12 @@ public:
 protected:
   explicit basic_stream(Stream stream) : state_(std::make_unique<stream_state<Stream>>(std::move(stream))) {}
 
-  [[nodiscard]] stream_state<Stream> &checked_state() const noexcept {
+  [[nodiscard]] stream_state<Stream> &checked_state() noexcept {
+    assert(state_ && "stream used after being moved from");
+    return *state_;
+  }
+
+  [[nodiscard]] stream_state<Stream> const &checked_state() const noexcept {
     assert(state_ && "stream used after being moved from");
     return *state_;
   }

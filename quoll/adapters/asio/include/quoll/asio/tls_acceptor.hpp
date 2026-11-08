@@ -109,6 +109,14 @@ private:
 
 static_assert(io::HalfClosableStream<accepted_tls_stream>);
 
+// On the state and a context of its own, bound at the call: the acceptor may move while an accept is pending.
+inline async::task<io::any_stream> accept_tls(acceptor_state &state, std::shared_ptr<::asio::ssl::context> context) {
+  auto socket = co_await accept_socket(state);
+
+  co_return io::any_stream{
+      accepted_tls_stream{tls_stream{tls_stream::session_type{std::move(socket), *context}}, std::move(context)}};
+}
+
 } // namespace detail
 
 /**
@@ -130,20 +138,22 @@ public:
         context_(detail::server_context(options)) {}
 
   /** @brief The next connection a peer opens. */
-  [[nodiscard]] async::task<io::any_stream> accept() {
-    assert(state_ && "tls_acceptor used after being moved from");
-
-    co_return io::any_stream{detail::accepted_tls_stream{
-        tls_stream{tls_stream::session_type{co_await detail::accept_socket(*state_), *context_}}, context_}};
-  }
+  [[nodiscard]] async::task<io::any_stream> accept() { return detail::accept_tls(checked_state(), context_); }
 
   /** @brief The port it accepts on: the one the system picked when it was bound to port 0. */
-  [[nodiscard]] std::uint16_t local_port() const {
-    assert(state_ && "tls_acceptor used after being moved from");
-    return state_->acceptor.local_endpoint().port();
-  }
+  [[nodiscard]] std::uint16_t local_port() const { return checked_state().acceptor.local_endpoint().port(); }
 
 private:
+  [[nodiscard]] detail::acceptor_state &checked_state() noexcept {
+    assert(state_ && "tls_acceptor used after being moved from");
+    return *state_;
+  }
+
+  [[nodiscard]] detail::acceptor_state const &checked_state() const noexcept {
+    assert(state_ && "tls_acceptor used after being moved from");
+    return *state_;
+  }
+
   std::unique_ptr<detail::acceptor_state> state_;
   std::shared_ptr<::asio::ssl::context> context_;
 };
