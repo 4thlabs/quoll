@@ -58,8 +58,11 @@ Across a `co_await`, a callback or a completion handler, the caller's statement 
   outlives the task, as in `co_await [&]() -> task<> { ... }();`. It is a bug when the task is stored, spawned or returned
   while the closure dies: pass what it needs as parameters instead.
 - **Children:** a task started on a local, or given a reference to one, that runs after the parent leaves its scope.
-- **Destroyed while suspended:** a frame destroyed while registered somewhere (a waiter list, a timer, a stream's pending
-  operation) leaves a dangling entry that the next wake-up uses.
+- **Destroyed while suspended:** for every awaitable whose `await_suspend` registers something (a work item in a waiter
+  list, a callback in a timer or a channel, a pending operation in a stream), ask what its destructor does if the frame is
+  destroyed while it is still registered. A defaulted destructor leaves a dangling entry that the next wake-up uses. "Nothing
+  destroys a suspended frame" is a hope, not a reason: a parent cancelled, a task dropped unstarted or a test tearing down
+  all do it.
 
 ### 3. Is the owner changed while a borrow is alive?
 
