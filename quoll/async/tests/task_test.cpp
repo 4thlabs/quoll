@@ -49,6 +49,7 @@
 #include <algorithm>
 #include <coroutine>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 #include <optional>
 
@@ -290,12 +291,16 @@ task<> waits_for_ever() { co_await never_resumed{}; }
 // Hidden: the ctest assert.task_destroyed_while_it_runs runs it alone, in a debug build, and passes on the assertion's
 // message, as the program ends there.
 TEST_CASE("task: destroying one that runs is asserted", "[.assert]") {
+#if defined(NDEBUG)
+  // What the ctest takes for a build with nothing to check, however NDEBUG came to be defined.
+  std::puts("quoll: assertions are compiled out");
+#else
   run_loop loop;
   auto const executor = loop.get_executor();
+  // Before the task: its frame keeps the address of what it was started with.
+  quoll::async::await_context const context{.executor = quoll::async::executor_ref{executor}, .stop_token = {}};
   auto running = waits_for_ever();
 
-  running
-      .await_suspend(std::noop_coroutine(),
-                     quoll::async::await_context{.executor = quoll::async::executor_ref{executor}, .stop_token = {}})
-      .resume();
+  running.await_suspend(std::noop_coroutine(), context).resume();
+#endif
 }

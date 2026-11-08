@@ -41,6 +41,7 @@
 #include <quoll/async/detail/context_promise.hpp>
 #include <quoll/async/detail/non_void.hpp>
 
+#include <cassert>
 #include <concepts>
 #include <coroutine>
 #include <cstddef>
@@ -83,7 +84,10 @@ public:
 
   [[nodiscard]] std::suspend_always initial_suspend() const noexcept { return {}; }
 
-  [[nodiscard]] task_final_awaiter final_suspend() const noexcept { return {}; }
+  [[nodiscard]] task_final_awaiter final_suspend() noexcept {
+    finished_ = true;
+    return {};
+  }
 
   void unhandled_exception() noexcept { result_.template emplace<error_index>(std::current_exception()); }
 
@@ -110,8 +114,22 @@ protected:
 
   std::variant<std::monostate, non_void_t<T>, std::exception_ptr> result_;
 
+  // A frame is destroyed only once it will not resume again: before it starts, or once it has ended, whatever
+  // destroys it (a task, or a handle held elsewhere). What its awaitables registered points into it until then.
+  ~task_promise_base() {
+    assert((!continuation_ || finished_) &&
+           "quoll::async::task: destroyed while it runs, with what it registered still pointing into its frame");
+  }
+
+  task_promise_base() = default;
+  task_promise_base(task_promise_base const &) = delete;
+  task_promise_base &operator=(task_promise_base const &) = delete;
+  task_promise_base(task_promise_base &&) = delete;
+  task_promise_base &operator=(task_promise_base &&) = delete;
+
 private:
   std::coroutine_handle<> continuation_;
+  bool finished_ = false;
 };
 
 template <class T>

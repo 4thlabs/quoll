@@ -133,9 +133,10 @@ endfunction()
 #
 #   quoll_declare_assert_tests(NAME <name> CASE <test case> EXPECT <text>)
 #
-# <test case> is a hidden Catch2 case ([.assert]) of the module's tests that breaks it. A ctest named assert.<name> runs
-# it alone and passes when the program ends with <text>, taken literally, in its output: text of the assertion's message
-# that the case's name does not hold, as Catch2 prints the name of a case failing for another reason. Native debug
+# <test case> is a hidden Catch2 case ([.assert]) of the module's tests that breaks it, and prints
+# "quoll: assertions are compiled out" instead when NDEBUG is defined. A ctest named assert.<name> runs it alone and
+# passes when the program ends on an assertion with <text>, taken literally, in its output: text of the assertion's
+# message that the case's name does not hold, as Catch2 prints the name of a case failing for another reason. Native
 # builds only. Does nothing unless QUOLL_BUILD_TESTS is ON.
 #
 function(quoll_declare_assert_tests)
@@ -254,33 +255,20 @@ function(quoll_main_tests)
   set_tests_properties(quoll PROPERTIES RESOURCE_LOCK quoll_ports)
 
   # What a debug build asserts (quoll_declare_assert_tests): each case runs alone, in a process the assertion ends.
-  # Native builds whose assertions are compiled in only: Debug for a multi-config generator, whose CMAKE_BUILD_TYPE is
-  # empty, and otherwise any build whose flags do not define NDEBUG, whatever the case of its type.
-  get_property(asserted GLOBAL PROPERTY QUOLL_ASSERT_TESTS)
-  get_property(multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-  string(TOUPPER "${CMAKE_BUILD_TYPE}" build_type)
-  set(configurations "")
-  set(compiled_flags "${CMAKE_CXX_FLAGS}")
+  # Native builds only. A case built without assertions says so, however NDEBUG came to be defined, and passes.
+  if(NOT EMSCRIPTEN)
+    get_property(asserted GLOBAL PROPERTY QUOLL_ASSERT_TESTS)
 
-  if(multi_config)
-    set(configurations CONFIGURATIONS Debug)
-  else()
-    string(APPEND compiled_flags " ${CMAKE_CXX_FLAGS_${build_type}}")
+    foreach(name IN LISTS asserted)
+      get_property(test_case GLOBAL PROPERTY "QUOLL_ASSERT_CASE:${name}")
+      get_property(expected GLOBAL PROPERTY "QUOLL_ASSERT_EXPECT:${name}")
+      add_test(
+        NAME assert.${name}
+        COMMAND ${CMAKE_COMMAND} "-DQUOLL_TESTS=$<TARGET_FILE:quoll_tests>" "-DQUOLL_CASE=${test_case}"
+                "-DQUOLL_EXPECT=${expected}" -P ${QUOLL_CMAKE_DIR}/QuollExpectAssert.cmake
+      )
+    endforeach()
   endif()
-
-  if(EMSCRIPTEN OR compiled_flags MATCHES "NDEBUG")
-    return()
-  endif()
-
-  foreach(name IN LISTS asserted)
-    get_property(test_case GLOBAL PROPERTY "QUOLL_ASSERT_CASE:${name}")
-    get_property(message GLOBAL PROPERTY "QUOLL_ASSERT_EXPECT:${name}")
-    add_test(
-      NAME assert.${name} ${configurations}
-      COMMAND ${CMAKE_COMMAND} "-DQUOLL_TESTS=$<TARGET_FILE:quoll_tests>" "-DQUOLL_CASE=${test_case}"
-              "-DQUOLL_EXPECT=${message}" -P ${QUOLL_CMAKE_DIR}/QuollExpectAssert.cmake
-    )
-  endforeach()
 endfunction()
 
 #
