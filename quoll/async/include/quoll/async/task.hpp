@@ -39,9 +39,11 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/detail/awaiting.hpp>
 #include <quoll/async/detail/task_promise.hpp>
 
 #include <coroutine>
+#include <stdexcept>
 #include <type_traits>
 #include <utility>
 
@@ -57,9 +59,9 @@ namespace quoll::async {
  *
  * Owns its coroutine frame: move-only, and destroying a task that never ran destroys the frame without running it.
  * A task that started is destroyed only once it has completed: its awaiter, suspended until then, is the only one
- * holding it, and Quoll destroys no suspended frame. A program never starts one itself, through await_suspend: it
- * awaits it, or spawns it. What its awaitables registered (a work item in a queue, an I/O
- * handler, a stop callback) therefore never outlives the frame. Its promise asserts it in debug builds, whatever
+ * holding it, and Quoll destroys no suspended frame. A program never starts one itself: it awaits it, or spawns it,
+ * as its await_suspend is private to Quoll's own awaiting. What its awaitables registered (a work item in a queue, an
+ * I/O handler, a stop callback) therefore never outlives the frame. Its promise asserts it in debug builds, whatever
  * destroys the frame.
  *
  * Thread safety: none; a task is awaited once, by one coroutine.
@@ -88,14 +90,16 @@ public:
 
   ~task() { destroy(); }
 
-  /** @brief Always false: a task starts when awaited. */
-  [[nodiscard]] bool await_ready() const noexcept { return false; }
+  /**
+   * @brief Always false: a task starts when awaited.
+   * @throws std::logic_error for a task with no frame: moved from, or awaited already.
+   */
+  [[nodiscard]] bool await_ready() const {
+    if (!handle_) {
+      throw std::logic_error{"quoll::async::task: awaited with no frame, moved from or awaited already"};
+    }
 
-  /** @brief Starts the task on `context`, which resumes `continuation` when it ends. */
-  [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> continuation,
-                                                      await_context const &context) noexcept {
-    handle_.promise().start(continuation, context);
-    return handle_;
+    return false;
   }
 
   /** @brief What the task returned, or rethrows what it threw. */
@@ -103,6 +107,15 @@ public:
 
 private:
   friend class detail::task_promise_base<T>;
+  friend struct detail::awaiting;
+
+  // Starts the task on `context`, which resumes `continuation` when it ends. Private: only Quoll's own awaiting starts
+  // a task, so that a program cannot start one and drop it while it runs (see detail::awaiting).
+  [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> continuation,
+                                                      await_context const &context) noexcept {
+    handle_.promise().start(continuation, context);
+    return handle_;
+  }
 
   explicit task(std::coroutine_handle<promise_type> handle) noexcept : handle_(handle) {}
 

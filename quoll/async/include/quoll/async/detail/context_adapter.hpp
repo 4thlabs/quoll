@@ -38,6 +38,7 @@
 #define QUOLL_ASYNC_DETAIL_CONTEXT_ADAPTER_HPP
 
 #include <quoll/async/await_context.hpp>
+#include <quoll/async/detail/awaiting.hpp>
 
 #include <coroutine>
 #include <type_traits>
@@ -55,7 +56,9 @@ public:
 
   [[nodiscard]] bool await_ready() { return awaitable_.await_ready(); }
 
-  decltype(auto) await_suspend(std::coroutine_handle<> handle) { return awaitable_.await_suspend(handle, *context_); }
+  decltype(auto) await_suspend(std::coroutine_handle<> handle) {
+    return awaiting::suspend(awaitable_, handle, *context_);
+  }
 
   decltype(auto) await_resume() { return awaitable_.await_resume(); }
 

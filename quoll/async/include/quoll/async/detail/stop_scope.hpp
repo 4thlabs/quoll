@@ -39,6 +39,7 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/detail/awaiting.hpp>
 #include <quoll/async/task.hpp>
 
 #include <coroutine>
@@ -61,7 +62,7 @@ public:
   [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> awaiter, await_context const &context) {
     context_.emplace(await_context{context.executor, std::move(stop_token_)});
 
-    return work_.await_suspend(awaiter, *context_);
+    return awaiting::suspend(work_, awaiter, *context_);
   }
 
   T await_resume() { return work_.await_resume(); }
