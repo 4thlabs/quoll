@@ -1380,6 +1380,20 @@ TEST_CASE("emscripten::runtime takes the options of every runtime, and runs its 
     co_return 42;
   };
 
+  std::optional<int> result;
+
+  co_spawn(runtime.get_executor(), answer(),
+           overloaded{[&result](int value) { result = value; }, [](std::exception_ptr) {}});
   runtime.run();
-  REQUIRE(run_on(runtime.get_executor(), answer()) == 42);
+
+  // run() returns at once, and the browser's loop runs the task from then on.
+  REQUIRE_FALSE(result);
+
+  auto const start = emscripten_get_now();
+
+  while (!result && emscripten_get_now() - start < 10'000.0) {
+    emscripten_sleep(1);
+  }
+
+  REQUIRE(result == 42);
 }

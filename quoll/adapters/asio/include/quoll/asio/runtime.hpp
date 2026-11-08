@@ -186,9 +186,10 @@ public:
 
   /**
    * @brief Runs the loop in the calling thread, and in the others its options ask for, until the runtime's tasks have
-   * ended and their work has drained. An exception a handler lets out on another thread ends the program. A thread the
-   * system refuses to start leaves the work to those started and to the calling one, and its failure is thrown once
-   * the work has drained.
+   * ended and their work has drained. An exception a handler lets out, on any of them, stops the loop on every thread
+   * and is thrown once they are joined; the tasks still suspended go on at the next run(). A thread the system refuses
+   * to start leaves the work to those started and to the calling one, and its failure is thrown once the work has
+   * drained.
    */
   void run();
 

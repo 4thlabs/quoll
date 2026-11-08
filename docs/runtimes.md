@@ -66,7 +66,8 @@ under `emcmake`, whose differences are [below](#emscripten). This table is the n
 | `context()`        | The `asio::io_context`, to mix the runtime with asio code. See below.                                                                                                         |
 
 The runtime can be neither copied nor moved, and it outlives its executors. `run()` and
-`get_stop_token()` belong to one thread, and `get_executor()` and the executors may be used from any.
+`get_stop_token()` belong to one thread, outside `run()` for `get_stop_token()`, never from a task; `get_executor()` and
+the executors may be used from any.
 
 ### Several threads
 

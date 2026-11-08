@@ -99,8 +99,10 @@ enum class object_strands : bool { shared, own };
  *
  * Its sockets, timers and the cancellation of their operations need an asio executor running one handler at a time: an
  * io_context run by one thread, or a strand. Over a strand, every connection that listen() accepts shares the
- * acceptor's. Over an io_context run by several threads, as quoll::asio::runtime has it then, ask for a strand per
- * object.
+ * acceptor's. Over an io_context run by several threads, `inner` is a strand as well, as the tasks this executor runs
+ * need one handler at a time too, a server's connections included: this executor offers no strands for them to run
+ * on (async::strands_ref). Ask for a strand per object then, for its sockets, acceptors and timers.
+ * quoll::asio::runtime gives each connection a strand of its own.
  *
  * Thread safety: post() may be called from any thread, as asio's post can.
  */

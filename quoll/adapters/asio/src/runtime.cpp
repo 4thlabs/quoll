@@ -203,7 +203,7 @@ struct runtime::state {
         loop(context.get_executor(), threads > 1 ? object_strands::own : object_strands::shared) {}
 
   std::size_t threads;
-  // A hint of 1 lets asio leave out its locks, for one thread.
+  // A hint of 1 tells asio that one thread runs it, which it optimizes for.
   ::asio::io_context context;
   // What the runtime's services refer to: as long-lived as the runtime. Tasks hold executors, not this. Its sockets,
   // acceptors and timers are each on a strand of their own on several threads.
@@ -347,6 +347,22 @@ void runtime::run() {
 
   state_->context.restart();
 
+  // A handler's exception stops the loop on every thread, and the first one is thrown once they are joined: waiting
+  // for the work to drain instead could wait for ever, as the tasks still suspended hold it.
+  async::detail::synchronized<std::exception_ptr> failure;
+  auto const run_loop = [this, &failure] {
+    try {
+      state_->context.run();
+    } catch (...) {
+      failure.with([](std::exception_ptr &first) {
+        if (!first) {
+          first = std::current_exception();
+        }
+      });
+      state_->context.stop();
+    }
+  };
+
   // The others run the loop beside this thread, and are joined before it returns. One the system refuses leaves the
   // work to those started and to this one: the tasks still end, and the failure goes on after.
   std::vector<std::jthread> others;
@@ -356,14 +372,18 @@ void runtime::run() {
     others.reserve(state_->threads - 1);
 
     for (std::size_t index = 1; index < state_->threads; ++index) {
-      others.emplace_back([this] { state_->context.run(); });
+      others.emplace_back(run_loop);
     }
   } catch (...) {
     refused = std::current_exception();
   }
 
-  state_->context.run();
+  run_loop();
   others.clear();
+
+  if (auto const first = failure.with([](std::exception_ptr const &stored) { return stored; }); first) {
+    std::rethrow_exception(first);
+  }
 
   if (refused) {
     std::rethrow_exception(refused);
