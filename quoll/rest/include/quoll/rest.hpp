@@ -39,6 +39,7 @@
 
 #include <quoll/rest/api.hpp>
 #include <quoll/rest/body.hpp>
+#include <quoll/rest/bytes_codec.hpp>
 #include <quoll/rest/call_error.hpp>
 #include <quoll/rest/client.hpp>
 #include <quoll/rest/codec.hpp>
@@ -46,6 +47,7 @@
 #include <quoll/rest/decode_error.hpp>
 #include <quoll/rest/endpoint.hpp>
 #include <quoll/rest/fixed_string.hpp>
+#include <quoll/rest/form_codec.hpp>
 #include <quoll/rest/header.hpp>
 #include <quoll/rest/http_error.hpp>
 #include <quoll/rest/json_codec.hpp>

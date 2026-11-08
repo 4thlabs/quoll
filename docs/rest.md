@@ -333,9 +333,32 @@ take one each.
 | `rest::json_codec`         | JSON, the default. Strict: every field that is not an `std::optional` must be there, and unknown keys are errors. |
 | `rest::lenient_json_codec` | The same, skipping unknown keys, for third-party APIs, which add fields over time.                                |
 | `rest::text_codec`         | `std::string`, as `text/plain; charset=utf-8`.                                                                    |
+| `rest::form_codec`         | The fields of an aggregate, as `application/x-www-form-urlencoded`, each converted as a query parameter is.       |
+| `rest::bytes_codec`        | `std::vector<std::byte>` or `std::string`, as they are, as `application/octet-stream`.                            |
 
 ```cpp
 using ping = rest::endpoint<"ping", verb::get, "/ping", rest::returns<std::string, status::ok, rest::text_codec>>;
+```
+
+A form takes the fields of a struct by name, as `query_params<>` does: a vector repeats its name, an `std::optional`
+without a value is left out, anything else is required, once. The struct is an aggregate, or a type described by a
+`glz::meta` as below, and a form of more than 1000 fields is refused. It is what a browser's form sends, and what many APIs take, as
+an OAuth token endpoint does:
+
+```cpp
+struct token_request {
+  std::string grant_type;
+  std::string refresh_token;
+};
+
+struct token_response {
+  std::string access_token;
+};
+
+using token = rest::endpoint<"token", verb::post, "/oauth/token", rest::body<token_request, rest::form_codec>,
+                             rest::returns<token_response, status::ok, rest::lenient_json_codec>>;
+using avatar = rest::endpoint<"avatar", verb::get, "/avatar",
+                              rest::returns<std::vector<std::byte>, status::ok, rest::bytes_codec>>;
 ```
 
 A type that is not an aggregate, a renamed field or an enum is described by a `glz::meta<T>`
@@ -421,7 +444,7 @@ API does, not what Quoll would choose. This works today:
 - **Names that are not C++ names**, with `glz::meta`.
 - **Unknown fields**, skipped by `rest::lenient_json_codec` on each `returns<>`.
 - **Error bodies of any shape**, one type per status.
-- **Bodies other than JSON**, with `rest::text_codec` or a codec of your own.
+- **Bodies other than JSON**, with `rest::text_codec`, `rest::form_codec`, `rest::bytes_codec` or a codec of your own.
 - **Credentials**, through `security<>` and `client.credentials<Scheme>()`.
 - **The browser and native programs alike**, through the transport.
 
@@ -467,8 +490,8 @@ async::task<> show_stars() {
 ```
 
 An API's full support is [step 4 of the roadmap](PLAN.md#step-4-rest-from-a-command-line-program), and
-[scopes](#scopes) and [interceptors](#interceptors) are there. Not yet: form and bytes codecs, an enumerator for the
-values an enum does not know, and an OpenAPI document generated from a contract.
+[scopes](#scopes), [interceptors](#interceptors) and the form and bytes [codecs](#codecs) are there. Not yet: an
+enumerator for the values an enum does not know, and an OpenAPI document generated from a contract.
 
 A larger example, a contract with its server and client over TCP, is in
 [`samples/notes`](../samples/notes).

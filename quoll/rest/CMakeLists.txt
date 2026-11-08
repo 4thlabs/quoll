@@ -2,6 +2,7 @@ quoll_declare_module(
   NAME rest
   SOURCES
     src/arguments.cpp
+    src/bytes_codec.cpp
     src/client.cpp
     src/next.cpp
     src/param_traits.cpp
@@ -21,6 +22,7 @@ quoll_declare_module(
 quoll_declare_tests(
   SOURCES
     tests/client_test.cpp
+    tests/codecs_test.cpp
     tests/contract_test.cpp
     tests/json_codec_test.cpp
     tests/mount_test.cpp
