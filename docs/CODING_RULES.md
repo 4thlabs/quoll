@@ -11,7 +11,7 @@ guidelines and the C++ Core Guidelines.
   constants are `inline constexpr`, no `static` or unnamed-namespace entities and no mutable global state in headers, but for
   `async::detail::type_id_tag`: only its address counts, which a linker folding identical constants would make the same.
 - Never `using namespace` at namespace scope in a header.
-- A module lives in `quoll/<module>/`, or in `quoll/adapters/<module>/` for an adapter (thread pool, asio...); paths
+- A module lives in `quoll/<module>/`, or in `quoll/adapters/<module>/` for an adapter (asio, Emscripten...); paths
   below are relative to that directory.
 - Implementation details live in `quoll::<module>::detail` (files under `include/quoll/<module>/detail/`). A user
   never has to name anything in `detail`.

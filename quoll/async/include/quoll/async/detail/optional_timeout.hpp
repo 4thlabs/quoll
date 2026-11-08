@@ -48,7 +48,7 @@
 namespace quoll::async::detail {
 
 // with_timeout() for a timeout that comes from options, set by default: zero means none, and an executor without a
-// timer (run_loop, a thread pool) has none to apply, which is no error. A negative one has expired already, as
+// timer (run_loop) has none to apply, which is no error. A negative one has expired already, as
 // with_timeout() has it: a deadline computed too late must not lift the limit.
 template <class T>
 [[nodiscard]] task<T> with_optional_timeout(std::chrono::nanoseconds timeout, task<T> work) {

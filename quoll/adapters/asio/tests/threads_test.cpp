@@ -34,6 +34,10 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+// What quoll::async does across threads, on an executor that resumes coroutines on several at once with no strand:
+// asio's own thread pool, behind quoll::asio::executor.
+
+#include <quoll/asio/executor.hpp>
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/detail/slots.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
@@ -41,9 +45,10 @@
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/test/overloaded.hpp>
-#include <quoll/threads.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+
+#include <asio/thread_pool.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -62,19 +67,14 @@
 namespace {
 
 using quoll::async::task;
-using quoll::threads::thread_pool;
-
 using quoll::test::overloaded;
 
-// Runs `work` on the pool. The handler runs on a worker, where Catch2
-// assertions are not allowed: the outcome goes through a future, read by the
-// test thread.
 template <class T>
-std::future<T> spawn(thread_pool &pool, task<T> work) {
+std::future<T> spawn(::asio::thread_pool &pool, task<T> work) {
   auto promise = std::make_shared<std::promise<T>>();
   auto future = promise->get_future();
 
-  co_spawn(pool.get_executor(), std::move(work),
+  co_spawn(quoll::asio::executor{pool.get_executor()}, std::move(work),
            overloaded{[promise](T value) { promise->set_value(std::move(value)); },
                       [promise](std::exception_ptr error) { promise->set_exception(std::move(error)); }});
   return future;
@@ -90,8 +90,6 @@ task<int> count_yields(int yields) {
   co_return yields;
 }
 
-// Blocks its worker until `expected` tasks have arrived, or a deadline passes:
-// they all arrive only if they run on distinct threads at the same time.
 task<bool> meet(std::atomic<std::size_t> &arrived, std::size_t expected) {
   arrived.fetch_add(1);
 
@@ -108,15 +106,6 @@ task<bool> meet(std::atomic<std::size_t> &arrived, std::size_t expected) {
   co_return true;
 }
 
-task<int> hold(std::atomic<bool> &released) {
-  while (!released.load()) {
-    std::this_thread::yield();
-  }
-
-  std::this_thread::sleep_for(std::chrono::milliseconds{100});
-  co_return 0;
-}
-
 task<std::tuple<int, int>> both(int first, int second) {
   co_return co_await quoll::async::when_all(count_yields(first), count_yields(second));
 }
@@ -128,18 +117,17 @@ task<int> fail() {
 
 } // namespace
 
-TEST_CASE("thread_pool resumes a spawned task on a worker thread", "[threads][thread_pool]") {
-  thread_pool pool{2};
+TEST_CASE("threads: a spawned task resumes on a worker thread", "[asio][threads]") {
+  ::asio::thread_pool pool{2};
 
   auto const id = spawn(pool, thread_id()).get();
 
   REQUIRE(id != std::this_thread::get_id());
 }
 
-TEST_CASE("co_spawn(this_executor) runs on a worker of the pool, past the coroutine that spawned it",
-          "[threads][thread_pool]") {
+TEST_CASE("threads: co_spawn(this_executor) runs on a worker, past the coroutine that spawned it", "[asio][threads]") {
   std::promise<std::thread::id> spawned;
-  thread_pool pool{2};
+  ::asio::thread_pool pool{2};
 
   auto const parent = [&]() -> task<int> {
     co_await quoll::async::co_spawn(quoll::async::this_executor, thread_id(),
@@ -152,19 +140,19 @@ TEST_CASE("co_spawn(this_executor) runs on a worker of the pool, past the corout
   REQUIRE(spawned.get_future().get() != std::this_thread::get_id());
 }
 
-TEST_CASE("thread_pool hands the exception of a task to its handler", "[threads][thread_pool]") {
-  thread_pool pool{2};
+TEST_CASE("threads: the exception of a task reaches its handler", "[asio][threads]") {
+  ::asio::thread_pool pool{2};
 
   auto outcome = spawn(pool, fail());
 
   REQUIRE_THROWS_AS(outcome.get(), std::runtime_error);
 }
 
-TEST_CASE("thread_pool resumes coroutines on all its workers at once", "[threads][thread_pool]") {
+TEST_CASE("threads: coroutines resume on all the workers at once", "[asio][threads]") {
   constexpr std::size_t threads = 4;
-  // Declared before the pool: if a REQUIRE throws, the pool still drains the tasks reading it.
+  // Declared before the pool: if a REQUIRE throws, the pool's destructor joins the workers still reading it.
   std::atomic<std::size_t> arrived{0};
-  thread_pool pool{threads};
+  ::asio::thread_pool pool{threads};
   std::vector<std::future<bool>> outcomes;
 
   for (std::size_t index = 0; index < threads; ++index) {
@@ -176,8 +164,8 @@ TEST_CASE("thread_pool resumes coroutines on all its workers at once", "[threads
   }
 }
 
-TEST_CASE("thread_pool runs many yielding tasks to completion", "[threads][thread_pool]") {
-  thread_pool pool{4};
+TEST_CASE("threads: many yielding tasks run to completion", "[asio][threads]") {
+  ::asio::thread_pool pool{4};
   std::vector<std::future<int>> outcomes;
 
   for (int index = 0; index < 200; ++index) {
@@ -189,38 +177,16 @@ TEST_CASE("thread_pool runs many yielding tasks to completion", "[threads][threa
   }
 }
 
-TEST_CASE("thread_pool joins when_all children resumed on different workers", "[threads][thread_pool]") {
-  thread_pool pool{4};
+TEST_CASE("threads: when_all joins children resumed on different workers", "[asio][threads]") {
+  ::asio::thread_pool pool{4};
 
   auto const result = spawn(pool, both(50, 70)).get();
 
   REQUIRE(result == std::tuple{50, 70});
 }
 
-TEST_CASE("thread_pool destruction runs what is still queued", "[threads][thread_pool]") {
-  std::atomic<bool> released{false};
-  std::atomic<int> completed{0};
-
-  {
-    thread_pool pool{1};
-    auto const count = overloaded{[&](int) { completed.fetch_add(1); }, [](std::exception_ptr) {}};
-
-    // Holds the only worker until the destructor is about to stop the pool, and a while after: the other tasks are
-    // still queued when it does.
-    co_spawn(pool.get_executor(), hold(released), count);
-
-    for (int index = 0; index < 100; ++index) {
-      co_spawn(pool.get_executor(), count_yields(3), count);
-    }
-
-    released.store(true);
-  }
-
-  REQUIRE(completed.load() == 101);
-}
-
-TEST_CASE("slots: on many threads, one at a time holds a single place", "[threads][thread_pool]") {
-  thread_pool pool{4};
+TEST_CASE("slots: on many threads, one at a time holds a single place", "[asio][threads]") {
+  ::asio::thread_pool pool{4};
   quoll::async::detail::slots places{1};
   // Not atomic: TSan reports it if two ever hold the place together.
   int count = 0;
@@ -251,8 +217,8 @@ TEST_CASE("slots: on many threads, one at a time holds a single place", "[thread
   REQUIRE(places.available() == 1);
 }
 
-TEST_CASE("slots: a stop from another thread ends a wait, as it starts or later", "[threads][thread_pool]") {
-  thread_pool pool{4};
+TEST_CASE("slots: a stop from another thread ends a wait, as it starts or later", "[asio][threads]") {
+  ::asio::thread_pool pool{4};
 
   for (int round = 0; round < 200; ++round) {
     quoll::async::detail::slots places{0};
@@ -276,16 +242,4 @@ TEST_CASE("slots: a stop from another thread ends a wait, as it starts or later"
     stopping.request_stop();
     REQUIRE(future.get() == 2);
   }
-}
-
-TEST_CASE("thread_pool needs at least one thread", "[threads][thread_pool]") {
-  REQUIRE_THROWS_AS(thread_pool{0}, std::invalid_argument);
-}
-
-TEST_CASE("thread_pool executors are equal when they post to the same pool", "[threads][thread_pool]") {
-  thread_pool pool{1};
-  thread_pool other{1};
-
-  REQUIRE(pool.get_executor() == pool.get_executor());
-  REQUIRE_FALSE(pool.get_executor() == other.get_executor());
 }

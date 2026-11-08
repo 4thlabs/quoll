@@ -102,7 +102,7 @@ http::client client{"https://api.example.com",
 default, as memory does not hold it and the caller is reading it.
 
 Zero disables a timeout, and a negative one has already expired. Timeouts need the timer of the
-executor that sends, which `quoll::runtime` provides: on a thread pool, they do not apply.
+executor that sends, which `quoll::runtime` provides: on one without a timer, as `async::run_loop`, they do not apply.
 
 `response_timeout` applies per attempt, so that a connection found closed and tried again counts
 anew, and each request of a redirect chain has its own. For a deadline over the whole of a `send`,
@@ -140,8 +140,8 @@ is closed to make room for a new one.
 - Without a timeout or a timer, a server that does not answer holds up those that wait.
 - A [streamed response](streaming.md#reading-a-response) holds its place until its body has come to its
   end or it goes. Read or drop one before a request that needs its place.
-- The executors that send have to take a `post()` from another thread, as `quoll::runtime`'s and a
-  thread pool's do, and `run_loop`'s does not.
+- The executors that send have to take a `post()` from another thread, as `quoll::runtime`'s does, and
+  `run_loop`'s does not.
 
 ## Redirects
 
