@@ -79,7 +79,30 @@ class one_at_a_time;
  * handler awaits: a stream that waits for changes ends then, not before.
  *
  * A client's `response_timeout` applies to each piece it waits for: a stream with nothing to say for a while sends a
- * comment() more often than that, every 15 seconds say, which also keeps a proxy from closing it. An event goes when
+ * comment() more often than that, every 15 seconds say, which also keeps a proxy from closing it. It comes from the
+ * loop that sends the events, as an operation asked while another is pending throws: wait for the next change within
+ * that time, and send a comment when it runs out.
+ *
+ * @code
+ * for (;;) {
+ *   bool quiet = false;
+ *
+ *   try {
+ *     co_await events.send(to_event(co_await async::with_timeout(15s, changes.next())));
+ *   } catch (std::system_error const &waited) {
+ *     if (waited.code() != std::errc::timed_out) {
+ *       throw;
+ *     }
+ *
+ *     quiet = true;   // no co_await in a handler
+ *   }
+ *
+ *   if (quiet) {
+ *     co_await events.comment();
+ *   }
+ * }
+ * @endcode
+ * An event goes when
  * send() completes, as with response_writer::write(), and a peer gone makes it throw, which ends the handler.
  *
  * Moved, not copied, as the response_writer it holds: one moved from throws std::logic_error when asked anything. An

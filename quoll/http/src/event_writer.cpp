@@ -52,16 +52,20 @@ event_writer::event_writer(response_writer &&out) {
     throw std::logic_error{"quoll::http::event_writer: a response_writer whose head is given, or moved from"};
   }
 
+  // Taken first, so that what may throw (the allocation) leaves `out` as it was.
+  auto taken = std::make_shared<state>(std::move(out));
+  auto &fields = taken->out.fields;
+
   // A handler's own, a charset say, stays.
-  if (!out.fields.contains("Content-Type")) {
-    out.fields.set("Content-Type", "text/event-stream");
+  if (!fields.contains("Content-Type")) {
+    fields.set("Content-Type", "text/event-stream");
   }
 
-  if (!out.fields.contains("X-Accel-Buffering")) {
-    out.fields.set("X-Accel-Buffering", "no");
+  if (!fields.contains("X-Accel-Buffering")) {
+    fields.set("X-Accel-Buffering", "no");
   }
 
-  state_ = std::make_shared<state>(std::move(out));
+  state_ = std::move(taken);
 }
 
 // An empty piece sends the head.

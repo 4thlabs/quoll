@@ -43,9 +43,10 @@
 
 namespace quoll::http::detail {
 
-// The turn of one operation of an object that allows one at a time: taken when the operation is asked, held by its task
-// as a parameter, so that it is given back when the frame goes, whether the task ran or was dropped. Asked while
-// another holds it: std::logic_error with `message`, so that operations run in the order they were asked.
+// The turn of one operation of an object that allows one at a time: taken when the operation is asked, and passed to
+// its task as a parameter, which moves it into a local, so that it is given back when the operation is over, and with
+// the frame of a task dropped unrun. Asked while another holds it: std::logic_error with `message`, so that operations
+// run in the order they were asked.
 //
 // Thread safety: the flag is atomic, taken by an exchange, so that an operation asked from another thread is refused
 // rather than raced; the flag keeps what holds it alive, an aliasing pointer into its state.

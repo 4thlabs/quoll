@@ -1845,6 +1845,67 @@ TEST_CASE("event_writer: a Content-Type and an X-Accel-Buffering of the handler 
   REQUIRE(answer.find("X-Accel-Buffering: no") == std::string::npos);
 }
 
+TEST_CASE("event_writer: comments from the loop that sends, when a wait for changes runs out", "[server][sse][timer]") {
+  http::router router;
+
+  router.get("/feed", [](http::response_writer out) -> task<> {
+    http::event_writer events{std::move(out)};
+    int waits = 0;
+
+    // A change comes at the third wait: 40 s from the start.
+    auto const next_change = [&waits]() -> task<std::string> {
+      co_await async::sleep_for(++waits < 3 ? 1h : 10s);
+      co_return "change";
+    };
+
+    while (waits < 3) {
+      bool quiet = false;
+
+      try {
+        co_await events.send({.data = co_await async::with_timeout(15s, next_change())});
+      } catch (std::system_error const &waited) {
+        if (waited.code() != std::errc::timed_out) {
+          throw;
+        }
+
+        quiet = true;
+      }
+
+      if (quiet) {
+        co_await events.comment();
+      }
+    }
+  });
+
+  auto const answer = answer_to(http::server{router}, get("/feed"));
+  auto const first_comment = answer.find(":\n");
+
+  REQUIRE(first_comment != std::string::npos);
+  REQUIRE(answer.find(":\n", first_comment + 1) != std::string::npos);
+  REQUIRE(answer.find("data: change\n\n") > first_comment);
+}
+
+TEST_CASE("event_writer: a Content-Type of a middleware is replaced, as a stream needs one", "[server][sse]") {
+  http::router router;
+
+  router.use([](http::request request, http::next const &next) -> task<http::response> {
+    auto answer = co_await next(std::move(request));
+
+    answer.fields.set("Content-Type", "application/json");
+    co_return answer;
+  });
+  router.get("/feed", [](http::response_writer out) -> task<> {
+    http::event_writer events{std::move(out)};
+
+    co_await events.send({.data = "x"});
+  });
+
+  auto const answer = answer_to(http::server{router}, get("/feed"));
+
+  REQUIRE(answer.find("Content-Type: text/event-stream\r\n") != std::string::npos);
+  REQUIRE(answer.find("application/json") == std::string::npos);
+}
+
 TEST_CASE("event_writer: a Cache-Control of a middleware stays", "[server][sse]") {
   http::router router;
 

@@ -45,7 +45,7 @@ namespace quoll::http {
  * @brief Whether `fields` say the body is a `text/event-stream`, as its media type, case aside, parameters aside: what
  * a client checks before an http::event_reader reads it.
  */
-[[nodiscard]] bool is_event_stream(fields const &fields);
+[[nodiscard]] bool is_event_stream(fields const &fields) noexcept;
 
 } // namespace quoll::http
 

@@ -41,7 +41,7 @@
 
 namespace quoll::http {
 
-bool is_event_stream(fields const &fields) {
+bool is_event_stream(fields const &fields) noexcept {
   auto const value = fields.find("Content-Type").value_or("");
 
   return detail::iequals(detail::trim(value.substr(0, value.find(';'))), "text/event-stream");
