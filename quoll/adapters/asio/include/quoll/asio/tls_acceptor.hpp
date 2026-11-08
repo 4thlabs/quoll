@@ -57,6 +57,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
 
@@ -131,10 +132,13 @@ public:
   /**
    * @brief Takes a listening acceptor over, and loads the certificate of `options`.
    *
+   * Each accepted socket goes on a strand of its own, made from `socket_strands` if any (see acceptor).
+   *
    * @throws std::system_error when it cannot be loaded, or the key is not the certificate's.
    */
-  tls_acceptor(::asio::ip::tcp::acceptor listening, io::tls_server_options const &options)
-      : state_(std::make_unique<detail::acceptor_state>(std::move(listening))),
+  tls_acceptor(::asio::ip::tcp::acceptor listening, io::tls_server_options const &options,
+               std::optional<::asio::any_io_executor> socket_strands = std::nullopt)
+      : state_(std::make_unique<detail::acceptor_state>(std::move(listening), std::move(socket_strands))),
         context_(detail::server_context(options)) {}
 
   /** @brief The next connection a peer opens. */

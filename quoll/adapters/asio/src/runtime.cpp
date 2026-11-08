@@ -39,11 +39,13 @@
 #include <quoll/async/detail/synchronized.hpp>
 
 #include <quoll/asio/executor.hpp>
+#include <quoll/async/any_executor.hpp>
 
 #include <asio/executor_work_guard.hpp>
 #include <asio/io_context.hpp>
 #include <asio/post.hpp>
 #include <asio/signal_set.hpp>
+#include <asio/strand.hpp>
 
 #include <array>
 #include <csignal>
@@ -53,6 +55,8 @@
 #include <signal.h>
 #include <stop_token>
 #include <system_error>
+#include <thread>
+#include <vector>
 
 namespace quoll::asio {
 
@@ -97,7 +101,9 @@ inline void set_action(int number, signal_action const &action) noexcept { ::sig
 // next one has its usual effect (ending a process whose tasks do not stop), and once the tasks are done.
 class stop_signals {
 public:
-  stop_signals(::asio::io_context &context, std::stop_source &stop) : signals_(context), stop_(&stop) {
+  // On a strand of its own: its handler and release() may otherwise run on two threads of the loop at once.
+  stop_signals(::asio::io_context &context, std::stop_source &stop)
+      : signals_(::asio::make_strand(context)), stop_(&stop) {
     try {
       for (std::size_t index = 0; index < numbers.size(); ++index) {
         saved_[index] = current_action(numbers[index]);
@@ -129,6 +135,9 @@ public:
   ~stop_signals() { release(); }
 
   [[nodiscard]] bool released() const noexcept { return released_; }
+
+  // Where release() runs while the loop does: the strand of its handler.
+  [[nodiscard]] ::asio::any_io_executor executor() { return signals_.get_executor(); }
 
   void release() noexcept {
     if (released_) {
@@ -164,10 +173,38 @@ private:
 
 } // namespace
 
+namespace detail {
+
+// What makes the runtime's strands: the service its executors offer.
+struct runtime_strands {
+  runtime::state *state;
+
+  [[nodiscard]] async::any_executor make_strand() const;
+};
+
+} // namespace detail
+
+namespace {
+
+// A strand of the runtime's loop, shared by the copies of an executor.
+struct runtime_strand {
+  asio::executor<::asio::strand<::asio::io_context::executor_type>> loop;
+};
+
+} // namespace
+
 struct runtime::state {
-  ::asio::io_context context{1};
-  // What the runtime's services refer to: as long-lived as the runtime. Tasks hold executors, not this.
-  asio::executor<::asio::io_context::executor_type> loop{context.get_executor()};
+  explicit state(async::runtime_options options)
+      : threads(options.threads == 0 ? 1 : options.threads), context(threads == 1 ? 1 : static_cast<int>(threads)),
+        loop(context.get_executor(), threads > 1) {}
+
+  std::size_t threads;
+  // A hint of 1 lets asio leave out its locks, for one thread.
+  ::asio::io_context context;
+  // What the runtime's services refer to: as long-lived as the runtime. Tasks hold executors, not this. Its sockets,
+  // acceptors and timers are each on a strand of their own on several threads.
+  asio::executor<::asio::io_context::executor_type> loop;
+  detail::runtime_strands strands{this};
   std::stop_source stop;
   std::optional<stop_signals> signals;
   async::detail::synchronized<std::weak_ptr<void>> work;
@@ -195,11 +232,18 @@ public:
   // the guard still holds the loop, which then runs this before it ends, and before the runtime can go.
   // Under memory pressure, a post that throws std::bad_alloc here ends the program, as a destructor cannot report it.
   ~work_token() {
-    ::asio::post(state_->context, [shared = state_] {
+    auto const release = [shared = state_] {
       if (shared->idle() && shared->signals) {
         shared->signals->release();
       }
-    });
+    };
+
+    // On the strand of the signals' handler, which may run at the same time on another thread.
+    if (state_->signals) {
+      ::asio::post(state_->signals->executor(), release);
+    } else {
+      ::asio::post(state_->context, release);
+    }
   }
 
 private:
@@ -209,7 +253,17 @@ private:
 
 } // namespace
 
-void runtime::executor::post(async::work_item &item) const { state_->loop.post(item); }
+void runtime::executor::post(async::work_item &item) const {
+  if (strand_) {
+    static_cast<runtime_strand const *>(strand_.get())->loop.post(item);
+  } else {
+    state_->loop.post(item);
+  }
+}
+
+async::strands_ref runtime::executor::query(async::service_tag<async::strands_ref>) const {
+  return async::strands_ref{state_->strands};
+}
 
 io::network_ref runtime::executor::query(async::service_tag<io::network_ref>) const {
   return io::network_ref{state_->loop};
@@ -229,24 +283,45 @@ io::tls_network_ref runtime::executor::query(async::service_tag<io::tls_network_
 }
 #endif
 
-runtime::runtime() : state_(std::make_unique<state>()) {}
+runtime::runtime() : runtime(async::runtime_options{}) {}
+
+runtime::runtime(async::runtime_options options) : state_(std::make_unique<state>(options)) {}
 
 runtime::~runtime() = default;
 
-runtime::executor runtime::get_executor() {
-  auto work = state_->work.with([this](std::weak_ptr<void> &held) {
+namespace {
+
+// An executor of the runtime, on a strand of its own when it runs several threads.
+[[nodiscard]] std::shared_ptr<void> work_of(runtime::state &shared) {
+  return shared.work.with([&shared](std::weak_ptr<void> &held) {
     auto token = held.lock();
 
     if (!token) {
-      token = std::make_shared<work_token>(*state_);
+      token = std::make_shared<work_token>(shared);
       held = token;
     }
 
     return token;
   });
-
-  return executor{*state_, std::move(work)};
 }
+
+[[nodiscard]] std::shared_ptr<void> strand_of(runtime::state &shared) {
+  if (shared.threads == 1) {
+    return nullptr;
+  }
+
+  return std::make_shared<runtime_strand>(
+      runtime_strand{asio::executor<::asio::strand<::asio::io_context::executor_type>>{
+          ::asio::make_strand(shared.context.get_executor()), true}});
+}
+
+} // namespace
+
+async::any_executor detail::runtime_strands::make_strand() const {
+  return async::any_executor{runtime::executor{*state, work_of(*state), strand_of(*state)}};
+}
+
+runtime::executor runtime::get_executor() { return executor{*state_, work_of(*state_), strand_of(*state_)}; }
 
 std::stop_token runtime::get_stop_token() {
   if (state_->stop.stop_requested()) {
@@ -268,6 +343,16 @@ void runtime::run() {
   }
 
   state_->context.restart();
+
+  // The others run the loop beside this thread, and are joined before it returns.
+  std::vector<std::jthread> others;
+
+  others.reserve(state_->threads - 1);
+
+  for (std::size_t index = 1; index < state_->threads; ++index) {
+    others.emplace_back([this] { state_->context.run(); });
+  }
+
   state_->context.run();
 }
 

@@ -37,11 +37,12 @@
 #ifndef QUOLL_ASIO_RUNTIME_HPP
 #define QUOLL_ASIO_RUNTIME_HPP
 
-#include <quoll/asio/detail/loop_services.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/offers_service.hpp>
 #include <quoll/async/offloader_ref.hpp>
+#include <quoll/async/runtime_options.hpp>
 #include <quoll/async/service.hpp>
+#include <quoll/async/strands_ref.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/io/network_ref.hpp>
@@ -60,8 +61,15 @@ class io_context;
 
 namespace quoll::asio {
 
+namespace detail {
+
+struct runtime_strands;
+
+} // namespace detail
+
 /**
- * @brief The asio runtime: an I/O loop run by the thread calling run(), on which a program's tasks run.
+ * @brief The asio runtime: an I/O loop run by the thread calling run(), and by the other threads its options ask for,
+ * on which a program's tasks run.
  *
  * @code
  * quoll::async::task<> serve_notes(std::uint16_t port) {
@@ -92,6 +100,12 @@ namespace quoll::asio {
  * process whose tasks do not stop; signals the process ignores stay ignored. The signals are the process's: one runtime
  * at a time takes them.
  *
+ * On one thread, the default, a program's tasks take turns, and nothing pays for more. With `threads` above 1, run()
+ * runs the loop on that many threads, its own included, and each executor of the runtime is a strand: the tasks spawned
+ * on it take turns, whichever thread runs them, while those on other executors run in parallel. Its executor makes
+ * strands (async::strands_ref), on which a server runs each connection, and each socket, acceptor and timer is on a
+ * strand of its own, as asio asks. What tasks on two executors share is the program's to protect.
+ *
  * Neither copied nor moved: its executors point to it, and it outlives them. Thread safety: run() and get_stop_token()
  * on one thread; get_executor() and the executors from any thread.
  */
@@ -99,11 +113,18 @@ class runtime {
 public:
   struct state;
 
-  /** @brief The executor of the runtime: posts to its loop, and offers its network, its timer and, with OpenSSL, TLS.
+  /**
+   * @brief The executor of the runtime: posts to its loop, on a strand of its own when it runs several threads, and
+   * offers its network, its timer, its strands and, with OpenSSL, TLS.
    */
   class executor {
   public:
-    using services = detail::loop_services;
+#if defined(QUOLL_ASIO_TLS)
+    using services = async::service_list<io::network_ref, async::timer_ref, async::offloader_ref, io::tls_network_ref,
+                                         async::strands_ref>;
+#else
+    using services = async::service_list<io::network_ref, async::timer_ref, async::offloader_ref, async::strands_ref>;
+#endif
 
     void post(async::work_item &item) const;
 
@@ -121,21 +142,35 @@ public:
     [[nodiscard]] io::tls_network_ref query(async::service_tag<io::tls_network_ref>) const;
 #endif
 
-    [[nodiscard]] bool operator==(executor const &other) const noexcept { return state_ == other.state_; }
+    /** @brief Makes strands of the runtime, as long-lived as the runtime: see async::Strands. */
+    [[nodiscard]] async::strands_ref query(async::service_tag<async::strands_ref>) const;
+
+    /** @brief Equal when they post to the same strand of the same runtime, or to its loop. */
+    [[nodiscard]] bool operator==(executor const &other) const noexcept {
+      return state_ == other.state_ && strand_ == other.strand_;
+    }
 
   private:
     friend class runtime;
+    friend struct detail::runtime_strands;
 
-    executor(state &shared, std::shared_ptr<void> work) noexcept : state_(&shared), work_(std::move(work)) {}
+    executor(state &shared, std::shared_ptr<void> work, std::shared_ptr<void> strand) noexcept
+        : state_(&shared), work_(std::move(work)), strand_(std::move(strand)) {}
 
     state *state_;
     // Keeps the loop running: shared by the executors of the runtime, and gone with the last one.
     std::shared_ptr<void> work_;
+    // The strand it posts to, shared by its copies: none on one thread.
+    std::shared_ptr<void> strand_;
   };
 
   using executor_type = executor;
 
+  /** @brief A runtime on one thread. */
   runtime();
+
+  /** @brief A runtime as `options` say: see async::runtime_options. */
+  explicit runtime(async::runtime_options options);
 
   runtime(runtime const &) = delete;
   runtime(runtime &&) = delete;
@@ -152,7 +187,10 @@ public:
    */
   [[nodiscard]] std::stop_token get_stop_token();
 
-  /** @brief Runs the loop in the calling thread until the runtime's tasks have ended and their work has drained. */
+  /**
+   * @brief Runs the loop in the calling thread, and in the others its options ask for, until the runtime's tasks have
+   * ended and their work has drained. An exception a handler lets out on another thread ends the program.
+   */
   void run();
 
   /**
@@ -169,6 +207,7 @@ static_assert(async::Executor<runtime::executor>);
 static_assert(async::OffersService<runtime::executor, io::network_ref>);
 static_assert(async::OffersService<runtime::executor, async::timer_ref>);
 static_assert(async::OffersService<runtime::executor, async::offloader_ref>);
+static_assert(async::OffersService<runtime::executor, async::strands_ref>);
 #if defined(QUOLL_ASIO_TLS)
 static_assert(async::OffersService<runtime::executor, io::tls_network_ref>);
 #endif

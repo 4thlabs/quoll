@@ -37,6 +37,7 @@
 #include <quoll/asio.hpp>
 #include <quoll/asio/detail/cancellation.hpp>
 #include <quoll/asio/detail/operation.hpp>
+#include <quoll/asio/runtime.hpp>
 #include <quoll/async/any_executor.hpp>
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
@@ -45,7 +46,9 @@
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/offload.hpp>
+#include <quoll/async/runtime_options.hpp>
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/strands_ref.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
@@ -1029,6 +1032,149 @@ TEST_CASE("asio: the executor over a strand, its loop run by two threads", "[asi
   }
 
   REQUIRE(answer == "pong");
+}
+
+namespace {
+
+// A plain counter that two tasks of one strand add to, each yielding between steps: TSan sees it if they do not take
+// turns.
+task<> add_with_yields(int &counter, int steps) {
+  for (int step = 0; step < steps; ++step) {
+    ++counter;
+
+    if (step % 16 == 0) {
+      co_await quoll::async::yield();
+    }
+  }
+}
+
+task<int> two_on_one_strand() {
+  int counter = 0;
+  auto [first, second] =
+      co_await quoll::async::when_all(add_with_yields(counter, 2000), add_with_yields(counter, 2000));
+
+  static_cast<void>(first);
+  static_cast<void>(second);
+  co_return counter;
+}
+
+// A client making requests on one kept connection, GETs and POSTs asking for 100 Continue: how many answered right.
+task<int> call_many(std::uint16_t port, int requests) {
+  http::client const client{"http://127.0.0.1:" + std::to_string(port)};
+  int right = 0;
+
+  for (int index = 0; index < requests; ++index) {
+    http::request get;
+
+    get.method = http::verb::get;
+    get.target = "/hello";
+
+    auto const got = co_await client.send(std::move(get));
+
+    right += got.body == "hello" ? 1 : 0;
+
+    http::request post;
+
+    post.method = http::verb::post;
+    post.target = "/echo";
+    post.body = std::string(4096, static_cast<char>('a' + index % 26));
+    post.fields.add("Expect", "100-continue");
+
+    auto const echoed = co_await client.send(std::move(post));
+
+    right += echoed.body == std::string(4096, static_cast<char>('a' + index % 26)) ? 1 : 0;
+  }
+
+  co_return right;
+}
+
+} // namespace
+
+TEST_CASE("asio::runtime on several threads: the tasks of one executor take turns", "[asio][runtime][threads]") {
+  quoll::asio::runtime runtime{quoll::async::runtime_options{.threads = 4}};
+  std::atomic<int> total{0};
+
+  for (int task_index = 0; task_index < 8; ++task_index) {
+    co_spawn(runtime.get_executor(), two_on_one_strand(),
+             overloaded{[&total](int counted) { total += counted; }, [](std::exception_ptr) {}});
+  }
+
+  runtime.run();
+
+  REQUIRE(total == 8 * 4000);
+}
+
+TEST_CASE("asio::runtime on several threads: a server and clients, each connection on a strand of its own",
+          "[asio][runtime][threads][server][client]") {
+  quoll::asio::runtime runtime{quoll::async::runtime_options{.threads = 4}};
+  auto &context = runtime.context();
+  ::asio::ip::tcp::acceptor listening{::asio::make_strand(context),
+                                      ::asio::ip::tcp::endpoint{::asio::ip::address_v4::loopback(), 0}};
+  auto const port = listening.local_endpoint().port();
+  quoll::asio::acceptor acceptor{std::move(listening), ::asio::any_io_executor{context.get_executor()}};
+  http::router router;
+
+  router.get("/hello", [](http::request) {
+    http::response response;
+
+    response.body = "hello";
+    return response;
+  });
+  router.post("/echo", [](http::request request) {
+    http::response response;
+
+    response.body = std::move(request.body);
+    return response;
+  });
+
+  constexpr int clients = 16;
+  constexpr int requests = 8;
+  std::stop_source server_stop;
+  std::atomic<int> right{0};
+  std::atomic<int> ended{0};
+  std::atomic<int> failures{0};
+
+  co_spawn(runtime.get_executor(), http::server{router}.serve(std::move(acceptor)),
+           overloaded{[] {}, [&failures](std::exception_ptr) { ++failures; }}, server_stop.get_token());
+
+  for (int client = 0; client < clients; ++client) {
+    // Each executor of the runtime is a strand of its own: the clients run in parallel.
+    co_spawn(runtime.get_executor(), call_many(port, requests),
+             overloaded{[&](int counted) {
+                          right += counted;
+
+                          if (++ended == clients) {
+                            server_stop.request_stop();
+                          }
+                        },
+                        [&](std::exception_ptr) {
+                          ++failures;
+
+                          if (++ended == clients) {
+                            server_stop.request_stop();
+                          }
+                        }});
+  }
+
+  runtime.run();
+
+  REQUIRE(failures == 0);
+  REQUIRE(right == clients * requests * 2);
+}
+
+TEST_CASE("asio::runtime: its strands, one thread or several", "[asio][runtime]") {
+  quoll::asio::runtime single;
+  auto const executor = single.get_executor();
+  auto const strands = executor.query(quoll::async::service<quoll::async::strands_ref>);
+
+  // One thread: nothing to take turns over, so a strand is the loop itself.
+  REQUIRE(strands.make_strand() == strands.make_strand());
+
+  quoll::asio::runtime several{quoll::async::runtime_options{.threads = 2}};
+  auto const many = several.get_executor().query(quoll::async::service<quoll::async::strands_ref>);
+
+  REQUIRE_FALSE(many.make_strand() == many.make_strand());
+  REQUIRE_FALSE(several.get_executor() == several.get_executor());
 }
 
 TEST_CASE("asio::runtime runs a task to its end", "[asio][runtime]") {

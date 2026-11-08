@@ -41,6 +41,7 @@
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/task_group.hpp>
+#include <quoll/async/strands_ref.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/io/any_listener.hpp>
@@ -282,8 +283,13 @@ async::task<> serve_accepting(async::any_executor executor, io::any_listener lis
     shared->connections.started();
 
     try {
-      async::co_spawn(executor, serve_shared(std::move(*stream), state->router, connection, shared),
-                      connection_outcome{shared}, connections_stop.get_token());
+      // On a strand of its own where tasks run on several threads: what a connection does beside itself (reading
+      // while writing, a timer, a stop) then takes turns.
+      auto const strands = executor.query<async::strands_ref>();
+
+      async::co_spawn(strands ? strands->make_strand() : executor,
+                      serve_shared(std::move(*stream), state->router, connection, shared), connection_outcome{shared},
+                      connections_stop.get_token());
     } catch (...) {
       // Not spawned: stop the others, wait for them, then fail.
       state->connections.fetch_sub(1);

@@ -37,6 +37,7 @@
 #ifndef QUOLL_EMSCRIPTEN_RUNTIME_HPP
 #define QUOLL_EMSCRIPTEN_RUNTIME_HPP
 
+#include <quoll/async/runtime_options.hpp>
 #include <quoll/emscripten/executor.hpp>
 
 #include <stop_token>
@@ -69,6 +70,9 @@ public:
   using executor_type = executor;
 
   runtime() = default;
+
+  /** @brief As a native one is built: the browser runs one thread, whatever `options` ask. */
+  explicit runtime(async::runtime_options options) noexcept { static_cast<void>(options); }
 
   runtime(runtime const &) = delete;
   runtime(runtime &&) = delete;

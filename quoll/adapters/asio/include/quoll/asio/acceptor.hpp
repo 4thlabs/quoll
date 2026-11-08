@@ -42,11 +42,13 @@
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/bound_listener.hpp>
 
+#include <asio/any_io_executor.hpp>
 #include <asio/ip/tcp.hpp>
 
 #include <cassert>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace quoll::asio {
@@ -66,7 +68,15 @@ class acceptor {
 public:
   /** @brief Takes a listening acceptor over. */
   explicit acceptor(::asio::ip::tcp::acceptor listening)
-      : state_(std::make_unique<detail::acceptor_state>(std::move(listening))) {}
+      : state_(std::make_unique<detail::acceptor_state>(std::move(listening), std::nullopt)) {}
+
+  /**
+   * @brief Takes a listening acceptor over, and puts each accepted socket on a strand of its own, made from
+   * `socket_strands`, if any: for a context run by several threads, where the acceptor's own strand would otherwise be
+   * every connection's.
+   */
+  acceptor(::asio::ip::tcp::acceptor listening, std::optional<::asio::any_io_executor> socket_strands)
+      : state_(std::make_unique<detail::acceptor_state>(std::move(listening), std::move(socket_strands))) {}
 
   /** @brief The next connection a peer opens. */
   [[nodiscard]] async::task<io::any_stream> accept() { return detail::accept(checked_state()); }
