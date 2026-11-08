@@ -57,8 +57,9 @@ callbacks that reach the object again through some other path.
 
 Follow the calls: a listener closing its connections, whose close callbacks look the object up in another map, is the case
 to find. When what a member's destruction runs is not visible in the code at hand, write "unknown", not "nothing": a member
-that owns listeners, connections, tasks, timers or callbacks may run code that reaches the object again, and it is a finding
-unless the destructor orders it explicitly. A "no" in the last column is a use after free of a member, which AddressSanitizer does not see, as the memory is
+that owns listeners, connections, tasks, timers or callbacks may run code that reaches the object again. An "unknown" that
+could is a doubt to report and a question for whoever knows that code, not a demand for a destructor: an explicit destructor
+is needed only where a path back to the object exists. A "no" in the last column is a use after free of a member, which AddressSanitizer does not see, as the memory is
 still allocated.
 
 ## Checks
