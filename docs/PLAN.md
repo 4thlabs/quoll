@@ -120,7 +120,10 @@ still sends its body: to look at with streaming. A client closes its TLS connect
     tests, kept alive by their own frames, and the other, `ui::detail::to_handler`, is documented and kept alive by its caller.
 - Fuzzing in CI, under ASan and UBSan, is done (`tests/fuzz`, five minutes per target every night, keeping its corpus): the
   HTTP parsers, `serve_connection`, the router, the REST decoding, the client's exchange and the decoding of REST responses.
-  Its stream never suspends, writes short or fails a write: a stream that does would reach the timeouts and cancellation.
+  Two more, `unfolding_server` and `unfolding_client`, run a connection over a stream the input scripts: each read and
+  write comes in a piece of any size, now or later, or fails, and any operation may hang until a timeout or a stop ends
+  it. The exchange must end.
+  They reach the timeouts and the cancellation, which the others' stream, never suspending, does not.
 - What a handler answers is replaced when its peer would read it as something else, through a connection as through
   `local_transport`: a 2xx to CONNECT, a tunnel, which is not offered, answers 501; a 1xx, and a `Content-Length` with no body, but
   to HEAD or as a 304, answer 500.
