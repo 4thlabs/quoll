@@ -69,15 +69,20 @@
 #include <asio/ip/tcp.hpp>
 #include <asio/post.hpp>
 #include <asio/prefer.hpp>
+#include <asio/strand.hpp>
 
 #include <chrono>
 #include <concepts>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
 
 namespace quoll::asio {
+
+/** @brief Where an executor's sockets, acceptors and timers run: on its executor, or each on a strand of its own. */
+enum class object_strands : bool { shared, own };
 
 /**
  * @brief Executor resuming coroutines on an asio executor: an io_context, a strand, any_io_executor.
@@ -93,8 +98,11 @@ namespace quoll::asio {
  * what runs blocking work away from the loop (async::Offloader), for async::offload().
  *
  * Its sockets, timers and the cancellation of their operations need an asio executor running one handler at a time: an
- * io_context run by one thread, or a strand, as quoll::asio::runtime has it. Over a strand, every connection that
- * listen() accepts shares the acceptor's strand.
+ * io_context run by one thread, or a strand. Over a strand, every connection that listen() accepts shares the
+ * acceptor's. Over an io_context run by several threads, `inner` is a strand as well, as the tasks this executor runs
+ * need one handler at a time too, a server's connections included: this executor offers no strands for them to run
+ * on (async::strands_ref). Ask for a strand per object then, for its sockets, acceptors and timers.
+ * quoll::asio::runtime gives each connection a strand of its own.
  *
  * Thread safety: post() may be called from any thread, as asio's post can.
  */
@@ -104,21 +112,26 @@ class executor {
 public:
   using services = detail::loop_services;
 
-  explicit executor(AsioExecutor inner) noexcept(std::is_nothrow_move_constructible_v<AsioExecutor>)
-      : inner_(std::move(inner)) {}
+  /**
+   * @brief Over `inner`. With object_strands::own, each socket, acceptor and timer it makes is on a strand of its own,
+   * for an execution context run by several threads: asio's I/O objects need one handler at a time.
+   */
+  explicit executor(AsioExecutor inner, object_strands strands = object_strands::shared) noexcept(
+      std::is_nothrow_move_constructible_v<AsioExecutor>)
+      : inner_(std::move(inner)), strand_per_object_(strands == object_strands::own) {}
 
   void post(async::work_item &item) const { ::asio::post(inner_, resumer{&item}); }
 
   /** @brief Opens a TCP connection to `host` (a name or an address) on `port`, on the execution context. */
   [[nodiscard]] async::task<io::any_stream> connect(std::string host, std::uint16_t port) const {
-    return detail::connect(io_executor(), std::move(host), port);
+    return detail::connect(object_executor(), std::move(host), port);
   }
 
   /** @brief Listens on `address` (an IP address) and `port` (0 for any free port), on the execution context. */
   [[nodiscard]] io::any_listener listen(std::string address, std::uint16_t port) const {
     ::asio::ip::tcp::endpoint const endpoint{::asio::ip::make_address(address), port};
 
-    return io::any_listener{acceptor{::asio::ip::tcp::acceptor{io_executor(), endpoint}}};
+    return io::any_listener{acceptor{::asio::ip::tcp::acceptor{object_executor(), endpoint}, socket_strands()}};
   }
 
   /** @brief This executor, as the network of its execution context: valid while it lives (see io::network_ref). */
@@ -126,7 +139,7 @@ public:
 
   /** @brief Completes with true once `duration` has elapsed, with false on a stop request (see async::Timer). */
   [[nodiscard]] async::task<bool> wait_for(std::chrono::nanoseconds duration) const {
-    return detail::wait(io_executor(), duration);
+    return detail::wait(object_executor(), duration);
   }
 
   /** @brief The time on the clock wait_for() goes by (see async::Timer). */
@@ -151,7 +164,7 @@ public:
   /** @brief Opens a TLS connection to `host` (a name or an address) on `port`, on the execution context. */
   [[nodiscard]] async::task<io::any_stream> connect_tls(std::string host, std::uint16_t port,
                                                         io::tls_client_options const &options) const {
-    return detail::connect_tls(io_executor(), std::move(host), port, options);
+    return detail::connect_tls(object_executor(), std::move(host), port, options);
   }
 
   /** @brief Listens for TLS connections on `address` and `port` (0 for any free port), on the execution context. */
@@ -159,7 +172,8 @@ public:
                                             io::tls_server_options const &options) const {
     ::asio::ip::tcp::endpoint const endpoint{::asio::ip::make_address(address), port};
 
-    return io::any_listener{tls_acceptor{::asio::ip::tcp::acceptor{io_executor(), endpoint}, options}};
+    return io::any_listener{
+        tls_acceptor{::asio::ip::tcp::acceptor{object_executor(), endpoint}, options, socket_strands()}};
   }
 
   /** @brief This executor, as the TLS network of its execution context: valid while it lives. */
@@ -171,6 +185,19 @@ public:
   [[nodiscard]] bool operator==(executor const &) const noexcept = default;
 
 private:
+  // What an I/O object it makes runs on: a strand of its own when asked.
+  [[nodiscard]] ::asio::any_io_executor object_executor() const {
+    auto executor = io_executor();
+
+    return strand_per_object_ ? ::asio::any_io_executor{::asio::make_strand(executor)} : executor;
+  }
+
+  // What an acceptor makes the strand of each accepted socket from, when asked: an accepted socket would otherwise take
+  // the acceptor's, which all connections would then share.
+  [[nodiscard]] std::optional<::asio::any_io_executor> socket_strands() const {
+    return strand_per_object_ ? std::optional<::asio::any_io_executor>{io_executor()} : std::nullopt;
+  }
+
   // The executor of the sockets, acceptors and timers: not counted as work, as an idle connection kept for later is
   // none (a runtime counts the work of its tasks itself; a pending wait counts on its own).
   [[nodiscard]] ::asio::any_io_executor io_executor() const {
@@ -184,6 +211,7 @@ private:
   };
 
   AsioExecutor inner_;
+  bool strand_per_object_ = false;
 };
 
 static_assert(async::Executor<executor<>>);

@@ -41,6 +41,7 @@
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/task_group.hpp>
+#include <quoll/async/strands_ref.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/io/any_listener.hpp>
@@ -215,8 +216,13 @@ async::task<> wind_down(shared_options &shared, std::stop_source &connections_st
                            stop_past_deadline(*timer, timeout, deadline.get_token(), connections_stop));
 }
 
+// Each connection a task of its own on `executor`, or with `own_strands`, on a strand of its own where the executor
+// makes them: a runtime on several threads.
 async::task<> serve_accepting(async::any_executor executor, io::any_listener listener,
-                              std::shared_ptr<server_state> state) {
+                              std::shared_ptr<server_state> state, bool own_strands) {
+  // Once: what the executor offers does not change.
+  auto const strands = own_strands ? executor.query<async::strands_ref>() : std::nullopt;
+
   state->serving.store(true);
 
   auto const stop_token = co_await async::current_stop_token();
@@ -282,8 +288,11 @@ async::task<> serve_accepting(async::any_executor executor, io::any_listener lis
     shared->connections.started();
 
     try {
-      async::co_spawn(executor, serve_shared(std::move(*stream), state->router, connection, shared),
-                      connection_outcome{shared}, connections_stop.get_token());
+      // On a strand of its own where tasks run on several threads: what a connection does beside itself (reading
+      // while writing, a timer, a stop) then takes turns.
+      async::co_spawn(strands ? strands->make_strand() : executor,
+                      serve_shared(std::move(*stream), state->router, connection, shared), connection_outcome{shared},
+                      connections_stop.get_token());
     } catch (...) {
       // Not spawned: stop the others, wait for them, then fail.
       state->connections.fetch_sub(1);
@@ -320,7 +329,7 @@ async::task<> serve_accepting_here(io::any_listener listener, std::shared_ptr<se
   // A copy, held by each connection: their frames end after serve() resumes.
   async::any_executor executor{co_await async::current_executor()};
 
-  co_await serve_accepting(std::move(executor), std::move(listener), std::move(state));
+  co_await serve_accepting(std::move(executor), std::move(listener), std::move(state), true);
 }
 
 [[nodiscard]] async::task<> listen_and_serve(std::shared_ptr<server_state> state, std::uint16_t port,
@@ -387,7 +396,7 @@ async::task<> server::serve(io::any_listener listener) const {
 }
 
 async::task<> server::serve_on(async::any_executor executor, io::any_listener listener) const {
-  return detail::serve_accepting(std::move(executor), std::move(listener), state_);
+  return detail::serve_accepting(std::move(executor), std::move(listener), state_, false);
 }
 
 async::task<> server::serve_connection(io::any_stream stream) const {
