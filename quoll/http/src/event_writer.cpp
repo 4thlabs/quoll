@@ -37,6 +37,8 @@
 #include <quoll/http/event_writer.hpp>
 #include <quoll/http/format_event.hpp>
 
+#include <atomic>
+#include <memory>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -56,10 +58,8 @@ event_writer::event_writer(response_writer out) : out_(std::move(out)) {
   out_.fields.set("X-Accel-Buffering", "no");
 }
 
-async::task<> event_writer::open() {
-  check_writable();
-  return out_.write(std::string_view{});
-}
+// An empty piece sends the head.
+async::task<> event_writer::open() { return write(std::string{}); }
 
 async::task<> event_writer::send(server_sent_event const &event) { return write(format_event(event)); }
 
@@ -69,6 +69,27 @@ async::task<> event_writer::comment(std::string_view text) { return write(format
 
 async::task<> event_writer::write(std::string text) {
   check_writable();
+
+  // The task's own: `this` is not used once it waits, as the writer may move meanwhile.
+  auto const busy = busy_;
+
+  if (busy->exchange(true)) {
+    throw std::logic_error{"quoll::http::event_writer: an operation while another is pending"};
+  }
+
+  struct release {
+    explicit release(std::atomic<bool> &flag) noexcept : of(&flag) {}
+
+    release(release const &) = delete;
+    release &operator=(release const &) = delete;
+    release(release &&) = delete;
+    release &operator=(release &&) = delete;
+
+    ~release() { of->store(false); }
+
+    std::atomic<bool> *of;
+  } const done{*busy};
+
   co_await out_.write(text);
 }
 

@@ -38,10 +38,14 @@
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
+#include <quoll/async/yield.hpp>
+#include <quoll/http/body_stream.hpp>
 #include <quoll/http/event_writer.hpp>
+#include <quoll/http/fields.hpp>
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/response_writer.hpp>
 #include <quoll/http/router.hpp>
+#include <quoll/http/status.hpp>
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/io/write.hpp>
 #include <quoll/server/server.hpp>
@@ -1648,6 +1652,53 @@ TEST_CASE("event_writer: a response_writer whose head has left, or moved from, i
   REQUIRE(answer_to(http::server{router}, get("/written")).find("before") != std::string::npos);
   REQUIRE(answer_to(http::server{router}, get("/moved")).find("kept") != std::string::npos);
   REQUIRE(refused == 2);
+}
+
+namespace {
+
+// What a writer sends, a turn of the loop after it is asked: long enough for another operation to come meanwhile.
+struct slow_sink {
+  std::string *sent;
+
+  void head(http::status, http::fields) {}
+
+  [[nodiscard]] task<> write(std::string_view piece) {
+    co_await async::yield();
+    sent->append(piece);
+  }
+};
+
+} // namespace
+
+TEST_CASE("event_writer: an operation while another is pending throws, and leaves it whole", "[server][sse]") {
+  std::string sent;
+  slow_sink sink{&sent};
+  http::body_stream out{sink};
+
+  auto const both = [&out]() -> task<bool> {
+    http::event_writer events{http::response_writer{out}};
+
+    auto const keep_alive = [](http::event_writer &writer) -> task<bool> {
+      try {
+        co_await writer.comment();
+      } catch (std::logic_error const &) {
+        co_return true;
+      }
+
+      co_return false;
+    };
+
+    auto [first, refused] = co_await async::when_all(events.send({.data = "first"}), keep_alive(events));
+
+    static_cast<void>(first);
+
+    // Free again once the first has left.
+    co_await events.comment("after");
+    co_return refused;
+  };
+
+  REQUIRE(quoll::test::run(both()) == true);
+  REQUIRE(sent == "data: first\n\n: after\n");
 }
 
 TEST_CASE("event_writer: a Cache-Control of a middleware stays", "[server][sse]") {

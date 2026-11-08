@@ -42,7 +42,9 @@
 #include <quoll/http/response_writer.hpp>
 #include <quoll/http/server_sent_event.hpp>
 
+#include <atomic>
 #include <chrono>
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -77,7 +79,8 @@ namespace quoll::http {
  * send() completes, as with response_writer::write(), and a peer gone makes it throw, which ends the handler.
  *
  * Moved, not copied, as the response_writer it holds: one moved from throws std::logic_error from what it is asked.
- * Thread safety: one operation at a time, as for response_writer.
+ * One operation at a time, a comment to keep the stream alive included: one asked for while another is pending throws
+ * std::logic_error from its task, in every build, rather than write over it.
  */
 class event_writer {
 public:
@@ -119,6 +122,9 @@ private:
   void check_writable() const;
 
   response_writer out_;
+  // Up while an operation is pending, so that a second one throws rather than write over the first. Held by each
+  // operation's task as well, so that the writer may move while one waits.
+  std::shared_ptr<std::atomic<bool>> busy_ = std::make_shared<std::atomic<bool>>(false);
 };
 
 } // namespace quoll::http
