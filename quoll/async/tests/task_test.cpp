@@ -36,6 +36,7 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detail/awaiting.hpp>
 #include <quoll/async/executor_ref.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
@@ -118,6 +119,19 @@ struct full_executor {
 task<int> owns(std::shared_ptr<int> resource) { co_return *resource; }
 
 } // namespace
+
+// What a program could call to start a task itself: in a concept, where a member out of reach makes it false, rather
+// than ill-formed.
+template <class T>
+concept startable_by_hand =
+    requires(T &work, std::coroutine_handle<> handle, quoll::async::await_context const &context) {
+      work.await_suspend(handle, context);
+    };
+
+// A program never starts a task itself: its await_suspend is out of its reach, while a co_await, through Quoll's own
+// awaiting, still starts one.
+static_assert(!startable_by_hand<quoll::async::task<>>);
+static_assert(quoll::async::ContextAwaitable<quoll::async::task<>>);
 
 TEST_CASE("A task returns the value of the tasks it awaits", "[async][task]") {
   run_loop loop;
@@ -301,6 +315,7 @@ TEST_CASE("task: destroying one that runs is asserted", "[.assert]") {
   quoll::async::await_context const context{.executor = quoll::async::executor_ref{executor}, .stop_token = {}};
   auto running = waits_for_ever();
 
-  running.await_suspend(std::noop_coroutine(), context).resume();
+  // Through Quoll's own awaiting: a program cannot start a task by hand.
+  quoll::async::detail::awaiting::suspend(running, std::noop_coroutine(), context).resume();
 #endif
 }

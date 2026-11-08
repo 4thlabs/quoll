@@ -38,6 +38,7 @@
 #define QUOLL_IO_DETAIL_STREAM_VTABLE_HPP
 
 #include <quoll/async/await_context.hpp>
+#include <quoll/async/detail/awaiting.hpp>
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/detail/erasable_stream.hpp>
@@ -87,18 +88,21 @@ struct awaitable_vtable {
   void (*destroy)(void *awaitable) noexcept;
 };
 
+// Through Quoll's own awaiting, as a co_await is: a stream's awaitable may be a task, whose await_suspend only that
+// reaches.
 template <class A>
 [[nodiscard]] std::coroutine_handle<> suspend(A &awaitable, std::coroutine_handle<> handle,
                                               async::await_context const &context) {
-  using result = decltype(awaitable.await_suspend(handle, context));
+  using async::detail::awaiting;
+  using result = decltype(awaiting::suspend(awaitable, handle, context));
 
   if constexpr (std::is_void_v<result>) {
-    awaitable.await_suspend(handle, context);
+    awaiting::suspend(awaitable, handle, context);
     return std::noop_coroutine();
   } else if constexpr (std::is_same_v<result, bool>) {
-    return awaitable.await_suspend(handle, context) ? std::noop_coroutine() : handle;
+    return awaiting::suspend(awaitable, handle, context) ? std::noop_coroutine() : handle;
   } else {
-    return awaitable.await_suspend(handle, context);
+    return awaiting::suspend(awaitable, handle, context);
   }
 }
 
