@@ -1635,6 +1635,10 @@ TEST_CASE("event_writer: a response_writer whose head has left, or moved from, i
     } catch (std::logic_error const &) {
       ++refused;
     }
+
+    // Refused, it is left to the handler, which finishes its response.
+    // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move): it was not taken.
+    co_await out.write(" and after");
   });
   router.get("/moved", [&refused](http::response_writer out) -> task<> {
     auto kept = std::move(out);
@@ -1649,7 +1653,7 @@ TEST_CASE("event_writer: a response_writer whose head has left, or moved from, i
     co_await kept.write("kept");
   });
 
-  REQUIRE(answer_to(http::server{router}, get("/written")).find("before") != std::string::npos);
+  REQUIRE(answer_to(http::server{router}, get("/written")).find(" and after") != std::string::npos);
   REQUIRE(answer_to(http::server{router}, get("/moved")).find("kept") != std::string::npos);
   REQUIRE(refused == 2);
 }
@@ -1728,6 +1732,24 @@ TEST_CASE("event_writer: operations leave in the order asked; one dropped unrun 
 
   REQUIRE(quoll::test::run(writing()) == true);
   REQUIRE(sent == "id: 1\ndata: 1\n\ndata: 3\n\n");
+}
+
+TEST_CASE("event_writer: an operation over gives its turn back, its task still held", "[server][sse]") {
+  std::string sent;
+  slow_sink sink{&sent};
+  http::body_stream out{sink};
+
+  auto const writing = [&out]() -> task<bool> {
+    http::event_writer events{http::response_writer{out}};
+    auto opening = events.open();
+
+    co_await std::move(opening);
+    co_await events.send({.data = "x"});
+    co_return true;
+  };
+
+  REQUIRE(quoll::test::run(writing()) == true);
+  REQUIRE(sent == "data: x\n\n");
 }
 
 TEST_CASE("event_writer: moved, or gone, once an operation is asked, the operation goes on", "[server][sse]") {

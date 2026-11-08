@@ -46,7 +46,8 @@
 
 namespace quoll::http {
 
-event_writer::event_writer(response_writer out) {
+event_writer::event_writer(response_writer &&out) {
+  // Before it is taken: refused, the handler keeps it, to finish what it started.
   if (!out.writable() || out.head_given()) {
     throw std::logic_error{"quoll::http::event_writer: a response_writer whose head is given, or moved from"};
   }
@@ -64,7 +65,10 @@ event_writer::event_writer(response_writer out) {
 }
 
 // An empty piece sends the head.
-async::task<> event_writer::open() { return ask(std::string{}); }
+async::task<> event_writer::open() {
+  check_writable();
+  return ask(std::string{});
+}
 
 // Moved from is checked before the text is made, so that it is what is reported.
 async::task<> event_writer::send(server_sent_event const &event) {
@@ -88,9 +92,8 @@ void event_writer::check_writable() const {
   }
 }
 
+// What asks has checked the writer.
 async::task<> event_writer::ask(std::string text) {
-  check_writable();
-
   detail::one_at_a_time turn{std::shared_ptr<std::atomic<bool>>{state_, &state_->busy},
                              "quoll::http::event_writer: an operation while another is pending"};
 
@@ -98,6 +101,10 @@ async::task<> event_writer::ask(std::string text) {
 }
 
 async::task<> event_writer::write(std::shared_ptr<state> writing, detail::one_at_a_time turn, std::string text) {
+  // Given back when the operation is over, not when its task goes, which a caller may keep: the parameter covers a task
+  // dropped unrun.
+  auto const held = std::move(turn);
+
   co_await writing->out.write(text);
 }
 

@@ -98,8 +98,9 @@ public:
    * @brief Writes through `out`, whose fields it completes.
    *
    * @throws std::logic_error for a response_writer whose head is given, or moved from: its fields would do nothing.
+   * Refused, `out` is left as it was, for the handler to finish its response.
    */
-  explicit event_writer(response_writer out);
+  explicit event_writer(response_writer &&out);
 
   event_writer(event_writer const &) = delete;
   event_writer &operator=(event_writer const &) = delete;

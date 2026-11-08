@@ -40,7 +40,6 @@
 #include <exception>
 #include <stdexcept>
 #include <string>
-#include <system_error>
 #include <utility>
 
 namespace quoll::http {
@@ -67,6 +66,10 @@ std::optional<std::chrono::milliseconds> event_reader::retry() const noexcept {
 
 async::task<std::optional<server_sent_event>> event_reader::read_next(std::shared_ptr<state> reading,
                                                                       detail::one_at_a_time turn) {
+  // Given back when the operation is over, not when its task goes, which a caller may keep: the parameter covers a task
+  // dropped unrun.
+  auto const held = std::move(turn);
+
   if (reading->failure) {
     std::rethrow_exception(reading->failure);
   }
@@ -85,9 +88,6 @@ async::task<std::optional<server_sent_event>> event_reader::read_next(std::share
 
       reading->parser.feed(*piece);
     }
-  } catch (std::logic_error const &) {
-    // A misuse, a second read of the body from elsewhere say, is the caller's, and ends nothing.
-    throw;
   } catch (...) {
     // A read that failed, a stop, a timeout, an event too large, running out of memory: reading ends here, and the
     // connection is not held for a stream nobody reads.

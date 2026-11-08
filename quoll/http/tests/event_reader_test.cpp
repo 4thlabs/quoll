@@ -291,3 +291,18 @@ TEST_CASE("event_reader: any failure of the body ends the reading, and lets it g
   REQUIRE(quoll::test::run(read()) == 2);
   REQUIRE(source.use_count() == 1);
 }
+
+TEST_CASE("event_reader: a next() over gives its turn back, its task still held", "[http][sse]") {
+  auto source = std::make_shared<byte_source>("data: a\n\ndata: b\n\n");
+  http::event_reader events{http::response_body{source}};
+
+  auto const reading = [&events]() -> async::task<bool> {
+    auto first = events.next();
+    auto const a = co_await std::move(first);
+    auto const b = co_await events.next();
+
+    co_return a == http::server_sent_event{.data = "a"} && b == http::server_sent_event{.data = "b"};
+  };
+
+  REQUIRE(quoll::test::run(reading()) == true);
+}
