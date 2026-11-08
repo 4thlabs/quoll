@@ -34,7 +34,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/http/error.hpp>
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
@@ -43,16 +45,21 @@
 #include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 #include <quoll/test/run.hpp>
+#include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -542,4 +549,312 @@ TEST_CASE("client: a response declared by a with<> is not held by reply<Endpoint
   REQUIRE_FALSE(removed.has_value());
   REQUIRE(removed.error().reason ==
           "status 409 is declared by a with<> around the endpoint: reply<Endpoint> does not hold it");
+}
+
+namespace client_test {
+
+// An api under prefixes with parameters, for scopes.
+namespace hub {
+using namespace quoll::rest;
+
+namespace issues {
+using list = endpoint<"issues.list", verb::get, "/issues", query<"state", std::optional<std::string>>,
+                      returns<std::string, status::ok, text_codec>>;
+using one = endpoint<"issues.one", verb::get, "/issues/{number:int}", returns<std::string, status::ok, text_codec>>;
+
+using api = rest::api<"/{repo}", list, one>;
+} // namespace issues
+
+using api = rest::api<"/repos/{owner}", issues::api>;
+} // namespace hub
+
+using hub_v1 = rest::api<"/hub", hub::api>;
+
+struct hub_service {
+  std::string operator()(hub::issues::list, std::string owner, std::string repo,
+                         std::optional<std::string> state) const {
+    return owner + "/" + repo + " " + state.value_or("all");
+  }
+
+  std::string operator()(hub::issues::one, std::string owner, std::string repo, int number) const {
+    return owner + "/" + repo + " #" + std::to_string(number);
+  }
+};
+
+} // namespace client_test
+
+namespace {
+
+http::router make_hub_router() {
+  http::router router;
+
+  rest::mount<hub_v1>(router, hub_service{});
+  return router;
+}
+
+// Answers the statuses of `script` in turn, after `failing` network failures, then 204, and counts what it was sent.
+// Shared by its copies, as the client copies its transport for its interceptors.
+struct scripted_transport {
+  struct state {
+    std::vector<http::status> script;
+    int failing = 0;
+    std::error_code failing_with = std::make_error_code(std::errc::connection_reset);
+    int sent = 0;
+  };
+
+  std::shared_ptr<state> shared = std::make_shared<state>();
+
+  [[nodiscard]] task<http::response> send(http::request) const { return answering(shared); }
+
+  [[nodiscard]] static task<http::response> answering(std::shared_ptr<state> shared) {
+    ++shared->sent;
+
+    if (shared->failing > 0) {
+      --shared->failing;
+      throw std::system_error{shared->failing_with};
+    }
+
+    http::response answer;
+
+    answer.status = http::status::no_content;
+
+    if (!shared->script.empty()) {
+      answer.status = shared->script.front();
+      shared->script.erase(shared->script.begin());
+    }
+
+    co_return answer;
+  }
+};
+
+} // namespace
+
+TEST_CASE("client: a scope fixes the parameters of the prefixes above its api, and its own", "[rest][client]") {
+  auto const router = make_hub_router();
+  rest::client<hub_v1, http::local_transport> const client{http::local_transport{router}};
+  auto const repo = client.scope<hub::issues::api>("4thlabs", "quoll");
+
+  static_assert(std::is_same_v<decltype(repo)::prefix_type, std::tuple<std::string, std::string>>);
+
+  REQUIRE(run(repo.call<hub::issues::list>("open")) == "4thlabs/quoll open");
+  REQUIRE(run(repo.call<hub::issues::one>(7)) == "4thlabs/quoll #7");
+  REQUIRE(run(repo.try_call<hub::issues::one>(8)).has_value());
+
+  // A scope of the owner, then of a repository of it: each fixes what its prefix adds.
+  auto const owner = client.scope<hub::api>("4thlabs");
+  auto const nested = owner.scope<hub::issues::api>("quoll");
+
+  REQUIRE(run(owner.call<hub::issues::one>("quoll", 8)) == "4thlabs/quoll #8");
+  REQUIRE(run(nested.call<hub::issues::one>(9)) == "4thlabs/quoll #9");
+}
+
+TEST_CASE("client: interceptors wrap what it sends, in the order they were added", "[rest][client]") {
+  auto const router = make_router();
+  auto client = make_client(router);
+  std::vector<std::string> seen;
+
+  client.use([&seen](http::request &&request, rest::next const &send) -> task<http::response> {
+    seen.emplace_back("outer");
+
+    auto response = co_await send(std::move(request));
+
+    seen.emplace_back("outer " + std::to_string(static_cast<int>(response.status)));
+    co_return response;
+  });
+  client.use([&seen](http::request &&request, rest::next const &send) -> task<http::response> {
+    seen.emplace_back("inner");
+    request.target = "/api/v1/users/42";
+    co_return co_await send(std::move(request));
+  });
+
+  // The inner one sends another request than the call's: the answer is that of user 42.
+  REQUIRE(run(client.call<users::get>(1)).name == "Ada");
+  REQUIRE(seen == std::vector<std::string>{"outer", "inner", "outer 200"});
+}
+
+TEST_CASE("client: an interceptor may send again, as a token refreshed on a 401", "[rest][client]") {
+  auto const router = make_router();
+  api_client client{http::local_transport{router}};
+
+  client.credentials<rest::bearer_auth>("expired");
+  client.use([](http::request &&request, rest::next const &send) -> task<http::response> {
+    auto response = co_await send(request);
+
+    if (response.status == http::status::unauthorized) {
+      request.fields.set("Authorization", "Bearer valid");
+      response = co_await send(std::move(request));
+    }
+
+    co_return response;
+  });
+
+  REQUIRE(run(client.call<users::get>(42)).name == "Ada");
+}
+
+TEST_CASE("client: a copy shares the interceptors it had, and one added after is its own", "[rest][client]") {
+  scripted_transport const transport;
+  rest::client<v1, scripted_transport> client{transport};
+  int outer = 0;
+  int later = 0;
+
+  client.use([&outer](http::request &&request, rest::next const &send) {
+    ++outer;
+    return send(std::move(request));
+  });
+
+  auto copy = client;
+
+  copy.use([&later](http::request &&request, rest::next const &send) {
+    ++later;
+    return send(std::move(request));
+  });
+
+  REQUIRE(run(completes(client.call<users::remove>(1))));
+  REQUIRE(run(completes(copy.call<users::remove>(1))));
+  REQUIRE(outer == 2);
+  REQUIRE(later == 1);
+  REQUIRE(transport.shared->sent == 2);
+  REQUIRE_THROWS_AS(client.use(rest::interceptor{}), std::invalid_argument);
+}
+
+TEST_CASE("retry: sends an idempotent request again after a 503 or a network error, then answers", "[rest][client]") {
+  scripted_transport const transport;
+  rest::client<v1, scripted_transport> client{transport};
+
+  client.use(rest::retry{.attempts = 4, .delay = std::chrono::milliseconds::zero()});
+  transport.shared->script = {http::status::service_unavailable, http::status::bad_gateway};
+  transport.shared->failing = 1;
+
+  REQUIRE(run(completes(client.call<users::remove>(1))));
+  REQUIRE(transport.shared->sent == 4);
+}
+
+TEST_CASE("retry: up to its attempts, then the last answer stands", "[rest][client]") {
+  scripted_transport const transport;
+  rest::client<v1, scripted_transport> client{transport};
+
+  client.use(rest::retry{.attempts = 2, .delay = std::chrono::milliseconds::zero()});
+  transport.shared->script = {http::status::service_unavailable, http::status::service_unavailable,
+                              http::status::service_unavailable};
+
+  REQUIRE_THROWS_AS(run(completes(client.call<users::remove>(1))), rest::call_error);
+  REQUIRE(transport.shared->sent == 2);
+
+  // A network error on the last attempt comes out of the call.
+  transport.shared->script.clear();
+  transport.shared->failing = 2;
+  transport.shared->sent = 0;
+
+  REQUIRE_THROWS_AS(run(completes(client.call<users::remove>(1))), std::system_error);
+  REQUIRE(transport.shared->sent == 2);
+}
+
+TEST_CASE("retry: a request that may not be sent twice is sent once", "[rest][client]") {
+  scripted_transport const transport;
+  rest::client<v1, scripted_transport> client{transport};
+
+  client.credentials<rest::bearer_auth>("valid");
+  client.use(rest::retry{.attempts = 3, .delay = std::chrono::milliseconds::zero()});
+  transport.shared->script = {http::status::service_unavailable};
+
+  // POST is not idempotent.
+  REQUIRE_THROWS_AS(run(client.call<users::create>({.name = "Grace"})), rest::call_error);
+  REQUIRE(transport.shared->sent == 1);
+}
+
+TEST_CASE("retry: waits between attempts, twice as long each time", "[rest][client][timer]") {
+  scripted_transport const transport;
+  rest::client<v1, scripted_transport> client{transport};
+  quoll::test::virtual_time time;
+
+  client.use(rest::retry{.attempts = 3, .delay = std::chrono::milliseconds{100}});
+  transport.shared->script = {http::status::service_unavailable, http::status::service_unavailable};
+
+  REQUIRE(quoll::test::run(time, completes(client.call<users::remove>(1))).value());
+  REQUIRE(transport.shared->sent == 3);
+  REQUIRE(time.now() == std::chrono::milliseconds{300});
+}
+
+TEST_CASE("retry: an error of the message itself is not sent again", "[rest][client]") {
+  scripted_transport const transport;
+  rest::client<v1, scripted_transport> client{transport};
+
+  client.use(rest::retry{.attempts = 3, .delay = std::chrono::milliseconds::zero()});
+  transport.shared->failing = 3;
+  transport.shared->failing_with = http::error::body_too_large;
+
+  REQUIRE_THROWS_AS(run(completes(client.call<users::remove>(1))), std::system_error);
+  REQUIRE(transport.shared->sent == 1);
+
+  // A connection ended in the middle of the response is the network's: sent again.
+  transport.shared->failing = 1;
+  transport.shared->failing_with = http::error::partial_message;
+  transport.shared->sent = 0;
+
+  REQUIRE(run(completes(client.call<users::remove>(1))));
+  REQUIRE(transport.shared->sent == 2);
+}
+
+TEST_CASE("retry: a stop request ends the call between attempts, whatever the transport makes of it",
+          "[rest][client]") {
+  scripted_transport const transport;
+  rest::client<v1, scripted_transport> client{transport};
+  quoll::async::run_loop loop;
+  std::stop_source stop;
+
+  client.use(rest::retry{.attempts = 3, .delay = std::chrono::milliseconds::zero()});
+  transport.shared->script = {http::status::service_unavailable, http::status::service_unavailable};
+  stop.request_stop();
+
+  // The transport answers 503 even so: retry sees the stop before sending again.
+  REQUIRE_THROWS_AS(quoll::test::run(loop, completes(client.call<users::remove>(1)), stop.get_token()),
+                    std::system_error);
+  REQUIRE(transport.shared->sent == 1);
+}
+
+TEST_CASE("client: an interceptor stays one object, with its state, once a copy adds another", "[rest][client]") {
+  scripted_transport const transport;
+  rest::client<v1, scripted_transport> client{transport};
+  auto const counted = std::make_shared<int>(0);
+
+  // Its count is its own, held by value: shared only if the interceptor itself is.
+  client.use([count = 0, counted](http::request &&request, rest::next const &send) mutable {
+    *counted = ++count;
+    return send(std::move(request));
+  });
+
+  auto copy = client;
+
+  copy.use([](http::request &&request, rest::next const &send) { return send(std::move(request)); });
+
+  REQUIRE(run(completes(client.call<users::remove>(1))));
+  REQUIRE(run(completes(copy.call<users::remove>(1))));
+  REQUIRE(*counted == 2);
+}
+
+TEST_CASE("client: a scope keeps the credentials and interceptors the client had when it was made", "[rest][client]") {
+  recording_transport const transport;
+  rest::client<v1, recording_transport> client{transport};
+  int earlier = 0;
+  int later = 0;
+
+  client.credentials<rest::bearer_auth>("first");
+  client.use([&earlier](http::request &&request, rest::next const &send) {
+    ++earlier;
+    return send(std::move(request));
+  });
+
+  auto const users_only = client.scope<users::api>();
+
+  client.credentials<rest::bearer_auth>("second");
+  client.use([&later](http::request &&request, rest::next const &send) {
+    ++later;
+    return send(std::move(request));
+  });
+
+  REQUIRE(run(completes(users_only.call<users::remove>(1))));
+  REQUIRE(transport.sent->back().fields.find("Authorization") == "Bearer first");
+  REQUIRE(earlier == 1);
+  REQUIRE(later == 0);
+  REQUIRE(&client.transport() == &users_only.client().transport());
 }

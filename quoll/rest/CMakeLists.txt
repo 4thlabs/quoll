@@ -3,9 +3,11 @@ quoll_declare_module(
   SOURCES
     src/arguments.cpp
     src/client.cpp
+    src/next.cpp
     src/param_traits.cpp
     src/printable_text.cpp
     src/query_string.cpp
+    src/retry.cpp
     src/scheme_traits.cpp
     src/serve.cpp
     src/single_field.cpp
@@ -76,6 +78,10 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/query_type.cpp
     tests/compile_fail/reply_holds_undeclared.cpp
     tests/compile_fail/reply_without_returns.cpp
+    tests/compile_fail/scope_arguments.cpp
+    tests/compile_fail/scope_empty_api.cpp
+    tests/compile_fail/scope_not_nested.cpp
+    tests/compile_fail/scoped_scope_not_nested.cpp
     tests/compile_fail/returns_body_on_no_content.cpp
     tests/compile_fail/returns_informational.cpp
     tests/compile_fail/same_name.cpp
