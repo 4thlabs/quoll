@@ -322,7 +322,8 @@ changes only what the harness shows. Candidates:
 ## Decided
 
 - **A coroutine frame is destroyed only once it will not resume again** (2026-11-08): by a root as it ends, or by its awaiter
-  once the task has completed, which `task` asserts in debug builds. What an awaitable registers from its frame is undone as
+  once the task has completed, which a task's promise asserts in debug builds, whatever destroys the frame. A program never
+  starts a task itself: its `await_suspend` is private to Quoll's own awaiting. What an awaitable registers from its frame is undone as
   it resumes or is cancelled, never because the frame went, and a work item stays a coroutine to resume. Chosen over giving a
   work item a function to run, so that an awaitable could be destroyed while queued (PR #111): that case was reached only by
   a test destroying a suspended awaitable by hand.
