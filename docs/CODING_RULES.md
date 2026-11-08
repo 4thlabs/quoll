@@ -74,8 +74,8 @@ guidelines and the C++ Core Guidelines.
   or before it starts when its start cannot be posted, or by its awaiter, through `async::task`, once it has completed.
   What an awaitable in it registers (its work item in an executor's queue, an I/O handler, a stop callback) is undone as it
   resumes or is cancelled, and never outlives the frame. `task` asserts it in debug builds, which run the tests. A program
-  can break it only by starting a task by hand, through `await_suspend`, in an awaitable of its own: such code destroys a
-  task it started only once it has completed, as Quoll's roots do. Quoll's own code destroys no awaitable while it
+  never starts a task itself, through `await_suspend`: it awaits it with `co_await`, or runs it with `co_spawn`, and
+  combines tasks through what Quoll offers (`when_all`, `with_timeout`). Quoll's own code destroys no awaitable while it
   waits; one a test destroys by hand undoes what it can, as a `memory_stream` read not yet woken does. A released root that never resumes leaks its frame, as do those a loop
   destroyed with work pending leaves. What is not a frame, as an object holding a timer or a stop callback, unregisters in
   its destructor, as `std::stop_callback` does.

@@ -93,7 +93,8 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   per case under `tests/compile_fail/`, starting with `// expect: <message>`, declared with
   `quoll_declare_compile_fail_tests(SOURCES ... DEPS ...)`. Each becomes a ctest `compile_fail.<case>` that compiles it
   and passes only when the compilation fails with that message, taken literally (native builds only).
-- What a debug build asserts, an invariant out of a caller's reach (a task destroyed while it runs), is tested too: a hidden
+- What a debug build asserts, an invariant out of a caller's reach (a task destroyed while it runs, which a program cannot
+  reach through `co_await` and `co_spawn`), is tested too: a hidden
   Catch2 case (`[.assert]`) that breaks it, declared with `quoll_declare_assert_tests(NAME ... CASE ... EXPECT ...)`. Each
   becomes a ctest `assert.<name>` that runs it alone and passes only when the program ends with the assertion's text, which
   the case's name must not hold (native debug builds only).

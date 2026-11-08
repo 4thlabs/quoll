@@ -58,7 +58,8 @@ namespace quoll::async {
  *
  * Owns its coroutine frame: move-only, and destroying a task that never ran destroys the frame without running it.
  * A task that started is destroyed only once it has completed: its awaiter, suspended until then, is the only one
- * holding it, and Quoll destroys no suspended frame. What its awaitables registered (a work item in a queue, an I/O
+ * holding it, and Quoll destroys no suspended frame. A program never starts one itself, through await_suspend: it
+ * awaits it, or spawns it. What its awaitables registered (a work item in a queue, an I/O
  * handler, a stop callback) therefore never outlives the frame. Debug builds assert it.
  *
  * Thread safety: none; a task is awaited once, by one coroutine.
