@@ -1372,9 +1372,14 @@ TEST_CASE("http::client through fetch: the status text counts toward the head's 
           http::error::header_too_large);
 }
 
-TEST_CASE("emscripten::runtime takes the options of every runtime, and runs one thread", "[emscripten]") {
-  quoll::emscripten::runtime const runtime{quoll::async::runtime_options{.threads = 4}};
+TEST_CASE("emscripten::runtime takes the options of every runtime, and runs its tasks", "[emscripten]") {
+  // Four asked for: the browser runs one, and the build has no threads to tell apart.
+  quoll::emscripten::runtime runtime{quoll::async::runtime_options{.threads = 4}};
+  auto const answer = []() -> task<int> {
+    co_await quoll::async::yield();
+    co_return 42;
+  };
 
-  static_cast<void>(runtime);
-  SUCCEED();
+  runtime.run();
+  REQUIRE(run_on(runtime.get_executor(), answer()) == 42);
 }
