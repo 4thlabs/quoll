@@ -213,6 +213,16 @@ template <class Message>
 
 // A stream whose peer sends `input` in pieces of `chunk` bytes, or at once for 0, then closes; what is written to it is
 // dropped. Nothing suspends, so that a task runs to its end on the input alone, and a server cannot wait for more.
+// Hands out the start of `input`, as much as `buffer` holds and at most `limit` bytes, as a stream's read gives it.
+[[nodiscard]] inline std::size_t take_input(std::string_view &input, std::span<std::byte> buffer,
+                                            std::size_t limit) noexcept {
+  auto const count = std::min({buffer.size(), input.size(), limit});
+
+  std::memcpy(buffer.data(), input.data(), count);
+  input.remove_prefix(count);
+  return count;
+}
+
 class input_stream {
 public:
   struct awaitable {
@@ -233,11 +243,7 @@ public:
       return {{io::error::end_of_stream, 0}};
     }
 
-    auto const count = std::min({buffer.size(), input_.size(), chunk_});
-
-    std::memcpy(buffer.data(), input_.data(), count);
-    input_.remove_prefix(count);
-    return {{{}, count}};
+    return {{{}, take_input(input_, buffer, chunk_)}};
   }
 
   [[nodiscard]] awaitable write_some(std::span<std::byte const> data) const noexcept { return {{{}, data.size()}}; }
