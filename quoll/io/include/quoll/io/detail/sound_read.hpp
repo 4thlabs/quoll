@@ -40,24 +40,13 @@
 #include <quoll/io/io_result.hpp>
 
 #include <cstddef>
-#include <system_error>
 
 namespace quoll::io::detail {
 
 // What a ByteStream reading into `asked` bytes may be trusted to have done, for what appends what it read: more than
 // that would read past its buffer, and no error with no progress would have it loop for ever, with nothing to stop it
 // if the stream never suspends. Such a stream reads as `std::errc::io_error`, and a read with an error has no bytes.
-[[nodiscard]] inline io_result sound_read(io_result read, std::size_t asked) noexcept {
-  if (read.error) {
-    return {read.error, 0};
-  }
-
-  if (read.transferred > asked || (read.transferred == 0 && asked > 0)) {
-    return {std::make_error_code(std::errc::io_error), 0};
-  }
-
-  return read;
-}
+[[nodiscard]] io_result sound_read(io_result read, std::size_t asked) noexcept;
 
 } // namespace quoll::io::detail
 

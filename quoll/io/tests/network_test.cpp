@@ -316,7 +316,9 @@ TEST_CASE("network_ref: what it is given stays until its task has run", "[io][ne
   std::string const host(64, 'x');
   auto connecting = reference.connect(host, 80);
 
-  REQUIRE(quoll::test::run(std::move(connecting)).has_value());
+  auto const connected = quoll::test::run(std::move(connecting));
+
+  REQUIRE(connected.has_value());
   REQUIRE(seen == host);
 }
 
@@ -327,7 +329,9 @@ TEST_CASE("tls_network_ref: what it is given stays until its task has run", "[io
   std::string const host(64, 'x');
   auto connecting = reference.connect_tls(host, 443, io::tls_client_options{.ca_file = std::string(64, 'y')});
 
-  REQUIRE(quoll::test::run(std::move(connecting)).has_value());
+  auto const connected = quoll::test::run(std::move(connecting));
+
+  REQUIRE(connected.has_value());
   REQUIRE(seen == host + "|" + std::string(64, 'y'));
   REQUIRE(reference.target<viewing_tls_network>() == &network);
   REQUIRE(reference.target<int>() == nullptr);
@@ -417,6 +421,72 @@ struct calling_network {
 
 } // namespace
 
+namespace {
+
+// What a connection's frame reads as it goes: a network may keep a view of what it was given until then.
+struct reads_when_gone {
+  std::string_view host;
+  std::string *seen;
+
+  reads_when_gone(std::string_view viewed, std::string *into) : host(viewed), seen(into) {}
+
+  reads_when_gone(reads_when_gone const &) = delete;
+  reads_when_gone &operator=(reads_when_gone const &) = delete;
+
+  reads_when_gone(reads_when_gone &&other) noexcept : host(other.host), seen(std::exchange(other.seen, nullptr)) {}
+
+  reads_when_gone &operator=(reads_when_gone &&) = delete;
+
+  ~reads_when_gone() {
+    if (seen != nullptr) {
+      seen->assign(host);
+    }
+  }
+};
+
+struct remembering_network {
+  std::string *seen;
+
+  [[nodiscard]] static task<io::any_stream> connected(reads_when_gone) {
+    co_return io::any_stream{io::make_memory_stream_pair().first};
+  }
+
+  [[nodiscard]] task<io::any_stream> connect(std::string_view host, std::uint16_t) const {
+    return connected(reads_when_gone{host, seen});
+  }
+
+  [[nodiscard]] io::any_listener listen(std::string, std::uint16_t) const {
+    static int accepts = 0;
+
+    return io::any_listener{idle_listener{&accepts}};
+  }
+};
+
+static_assert(io::Network<remembering_network>);
+
+} // namespace
+
+TEST_CASE("network_ref: what it is given outlives the connection's frame, run or not", "[io][network]") {
+  std::string const host(64, 'x');
+
+  for (auto const run_it : {false, true}) {
+    std::string seen;
+    remembering_network const network{&seen};
+
+    {
+      auto connecting = io::network_ref{network}.connect(host, 80);
+
+      if (run_it) {
+        auto const connected = quoll::test::run(std::move(connecting));
+
+        REQUIRE(connected.has_value());
+      }
+    }
+
+    REQUIRE(seen == host);
+  }
+}
+
 TEST_CASE("network_ref and tls_network_ref: the network is used at the call, and may go before the task runs",
           "[io][network]") {
   auto calls = 0;
@@ -428,7 +498,9 @@ TEST_CASE("network_ref and tls_network_ref: the network is used at the call, and
   }();
 
   REQUIRE(calls == 1);
-  REQUIRE(quoll::test::run(std::move(connecting)).has_value());
+  auto const connected = quoll::test::run(std::move(connecting));
+
+  REQUIRE(connected.has_value());
 
   auto encrypting = [&] {
     calling_network const network{&calls};
@@ -437,5 +509,7 @@ TEST_CASE("network_ref and tls_network_ref: the network is used at the call, and
   }();
 
   REQUIRE(calls == 2);
-  REQUIRE(quoll::test::run(std::move(encrypting)).has_value());
+  auto const encrypted = quoll::test::run(std::move(encrypting));
+
+  REQUIRE(encrypted.has_value());
 }

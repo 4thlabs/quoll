@@ -104,7 +104,7 @@ private:
         auto kept = std::make_unique<std::string>(std::move(host));
         auto connecting = static_cast<N const *>(network)->connect(*kept, port);
 
-        return detail::keeping(std::move(kept), std::move(connecting));
+        return detail::keeping(detail::kept_connection{std::move(kept), std::move(connecting)});
       },
       [](void const *network, std::string address, std::uint16_t port) {
         return static_cast<N const *>(network)->listen(std::move(address), port);

@@ -45,12 +45,19 @@
 
 namespace quoll::io::detail {
 
-// `connecting`, with what it was given kept until it has ended: a network may take a view of it, in a coroutine that
-// only starts later. On the heap, for what `connecting` refers to not to move. It goes after `connecting`, its
-// parameters being destroyed in reverse order.
+// A connection's task, and what it was given: a network may take a view of it, in a coroutine that only starts later,
+// and refer to it until its frame goes. The members go in reverse order, the task first, which the parameters of a
+// coroutine do not promise: GCC 13 destroys them in another. On the heap, for what the task refers to not to move.
 template <class Kept>
-[[nodiscard]] async::task<any_stream> keeping(std::unique_ptr<Kept> kept, async::task<any_stream> connecting) {
-  co_return co_await std::move(connecting);
+struct kept_connection {
+  std::unique_ptr<Kept> kept;
+  async::task<any_stream> connecting;
+};
+
+// The task of `owned`, its arguments kept until it has ended, or until it goes without having run.
+template <class Kept>
+[[nodiscard]] async::task<any_stream> keeping(kept_connection<Kept> owned) {
+  co_return co_await std::move(owned.connecting);
 }
 
 } // namespace quoll::io::detail

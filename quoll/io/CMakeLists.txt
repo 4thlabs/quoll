@@ -5,6 +5,7 @@ quoll_declare_module(
     src/any_stream.cpp
     src/error.cpp
     src/network.cpp
+    src/sound_read.cpp
   DEPS
     quoll::async
 )

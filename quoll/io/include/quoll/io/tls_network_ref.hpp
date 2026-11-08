@@ -115,7 +115,7 @@ private:
         auto kept = std::make_unique<tls_connection_arguments>(std::move(host), options);
         auto connecting = static_cast<N const *>(network)->connect_tls(kept->host, port, kept->options);
 
-        return detail::keeping(std::move(kept), std::move(connecting));
+        return detail::keeping(detail::kept_connection{std::move(kept), std::move(connecting)});
       },
       [](void const *network, std::string address, std::uint16_t port, tls_server_options const &options) {
         return static_cast<N const *>(network)->listen_tls(std::move(address), port, options);
