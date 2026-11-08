@@ -711,8 +711,9 @@ For now this is a plugin of the sample `samples/ui_notes`, driven by Vite; [step
 - **No sockets in the browser.** Outgoing HTTP uses the `http_transport` concept implemented with `fetch`; there is no
   server in the browser (WASI later).
 - **Threads are optional.** The core (`async`, `http`, `rest`, `ui`) must not require `std::thread`, `std::jthread` or
-  blocking waits; threads only live in the thread pool adapter (`quoll::threads`). Never `sync_wait` on the browser main
-  thread.
+  blocking waits; threads live in the adapters: the asio runtime on several threads (`runtime_options::threads`, each
+  executor a strand, each connection on one of its own, through `async::strands_ref`), and the thread pool. Never
+  `sync_wait` on the browser main thread.
 - **Exceptions**: build with `-fwasm-exceptions`; keep hot paths on error codes / `results`.
 - Every module builds under Emscripten in CI and runs its tests there (headless Node runner), except the thread pool
   tests: the CI build has no pthreads.

@@ -109,8 +109,7 @@ not be the same class:
 | Name                                                 | What it is                                                                                                        |
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `runtime.context()`                                  | The `io_context` of the runtime                                                                                   |
-| `quoll::asio::executor<>`                            | An executor over any asio executor, an `io_context` or a strand, which is also its network, timer and TLS network |
-|                                                      | It needs one handler at a time; with `true` as its second argument, each socket, acceptor and timer it makes is on a strand of its own, for an `io_context` run by several threads |
+| `quoll::asio::executor<>`                            | An executor over any asio executor, an `io_context` or a strand, which is also its network, timer and TLS network. Its I/O objects need one handler at a time: with `object_strands::own`, each is on a strand of its own, for an `io_context` run by several threads |
 | `quoll::asio::tcp_stream`, `quoll::asio::tls_stream` | Streams over asio sockets                                                                                         |
 | `quoll::asio::connector`                             | A connector opening TCP connections on an asio executor                                                           |
 | `quoll::asio::acceptor`, `quoll::asio::tls_acceptor` | Listeners over an asio acceptor                                                                                   |

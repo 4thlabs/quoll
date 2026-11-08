@@ -81,6 +81,9 @@
 
 namespace quoll::asio {
 
+/** @brief Where an executor's sockets, acceptors and timers run: on its executor, or each on a strand of its own. */
+enum class object_strands : bool { shared, own };
+
 /**
  * @brief Executor resuming coroutines on an asio executor: an io_context, a strand, any_io_executor.
  *
@@ -108,12 +111,12 @@ public:
   using services = detail::loop_services;
 
   /**
-   * @brief Over `inner`. With `strand_per_object`, each socket, acceptor and timer it makes is on a strand of its own,
+   * @brief Over `inner`. With object_strands::own, each socket, acceptor and timer it makes is on a strand of its own,
    * for an execution context run by several threads: asio's I/O objects need one handler at a time.
    */
-  explicit executor(AsioExecutor inner,
-                    bool strand_per_object = false) noexcept(std::is_nothrow_move_constructible_v<AsioExecutor>)
-      : inner_(std::move(inner)), strand_per_object_(strand_per_object) {}
+  explicit executor(AsioExecutor inner, object_strands strands = object_strands::shared) noexcept(
+      std::is_nothrow_move_constructible_v<AsioExecutor>)
+      : inner_(std::move(inner)), strand_per_object_(strands == object_strands::own) {}
 
   void post(async::work_item &item) const { ::asio::post(inner_, resumer{&item}); }
 

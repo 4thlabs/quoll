@@ -49,7 +49,7 @@ struct runtime_options {
   /**
    * @brief The threads running the loop, the calling one included. 1, the default, runs everything on it, with nothing
    * to pay for. More run a program's tasks in parallel: each executor of the runtime is then a strand, and a server
-   * runs each connection on one of its own (see Strands).
+   * runs each connection on one of its own (see Strands). 0 is 1.
    */
   std::size_t threads = 1;
 };

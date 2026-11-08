@@ -1090,6 +1090,106 @@ task<int> call_many(std::uint16_t port, int requests) {
 
 } // namespace
 
+namespace {
+
+// Arrives, then waits up to two seconds for `expected` tasks to have arrived, blocking its thread: they meet only if
+// they run at once, on threads of their own.
+task<bool> meet(std::atomic<int> &arrived, int expected) {
+  ++arrived;
+
+  auto const deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+
+  while (arrived.load() < expected && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+
+  co_return arrived.load() >= expected;
+}
+
+} // namespace
+
+TEST_CASE("asio::runtime on several threads runs tasks of different executors at once", "[asio][runtime][threads]") {
+  quoll::asio::runtime runtime{quoll::async::runtime_options{.threads = 2}};
+  std::atomic<int> arrived{0};
+  std::atomic<int> met{0};
+
+  for (int task_index = 0; task_index < 2; ++task_index) {
+    co_spawn(runtime.get_executor(), meet(arrived, 2),
+             overloaded{[&met](bool together) { met += together ? 1 : 0; }, [](std::exception_ptr) {}});
+  }
+
+  runtime.run();
+
+  REQUIRE(met == 2);
+}
+
+TEST_CASE("asio::runtime on several threads: http::server::listen and its clients, through the runtime's network",
+          "[asio][runtime][threads][server]") {
+  quoll::asio::runtime runtime{quoll::async::runtime_options{.threads = 4}};
+  auto const port = quoll::test::free_port();
+  http::router router;
+
+  router.get("/hello", [](http::request) {
+    http::response response;
+
+    response.body = "hello";
+    return response;
+  });
+  router.post("/echo", [](http::request request) {
+    http::response response;
+
+    response.body = std::move(request.body);
+    return response;
+  });
+
+  constexpr int clients = 8;
+  std::stop_source server_stop;
+  std::atomic<int> right{0};
+  std::atomic<int> ended{0};
+  std::atomic<int> failures{0};
+
+  co_spawn(runtime.get_executor(), http::server{router}.listen(port),
+           overloaded{[] {}, [&failures](std::exception_ptr) { ++failures; }}, server_stop.get_token());
+
+  auto const calling = [](std::uint16_t to) -> task<int> {
+    // Until the server listens: it starts on another thread.
+    for (int attempt = 0;; ++attempt) {
+      try {
+        co_return co_await call_many(to, 4);
+      } catch (std::system_error const &) {
+        if (attempt == 50) {
+          throw;
+        }
+      }
+
+      co_await quoll::async::sleep_for(std::chrono::milliseconds{20});
+    }
+  };
+
+  for (int client = 0; client < clients; ++client) {
+    co_spawn(runtime.get_executor(), calling(port),
+             overloaded{[&](int counted) {
+                          right += counted;
+
+                          if (++ended == clients) {
+                            server_stop.request_stop();
+                          }
+                        },
+                        [&](std::exception_ptr) {
+                          ++failures;
+
+                          if (++ended == clients) {
+                            server_stop.request_stop();
+                          }
+                        }});
+  }
+
+  runtime.run();
+
+  REQUIRE(failures == 0);
+  REQUIRE(right == clients * 4 * 2);
+}
+
 TEST_CASE("asio::runtime on several threads: the tasks of one executor take turns", "[asio][runtime][threads]") {
   quoll::asio::runtime runtime{quoll::async::runtime_options{.threads = 4}};
   std::atomic<int> total{0};
@@ -1188,8 +1288,10 @@ TEST_CASE("asio::runtime on several threads: serve(executor, listener) keeps eve
   std::atomic<int> right{0};
   std::atomic<int> ended{0};
   // Handed over, not kept: an executor kept here would keep run() running.
+  std::atomic<int> failures{0};
+
   co_spawn(runtime.get_executor(), http::server{router}.serve(runtime.get_executor(), std::move(acceptor)),
-           overloaded{[] {}, [](std::exception_ptr) {}}, server_stop.get_token());
+           overloaded{[] {}, [&failures](std::exception_ptr) { ++failures; }}, server_stop.get_token());
 
   for (int client = 0; client < clients; ++client) {
     co_spawn(runtime.get_executor(), call_many(port, 4),
@@ -1201,6 +1303,8 @@ TEST_CASE("asio::runtime on several threads: serve(executor, listener) keeps eve
                           }
                         },
                         [&](std::exception_ptr) {
+                          ++failures;
+
                           if (++ended == clients) {
                             server_stop.request_stop();
                           }
@@ -1209,7 +1313,9 @@ TEST_CASE("asio::runtime on several threads: serve(executor, listener) keeps eve
 
   runtime.run();
 
-  // call_many sends a POST to /echo too, which this router answers 404: the GETs alone count.
+  // call_many sends a POST to /echo too, which this router answers 404: the GETs alone are right.
+  REQUIRE(failures == 0);
+  REQUIRE(right == clients * 4);
   REQUIRE(served == clients * 4);
 }
 

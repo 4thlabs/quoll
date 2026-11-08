@@ -72,7 +72,7 @@ public:
   runtime() = default;
 
   /** @brief As a native one is built: the browser runs one thread, whatever `options` ask. */
-  explicit runtime(async::runtime_options options) noexcept { static_cast<void>(options); }
+  explicit runtime(async::runtime_options options) noexcept;
 
   runtime(runtime const &) = delete;
   runtime(runtime &&) = delete;

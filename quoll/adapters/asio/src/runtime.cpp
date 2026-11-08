@@ -51,6 +51,7 @@
 #include <array>
 #include <csignal>
 #include <cstddef>
+#include <exception>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -199,7 +200,7 @@ struct runtime::state {
   explicit state(async::runtime_options options)
       : threads(options.threads == 0 ? 1 : options.threads),
         context(static_cast<int>(std::min<std::size_t>(threads, std::numeric_limits<int>::max()))),
-        loop(context.get_executor(), threads > 1) {}
+        loop(context.get_executor(), threads > 1 ? object_strands::own : object_strands::shared) {}
 
   std::size_t threads;
   // A hint of 1 lets asio leave out its locks, for one thread.
@@ -346,16 +347,27 @@ void runtime::run() {
 
   state_->context.restart();
 
-  // The others run the loop beside this thread, and are joined before it returns.
+  // The others run the loop beside this thread, and are joined before it returns. One the system refuses leaves the
+  // work to those started and to this one: the tasks still end, and the failure goes on after.
   std::vector<std::jthread> others;
+  std::exception_ptr refused;
 
-  others.reserve(state_->threads - 1);
+  try {
+    others.reserve(state_->threads - 1);
 
-  for (std::size_t index = 1; index < state_->threads; ++index) {
-    others.emplace_back([this] { state_->context.run(); });
+    for (std::size_t index = 1; index < state_->threads; ++index) {
+      others.emplace_back([this] { state_->context.run(); });
+    }
+  } catch (...) {
+    refused = std::current_exception();
   }
 
   state_->context.run();
+  others.clear();
+
+  if (refused) {
+    std::rethrow_exception(refused);
+  }
 }
 
 ::asio::io_context &runtime::context() noexcept { return state_->context; }
