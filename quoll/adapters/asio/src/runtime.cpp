@@ -104,8 +104,8 @@ inline void set_action(int number, signal_action const &action) noexcept { ::sig
 class stop_signals {
 public:
   // On a strand of its own: its handler and release() may otherwise run on two threads of the loop at once.
-  stop_signals(::asio::io_context &context, std::stop_source &stop)
-      : signals_(::asio::make_strand(context)), stop_(&stop) {
+  stop_signals(::asio::strand<::asio::io_context::executor_type> const &strand, std::stop_source &stop)
+      : signals_(strand), stop_(&stop) {
     try {
       for (std::size_t index = 0; index < numbers.size(); ++index) {
         saved_[index] = current_action(numbers[index]);
@@ -122,9 +122,10 @@ public:
     }
 
     signals_.async_wait([this](std::error_code error, int) {
+      // The former actions back first: a task the stop wakes, on another thread, then finds them.
       if (!error) {
-        stop_->request_stop();
         release();
+        stop_->request_stop();
       }
     });
   }
@@ -137,9 +138,6 @@ public:
   ~stop_signals() { release(); }
 
   [[nodiscard]] bool released() const noexcept { return released_; }
-
-  // Where release() runs while the loop does: the strand of its handler.
-  [[nodiscard]] ::asio::any_io_executor executor() { return signals_.get_executor(); }
 
   void release() noexcept {
     if (released_) {
@@ -210,6 +208,8 @@ struct runtime::state {
   // acceptors and timers are each on a strand of their own on several threads.
   asio::executor<::asio::io_context::executor_type> loop;
   detail::runtime_strands strands{this};
+  // Where the signals wait, and what touches them while the loop runs.
+  ::asio::strand<::asio::io_context::executor_type> signals_strand{::asio::make_strand(context)};
   std::stop_source stop;
   std::optional<stop_signals> signals;
   async::detail::synchronized<std::weak_ptr<void>> work;
@@ -243,12 +243,9 @@ public:
       }
     };
 
-    // On the strand of the signals' handler, which may run at the same time on another thread.
-    if (state_->signals) {
-      ::asio::post(state_->signals->executor(), release);
-    } else {
-      ::asio::post(state_->context, release);
-    }
+    // On the strand of the signals' handler, which may run at the same time on another thread: the runtime's, which
+    // does not change, as the signals themselves may be made again by get_stop_token().
+    ::asio::post(state_->signals_strand, release);
   }
 
 private:
@@ -335,7 +332,7 @@ std::stop_token runtime::get_stop_token() {
 
   if (!state_->signals || state_->signals->released()) {
     state_->signals.reset();
-    state_->signals.emplace(state_->context, state_->stop);
+    state_->signals.emplace(state_->signals_strand, state_->stop);
   }
 
   return state_->stop.get_token();
