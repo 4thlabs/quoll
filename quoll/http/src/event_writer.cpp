@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/http/detail/one_at_a_time.hpp>
 #include <quoll/http/event_writer.hpp>
 #include <quoll/http/format_event.hpp>
 
@@ -50,12 +51,14 @@ event_writer::event_writer(response_writer out) : out_(std::move(out)) {
     throw std::logic_error{"quoll::http::event_writer: a response_writer whose head is given, or moved from"};
   }
 
-  // A handler's own, with a charset say, stays.
+  // A handler's own, a charset say, stays.
   if (!out_.fields.contains("Content-Type")) {
     out_.fields.set("Content-Type", "text/event-stream");
   }
 
-  out_.fields.set("X-Accel-Buffering", "no");
+  if (!out_.fields.contains("X-Accel-Buffering")) {
+    out_.fields.set("X-Accel-Buffering", "no");
+  }
 }
 
 // An empty piece sends the head.
@@ -73,22 +76,7 @@ async::task<> event_writer::write(std::string text) {
   // The task's own: `this` is not used once it waits, as the writer may move meanwhile.
   auto const busy = busy_;
 
-  if (busy->exchange(true)) {
-    throw std::logic_error{"quoll::http::event_writer: an operation while another is pending"};
-  }
-
-  struct release {
-    explicit release(std::atomic<bool> &flag) noexcept : of(&flag) {}
-
-    release(release const &) = delete;
-    release &operator=(release const &) = delete;
-    release(release &&) = delete;
-    release &operator=(release &&) = delete;
-
-    ~release() { of->store(false); }
-
-    std::atomic<bool> *of;
-  } const done{*busy};
+  detail::one_at_a_time const operation{*busy, "quoll::http::event_writer: an operation while another is pending"};
 
   co_await out_.write(text);
 }

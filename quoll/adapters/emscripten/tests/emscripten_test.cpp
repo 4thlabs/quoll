@@ -832,7 +832,8 @@ TEST_CASE("http::client through fetch: stream completes before the body, and han
   REQUIRE(run(next_piece(response.body)) == std::nullopt);
 }
 
-TEST_CASE("event_reader through fetch: events as they come, cut anywhere", "[emscripten][stream][sse]") {
+TEST_CASE("event_reader through fetch: events as they come, written in the middle of a field and of a CRLF",
+          "[emscripten][stream][sse]") {
   test_server const server;
   auto const response = run(stream_target(http::client{server.url()}, "/open"));
   http::event_reader events{response.body};
@@ -840,7 +841,8 @@ TEST_CASE("event_reader through fetch: events as they come, cut anywhere", "[ems
   server_writes("id: 1\ndata: first\n\n");
   REQUIRE(run(events.next()) == http::server_sent_event{.data = "first", .id = "1"});
 
-  // Cut in the middle of a field, and of a CRLF, each piece let through on its own.
+  // Written in the middle of a field, and of a CRLF: how fetch hands them over is its own, the parser's tests cut
+  // every input a byte at a time.
   server_writes("event: add\r\ndata: sec");
   emscripten_sleep(20);
   server_writes("ond\r");

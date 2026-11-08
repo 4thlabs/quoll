@@ -309,7 +309,7 @@ router.get("/feed", [](http::response_writer out) -> async::task<> {
 });
 ```
 
-It sets `Content-Type: text/event-stream`, unless the handler set one, and `X-Accel-Buffering: no`, which tells a proxy such as nginx
+It sets `Content-Type: text/event-stream` and `X-Accel-Buffering: no`, unless the handler set them, which tells a proxy such as nginx
 to pass each event on as it comes. A status and other fields, a `Cache-Control: no-store` say, go on the
 `response_writer` before it is given, with nothing written through it yet: it throws `std::logic_error`
 otherwise. `open()` sends the head at once, so that a client sees the stream before there is anything to
@@ -346,7 +346,7 @@ long the stream asked to wait first, at most a day. The reader does not connect 
 | Text is not UTF-8                         | Read with U+FFFD in its place, as a browser does. `send()` throws `std::invalid_argument` for it.                                                                                                                                         |
 | An event is larger than the reader holds  | 1 MiB by default, its data and type, or its data with the line being read: `next()` throws `http::error::event_too_large`, and goes on throwing. An id longer than 1 KiB once read is ignored: the last ID stays, and the stream goes on. |
 | The stream ends in the middle of an event | That event is not one, as for a browser.                                                                                                                                                                                                  |
-| A type or an id holds a line break        | `send()` throws `std::invalid_argument`, before anything leaves, as the line would end there. So does an id holding a NUL, or longer than 1 KiB, and a `comment()` with a line break.                                                     |
+| A type or an id holds a line break        | `send()` throws `std::invalid_argument`, before anything leaves, as the line would end there. So does an id holding a NUL, or longer than 1 KiB, and a `comment()` with a line break or text that is not UTF-8.                                                     |
 | The server is stopped                     | It waits for a stream as for any request under way, up to `shutdown_timeout`, then stops what the handler awaits: a stream waiting for changes ends then.                                                                                 |
 | The peer is gone                          | `send()` throws, as `response_writer::write()` does, which ends the handler.                                                                                                                                                              |
 

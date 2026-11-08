@@ -65,7 +65,7 @@ namespace quoll::http {
  * });
  * @endcode
  *
- * It sets `Content-Type: text/event-stream`, unless the handler set one, and `X-Accel-Buffering: no`, which tells a
+ * It sets `Content-Type: text/event-stream` and `X-Accel-Buffering: no`, unless the handler set them, which tells a
  * proxy such as nginx to pass each event on as it comes rather than hold them. A `Cache-Control` is left to the handler
  * or a middleware: set here, it would replace a middleware's. Status and other fields are set on the response_writer
  * before it is given, with nothing written through it yet. The head leaves with open(), or the first event: open() at

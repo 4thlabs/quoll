@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/http/detail/one_at_a_time.hpp>
 #include <quoll/http/event_reader.hpp>
 
 #include <stdexcept>
@@ -58,23 +59,7 @@ async::task<std::optional<server_sent_event>> event_reader::read_next(std::share
     co_return std::nullopt;
   }
 
-  if (reading->reading.exchange(true)) {
-    throw std::logic_error{"quoll::http::event_reader: next() while another is pending"};
-  }
-
-  // Cleared on every way out, a throw or the frame destroyed while it waits included.
-  struct done {
-    explicit done(state *reader) noexcept : of(reader) {}
-
-    done(done const &) = delete;
-    done &operator=(done const &) = delete;
-    done(done &&) = delete;
-    done &operator=(done &&) = delete;
-
-    ~done() { of->reading = false; }
-
-    state *of;
-  } const clear{reading.get()};
+  detail::one_at_a_time const operation{reading->reading, "quoll::http::event_reader: next() while another is pending"};
 
   for (;;) {
     if (auto event = reading->parser.next()) {

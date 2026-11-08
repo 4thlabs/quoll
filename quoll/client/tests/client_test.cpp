@@ -4188,7 +4188,7 @@ TEST_CASE("event_reader: the events an event_writer sends, as they come", "[clie
   REQUIRE_FALSE(got->error);
 }
 
-TEST_CASE("event_reader: events cut anywhere, and one the stream does not end", "[client][sse]") {
+TEST_CASE("event_reader: events written a byte at a time, and one the stream does not end", "[client][sse]") {
   auto const router = make_event_router();
   async::run_loop loop;
   memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
@@ -4357,7 +4357,9 @@ TEST_CASE("event_reader: one moved from reads nothing, and has no id nor retry",
     bool const empty = !nothing && events.last_event_id().empty() && !events.retry();
     // NOLINTEND(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
 
-    co_return first &&empty &&moved.last_event_id() == "1" && moved.retry() == 2s;
+    bool const kept = moved.last_event_id() == "1" && moved.retry() == 2s;
+
+    co_return first.has_value() && empty &&kept;
   };
 
   REQUIRE(quoll::test::run(loop, reading()) == true);

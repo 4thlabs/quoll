@@ -55,6 +55,7 @@ quoll_declare_module(
 quoll_declare_tests(
   SOURCES
     tests/event_parser_test.cpp
+    tests/event_reader_test.cpp
     tests/fields_test.cpp
     tests/format_event_test.cpp
     tests/parser_test.cpp

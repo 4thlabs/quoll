@@ -37,7 +37,6 @@
 #ifndef QUOLL_HTTP_EVENT_READER_HPP
 #define QUOLL_HTTP_EVENT_READER_HPP
 
-#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/event_parser.hpp>
 #include <quoll/http/response_body.hpp>
@@ -76,7 +75,9 @@ namespace quoll::http {
  * event_parser), and reading ends there.
  *
  * Moved, not copied: copies would share the body, not the events read from it. What it reads lives with the task of
- * next() too, so that the reader may be moved, or go, while one is pending. Thread safety: one next() at a time.
+ * next() too, so that the reader may be moved, or go, while one is pending. Thread safety: one next() at a time, a
+ * second throws; last_event_id() and retry() not while one is pending, from another thread, as it changes what they
+ * read.
  */
 class event_reader {
 public:
