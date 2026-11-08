@@ -42,9 +42,11 @@
 #include <quoll/client/client.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
+#include <quoll/http/streaming_transport.hpp>
 #include <quoll/http/transport.hpp>
 #include <quoll/rest/call_error.hpp>
 #include <quoll/rest/detail/client_calls.hpp>
+#include <quoll/rest/detail/client_events.hpp>
 #include <quoll/rest/detail/client_request.hpp>
 #include <quoll/rest/detail/client_response.hpp>
 #include <quoll/rest/detail/type_list.hpp>
@@ -77,7 +79,13 @@ using result = detail::call_result<Endpoint>;
  *   does not decode.
  * - `try_call<Endpoint>(arguments...)` returns a task of result<Endpoint>: a reply<Endpoint> holding the declared
  *   response received, or an unexpected_response.
- * - Transport failures (network, cancellation) are exceptions from both tasks (std::system_error). Over a
+ * - `subscribe<Endpoint>(arguments...)`, for an endpoint with events<T>, returns a task of rest::event_stream<T>, once
+ *   the head of a `text/event-stream` has come: its events as they come. Any other answer throws call_error from the
+ *   task, as from call, with its body read up to 64 KiB. It needs a transport that gives a response as its head comes
+ *   (`stream()`: http::client, not http::local_transport), and it goes straight through it, credentials applied.
+ *   Interceptors take whole responses: on a client with any, it throws std::logic_error at the call, rather than go
+ *   out without what they add.
+ * - Transport failures (network, cancellation) are exceptions from the tasks (std::system_error). Over a
  *   http::local_transport, so is what a service throws, as there is no connection to answer 500.
  *
  * The arguments are those of the endpoint, in its order: path parameters (prefixes first), then the argument parts,
@@ -212,6 +220,8 @@ private:
 
   template <class Endpoint>
   [[nodiscard]] async::task<typename detail::call_value<Endpoint>::type> call_with(arguments<Endpoint> args) const {
+    static_assert(!detail::has_events<Endpoint>, "quoll::rest::client::call: the endpoint answers events<>: subscribe");
+
     using route = typename Api::template route<Endpoint>;
 
     return detail::receive_value<route>(send(detail::build_request<route>(args, credentials_)));
@@ -219,9 +229,43 @@ private:
 
   template <class Endpoint>
   [[nodiscard]] async::task<result<Endpoint>> try_call_with(arguments<Endpoint> args) const {
+    static_assert(!detail::has_events<Endpoint>,
+                  "quoll::rest::client::try_call: the endpoint answers events<>: subscribe");
+
     using route = typename Api::template route<Endpoint>;
 
     return detail::receive<route>(send(detail::build_request<route>(args, credentials_)));
+  }
+
+  // `auto`, so that an endpoint without events<> meets the static_assert, not a failure to name what it returns.
+  template <class Endpoint>
+  [[nodiscard]] auto subscribe_with(arguments<Endpoint> args) const {
+    static_assert(detail::has_events<Endpoint>,
+                  "quoll::rest::client::subscribe: the endpoint has no events<>, call it");
+    static_assert(http::StreamingTransport<Transport>,
+                  "quoll::rest::client::subscribe: the transport gives no response as its head comes (no stream())");
+
+    if constexpr (detail::has_events<Endpoint> && http::StreamingTransport<Transport>) {
+      // Interceptors take whole responses: rather than go out without what they add, a token say, it refuses.
+      if (interception_) {
+        throw std::logic_error{"quoll::rest::client::subscribe: a client with interceptors, which take whole "
+                               "responses: subscribe through one without them"};
+      }
+
+      using route = typename Api::template route<Endpoint>;
+
+      auto request = detail::build_request<route>(args, credentials_);
+
+      // One the contract declares stays, a third-party API's own media type say, and then the answer's is not checked:
+      // the API says what its stream is.
+      bool const declared = request.fields.contains("Accept");
+
+      if (!declared) {
+        request.fields.set("Accept", "text/event-stream");
+      }
+
+      return detail::open_events<route>(transport_, std::move(request), !declared);
+    }
   }
 
   [[nodiscard]] static std::string without_trailing_slash(std::string url) {

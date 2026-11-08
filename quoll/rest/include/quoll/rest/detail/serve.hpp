@@ -38,8 +38,10 @@
 #define QUOLL_REST_DETAIL_SERVE_HPP
 
 #include <quoll/async/task.hpp>
+#include <quoll/http/body_stream.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
+#include <quoll/http/response_writer.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/rest/credential.hpp>
@@ -49,8 +51,10 @@
 #include <quoll/rest/detail/response_value.hpp>
 #include <quoll/rest/detail/scheme_traits.hpp>
 #include <quoll/rest/detail/type_list.hpp>
+#include <quoll/rest/event_sink.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/http_error.hpp>
+#include <quoll/rest/problem.hpp>
 #include <quoll/rest/query.hpp>
 #include <quoll/rest/reply.hpp>
 #include <quoll/rest/security.hpp>
@@ -58,11 +62,13 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <concepts>
 #include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -234,16 +240,17 @@ struct exactly {
 };
 
 // The service for an endpoint: the one taking it and exactly its arguments, by value or by reference.
-template <class Endpoint, class... Arguments, class... Services>
+// `Extra`, given as is after the arguments: the sink of an endpoint with events<>.
+template <class Endpoint, class... Extra, class... Arguments, class... Services>
 [[nodiscard]] consteval std::size_t service_index(std::tuple<Arguments...> const *, type_list<Services...>) {
-  return first_true(
-      std::array<bool, sizeof...(Services)>{std::is_invocable_v<Services &, Endpoint, exactly<Arguments>...>...});
+  return first_true(std::array<bool, sizeof...(Services)>{
+      std::is_invocable_v<Services &, Endpoint, exactly<Arguments>..., Extra...>...});
 }
 
-template <class Endpoint, class... Arguments, class... Services>
+template <class Endpoint, class... Extra, class... Arguments, class... Services>
 [[nodiscard]] consteval std::size_t service_count(std::tuple<Arguments...> const *, type_list<Services...>) {
-  return count_true(
-      std::array<bool, sizeof...(Services)>{std::is_invocable_v<Services &, Endpoint, exactly<Arguments>...>...});
+  return count_true(std::array<bool, sizeof...(Services)>{
+      std::is_invocable_v<Services &, Endpoint, exactly<Arguments>..., Extra...>...});
 }
 
 template <class Route, class Validators, class... Services>
@@ -281,6 +288,10 @@ async::task<http::response> answer(mounted<Validators, Services...> &state, type
   }
 }
 
+// The sink the service of an endpoint with events<> sends through.
+template <class Endpoint>
+using sink_of = event_sink<typename events_part_of<Endpoint>::type, typename events_part_of<Endpoint>::codec>;
+
 // Whether an http_error is one: another status is a programming error, which goes on as any other exception.
 [[nodiscard]] constexpr bool answers_as_an_error(http::status status) noexcept {
   auto const code = static_cast<int>(status);
@@ -304,6 +315,111 @@ template <class Route>
   return response;
 }
 
+// What the arguments of a request are decoded from: for a stream, it lives as long as the stream, as they may point
+// into it.
+struct served_input {
+  http::request request;
+  http::route_match match;
+  std::optional<std::vector<query_entry>> query;
+};
+
+// What an events<> service can answer: an error (4xx or 5xx), as an http_error, its body a problem or none.
+template <class... Responses>
+[[nodiscard]] consteval bool errors_are_problems(type_list<Responses...>) {
+  return ((static_cast<int>(Responses::status) >= 400 &&
+           (std::is_void_v<typename Responses::type> || std::same_as<typename Responses::type, problem>)) &&
+          ...);
+}
+
+// The services taking an endpoint's arguments with no `Sink`, and not with one: those a stream would never call.
+template <class Endpoint, class Sink, class... Arguments, class... Services>
+[[nodiscard]] consteval std::size_t services_without_sink(std::tuple<Arguments...> const *, type_list<Services...>) {
+  return count_true(std::array<bool, sizeof...(Services)>{
+      (std::is_invocable_v<Services &, Endpoint, exactly<Arguments>...> &&
+       !std::is_invocable_v<Services &, Endpoint, exactly<Arguments>..., Sink>)...});
+}
+
+// The arguments of a stream, and whether it has run: it runs once, as a handler writing its response does.
+template <class Arguments>
+struct held_arguments {
+  // Declared first: destroyed after the arguments, which may point into it.
+  std::shared_ptr<served_input const> input;
+  Arguments values;
+  std::atomic_flag started;
+};
+
+// The stream of an endpoint with events<>: its service, given a sink over the response, run as the response's writer,
+// after the router has answered. An http_error before the stream starts answers as from any service; after, it cuts the
+// stream, as any failure of a writer does. What it reads is held here: the arguments, and the state of the services.
+template <class Route, class Validators, class... Services>
+[[nodiscard]] async::task<> stream_events(std::shared_ptr<mounted<Validators, Services...>> state,
+                                          std::shared_ptr<held_arguments<typename Route::arguments>> held,
+                                          http::body_stream out) {
+  if (held->started.test_and_set()) {
+    throw std::logic_error{"quoll::rest::mount: the stream of a response run again"};
+  }
+
+  using endpoint = typename Route::endpoint;
+  using sink_type = sink_of<endpoint>;
+  using arguments_type = typename Route::arguments;
+  constexpr arguments_type const *signature = nullptr;
+  constexpr auto index = service_index<endpoint, sink_type &>(signature, type_list<Services...>{});
+
+  static_assert(index < sizeof...(Services), "quoll::rest::mount: no service has an operator()(Endpoint, arguments..., "
+                                             "event_sink<T> &) for an endpoint of the api with events<>");
+  // One service: a second one taking no sink counts too, which would never be called, but not the same one twice.
+  static_assert(service_count<endpoint, sink_type &>(signature, type_list<Services...>{}) +
+                        services_without_sink<endpoint, sink_type &>(signature, type_list<Services...>{}) ==
+                    1,
+                "quoll::rest::mount: more than one service takes an endpoint of the api");
+
+  auto &service = std::get<index>(state->services);
+  sink_type sink{http::response_writer{out}};
+  auto call = [&] {
+    return std::apply([&](auto &...each) { return std::invoke(service, endpoint{}, std::move(each)..., sink); },
+                      held->values);
+  };
+
+  static_assert(std::same_as<decltype(call()), async::task<>>,
+                "quoll::rest::mount: the service of an endpoint with events<> returns a task<>");
+  // Its errors are thrown, as http_error, which answers a problem: a body of another type it could not send.
+  static_assert(
+      errors_are_problems(typename Route::responses{}),
+      "quoll::rest::mount: an endpoint with events<> declares its errors as 4xx or 5xx, a problem or no body");
+
+  std::optional<http::response> refused;
+
+  try {
+    co_await call();
+  } catch (http_error const &error) {
+    if (!answers_as_an_error(error.status()) || sink.started()) {
+      throw;
+    }
+
+    refused = error_response<Route>(error);
+  }
+
+  if (refused) {
+    co_await event_sink_access::answer(sink, std::move(*refused));
+  } else {
+    // A stream with no event is still one: its head, so that a client reads it as such, and its end.
+    co_await event_sink_access::finish(sink);
+  }
+}
+
+// The answer of an endpoint with events<>: its stream, run once the router has answered.
+template <class Route, class State>
+[[nodiscard]] http::response events_response(std::shared_ptr<State> state, std::shared_ptr<served_input const> input,
+                                             typename Route::arguments arguments) {
+  auto held = std::make_shared<held_arguments<typename Route::arguments>>(std::move(input), std::move(arguments));
+  http::response response;
+
+  response.late_head_writer = [state = std::move(state), held = std::move(held)](http::body_stream out) {
+    return stream_events<Route>(state, held, out);
+  };
+  return response;
+}
+
 // Whether a route reads the query: a query it makes nothing of, however it is written, is none of its business.
 template <class Part>
 inline constexpr bool reads_the_query = false;
@@ -322,43 +438,70 @@ template <class... Parts>
   return (reads_the_query<Parts> || ...);
 }
 
-// Serves a request routed to `Route`: credentials (401), arguments (400, 415), the service, its response. A service
-// throwing http_error with an error status answers it. Anything else goes on, as from any handler: a connection answers
-// 500 and tells on_handler_error, and a stop or a timeout reaches what waits for it.
-template <class Route, class State>
-async::task<http::response> serve(std::shared_ptr<State> state, http::request request, http::route_match match) {
+// One frame for a request, which holds what its arguments are decoded from: in it, or shared with the stream of an
+// endpoint with events<>, as they may point into it.
+template <class Route, class State, class Input>
+[[nodiscard]] async::task<http::response> serve_from(std::shared_ptr<State> state, Input input) {
+  // What `input` holds, as it is or behind the pointer of a stream.
+  auto &in = [&]() -> served_input & {
+    if constexpr (std::same_as<Input, served_input>) {
+      return input;
+    } else {
+      return *input;
+    }
+  }();
+
   try {
     constexpr auto reads_query =
         any_reads_the_query(typename Route::parts{}) || any_reads_the_query(typename Route::schemes{});
 
     // An invalid query string is reported after the credentials, which an api_key_query cannot then find.
+    in.query = reads_query ? parse_query(in.match.query) : std::optional{std::vector<query_entry>{}};
+
     std::vector<query_entry> const none;
-    auto const query = reads_query ? parse_query(match.query) : std::optional{none};
-    request_input const input{request, match, query ? *query : none};
+    request_input const request{in.request, in.match, in.query ? *in.query : none};
 
     if constexpr (Route::schemes::size > 0) {
-      if (auto refused = co_await check_security(typename Route::schemes{}, state->validators, input)) {
+      if (auto refused = co_await check_security(typename Route::schemes{}, state->validators, request)) {
         co_return std::move(*refused);
       }
     }
 
-    if (!query) {
+    if (!in.query) {
       co_return problem_response(http::status::bad_request, "invalid query string");
     }
 
-    auto arguments = decode_arguments<Route>(input);
+    auto arguments = decode_arguments<Route>(request);
 
     if (!arguments) {
       co_return problem_response(arguments.error().status, std::move(arguments.error().detail));
     }
 
-    co_return co_await answer<Route>(*state, std::move(*arguments));
+    if constexpr (has_events<typename Route::endpoint>) {
+      co_return events_response<Route>(state, std::move(input), std::move(*arguments));
+    } else {
+      co_return co_await answer<Route>(*state, std::move(*arguments));
+    }
   } catch (http_error const &error) {
     if (!answers_as_an_error(error.status())) {
       throw;
     }
 
     co_return error_response<Route>(error);
+  }
+}
+
+// Serves a request routed to `Route`: credentials (401), arguments (400, 415), the service, its response. A service
+// throwing http_error with an error status answers it. Anything else goes on, as from any handler: a connection answers
+// 500 and tells on_handler_error, and a stop or a timeout reaches what waits for it.
+template <class Route, class State>
+[[nodiscard]] async::task<http::response> serve(std::shared_ptr<State> state, http::request request,
+                                                http::route_match match) {
+  if constexpr (has_events<typename Route::endpoint>) {
+    return serve_from<Route>(std::move(state),
+                             std::make_shared<served_input>(std::move(request), std::move(match), std::nullopt));
+  } else {
+    return serve_from<Route>(std::move(state), served_input{std::move(request), std::move(match), std::nullopt});
   }
 }
 

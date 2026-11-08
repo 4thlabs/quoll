@@ -52,10 +52,10 @@ namespace quoll::rest {
  * @brief The endpoints of `Scope`, an api nested in the client's, with the parameters of the prefixes above them fixed:
  * what client::scope returns.
  *
- * `call<Endpoint>(arguments...)` and `try_call<Endpoint>(arguments...)` are those of the client, without the arguments
- * the scope fixes, for an endpoint of `Scope` only. It keeps a copy of the client as it was when it was made: its
- * transport, which an http::client shares with it, its credentials and its interceptors. Thread safety: as the
- * client's.
+ * `call<Endpoint>(arguments...)`, `try_call<Endpoint>(arguments...)` and `subscribe<Endpoint>(arguments...)` are those
+ * of the client, without the arguments the scope fixes, for an endpoint of `Scope` only. It keeps a copy of the client
+ * as it was when it was made: its transport, which an http::client shares with it, its credentials and its
+ * interceptors. Thread safety: as the client's.
  *
  * @code
  * auto repo = github.scope<github::repos::api>("4thlabs", "quoll");    // fixes {owner} and {repo}
@@ -119,6 +119,11 @@ private:
   template <class Endpoint>
   [[nodiscard]] auto try_call_with(arguments<Endpoint> args) const {
     return client_.template try_call_with<Endpoint>(std::tuple_cat(prefix_, std::move(args)));
+  }
+
+  template <class Endpoint>
+  [[nodiscard]] auto subscribe_with(arguments<Endpoint> args) const {
+    return client_.template subscribe_with<Endpoint>(std::tuple_cat(prefix_, std::move(args)));
   }
 
   Client client_;

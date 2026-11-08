@@ -66,7 +66,7 @@ struct endpoint {
   static_assert(!Name.view().empty(), "quoll::rest::endpoint: the name is empty");
   static_assert(detail::checked_path<Path>::valid);
   static_assert((detail::Part<Parts> && ...), "quoll::rest::endpoint: a part is not query<>, query_params<>, "
-                                              "header<>, body<>, returns<> or security<>");
+                                              "header<>, body<>, returns<>, events<> or security<>");
   static_assert(detail::count_bodies(detail::type_list<Parts...>{}) <= 1,
                 "quoll::rest::endpoint: more than one body<>");
   static_assert(detail::count_bodies(detail::type_list<Parts...>{}) == 0 ||
@@ -81,6 +81,13 @@ struct endpoint {
   static_assert(Method != http::verb::head || !detail::any_body_response(detail::type_list<Parts...>{}),
                 "quoll::rest::endpoint: a response to HEAD has no body");
 
+  static_assert(detail::count_events(detail::type_list<Parts...>{}) <= 1,
+                "quoll::rest::endpoint: more than one events<>");
+  static_assert(detail::count_events(detail::type_list<Parts...>{}) == 0 ||
+                    !detail::any_success_response(detail::type_list<Parts...>{}),
+                "quoll::rest::endpoint: an endpoint with events<> declares no other success, only error responses");
+  static_assert(detail::count_events(detail::type_list<Parts...>{}) == 0 || Method != http::verb::head,
+                "quoll::rest::endpoint: a response to HEAD has no events");
   using contract_category = detail::endpoint_category;
   using parts = detail::type_list<Parts...>;
 

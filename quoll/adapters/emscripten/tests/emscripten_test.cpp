@@ -65,6 +65,7 @@
 #include <quoll/rest/body.hpp>
 #include <quoll/rest/client.hpp>
 #include <quoll/rest/endpoint.hpp>
+#include <quoll/rest/events.hpp>
 #include <quoll/rest/header.hpp>
 #include <quoll/rest/returns.hpp>
 #include <quoll/rest/text_codec.hpp>
@@ -454,7 +455,10 @@ using echo = endpoint<"echo", http::verb::post, "/echo/{name}", header<"X-Test",
                       body<std::string, text_codec>, returns<std::string, http::status::ok, text_codec>>;
 using missing = endpoint<"missing", http::verb::get, "/status/404", returns<std::string, http::status::ok, text_codec>>;
 
-using api = quoll::rest::api<"", echo, missing>;
+// The events the test writes on the server's /events, as they come.
+using events = endpoint<"events", http::verb::get, "/events", quoll::rest::events<std::string, text_codec>>;
+
+using api = quoll::rest::api<"", echo, missing, events>;
 } // namespace node_server_api
 
 } // namespace
@@ -854,6 +858,25 @@ TEST_CASE("event_reader through fetch: events as they come, written in the middl
   quoll_test_server_end();
   REQUIRE(run(events.next()) == std::nullopt);
   REQUIRE(events.last_event_id() == "1");
+}
+
+TEST_CASE("rest::client through fetch: subscribe reads the events as the server writes them",
+          "[emscripten][rest][sse]") {
+  test_server const server;
+  quoll::rest::client<node_server_api::api> const client{server.url()};
+  auto stream = run(client.subscribe<node_server_api::events>());
+
+  server_writes("id: 1\ndata: one\n\n");
+  REQUIRE(run(stream.next()) == "one");
+
+  server_writes("data: tw");
+  emscripten_sleep(20);
+  server_writes("o\n\n");
+  REQUIRE(run(stream.next()) == "two");
+
+  quoll_test_server_end();
+  REQUIRE(run(stream.next()) == std::nullopt);
+  REQUIRE(stream.last_event_id() == "1");
 }
 
 TEST_CASE("http::client through fetch: stream gives several pieces, none larger than what was written at once",

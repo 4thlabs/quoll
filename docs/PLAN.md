@@ -201,6 +201,10 @@ document stays optional, for later.
   streamed `fetch` rather than `EventSource`, which takes no headers: an API with credentials could not use it.
 - WebSocket: the upgrade, frames, a client, the browser adapter, its shape in the DSL.
 
+SSE is done on 2026-11-09: the parser and its formatting, fuzzed (#123), `http::event_writer` and `http::event_reader`
+over the transports (#124), and `rest::events<T>`, its `event_sink` and the client's `subscribe`, natively and through
+`fetch`, run in Node by CI as the browser's stand-in, as for step 3.
+
 *Done when:* each runs end to end, natively and in the browser, with its frame parsing fuzzed.
 
 ### Step 6: the UI DSL, complete

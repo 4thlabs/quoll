@@ -119,8 +119,12 @@ template <class... Args>
  * A service is an overload set: one `operator()(Endpoint, arguments...)` per endpoint, the arguments being those of
  * the endpoint (path parameters, then its parts in order, then the inherited ones), by value or `const&`. It returns
  * the body of the endpoint's first returns<>, a reply<Endpoint>, or nothing (204, or a first response without body),
- * as is or in a task<>. Each endpoint has exactly one service, and each security scheme of the api a validator:
- * otherwise mount() does not compile.
+ * as is or in a task<>. For an endpoint with events<T>, it takes an rest::event_sink<T> by reference after its
+ * arguments, returns a task<>, and sends its events through it, after the router has answered: an http_error before the
+ * stream starts (open() or the first event) answers as from any service, after it the stream is cut. It runs as the
+ * response's `late_head_writer`: a middleware that sets a `body_writer` of its own replaces it, and the service is not
+ * called. Each endpoint has
+ * exactly one service, and each security scheme of the api a validator: otherwise mount() does not compile.
  *
  * For each request: credentials (401 if missing or rejected, with the `WWW-Authenticate` challenge of the scheme:
  * `Bearer`, or `ApiKey header="X-Api-Key"` / `ApiKey query="key"` for keys, which have no registered scheme), then
@@ -133,8 +137,10 @@ template <class... Args>
  *
  * Adds all the routes or none: @throws std::invalid_argument, leaving `router` as it was, for a route it already has.
  *
- * Services and validators are moved into storage shared by the routes, which lives as long as the router; they are
- * called from the thread awaiting the dispatch, concurrently if the router is dispatched concurrently.
+ * Services and validators are moved into storage shared by the routes, which lives as long as the router, and as long
+ * as a stream of events<> under way; they are called from the thread awaiting the dispatch, concurrently if the router
+ * is dispatched concurrently, but for the service of events<>, which runs as the response's writer, on the thread of
+ * the connection that writes it.
  */
 template <class Api, class... Args>
 void mount(http::router &router, Args &&...args) {

@@ -4,6 +4,8 @@ quoll_declare_module(
     src/arguments.cpp
     src/bytes_codec.cpp
     src/client.cpp
+    src/client_events.cpp
+    src/event_sink.cpp
     src/next.cpp
     src/param_traits.cpp
     src/printable_text.cpp
@@ -24,6 +26,7 @@ quoll_declare_tests(
     tests/client_test.cpp
     tests/codecs_test.cpp
     tests/contract_test.cpp
+    tests/events_test.cpp
     tests/json_codec_test.cpp
     tests/mount_test.cpp
     tests/open_enum_test.cpp
@@ -44,10 +47,22 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/body_codec_mismatch.cpp
     tests/compile_fail/body_on_get.cpp
     tests/compile_fail/body_on_trace.cpp
+    tests/compile_fail/call_on_events.cpp
     tests/compile_fail/client_unused_scheme.cpp
     tests/compile_fail/connect_endpoint.cpp
     tests/compile_fail/endpoint_empty_name.cpp
     tests/compile_fail/endpoint_not_in_api.cpp
+    tests/compile_fail/events_in_with.cpp
+    tests/compile_fail/events_on_head.cpp
+    tests/compile_fail/events_redirect.cpp
+    tests/compile_fail/events_service_not_a_task.cpp
+    tests/compile_fail/events_service_without_sink.cpp
+    tests/compile_fail/events_service_without_sink_beside.cpp
+    tests/compile_fail/events_twice.cpp
+    tests/compile_fail/events_two_services.cpp
+    tests/compile_fail/events_typed_error.cpp
+    tests/compile_fail/events_typed_error_in_with.cpp
+    tests/compile_fail/events_with_success.cpp
     tests/compile_fail/head_returns_body.cpp
     tests/compile_fail/header_beside_a_body.cpp
     tests/compile_fail/header_invalid_name.cpp
@@ -81,10 +96,6 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/query_type.cpp
     tests/compile_fail/reply_holds_undeclared.cpp
     tests/compile_fail/reply_without_returns.cpp
-    tests/compile_fail/scope_arguments.cpp
-    tests/compile_fail/scope_empty_api.cpp
-    tests/compile_fail/scope_not_nested.cpp
-    tests/compile_fail/scoped_scope_not_nested.cpp
     tests/compile_fail/returns_body_on_no_content.cpp
     tests/compile_fail/returns_informational.cpp
     tests/compile_fail/same_name.cpp
@@ -93,9 +104,17 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/same_status.cpp
     tests/compile_fail/scheme_on_a_field_twice.cpp
     tests/compile_fail/scheme_twice.cpp
+    tests/compile_fail/scope_arguments.cpp
+    tests/compile_fail/scope_empty_api.cpp
+    tests/compile_fail/scope_not_nested.cpp
+    tests/compile_fail/scoped_scope_not_nested.cpp
+    tests/compile_fail/subscribe_over_local_transport.cpp
+    tests/compile_fail/subscribe_without_events.cpp
+    tests/compile_fail/try_call_on_events.cpp
     tests/compile_fail/with_body_on_get.cpp
     tests/compile_fail/with_body_on_trace.cpp
     tests/compile_fail/with_same_status.cpp
+    tests/compile_fail/with_success_on_events.cpp
     tests/compile_fail/with_two_bodies.cpp
   DEPS
     quoll::rest

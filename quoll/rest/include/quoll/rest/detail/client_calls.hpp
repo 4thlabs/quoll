@@ -82,6 +82,13 @@ struct client_calls<Client, Api, std::index_sequence<Index...>> {
     return static_cast<Client const &>(*this).template try_call_with<Endpoint>(
         arguments_of<Api, Endpoint>{std::move(args)...});
   }
+
+  template <class Endpoint>
+    requires(std::tuple_size_v<arguments_of<Api, Endpoint>> == sizeof...(Index))
+  [[nodiscard]] auto subscribe(typename nth_argument<arguments_of<Api, Endpoint>, Index>::type... args) const {
+    return static_cast<Client const &>(*this).template subscribe_with<Endpoint>(
+        arguments_of<Api, Endpoint>{std::move(args)...});
+  }
 };
 
 template <class Scheme, class... Routes>
@@ -110,6 +117,7 @@ struct client_call_set<Client, Api, std::index_sequence<Arity...>>
     : client_calls<Client, Api, std::make_index_sequence<Arity>>... {
   using client_calls<Client, Api, std::make_index_sequence<Arity>>::call...;
   using client_calls<Client, Api, std::make_index_sequence<Arity>>::try_call...;
+  using client_calls<Client, Api, std::make_index_sequence<Arity>>::subscribe...;
 };
 
 } // namespace quoll::rest::detail

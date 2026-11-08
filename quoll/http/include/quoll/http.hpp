@@ -62,6 +62,7 @@
 #include <quoll/http/server_sent_event.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/streamed_response.hpp>
+#include <quoll/http/streaming_transport.hpp>
 #include <quoll/http/transport.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/http/version.hpp>

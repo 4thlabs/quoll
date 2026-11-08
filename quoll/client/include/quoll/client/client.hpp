@@ -45,6 +45,7 @@
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/streamed_response.hpp>
+#include <quoll/http/streaming_transport.hpp>
 #include <quoll/http/transport.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/connector.hpp>
@@ -309,6 +310,7 @@ private:
 };
 
 static_assert(HttpTransport<client>);
+static_assert(StreamingTransport<client>);
 
 } // namespace quoll::http
 
