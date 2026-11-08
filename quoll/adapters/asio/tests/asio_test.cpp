@@ -45,6 +45,7 @@
 #include <quoll/async/detached.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/offload.hpp>
 #include <quoll/async/runtime_options.hpp>
 #include <quoll/async/sleep_for.hpp>
@@ -705,7 +706,7 @@ TEST_CASE("asio: a client on a thread pool talks through sockets run by another 
     check(error);
     spawn(context, serve_one(quoll::asio::tcp_stream{std::move(socket)}), request, failure);
   });
-  co_spawn(quoll::asio::executor{pool.get_executor()},
+  co_spawn(quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own},
            get(quoll::asio::connector{context.get_executor()}, port_of(acceptor)),
            overloaded{[&](http::response value) {
                         response.set_value(std::move(value));
@@ -755,7 +756,7 @@ TEST_CASE("asio: a client on a thread pool sends a body_writer through sockets r
     co_return co_await client.send(std::move(message));
   };
 
-  co_spawn(quoll::asio::executor{pool.get_executor()},
+  co_spawn(quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own},
            uploading(quoll::asio::connector{context.get_executor()}, port_of(acceptor)),
            overloaded{[&](http::response value) {
                         response.set_value(std::move(value));
@@ -803,7 +804,7 @@ TEST_CASE("asio: a stop request from a pool thread cancels a read pending on the
     silent_peer.emplace(std::move(socket));
   });
   // when_all runs on the pool: its second child requests stop there, while the read waits on the I/O thread.
-  co_spawn(quoll::asio::executor{pool.get_executor()},
+  co_spawn(quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own},
            read_until_stopped(quoll::asio::connector{context.get_executor()}, port_of(acceptor), source),
            overloaded{[&](io::io_result value) {
                         read.set_value(value);
@@ -825,7 +826,7 @@ TEST_CASE("asio: an operation starts on its I/O executor, even awaited from a po
   ::asio::thread_pool pool{1};
   std::promise<std::thread::id> started_on;
 
-  co_spawn(quoll::asio::executor{pool.get_executor()}, start_thread(context),
+  co_spawn(quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own}, start_thread(context),
            overloaded{[&](std::thread::id value) {
                         started_on.set_value(value);
                         work.reset();
@@ -2216,40 +2217,56 @@ TEST_CASE("rest::mount: on a server, as on a router", "[asio][rest][server]") {
 
 namespace {
 
+// Serves `router` over TCP on the executor it runs on, and runs `calling` with a client of it.
+template <class Calling>
+task<> serve_and_call(http::router const &router QUOLL_LIFETIMEBOUND, Calling calling) {
+  auto listener = co_await quoll::io::listen(0);
+  auto const port = listener.local_port().value();
+  std::stop_source stop;
+
+  auto const serving = [&]() -> task<int> {
+    co_await quoll::async::detail::stop_scope<void>{
+        http::server{router, {.shutdown_timeout = {}}}.serve(std::move(listener)), stop.get_token()};
+    co_return 1;
+  };
+
+  auto const calls = [&]() -> task<int> {
+    co_await calling(http::client{"http://127.0.0.1:" + std::to_string(port)});
+    stop.request_stop();
+    co_return 1;
+  };
+
+  (void)co_await quoll::async::when_all(serving(), calls());
+}
+
 // Runs `calling` with a client of a server whose connections run on a runtime of several threads, each on a strand of
-// its own, over TCP.
+// its own.
 template <class Calling>
 void calling_a_server_on_several_threads(http::router const &router, Calling calling) {
   quoll::asio::runtime runtime{quoll::async::runtime_options{.threads = 4}};
   std::exception_ptr failure;
 
-  auto const exchange = [&]() -> task<> {
-    auto listener = co_await quoll::io::listen(0);
-    auto const port = listener.local_port().value();
-    std::stop_source stop;
-
-    auto const serving = [&]() -> task<int> {
-      co_await quoll::async::detail::stop_scope<void>{
-          http::server{router, {.shutdown_timeout = {}}}.serve(std::move(listener)), stop.get_token()};
-      co_return 1;
-    };
-
-    auto const calls = [&]() -> task<int> {
-      co_await calling(http::client{"http://127.0.0.1:" + std::to_string(port)});
-      stop.request_stop();
-      co_return 1;
-    };
-
-    (void)co_await quoll::async::when_all(serving(), calls());
-  };
-
-  co_spawn(runtime.get_executor(), exchange(),
+  co_spawn(runtime.get_executor(), serve_and_call(router, std::move(calling)),
            overloaded{[] {}, [&failure](std::exception_ptr error) { failure = std::move(error); }});
   runtime.run();
 
   if (failure) {
     std::rethrow_exception(failure);
   }
+}
+
+// The same with no strand for a connection: on asio's thread pool, through an executor that offers none, so that what
+// a connection does beside itself, reading while it writes, runs on two threads at once.
+template <class Calling>
+void calling_a_server_with_no_strand(http::router const &router, Calling calling) {
+  ::asio::thread_pool pool{4};
+  std::promise<void> done;
+
+  co_spawn(quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own},
+           serve_and_call(router, std::move(calling)),
+           overloaded{[&done] { done.set_value(); },
+                      [&done](std::exception_ptr error) { done.set_exception(std::move(error)); }});
+  done.get_future().get();
 }
 
 } // namespace
@@ -2281,9 +2298,10 @@ TEST_CASE("response_writer: on a runtime of several threads, as the connection i
   }
 }
 
-// What TSan is here for: the first write asks whether the connection goes on, as the read side feeds the parser.
-TEST_CASE("response_writer: on a runtime of several threads, reading as it writes",
-          "[asio][runtime][server][threads]") {
+// What TSan is here for: the first write asks whether the connection goes on, as the read side feeds the parser, on
+// another thread, as no strand makes them take turns.
+TEST_CASE("response_writer: on a thread pool with no strand per connection, reading as it writes",
+          "[asio][server][threads]") {
   http::router router;
   std::atomic<std::size_t> read_in_all{0};
 
@@ -2311,7 +2329,7 @@ TEST_CASE("response_writer: on a runtime of several threads, reading as it write
   constexpr std::size_t body_size = 256 * 1024;
   std::vector<std::size_t> received;
 
-  calling_a_server_on_several_threads(router, [&received](http::client const client) -> task<> {
+  calling_a_server_with_no_strand(router, [&received](http::client const client) -> task<> {
     for (auto request = 0; request < requests; ++request) {
       http::request both;
 

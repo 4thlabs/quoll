@@ -36,6 +36,7 @@
 
 #include <quoll/server/server.hpp>
 
+#include <quoll/async/any_executor.hpp>
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
@@ -216,10 +217,11 @@ async::task<> wind_down(shared_options &shared, std::stop_source &connections_st
                            stop_past_deadline(*timer, timeout, deadline.get_token(), connections_stop));
 }
 
-// Each connection a task of its own on `executor`, or on a strand of its own where the executor makes them: a runtime
-// on several threads.
-async::task<> serve_accepting(async::any_executor executor, io::any_listener listener,
-                              std::shared_ptr<server_state> state) {
+// Each connection a task of its own on the executor this runs on, or on a strand of its own where the executor makes
+// them: a runtime on several threads.
+async::task<> serve_accepting(io::any_listener listener, std::shared_ptr<server_state> state) {
+  // A copy, held by each connection: their frames end after serve() resumes.
+  async::any_executor const executor{co_await async::current_executor()};
   // Once: what the executor offers does not change.
   auto const strands = executor.query<async::strands_ref>();
 
@@ -325,19 +327,12 @@ async::task<> serve_accepting(async::any_executor executor, io::any_listener lis
   }
 }
 
-async::task<> serve_accepting_here(io::any_listener listener, std::shared_ptr<server_state> state) {
-  // A copy, held by each connection: their frames end after serve() resumes.
-  async::any_executor executor{co_await async::current_executor()};
-
-  co_await serve_accepting(std::move(executor), std::move(listener), std::move(state));
-}
-
 [[nodiscard]] async::task<> listen_and_serve(std::shared_ptr<server_state> state, std::uint16_t port,
                                              listen_options where) {
   auto listener = where.tls.enabled() ? co_await io::listen_tls(port, std::move(where.tls), std::move(where.address))
                                       : co_await io::listen(port, std::move(where.address));
 
-  co_await serve_accepting_here(std::move(listener), std::move(state));
+  co_await serve_accepting(std::move(listener), std::move(state));
 }
 
 // One more connection for connections(), for as long as it lives.
@@ -392,7 +387,7 @@ async::task<> server::listen(std::uint16_t port, listen_options where) const {
 }
 
 async::task<> server::serve(io::any_listener listener) const {
-  return detail::serve_accepting_here(std::move(listener), state_);
+  return detail::serve_accepting(std::move(listener), state_);
 }
 
 async::task<> server::serve_connection(io::any_stream stream) const {

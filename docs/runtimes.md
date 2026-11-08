@@ -83,8 +83,9 @@ in parallel. A server runs each connection on a strand of its own, so that what 
 while it writes, a timer, a stop) never runs on two threads at once, and each socket, acceptor and timer is on its own too,
 as asio asks.
 
-What two tasks on different executors share is the program's to protect: a `std::atomic`, a mutex, or one executor for
-both. A handler's state shared between connections is such a thing.
+What two tasks on different executors share is the program's to protect: a `std::atomic`, a mutex, or, for tasks of its
+own, one executor for both. A handler's state shared between connections is such a thing, and takes an atomic or a mutex,
+as each connection has a strand of its own.
 
 ### Blocking work
 

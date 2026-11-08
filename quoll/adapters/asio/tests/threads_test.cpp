@@ -150,7 +150,7 @@ TEST_CASE("threads: the exception of a task reaches its handler", "[asio][thread
 
 TEST_CASE("threads: coroutines resume on all the workers at once", "[asio][threads]") {
   constexpr std::size_t threads = 4;
-  // Declared before the pool: if a REQUIRE throws, the pool still drains the tasks reading it.
+  // Declared before the pool: if a REQUIRE throws, the pool's destructor joins the workers still reading it.
   std::atomic<std::size_t> arrived{0};
   ::asio::thread_pool pool{threads};
   std::vector<std::future<bool>> outcomes;

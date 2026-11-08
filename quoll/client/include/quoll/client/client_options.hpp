@@ -71,7 +71,7 @@ struct client_options {
    * counts until its body has come to its end or it goes: read or drop one before a request that needs its place. A
    * stop request ends the wait, and so does `connect_timeout`, which then starts again to connect. Without a timeout or
    * a timer, a server that does not answer holds up those that wait. The executors that send have to take a post() from
-   * another thread, as asio's and a thread pool's do, and a run_loop's does not.
+   * another thread, as quoll::runtime's does, and a run_loop's does not.
    */
   std::size_t max_connections = 0;
   /**
