@@ -3,6 +3,7 @@ quoll_declare_module(
   SOURCES
     src/arguments.cpp
     src/client.cpp
+    src/param_traits.cpp
     src/printable_text.cpp
     src/query_string.cpp
     src/scheme_traits.cpp
@@ -31,18 +32,25 @@ quoll_declare_tests(
 # What the contract, mount and the client refuse at compile time, with the message the user gets.
 quoll_declare_compile_fail_tests(
   SOURCES
+    tests/compile_fail/api_key_invalid_name.cpp
+    tests/compile_fail/api_key_query_empty_name.cpp
     tests/compile_fail/api_key_query_name.cpp
     tests/compile_fail/bad_escape.cpp
-    tests/compile_fail/body_on_connect.cpp
+    tests/compile_fail/body_codec_mismatch.cpp
     tests/compile_fail/body_on_get.cpp
     tests/compile_fail/body_on_trace.cpp
     tests/compile_fail/client_unused_scheme.cpp
+    tests/compile_fail/connect_endpoint.cpp
+    tests/compile_fail/endpoint_empty_name.cpp
     tests/compile_fail/endpoint_not_in_api.cpp
+    tests/compile_fail/head_returns_body.cpp
     tests/compile_fail/header_beside_a_body.cpp
+    tests/compile_fail/header_invalid_name.cpp
     tests/compile_fail/mount_generic_validator.cpp
     tests/compile_fail/mount_no_service.cpp
     tests/compile_fail/mount_no_services_at_all.cpp
     tests/compile_fail/mount_no_validator.cpp
+    tests/compile_fail/mount_nothing_for_a_body.cpp
     tests/compile_fail/mount_service_narrower.cpp
     tests/compile_fail/mount_service_other_order.cpp
     tests/compile_fail/mount_two_services.cpp
@@ -52,19 +60,30 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/parameter_repeated_by_prefix.cpp
     tests/compile_fail/path_after_rest_of_path.cpp
     tests/compile_fail/path_dot_segment.cpp
+    tests/compile_fail/path_empty_type.cpp
+    tests/compile_fail/path_invalid_character.cpp
+    tests/compile_fail/path_not_whole_segment.cpp
     tests/compile_fail/path_parameter_type.cpp
+    tests/compile_fail/path_query_in_literal.cpp
+    tests/compile_fail/path_too_many_parameters.cpp
+    tests/compile_fail/path_unbalanced_brace.cpp
     tests/compile_fail/path_without_slash.cpp
     tests/compile_fail/prefix_trailing_slash.cpp
+    tests/compile_fail/query_empty_name.cpp
     tests/compile_fail/query_params_field_twice.cpp
+    tests/compile_fail/query_params_not_aggregate.cpp
     tests/compile_fail/query_twice.cpp
     tests/compile_fail/query_type.cpp
     tests/compile_fail/reply_holds_undeclared.cpp
+    tests/compile_fail/reply_without_returns.cpp
+    tests/compile_fail/returns_body_on_no_content.cpp
+    tests/compile_fail/returns_informational.cpp
     tests/compile_fail/same_name.cpp
     tests/compile_fail/same_route.cpp
+    tests/compile_fail/same_route_encoded.cpp
     tests/compile_fail/same_status.cpp
     tests/compile_fail/scheme_on_a_field_twice.cpp
     tests/compile_fail/scheme_twice.cpp
-    tests/compile_fail/with_body_on_connect.cpp
     tests/compile_fail/with_body_on_get.cpp
     tests/compile_fail/with_body_on_trace.cpp
     tests/compile_fail/with_same_status.cpp

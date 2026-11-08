@@ -34,9 +34,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: a CONNECT endpoint gets a body<>
+// expect: quoll::rest::endpoint: the name is empty
 //
-// A with<> adding a body to a CONNECT endpoint.
+// An endpoint with no name.
 
 #include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
@@ -44,11 +44,6 @@
 using namespace quoll::rest;
 using quoll::http::verb;
 
-struct thing {
-  int value = 0;
-};
+using nameless = endpoint<"", verb::get, "/">;
 
-using e = endpoint<"e", verb::connect, "/">;
-using route = api<"", with<body<thing>, e>>::route<e>;
-
-route const instance{};
+api<"", nameless> const instance{};

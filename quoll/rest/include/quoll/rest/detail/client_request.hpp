@@ -131,7 +131,7 @@ void add_part(std::type_identity<header<Name, T>>, T const &value, request_draft
 
 template <class T, class BodyCodec>
 void add_part(std::type_identity<body<T, BodyCodec>>, T const &value, request_draft &draft) {
-  constexpr BodyCodec codec;
+  BodyCodec const codec{};
 
   draft.request.body = codec.encode(value);
   draft.request.fields.add("Content-Type", codec.content_type);

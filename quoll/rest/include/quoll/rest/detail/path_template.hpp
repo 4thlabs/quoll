@@ -109,6 +109,7 @@ enum class path_error {
   duplicate_name,
   invalid_escape,
   dot_segment,
+  invalid_character,
   too_many_parameters,
 };
 
@@ -168,9 +169,21 @@ struct path_template {
     return path_error::invalid_escape;
   case template_error::dot_segment:
     return path_error::dot_segment;
+  case template_error::empty_type:
+    return path_error::unknown_type;
   }
 
   return path_error::none;
+}
+
+// What a literal of an endpoint's path may hold (RFC 3986, pchar): a client copies it into the target as it is, where a
+// space, '?', '#', a control or a byte past ASCII would take the request elsewhere, or none could carry it. The router
+// itself matches literals decoded, and takes them.
+[[nodiscard]] constexpr bool is_path_character(char character) noexcept {
+  constexpr std::string_view others = "-._~!$&'()*+,;=:@%";
+
+  return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+         (character >= '0' && character <= '9') || http::detail::find_char(others, character) != std::string_view::npos;
 }
 
 // The grammar is the router's (http::detail::parse_template); the DSL adds the parameter types: `{name}` is a string,
@@ -184,6 +197,11 @@ struct path_template {
 
   for (auto const &segment : grammar.segments) {
     if (segment.kind == http::detail::segment_kind::literal) {
+      if (!std::ranges::all_of(segment.text, is_path_character)) {
+        parsed.error = path_error::invalid_character;
+        return parsed;
+      }
+
       continue;
     }
 

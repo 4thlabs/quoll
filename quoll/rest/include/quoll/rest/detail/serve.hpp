@@ -166,7 +166,7 @@ template <class Response>
 
 template <class Response, class T>
 [[nodiscard]] http::response make_response(T const &value) {
-  constexpr typename Response::codec codec;
+  typename Response::codec const codec{};
   auto response = make_response<Response>();
 
   response.body = codec.encode(value);

@@ -553,8 +553,8 @@ using v1 = rest::api<"/api/v1", auth::api, rest::with<rest::security<rest::beare
   compile time. It is the OpenAPI `operationId` and the name of the route on the server. The method is an
   `http::verb` value, not a bare `GET` / `DELETE`: those are macros on some platforms (`DELETE` in `<winnt.h>`), and
   the rules allow no macro of our own.
-- Path parameters are typed in the template, `{name:type}` (`int`, `int64`, `uint64`, `double`, `bool`, `string`
-  by default, `path` for the rest of the path), and parsed at compile time.
+- Path parameters are typed in the template, `{name:type}` (`int`, `int64`, `uint`, `uint64`, `double`, `bool`,
+  `string` by default, `path` for the rest of the path), and parsed at compile time.
 - Parts:
   - `query<"name", T>`: `T` is the argument type. `query<"limit", std::optional<int>>` is optional (not required in
     the document, omitted from the URL when empty), `query<"tag", std::vector<std::string>>` repeats the parameter
@@ -595,7 +595,7 @@ struct users_service {
 http::router router;
 
 rest::mount<bank::v1>(router, bank::auth_service{}, bank::users_service{}, bank::cards_service{},
-                      rest::validators([&](rest::bearer_token const &token) { return sessions.valid(token); }));
+                      rest::validators([&](rest::credential<rest::bearer_auth> const &token) { return sessions.valid(token.value); }));
 ```
 
 - A service returns the type of the first `returns`, or `rest::reply<E>`, which holds any declared response with its
@@ -624,8 +624,9 @@ auto page = co_await api.call<bank::users::list>({.limit = 20});
 auto alice_cards = api.scope<bank::cards::api>(1); // fixes {user_id}
 ```
 
-- `call` returns the first declared response. Any other outcome throws `rest::http_error` with the status and the
-  detail of the server's problem, if any; another declared response is read with `try_call`.
+- `call` returns the first declared response. Any other outcome throws `rest::call_error`, with the response, and the
+  detail of the server's problem, if any, as `what()`; another declared response is read with `try_call`. It is no
+  `rest::http_error`, so that a service letting a failed call escape answers 500, not that API's status.
 - `try_call` returns `rest::result<E>`, `std::expected<rest::reply<E>, rest::unexpected_response>`: the declared
   response received, or the whole response with why it is unexpected (an undeclared status, a body that does not
   decode).

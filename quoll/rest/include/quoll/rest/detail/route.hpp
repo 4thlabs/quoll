@@ -54,6 +54,8 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -163,13 +165,12 @@ struct route {
   using inherited = Inherited;
   using parts = concat_t<typename Endpoint::parts, Inherited>;
 
-  // The endpoint checks its own parts; these hold with the parts inherited from with<> too.
+  // The endpoint checks its own parts; these hold with the parts inherited from with<> too, but for HEAD: what with<>
+  // adds is the server's answers, never decoded as a body.
   static_assert(count_bodies(parts{}) <= 1, "quoll::rest::with: the endpoint gets more than one body<>");
   static_assert(count_bodies(parts{}) == 0 ||
                     (Endpoint::method != http::verb::get && Endpoint::method != http::verb::head),
                 "quoll::rest::with: a GET or HEAD endpoint gets a body<> (fetch rejects one)");
-  static_assert(count_bodies(parts{}) == 0 || Endpoint::method != http::verb::connect,
-                "quoll::rest::with: a CONNECT endpoint gets a body<> (what follows its head is the tunnel)");
   static_assert(count_bodies(parts{}) == 0 || Endpoint::method != http::verb::trace,
                 "quoll::rest::with: a TRACE endpoint gets a body<> (RFC 9110, 9.3.8)");
   static_assert(distinct_statuses(parts{}), "quoll::rest::with: the endpoint gets two returns<> with the same status");
@@ -187,40 +188,47 @@ struct route {
   static constexpr std::string_view path = path_value.view();
 };
 
-// Whether two operations would be routed alike: same method, and same path once the parameter names are ignored.
+// The shape of a template as the router compares it: the kind of each segment, and each literal decoded. Nothing for a
+// template that is wrong, which has its own static_assert. A NUL ends each segment, as no checked literal holds one, so
+// that `/a%2Fb`, one segment, and `/a/b`, two, differ.
+[[nodiscard]] consteval std::optional<std::string> route_shape(std::string_view path) {
+  auto const parsed = http::detail::parse_template(path);
+
+  if (parsed.error != http::detail::template_error::none) {
+    return std::nullopt;
+  }
+
+  std::string shape;
+
+  for (auto const &segment : parsed.segments) {
+    switch (segment.kind) {
+    case http::detail::segment_kind::literal:
+      shape += 'l' + http::detail::decoded_literal(segment.text);
+      break;
+    case http::detail::segment_kind::param:
+      shape += 'p';
+      break;
+    case http::detail::segment_kind::rest:
+      shape += 'r';
+      break;
+    }
+
+    shape += '\0';
+  }
+
+  return shape;
+}
+
+// Whether two operations would be routed alike, from their shapes: the same method, and the same decoded literals and
+// kind of parameter in each place, whatever the names: `/a` and `/%61` are one, `{name}` and `{name:path}` two.
+[[nodiscard]] consteval bool same_shape(http::verb first_method, std::optional<std::string> const &first,
+                                        http::verb second_method, std::optional<std::string> const &second) {
+  return first_method == second_method && first && second && *first == *second;
+}
+
 [[nodiscard]] consteval bool same_operation(http::verb first_method, std::string_view first, http::verb second_method,
                                             std::string_view second) {
-  if (first_method != second_method) {
-    return false;
-  }
-
-  std::size_t left = 0;
-  std::size_t right = 0;
-
-  while (left < first.size() && right < second.size()) {
-    if (first[left] == '{' && second[right] == '{') {
-      auto const first_close = http::detail::find_char(first, '}', left);
-      auto const second_close = http::detail::find_char(second, '}', right);
-
-      // Checked templates have their braces; an unbalanced one compares as different rather than wrapping around.
-      if (first_close == std::string_view::npos || second_close == std::string_view::npos) {
-        return false;
-      }
-
-      left = first_close + 1;
-      right = second_close + 1;
-      continue;
-    }
-
-    if (first[left] != second[right]) {
-      return false;
-    }
-
-    ++left;
-    ++right;
-  }
-
-  return left == first.size() && right == second.size();
+  return same_shape(first_method, route_shape(first), second_method, route_shape(second));
 }
 
 template <class... Routes>
@@ -242,10 +250,16 @@ template <class... Routes>
 [[nodiscard]] consteval bool distinct_operations(type_list<Routes...>) {
   constexpr std::array<http::verb, sizeof...(Routes)> methods{Routes::endpoint::method...};
   constexpr std::array<std::string_view, sizeof...(Routes)> paths{Routes::path...};
+  // Once each, before the pairs. A loop, as GCC 13 refuses a consteval call in a pack expansion here.
+  std::array<std::optional<std::string>, sizeof...(Routes)> shapes{};
 
-  for (std::size_t first = 0; first < paths.size(); ++first) {
-    for (std::size_t second = first + 1; second < paths.size(); ++second) {
-      if (same_operation(methods[first], paths[first], methods[second], paths[second])) {
+  for (std::size_t index = 0; index < paths.size(); ++index) {
+    shapes[index] = route_shape(paths[index]);
+  }
+
+  for (std::size_t first = 0; first < shapes.size(); ++first) {
+    for (std::size_t second = first + 1; second < shapes.size(); ++second) {
+      if (same_shape(methods[first], shapes[first], methods[second], shapes[second])) {
         return false;
       }
     }

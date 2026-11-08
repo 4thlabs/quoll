@@ -210,8 +210,8 @@ TEST_CASE("json_codec: what it writes it reads back, control characters included
   quoll::rest::json_codec const json;
 
   // Short and long: Glaze writes a long one another way.
-  for (std::string const name : {std::string{"a\x01z"}, std::string(81, '\x02'), std::string(81, 'x') + '\x1f',
-                                 std::string{"\t\n\"\\"}, std::string{"caf\xC3\xA9 \xF0\x9F\x90\xA8"}}) {
+  for (std::string const &name : {std::string{"a\x01z"}, std::string(81, '\x02'), std::string(81, 'x') + '\x1f',
+                                  std::string{"\t\n\"\\"}, std::string{"caf\xC3\xA9 \xF0\x9F\x90\xA8"}}) {
     json_codec_test::address const place{.city = name};
     auto const written = json.encode(place);
     auto const read = json.decode<json_codec_test::address>(written);
@@ -224,7 +224,7 @@ TEST_CASE("json_codec: what it writes it reads back, control characters included
 TEST_CASE("json_codec: text that is not UTF-8 is refused rather than written", "[rest][json]") {
   quoll::rest::json_codec const json;
 
-  for (std::string const name :
+  for (std::string const &name :
        {std::string{"a\xffz"}, std::string{"\xC0\x80"}, std::string{"\xED\xA0\x80"}, std::string{"\xF4\x90\x80\x80"},
         std::string{"\xE2\x82"}, std::string{"\xF0\x80\x80\x80"}, std::string{"\x80"}}) {
     REQUIRE_THROWS_AS((void)json.encode(json_codec_test::address{.city = name}), std::invalid_argument);

@@ -102,7 +102,7 @@ void read_declared(http::response &response, std::optional<call_result<Endpoint>
   if constexpr (std::is_void_v<typename Response::type>) {
     result.emplace(reply<Endpoint>{respond<Response::status>()});
   } else {
-    constexpr typename Response::codec codec;
+    typename Response::codec const codec{};
 
     if (auto value = codec.template decode<typename Response::type>(response.body)) {
       result.emplace(reply<Endpoint>{respond<Response::status>(std::move(*value))});

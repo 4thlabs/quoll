@@ -39,6 +39,7 @@
 
 #include <quoll/rest/api.hpp>
 #include <quoll/rest/body.hpp>
+#include <quoll/rest/call_error.hpp>
 #include <quoll/rest/client.hpp>
 #include <quoll/rest/codec.hpp>
 #include <quoll/rest/credential.hpp>

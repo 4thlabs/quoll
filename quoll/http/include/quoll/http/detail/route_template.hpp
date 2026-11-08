@@ -42,6 +42,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -61,6 +62,7 @@ enum class template_error {
   duplicate_name,
   invalid_escape,
   dot_segment,
+  empty_type,
 };
 
 struct template_segment {
@@ -113,6 +115,23 @@ struct parsed_template {
 
 // What http::detail::plain_segment says of a literal with valid escapes, at compile time too: no request could reach
 // one that fails, as what the router sees of it is refused.
+// A literal whose escapes are valid, decoded: what the router compares, at compile time too.
+[[nodiscard]] constexpr std::string decoded_literal(std::string_view literal) {
+  std::string decoded;
+
+  for (std::size_t index = 0; index < literal.size(); ++index) {
+    if (literal[index] != '%') {
+      decoded += literal[index];
+      continue;
+    }
+
+    decoded += static_cast<char>(hex_value(literal[index + 1]) * 16 + hex_value(literal[index + 2]));
+    index += 2;
+  }
+
+  return decoded;
+}
+
 [[nodiscard]] constexpr bool plain_literal(std::string_view text) noexcept {
   plain_text decoded;
 
@@ -196,6 +215,10 @@ struct parsed_template {
 
       if (name.empty() || !std::ranges::all_of(name, is_name_char)) {
         return fail(template_error::invalid_name);
+      }
+
+      if (colon != std::string_view::npos && type.empty()) {
+        return fail(template_error::empty_type);
       }
 
       auto const same_name = [name](template_segment const &other) {

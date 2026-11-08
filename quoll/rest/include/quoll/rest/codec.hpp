@@ -51,10 +51,10 @@ namespace quoll::rest {
  *
  * `codec.content_type` is the media type sent in `Content-Type`. `codec.encode(value)` returns the body; a value that
  * cannot be encoded throws. `codec.template decode<T>(body)` returns the value, or a decode_error for a body that does
- * not match the type: bodies come from the network.
+ * not match the type: bodies come from the network. A codec is default constructible: one is built where it is used.
  */
 template <class C, class T>
-concept Codec = requires(C const &codec, T const &value, std::string_view body) {
+concept Codec = std::default_initializable<C> && requires(C const &codec, T const &value, std::string_view body) {
   { codec.content_type } -> std::convertible_to<std::string_view>;
   { codec.encode(value) } -> std::same_as<std::string>;
   { codec.template decode<T>(body) } -> std::same_as<std::expected<T, decode_error>>;

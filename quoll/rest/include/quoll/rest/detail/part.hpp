@@ -67,6 +67,21 @@ struct is_argument_part : std::bool_constant<std::same_as<typename P::part_categ
 template <class P>
 struct is_response_part : std::bool_constant<std::same_as<typename P::part_category, response_part>> {};
 
+// Whether a part declares a response with a body.
+template <class P>
+[[nodiscard]] consteval bool declares_a_body_response() {
+  if constexpr (std::same_as<typename P::part_category, response_part>) {
+    return !std::is_void_v<typename P::type>;
+  } else {
+    return false;
+  }
+}
+
+template <class... Parts>
+[[nodiscard]] consteval bool any_body_response(type_list<Parts...>) {
+  return (declares_a_body_response<Parts>() || ...);
+}
+
 template <class P>
 struct is_security_part : std::bool_constant<std::same_as<typename P::part_category, security_part>> {};
 
