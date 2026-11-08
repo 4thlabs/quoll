@@ -45,8 +45,10 @@
 
 #include <concepts>
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -199,6 +201,32 @@ using namespace quoll::rest;
 using quoll::http::status;
 using quoll::http::verb;
 
+// A codec whose default constructor is no constant: one is built where it is used, at run time, on both sides.
+class marked_codec {
+public:
+  static constexpr std::string_view content_type = "text/x-marked";
+
+  // NOLINTNEXTLINE(modernize-use-equals-default): not constexpr, which is the point.
+  marked_codec() : mark_(">") {}
+
+  [[nodiscard]] std::string encode(std::string const &value) const { return mark_ + value; }
+
+  template <class T>
+    requires std::same_as<T, std::string>
+  [[nodiscard]] std::expected<T, decode_error> decode(std::string_view body) const {
+    if (!body.starts_with(mark_)) {
+      return std::unexpected{decode_error{"not marked"}};
+    }
+
+    return std::string{body.substr(mark_.size())};
+  }
+
+private:
+  std::string mark_;
+};
+
+static_assert(Codec<marked_codec, std::string>);
+
 // A parameter and the rest of a path, in one place: the router tells them apart, and so does the api.
 using one = endpoint<"one", verb::get, "/x/{a}", returns<std::string, status::ok, text_codec>>;
 using rest_of = endpoint<"rest_of", verb::get, "/x/{b:path}", returns<std::string, status::ok, text_codec>>;
@@ -209,8 +237,11 @@ using made = endpoint<"made", verb::post, "/made", body<std::string, text_codec>
 using accepted = endpoint<"accepted", verb::post, "/accepted", returns<void, status::accepted>>;
 // A prefix with a parameter: its argument comes first.
 using owned = endpoint<"owned", verb::get, "/items/{item:int}", returns<std::string, status::ok, text_codec>>;
+// Bodies both ways through that codec.
+using marked = endpoint<"marked", verb::post, "/marked", body<std::string, marked_codec>,
+                        returns<std::string, status::ok, marked_codec>>;
 
-using api = quoll::rest::api<"", one, rest_of, made, accepted, quoll::rest::api<"/orgs/{org}", owned>>;
+using api = quoll::rest::api<"", one, rest_of, made, accepted, marked, quoll::rest::api<"/orgs/{org}", owned>>;
 
 struct service {
   [[nodiscard]] std::string operator()(one, std::string a) const { return "one " + a; }
@@ -226,6 +257,8 @@ struct service {
   }
 
   void operator()(accepted) const {}
+
+  [[nodiscard]] std::string operator()(marked, std::string text) const { return text + "!"; }
 
   [[nodiscard]] std::string operator()(owned, std::string org, int item) const {
     return org + "/" + std::to_string(item);
@@ -258,6 +291,8 @@ TEST_CASE("contract: what users write runs, through mount and a client", "[rest]
   REQUIRE(accepted.has_value());
   REQUIRE(accepted->holds<quoll::http::status::accepted>());
   REQUIRE(run(client.call<routes::owned>("acme", 7)) == "acme/7");
+  // Encoded by the client, decoded and encoded by the server, decoded by the client: each with a codec built then.
+  REQUIRE(run(client.call<routes::marked>("hi")) == "hi!");
 }
 
 namespace contract_test_size {
