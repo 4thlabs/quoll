@@ -29,7 +29,37 @@ Go through each function the diff adds or changes, and what it calls where the b
 awaits at once, and the type says so". "The caller keeps it alive" is a reason only for a view or a non-owning type whose name
 and documentation say so.
 
-Then go through the checks below. A borrow no check worries about takes one line; a doubt is a finding.
+Then do the destruction pass, and go through the checks below. A borrow no check worries about takes one line; a doubt is a
+finding.
+
+## The destruction pass
+
+Reviews follow the normal path, and the bugs they miss are on the way out: an object destroyed while still registered
+somewhere, or a destructor that calls back into an object half destroyed. Fill these two tables for every class the diff
+touches that registers something or owns members whose destruction runs code. An empty cell is a finding.
+
+**Registrations.** Every place that hands a pointer or reference to something that will call it later: a work item put in a
+waiter list or a channel, a callback given to a timer, a stop token or an event source, an object put in a registry or a map
+owned elsewhere, `this` captured by a scheduled task.
+
+| Registered (where) | Unregistered on completion | on cancellation | on destruction while still registered |
+|---|---|---|---|
+
+The last column is the one reviews leave empty. For a coroutine awaitable it means: the frame is destroyed while suspended,
+by a parent that stops, a task dropped or a test tearing down. "Nothing destroys it while registered" is a hope, not an entry.
+
+**Destruction order.** List the members in the order they are destroyed (reverse of declaration, after the destructor's
+body), and for each one what its destruction runs: a joined thread, a cancelled task, closed connections, notified observers,
+callbacks that reach the object again through some other path.
+
+| Member (destroyed in this order) | What its destruction runs | Members that code touches | Still alive then? |
+|---|---|---|---|
+
+Follow the calls: a listener closing its connections, whose close callbacks look the object up in another map, is the case
+to find. When what a member's destruction runs is not visible in the code at hand, write "unknown", not "nothing": a member
+that owns listeners, connections, tasks, timers or callbacks may run code that reaches the object again, and it is a finding
+unless the destructor orders it explicitly. A "no" in the last column is a use after free of a member, which AddressSanitizer does not see, as the memory is
+still allocated.
 
 ## Checks
 
@@ -132,10 +162,24 @@ In this order of preference:
    attribute (`[[clang::lifetimebound]]`, behind the project's macro where compilers lack it) on what returns a reference into
    `*this` or a parameter.
 
-Each real finding gets a test that fails without the fix, under ASan or TSan when it is about memory or threads.
+Two shapes make the destruction pass's bugs impossible to write:
+
+- **A registration is a token.** What registers returns an object whose destructor unregisters, as `std::stop_callback`
+  does, and whoever registered keeps it as a member. Destroying the awaitable, the task or the owner then unregisters on
+  every path.
+- **What calls back goes first.** A member whose destruction may call back into the object is declared last, so that it is
+  destroyed first, while everything else is alive. Where that order cannot hold, an explicit destructor empties it first,
+  after clearing the lookups a callback could reach.
+
+Each real finding gets a test that fails without the fix, under ASan or TSan when it is about memory or threads. For a
+registration, the test destroys the object at every state it can be registered in (each suspension point of a coroutine, in
+turn). A member used after its destructor needs MemorySanitizer's use-after-dtor, or a flag the destructor sets and the
+public functions check in debug builds.
 
 ## What to report
 
-In the PR body, a section **Borrow check**: the borrows that needed a reason, one line each, and what was found and fixed.
+In the PR body, a section **Borrow check**: the borrows that needed a reason, one line each, the two tables of the
+destruction pass, and what was found and fixed. The tables are the part to keep when a report must be short: they are where
+the findings reviews miss come from.
 Nothing to report: say which functions were checked. In a review, each finding goes out as the project's review rules ask,
 like any other.
