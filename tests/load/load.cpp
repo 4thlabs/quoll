@@ -75,7 +75,6 @@
 #include <quoll/server/serve_options.hpp>
 #include <quoll/server/server.hpp>
 #include <quoll/test/overloaded.hpp>
-#include <quoll/test/read_until_closed.hpp>
 
 #include <array>
 #include <atomic>
@@ -108,6 +107,28 @@ using steady_clock = std::chrono::steady_clock;
 
 constexpr std::size_t piece_size = 4096;
 constexpr int pieces = 32;
+
+// Each piece of a streamed body is told apart from the others, so that a piece lost, doubled or out of order shows.
+std::string streamed_piece(int index) {
+  auto piece = std::to_string(index) + ":";
+
+  piece.resize(piece_size, static_cast<char>('a' + index % 26));
+  return piece;
+}
+
+std::string const &streamed_body() {
+  static std::string const whole = [] {
+    std::string body;
+
+    for (int index = 0; index < pieces; ++index) {
+      body += streamed_piece(index);
+    }
+
+    return body;
+  }();
+
+  return whole;
+}
 
 // The first few lines that say what went wrong, each written at once, as one failure repeated would fill the log and
 // threads writing piece by piece would mix theirs.
@@ -347,6 +368,28 @@ struct raw_answer {
   bool closed = false;
 };
 
+// Reads until the server closes, or a read fails: a read the timeout cancelled says it kept the connection, which
+// quoll::test::read_until_closed would not tell from a close.
+task<raw_answer> read_answer(io::any_stream &stream QUOLL_LIFETIMEBOUND) {
+  raw_answer answer;
+  std::array<char, 256> chunk{};
+
+  while (true) {
+    auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+    if (read.error == std::errc::operation_canceled) {
+      co_return answer;
+    }
+
+    if (read.error || read.transferred == 0) {
+      answer.closed = true;
+      co_return answer;
+    }
+
+    answer.received.append(chunk.data(), read.transferred);
+  }
+}
+
 // Sends `data` on a connection of its own, waits `pause`, then reads what comes back until the server closes, for a
 // second at most, unless `listen` is false: a peer that stops listening is part of the load too.
 task<raw_answer> send_raw(std::uint16_t port, std::string data, std::chrono::milliseconds pause, bool listen) {
@@ -359,22 +402,19 @@ task<raw_answer> send_raw(std::uint16_t port, std::string data, std::chrono::mil
     co_await async::sleep_for(pause);
   }
 
-  raw_answer answer;
-
   if (!listen) {
-    co_return answer;
+    co_return raw_answer{};
   }
 
   try {
-    answer.received = co_await async::with_timeout(1s, quoll::test::read_until_closed(stream));
-    answer.closed = true;
+    co_return co_await async::with_timeout(1s, read_answer(stream));
   } catch (std::system_error const &error) {
     if (error.code() != std::errc::timed_out) {
       throw;
     }
   }
 
-  co_return answer;
+  co_return raw_answer{};
 }
 
 [[nodiscard]] bool answered(raw_answer const &answer, std::string_view status) {
@@ -403,16 +443,14 @@ task<bool> run_scenario(scenario which, peers const &to QUOLL_LIFETIMEBOUND) {
     auto request = make_request(http::verb::post, "/stream");
 
     request.body_writer = [](http::body_stream out) -> task<> {
-      std::string const piece(piece_size, 's');
-
       for (int index = 0; index < pieces; ++index) {
-        co_await out.write(piece);
+        co_await out.write(streamed_piece(index));
       }
     };
 
     auto const response = co_await to.plain.send(std::move(request));
 
-    co_return response.status == http::status::ok &&response.body.size() == piece_size *pieces;
+    co_return response.status == http::status::ok &&response.body == streamed_body();
   }
   case scenario::failing: {
     auto const response = co_await to.plain.send(make_request(http::verb::get, "/throws"));
