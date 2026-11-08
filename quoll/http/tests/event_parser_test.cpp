@@ -157,6 +157,35 @@ TEST_CASE("event_parser: an id counts once its event has ended", "[http][sse]") 
   REQUIRE(parser.last_event_id() == "5");
 }
 
+TEST_CASE("event_parser: an id longer than max_id_size is ignored, the stream goes on", "[http][sse]") {
+  http::event_parser parser;
+  std::string const longest(http::event_parser::max_id_size, 'i');
+
+  parser.feed("id: " + longest + "\ndata: a\n\n");
+
+  REQUIRE(parser.next() == event("a", longest));
+  REQUIRE_FALSE(parser.next());
+
+  parser.feed("id: " + longest + "i\ndata: b\n\n");
+
+  REQUIRE(parser.next() == event("b", longest));
+  REQUIRE(parser.last_event_id() == longest);
+}
+
+TEST_CASE("event_parser: a BOM still to come, then a CR", "[http][sse]") {
+  http::event_parser parser;
+
+  parser.feed("");
+  REQUIRE_FALSE(parser.next());
+  parser.feed("\xEF");
+  REQUIRE_FALSE(parser.next());
+  parser.feed("\xBB\xBF"
+              "data: a\r");
+  REQUIRE_FALSE(parser.next());
+  parser.feed("\r");
+  REQUIRE(parser.next() == event("a"));
+}
+
 TEST_CASE("event_parser: retry takes ASCII digits only", "[http][sse]") {
   http::event_parser parser;
 
@@ -301,16 +330,24 @@ TEST_CASE("event_parser: an event larger than the most it holds fails, and goes 
     REQUIRE(failed);
   }
 
-  SECTION("an id longer than max_id_size") {
-    http::event_parser parser;
-    std::string const longest(http::event_parser::max_id_size, 'i');
+  SECTION("the type counts, not the one an event line replaces") {
+    http::event_parser parser{16};
 
-    parser.feed("id: " + longest + "\ndata: a\n\n");
+    parser.feed("event: 0123456\nevent: 0123456\ndata: x\n\n");
 
-    REQUIRE(parser.next() == event("a", longest));
+    REQUIRE(parser.next() == event("x", std::nullopt, "0123456"));
     REQUIRE_FALSE(parser.next());
 
-    parser.feed("id: " + longest + "i\n\n");
+    parser.feed("event: 01234567\ndata: 012345678\n\n");
+
+    REQUIRE(throws_too_large(parser));
+  }
+
+  SECTION("what is not UTF-8 counts as read, U+FFFD each") {
+    http::event_parser parser{16};
+
+    // 6 bytes, 18 once read.
+    parser.feed("data: \xFF\xFF\xFF\xFF\xFF\xFF\n\n");
 
     REQUIRE(throws_too_large(parser));
   }

@@ -74,6 +74,10 @@ std::string format_event(server_sent_event const &event) {
     if (event.id->contains('\0')) {
       throw std::invalid_argument{"quoll::http::format_event: the id holds a NUL, which a reader ignores"};
     }
+
+    if (event.id->size() > max_event_id_size) {
+      throw std::invalid_argument{"quoll::http::format_event: the id is longer than a reader takes"};
+    }
   }
 
   if (!detail::is_utf8(event.data)) {

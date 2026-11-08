@@ -91,15 +91,19 @@ struct outcome {
   return result;
 }
 
-void check_written_again(http::server_sent_event const &event) {
+// The event behind a comment and the stream's retry, which a reader skips and takes, written again.
+void check_written_again(http::server_sent_event const &event, outcome const &read) {
   http::event_parser parser{max_event_size * 8};
 
-  parser.feed(http::format_event(event));
+  parser.feed(http::format_comment(event.type) + (read.retry ? http::format_retry(*read.retry) : std::string{}) +
+              http::format_event(event));
 
   auto const again = parser.next();
 
   quoll::fuzz::require(again == event);
   quoll::fuzz::require(!parser.next());
+  quoll::fuzz::require(parser.retry() == read.retry);
+  quoll::fuzz::require(parser.last_event_id() == event.id.value_or(""));
 }
 
 } // namespace
@@ -117,7 +121,7 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
   quoll::fuzz::require(read_all(input, piece) == whole);
 
   for (auto const &event : whole.events) {
-    check_written_again(event);
+    check_written_again(event, whole);
   }
 
   return 0;

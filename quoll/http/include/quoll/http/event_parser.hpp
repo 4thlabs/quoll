@@ -71,14 +71,16 @@ namespace quoll::http {
 class event_parser {
 public:
   /**
-   * @brief The most an event holds by default, 1 MiB: its data and its type as read, and the line being read, as it
-   * came, its field's name included.
+   * @brief The most an event holds by default, 1 MiB: its data and its type as read, and its data with the line being
+   * read, as it came, its field's name included.
    */
   static constexpr std::size_t default_max_event_size = std::size_t{1} << 20U;
 
+  /** @brief A parser holding at most default_max_event_size bytes of an event. */
+  event_parser() noexcept = default;
+
   /** @brief A parser holding at most `max_event_size` bytes of an event, against a peer that never ends one. */
-  explicit event_parser(std::size_t max_event_size = default_max_event_size) noexcept
-      : max_event_size_(max_event_size) {}
+  explicit event_parser(std::size_t max_event_size) noexcept : max_event_size_(max_event_size) {}
 
   /**
    * @brief Adds bytes of the body, which next() reads. They are copied. Call next() until it gives nothing before the
@@ -93,15 +95,15 @@ public:
    * @brief The next event the bytes fed so far end, or none until more comes.
    *
    * @throws std::system_error with http::error::event_too_large once an event, the line being read included, holds
-   * more than the most it may, or an id more than max_id_size, and on every call after.
+   * more than the most it may, and on every call after.
    */
   [[nodiscard]] std::optional<server_sent_event> next();
 
   /**
-   * @brief The most an `id` holds, 1 KiB: each event carries a copy, and it goes back in a header. Past it, next()
-   * fails as for an event too large.
+   * @brief The most an `id` field holds, as it came: http::max_event_id_size, 1 KiB. A longer one is ignored, as one
+   * holding a NUL is, as each event carries a copy, and it goes back in a header.
    */
-  static constexpr std::size_t max_id_size = 1024;
+  static constexpr std::size_t max_id_size = max_event_id_size;
 
   /**
    * @brief The ID of the last event the stream ended, empty if none: what `Last-Event-ID` sends when connecting again.
@@ -124,9 +126,8 @@ private:
   [[nodiscard]] std::optional<server_sent_event> take_line(std::string_view line);
 
   void check_size(std::size_t held);
-  void check_id_size();
 
-  std::size_t max_event_size_;
+  std::size_t max_event_size_ = default_max_event_size;
   // What was fed, from position_ on not read yet.
   std::string buffer_;
   std::size_t position_ = 0;

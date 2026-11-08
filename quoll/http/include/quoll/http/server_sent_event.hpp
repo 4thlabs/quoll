@@ -37,10 +37,14 @@
 #ifndef QUOLL_HTTP_SERVER_SENT_EVENT_HPP
 #define QUOLL_HTTP_SERVER_SENT_EVENT_HPP
 
+#include <cstddef>
 #include <optional>
 #include <string>
 
 namespace quoll::http {
+
+/** @brief The most an event's `id` holds: one longer is not written, and is ignored when read. */
+inline constexpr std::size_t max_event_id_size = 1024;
 
 /**
  * @brief An event of a `text/event-stream` body (Server-Sent Events, HTML Living Standard 9.2).

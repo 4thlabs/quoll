@@ -52,6 +52,9 @@ namespace {
 
 constexpr std::string_view byte_order_mark = "\xEF\xBB\xBF";
 
+// The capacity an empty buffer keeps: about what a socket gives at once.
+constexpr std::size_t kept_capacity = std::size_t{64} * 1024;
+
 // A `retry` value: ASCII digits only, or nothing. A long one is cut to the most a reader waits, the digits of one too
 // long for a number included.
 [[nodiscard]] std::optional<std::chrono::milliseconds> retry_value(std::string_view value) noexcept {
@@ -133,7 +136,13 @@ std::optional<server_sent_event> event_parser::next() {
       buffer_.erase(0, position_);
       position_ = 0;
       scanned_ = buffer_.size();
-      check_size(buffer_.size() + data_.size() + type_.size());
+
+      // A large piece once read leaves no large buffer behind, for the life of a stream.
+      if (buffer_.empty() && buffer_.capacity() > kept_capacity) {
+        buffer_.shrink_to_fit();
+      }
+
+      check_size(buffer_.size() + data_.size());
       drained_ = true;
       return std::nullopt;
     }
@@ -142,8 +151,9 @@ std::optional<server_sent_event> event_parser::next() {
 
     auto const line = rest.substr(0, end);
 
-    // As it would have been while it came, so that how the body is cut changes nothing.
-    check_size(line.size() + data_.size() + type_.size());
+    // As it would have been while it came, so that how the body is cut changes nothing. Not with the type held, which
+    // an `event` line replaces: after the line, the type counts.
+    check_size(line.size() + data_.size());
     position_ += end + 1;
     after_cr_ = rest[end] == '\r';
 
@@ -179,11 +189,11 @@ std::optional<server_sent_event> event_parser::take_line(std::string_view line) 
     append_text(data_, value);
     data_.push_back('\n');
   } else if (field == "id") {
-    if (!value.contains('\0')) {
+    // Ignored, as one holding a NUL, when too long: what a browser keeps, a stream does not fail on.
+    if (!value.contains('\0') && value.size() <= max_id_size) {
       id_buffer_.clear();
       append_text(id_buffer_, value);
       id_changed_ = true;
-      check_id_size();
     }
   } else if (field == "retry") {
     if (auto const delay = retry_value(value)) {
@@ -223,13 +233,6 @@ std::optional<server_sent_event> event_parser::dispatch() {
   }
 
   return event;
-}
-
-void event_parser::check_id_size() {
-  if (id_buffer_.size() > max_id_size) {
-    failed_ = true;
-    throw std::system_error{error::event_too_large, "quoll::http::event_parser: id too large"};
-  }
 }
 
 void event_parser::check_size(std::size_t held) {

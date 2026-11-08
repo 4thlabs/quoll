@@ -35,8 +35,8 @@ quoll_declare_module(
     src/connection_field.cpp
     src/error.cpp
     src/event_parser.cpp
-    src/format_event.cpp
     src/fields.cpp
+    src/format_event.cpp
     src/local_transport.cpp
     src/parser.cpp
     src/percent.cpp

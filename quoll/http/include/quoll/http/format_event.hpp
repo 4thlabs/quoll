@@ -50,7 +50,7 @@ namespace quoll::http {
  * it has lines, whatever ends them (CRLF, LF or CR), so that a reader gets it back with LF between them.
  *
  * @throws std::invalid_argument for text that is not UTF-8, or a `type` or an `id` holding a CR or an LF, which would
- * end the field, or a NUL in the `id`, which a reader ignores.
+ * end the field, or an `id` that a reader ignores: holding a NUL, or longer than max_event_id_size.
  */
 [[nodiscard]] std::string format_event(server_sent_event const &event);
 

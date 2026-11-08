@@ -104,6 +104,9 @@ TEST_CASE("format_event: what a reader would read otherwise is refused", "[http]
   REQUIRE_THROWS_AS(http::format_event({.data = "\xFF"}), std::invalid_argument);
   REQUIRE_THROWS_AS(http::format_event({.type = "\xC0\xAF", .data = "x"}), std::invalid_argument);
   REQUIRE_THROWS_AS(http::format_event({.data = "x", .id = "\xED\xA0\x80"}), std::invalid_argument);
+  REQUIRE_THROWS_AS(http::format_event({.data = "x", .id = std::string(http::max_event_id_size + 1, 'i')}),
+                    std::invalid_argument);
+  REQUIRE(read_back(http::format_event({.data = "x", .id = std::string(http::max_event_id_size, 'i')})));
 }
 
 TEST_CASE("format_retry and format_comment: read, and dispatching nothing", "[http][sse]") {
