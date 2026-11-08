@@ -293,44 +293,64 @@ See [`http::client` in a browser](runtimes.md#httpclient-in-a-browser) for what 
 ## Server-sent events
 
 A `text/event-stream` body is a stream of events, which a server writes and a client reads in pieces, as
-any other. `http::format_event` writes one, and `http::event_parser` reads them as the pieces come, as a
-browser does:
+any other. `http::event_writer` writes them through a handler's `response_writer`:
 
 ```cpp
 router.get("/feed", [](http::response_writer out) -> async::task<> {
-  out.fields.set("Content-Type", "text/event-stream");
-  out.fields.set("Cache-Control", "no-store");
-  co_await out.write(http::format_event({.type = "add", .data = R"({"id":7})", .id = "7"}));
+  http::event_writer events{std::move(out)};
+
+  co_await events.open();
+
+  auto const pending = co_await changes();
+
+  for (auto const &change : pending) {
+    co_await events.send({.type = "change", .data = to_json(change), .id = change.id});
+  }
 });
 ```
 
+It sets `Content-Type: text/event-stream` and `X-Accel-Buffering: no`, which tells a proxy such as nginx
+to pass each event on as it comes. A status and other fields, a `Cache-Control: no-store` say, go on the
+`response_writer` before it is given, with nothing written through it yet: it throws `std::logic_error`
+otherwise. `open()` sends the head at once, so that a client sees the stream before there is anything to
+say; otherwise it leaves with the first event.
+
+`http::event_reader` reads them on the client, natively and in a browser alike, as a streamed `fetch`
+there, which takes headers where `EventSource` does not:
+
 ```cpp
-http::event_parser events;
+auto response = co_await client.stream(request);
 
-while (auto const piece = co_await response.body.read()) {
-  events.feed(*piece);
+if (response.status != http::status::ok) {
+  co_return;
+}
 
-  while (auto const event = events.next()) {
-    show(event->type, event->data);
-  }
+http::event_reader events{response.body};
+
+while (auto const event = co_await events.next()) {
+  show(event->type, event->data);
 }
 ```
 
 An event has a `type`, `"message"` unless the stream names another, its `data`, the lines of its `data`
-fields joined with LF, and an `id`, the last event ID the stream set: what a client sends back as
-`Last-Event-ID` when it connects again. `events.last_event_id()` gives it too, once its event has ended,
-so that an event cut short is asked for again. `events.retry()` gives how long the stream asks it to wait first, at most a day.
-`http::format_retry` writes that, and `http::format_comment` a comment, which keeps a quiet stream from
-looking dead to a proxy.
+fields joined with LF, and an `id`, the last event ID the stream set, empty once it reset it. When the stream ends, `next()`
+gives nothing, and `events.last_event_id()`, the ID of the last event that ended, is what to send as
+`Last-Event-ID` when connecting again, so that an event cut short comes again. `events.retry()` gives how
+long the stream asked to wait first, at most a day. The reader does not connect again on its own.
 
-| When                                      | What happens                                                                                                                                                       |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Lines end with CRLF, LF or CR             | All the same, even split between two pieces, and a BOM at the start is skipped.                                                                                    |
-| Text is not UTF-8                         | Read with U+FFFD in its place, as a browser does. `format_event` throws `std::invalid_argument` for it.                                                            |
-| An event is larger than the parser holds  | 1 MiB by default, its data and type, or its data with the line being read: `next()` throws `http::error::event_too_large`, and so do it and `feed()` from then on. |
-| The stream ends in the middle of an event | That event is not one, as for a browser.                                                                                                                           |
-| A type or an id holds a line break        | `format_event` throws `std::invalid_argument`, as the line would end there. So does a NUL in an id.                                                                |
-| An id is longer than 1 KiB once read      | Ignored, as one holding a NUL is: the last ID stays, and the stream goes on. `format_event` throws `std::invalid_argument` for one.                                |
+| When                                      | What happens                                                                                                                                                                                                                              |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A stream has nothing to say for a while   | A client's `response_timeout` applies to each piece it waits for, 60 seconds by default: the server's `comment()` every 15 seconds or so keeps it, and a proxy, from closing the stream.                                                  |
+| Lines end with CRLF, LF or CR             | All the same, even split between two pieces, and a BOM at the start is skipped.                                                                                                                                                           |
+| Text is not UTF-8                         | Read with U+FFFD in its place, as a browser does. `send()` throws `std::invalid_argument` for it.                                                                                                                                         |
+| An event is larger than the reader holds  | 1 MiB by default, its data and type, or its data with the line being read: `next()` throws `http::error::event_too_large`, and goes on throwing. An id longer than 1 KiB once read is ignored: the last ID stays, and the stream goes on. |
+| The stream ends in the middle of an event | That event is not one, as for a browser.                                                                                                                                                                                                  |
+| A type or an id holds a line break        | `send()` throws `std::invalid_argument`, before anything leaves, as the line would end there. So does an id holding a NUL, or longer than 1 KiB, and a `comment()` with a line break.                                                     |
+| The server is stopped                     | It waits for a stream as for any request under way, up to `shutdown_timeout`, then stops what the handler awaits: a stream waiting for changes ends then.                                                                                 |
+| The peer is gone                          | `send()` throws, as `response_writer::write()` does, which ends the handler.                                                                                                                                                              |
+
+Underneath, `http::format_event`, `format_retry` and `format_comment` write the text of an event, and
+`http::event_parser` reads it as its pieces come, with no IO: for a transport of one's own.
 
 ## In a test
 

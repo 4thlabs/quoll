@@ -38,6 +38,7 @@
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
+#include <quoll/http/event_writer.hpp>
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/response_writer.hpp>
 #include <quoll/http/router.hpp>
@@ -56,6 +57,7 @@
 #include <chrono>
 #include <cstddef>
 #include <exception>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <stop_token>
@@ -1538,4 +1540,175 @@ TEST_CASE("response_writer: a 2xx given with its first write to CONNECT is no tu
 
   REQUIRE_FALSE(answer.contains(" 201 "));
   REQUIRE(answer.contains(" 501 "));
+}
+
+TEST_CASE("event_writer: a text/event-stream, its head at once, an event a piece", "[server][sse]") {
+  http::router router;
+
+  router.get("/feed", [](http::response_writer out) -> task<> {
+    out.fields.set("X-Feed", "yes");
+
+    http::event_writer events{std::move(out)};
+
+    co_await events.open();
+    co_await async::sleep_for(1s);
+    co_await events.retry(2s);
+    co_await events.send({.type = "add", .data = "a\nb", .id = "1"});
+    co_await events.comment("ping");
+    co_await events.send({.data = "c"});
+  });
+
+  auto const answer = answer_to(http::server{router}, get("/feed"));
+
+  REQUIRE(answer.starts_with("HTTP/1.1 200"));
+  REQUIRE(answer.find("Content-Type: text/event-stream\r\n") != std::string::npos);
+  REQUIRE(answer.find("X-Accel-Buffering: no\r\n") != std::string::npos);
+  REQUIRE(answer.find("X-Feed: yes\r\n") != std::string::npos);
+  REQUIRE(answer.find("Transfer-Encoding: chunked") != std::string::npos);
+  // A chunk each, as it was sent.
+  REQUIRE(answer.find("\r\nretry: 2000\n\r\n") != std::string::npos);
+  REQUIRE(answer.find("\r\nevent: add\nid: 1\ndata: a\ndata: b\n\n\r\n") != std::string::npos);
+  REQUIRE(answer.find("\r\n: ping\n\r\n") != std::string::npos);
+  REQUIRE(answer.find("\r\ndata: c\n\n\r\n") != std::string::npos);
+  REQUIRE(answer.ends_with("0\r\n\r\n"));
+}
+
+TEST_CASE("event_writer: open() sends the head before any event", "[server][sse]") {
+  http::router router;
+
+  router.get("/feed", [](http::response_writer out) -> task<> {
+    http::event_writer events{std::move(out)};
+
+    co_await events.open();
+    co_await async::sleep_for(1h);
+    co_await events.send({.data = "late"});
+  });
+
+  virtual_time time;
+  auto [client, ours] = io::make_memory_stream_pair();
+  std::optional<std::chrono::nanoseconds> head_at;
+
+  // Reads up to the end of the head, notes when, then the rest.
+  auto const peer = [&time, &head_at](io::memory_stream to) -> task<std::string> {
+    std::string const request = get("/feed");
+    std::string seen;
+    std::array<char, 256> chunk{};
+
+    (void)co_await io::write(to, std::as_bytes(std::span{request}));
+
+    while (!seen.contains("\r\n\r\n")) {
+      auto const read = co_await to.read_some(std::as_writable_bytes(std::span{chunk}));
+
+      if (read.error || read.transferred == 0) {
+        co_return seen;
+      }
+
+      seen.append(chunk.data(), read.transferred);
+    }
+
+    head_at = time.now();
+    co_return seen + co_await read_until_closed(to);
+  };
+
+  http::server const server{router};
+  auto outcome =
+      quoll::test::run(time, async::when_all(server.serve_connection(std::move(ours)), peer(std::move(client))));
+
+  REQUIRE(head_at == 0s);
+  REQUIRE(time.now() >= 1h);
+  REQUIRE(std::get<1>(outcome.value()).find("data: late") != std::string::npos);
+}
+
+TEST_CASE("event_writer: a response_writer whose head has left, or moved from, is refused", "[server][sse]") {
+  http::router router;
+  int refused = 0;
+
+  router.get("/written", [&refused](http::response_writer out) -> task<> {
+    co_await out.write("before");
+
+    try {
+      http::event_writer const events{std::move(out)};
+    } catch (std::logic_error const &) {
+      ++refused;
+    }
+  });
+  router.get("/moved", [&refused](http::response_writer out) -> task<> {
+    auto kept = std::move(out);
+
+    try {
+      // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move): what is tested.
+      http::event_writer const events{std::move(out)};
+    } catch (std::logic_error const &) {
+      ++refused;
+    }
+
+    co_await kept.write("kept");
+  });
+
+  REQUIRE(answer_to(http::server{router}, get("/written")).find("before") != std::string::npos);
+  REQUIRE(answer_to(http::server{router}, get("/moved")).find("kept") != std::string::npos);
+  REQUIRE(refused == 2);
+}
+
+TEST_CASE("event_writer: a Cache-Control of a middleware stays", "[server][sse]") {
+  http::router router;
+
+  router.use([](http::request request, http::next const &next) -> task<http::response> {
+    auto answer = co_await next(std::move(request));
+
+    answer.fields.set("Cache-Control", "no-store");
+    co_return answer;
+  });
+  router.get("/feed", [](http::response_writer out) -> task<> {
+    http::event_writer events{std::move(out)};
+
+    co_await events.send({.data = "x"});
+  });
+
+  auto const answer = answer_to(http::server{router}, get("/feed"));
+
+  REQUIRE(answer.find("Cache-Control: no-store\r\n") != std::string::npos);
+  REQUIRE(answer.find("Content-Type: text/event-stream\r\n") != std::string::npos);
+}
+
+TEST_CASE("event_writer: a Cache-Control and a status of the handler stay", "[server][sse]") {
+  http::router router;
+
+  router.get("/feed", [](http::response_writer out) -> task<> {
+    out.status = http::status::accepted;
+    out.fields.set("Cache-Control", "private, no-cache");
+
+    http::event_writer events{std::move(out)};
+
+    co_await events.send({.data = "x"});
+  });
+
+  auto const answer = answer_to(http::server{router}, get("/feed"));
+
+  REQUIRE(answer.starts_with("HTTP/1.1 202"));
+  REQUIRE(answer.find("Cache-Control: private, no-cache\r\n") != std::string::npos);
+  REQUIRE(answer.find("no-store") == std::string::npos);
+}
+
+TEST_CASE("event_writer: an event format_event refuses throws before anything leaves", "[server][sse]") {
+  http::router router;
+  bool refused = false;
+
+  router.get("/feed", [&refused](http::response_writer out) -> task<> {
+    http::event_writer events{std::move(out)};
+
+    try {
+      static_cast<void>(events.send({.type = "a\nb", .data = "x"}));
+    } catch (std::invalid_argument const &) {
+      refused = true;
+    }
+
+    co_await events.send({.data = "after"});
+  });
+
+  auto const answer = answer_to(http::server{router}, get("/feed"));
+
+  REQUIRE(refused);
+  REQUIRE(answer.find("\r\ndata: after\n\n\r\n") != std::string::npos);
+  REQUIRE(answer.find("event:") == std::string::npos);
 }

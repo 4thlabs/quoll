@@ -50,11 +50,15 @@
 #include <quoll/http/body_reader.hpp>
 #include <quoll/http/body_stream.hpp>
 #include <quoll/http/error.hpp>
+#include <quoll/http/event_reader.hpp>
+#include <quoll/http/event_writer.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
+#include <quoll/http/response_writer.hpp>
 #include <quoll/http/router.hpp>
+#include <quoll/http/server_sent_event.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/streamed_response.hpp>
 #include <quoll/http/transport.hpp>
@@ -4091,4 +4095,106 @@ TEST_CASE("http::client: a URL or a host that would not read as itself is refuse
   // A connector may make nothing of a port: it is the connector's to read.
   REQUIRE_NOTHROW(http::client{memory_connector{server}, "example.com", 0});
   REQUIRE_THROWS_AS((http::client{memory_connector{server}, "example.com", 65536}), std::invalid_argument);
+}
+
+namespace {
+
+// Events, written whole, or cut anywhere in pieces of a byte.
+http::router make_event_router() {
+  http::router router;
+
+  router.get("/events", [](http::response_writer out) -> task<> {
+    http::event_writer events{std::move(out)};
+
+    co_await events.open();
+    co_await events.retry(2s);
+    co_await events.send({.type = "add", .data = "first\nline", .id = "1"});
+    co_await events.comment();
+    co_await events.send({.data = "second"});
+  });
+  router.get("/cut", [](http::response_writer out) -> task<> {
+    out.fields.set("Content-Type", "text/event-stream");
+
+    for (auto const piece : std::string_view{"id: 7\r\ndata: a\r\n\r\ndata: b\n\ndata: lost"}) {
+      co_await out.write(std::string_view{&piece, 1});
+    }
+  });
+  router.get("/large", [](http::response_writer out) -> task<> {
+    http::event_writer events{std::move(out)};
+
+    co_await events.send({.data = std::string(100, 'x')});
+  });
+  return router;
+}
+
+struct read_events {
+  std::string content_type;
+  std::vector<http::server_sent_event> events;
+  std::string last_event_id;
+  std::optional<std::chrono::milliseconds> retry;
+  std::error_code error;
+};
+
+task<read_events> events_from(memory_server &server, std::string target, std::size_t max_event_size = 1024) {
+  http::client const client{memory_connector{server}, "example.com", 80};
+  read_events out;
+
+  try {
+    auto response = co_await client.stream(make_request(verb::get, std::move(target)));
+
+    out.content_type = response.fields.find("Content-Type").value_or("");
+
+    http::event_reader events{response.body, max_event_size};
+
+    while (auto event = co_await events.next()) {
+      out.events.push_back(std::move(*event));
+    }
+
+    out.last_event_id = events.last_event_id();
+    out.retry = events.retry();
+  } catch (std::system_error const &failure) {
+    out.error = failure.code();
+  }
+
+  co_return out;
+}
+
+} // namespace
+
+TEST_CASE("event_reader: the events an event_writer sends, as they come", "[client][sse]") {
+  auto const router = make_event_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+  auto const got = quoll::test::run(loop, events_from(server, "/events"));
+
+  REQUIRE(got);
+  REQUIRE(got->content_type == "text/event-stream");
+  REQUIRE(got->events == std::vector<http::server_sent_event>{{.type = "add", .data = "first\nline", .id = "1"},
+                                                              {.data = "second", .id = "1"}});
+  REQUIRE(got->last_event_id == "1");
+  REQUIRE(got->retry == 2s);
+  REQUIRE_FALSE(got->error);
+}
+
+TEST_CASE("event_reader: events cut anywhere, and one the stream does not end", "[client][sse]") {
+  auto const router = make_event_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+  auto const got = quoll::test::run(loop, events_from(server, "/cut"));
+
+  REQUIRE(got);
+  REQUIRE(got->events == std::vector<http::server_sent_event>{{.data = "a", .id = "7"}, {.data = "b", .id = "7"}});
+  REQUIRE(got->last_event_id == "7");
+  REQUIRE_FALSE(got->error);
+}
+
+TEST_CASE("event_reader: an event larger than it holds fails the reading", "[client][sse]") {
+  auto const router = make_event_router();
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), serving(router), 0, {}, {}};
+  auto const got = quoll::test::run(loop, events_from(server, "/large", 64));
+
+  REQUIRE(got);
+  REQUIRE(got->events.empty());
+  REQUIRE(got->error == http::error::event_too_large);
 }
