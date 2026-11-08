@@ -4099,7 +4099,7 @@ TEST_CASE("http::client: a URL or a host that would not read as itself is refuse
 
 namespace {
 
-// Events, written whole, or cut anywhere in pieces of a byte.
+// Events written whole, a stream a server keeps open a while, and an event too large.
 http::router make_event_router() {
   http::router router;
 

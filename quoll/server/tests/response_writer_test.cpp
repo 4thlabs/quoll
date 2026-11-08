@@ -1770,6 +1770,9 @@ TEST_CASE("event_writer: one moved from refuses what it is asked, at once", "[se
   REQUIRE_THROWS_AS(events.send({.data = "x"}), std::logic_error);
   REQUIRE_THROWS_AS(events.retry(std::chrono::seconds{1}), std::logic_error);
   REQUIRE_THROWS_AS(events.comment(), std::logic_error);
+  // What it would refuse anyway: moved from is what it says.
+  REQUIRE_THROWS_AS(events.send({.type = "a\nb", .data = "x"}), std::logic_error);
+  REQUIRE_THROWS_AS(events.comment("a\nb"), std::logic_error);
   // NOLINTEND(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
 }
 

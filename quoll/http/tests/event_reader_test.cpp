@@ -256,3 +256,38 @@ TEST_CASE("event_reader: a timeout around next() ends the reading", "[http][sse]
 
   REQUIRE(quoll::test::run(time, reading()) == "timed out;ended");
 }
+
+namespace {
+
+// A body whose read fails with what is no system_error.
+class failing_source {
+public:
+  [[nodiscard]] async::task<std::optional<std::string_view>> read() {
+    co_await async::yield();
+    throw std::runtime_error{"transport"};
+  }
+};
+
+} // namespace
+
+TEST_CASE("event_reader: any failure of the body ends the reading, and lets it go", "[http][sse]") {
+  auto source = std::make_shared<failing_source>();
+  http::event_reader events{http::response_body{source}};
+
+  auto const read = [&events]() -> async::task<int> {
+    int failed = 0;
+
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      try {
+        static_cast<void>(co_await events.next());
+      } catch (std::runtime_error const &) {
+        ++failed;
+      }
+    }
+
+    co_return failed;
+  };
+
+  REQUIRE(quoll::test::run(read()) == 2);
+  REQUIRE(source.use_count() == 1);
+}

@@ -85,10 +85,12 @@ async::task<std::optional<server_sent_event>> event_reader::read_next(std::share
 
       reading->parser.feed(*piece);
     }
-  } catch (std::system_error const &) {
-    // A read that failed, a stop, a timeout or an event too large: reading ends here, and the connection is not held
-    // for a stream nobody reads. A misuse, a second read of the body from elsewhere say, is the caller's, and ends
-    // nothing.
+  } catch (std::logic_error const &) {
+    // A misuse, a second read of the body from elsewhere say, is the caller's, and ends nothing.
+    throw;
+  } catch (...) {
+    // A read that failed, a stop, a timeout, an event too large, running out of memory: reading ends here, and the
+    // connection is not held for a stream nobody reads.
     reading->failure = std::current_exception();
     reading->body = response_body{};
     throw;

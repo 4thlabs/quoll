@@ -66,16 +66,30 @@ event_writer::event_writer(response_writer out) {
 // An empty piece sends the head.
 async::task<> event_writer::open() { return ask(std::string{}); }
 
-async::task<> event_writer::send(server_sent_event const &event) { return ask(format_event(event)); }
+// Moved from is checked before the text is made, so that it is what is reported.
+async::task<> event_writer::send(server_sent_event const &event) {
+  check_writable();
+  return ask(format_event(event));
+}
 
-async::task<> event_writer::retry(std::chrono::milliseconds delay) { return ask(format_retry(delay)); }
+async::task<> event_writer::retry(std::chrono::milliseconds delay) {
+  check_writable();
+  return ask(format_retry(delay));
+}
 
-async::task<> event_writer::comment(std::string_view text) { return ask(format_comment(text)); }
+async::task<> event_writer::comment(std::string_view text) {
+  check_writable();
+  return ask(format_comment(text));
+}
 
-async::task<> event_writer::ask(std::string text) const {
+void event_writer::check_writable() const {
   if (!state_) {
     throw std::logic_error{"quoll::http::event_writer: used once moved from"};
   }
+}
+
+async::task<> event_writer::ask(std::string text) {
+  check_writable();
 
   detail::one_at_a_time turn{std::shared_ptr<std::atomic<bool>>{state_, &state_->busy},
                              "quoll::http::event_writer: an operation while another is pending"};

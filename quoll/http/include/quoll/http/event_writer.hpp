@@ -140,7 +140,10 @@ private:
   };
 
   // `text` written, its turn taken now: std::logic_error for a writer moved from, or while another is pending.
-  [[nodiscard]] async::task<> ask(std::string text) const;
+  [[nodiscard]] async::task<> ask(std::string text);
+
+  // std::logic_error for a writer moved from.
+  void check_writable() const;
 
   // `text` lives in the frame until it has left; `turn` until the frame goes.
   [[nodiscard]] static async::task<> write(std::shared_ptr<state> writing, detail::one_at_a_time turn,
