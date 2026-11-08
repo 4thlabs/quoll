@@ -48,7 +48,6 @@
 
 #include <algorithm>
 #include <array>
-#include <coroutine>
 #include <cstddef>
 #include <exception>
 #include <new>
@@ -465,26 +464,6 @@ TEST_CASE("memory_stream: a reader a little behind does not keep all that went t
   }
 
   REQUIRE(channel.held() <= 4 * chunk.size());
-}
-
-TEST_CASE("memory_stream: a suspended read that goes leaves the peer nothing to find", "[io][memory_stream]") {
-  auto [left, right] = io::make_memory_stream_pair();
-  quoll::async::run_loop loop;
-  auto const executor = loop.get_executor();
-  std::array<std::byte, 4> buffer{};
-
-  {
-    auto read = left.read_some(buffer);
-
-    REQUIRE_FALSE(read.await_ready());
-    read.await_suspend(std::noop_coroutine(),
-                       quoll::async::await_context{.executor = quoll::async::executor_ref{executor}, .stop_token = {}});
-  }
-
-  // It would otherwise post the read that went, and another could not start.
-  REQUIRE(run(write_once(right, "late")));
-  loop.run();
-  REQUIRE(run(read_once(left))->text == "late");
 }
 
 TEST_CASE("io::detail::sound_read: what a stream reports is what can be trusted", "[io]") {

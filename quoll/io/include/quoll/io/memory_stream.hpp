@@ -50,7 +50,6 @@
 #include <cassert>
 #include <coroutine>
 #include <cstddef>
-#include <exception>
 #include <memory>
 #include <optional>
 #include <span>
@@ -85,22 +84,9 @@ public:
     // Moved into the awaiting coroutine before it suspends, when no stop callback is registered yet.
     read_awaitable(read_awaitable &&other) noexcept : channel_(other.channel_), buffer_(other.buffer_) {}
 
-    // A coroutine suspended here may go, and the peer's next write must not then find it. One already woken is on its
-    // executor's queue, from where nothing can take it: it would resume a frame that is gone, so this ends the program
-    // now rather than then.
-    ~read_awaitable() {
-      if (!suspended_) {
-        return;
-      }
-
-      stop_callback_.reset();
-
-      if (channel_->woken()) {
-        std::terminate();
-      }
-
-      channel_->end_wait();
-    }
+    // Its frame is destroyed only once it has resumed from here (see async::task): the channel and the executor's
+    // queue may still point to its work item until then.
+    ~read_awaitable() { assert(!suspended_ && "memory_stream: a read destroyed while it waits"); }
 
     [[nodiscard]] bool await_ready() const noexcept { return buffer_.empty() || channel_->readable(); }
 
