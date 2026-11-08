@@ -471,7 +471,7 @@ TEST_CASE("memory_stream: a reader a little behind does not keep all that went t
 
 // Hidden: the ctest assert.memory_stream_read_destroyed_while_it_waits runs it alone, in a debug build, and passes on
 // the assertion's message, as the program ends there.
-TEST_CASE("memory_stream: a read destroyed while it waits is asserted", "[.assert]") {
+TEST_CASE("memory_stream: destroying a read that waits is asserted", "[.assert]") {
   auto [left, right] = io::make_memory_stream_pair();
   quoll::async::run_loop loop;
   auto const executor = loop.get_executor();
