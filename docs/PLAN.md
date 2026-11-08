@@ -49,13 +49,16 @@ One pull request per topic, under the rule in [`AGENTS.md`](../AGENTS.md). A new
 before much is built on it. Points marked "To settle" and the [open questions](#open-questions) are the maintainer's to
 decide. Steps marked *(maintainer merges)* are big architecture changes.
 
-**Current step: 4.** Step 0 only waits for the maintainer.
+**Current step: 5.** Step 0 only waits for the maintainer.
 
 ### Done
 
 `async`, `io`, `http`, `client`, `server` and `rest`, with timeouts by default and TLS (a client GET and a REST client
 over TCP, over `fetch`, and through OpenSSL). A first `quoll::ui` with its DOM renderer, Tailwind through Vite, and two
 levels of hot reload, in the sample `ui_notes`. In CI: `clang-tidy`, the standard library's checks, Apple Clang on macOS, Codex's review and a protected `main`.
+
+REST from a command-line program (step 4): a client's scopes and interceptors, form and bytes codecs, `open_enum` for the
+values an enum does not know, and `samples/github`, calling GitHub natively and in Node through `fetch`.
 
 Client and server (step 2): the reviews of each module, a runtime on several threads with a strand per connection, a
 coroutine frame destroyed only once it will not resume again, which a program reaches no way of breaking through
@@ -172,7 +175,7 @@ every night, a mixed load under TSan and under ASan with UBSan (#113), and the f
 each way, a request, a response and a file, with a process that never held more than 10.3 MiB, in
 [`BENCHMARKS.md`](BENCHMARKS.md#larger-than-memory).
 
-### Step 4: REST from a command-line program
+### Step 4: REST from a command-line program *(done)*
 
 The DSL and a runtime, with no UI.
 
@@ -186,6 +189,11 @@ The DSL and a runtime, with no UI.
 
 *Done when:* a real third-party API is called from a command-line program, natively and through `fetch`, with
 `call`, `try_call` and credentials.
+
+Done on 2026-11-08: a client's scopes and interceptors, with `rest::retry` (#119), the form and bytes codecs (#120),
+`samples/github` calling GitHub natively and in Node through `fetch`, tested against fakes, with
+[`docs/command-line.md`](command-line.md) (#121), and `rest::open_enum<E>` for the values an enum does not know. The OpenAPI
+document stays optional, for later.
 
 ### Step 5: SSE, then WebSocket
 
@@ -541,7 +549,7 @@ peer holds nobody back and the idle timeout covers it. In a browser, `fetch` doe
 ### REST DSL: contract, server, client
 
 What this section says of OpenAPI (operation ids, security schemes, JSON Schemas) describes the optional output of
-[step 4](#step-4-rest-from-a-command-line-program), which does not exist yet: it binds nothing else.
+[step 4](#step-4-rest-from-a-command-line-program-done), which does not exist yet: it binds nothing else.
 
 An API description is a **contract**: C++ types, with no I/O and no server or client code. A server implements a
 contract and a client consumes one, but neither needs the other. Describing a third-party API (a payment provider, a
@@ -681,7 +689,8 @@ auto alice_cards = api.scope<bank::cards::api>(1); // fixes {user_id}
 would choose:
 
 - JSON names that are not C++ names (`created_at`, `htmlUrl`, reserved words), through a per-type renaming trait.
-- Unknown fields are ignored. An enum may declare an enumerator for the values it does not know.
+- Unknown fields are ignored. A field of type `rest::open_enum<E>` reads a value `E` does not know, kept as it came and
+  written back so, while `E` itself stays strict.
 - Error bodies of any shape, one type per status (`returns<github_error, status::not_found>`), not only `problem+json`.
 - Bodies other than JSON through codecs: text, form, bytes.
 - Later: a tool generating the contract header from an existing OpenAPI document. The DSL stays able to express what
