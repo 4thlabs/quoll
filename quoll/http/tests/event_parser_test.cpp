@@ -301,6 +301,20 @@ TEST_CASE("event_parser: an event larger than the most it holds fails, and goes 
     REQUIRE(failed);
   }
 
+  SECTION("an id longer than max_id_size") {
+    http::event_parser parser;
+    std::string const longest(http::event_parser::max_id_size, 'i');
+
+    parser.feed("id: " + longest + "\ndata: a\n\n");
+
+    REQUIRE(parser.next() == event("a", longest));
+    REQUIRE_FALSE(parser.next());
+
+    parser.feed("id: " + longest + "i\n\n");
+
+    REQUIRE(throws_too_large(parser));
+  }
+
   SECTION("an event at the limit, and many of them") {
     http::event_parser parser{16};
     std::string text;

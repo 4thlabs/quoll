@@ -182,6 +182,8 @@ std::optional<server_sent_event> event_parser::take_line(std::string_view line) 
     if (!value.contains('\0')) {
       id_buffer_.clear();
       append_text(id_buffer_, value);
+      id_changed_ = true;
+      check_id_size();
     }
   } else if (field == "retry") {
     if (auto const delay = retry_value(value)) {
@@ -194,9 +196,11 @@ std::optional<server_sent_event> event_parser::take_line(std::string_view line) 
 }
 
 std::optional<server_sent_event> event_parser::dispatch() {
-  // Even for a block with no data, as for a browser. Copied only when it changed.
-  if (last_event_id_ != id_buffer_) {
+  // Even for a block with no data, as for a browser. Copied only when an id field came, so that blank lines after a
+  // long one cost nothing.
+  if (id_changed_) {
     last_event_id_ = id_buffer_;
+    id_changed_ = false;
   }
 
   if (data_.empty()) {
@@ -219,6 +223,13 @@ std::optional<server_sent_event> event_parser::dispatch() {
   }
 
   return event;
+}
+
+void event_parser::check_id_size() {
+  if (id_buffer_.size() > max_id_size) {
+    failed_ = true;
+    throw std::system_error{error::event_too_large, "quoll::http::event_parser: id too large"};
+  }
 }
 
 void event_parser::check_size(std::size_t held) {

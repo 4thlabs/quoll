@@ -93,9 +93,15 @@ public:
    * @brief The next event the bytes fed so far end, or none until more comes.
    *
    * @throws std::system_error with http::error::event_too_large once an event, the line being read included, holds
-   * more than the most it may, and on every call after.
+   * more than the most it may, or an id more than max_id_size, and on every call after.
    */
   [[nodiscard]] std::optional<server_sent_event> next();
+
+  /**
+   * @brief The most an `id` holds, 1 KiB: each event carries a copy, and it goes back in a header. Past it, next()
+   * fails as for an event too large.
+   */
+  static constexpr std::size_t max_id_size = 1024;
 
   /**
    * @brief The ID of the last event the stream ended, empty if none: what `Last-Event-ID` sends when connecting again.
@@ -118,6 +124,7 @@ private:
   [[nodiscard]] std::optional<server_sent_event> take_line(std::string_view line);
 
   void check_size(std::size_t held);
+  void check_id_size();
 
   std::size_t max_event_size_;
   // What was fed, from position_ on not read yet.
@@ -136,6 +143,8 @@ private:
   std::string type_;
   // The id fields read, and what the last event ended took from them.
   std::string id_buffer_;
+  // Whether an id field came since the last blank line: only then is it copied.
+  bool id_changed_ = false;
   std::string last_event_id_;
   std::optional<std::chrono::milliseconds> retry_;
 };

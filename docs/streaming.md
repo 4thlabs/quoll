@@ -323,13 +323,13 @@ so that an event cut short is asked for again. `events.retry()` gives how long t
 `http::format_retry` writes that, and `http::format_comment` a comment, which keeps a quiet stream from
 looking dead to a proxy.
 
-| When                                      | What happens                                                                                                                                          |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Lines end with CRLF, LF or CR             | All the same, even split between two pieces, and a BOM at the start is skipped.                                                                       |
-| Text is not UTF-8                         | Read with U+FFFD in its place, as a browser does. `format_event` throws `std::invalid_argument` for it.                                               |
-| An event is larger than the parser holds  | 1 MiB by default, its data and type, and the line being read: `next()` throws `http::error::event_too_large`, and so do it and `feed()` from then on. |
-| The stream ends in the middle of an event | That event is not one, as for a browser.                                                                                                              |
-| A type or an id holds a line break        | `format_event` throws `std::invalid_argument`, as the line would end there. So does a NUL in an id.                                                   |
+| When                                      | What happens                                                                                                                                                               |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lines end with CRLF, LF or CR             | All the same, even split between two pieces, and a BOM at the start is skipped.                                                                                            |
+| Text is not UTF-8                         | Read with U+FFFD in its place, as a browser does. `format_event` throws `std::invalid_argument` for it.                                                                    |
+| An event is larger than the parser holds  | 1 MiB by default, its data and type, and the line being read, or an id over 1 KiB: `next()` throws `http::error::event_too_large`, and so do it and `feed()` from then on. |
+| The stream ends in the middle of an event | That event is not one, as for a browser.                                                                                                                                   |
+| A type or an id holds a line break        | `format_event` throws `std::invalid_argument`, as the line would end there. So does a NUL in an id.                                                                        |
 
 ## In a test
 
