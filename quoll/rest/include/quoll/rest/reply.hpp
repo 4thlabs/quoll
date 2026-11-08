@@ -37,6 +37,7 @@
 #ifndef QUOLL_REST_REPLY_HPP
 #define QUOLL_REST_REPLY_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/response_value.hpp>
@@ -82,7 +83,7 @@ template <http::status Status>
 template <class Endpoint>
 class reply {
 public:
-  using responses = detail::filter_t<detail::is_response_part, typename Endpoint::parts>;
+  using responses = detail::own_responses<Endpoint>;
 
   static_assert(responses::size > 0, "quoll::rest::reply: the endpoint declares no returns<>");
 
@@ -117,12 +118,12 @@ public:
    * @throws std::bad_variant_access when another response is held.
    */
   template <http::status Status>
-  [[nodiscard]] auto &get() {
+  [[nodiscard]] auto &get() QUOLL_LIFETIMEBOUND {
     return std::get<status_index<Status>()>(value_).value;
   }
 
   template <http::status Status>
-  [[nodiscard]] auto const &get() const {
+  [[nodiscard]] auto const &get() const QUOLL_LIFETIMEBOUND {
     return std::get<status_index<Status>()>(value_).value;
   }
 

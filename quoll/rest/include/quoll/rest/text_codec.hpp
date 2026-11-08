@@ -64,6 +64,7 @@ public:
     return value;
   }
 
+  /** @brief The text `body` holds, or a decode_error for one that is not UTF-8. */
   template <class T>
     requires std::same_as<T, std::string>
   [[nodiscard]] std::expected<T, decode_error> decode(std::string_view body) const {

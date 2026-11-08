@@ -55,6 +55,7 @@ enum class status : std::uint16_t {
   created = 201,
   accepted = 202,
   no_content = 204,
+  reset_content = 205,
   partial_content = 206,
   moved_permanently = 301,
   found = 302,
@@ -99,6 +100,8 @@ enum class status : std::uint16_t {
     return "Accepted";
   case status::no_content:
     return "No Content";
+  case status::reset_content:
+    return "Reset Content";
   case status::partial_content:
     return "Partial Content";
   case status::moved_permanently:

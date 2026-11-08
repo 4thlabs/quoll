@@ -34,9 +34,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: a CONNECT endpoint has no body<>
+// expect: quoll::rest: unbalanced brace in a path
 //
-// A body on a CONNECT endpoint.
+// A brace not closed.
 
 #include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
@@ -44,10 +44,6 @@
 using namespace quoll::rest;
 using quoll::http::verb;
 
-struct thing {
-  int value = 0;
-};
+using open = endpoint<"open", verb::get, "/{x">;
 
-using e = endpoint<"e", verb::connect, "/", body<thing>>;
-
-e const instance{};
+api<"", open> const instance{};

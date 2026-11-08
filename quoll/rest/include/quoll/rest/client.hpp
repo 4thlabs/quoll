@@ -37,6 +37,7 @@
 #ifndef QUOLL_REST_CLIENT_HPP
 #define QUOLL_REST_CLIENT_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/client/client.hpp>
 #include <quoll/http/transport.hpp>
@@ -129,7 +130,8 @@ public:
     credentials_.insert_or_assign(std::string{detail::scheme_traits<Scheme>::key.view()}, std::move(value));
   }
 
-  [[nodiscard]] Transport const &transport() const noexcept { return transport_; }
+  /** @brief The transport the client sends its requests with. */
+  [[nodiscard]] Transport const &transport() const noexcept QUOLL_LIFETIMEBOUND { return transport_; }
 
 private:
   template <class, class, class>

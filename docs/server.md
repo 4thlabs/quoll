@@ -90,8 +90,8 @@ References and views a handler takes stay valid in a coroutine too, until its ta
 | A path whose routes have other methods                                    | 405, with `Allow`    |
 | Another form of target, an invalid escape, a NUL or a `.` or `..` segment | 400                  |
 
-`add()` and the functions above throw `std::invalid_argument` for an invalid template, an empty name
-or handler, or a route this method already has with the same shape.
+`add()` and the functions above throw `std::invalid_argument` for an invalid template (a `:` with no type after it
+included), an empty name or handler, or a route this method already has with the same shape.
 
 Add routes and middlewares first, then serve: from then on, `dispatch()` may be called from any
 thread.

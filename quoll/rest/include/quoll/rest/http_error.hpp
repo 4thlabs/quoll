@@ -53,6 +53,7 @@ class http_error : public std::runtime_error {
 public:
   http_error(http::status status, std::string const &detail) : std::runtime_error(detail), status_(status) {}
 
+  /** @brief The status the server answers. */
   [[nodiscard]] http::status status() const noexcept { return status_; }
 
 private:

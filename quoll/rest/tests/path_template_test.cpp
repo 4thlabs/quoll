@@ -95,6 +95,10 @@ static_assert(!same_operation(verb::get, "/users/{id}", verb::delete_, "/users/{
 static_assert(!same_operation(verb::get, "/users/{id}", verb::get, "/users/{id}/cards"));
 static_assert(!same_operation(verb::get, "/users", verb::get, "/user"));
 static_assert(!same_operation(verb::get, "/users/{id", verb::get, "/users/{id"));
+// As the router reads them: an encoded letter is the letter, an encoded slash stays in its segment.
+static_assert(same_operation(verb::get, "/a", verb::get, "/%61"));
+static_assert(!same_operation(verb::get, "/a%2Fb", verb::get, "/a/b"));
+static_assert(!same_operation(verb::get, "/x/{a}", verb::get, "/x/{b:path}"));
 
 } // namespace
 
