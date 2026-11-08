@@ -68,6 +68,25 @@ under `emcmake`, whose differences are [below](#emscripten). This table is the n
 The runtime can be neither copied nor moved, and it outlives its executors. `run()` and
 `get_stop_token()` belong to one thread, and `get_executor()` and the executors may be used from any.
 
+### Several threads
+
+A runtime runs one thread by default, the one calling `run()`, and a program's tasks take turns on it, with nothing to pay
+for more. Its options ask for more, the same on every runtime, so that `main()` does not change with the build: a browser
+runs one whatever they say.
+
+```cpp
+quoll::runtime runtime{quoll::async::runtime_options{.threads = 4}};
+```
+
+`run()` then runs the loop on four threads, its own included. Each executor `get_executor()` hands out is a **strand**: the
+tasks spawned on it, and the tasks they await, take turns, whichever thread runs them, while those on other executors run
+in parallel. A server runs each connection on a strand of its own, so that what a connection does beside itself (reading
+while it writes, a timer, a stop) never runs on two threads at once, and each socket, acceptor and timer is on its own too,
+as asio asks.
+
+What two tasks on different executors share is the program's to protect: a `std::atomic`, a mutex, or one executor for
+both. A handler's state shared between connections is such a thing.
+
 ### Blocking work
 
 `async::offload` runs work that blocks away from the loop, on threads of the runtime's own, started by its first use, and
@@ -91,6 +110,7 @@ not be the same class:
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `runtime.context()`                                  | The `io_context` of the runtime                                                                                   |
 | `quoll::asio::executor<>`                            | An executor over any asio executor, an `io_context` or a strand, which is also its network, timer and TLS network |
+|                                                      | It needs one handler at a time; with `true` as its second argument, each socket, acceptor and timer it makes is on a strand of its own, for an `io_context` run by several threads |
 | `quoll::asio::tcp_stream`, `quoll::asio::tls_stream` | Streams over asio sockets                                                                                         |
 | `quoll::asio::connector`                             | A connector opening TCP connections on an asio executor                                                           |
 | `quoll::asio::acceptor`, `quoll::asio::tls_acceptor` | Listeners over an asio acceptor                                                                                   |

@@ -47,9 +47,11 @@
 #include <asio/signal_set.hpp>
 #include <asio/strand.hpp>
 
+#include <algorithm>
 #include <array>
 #include <csignal>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <signal.h>
@@ -195,7 +197,8 @@ struct runtime_strand {
 
 struct runtime::state {
   explicit state(async::runtime_options options)
-      : threads(options.threads == 0 ? 1 : options.threads), context(threads == 1 ? 1 : static_cast<int>(threads)),
+      : threads(options.threads == 0 ? 1 : options.threads),
+        context(static_cast<int>(std::min<std::size_t>(threads, std::numeric_limits<int>::max()))),
         loop(context.get_executor(), threads > 1) {}
 
   std::size_t threads;
