@@ -225,11 +225,21 @@ function(quoll_main_tests)
   set_tests_properties(quoll PROPERTIES RESOURCE_LOCK quoll_ports)
 
   # What a debug build asserts: each hidden case ([.assert]) runs alone, in a process the assertion ends, and passes on
-  # its message (QuollExpectAssert.cmake). Native builds whose assertions are compiled in only.
-  if(NOT EMSCRIPTEN AND NOT CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$")
+  # its message (QuollExpectAssert.cmake), which the case's name does not hold: Catch2 prints the name of a case that
+  # fails otherwise. Native builds whose assertions are compiled in only: Debug for a multi-config generator, whose
+  # CMAKE_BUILD_TYPE is empty, and any type but the optimized ones otherwise.
+  get_property(multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+
+  if(multi_config)
+    set(configurations CONFIGURATIONS Debug)
+  else()
+    set(configurations "")
+  endif()
+
+  if(NOT EMSCRIPTEN AND (multi_config OR NOT CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$"))
     set(asserted
-        "task_destroyed_while_it_runs|task: one destroyed while it runs is asserted|destroyed while it runs"
-        "memory_stream_read_destroyed_while_it_waits|memory_stream: a read destroyed while it waits is asserted|a read destroyed while it waits"
+        "task_destroyed_while_it_runs|task: destroying one that runs is asserted|still pointing into its frame"
+        "memory_stream_read_destroyed_while_it_waits|memory_stream: destroying a read that waits is asserted|a read destroyed while it waits"
     )
 
     foreach(entry IN LISTS asserted)
@@ -238,7 +248,7 @@ function(quoll_main_tests)
       list(GET fields 1 test_case)
       list(GET fields 2 message)
       add_test(
-        NAME assert.${name}
+        NAME assert.${name} ${configurations}
         COMMAND ${CMAKE_COMMAND} "-DQUOLL_TESTS=$<TARGET_FILE:quoll_tests>" "-DQUOLL_CASE=${test_case}"
                 "-DQUOLL_EXPECT=${message}" -P ${QUOLL_CMAKE_DIR}/QuollExpectAssert.cmake
       )
