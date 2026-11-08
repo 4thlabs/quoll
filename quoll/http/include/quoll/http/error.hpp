@@ -61,6 +61,8 @@ enum class error {
   /** @brief A client followed http::client_options::max_redirects redirects, and got one more: for a client to
      report. */
   too_many_redirects,
+  /** @brief An event of a `text/event-stream` holds more than an http::event_parser may. */
+  event_too_large,
 };
 
 /** @brief The category of http::error codes. */
