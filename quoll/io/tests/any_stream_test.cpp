@@ -540,11 +540,11 @@ TEST_CASE("any_stream: an operation on one moved from is refused", "[io][any_str
   io::any_stream stream{task_stream{}};
   io::any_stream const moved{std::move(stream)};
 
-  // NOLINTBEGIN(bugprone-use-after-move): what is tested.
+  // NOLINTBEGIN(bugprone-use-after-move,clang-analyzer-cplusplus.Move): what is tested.
   REQUIRE_THROWS_AS((void)stream.read_some(buffer), std::logic_error);
   REQUIRE_THROWS_AS((void)stream.write_some(buffer), std::logic_error);
   REQUIRE_THROWS_AS((void)stream.shutdown_send(), std::logic_error);
-  // NOLINTEND(bugprone-use-after-move)
+  // NOLINTEND(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
 }
 
 TEST_CASE("any_stream: awaiting an operation twice is refused", "[io][any_stream]") {
