@@ -223,6 +223,27 @@ function(quoll_main_tests)
   add_test(NAME quoll COMMAND quoll_tests)
   # Not next to the other tests using ports: one of them relies on a port just freed staying unused.
   set_tests_properties(quoll PROPERTIES RESOURCE_LOCK quoll_ports)
+
+  # What a debug build asserts: each hidden case ([.assert]) runs alone, in a process the assertion ends, and passes on
+  # its message (QuollExpectAssert.cmake). Native builds whose assertions are compiled in only.
+  if(NOT EMSCRIPTEN AND NOT CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$")
+    set(asserted
+        "task_destroyed_while_it_runs|task: one destroyed while it runs is asserted|destroyed while it runs"
+        "memory_stream_read_destroyed_while_it_waits|memory_stream: a read destroyed while it waits is asserted|a read destroyed while it waits"
+    )
+
+    foreach(entry IN LISTS asserted)
+      string(REPLACE "|" ";" fields "${entry}")
+      list(GET fields 0 name)
+      list(GET fields 1 test_case)
+      list(GET fields 2 message)
+      add_test(
+        NAME assert.${name}
+        COMMAND ${CMAKE_COMMAND} "-DQUOLL_TESTS=$<TARGET_FILE:quoll_tests>" "-DQUOLL_CASE=${test_case}"
+                "-DQUOLL_EXPECT=${message}" -P ${QUOLL_CMAKE_DIR}/QuollExpectAssert.cmake
+      )
+    endforeach()
+  endif()
 endfunction()
 
 #

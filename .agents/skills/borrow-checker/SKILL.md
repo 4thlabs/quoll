@@ -166,9 +166,9 @@ In this order of preference:
 1. **Own it:** copy or move into what outlives the call. A copy costs less than a crash.
 2. **Make the API refuse it:** a type, an `&&`-qualifier, a deleted overload, a `static_assert`, so that misuse does not
    compile.
-3. **Check it in every build:** throw on a misuse that types cannot express. An invariant that only the library's own code
-   can break, out of a caller's reach, is asserted instead, and debug builds run the tests: a task's frame destroyed
-   while it runs is one.
+3. **Check it in every build:** throw on a misuse that types cannot express. An invariant that only code speaking the
+   library's own protocol can break, out of a normal caller's reach, is asserted instead, and debug builds run the tests:
+   a task destroyed while it runs, which needs starting it by hand through `await_suspend`, is one.
 4. **Say it:** a name or a view type that says it does not own, the lifetime in the doc comment, and the lifetimebound
    attribute (`[[clang::lifetimebound]]`, behind the project's macro where compilers lack it) on what returns a reference into
    `*this` or a parameter.
@@ -176,8 +176,8 @@ In this order of preference:
 Two shapes make the destruction pass's bugs impossible to write:
 
 - **A registration is a token.** What registers returns an object whose destructor unregisters, as `std::stop_callback`
-  does, and whoever registered keeps it as a member. Destroying the awaitable, the task or the owner then unregisters on
-  every path.
+  does, and whoever registered keeps it as a member. Destroying the owner then unregisters on every path. In Quoll, an
+  awaitable in a task's frame is not destroyed while it waits (see the destruction pass): what it registered with is.
 - **What calls back is taken apart first, on purpose.** When a member's destruction may call back into the object, an
   explicit destructor first clears what a callback could reach (lookups, registrations), then moves that member out into a
   local and destroys it there, while the object is still whole. Declaring it last is not enough: a callback may look it up
@@ -187,7 +187,8 @@ Two shapes make the destruction pass's bugs impossible to write:
 
 Each real finding gets a test that fails without the fix, under ASan or TSan when it is about memory or threads. For a
 registration, the test destroys the object at every state it can be registered in (each suspension point of a coroutine, in
-turn). A member used after its destructor needs MemorySanitizer's use-after-dtor. A flag set by the destructor is no
+turn), unless that object is a task's frame or an awaitable waiting in it, which Quoll never destroys while suspended: the
+test then destroys what it registered with. A member used after its destructor needs MemorySanitizer's use-after-dtor. A flag set by the destructor is no
 substitute: reading the object afterwards is itself undefined, and an optimizing compiler may drop the store as dead.
 
 ## What to report

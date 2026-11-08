@@ -34,7 +34,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/await_context.hpp>
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/executor_ref.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
@@ -48,6 +50,7 @@
 
 #include <algorithm>
 #include <array>
+#include <coroutine>
 #include <cstddef>
 #include <exception>
 #include <new>
@@ -464,6 +467,20 @@ TEST_CASE("memory_stream: a reader a little behind does not keep all that went t
   }
 
   REQUIRE(channel.held() <= 4 * chunk.size());
+}
+
+// Hidden: the ctest assert.memory_stream_read_destroyed_while_it_waits runs it alone, in a debug build, and passes on
+// the assertion's message, as the program ends there.
+TEST_CASE("memory_stream: a read destroyed while it waits is asserted", "[.assert]") {
+  auto [left, right] = io::make_memory_stream_pair();
+  quoll::async::run_loop loop;
+  auto const executor = loop.get_executor();
+  std::array<std::byte, 4> buffer{};
+  auto read = left.read_some(buffer);
+
+  REQUIRE_FALSE(read.await_ready());
+  read.await_suspend(std::noop_coroutine(),
+                     quoll::async::await_context{.executor = quoll::async::executor_ref{executor}, .stop_token = {}});
 }
 
 TEST_CASE("io::detail::sound_read: what a stream reports is what can be trusted", "[io]") {

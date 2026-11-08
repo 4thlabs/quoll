@@ -71,12 +71,14 @@ guidelines and the C++ Core Guidelines.
   copy. The exceptions are `_ref` wrappers, views, and what an operation acts on, as a stream or the object of a member
   (`http::read(stream, ...)`, `router.dispatch()`). The fast path goes behind it, in `detail`.
 - A coroutine frame is destroyed only once it will not resume again: by a root (`co_spawn`'s, `when_all`'s) as it ends,
-  or by its awaiter, through `async::task`, once it has completed. What an awaitable in it registers (its work item in an
-  executor's queue, an I/O handler, a stop callback) therefore never outlives the frame, and needs nothing undone if the frame
-  goes. `task` asserts it in debug builds: a program reaches a frame's handle only in the `await_suspend` of an awaitable of
-  its own, which resumes it rather than destroy it. Nothing destroys a suspended frame or an awaitable while it waits,
-  tests included: one driven by hand is resumed first. What is not a frame, as an object holding a timer or a stop
-  callback, unregisters in its destructor, as `std::stop_callback` does.
+  or before it starts when its start cannot be posted, or by its awaiter, through `async::task`, once it has completed.
+  What an awaitable in it registers (its work item in an executor's queue, an I/O handler, a stop callback) is undone as it
+  resumes or is cancelled, and never outlives the frame. `task` asserts it in debug builds, which run the tests. A program
+  can break it only by starting a task by hand, through `await_suspend`, in an awaitable of its own: such code destroys a
+  task it started only once it has completed, as Quoll's roots do. Nothing destroys an awaitable while it waits, tests
+  included: one driven by hand is resumed first. A released root that never resumes leaks its frame, as do those a loop
+  destroyed with work pending leaves. What is not a frame, as an object holding a timer or a stop callback, unregisters in
+  its destructor, as `std::stop_callback` does.
 - Non-owning parameters as `std::string_view` / `std::span`; ownership through values or `std::unique_ptr`. No raw
   owning pointers, no `new` / `delete`. Throw by value, catch by `const&`.
 - A handle on shared state whose copies are the same object (`http::client`, `http::server`) has copies and no moves, so that
