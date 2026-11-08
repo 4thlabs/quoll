@@ -324,8 +324,8 @@ TEST_CASE("any_stream: a small stream is held in place, a big one on the heap", 
   REQUIRE(moved_small.target<small_stream>() != small_address);
   REQUIRE(moved_big.target<big_stream>() == big_address);
   // What a moved-from stream holds is the point here.
-  REQUIRE(small.target<small_stream>() == nullptr); // NOLINT(bugprone-use-after-move)
-  REQUIRE(big.target<big_stream>() == nullptr);     // NOLINT(bugprone-use-after-move)
+  REQUIRE(small.target<small_stream>() == nullptr); // NOLINT(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
+  REQUIRE(big.target<big_stream>() == nullptr);     // NOLINT(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
   REQUIRE(run(read_and_write(moved_small, 1)) == 0U);
   REQUIRE(run(read_and_write(moved_big, 1)) == 0U);
 }
@@ -540,11 +540,11 @@ TEST_CASE("any_stream: an operation on one moved from is refused", "[io][any_str
   io::any_stream stream{task_stream{}};
   io::any_stream const moved{std::move(stream)};
 
-  // NOLINTBEGIN(bugprone-use-after-move): what is tested.
+  // NOLINTBEGIN(bugprone-use-after-move,clang-analyzer-cplusplus.Move): what is tested.
   REQUIRE_THROWS_AS((void)stream.read_some(buffer), std::logic_error);
   REQUIRE_THROWS_AS((void)stream.write_some(buffer), std::logic_error);
   REQUIRE_THROWS_AS((void)stream.shutdown_send(), std::logic_error);
-  // NOLINTEND(bugprone-use-after-move)
+  // NOLINTEND(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
 }
 
 TEST_CASE("any_stream: awaiting an operation twice is refused", "[io][any_stream]") {

@@ -313,7 +313,7 @@ TEST_CASE("task: one awaited with no frame throws, rather than start one that ha
     auto const first = co_await std::move(work);
 
     // Moved from: what the test is about.
-    co_return first + co_await std::move(work); // NOLINT(bugprone-use-after-move)
+    co_return first + co_await std::move(work); // NOLINT(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
   };
 
   REQUIRE_THROWS_AS(quoll::test::run(twice()), std::logic_error);

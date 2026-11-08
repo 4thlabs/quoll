@@ -747,7 +747,8 @@ TEST_CASE("response_writer: write on one moved from throws", "[server]") {
     auto const taken = std::move(out);
 
     try {
-      // NOLINTNEXTLINE(bugprone-use-after-move)
+      // What is tested, which tidy and its analyzer both report.
+      // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
       (void)out.write("x");
     } catch (std::logic_error const &) {
       refused = true;
