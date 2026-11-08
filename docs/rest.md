@@ -78,6 +78,9 @@ What does not hold fails to compile, with a message that says so. These are some
 | Two endpoints of an API with one name  | `quoll::rest::api: two endpoints have the same name`                              |
 | Two endpoints with one method and path | `quoll::rest::api: two endpoints have the same method and path`                   |
 | A `body<>` on GET or HEAD              | `quoll::rest::endpoint: a GET or HEAD endpoint has no body<> (fetch rejects one)` |
+| A response with a body to HEAD         | `quoll::rest::endpoint: a response to HEAD has no body`                           |
+| A body on 204, 205 or 304              | `quoll::rest::returns: a 204, 205 or 304 has no body`                             |
+| A space or a `?` in a literal          | `quoll::rest: a path holds a character RFC 3986 does not allow in a segment`      |
 | Two `returns<>` with one status        | `quoll::rest::endpoint: two returns<> have the same status`                       |
 
 ### Parts
@@ -87,8 +90,8 @@ What does not hold fails to compile, with a message that says so. These are some
 | `query<"name", T>`          | A query parameter. `T` is required, `std::optional<T>` may be left out, `std::vector<T>` repeats it (`?tag=a&tag=b`).                |
 | `query_params<Struct>`      | One query parameter per field of an aggregate, by the same rules: for many optional parameters, filled with designated initializers. |
 | `header<"Name", T>`         | A request header field, by the same rules.                                                                                           |
-| `body<T, Codec>`            | The request body, at most one, none on GET, HEAD or CONNECT. JSON by default.                                                        |
-| `returns<T, Status, Codec>` | A declared response, one per status. 200 and JSON by default, `void` for no body. Without any, the endpoint answers 204.             |
+| `body<T, Codec>`            | The request body, at most one, none on GET, HEAD or TRACE. JSON by default. CONNECT is no operation of an API.                       |
+| `returns<T, Status, Codec>` | A declared response, one per status from 200 to 599. 200 and JSON by default, `void` for no body, as on 204, 205, 304 and HEAD.    |
 | `security<Schemes...>`      | The security schemes required: `api_key<"Header">`, `api_key_query<"param">` or `bearer_auth`. They are not arguments.               |
 
 ### Arguments
@@ -299,8 +302,9 @@ struct glz::meta<card_status> {
 };
 ```
 
-Anything modelling `rest::Codec` is a codec. `encode` throws on what it cannot encode, and `decode`
-returns a `rest::decode_error` for a body that does not match, as bodies come from the network:
+Anything modelling `rest::Codec` is a codec, default constructible, as one is built where it is used. `encode` throws on
+what it cannot encode, and `decode` returns a `rest::decode_error` for a body that does not match, as bodies come from the
+network:
 
 ```cpp
 struct lines_codec {

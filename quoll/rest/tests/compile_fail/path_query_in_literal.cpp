@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest: a path holds what a target cannot
+// expect: quoll::rest: a path holds a character RFC 3986 does not allow in a segment
 //
 // A query in a literal: the server would never route it.
 
