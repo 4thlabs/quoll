@@ -59,8 +59,8 @@ Follow the calls: a listener closing its connections, whose close callbacks look
 to find. When what a member's destruction runs is not visible in the code at hand, write "unknown", not "nothing": a member
 that owns listeners, connections, tasks, timers or callbacks may run code that reaches the object again. An "unknown" that
 could is a doubt to report and a question for whoever knows that code, not a demand for a destructor: an explicit destructor
-is needed only where a path back to the object exists. A "no" in the last column is a use after free of a member, which AddressSanitizer does not see, as the memory is
-still allocated.
+is needed only where a path back to the object exists. A "no" in the last column is a use after free of a member, which
+AddressSanitizer does not see, as the memory is still allocated.
 
 ## Checks
 
@@ -89,11 +89,8 @@ Across a `co_await`, a callback or a completion handler, the caller's statement 
   outlives the task, as in `co_await [&]() -> task<> { ... }();`. It is a bug when the task is stored, spawned or returned
   while the closure dies: pass what it needs as parameters instead.
 - **Children:** a task started on a local, or given a reference to one, that runs after the parent leaves its scope.
-- **Destroyed while suspended:** for every awaitable whose `await_suspend` registers something (a work item in a waiter
-  list, a callback in a timer or a channel, a pending operation in a stream), ask what its destructor does if the frame is
-  destroyed while it is still registered. A defaulted destructor leaves a dangling entry that the next wake-up uses. "Nothing
-  destroys a suspended frame" is a hope, not a reason: a parent cancelled, a task dropped unstarted or a test tearing down
-  all do it.
+- **Destroyed while suspended:** every awaitable whose `await_suspend` registers something has a row in the registrations
+  table of the destruction pass; its last column is the question here. A defaulted destructor leaves a dangling entry.
 
 ### 3. Is the owner changed while a borrow is alive?
 
@@ -106,7 +103,8 @@ Across a `co_await`, a callback or a completion handler, the caller's statement 
 ### 4. Is anything used after a move?
 
 - Read after `std::move`, also in the next iteration of a loop, and in another argument of the same call:
-  `f(std::move(x), x.size())` may evaluate the move first.
+  `f(std::move(x), x.size())`, when `f` takes that parameter by value, may build it before `size()` runs. `std::move` itself
+  moves nothing: with a `T &&` parameter, nothing is moved before `f`'s body.
 - A member that empties `*this` is `&&`-qualified, so that the call reads `std::move(obj).run()` and a later use shows.
 - A callable that may only run once, or an object copied after its contents were moved out.
 
@@ -114,10 +112,9 @@ Across a `co_await`, a callback or a completion handler, the caller's statement 
 
 - Members die in reverse order of declaration: a member whose destructor uses another (a thread, a task, a timer, a registered
   callback) is declared after it.
-- A member whose destruction runs code (closing connections, cancelling tasks, notifying observers, firing callbacks) may
-  re-enter the object while it dies: the members declared after it are already gone, and those code paths read them.
-  Follow what that destruction calls, and remember that with shared ownership the object dies with its last owner, which may
-  be another member. An explicit destructor that clears and moves out the members in a safe order fixes it.
+- A member whose destruction runs code may re-enter the object while it dies: the destruction-order table of the
+  destruction pass is where this is followed. With shared ownership, the object dies with its last owner, which may be
+  another member.
 - A `std::jthread` or a task joined in a destructor uses the members declared before it.
 - Do not rely on the order in which coroutine parameters are destroyed, which compilers do not share: put what must outlive the
   task and the task in one struct whose member order says it.
@@ -127,8 +124,9 @@ Across a `co_await`, a callback or a completion handler, the caller's statement 
 
 Every object reachable from two threads, or from two tasks on executors that may run in parallel, is one of: immutable, an
 atomic, behind a mutex, or confined to one strand. Prefer a type that holds the mutex and the data together and only hands
-the data out under the lock, over a mutex member beside the fields it guards. A plain `bool` or flag between threads is a data race, and so is a
-`shared_ptr`'s object: only its count is atomic. Ask on which thread each callback and each resumption runs.
+the data out under the lock, over a mutex member beside the fields it guards. A plain `bool` or flag between threads is a
+data race, and so is a `shared_ptr`'s object: only its count is atomic. Ask on which thread each callback and each
+resumption runs.
 
 No lock is held across a suspension point (CP.52): the task may resume on another thread, where unlocking a `std::mutex` it
 does not own is undefined behaviour, and anything else needing that lock waits for a task that may never resume.
@@ -137,10 +135,11 @@ does not own is undefined behaviour, and anything else needing that lock waits f
 
 An object that allows one operation at a time (a stream, a parser, an awaitable, a writer): what stops a second one from
 starting while the first is pending, from awaiting the same awaitable twice, or from moving the object meanwhile? Prefer an API
-that refuses it: the awaitable of one operation with no copy or move and an rvalue-only `operator co_await`, so that it can only
-be awaited where it is made. A task type that has to move, to be stored or spawned, is not such an awaitable. Otherwise, a
-check that fails in every build, never an assert alone, which release builds drop: it throws where the function may throw,
-and in a `noexcept` function or a move it terminates on purpose, or the check moves to an earlier call that may throw.
+that makes it hard: the awaitable of one operation with no copy or move and an rvalue-only `operator co_await`, so that the
+natural way to await it is where it is made. It is not airtight, as a named one awaited through `std::move` still compiles,
+and a task type that has to move, to be stored or spawned, cannot be one. So keep a check that fails in every build as well,
+never an assert alone, which release builds drop: it throws where the function may throw, and in a `noexcept` function or a
+move it terminates on purpose, or the check moves to an earlier call that may throw.
 
 ### 8. Undefined behaviour beyond lifetimes
 
@@ -150,7 +149,8 @@ What safe Rust has none of:
 - Narrowing conversions, including through a template parameter or an implicit conversion to a handler's argument.
 - Shifts past the width, division by zero, reading an uninitialized value, an index out of bounds.
 - An object in storage less aligned than its type.
-- `noexcept` on code that may throw, allocation included: it terminates.
+- `noexcept` on code that may throw by accident, allocation included: not undefined, but it terminates, which is rarely
+  what was meant. A deliberate terminate on misuse, as in check 7, is the exception.
 - Text assumed to be UTF-8, or numbers assumed to be finite, when they come from outside.
 
 ## Fixing
@@ -158,7 +158,8 @@ What safe Rust has none of:
 In this order of preference:
 
 1. **Own it:** copy or move into what outlives the call. A copy costs less than a crash.
-2. **Make the API refuse it:** a type, an `&&`-qualifier, a deleted overload, a `static_assert`, so that misuse does not compile.
+2. **Make the API refuse it:** a type, an `&&`-qualifier, a deleted overload, a `static_assert`, so that misuse does not
+   compile.
 3. **Check it in every build:** throw on a misuse that types cannot express.
 4. **Say it:** a name or a view type that says it does not own, the lifetime in the doc comment, and the lifetimebound
    attribute (`[[clang::lifetimebound]]`, behind the project's macro where compilers lack it) on what returns a reference into
@@ -173,17 +174,17 @@ Two shapes make the destruction pass's bugs impossible to write:
   explicit destructor first clears what a callback could reach (lookups, registrations), then moves that member out into a
   local and destroys it there, while the object is still whole. Declaring it last is not enough: a callback may look it up
   while it is half destroyed, shared ownership moves the real destruction to whichever owner goes last, and the next edit
-  that reorders the members brings the bug back without a sound.
+  that reorders the members brings the bug back without a sound. Declaring a destructor removes the implicit move
+  operations: default them back, or define all five special members, as the project's rules ask.
 
 Each real finding gets a test that fails without the fix, under ASan or TSan when it is about memory or threads. For a
 registration, the test destroys the object at every state it can be registered in (each suspension point of a coroutine, in
-turn). A member used after its destructor needs MemorySanitizer's use-after-dtor, or a flag the destructor sets and the
-public functions check in debug builds.
+turn). A member used after its destructor needs MemorySanitizer's use-after-dtor. A flag set by the destructor is no
+substitute: reading the object afterwards is itself undefined, and an optimizing compiler may drop the store as dead.
 
 ## What to report
 
 In the PR body, a section **Borrow check**: the borrows that needed a reason, one line each, the two tables of the
 destruction pass, and what was found and fixed. The tables are the part to keep when a report must be short: they are where
-the findings reviews miss come from.
-Nothing to report: say which functions were checked. In a review, each finding goes out as the project's review rules ask,
-like any other.
+the findings reviews miss come from. Nothing to report: say which functions were checked. In a review, each finding goes
+out as the project's review rules ask, like any other.
