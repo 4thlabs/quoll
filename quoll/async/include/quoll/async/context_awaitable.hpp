@@ -50,7 +50,10 @@ namespace quoll::async {
  *
  * Same protocol as a standard awaitable, except that `await_suspend` takes the context as a second argument. An
  * operation completing later resumes its awaiter through `context.executor`. Only ContextAwaitables can be
- * `co_await`-ed inside a task. Its `await_suspend` is reached through Quoll's own awaiting, as a task's is only there.
+ * `co_await`-ed inside a task. Its `await_suspend` is reached through Quoll's own awaiting, as a task's is only there:
+ * an awaitable wrapping another cannot wrap a task, which would be starting it by hand, and awaits it in a coroutine
+ * instead. A task is awaited as a temporary, `co_await std::move(work)` for one held by name, so that its frame belongs
+ * to its awaiter.
  */
 template <class A>
 concept ContextAwaitable = requires(A &awaitable, std::coroutine_handle<> handle, await_context const &context) {

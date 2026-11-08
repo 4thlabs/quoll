@@ -34,6 +34,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/synchronized_await.cpp
     tests/compile_fail/synchronized_free_co_await.cpp
     tests/compile_fail/synchronized_rvalue_co_await.cpp
+    tests/compile_fail/task_awaited_by_name.cpp
     tests/compile_fail/task_explicit_conversion.cpp
     tests/compile_fail/task_over_aligned.cpp
     tests/compile_fail/synchronized_reference.cpp

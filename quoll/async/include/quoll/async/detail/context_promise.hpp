@@ -45,7 +45,20 @@
 #include <type_traits>
 #include <utility>
 
+namespace quoll::async {
+
+template <class T>
+class task;
+
+} // namespace quoll::async
+
 namespace quoll::async::detail {
+
+template <class A>
+inline constexpr bool is_task_v = false;
+
+template <class T>
+inline constexpr bool is_task_v<task<T>> = true;
 
 // Base of the promises of coroutines running on an await_context: every co_await hands the context to the awaited
 // ContextAwaitable, and anything else is rejected at compile time.
@@ -55,6 +68,12 @@ public:
     requires ContextAwaitable<std::remove_cvref_t<A>>
   [[nodiscard]] context_adapter<A> await_transform(A &&awaitable) noexcept(
       std::is_nothrow_constructible_v<context_adapter<A>, A &&, await_context const &>) {
+    // A task is moved into the co_await, so that its frame belongs to its awaiter: one awaited by name could be
+    // destroyed elsewhere while it runs, or awaited again once it has ended.
+    static_assert(!is_task_v<std::remove_cvref_t<A>> || !std::is_lvalue_reference_v<A>,
+                  "quoll: co_await std::move(task): a task awaited by name could be dropped while it runs, or "
+                  "started again");
+
     return context_adapter<A>{std::forward<A>(awaitable), *context_};
   }
 

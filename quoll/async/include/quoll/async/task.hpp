@@ -43,6 +43,7 @@
 #include <quoll/async/detail/task_promise.hpp>
 
 #include <coroutine>
+#include <stdexcept>
 #include <type_traits>
 #include <utility>
 
@@ -89,8 +90,17 @@ public:
 
   ~task() { destroy(); }
 
-  /** @brief Always false: a task starts when awaited. */
-  [[nodiscard]] bool await_ready() const noexcept { return false; }
+  /**
+   * @brief Always false: a task starts when awaited.
+   * @throws std::logic_error for a task with no frame: moved from, or awaited already.
+   */
+  [[nodiscard]] bool await_ready() const {
+    if (!handle_) {
+      throw std::logic_error{"quoll::async::task: awaited with no frame, moved from or awaited already"};
+    }
+
+    return false;
+  }
 
   /** @brief What the task returned, or rethrows what it threw. */
   T await_resume() { return handle_.promise().take(); }

@@ -118,8 +118,6 @@ struct full_executor {
 
 task<int> owns(std::shared_ptr<int> resource) { co_return *resource; }
 
-} // namespace
-
 // What a program could call to start a task itself: in a concept, where a member out of reach makes it false, rather
 // than ill-formed.
 template <class T>
@@ -131,7 +129,11 @@ concept startable_by_hand =
 // A program never starts a task itself: its await_suspend is out of its reach, while a co_await, through Quoll's own
 // awaiting, still starts one.
 static_assert(!startable_by_hand<quoll::async::task<>>);
+static_assert(!startable_by_hand<quoll::async::task<int>>);
 static_assert(quoll::async::ContextAwaitable<quoll::async::task<>>);
+static_assert(quoll::async::ContextAwaitable<quoll::async::task<int>>);
+
+} // namespace
 
 TEST_CASE("A task returns the value of the tasks it awaits", "[async][task]") {
   run_loop loop;
@@ -304,6 +306,19 @@ task<> waits_for_ever() { co_await never_resumed{}; }
 
 // Hidden: the ctest assert.task_destroyed_while_it_runs runs it alone, in a debug build, and passes on the assertion's
 // message, as the program ends there.
+TEST_CASE("task: one awaited with no frame throws, rather than start one that has ended", "[async]") {
+  auto const twice = []() -> task<int> {
+    auto const make = []() -> task<int> { co_return 21; };
+    auto work = make();
+    auto const first = co_await std::move(work);
+
+    // Moved from: what the test is about.
+    co_return first + co_await std::move(work); // NOLINT(bugprone-use-after-move)
+  };
+
+  REQUIRE_THROWS_AS(quoll::test::run(twice()), std::logic_error);
+}
+
 TEST_CASE("task: destroying one that runs is asserted", "[.assert]") {
 #if defined(NDEBUG)
   // What the ctest takes for a build with nothing to check, however NDEBUG came to be defined.

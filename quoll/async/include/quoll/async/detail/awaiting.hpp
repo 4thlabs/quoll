@@ -39,19 +39,36 @@
 
 #include <quoll/async/await_context.hpp>
 
+#include <concepts>
 #include <coroutine>
+#include <type_traits>
 
 namespace quoll::async::detail {
 
-// The way to what an awaitable does as it suspends, for Quoll's own awaiting: a co_await, stop_scope. task keeps its
-// await_suspend for this alone, a friend, as a program never starts a task itself: it awaits it, or spawns it. Any other
-// awaitable's is public, and reached the same way.
+// What an await_suspend returns that its caller must use: a coroutine to resume, whether it suspended.
+template <class R>
+concept not_void = !std::is_void_v<R>;
+
+// The way to what an awaitable does as it suspends, for Quoll's own awaiting: a co_await, stop_scope, any_stream. task
+// keeps its await_suspend for this alone, a friend, as a program never starts a task itself: it awaits it, or spawns
+// it. Any other awaitable's is public, and reached the same way.
 struct awaiting {
-  // The return type is spelled out, so that ContextAwaitable asks rather than fails to compile, and is checked from
-  // here, where task's await_suspend is reachable.
+  // Constrained, so that ContextAwaitable asks rather than fails to compile, from here, where task's await_suspend is
+  // reachable. What it returns (a coroutine to resume, whether it suspended) must not be dropped.
   template <class A>
-  static auto suspend(A &awaitable, std::coroutine_handle<> handle, await_context const &context)
-      -> decltype(awaitable.await_suspend(handle, context)) {
+    requires requires(A &awaitable, std::coroutine_handle<> handle, await_context const &context) {
+      { awaitable.await_suspend(handle, context) } -> std::same_as<void>;
+    }
+  static void suspend(A &awaitable, std::coroutine_handle<> handle, await_context const &context) {
+    awaitable.await_suspend(handle, context);
+  }
+
+  template <class A>
+    requires requires(A &awaitable, std::coroutine_handle<> handle, await_context const &context) {
+      { awaitable.await_suspend(handle, context) } -> not_void;
+    }
+  [[nodiscard]] static decltype(auto) suspend(A &awaitable, std::coroutine_handle<> handle,
+                                              await_context const &context) {
     return awaitable.await_suspend(handle, context);
   }
 };
