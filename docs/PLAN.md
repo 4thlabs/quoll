@@ -95,7 +95,7 @@ library's build type, and inline code holding one, compiled on both sides, is an
 nothing detects. A program using `tcp_stream` or `runtime::context()` compiles asio too, in the same version as the library,
 which nothing checks either.
 
-### Step 2: client and server, security and completeness
+### Step 2: client and server, security and completeness *(done)*
 
 Exposure to the Internet goes through a reverse proxy (decided on 2026-11-07, see [Decided](#decided)), what was built for a
 direct exposure stays, and RFC corners that touch neither security nor stability are not guaranteed. `Expect: 100-continue` is
@@ -138,6 +138,12 @@ lambda can still capture by reference what dies before it.
 
 *Done when:* the fuzz targets run in CI with no open crash, the limits, the shutdown and the features are tested, and the
 reliability points are in place or dropped with a reason.
+
+Done on 2026-11-08, with what the reviews of each module found fixed (#97 to #108), and since: `quoll::runtime` on several
+threads with a strand per connection (#110); a coroutine frame destroyed only once it will not resume again, asserted by
+the task's promise, and a task a program cannot start itself nor await by name (#112, #116); the thread pool gone (#115);
+every night, a mixed load under TSan and under ASan with UBSan (#113), and the fuzz of how a connection unfolds (#114), with
+`clang-tidy` and its analyzer (#117). No crash is open.
 
 ### Step 3: streaming *(done)*
 
@@ -192,6 +198,8 @@ The DSL and a runtime, with no UI.
 - Two siblings with the same key: only caught by an `assert`, on the render after, which a real error should replace. A state
   changed on an app never started leaves a render pending, which nothing waits for.
 - Hydration, then pages sent by a server: see [UI DSL](#ui-dsl). `to_html` is there; a `value` on a `select` selects nothing yet.
+- Using the JavaScript libraries a page needs (charts, maps, editors and the like): calling them from C++ and mounting
+  what they render, a requirement whatever form the UI takes.
 - A trial on a real screen of an application, chosen with the maintainer at the start of this step.
 
 *Done when:* that screen runs with the base components, with what it lacks listed.
@@ -305,7 +313,9 @@ Last, as what comes before it is needed first. It starts from a new baseline, as
 changes only what the harness shows. Candidates:
 
 - Each bounded phase takes a coroutine frame, recycled by each thread since `async::detail::recycled_frame`, and an asio timer,
-  about three times per request on the server. A timer per connection avoids it.
+  about three times per request on the server. A timer per connection avoids it. On several threads, each wait and each
+  connect also makes a strand, and a socket's completion goes through its own strand, then its connection's: the timer and
+  the socket on the connection's strand would avoid both.
 - A client copies the request body into the serialized message: write the head and the body as two buffers.
 - A TLS client builds its context per connection, and resumes no session.
 - A client builds a parser per request, which now allocates: one per connection avoids it.
