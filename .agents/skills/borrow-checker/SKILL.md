@@ -168,7 +168,7 @@ In this order of preference:
    compile.
 3. **Check it in every build:** throw on a misuse that types cannot express. An invariant that only code speaking the
    library's own protocol can break, out of a normal caller's reach, is asserted instead, and debug builds run the tests:
-   a task destroyed while it runs, which needs starting it by hand through `await_suspend`, is one.
+   a task destroyed while it runs, which needs starting it through `await_suspend`, as a program never does, is one.
 4. **Say it:** a name or a view type that says it does not own, the lifetime in the doc comment, and the lifetimebound
    attribute (`[[clang::lifetimebound]]`, behind the project's macro where compilers lack it) on what returns a reference into
    `*this` or a parameter.
