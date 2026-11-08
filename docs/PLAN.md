@@ -1,6 +1,6 @@
 # Quoll — plan
 
-Last update: 2026-11-07. The [roadmap](#roadmap) says what comes next, and is the reference for the order of the work.
+Last update: 2026-11-08. The [roadmap](#roadmap) says what comes next, and is the reference for the order of the work.
 
 ## Target
 
@@ -37,7 +37,7 @@ What shows it, rather than an argument, with no public announcement before step 
   results as they arrive. DuckDB has an interface of its own, so that this stays a demo and not a product.
 - The framework's site, written with Quoll, served by Quoll behind a reverse proxy, with its source in view.
 - A page saying what is guaranteed (the nightly fuzzing, ASan, UBSan and TSan) and what is not (see
-  [step 2](#step-2-client-and-server-security-and-completeness)), as "C++ exposed to the Internet" is the first objection: the answer
+  [step 2](#step-2-client-and-server-security-and-completeness-done)), as "C++ exposed to the Internet" is the first objection: the answer
   is a reverse proxy in front, and a server that still defends itself.
 
 The figures to lead with are those of size, build time and memory (see [Done](#done)). Not the rate:
@@ -56,6 +56,11 @@ decide. Steps marked *(maintainer merges)* are big architecture changes.
 `async`, `io`, `http`, `client`, `server` and `rest`, with timeouts by default and TLS (a client GET and a REST client
 over TCP, over `fetch`, and through OpenSSL). A first `quoll::ui` with its DOM renderer, Tailwind through Vite, and two
 levels of hot reload, in the sample `ui_notes`. In CI: `clang-tidy`, the standard library's checks, Apple Clang on macOS, Codex's review and a protected `main`.
+
+Client and server (step 2): the reviews of each module, a runtime on several threads with a strand per connection, a
+coroutine frame destroyed only once it will not resume again, which a program reaches no way of breaking through
+`co_await` and `co_spawn`, and debug builds assert, and every night nine fuzz targets,
+a mixed load under TSan and under ASan with UBSan, and `clang-tidy` with its analyzer, with no crash open.
 
 Streaming (step 3): a body in pieces on the server, the client and browser `fetch`, a minimum rate, static files. 32 GiB each way
 through a process that never holds more than 10.3 MiB, checked every night at 1 GiB.
@@ -95,7 +100,7 @@ library's build type, and inline code holding one, compiled on both sides, is an
 nothing detects. A program using `tcp_stream` or `runtime::context()` compiles asio too, in the same version as the library,
 which nothing checks either.
 
-### Step 2: client and server, security and completeness
+### Step 2: client and server, security and completeness *(done)*
 
 Exposure to the Internet goes through a reverse proxy (decided on 2026-11-07, see [Decided](#decided)), what was built for a
 direct exposure stays, and RFC corners that touch neither security nor stability are not guaranteed. `Expect: 100-continue` is
@@ -127,7 +132,7 @@ still sends its body: to look at with streaming. A client closes its TLS connect
 - What a handler answers is replaced when its peer would read it as something else, through a connection as through
   `local_transport`: a 2xx to CONNECT, a tunnel, which is not offered, answers 501; a 1xx, and a `Content-Length` with no body, but
   to HEAD or as a 304, answer 500.
-- The first nightly fuzz run, on 2026-11-06, found nothing: five minutes on each of the seven targets, from 225,000 to 12 million runs.
+- The first nightly fuzz run, on 2026-11-06, found nothing: five minutes on each of the seven targets of then, from 225,000 to 12 million runs.
 - Features: middlewares (`router::use`) and routes whose handler takes the path's parameters, checked at compile time
   (`router::get`...), a path prefix in the base URL, a connection limit per transport and client redirects, are done. A client's `response_timeout` applies per attempt, so a deadline over the whole `send` if that proves
   confusing.
@@ -138,6 +143,14 @@ lambda can still capture by reference what dies before it.
 
 *Done when:* the fuzz targets run in CI with no open crash, the limits, the shutdown and the features are tested, and the
 reliability points are in place or dropped with a reason.
+
+Done on 2026-11-08, with what the reviews of each module found fixed (#97 to #108, but #102, which records the reverse
+proxy), and since: `quoll::runtime` on several
+threads with a strand per connection (#110); a coroutine frame destroyed only once it will not resume again, asserted by
+the task's promise, and a task a program cannot start itself nor await by name (#112, #116); the thread pool gone (#115);
+every night, a mixed load under TSan and under ASan with UBSan (#113), and the fuzz of how a connection unfolds (#114), with
+`clang-tidy` and its analyzer, green again with #117. Run on main by hand on 2026-11-08, with no crash: the fuzz after
+#116, the load and `clang-tidy` after #117.
 
 ### Step 3: streaming *(done)*
 
@@ -166,7 +179,8 @@ The DSL and a runtime, with no UI.
 - On the client: `scope<Api>(prefix arguments...)`, and interceptors around `send` (retry, token refresh on 401).
 - Third-party APIs, as [the REST DSL](#rest-dsl-contract-server-client) describes: renamed fields, unknown fields, error
   bodies of any shape, codecs. A contract alone, with no Quoll server in the program.
-- A sample and a guide for a command-line program.
+- A sample and a guide for a command-line program: `samples/github`, GitHub's API as the real one, as decided on
+  2026-11-07. A client of Docker over a Unix socket comes later, in no step yet.
 - After this, and optional: an OpenAPI document generated from the DSL, to document an API or for third-party clients,
   and a generator of contracts from existing documents.
 
@@ -192,9 +206,14 @@ The DSL and a runtime, with no UI.
 - Two siblings with the same key: only caught by an `assert`, on the render after, which a real error should replace. A state
   changed on an app never started leaves a render pending, which nothing waits for.
 - Hydration, then pages sent by a server: see [UI DSL](#ui-dsl). `to_html` is there; a `value` on a `select` selects nothing yet.
+- Using the JavaScript libraries a page needs (charts, maps, editors, a terminal), a requirement whatever form the UI
+  takes, said on 2026-11-07: a node the reconciler leaves alone, a lifecycle with an unmount, calls both ways, bytes passed
+  without a copy where it counts, npm packages through the Vite build, loaded on demand. Plain DOM libraries and web
+  components come this way; those tied to React cannot.
 - A trial on a real screen of an application, chosen with the maintainer at the start of this step.
 
-*Done when:* that screen runs with the base components, with what it lacks listed.
+*Done when:* that screen runs with the base components and a JavaScript library loaded on demand, called from C++ and
+calling back, mounted and unmounted, with what it lacks listed.
 
 ### Step 7: the `quoll` command, driving Vite *(maintainer merges the first pull request)*
 
@@ -251,8 +270,9 @@ soon as they listen beyond their machine. It first settles what a reverse proxy 
 once it exists. A new module, as it needs cryptography that `quoll::rest` and `quoll::server` do not have and must not bring to
 WASM builds.
 
-- Proposed: signing in through an OIDC provider and sessions, and a shared secret in a program's configuration for a machine on a
-  closed network, with no store of passwords, the most exposed part, at the start.
+- Signing in through an OIDC provider and sessions, a shared secret in a program's configuration for a machine on a
+  closed network, and a local account with a password, decided on 2026-11-07 against the "no store of passwords" proposed
+  before: its hashing is part of the cryptography to settle below.
 - Cryptography: nothing in Quoll hashes, signs or draws secure random numbers. OIDC needs ID tokens checked against the
   provider's keys, a nonce and PKCE, and session ids from a secure source. **To settle at its start:** OpenSSL, as TLS uses, or
   something else, and what a build with `QUOLL_TLS` off does. None of it written by hand.
@@ -265,7 +285,7 @@ WASM builds.
 - Cookies and what they ask: expiry, revocation, CSRF.
 - What it parses from outside, tokens among them, is fuzzed.
 
-*Done when:* a sample signs in through a real provider, from a page too, its sessions survive a restart through a file, and
+*Done when:* a sample signs in through a real provider, from a page too, and with a local account and its password, its sessions survive a restart through a file, and
 expiry and revocation are tested, with its guide.
 
 ### Step 9: an ORM *(maintainer merges)*
@@ -305,7 +325,9 @@ Last, as what comes before it is needed first. It starts from a new baseline, as
 changes only what the harness shows. Candidates:
 
 - Each bounded phase takes a coroutine frame, recycled by each thread since `async::detail::recycled_frame`, and an asio timer,
-  about three times per request on the server. A timer per connection avoids it.
+  about three times per request on the server. A timer per connection avoids it. On several threads, each wait and each
+  connect also makes a strand, and a socket's completion goes through its own strand, then its connection's: the timer and
+  the socket on the connection's strand would avoid both.
 - A client copies the request body into the serialized message: write the head and the body as two buffers.
 - A TLS client builds its context per connection, and resumes no session.
 - A client builds a parser per request, which now allocates: one per connection avoids it.
@@ -321,6 +343,12 @@ changes only what the harness shows. Candidates:
 
 ## Decided
 
+- **Using the JavaScript libraries a page needs is a requirement of the UI** (2026-11-07), whatever form it takes: see step
+  6.
+- **`samples/github` is step 4's real API** (2026-11-07), and a client of Docker over a Unix socket comes later, in no step
+  yet.
+- **A local account with a password** (2026-11-07) joins OIDC and a shared secret in step 8, against the "no store of
+  passwords" proposed before.
 - **The thread pool and `serve(executor, listener)` go** (decided on 2026-11-07, done on 2026-11-08). Several threads come
   from the asio runtime (`runtime_options::threads`, a strand per connection), `async::run_loop` is the runtime of one thread
   without asio, for tests and as an example, and blocking work goes through `async::offload`. With them goes the question of
