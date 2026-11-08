@@ -339,4 +339,14 @@ using large = rest::api<"/api/v1", e0, e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, 
 
 static_assert(large::routes::size == 32);
 
+// What with<> adds to a HEAD endpoint is the server's answers, never read as a body: it compiles.
+struct problem_body {
+  std::string detail;
+};
+
+using exists = rest::endpoint<"exists", verb::head, "/things/{id}">;
+using guarded = rest::api<"", rest::with<rest::returns<problem_body, quoll::http::status::unauthorized>, exists>>;
+
+static_assert(guarded::routes::size == 1);
+
 } // namespace contract_test_size

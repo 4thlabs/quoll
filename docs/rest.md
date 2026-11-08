@@ -91,7 +91,7 @@ What does not hold fails to compile, with a message that says so. These are some
 | `query_params<Struct>`      | One query parameter per field of an aggregate, by the same rules: for many optional parameters, filled with designated initializers. |
 | `header<"Name", T>`         | A request header field, by the same rules.                                                                                           |
 | `body<T, Codec>`            | The request body, at most one, none on GET, HEAD or TRACE. JSON by default. CONNECT is no operation of an API.                       |
-| `returns<T, Status, Codec>` | A declared response, one per status from 200 to 599. 200 and JSON by default, `void` for no body, as on 204, 205, 304 and HEAD.    |
+| `returns<T, Status, Codec>` | A declared response, one per status from 200 to 599. 200 and JSON by default, `void` for no body, as on 204, 205, 304 and HEAD. Without any, the endpoint answers 204. |
 | `security<Schemes...>`      | The security schemes required: `api_key<"Header">`, `api_key_query<"param">` or `bearer_auth`. They are not arguments.               |
 
 ### Arguments

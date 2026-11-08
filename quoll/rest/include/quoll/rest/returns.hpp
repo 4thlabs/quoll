@@ -59,7 +59,7 @@ struct returns {
                 "quoll::rest::returns: the codec cannot encode and decode the type");
   static_assert(static_cast<int>(Status) >= 200 && static_cast<int>(Status) <= 599,
                 "quoll::rest::returns: the status is no final response (200 to 599)");
-  static_assert(std::is_void_v<T> || (Status != http::status::no_content && static_cast<int>(Status) != 205 &&
+  static_assert(std::is_void_v<T> || (Status != http::status::no_content && Status != http::status::reset_content &&
                                       Status != http::status::not_modified),
                 "quoll::rest::returns: a 204, 205 or 304 has no body");
 

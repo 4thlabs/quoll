@@ -54,6 +54,7 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -187,34 +188,22 @@ struct route {
   static constexpr std::string_view path = path_value.view();
 };
 
-// The shape of a template as the router compares it: the kind of each segment, and each literal decoded. Empty for a
+// The shape of a template as the router compares it: the kind of each segment, and each literal decoded. Nothing for a
 // template that is wrong, which has its own static_assert. A NUL ends each segment, as no checked literal holds one, so
 // that `/a%2Fb`, one segment, and `/a/b`, two, differ.
-[[nodiscard]] consteval std::string route_shape(std::string_view path) {
+[[nodiscard]] consteval std::optional<std::string> route_shape(std::string_view path) {
   auto const parsed = http::detail::parse_template(path);
 
   if (parsed.error != http::detail::template_error::none) {
-    return {};
+    return std::nullopt;
   }
 
-  std::string shape = "shape";
+  std::string shape;
 
   for (auto const &segment : parsed.segments) {
     switch (segment.kind) {
     case http::detail::segment_kind::literal:
-      shape += 'l';
-
-      for (std::size_t index = 0; index < segment.text.size(); ++index) {
-        if (segment.text[index] != '%') {
-          shape += segment.text[index];
-          continue;
-        }
-
-        shape += static_cast<char>(http::detail::hex_value(segment.text[index + 1]) * 16 +
-                                   http::detail::hex_value(segment.text[index + 2]));
-        index += 2;
-      }
-
+      shape += 'l' + http::detail::decoded_literal(segment.text);
       break;
     case http::detail::segment_kind::param:
       shape += 'p';
@@ -230,14 +219,16 @@ struct route {
   return shape;
 }
 
-// Whether two operations would be routed alike: the same method, and the router's same shape, the same decoded
-// literals and the same kind of parameter in each place, whatever the names: `/a` and `/%61` are one, `{name}` and
-// `{name:path}` two.
+// Whether two operations would be routed alike, from their shapes: the same method, and the same decoded literals and
+// kind of parameter in each place, whatever the names: `/a` and `/%61` are one, `{name}` and `{name:path}` two.
+[[nodiscard]] consteval bool same_shape(http::verb first_method, std::optional<std::string> const &first,
+                                        http::verb second_method, std::optional<std::string> const &second) {
+  return first_method == second_method && first && second && *first == *second;
+}
+
 [[nodiscard]] consteval bool same_operation(http::verb first_method, std::string_view first, http::verb second_method,
                                             std::string_view second) {
-  auto const left = route_shape(first);
-
-  return first_method == second_method && !left.empty() && left == route_shape(second);
+  return same_shape(first_method, route_shape(first), second_method, route_shape(second));
 }
 
 template <class... Routes>
@@ -260,7 +251,7 @@ template <class... Routes>
   constexpr std::array<http::verb, sizeof...(Routes)> methods{Routes::endpoint::method...};
   constexpr std::array<std::string_view, sizeof...(Routes)> paths{Routes::path...};
   // Once each, before the pairs. A loop, as GCC 13 refuses a consteval call in a pack expansion here.
-  std::array<std::string, sizeof...(Routes)> shapes{};
+  std::array<std::optional<std::string>, sizeof...(Routes)> shapes{};
 
   for (std::size_t index = 0; index < paths.size(); ++index) {
     shapes[index] = route_shape(paths[index]);
@@ -268,7 +259,7 @@ template <class... Routes>
 
   for (std::size_t first = 0; first < shapes.size(); ++first) {
     for (std::size_t second = first + 1; second < shapes.size(); ++second) {
-      if (methods[first] == methods[second] && !shapes[first].empty() && shapes[first] == shapes[second]) {
+      if (same_shape(methods[first], shapes[first], methods[second], shapes[second])) {
         return false;
       }
     }
