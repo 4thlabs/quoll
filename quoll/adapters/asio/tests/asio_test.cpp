@@ -1162,6 +1162,57 @@ TEST_CASE("asio::runtime on several threads: a server and clients, each connecti
   REQUIRE(right == clients * requests * 2);
 }
 
+TEST_CASE("asio::runtime on several threads: serve(executor, listener) keeps every connection on that executor",
+          "[asio][runtime][threads][server]") {
+  quoll::asio::runtime runtime{quoll::async::runtime_options{.threads = 4}};
+  auto &context = runtime.context();
+  ::asio::ip::tcp::acceptor listening{::asio::make_strand(context),
+                                      ::asio::ip::tcp::endpoint{::asio::ip::address_v4::loopback(), 0}};
+  auto const port = listening.local_endpoint().port();
+  quoll::asio::acceptor acceptor{std::move(listening), ::asio::any_io_executor{context.get_executor()}};
+  // Shared by every connection with no lock: they take turns on one strand, as serve(executor, ...) promises.
+  int served = 0;
+  http::router router;
+
+  router.get("/hello", [&served](http::request) {
+    ++served;
+
+    http::response response;
+
+    response.body = "hello";
+    return response;
+  });
+
+  constexpr int clients = 8;
+  std::stop_source server_stop;
+  std::atomic<int> right{0};
+  std::atomic<int> ended{0};
+  // Handed over, not kept: an executor kept here would keep run() running.
+  co_spawn(runtime.get_executor(), http::server{router}.serve(runtime.get_executor(), std::move(acceptor)),
+           overloaded{[] {}, [](std::exception_ptr) {}}, server_stop.get_token());
+
+  for (int client = 0; client < clients; ++client) {
+    co_spawn(runtime.get_executor(), call_many(port, 4),
+             overloaded{[&](int counted) {
+                          right += counted;
+
+                          if (++ended == clients) {
+                            server_stop.request_stop();
+                          }
+                        },
+                        [&](std::exception_ptr) {
+                          if (++ended == clients) {
+                            server_stop.request_stop();
+                          }
+                        }});
+  }
+
+  runtime.run();
+
+  // call_many sends a POST to /echo too, which this router answers 404: the GETs alone count.
+  REQUIRE(served == clients * 4);
+}
+
 TEST_CASE("asio::runtime: its strands, one thread or several", "[asio][runtime]") {
   quoll::asio::runtime single;
   auto const executor = single.get_executor();
@@ -1220,6 +1271,27 @@ TEST_CASE("asio::runtime runs again, with a fresh stop token and the signals wai
 
     REQUIRE(restored == true);
   }
+}
+
+TEST_CASE("asio::runtime on several threads turns Ctrl-C into a stop request, and gives SIGINT its action back",
+          "[asio][runtime][threads]") {
+  if (sigint_handler() == SIG_IGN) {
+    SKIP("SIGINT is ignored by this process (started in the background): raise() would not reach the runtime");
+  }
+
+  auto const before = sigint_handler();
+  quoll::asio::runtime runtime{quoll::async::runtime_options{.threads = 4}};
+  auto const stop_token = runtime.get_stop_token();
+  std::atomic<bool> restored{false};
+  std::atomic<bool> failed{false};
+
+  co_spawn(runtime.get_executor(), interrupt_then_check_restored(before),
+           overloaded{[&](bool value) { restored = value; }, [&](std::exception_ptr) { failed = true; }}, stop_token);
+  runtime.run();
+
+  REQUIRE_FALSE(failed);
+  REQUIRE(restored);
+  REQUIRE(sigint_handler() == before);
 }
 
 TEST_CASE("asio::runtime runs until the work its tasks started has ended", "[asio][runtime]") {

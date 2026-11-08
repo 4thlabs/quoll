@@ -39,6 +39,7 @@
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/lifetimebound.hpp>
+#include <quoll/async/runtime_options.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer_ref.hpp>
@@ -47,6 +48,7 @@
 #include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/emscripten.hpp>
+#include <quoll/emscripten/runtime.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/platform_ref.hpp>
 #include <quoll/http/request.hpp>
@@ -1368,4 +1370,11 @@ TEST_CASE("http::client through fetch: the status text counts toward the head's 
   REQUIRE_FALSE(run(error_of(http::client{server.url(), {.limits = {.max_header_size = fields + 2}}})));
   REQUIRE(run(error_of(http::client{server.url(), {.limits = {.max_header_size = fields + 1}}})) ==
           http::error::header_too_large);
+}
+
+TEST_CASE("emscripten::runtime takes the options of every runtime, and runs one thread", "[emscripten]") {
+  quoll::emscripten::runtime const runtime{quoll::async::runtime_options{.threads = 4}};
+
+  static_cast<void>(runtime);
+  SUCCEED();
 }

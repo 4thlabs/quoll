@@ -37,6 +37,7 @@
 #ifndef QUOLL_ASIO_RUNTIME_HPP
 #define QUOLL_ASIO_RUNTIME_HPP
 
+#include <quoll/asio/detail/loop_services.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/offers_service.hpp>
 #include <quoll/async/offloader_ref.hpp>
@@ -107,7 +108,8 @@ struct runtime_strands;
  * strand of its own, as asio asks. What tasks on two executors share is the program's to protect.
  *
  * Neither copied nor moved: its executors point to it, and it outlives them. Thread safety: run() and get_stop_token()
- * on one thread; get_executor() and the executors from any thread.
+ * on one thread, and get_stop_token() outside of run(), never from a task; get_executor() and the executors from any
+ * thread.
  */
 class runtime {
 public:
@@ -119,12 +121,7 @@ public:
    */
   class executor {
   public:
-#if defined(QUOLL_ASIO_TLS)
-    using services = async::service_list<io::network_ref, async::timer_ref, async::offloader_ref, io::tls_network_ref,
-                                         async::strands_ref>;
-#else
-    using services = async::service_list<io::network_ref, async::timer_ref, async::offloader_ref, async::strands_ref>;
-#endif
+    using services = detail::runtime_services;
 
     void post(async::work_item &item) const;
 

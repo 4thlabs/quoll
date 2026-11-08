@@ -184,6 +184,8 @@ struct runtime_strands {
   [[nodiscard]] async::any_executor make_strand() const;
 };
 
+static_assert(async::Strands<runtime_strands>);
+
 } // namespace detail
 
 namespace {
@@ -315,7 +317,7 @@ namespace {
 
   return std::make_shared<runtime_strand>(
       runtime_strand{asio::executor<::asio::strand<::asio::io_context::executor_type>>{
-          ::asio::make_strand(shared.context.get_executor()), true}});
+          ::asio::make_strand(shared.context.get_executor())}});
 }
 
 } // namespace

@@ -95,8 +95,9 @@ namespace quoll::asio {
  * what runs blocking work away from the loop (async::Offloader), for async::offload().
  *
  * Its sockets, timers and the cancellation of their operations need an asio executor running one handler at a time: an
- * io_context run by one thread, or a strand, as quoll::asio::runtime has it. Over a strand, every connection that
- * listen() accepts shares the acceptor's strand.
+ * io_context run by one thread, or a strand. Over a strand, every connection that listen() accepts shares the
+ * acceptor's. Over an io_context run by several threads, as quoll::asio::runtime has it then, ask for a strand per
+ * object.
  *
  * Thread safety: post() may be called from any thread, as asio's post can.
  */
@@ -179,8 +180,6 @@ public:
   [[nodiscard]] bool operator==(executor const &) const noexcept = default;
 
 private:
-  // The executor of the sockets, acceptors and timers: not counted as work, as an idle connection kept for later is
-  // none (a runtime counts the work of its tasks itself; a pending wait counts on its own).
   // What an I/O object it makes runs on: a strand of its own when asked.
   [[nodiscard]] ::asio::any_io_executor object_executor() const {
     auto executor = io_executor();
@@ -194,6 +193,8 @@ private:
     return strand_per_object_ ? std::optional<::asio::any_io_executor>{io_executor()} : std::nullopt;
   }
 
+  // The executor of the sockets, acceptors and timers: not counted as work, as an idle connection kept for later is
+  // none (a runtime counts the work of its tasks itself; a pending wait counts on its own).
   [[nodiscard]] ::asio::any_io_executor io_executor() const {
     return ::asio::prefer(::asio::any_io_executor{inner_}, ::asio::execution::outstanding_work.untracked);
   }

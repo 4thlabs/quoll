@@ -230,8 +230,9 @@ public:
 
   /**
    * @brief serve() with each connection as a task of its own on `executor`: a thread pool or a strand, for instance,
-   * while the accept loop stays on its I/O loop. An executor without a timer, as a thread pool has none, leaves the
-   * timeouts of `connection` without effect, and a slow peer can hold its connection.
+   * while the accept loop stays on its I/O loop. serve() alone puts each on a strand of its own where the executor
+   * runs several threads; this one keeps them all on `executor`. An executor without a timer, as a thread pool has
+   * none, leaves the timeouts of `connection` without effect, and a slow peer can hold its connection.
    */
   template <async::Executor Executor, io::Listener Listener>
   [[nodiscard]] async::task<> serve(Executor executor, Listener listener) const {
