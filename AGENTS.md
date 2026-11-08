@@ -4,7 +4,10 @@ Guidance for AI coding agents working in this repository.
 
 **Before writing or reviewing code, read [`docs/CODING_RULES.md`](docs/CODING_RULES.md)** — the C++ rules every
 change must follow. The target, the roadmap and open decisions are in [`docs/PLAN.md`](docs/PLAN.md): read it first, it is the
-source of truth for the design and the order of the work.
+source of truth for the design and the order of the work. **Before committing or reviewing C++ that borrows** (a reference, pointer,
+view, span, iterator or `this` held past one expression, a move, a coroutine or a callback, a destruction order that matters,
+state shared between threads or tasks), run the check in
+[`.claude/skills/borrow-checker/SKILL.md`](.claude/skills/borrow-checker/SKILL.md).
 
 Quoll is a public C++23 web framework aimed at performance and ease of use: a sans-IO async runtime, an HTTP client and server,
 a typed REST DSL usable from any program, and a UI DSL compiled to WASM for web, desktop and mobile, styled with Tailwind. Namespace `quoll::`.
