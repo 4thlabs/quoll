@@ -48,8 +48,8 @@
 namespace quoll::http::detail {
 
 // A server's connection, handed to `handler` as an http::websocket: pinged when quiet and its handler stopped once it
-// has gone, closed with 1001 when `drain` is stopped, and what the peer's failure throws through the handler not
-// thrown on. See http::accept_websocket.
+// has gone, closed with 1001 when `drain` is stopped, closed and shut once the handler is over. What the handler throws
+// is thrown on, but for what its stop throws and a send refused after a close. See http::accept_websocket.
 [[nodiscard]] async::task<> serve_websocket(std::function<async::task<>(websocket)> handler, io::any_stream stream,
                                             std::string received, websocket_options options, std::stop_token drain);
 

@@ -589,6 +589,26 @@ TEST_CASE("serve_connection: what a WebSocket handler throws is reported, but fo
     REQUIRE(reported.size() == 1);
   }
 
+  SECTION("operation_canceled with no stop asked for") {
+    auto const router = socket_at([](http::websocket) -> task<> {
+      throw std::system_error{std::make_error_code(std::errc::operation_canceled), "its own"};
+    });
+
+    auto const reported = served(router, [](io::memory_stream &client) -> task<int> {
+      auto answer = co_await send_then_read(client, handshake());
+      http::websocket_parser from_server{websocket_role::client};
+
+      from_server.feed(answer.after);
+
+      auto const close = co_await quoll::test::next_websocket_message(client, from_server);
+
+      REQUIRE(close == websocket_message{websocket_opcode::close, "", 1011});
+      co_return 1;
+    });
+
+    REQUIRE(reported.size() == 1);
+  }
+
   SECTION("a stop") {
     std::stop_source stop;
     std::error_code ended;
@@ -1003,7 +1023,7 @@ TEST_CASE("accept_websocket: a pong goes whole, whatever stops the receive() tha
   REQUIRE(reported.empty());
 }
 
-TEST_CASE("accept_websocket: a send after a frame the handler's own stop cut is refused", "[server][websocket]") {
+TEST_CASE("accept_websocket: a send after a frame the handler's own stop cut is its failure", "[server][websocket]") {
   auto const [ended_at, reported] = run_paced(
       [](http::websocket socket, std::chrono::nanoseconds &per_byte) -> task<> {
         // Stopped once a byte has left.
@@ -1017,8 +1037,8 @@ TEST_CASE("accept_websocket: a send after a frame the handler's own stop cut is 
       },
       {.ping_interval = 0s}, read_to_the_end);
 
-  // Refused, as after a close: no failure reported.
-  REQUIRE(reported.empty());
+  // Refused after a frame cut short, not a close: the handler's failure, reported.
+  REQUIRE(reported == std::vector<std::string>{"quoll::http::websocket: cannot send: WebSocket connection closed"});
 }
 
 TEST_CASE("accept_websocket: the keep-alive watches nothing once the peer has closed", "[server][websocket]") {
@@ -1082,8 +1102,8 @@ TEST_CASE("accept_websocket: a peer that does not answer the handler's close has
       },
       {.ping_interval = 1s}, read_to_the_end);
 
-  // Read nothing at 1 s, when it would have been pinged, nor at 2 s: gone.
-  REQUIRE(ended_at == 2s);
+  // Its close's answer waited for as a pong is: nothing read by 1 s, gone.
+  REQUIRE(ended_at == 1s);
   REQUIRE(ended == std::errc::operation_canceled);
   REQUIRE(reported.empty());
 }
@@ -1112,8 +1132,10 @@ TEST_CASE("accept_websocket: a keep-alive frame stuck on its peer ends with the 
 
 TEST_CASE("accept_websocket: a receive() after the keep-alive stopped the handler throws the stop again",
           "[server][websocket]") {
+  std::string again;
+
   auto const [ended_at, reported] = run_paced(
-      [](http::websocket socket, std::chrono::nanoseconds &) -> task<> {
+      [&again](http::websocket socket, std::chrono::nanoseconds &) -> task<> {
         auto stopped = false;
 
         try {
@@ -1124,13 +1146,22 @@ TEST_CASE("accept_websocket: a receive() after the keep-alive stopped the handle
           stopped = true;
         }
 
-        if (stopped) {
+        if (!stopped) {
+          co_return;
+        }
+
+        // Thrown again as it was stored, without reading.
+        try {
           static_cast<void>(co_await socket.receive());
+        } catch (std::system_error const &thrown) {
+          again = std::string{thrown.what()};
+          throw;
         }
       },
       {.ping_interval = 1s}, read_to_the_end);
 
   REQUIRE(ended_at == 2s);
+  REQUIRE(again.starts_with("quoll::http::websocket: receiving has ended"));
   REQUIRE(reported.empty());
 }
 
@@ -1170,8 +1201,8 @@ TEST_CASE("accept_websocket: a drain after the handler's close changes nothing t
       },
       {}, drain.get_token());
 
-  // The drain wakes it at 0.5 s, without a spin, and the wait starts again: read nothing at 1.5 s nor at 2.5 s.
-  REQUIRE(ended_at == 2500ms);
+  // The drain wakes it at 0.5 s, without a spin, and the wait for the close's answer starts again: gone at 1.5 s.
+  REQUIRE(ended_at == 1500ms);
   REQUIRE(reported.empty());
 }
 

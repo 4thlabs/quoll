@@ -38,19 +38,31 @@
 #define QUOLL_ASYNC_DETAIL_IS_A_STOP_HPP
 
 #include <exception>
+#include <optional>
 #include <system_error>
 
 namespace quoll::async::detail {
 
-// Whether `failure` is what a stop throws: a std::system_error with std::errc::operation_canceled.
-[[nodiscard]] inline bool is_a_stop(std::exception_ptr const &failure) {
+// The code of `failure`, if it is a std::system_error.
+[[nodiscard]] inline std::optional<std::error_code> code_of(std::exception_ptr const &failure) {
+  if (!failure) {
+    return std::nullopt;
+  }
+
   try {
     std::rethrow_exception(failure);
   } catch (std::system_error const &thrown) {
-    return thrown.code() == std::errc::operation_canceled;
+    return thrown.code();
   } catch (...) {
-    return false;
+    return std::nullopt;
   }
+}
+
+// Whether `failure` is what a stop throws: a std::system_error with std::errc::operation_canceled.
+[[nodiscard]] inline bool is_a_stop(std::exception_ptr const &failure) {
+  auto const code = code_of(failure);
+
+  return code && *code == std::errc::operation_canceled;
 }
 
 } // namespace quoll::async::detail

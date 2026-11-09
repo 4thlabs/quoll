@@ -291,6 +291,11 @@ async::task<> end_sending(std::shared_ptr<state> connection) {
     co_await turn.take(socket->writes);
 
     if (!std::exchange(socket->sending_shut, true)) {
+      // Nothing may be written past it, a close that could not leave included.
+      if (socket->sending == detail::sending_state::open) {
+        socket->sending = detail::sending_state::cut;
+      }
+
       static_cast<void>(co_await socket->stream.shutdown_send());
     }
   };
@@ -400,8 +405,17 @@ async::task<> watch_peer(std::shared_ptr<state> connection, std::chrono::nanosec
   auto seen = connection->reads_done.load();
   auto pinged = false;
   auto drained = false;
+  // A close has left: the peer's answer is waited for as a pong is.
+  auto closing = false;
 
   while (!ends.stop_requested()) {
+    // Before it waits, as a close may have left before this started.
+    if (!closing && connection->closing.stop_requested()) {
+      closing = true;
+      pinged = true;
+      seen = connection->reads_done.load();
+    }
+
     std::stop_source wake;
     std::stop_callback const on_end{ends, wake_up{&wake}};
     std::optional<std::stop_callback<wake_up>> on_drain;
@@ -441,11 +455,11 @@ async::task<> watch_peer(std::shared_ptr<state> connection, std::chrono::nanosec
 
     if (now != seen) {
       seen = now;
-      pinged = false;
+      pinged = closing;
       continue;
     }
 
-    // Read nothing since it was pinged, or since its close was asked for: gone, or half-open.
+    // Read nothing since it was pinged, or since a close left: gone, or half-open.
     if (pinged) {
       gone.request_stop();
       co_return;
@@ -482,15 +496,11 @@ async::task<> run_handler(std::function<async::task<>(websocket)> handler, webso
   co_await async::detail::stop_scope<void>{handler(std::move(socket)), std::move(stop)};
 }
 
-// Whether `failure` is a send refused after a close.
-[[nodiscard]] bool refused_after_a_close(std::exception_ptr const &failure) {
-  try {
-    std::rethrow_exception(failure);
-  } catch (std::system_error const &thrown) {
-    return thrown.code() == error::websocket_closed;
-  } catch (...) {
-    return false;
-  }
+// Whether `failure` is a send refused after a close left, rather than after a frame cut short. Read once the handler is
+// over: what it wrote of the state is behind when_all.
+[[nodiscard]] bool refused_after_a_close(state const &connection, std::exception_ptr const &failure) {
+  return connection.sending == detail::sending_state::closed &&
+         async::detail::code_of(failure) == make_error_code(error::websocket_closed);
 }
 
 // The connection, once its handler is over: a close if none left, 1011 if it failed (RFC 6455, 7.4.1), then the
@@ -535,7 +545,8 @@ async::task<> serve_websocket(std::function<async::task<>(websocket)> handler, i
 
   // What a stop throws is no failure, the server's or the keep-alive's, nor a send refused after a close, the peer's or
   // a drain's: the connection ends.
-  auto const failed = failure && !async::detail::is_a_stop(failure) && !refused_after_a_close(failure);
+  auto const stopped = failure && handler_stop.stop_requested() && async::detail::is_a_stop(failure);
+  auto const failed = failure && !stopped && !refused_after_a_close(*connection, failure);
 
   co_await finish(connection, failed);
 
