@@ -302,14 +302,17 @@ async::task<> end_sending(std::shared_ptr<state> connection) {
 
     co_await turn.take(socket->writes);
 
-    if (!std::exchange(socket->sending_shut, true)) {
-      // Nothing may be written past it, a close that could not leave included.
-      if (socket->sending == detail::sending_state::open) {
-        socket->sending = detail::sending_state::cut;
-      }
-
-      static_cast<void>(co_await socket->stream.shutdown_send());
+    if (socket->sending_shut) {
+      co_return;
     }
+
+    // Nothing may be written past it, a close that could not leave included.
+    if (socket->sending == detail::sending_state::open) {
+      socket->sending = detail::sending_state::cut;
+    }
+
+    // Done once it has left: one stopped, or failed, may be tried again, by finish().
+    socket->sending_shut = !(co_await socket->stream.shutdown_send()).error;
   };
 
   try {
@@ -331,8 +334,8 @@ async::task<websocket_message> receive_next(std::shared_ptr<state> connection) {
 
     if (!parsed) {
       // Told, if it can be: what fails sending it changes nothing to what is thrown.
-      static_cast<void>(
-          co_await send_quietly(connection, close_of(*connection, close_code_of(parsed.error())), frame_kind::close));
+      static_cast<void>(co_await send_quietly(connection, close_of(*connection, close_code_of(parsed.error())),
+                                              frame_kind::close, co_await async::current_stop_token()));
 
       throw std::system_error{parsed.error(), "quoll::http::websocket: the peer broke the protocol"};
     }
@@ -340,8 +343,10 @@ async::task<websocket_message> receive_next(std::shared_ptr<state> connection) {
     if (auto &message = *parsed) {
       switch (message->opcode) {
       case websocket_opcode::ping:
-        static_cast<void>(co_await send_quietly(
-            connection, frame_of(*connection, websocket_opcode::pong, message->data), frame_kind::answer));
+        // Its wait for the turn ends with the receive()'s stop too: a stopped receive() leaves its pong unsent.
+        static_cast<void>(co_await send_quietly(connection,
+                                                frame_of(*connection, websocket_opcode::pong, message->data),
+                                                frame_kind::answer, co_await async::current_stop_token()));
         continue;
       case websocket_opcode::pong:
         continue;
@@ -350,7 +355,8 @@ async::task<websocket_message> receive_next(std::shared_ptr<state> connection) {
         connection->closing.request_stop();
 
         // A peer that closed its stream after its close, as some do, has had all it needs.
-        static_cast<void>(co_await send_quietly(connection, close_answering(*connection, *message), frame_kind::close));
+        static_cast<void>(co_await send_quietly(connection, close_answering(*connection, *message), frame_kind::close,
+                                                co_await async::current_stop_token()));
 
         if (connection->role == websocket_role::server) {
           co_await end_sending(connection);

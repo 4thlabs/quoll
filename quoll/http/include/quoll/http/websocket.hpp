@@ -97,9 +97,9 @@ struct websocket_options {
  *
  * Given a timer, a write that waits websocket_options::ping_interval, or 30 seconds where it is zero, with nothing
  * taken has the peer taken as gone: its frame is cut, and the send throws std::errc::timed_out. A pong, and the close
- * that answers the peer's, go whole, whatever stops the receive() that read what they answer. A receive() stopped, or
- * failed, ends receiving, as what it read of a frame cannot be taken up again: the next one throws the same. Without a
- * timer, nothing here times out.
+ * that answers the peer's, go whole once they have the turn to send; a receive() stopped before then leaves them
+ * unsent. A receive() stopped, or failed, ends receiving: a stream such as TLS does not take a read up again once it
+ * was stopped, so the next one throws the same. Without a timer, nothing here times out.
  *
  * Copied, not moved: its copies are the same connection, as http::client's are, which a task receiving and another
  * sending may each hold. An operation holds what it works on from when it is called, so that every copy may go before
