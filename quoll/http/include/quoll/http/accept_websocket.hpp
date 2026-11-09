@@ -84,10 +84,10 @@ namespace quoll::http {
  * peer has answered it, then waits for the handler up to its `shutdown_timeout`, and stops what it awaits.
  *
  * Once the handler is over, a close goes, unless one did: 1000, or 1011 if the handler threw. What the peer sends is
- * then read up to its close, within `ping_interval`, or 30 seconds where it is zero, and the server's side shut, so
- * that the close is not lost to a reset. A peer that broke the protocol has had its close: the server's side is shut at
- * once, and what the peer still sends dropped for as long. Pinging, the 1001 of a drain and that wait need a timer,
- * which quoll::runtime has.
+ * then read up to its close, and the server's side shut, so that the close is not lost to a reset, each step within
+ * `ping_interval`, or 30 seconds where it is zero. A peer that broke the protocol has had its close: the server's side
+ * is shut at once, and what the peer still sends dropped for as long. Pinging, the 1001 of a drain and that wait need a
+ * timer, which quoll::runtime has.
  *
  * What the handler throws goes to `connection_options::on_handler_error`, but for what a peer gone, silent, or breaking
  * the protocol throws through it, and for a send refused after a close the handler did not send, the peer's or a

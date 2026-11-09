@@ -77,6 +77,8 @@ response accept_websocket(request const &message, std::function<async::task<>(we
 
     auto refused = detail::status_response(status::upgrade_required);
 
+    // RFC 9110, 15.5.22: a 426 names the protocol to switch to.
+    refused.fields.set("Upgrade", "websocket");
     refused.fields.set("Sec-WebSocket-Version", "13");
     return refused;
   }

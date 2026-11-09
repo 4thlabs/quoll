@@ -329,6 +329,7 @@ TEST_CASE("accept_websocket: a request that is no handshake is refused", "[serve
     auto const refused = http::accept_websocket(request, handler);
 
     REQUIRE(refused.status == http::status::upgrade_required);
+    REQUIRE(refused.fields.find("Upgrade") == "websocket");
     REQUIRE(refused.fields.find("Sec-WebSocket-Version") == "13");
     REQUIRE_FALSE(refused.upgrade);
   }
@@ -407,6 +408,21 @@ TEST_CASE("serve_connection: a switch that answers no request for one is replace
 
   SECTION("a request that did not ask") {
     auto const [status, reported] = answer_to("GET /other HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n");
+
+    REQUIRE(status == http::status::internal_server_error);
+    REQUIRE(reported == did_not_ask);
+  }
+
+  SECTION("CONNECT, which names no protocol") {
+    router.use([&taker](http::request, http::next const &) -> task<http::response> {
+      http::response response;
+
+      response.status = http::status::switching_protocols;
+      response.upgrade = taker;
+      co_return response;
+    });
+
+    auto const [status, reported] = answer_to("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
 
     REQUIRE(status == http::status::internal_server_error);
     REQUIRE(reported == did_not_ask);
@@ -1079,9 +1095,10 @@ TEST_CASE("accept_websocket: a send after a frame the handler's own stop cut is 
           "[server][websocket]") {
   auto const [ended_at, reported] = run_paced(
       [](http::websocket socket, std::chrono::nanoseconds &per_byte) -> task<> {
+        // Stopped once a byte has left.
         per_byte = 1s;
 
-        auto const cut = co_await code_thrown_by(quoll::async::with_timeout(500ms, socket.send_text("cut short")));
+        auto const cut = co_await code_thrown_by(quoll::async::with_timeout(1500ms, socket.send_text("cut short")));
 
         REQUIRE(cut == std::errc::timed_out);
         co_await socket.send_text("next");
@@ -1089,6 +1106,64 @@ TEST_CASE("accept_websocket: a send after a frame the handler's own stop cut is 
       {.ping_interval = 0s}, read_to_the_end);
 
   REQUIRE(reported == std::vector<std::string>{"quoll::http::websocket: cannot send: WebSocket connection closed"});
+}
+
+TEST_CASE("accept_websocket: the keep-alive watches nothing once the peer has closed", "[server][websocket]") {
+  auto done = false;
+
+  auto const [ended_at, reported] = run_paced(
+      [&done](http::websocket socket, std::chrono::nanoseconds &) -> task<> {
+        while ((co_await socket.receive()).opcode != websocket_opcode::close) {
+        }
+
+        // Its own work after the close, longer than a silent peer is given.
+        co_await quoll::async::sleep_for(5s);
+        done = true;
+      },
+      {.ping_interval = 1s},
+      [](io::memory_stream &client, std::string) -> task<int> {
+        auto const close = http::format_websocket_close(1000, "", mask);
+
+        (void)co_await io::write(client, std::as_bytes(std::span{close}));
+        static_cast<void>(co_await quoll::test::read_until_closed(client));
+        co_return 1;
+      });
+
+  REQUIRE(done);
+  REQUIRE(ended_at == 5s);
+  REQUIRE(reported.empty());
+}
+
+TEST_CASE("accept_websocket: a send stopped before anything of it left leaves sending open", "[server][websocket]") {
+  auto const [ended_at, reported] = run_paced(
+      [](http::websocket socket, std::chrono::nanoseconds &per_byte) -> task<> {
+        per_byte = 1s;
+
+        auto const stopped = co_await code_thrown_by(quoll::async::with_timeout(500ms, socket.send_text("not sent")));
+
+        REQUIRE(stopped == std::errc::timed_out);
+        per_byte = 0s;
+        co_await socket.send_text("sent");
+      },
+      {.ping_interval = 0s},
+      expecting(
+          {websocket_message{websocket_opcode::text, "sent"}, websocket_message{websocket_opcode::close, "", 1000}}));
+
+  REQUIRE(reported.empty());
+}
+
+TEST_CASE("accept_websocket: a receive() once stopped is the handler's doing", "[server][websocket]") {
+  auto const [ended_at, reported] = run_paced(
+      [](http::websocket socket, std::chrono::nanoseconds &) -> task<> {
+        auto const stopped = co_await code_thrown_by(quoll::async::with_timeout(50ms, socket.receive()));
+
+        REQUIRE(stopped == std::errc::timed_out);
+        static_cast<void>(co_await socket.receive());
+      },
+      {.ping_interval = 1s}, read_to_the_end);
+
+  REQUIRE(reported ==
+          std::vector<std::string>{"quoll::http::websocket: receiving was stopped: WebSocket connection closed"});
 }
 
 TEST_CASE("accept_websocket: a handshake as the server drains is answered 503", "[server][websocket]") {

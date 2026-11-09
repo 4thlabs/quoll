@@ -37,6 +37,8 @@
 #include <quoll/http/websocket.hpp>
 
 #include <quoll/async/current_executor.hpp>
+#include <quoll/async/detail/held_place.hpp>
+#include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/detail/slots.hpp>
 #include <quoll/async/detail/stop_on_exit.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
@@ -118,6 +120,8 @@ struct websocket_state {
   sending_state sending = sending_state::open;
   // The stream's sending side is shut.
   bool sending_shut = false;
+  // A close has left, or come: the keep-alive has nothing more to watch, as the close handshake is finish()'s.
+  std::atomic<bool> closing = false;
 
   // How long what the server sends on its own, a keep-alive frame, an answer to the peer, its last close, may take to
   // leave, and how long it waits for the peer's close: `ping_interval`, or 30 seconds where it is zero, as a peer that
@@ -208,9 +212,6 @@ async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, 
     co_return;
   }
 
-  // Until it has left whole: what stops its operation midway cuts it, unless the peer is found to have failed.
-  connection->sending = detail::sending_state::cut_by_handler;
-
   auto rest = std::as_bytes(std::span{frame});
 
   while (!rest.empty()) {
@@ -222,6 +223,7 @@ async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, 
 
       record_peer_failure(*connection, failure);
 
+      // A frame of which nothing left leaves sending open, unless the peer has failed.
       if (peer_failure_of(*connection)) {
         connection->sending = detail::sending_state::cut_by_peer;
       }
@@ -229,6 +231,8 @@ async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, 
       fail(*connection, failure, "quoll::http::websocket: cannot send");
     }
 
+    // Until it has left whole: what stops its operation midway cuts it, unless the peer is found to have failed.
+    connection->sending = detail::sending_state::cut_by_handler;
     connection->writes_done.fetch_add(1);
     rest = rest.subspan(sent.transferred);
   }
@@ -236,20 +240,16 @@ async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, 
   connection->sending = kind == frame_kind::own_close ? detail::sending_state::closed_by_handler
                         : kind == frame_kind::close   ? detail::sending_state::closed
                                                       : detail::sending_state::open;
+  connection->closing.store(connection->sending != detail::sending_state::open);
 }
 
 // write_frame(), its turn held, whole rather than cut by the stop of the operation it serves, which a peer would read
 // as a broken stream, but within the connection's wait_limit where there is a timer: what does not take it is a peer
 // gone.
 async::task<> write_whole(std::shared_ptr<state> connection, std::string frame, frame_kind kind) {
-  if (!(co_await async::current_executor()).query<async::timer_ref>()) {
-    co_await async::detail::stop_scope<void>{write_frame(connection, std::move(frame), kind), std::stop_token{}};
-    co_return;
-  }
-
   try {
     co_await async::detail::stop_scope<void>{
-        async::with_timeout(connection->wait_limit, write_frame(connection, std::move(frame), kind)),
+        async::detail::with_optional_timeout(connection->wait_limit, write_frame(connection, std::move(frame), kind)),
         std::stop_token{}};
   } catch (std::system_error const &thrown) {
     record_peer_failure(*connection, thrown.code());
@@ -347,6 +347,7 @@ async::task<websocket_message> receive_next(std::shared_ptr<state> connection) {
         continue;
       case websocket_opcode::close:
         connection->close_received = true;
+        connection->closing.store(true);
 
         // A peer that closed its stream after its close, as some do, has had all it needs.
         try {
@@ -382,6 +383,11 @@ async::task<websocket_message> receive_next(std::shared_ptr<state> connection) {
 // `turn` until the frame goes, given back with it.
 async::task<websocket_message> receive_from(std::shared_ptr<state> connection, detail::one_at_a_time turn) {
   auto const held = std::move(turn);
+
+  // What a stop left cannot be taken up again, as the stream may be in the middle of a frame: the handler's doing.
+  if (connection->failure == std::errc::operation_canceled) {
+    throw std::system_error{make_error_code(error::websocket_closed), "quoll::http::websocket: receiving was stopped"};
+  }
 
   if (connection->failure) {
     fail(*connection, connection->failure, "quoll::http::websocket: receiving has failed");
@@ -494,7 +500,7 @@ async::task<> keep_alive(std::shared_ptr<state> connection, std::chrono::nanosec
 
     auto const quiet = co_await async::detail::stop_scope<bool>{timer->wait_for(period), wake.get_token()};
 
-    if (ends.stop_requested()) {
+    if (ends.stop_requested() || connection->closing.load()) {
       co_return;
     }
 
@@ -589,12 +595,9 @@ async::task<> finish(std::shared_ptr<state> connection, bool failed) {
   auto const broken = turn_free && broke_the_protocol(*connection);
 
   try {
-    if (broken) {
-      // Its close went as it was found.
-    } else if (timed) {
-      co_await async::with_timeout(limit, close_and_read(connection, failed, turn_free));
-    } else {
-      co_await close_and_read(connection, failed, false);
+    // Its close went as it was found, to a peer that broke the protocol.
+    if (!broken) {
+      co_await async::detail::with_optional_timeout(limit, close_and_read(connection, failed, turn_free && timed));
     }
   } catch (std::system_error const &) {
     // The peer slow to answer, or gone, or a stop: the connection ends all the same.
@@ -605,11 +608,7 @@ async::task<> finish(std::shared_ptr<state> connection, bool failed) {
   }
 
   try {
-    if (timed) {
-      co_await async::with_timeout(limit, end_sending(connection));
-    } else {
-      co_await end_sending(connection);
-    }
+    co_await async::detail::with_optional_timeout(limit, end_sending(connection));
 
     if (broken && timed) {
       co_await async::with_timeout(limit, drop_what_comes(connection));

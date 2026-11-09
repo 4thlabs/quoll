@@ -1377,6 +1377,9 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
       keep_alive = parser.keep_alive() && !parser.upgrade();
       asks_to_switch = parser.upgrade();
       request = parser.release();
+      // llhttp says so of every CONNECT too, which names no protocol: a switch is only to one an Upgrade field names
+      // (RFC 9110, 7.8), and a CONNECT is a tunnel, which is not offered.
+      asks_to_switch = asks_to_switch && request.method != http::verb::connect && request.fields.contains("Upgrade");
     }
 
     auto const method = request.method;

@@ -271,9 +271,8 @@ TEST_CASE("websocket: the peer's close is answered, and is the last message", "[
     REQUIRE(quoll::test::run(closed()) == 1);
   }
 
-  // The server's end gone, nothing else came.
-  { auto const gone = std::move(server); }
-
+  // The close handshake over, the server's side is shut, while the server still holds the connection: nothing else
+  // came.
   auto const rest = [&]() -> task<std::string> { co_return co_await quoll::test::read_until_closed(client_end); };
 
   REQUIRE(quoll::test::run(rest()) == "");
@@ -307,8 +306,7 @@ TEST_CASE("websocket: close() sends a close once, and nothing after it", "[http]
 
   REQUIRE(quoll::test::run(closing()) == 1);
 
-  { auto const gone = std::move(server); }
-
+  // The close handshake over, the server's side is shut: nothing else came.
   auto const rest = [&]() -> task<std::string> { co_return co_await quoll::test::read_until_closed(client_end); };
 
   REQUIRE(quoll::test::run(rest()) == "");
@@ -475,6 +473,33 @@ TEST_CASE("websocket: copies are the same connection, and an operation outlives 
   };
 
   REQUIRE(quoll::test::run(outlived()) == text("still"));
+}
+
+TEST_CASE("websocket: the stream closes once the last copy, and the last operation, has gone", "[http][websocket]") {
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  std::optional<http::websocket> server{server_over(std::move(server_end))};
+  std::optional<http::websocket> copy{*server};
+  std::optional<task<>> sending{copy->send_text("last")};
+  http::websocket_parser from_server{websocket_role::client};
+
+  server.reset();
+  copy.reset();
+
+  auto const after_copies = [&]() -> task<websocket_message> { co_return co_await next_raw(client_end, from_server); };
+
+  // The operation still holds the connection, and sends.
+  REQUIRE(quoll::test::run([&]() -> task<int> {
+            co_await std::move(*sending);
+            co_return 1;
+          }()) == 1);
+  REQUIRE(quoll::test::run(after_copies()) == text("last"));
+
+  sending.reset();
+
+  auto const rest = [&]() -> task<std::string> { co_return co_await quoll::test::read_until_closed(client_end); };
+
+  // No close was sent: the stream itself ends.
+  REQUIRE(quoll::test::run(rest()) == "");
 }
 
 TEST_CASE("websocket: what cannot be sent is refused when it is asked", "[http][websocket]") {
