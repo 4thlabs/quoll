@@ -39,6 +39,7 @@
 
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/held_place.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/detail/slots.hpp>
 #include <quoll/async/detail/stop_on_exit.hpp>
@@ -508,34 +509,6 @@ public:
   std::optional<async::detail::slots> places;
 };
 
-// A place held for as long as a request is on a connection. Thread safety: none, as the one request it holds it for.
-class held_place {
-public:
-  held_place() noexcept = default;
-
-  held_place(held_place const &) = delete;
-  held_place &operator=(held_place const &) = delete;
-  held_place(held_place &&) = delete;
-  held_place &operator=(held_place &&) = delete;
-
-  ~held_place() { release(); }
-
-  void release() noexcept {
-    if (places_ != nullptr) {
-      std::exchange(places_, nullptr)->release();
-    }
-  }
-
-  // Owned from the moment it is given, whatever fails around the wait for it.
-  [[nodiscard]] async::task<> take(async::detail::slots &places QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
-    co_await places.acquire();
-    places_ = &places;
-  }
-
-private:
-  async::detail::slots *places_ = nullptr;
-};
-
 // A stop already asked for: no connection is taken or opened, as what it would be awaited under completes without a
 // word on it, and it would close having carried nothing.
 void throw_if_stopped(std::stop_token const &token) {
@@ -553,7 +526,7 @@ void make_room(client_core &shared) {
 
 // The task holds the shared state, not the client.
 [[nodiscard]] async::task<http::response> send_prepared(std::shared_ptr<client_core> shared, prepared_request request) {
-  held_place place;
+  async::detail::held_place place;
 
   if (shared->places) {
     co_await async::detail::with_optional_timeout(shared->options.connect_timeout, place.take(*shared->places));
@@ -719,7 +692,7 @@ public:
   explicit response_stream(std::shared_ptr<client_core> shared)
       : shared_(std::move(shared)), trailers_(std::make_shared<http::fields>()) {}
 
-  [[nodiscard]] held_place &place() noexcept { return place_; }
+  [[nodiscard]] async::detail::held_place &place() noexcept { return place_; }
 
   // Sends `request` on `connection` and reads the head of its final response. As in exchange(): with `retry_if_closed`,
   // a connection found closed, or answering 408 first, gives false, and the caller goes on with another.
@@ -927,7 +900,7 @@ private:
   std::optional<http::response_parser> parser_;
   std::shared_ptr<http::fields> trailers_;
   // Before the connection: it closes first, and only then is its place another's.
-  held_place place_;
+  async::detail::held_place place_;
   std::optional<io::any_stream> connection_;
   std::string buffer_;
   std::string piece_;

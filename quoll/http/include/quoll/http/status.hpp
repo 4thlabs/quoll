@@ -76,6 +76,7 @@ enum class status : std::uint16_t {
   range_not_satisfiable = 416,
   expectation_failed = 417,
   unprocessable_content = 422,
+  upgrade_required = 426,
   too_many_requests = 429,
   request_header_fields_too_large = 431,
   internal_server_error = 500,
@@ -142,6 +143,8 @@ enum class status : std::uint16_t {
     return "Expectation Failed";
   case status::unprocessable_content:
     return "Unprocessable Content";
+  case status::upgrade_required:
+    return "Upgrade Required";
   case status::too_many_requests:
     return "Too Many Requests";
   case status::request_header_fields_too_large:

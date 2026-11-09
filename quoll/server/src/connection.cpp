@@ -39,6 +39,7 @@
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
@@ -77,6 +78,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -725,6 +727,22 @@ private:
   bool stopped_ = false;
 };
 
+// What the handler being caught threw, told to the application, but for what a stop throws: no failure, unlike what
+// goes wrong during one. Called in a catch block.
+void report_failure(connection_options const &options, std::stop_token const &stop_token) {
+  if (!options.on_handler_error) {
+    return;
+  }
+
+  auto const failure = std::current_exception();
+
+  if (stop_token.stop_requested() && async::detail::is_a_stop(failure)) {
+    return;
+  }
+
+  options.on_handler_error(failure);
+}
+
 // The router's response, or 500 if a handler or a middleware threw, reported to the application's callback if it gave
 // one.
 async::task<http::response> respond(http::router const &router, http::request request,
@@ -736,15 +754,8 @@ async::task<http::response> respond(http::router const &router, http::request re
                                        body != nullptr ? http::body_reader{*body} : http::body_reader{});
   } catch (body_not_read const &) {
     // No failure of the handler's, which only let it through.
-  } catch (std::system_error const &thrown) {
-    // What a stop throws is no failure either, unlike what goes wrong during one.
-    if (options.on_handler_error && !(stop_token.stop_requested() && thrown.code() == std::errc::operation_canceled)) {
-      options.on_handler_error(std::current_exception());
-    }
   } catch (...) {
-    if (options.on_handler_error) {
-      options.on_handler_error(std::current_exception());
-    }
+    report_failure(options, stop_token);
   }
 
   co_return http::detail::status_response(http::status::internal_server_error);
@@ -972,15 +983,8 @@ async::task<writer_end> run_writer(http::body_writer writer, http::response &res
     // No failure of the writer's, which only let it through.
   } catch (body_not_read const &) {
     // Nor is this, from a writer reading the request.
-  } catch (std::system_error const &thrown) {
-    // What a stop throws is no failure either, unlike what goes wrong during one.
-    if (options.on_handler_error && !(stop_token.stop_requested() && thrown.code() == std::errc::operation_canceled)) {
-      options.on_handler_error(std::current_exception());
-    }
   } catch (...) {
-    if (options.on_handler_error) {
-      options.on_handler_error(std::current_exception());
-    }
+    report_failure(options, stop_token);
   }
 
   nothing_left = !sink.started();
@@ -1241,6 +1245,33 @@ async::task<bool> send_written_by_handler(paced_stream &stream, http::response &
 // last response, what is on its way is read, in stages as RFC 9112, 9.6 asks.
 enum class connection_end { nothing_owed, stop_sending, linger };
 
+// What takes a connection over once it has switched protocols, and what came on it after the request: no handler, no
+// switch.
+struct taken_over {
+  http::upgrade_handler handler;
+  std::string received;
+};
+
+// What is wrong with taking the connection over with `response`, or nullptr. Only a 101 answering a request that asked
+// to switch, in HTTP/1.1 and with nothing of its own to follow it, can: the peer would read the protocol's bytes as
+// something else otherwise.
+[[nodiscard]] char const *cannot_switch(http::response const &response, bool asked, http::verb method,
+                                        http::version version) noexcept {
+  if (!asked || method == http::verb::head || speaks_http_1_0(response, version)) {
+    return "quoll::http::server: a protocol switch the request did not ask for";
+  }
+
+  if (response.status != http::status::switching_protocols) {
+    return "quoll::http::server: a protocol switch with a status other than 101";
+  }
+
+  if (!response.body.empty() || response.body_writer || response.late_head_writer) {
+    return "quoll::http::server: a protocol switch with a body";
+  }
+
+  return nullptr;
+}
+
 async::task<std::error_code> stop_sending(io::any_stream &stream) { co_return (co_await stream.shutdown_send()).error; }
 
 async::task<io::io_result> read_once(io::any_stream &stream, std::span<std::byte> buffer) {
@@ -1262,9 +1293,34 @@ async::task<std::error_code> drop_what_comes(io::any_stream &stream, std::chrono
   }
 }
 
+// The 101 written, or nothing if it may not be (see cannot_switch()) or cannot be serialized, the application being
+// told: it must not switch then, as a 500 goes in its place.
+[[nodiscard]] std::optional<async::task<std::error_code>> switch_protocols(paced_stream &stream,
+                                                                           http::response const &response, bool asked,
+                                                                           http::verb method, http::version version,
+                                                                           connection_options const &options) {
+  if (auto const *const wrong = cannot_switch(response, asked, method, version)) {
+    if (options.on_handler_error) {
+      options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
+    }
+
+    return std::nullopt;
+  }
+
+  try {
+    return http::write(stream, response);
+  } catch (std::invalid_argument const &) {
+    if (options.on_handler_error) {
+      options.on_handler_error(std::current_exception());
+    }
+
+    return std::nullopt;
+  }
+}
+
 // Requests and their responses, up to how the connection ends.
 async::task<connection_end> serve_requests(io::any_stream &stream, http::router const &router,
-                                           connection_options const &options) {
+                                           connection_options const &options, taken_over &taken) {
   std::string buffer;
   http::request_parser parser{options.limits};
   paced_stream paced{stream, parser, options};
@@ -1314,6 +1370,8 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
 
     std::optional<streamed_body> body;
     auto keep_alive = false;
+    // Whether the request asks to switch protocols, its body read: a body still coming is not.
+    auto asks_to_switch = false;
     http::request request;
 
     if (parser.body_streamed()) {
@@ -1321,8 +1379,13 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
       request = parser.head();
       body.emplace(paced, buffer, parser, continue_owed);
     } else {
-      keep_alive = parser.keep_alive() && !parser.upgrade();
+      auto const upgrade = parser.upgrade();
+
+      keep_alive = parser.keep_alive() && !upgrade;
       request = parser.release();
+      // llhttp says so of every CONNECT too, which names no protocol: a switch is only to one an Upgrade field names
+      // (RFC 9110, 7.8), and a CONNECT is a tunnel, which is not offered.
+      asks_to_switch = upgrade && request.method != http::verb::connect && request.fields.contains("Upgrade");
     }
 
     auto const method = request.method;
@@ -1342,6 +1405,26 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
 
       // What it left unread, or could not tell apart from the next request, ends the connection.
       keep_alive = body->read_to_its_end();
+    }
+
+    if (response.upgrade) {
+      if (options.drain.stop_requested()) {
+        // No connection to start as the server stops: the client may try another.
+        response = http::detail::status_response(http::status::service_unavailable);
+      } else if (auto switching = switch_protocols(paced, response, asks_to_switch, method, version, options)) {
+        paced.writing().start_again();
+
+        if (co_await paced.patiently_writing(std::move(*switching))) {
+          co_return connection_end::nothing_owed;
+        }
+
+        // What came after the request is the new protocol's.
+        taken.handler = std::move(response.upgrade);
+        taken.received = std::move(buffer);
+        co_return connection_end::nothing_owed;
+      } else {
+        response = http::detail::status_response(http::status::internal_server_error);
+      }
     }
 
     keep_alive = keep_alive && !http::detail::closes_connection(response.fields) && !options.drain.stop_requested();
@@ -1446,12 +1529,29 @@ async::task<> end_connection(io::any_stream &stream, connection_options const &o
   }
 }
 
+// The connection, run by what took it over, told of a drain, with what it throws reported as a handler's would be.
+async::task<> run_taken_over(io::any_stream stream, taken_over taken, connection_options const &options) {
+  auto const stop_token = co_await async::current_stop_token();
+
+  try {
+    co_await taken.handler(std::move(stream), std::move(taken.received), options.drain);
+  } catch (...) {
+    report_failure(options, stop_token);
+  }
+}
+
 } // namespace
 
 namespace detail {
 
 async::task<> serve_connection(io::any_stream stream, http::router const &router, connection_options const &options) {
-  auto const end = co_await serve_requests(stream, router, options);
+  taken_over taken;
+  auto const end = co_await serve_requests(stream, router, options, taken);
+
+  if (taken.handler) {
+    co_await run_taken_over(std::move(stream), std::move(taken), options);
+    co_return;
+  }
 
   co_await end_connection(stream, options, end);
 }

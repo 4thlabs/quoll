@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/detail/held_place.hpp>
 #include <quoll/async/detail/slots.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/run_loop.hpp>
@@ -44,6 +45,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <stop_token>
 #include <system_error>
 #include <vector>
@@ -177,4 +179,25 @@ TEST_CASE("slots: a stop coming after a place was given leaves it to what waited
   REQUIRE(quoll::test::run(quoll::async::when_all(holds(), waits_with_a_stop())));
   REQUIRE(got_it);
   REQUIRE(places.available() == 1);
+}
+
+TEST_CASE("held_place: a place taken is held until it goes", "[async][slots]") {
+  slots places{1};
+
+  auto const holding = [&]() -> task<std::size_t> {
+    {
+      quoll::async::detail::held_place held;
+
+      co_await held.take(places);
+
+      // Held: none free.
+      if (places.available() != 0) {
+        co_return 10;
+      }
+    }
+
+    co_return places.available();
+  };
+
+  REQUIRE(quoll::test::run(holding()) == 1);
 }

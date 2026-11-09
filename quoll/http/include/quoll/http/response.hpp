@@ -37,14 +37,28 @@
 #ifndef QUOLL_HTTP_RESPONSE_HPP
 #define QUOLL_HTTP_RESPONSE_HPP
 
+#include <quoll/async/task.hpp>
 #include <quoll/http/body_stream.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/version.hpp>
 
+#include <functional>
+#include <stop_token>
 #include <string>
 
+namespace quoll::io {
+class any_stream;
+} // namespace quoll::io
+
 namespace quoll::http {
+
+/**
+ * @brief What takes a connection over once it has switched protocols: its stream, what came on it after the request,
+ * and a token stopped when the server drains, which asks it to end gently. See http::response::upgrade.
+ */
+using upgrade_handler =
+    std::function<async::task<>(io::any_stream stream, std::string received, std::stop_token drain)>;
 
 /** @brief A complete HTTP/1.x response: status line, fields, body and trailers. */
 struct response {
@@ -69,6 +83,13 @@ struct response {
    * passing `head()` on.
    */
   http::body_writer late_head_writer{};
+  /**
+   * @brief What takes the connection over once this response has left, for a 101 that answers a request asking to
+   * switch protocols, as http::accept_websocket sets it: see http::upgrade_handler. What
+   * serves a router over a connection runs it, in the task of that connection; a response with it that is not such an
+   * answer is replaced with a 500. Nothing else runs it.
+   */
+  http::upgrade_handler upgrade{};
 };
 
 } // namespace quoll::http

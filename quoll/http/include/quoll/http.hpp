@@ -37,6 +37,7 @@
 #ifndef QUOLL_HTTP_HPP
 #define QUOLL_HTTP_HPP
 
+#include <quoll/http/accept_websocket.hpp>
 #include <quoll/http/body_reader.hpp>
 #include <quoll/http/body_stream.hpp>
 #include <quoll/http/error.hpp>
@@ -67,6 +68,7 @@
 #include <quoll/http/transport.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/http/version.hpp>
+#include <quoll/http/websocket.hpp>
 #include <quoll/http/websocket_handshake.hpp>
 #include <quoll/http/websocket_message.hpp>
 #include <quoll/http/websocket_parser.hpp>

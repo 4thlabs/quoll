@@ -354,6 +354,62 @@ long the stream asked to wait first, at most a day. The reader does not connect 
 Underneath, `http::format_event`, `format_retry` and `format_comment` write the text of an event, and
 `http::event_parser` reads it as its pieces come, with no IO: for a transport of one's own.
 
+## WebSocket
+
+A WebSocket is a connection that switched from HTTP: a server accepts it in a route with
+`http::accept_websocket`, whose handler then has the connection, as an `http::websocket`, for as long as
+its task runs:
+
+```cpp
+router.get("/echo", [](http::request request) {
+  return http::accept_websocket(request, [](http::websocket socket) -> async::task<> {
+    for (;;) {
+      auto message = co_await socket.receive();
+
+      if (message.opcode == http::websocket_opcode::close) {
+        co_return;
+      }
+
+      co_await socket.send_text(message.data);
+    }
+  });
+});
+```
+
+The route answers 101, with the `Sec-WebSocket-Accept` the handshake asks for. A request that is no
+handshake gets 400, or 426 with `Sec-WebSocket-Version: 13` for another version, and the handler never
+runs. The response is the route's to complete, with a subprotocol from those the request offers in
+`Sec-WebSocket-Protocol`, say. A route that refuses a handshake, for want of credentials say, returns a
+response of its own instead. A browser sends its cookies with a handshake whatever page asks for it, and
+holds no WebSocket to the same origin: a route that knows its users by a cookie checks the request's
+`Origin` against its own before accepting, or a page of another site acts for them (cross-site WebSocket
+hijacking). Over TLS, as `wss://`, it is the same: the handshake is no cryptography.
+
+`receive()` gives each text or binary message, its fragments joined, then the peer's close, the last
+message, with its `close_code` and reason in `data`. It answers pings with pongs, drops pongs, and answers
+the close with its own: a loop that receives is all a connection needs to stay alive. `send_text()`,
+`send_binary()`, `ping()` and `close()` go on while a `receive()` waits, from a task beside it through
+`when_all`, each holding a copy of the `http::websocket` if it likes, as copies are the same connection, each message whole, in the order their tasks start. All of them run on the connection's own
+strand, where the handler runs: a socket is not shared between threads, so that what another connection
+wants sent, to broadcast say, goes to this handler, which sends it itself.
+
+| When                         | What happens                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The peer breaks the protocol | It is sent the close the failure calls for: 1002, 1007 for text that is not UTF-8, 1009 for a message over `websocket_options::max_message_size`, 1 MiB by default. `receive()` throws the `http::error`, and goes on throwing.                                                                                                                                                                                                                                              |
+| A close has gone out         | A message sent after it throws `http::error::websocket_closed`, and a `close()` does nothing. So does a message after a frame cut short, by a stop or a failure of the stream.                                                                                                                                                                                                                                                                                               |
+| Two `receive()` at once      | The second throws `std::logic_error` when it is asked.                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| The peer stays quiet         | The connection's timeouts end with the handshake. After `websocket_options::ping_interval` with nothing read, 30 seconds by default, the peer is pinged; after another, it is taken as gone, or half-open, and the handler is stopped, which frees the connection. Only what `receive()` reads counts: a handler keeps receiving beside what else it does. A write that waits as long with nothing taken has the peer taken as gone: the send throws `std::errc::timed_out`. |
+| The server is stopped        | As it starts to drain, a close with 1001 (going away) is sent: the peer's answer comes to `receive()` as the last message. A handshake that comes then gets 503. The server waits for the handler as for any request under way, up to `shutdown_timeout`, then stops what it awaits.                                                                                                                                                                                         |
+| The handler ends             | A close goes, unless one did: 1000, or 1011 if it threw; then the server shuts its side. What it threw goes to `connection_options::on_handler_error`, but for what a stop throws, and a send refused after a close. A peer gone, or breaking the protocol, makes `receive()` throw: a handler catches it if that is no failure of its own.                                                                                                                                  |
+| The peer is gone             | `receive()` throws the stream's error, and so do the sends that find it gone.                                                                                                                                                                                                                                                                                                                                                                                                |
+
+Pinging and the 1001 of a drain need a timer, which `quoll::runtime` has.
+
+Underneath, `response::upgrade`, an `http::upgrade_handler`, is what takes a connection over once a 101 has left,
+which the server runs only for a request that asked to switch: any other response with it is replaced with a 500. `http::websocket_parser`,
+`format_websocket_frame` and `format_websocket_close` read and write frames with no IO, for a transport of one's own.
+A WebSocket client, natively and in a browser, is not there yet.
+
 ## In a test
 
 `http::local_transport` has no `stream()`. It runs a `request.body_writer` to its end before the handler,

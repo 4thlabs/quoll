@@ -69,6 +69,8 @@ enum class error {
   websocket_invalid_text,
   /** @brief A WebSocket message holds more than an http::websocket_parser may: a close with 1009. */
   websocket_too_large,
+  /** @brief A WebSocket connection has sent its close, or could not send it whole: nothing more can follow. */
+  websocket_closed,
 };
 
 /** @brief The category of http::error codes. */

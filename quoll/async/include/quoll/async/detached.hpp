@@ -38,9 +38,9 @@
 #define QUOLL_ASYNC_DETACHED_HPP
 
 #include <quoll/async/completion_handler.hpp>
+#include <quoll/async/detail/is_a_stop.hpp>
 
 #include <exception>
-#include <system_error>
 
 namespace quoll::async {
 
@@ -63,12 +63,8 @@ struct detached_t {
       return;
     }
 
-    try {
+    if (!detail::is_a_stop(failure)) {
       std::rethrow_exception(failure);
-    } catch (std::system_error const &thrown) {
-      if (thrown.code() != std::errc::operation_canceled) {
-        std::rethrow_exception(failure);
-      }
     }
   }
 };
