@@ -827,7 +827,8 @@ struct paced_run {
 // when it ended, and what the server reported. The client sends the handshake, then does what `client` says with the
 // rest of what came, by default reading to the end.
 template <class Handler, class Client>
-paced_run run_paced(Handler handler, http::websocket_options options, Client client, std::stop_token stop = {}) {
+paced_run run_paced(Handler handler, http::websocket_options options, Client client, std::stop_token stop = {},
+                    std::stop_token drain = {}) {
   quoll::test::virtual_time time;
   auto [client_end, server_end] = io::make_memory_stream_pair();
   std::chrono::nanoseconds per_byte{};
@@ -835,6 +836,8 @@ paced_run run_paced(Handler handler, http::websocket_options options, Client cli
   http::connection_options connection;
   auto const router = socket_at(
       [&per_byte, &handler](http::websocket socket) { return handler(std::move(socket), per_byte); }, options);
+
+  connection.drain = std::move(drain);
 
   connection.on_handler_error = [&reported](std::exception_ptr const &failure) {
     try {
@@ -1304,6 +1307,87 @@ TEST_CASE("accept_websocket: a pong waits for a long message, not the receive() 
       });
 
   REQUIRE(received_first);
+  REQUIRE(reported.empty());
+}
+
+TEST_CASE("accept_websocket: a drain after the handler's close changes nothing to the wait", "[server][websocket]") {
+  std::stop_source drain;
+
+  auto const [ended_at, reported] = run_paced(
+      [](http::websocket socket, std::chrono::nanoseconds &) -> task<> {
+        co_await socket.close();
+        static_cast<void>(co_await socket.receive());
+      },
+      {.ping_interval = 1s},
+      [&drain](io::memory_stream &client, std::string) -> task<int> {
+        co_await quoll::async::sleep_for(500ms);
+        drain.request_stop();
+        static_cast<void>(co_await quoll::test::read_until_closed(client));
+        co_return 1;
+      },
+      {}, drain.get_token());
+
+  // The peer's answer waited for from the close, at 0 s, the drain or not.
+  REQUIRE(ended_at == 1s);
+  REQUIRE(reported.empty());
+}
+
+TEST_CASE("accept_websocket: a peer that sends on after the server's close is not waited for longer",
+          "[server][websocket]") {
+  auto const [ended_at, reported] = run_paced(
+      [](http::websocket socket, std::chrono::nanoseconds &) -> task<> {
+        co_await socket.close();
+
+        while ((co_await socket.receive()).opcode != websocket_opcode::close) {
+        }
+      },
+      {.ping_interval = 1s},
+      [](io::memory_stream &client, std::string) -> task<int> {
+        auto const chatter = http::format_websocket_frame(websocket_opcode::text, "still here", true, mask);
+
+        // Every 0.3 s, until the server has gone, at 1 s: the write at 1.2 s fails.
+        while (!(co_await io::write(client, std::as_bytes(std::span{chatter}))).error) {
+          co_await quoll::async::sleep_for(300ms);
+        }
+
+        co_return 1;
+      });
+
+  REQUIRE(ended_at == 1200ms);
+  REQUIRE(reported.empty());
+}
+
+TEST_CASE("accept_websocket: the peer's close is answered, whatever stops the receive() that read it",
+          "[server][websocket]") {
+  auto answered = false;
+
+  auto const [ended_at, reported] = run_paced(
+      [&answered](http::websocket socket, std::chrono::nanoseconds &per_byte) -> task<> {
+        auto const sending = [&socket]() -> task<> { co_await socket.send_text("a long message, 2 s"); };
+        auto const receiving = [&socket, &answered]() -> task<> {
+          // Stopped at 0.1 s, as its answer waits behind the long message.
+          auto const close = co_await quoll::async::with_timeout(100ms, socket.receive());
+
+          answered = close == websocket_message{websocket_opcode::close, "", 4000};
+        };
+
+        per_byte = 100ms;
+        static_cast<void>(co_await quoll::async::when_all(sending(), receiving()));
+      },
+      {.ping_interval = 0s},
+      [](io::memory_stream &client, std::string after) -> task<int> {
+        auto const rest = expecting({websocket_message{websocket_opcode::text, "a long message, 2 s"},
+                                     websocket_message{websocket_opcode::close, "", 4000}});
+        auto const close = http::format_websocket_close(4000, "", mask);
+
+        (void)co_await io::write(client, std::as_bytes(std::span{close}));
+
+        auto const done = co_await rest(client, std::move(after));
+
+        co_return done;
+      });
+
+  REQUIRE(answered);
   REQUIRE(reported.empty());
 }
 

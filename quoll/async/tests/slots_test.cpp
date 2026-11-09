@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/detail/held_place.hpp>
 #include <quoll/async/detail/slots.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/run_loop.hpp>
@@ -176,5 +177,48 @@ TEST_CASE("slots: a stop coming after a place was given leaves it to what waited
 
   REQUIRE(quoll::test::run(quoll::async::when_all(holds(), waits_with_a_stop())));
   REQUIRE(got_it);
+  REQUIRE(places.available() == 1);
+}
+
+TEST_CASE("slots: try_acquire takes a free place, and none while what waits keeps its turn", "[async][slots]") {
+  slots places{1};
+
+  REQUIRE(places.try_acquire());
+  REQUIRE_FALSE(places.try_acquire());
+
+  auto const waits = [&]() -> task<int> {
+    co_await places.acquire();
+    co_return 1;
+  };
+
+  auto const both = [&]() -> task<int> {
+    auto const [got, refused] = co_await quoll::async::when_all(waits(), [&]() -> task<bool> {
+      // The waiter is queued: the place given back goes to it, not to what asks without waiting.
+      co_await quoll::async::yield();
+      places.release();
+
+      auto const taken = places.try_acquire();
+
+      co_return taken;
+    }());
+
+    co_return got + (refused ? 10 : 0);
+  };
+
+  REQUIRE(quoll::test::run(both()) == 1);
+  REQUIRE(places.available() == 0);
+}
+
+TEST_CASE("held_place: try_take holds a free place until it goes, and gives it back", "[async][slots]") {
+  slots places{1};
+
+  {
+    quoll::async::detail::held_place held;
+
+    REQUIRE(held.try_take(places));
+    REQUIRE_FALSE(held.try_take(places));
+    REQUIRE(places.available() == 0);
+  }
+
   REQUIRE(places.available() == 1);
 }

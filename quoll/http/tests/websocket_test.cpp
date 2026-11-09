@@ -397,6 +397,100 @@ TEST_CASE("websocket: a read that brings nothing, with no error, ends receiving"
   REQUIRE(quoll::test::run(receiving()) == std::errc::io_error);
 }
 
+namespace {
+
+// A stream whose first write takes a byte, then says it was stopped: a frame left in its middle.
+class cut_after_a_byte {
+public:
+  explicit cut_after_a_byte(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
+    if (std::exchange(first_, false)) {
+      auto const sent = co_await inner_.write_some(data.first(1));
+
+      co_return io::io_result{std::make_error_code(std::errc::operation_canceled), sent.transferred};
+    }
+
+    co_return co_await inner_.write_some(data);
+  }
+
+private:
+  io::memory_stream inner_;
+  bool first_ = true;
+};
+
+// A stream whose first write waits until it is stopped, taking nothing: a send stopped before it began.
+class first_write_stuck {
+public:
+  explicit first_write_stuck(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
+    if (std::exchange(first_, false)) {
+      try {
+        co_await quoll::async::sleep_for(24h);
+      } catch (std::system_error const &stopped) {
+        co_return io::io_result{stopped.code(), 0};
+      }
+    }
+
+    co_return co_await inner_.write_some(data);
+  }
+
+private:
+  io::memory_stream inner_;
+  bool first_ = true;
+};
+
+} // namespace
+
+TEST_CASE("websocket: what left of a frame before an error leaves it cut", "[http][websocket]") {
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket server{io::any_stream{cut_after_a_byte{std::move(server_end)}}, websocket_role::server};
+
+  auto const sending = [&]() -> task<int> {
+    auto const stopped = co_await code_thrown_by(server.send_text("cut"));
+    auto const next = co_await code_thrown_by(server.send_text("next"));
+
+    REQUIRE(stopped == std::errc::operation_canceled);
+    REQUIRE(next == http::error::websocket_closed);
+    co_return 1;
+  };
+
+  REQUIRE(quoll::test::run(sending()) == 1);
+}
+
+TEST_CASE("websocket: a pong left waiting goes when the send ahead of it fails", "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket server{io::any_stream{first_write_stuck{std::move(server_end)}}, websocket_role::server};
+  http::websocket_parser from_server{websocket_role::client};
+
+  auto const peer = [&]() -> task<websocket_message> {
+    co_await send_raw(client_end, http::format_websocket_frame(websocket_opcode::ping, "?", true, mask));
+
+    auto const pong = co_await next_raw(client_end, from_server);
+
+    co_await send_raw(client_end, http::format_websocket_frame(websocket_opcode::text, "end", true, mask));
+    co_return pong;
+  };
+
+  auto const all = [&]() -> task<int> {
+    auto [stopped, received, pong] = co_await quoll::async::when_all(
+        code_thrown_by(quoll::async::with_timeout(1s, server.send_text("stuck"))), server.receive(), peer());
+
+    REQUIRE(stopped == std::errc::timed_out);
+    REQUIRE(received == text("end"));
+    REQUIRE(pong == websocket_message{websocket_opcode::pong, "?"});
+    co_return 1;
+  };
+
+  REQUIRE(quoll::test::run(time, all()) == 1);
+}
+
 TEST_CASE("websocket: messages leave whole, in the order asked, while a receive() waits", "[http][websocket]") {
   auto [client_end, server_end] = io::make_memory_stream_pair();
   http::websocket server{io::any_stream{trickling{std::move(server_end)}}, websocket_role::server};
