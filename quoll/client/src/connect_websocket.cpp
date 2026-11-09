@@ -197,6 +197,8 @@ websocket_handshake prepare_websocket_handshake(websocket_target const &where, h
       continue;
     }
 
+    auto const before = handshake.offered.size();
+
     for (auto const member : std::views::split(std::string_view{field.value}, ',')) {
       // An empty member offers nothing, nor may a server choose it.
       auto const token = trim(std::string_view{member.begin(), member.end()});
@@ -211,7 +213,17 @@ websocket_handshake prepare_websocket_handshake(websocket_target const &where, h
                                     std::string{token}};
       }
 
+      // Each one once (RFC 6455, 4.1).
+      if (std::ranges::find(handshake.offered, token) != handshake.offered.end()) {
+        throw std::invalid_argument{"quoll::http::connect_websocket: a subprotocol offered twice: " +
+                                    std::string{token}};
+      }
+
       handshake.offered.emplace_back(token);
+    }
+
+    if (handshake.offered.size() == before) {
+      throw std::invalid_argument{"quoll::http::connect_websocket: a Sec-WebSocket-Protocol that names none"};
     }
   }
 

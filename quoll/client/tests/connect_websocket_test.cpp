@@ -503,8 +503,24 @@ TEST_CASE("connect_websocket: what cannot be asked is refused when it is called"
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", with_a_body), std::invalid_argument);
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "wss://h/"), std::invalid_argument);
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://bad host/"), std::invalid_argument);
-  // What a proxy could read as another server.
-  REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h//evil.example/x"), std::invalid_argument);
+  // What a proxy could read as another server, as it is, decoded, without its dot segments, or with a backslash.
+  for (auto const *const url : {"ws://h//evil.example/x", "ws://h/%2F/evil.example/x", "ws://h/.//evil.example/x",
+                                "ws://h/./%2Fevil.example", "ws://h/\\evil.example"}) {
+    REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, url), std::invalid_argument);
+  }
+
+  http::websocket_connect_options no_subprotocol;
+
+  no_subprotocol.fields.set("Sec-WebSocket-Protocol", " , ");
+
+  REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", no_subprotocol),
+                    std::invalid_argument);
+
+  http::websocket_connect_options twice;
+
+  twice.fields.set("Sec-WebSocket-Protocol", "chat, chat");
+
+  REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", twice), std::invalid_argument);
 
   http::websocket_connect_options broken;
 
@@ -960,4 +976,41 @@ TEST_CASE("connect_websocket: its options reach what they say", "[client][websoc
     REQUIRE(quoll::test::run(loop, connecting()) == 1);
     REQUIRE(trusted == "authorities.pem");
   }
+}
+
+TEST_CASE("connect_websocket: a handshake_timeout of zero waits as long as the server takes", "[client][websocket]") {
+  quoll::test::virtual_time time;
+  http::websocket_connect_options options;
+
+  options.handshake_timeout = 0s;
+
+  // A server that answers, refusing, after a minute.
+  struct late_connector {
+    [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+      auto [client_end, server_end] = io::make_memory_stream_pair();
+      auto const refusal = std::string{"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n"};
+
+      co_await quoll::async::sleep_for(60s);
+      (void)co_await io::write(server_end, std::as_bytes(std::span{refusal}));
+      *kept = std::move(server_end);
+      co_return io::any_stream{std::move(client_end)};
+    }
+
+    std::optional<io::memory_stream> *kept;
+  };
+
+  std::optional<io::memory_stream> kept;
+
+  auto const connecting = [&]() -> task<std::string> {
+    try {
+      static_cast<void>(co_await http::connect_websocket(late_connector{&kept}, "ws://h/", std::move(options)));
+    } catch (http::websocket_refused const &refused) {
+      co_return std::to_string(static_cast<int>(refused.response().status));
+    }
+
+    co_return std::string{};
+  };
+
+  REQUIRE(quoll::test::run(time, connecting()) == "403");
+  REQUIRE(time.now() == 60s);
 }

@@ -43,14 +43,11 @@
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/streamed_response.hpp>
-#include <quoll/io/any_stream.hpp>
-#include <quoll/io/tls_options.hpp>
 
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
-#include <utility>
 
 namespace quoll::http::detail {
 

@@ -392,8 +392,9 @@ websocket_target parse_websocket_url(std::string_view url) {
   auto const slash = before.find('/');
   auto const path = slash == std::string_view::npos ? std::string_view{"/"} : before.substr(slash);
 
-  // What a proxy could read as another server: `//host/...`, a reference to a network path.
-  if (path.starts_with("//")) {
+  // What a proxy could read as another server, `//host/...`, a reference to a network path, once it has decoded it and
+  // taken its dot segments out as a parser does, a backslash read as a slash.
+  if (!reads_as_itself(path)) {
     throw std::invalid_argument{"quoll::http::connect_websocket: a path a proxy could read as another server"};
   }
 

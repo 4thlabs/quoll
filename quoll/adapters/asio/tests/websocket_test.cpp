@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/detail/stop_on_exit.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
@@ -77,6 +78,8 @@ task<std::string> echo_over_tcp() {
     co_await quoll::async::detail::stop_scope<void>{server.serve(std::move(listener)), stop.get_token()};
   };
   auto const talking = [&]() -> task<std::string> {
+    // The server stopped however this ends, a failure included, which would leave it serving otherwise.
+    quoll::async::detail::stop_on_exit const stop_server{stop};
     auto [socket, handshake] = co_await http::connect_websocket(url);
 
     co_await socket.send_text("over TCP");
@@ -87,7 +90,6 @@ task<std::string> echo_over_tcp() {
 
     auto const closed = co_await socket.receive();
 
-    stop.request_stop();
     co_return closed.opcode == http::websocket_opcode::close ? answer.data : std::string{};
   };
 
