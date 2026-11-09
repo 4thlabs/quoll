@@ -76,10 +76,12 @@ namespace quoll::http {
  * The handler runs in the task of the connection, on its strand, as a request's handler does. The timeouts of the
  * connection no longer apply, as a WebSocket may stay quiet: a peer quiet for websocket_options::ping_interval, 30
  * seconds by default, is pinged, and one that stays so for another, or does not take a ping within it, gone or
- * half-open, has its handler stopped, which frees the connection. That needs the handler to receive, which is also what
- * answers the peer. Stopping a server sends a close with 1001 (going away) as it starts to drain, which a handler that
- * receives sees as the last message once the peer has answered it, then waits for the handler up to its
- * `shutdown_timeout`, and stops what it awaits.
+ * half-open, has its handler stopped, which frees the connection. That needs the handler to keep receiving, which is
+ * also what answers the peer: one that waits on something else for longer than an interval receives beside it, through
+ * when_all, or sets a longer ping_interval. A task left holding a copy of the websocket past the handler keeps the
+ * connection open, out of the keep-alive's watch and the server's count, until it lets go. Stopping a server sends a
+ * close with 1001 (going away) as it starts to drain, which a handler that receives sees as the last message once the
+ * peer has answered it, then waits for the handler up to its `shutdown_timeout`, and stops what it awaits.
  *
  * Once the handler is over, a close goes, unless one did: 1000, or 1011 if the handler threw. What the peer sends is
  * then read up to its close, within `ping_interval`, or 30 seconds where it is zero, and the server's side shut, so
