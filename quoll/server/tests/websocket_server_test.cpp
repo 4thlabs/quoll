@@ -532,6 +532,33 @@ TEST_CASE("serve_connection: what a WebSocket handler throws is reported, but fo
     REQUIRE(reported == std::vector<std::string>{"quoll::http::websocket: cannot send: WebSocket connection closed"});
   }
 
+  SECTION("a failure of its own, with the code of the peer's") {
+    auto const router = socket_at([](http::websocket socket) -> task<> {
+      auto peer_gone = false;
+
+      try {
+        static_cast<void>(co_await socket.receive());
+      } catch (std::system_error const &) {
+        peer_gone = true;
+      }
+
+      if (peer_gone) {
+        throw std::system_error{make_error_code(io::error::end_of_stream), "its own"};
+      }
+    });
+
+    auto const reported = served(router, [](io::memory_stream &client) -> task<int> {
+      auto const answer = co_await send_then_read(client, handshake());
+
+      REQUIRE(answer.response.status == http::status::switching_protocols);
+
+      { auto const gone = std::move(client); }
+      co_return 1;
+    });
+
+    REQUIRE(reported.size() == 1);
+  }
+
   SECTION("a peer gone") {
     std::error_code ended;
     auto const router = socket_at([&ended](http::websocket socket) { return receive_all(std::move(socket), ended); });
@@ -887,6 +914,82 @@ TEST_CASE("accept_websocket: a peer that broke the protocol has the server's sid
   // What it drops, for as long as a close waits.
   REQUIRE(ended_at == 1s);
   REQUIRE(reported.empty());
+}
+
+TEST_CASE("accept_websocket: a peer that answers nothing is gone, whatever the handler sends", "[server][websocket]") {
+  std::error_code ended;
+
+  auto const [ended_at, reported] = run_paced(
+      [&ended](http::websocket socket, std::chrono::nanoseconds &) -> task<> {
+        try {
+          for (;;) {
+            co_await socket.send_text("tick");
+            co_await quoll::async::sleep_for(500ms);
+          }
+        } catch (std::system_error const &thrown) {
+          ended = thrown.code();
+          throw;
+        }
+      },
+      {.ping_interval = 1s}, read_to_the_end);
+
+  // Its sends tell nothing of the peer: pinged at 1 s, gone at 2 s.
+  REQUIRE(ended_at == 2s);
+  REQUIRE(ended == std::errc::operation_canceled);
+  REQUIRE(reported.empty());
+}
+
+TEST_CASE("accept_websocket: a peer that answers each ping stays", "[server][websocket]") {
+  auto const [ended_at, reported] = run_paced(
+      [](http::websocket socket, std::chrono::nanoseconds &) -> task<> {
+        while ((co_await socket.receive()).opcode != websocket_opcode::close) {
+        }
+      },
+      {.ping_interval = 1s},
+      [](io::memory_stream &client, std::string after) -> task<int> {
+        http::websocket_parser from_server{websocket_role::client};
+        auto pings = 0;
+
+        from_server.feed(after);
+
+        // Five pings answered, over more than twice the time a silent peer is given.
+        while (pings < 5) {
+          auto const message = co_await next_from_server(client, from_server);
+
+          REQUIRE(message.opcode == websocket_opcode::ping);
+          ++pings;
+
+          auto const pong = http::format_websocket_frame(websocket_opcode::pong, message.data, true, mask);
+
+          (void)co_await io::write(client, std::as_bytes(std::span{pong}));
+        }
+
+        auto const close = http::format_websocket_close(1000, "", mask);
+
+        (void)co_await io::write(client, std::as_bytes(std::span{close}));
+
+        auto const answer = co_await next_from_server(client, from_server);
+
+        REQUIRE(answer == websocket_message{websocket_opcode::close, "", 1000});
+        co_return 1;
+      });
+
+  // Pinged at 1, 3, 5, 7 and 9 s: each pong counts, then a quiet second, then the next ping.
+  REQUIRE(ended_at == 9s);
+  REQUIRE(reported.empty());
+}
+
+TEST_CASE("accept_websocket: a ping under way as the handler throws goes whole, then a 1011", "[server][websocket]") {
+  auto const [ended_at, reported] = run_paced(
+      [](http::websocket, std::chrono::nanoseconds &per_byte) -> task<> {
+        per_byte = 100ms;
+        co_await quoll::async::sleep_for(1050ms);
+        throw std::runtime_error{"handler failure"};
+      },
+      {.ping_interval = 1s},
+      expecting({websocket_message{websocket_opcode::ping, ""}, websocket_message{websocket_opcode::close, "", 1011}}));
+
+  REQUIRE(reported == std::vector<std::string>{"handler failure"});
 }
 
 TEST_CASE("accept_websocket: a handshake as the server drains is answered 503", "[server][websocket]") {

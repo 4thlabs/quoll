@@ -371,6 +371,28 @@ TEST_CASE("websocket: a peer gone ends receiving with the stream's error", "[htt
   REQUIRE(quoll::test::run(receiving()) == io::error::end_of_stream);
 }
 
+namespace {
+
+// A stream whose reads bring nothing, and say nothing of why.
+class empty_reads {
+public:
+  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte>) { co_return io::io_result{}; }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
+    co_return io::io_result{{}, data.size()};
+  }
+};
+
+} // namespace
+
+TEST_CASE("websocket: a read that brings nothing, with no error, ends receiving", "[http][websocket]") {
+  http::websocket server{io::any_stream{empty_reads{}}, websocket_role::server};
+
+  auto const receiving = [&]() -> task<std::error_code> { co_return co_await code_thrown_by(server.receive()); };
+
+  REQUIRE(quoll::test::run(receiving()) == std::errc::io_error);
+}
+
 TEST_CASE("websocket: messages leave whole, in the order asked, while a receive() waits", "[http][websocket]") {
   auto [client_end, server_end] = io::make_memory_stream_pair();
   http::websocket server{io::any_stream{trickling{std::move(server_end)}}, websocket_role::server};
