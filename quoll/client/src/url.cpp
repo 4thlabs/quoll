@@ -367,6 +367,48 @@ void check_origin_form(std::string_view target) {
   }
 }
 
+websocket_target parse_websocket_url(std::string_view url) {
+  constexpr std::string_view plain_scheme = "ws://";
+  constexpr std::string_view tls_scheme = "wss://";
+
+  auto const secure =
+      url.size() >= tls_scheme.size() && http::detail::iequals(url.substr(0, tls_scheme.size()), tls_scheme);
+
+  if (!secure &&
+      (url.size() < plain_scheme.size() || !http::detail::iequals(url.substr(0, plain_scheme.size()), plain_scheme))) {
+    throw std::invalid_argument{"quoll::http::connect_websocket: the URL is not ws[s]://host[:port][/path][?query]"};
+  }
+
+  auto const rest = url.substr(secure ? tls_scheme.size() : plain_scheme.size());
+
+  if (rest.find('#') != std::string_view::npos) {
+    throw std::invalid_argument{"quoll::http::connect_websocket: a WebSocket URL has no fragment"};
+  }
+
+  auto const question = rest.find('?');
+  auto const query = question == std::string_view::npos ? std::string_view{} : rest.substr(question);
+
+  // What a request line could not carry as itself.
+  if (std::ranges::any_of(query, [](char letter) {
+        auto const byte = static_cast<unsigned char>(letter);
+
+        return byte <= 0x20U || byte == 0x7FU;
+      })) {
+    throw std::invalid_argument{"quoll::http::connect_websocket: the query holds a space or a control character"};
+  }
+
+  auto const before = rest.substr(0, question);
+  auto const slash = before.find('/');
+  auto const path = slash == std::string_view::npos ? std::string_view{"/"} : before.substr(slash);
+
+  // Its server and path checked as an http one's are.
+  websocket_target result{parse_url((secure ? std::string{"https://"} : std::string{"http://"}) + std::string{before}),
+                          std::string{path} + std::string{query}};
+
+  result.server.prefix.clear();
+  return result;
+}
+
 origin parse_url(std::string_view url) {
   constexpr std::string_view plain_scheme = "http://";
   constexpr std::string_view tls_scheme = "https://";

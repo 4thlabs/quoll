@@ -61,6 +61,15 @@ struct origin {
 // segment, encoded or not, a NUL, or an empty segment.
 [[nodiscard]] origin parse_url(std::string_view url);
 
+// Where a WebSocket URL leads: its server, and the target of its handshake, path and query.
+struct websocket_target {
+  origin server;
+  std::string target;
+};
+
+// `ws[s]://host[:port][/path][?query]`, as RFC 6455, 3 has it: no fragment.
+[[nodiscard]] websocket_target parse_websocket_url(std::string_view url);
+
 // The Host field naming `host` on `port`: an IPv6 address in brackets, the port unless it is the scheme's default.
 // Throws std::invalid_argument for a host that is neither a name, an IPv4 nor an IPv6 address.
 [[nodiscard]] std::string host_field(std::string_view host, std::uint16_t port, std::uint16_t default_port = 80);

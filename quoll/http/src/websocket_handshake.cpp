@@ -36,6 +36,7 @@
 
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
+#include <quoll/http/detail/websocket_key.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/http/version.hpp>
 #include <quoll/http/websocket_handshake.hpp>
@@ -45,6 +46,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <random>
 #include <span>
 #include <string>
 #include <string_view>
@@ -179,6 +181,25 @@ bool is_websocket_upgrade(request const &message) noexcept {
          detail::trim(message.fields.find("Sec-WebSocket-Version").value_or("")) == "13" &&
          is_key(detail::trim(message.fields.find("Sec-WebSocket-Key").value_or("")));
 }
+
+namespace detail {
+
+std::string random_websocket_key() {
+  std::random_device source;
+  std::array<std::uint8_t, 16> bytes{};
+
+  for (std::size_t index = 0; index < bytes.size(); index += 4) {
+    auto const bits = static_cast<std::uint32_t>(source());
+
+    for (std::size_t shift = 0; shift < 4; ++shift) {
+      bytes.at(index + shift) = static_cast<std::uint8_t>(bits >> (8U * shift));
+    }
+  }
+
+  return base64(bytes);
+}
+
+} // namespace detail
 
 std::string websocket_accept(std::string_view key) {
   // Trimmed as is_websocket_upgrade reads it: the key the client sent, not the spaces around it.

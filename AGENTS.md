@@ -27,7 +27,7 @@ current_executor and current_stop_token, executor services, co_spawn, on an exec
 router of the same program; llhttp is compiled and exported as `quoll::llhttp`), `quoll::server` (in `quoll::http`: `server` holds routes or a copy of a router, a handle shared with its tasks, and serves a byte stream,
 takes over a `Listener` or listens on a port, `static_files`, a middleware),
 `quoll::client` (in `quoll::http`: `client`, an `HttpTransport` over a `Connector` with keep-alive connections, built from an
-`http[s]://` URL), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `http::client` by default, and the
+`http[s]://` URL, and `connect_websocket` from a `ws[s]://` one), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `http::client` by default, and the
 contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates, and `events<T>` with its `event_sink` and the client's `subscribe`; and the codecs: `json_codec` on
 Glaze, `text_codec`, `param_traits`), `quoll::ui` (a prototype: elements, decorators, `state`, `to_html`, `app` and the `Renderer`
 concept), the adapters `quoll::asio` (asio executor offering the network, a timer, threads for blocking work and TLS, `tcp_stream`, `tls_stream`, connector and acceptors,
