@@ -548,6 +548,36 @@ TEST_CASE("serve_connection: what a WebSocket handler throws is reported, but fo
     REQUIRE(reported.empty());
   }
 
+  SECTION("a send refused after the peer's close, which could not be answered") {
+    std::error_code refused;
+    auto const router = socket_at([&refused](http::websocket socket) -> task<> {
+      static_cast<void>(co_await socket.receive());
+
+      try {
+        co_await socket.send_text("late");
+      } catch (std::system_error const &thrown) {
+        refused = thrown.code();
+        throw;
+      }
+    });
+
+    auto const reported = served(router, [](io::memory_stream &client) -> task<int> {
+      auto const answer = co_await send_then_read(client, handshake());
+      auto const close = http::format_websocket_close(1000, "", mask);
+
+      REQUIRE(answer.response.status == http::status::switching_protocols);
+
+      // Gone with its close, as some peers are: the answer finds no one.
+      (void)co_await io::write(client, std::as_bytes(std::span{close}));
+
+      { auto const gone = std::move(client); }
+      co_return 1;
+    });
+
+    REQUIRE(refused == http::error::websocket_closed);
+    REQUIRE(reported.empty());
+  }
+
   SECTION("a peer gone") {
     std::error_code ended;
     auto const router = socket_at([&ended](http::websocket socket) { return receive_all(std::move(socket), ended); });
@@ -1317,6 +1347,45 @@ TEST_CASE("accept_websocket: a drain ends a handler that sends with no failure r
 
   REQUIRE(refused == http::error::websocket_closed);
   REQUIRE(reported.empty());
+}
+
+TEST_CASE("accept_websocket: the connection's stop ends a close waiting behind a copy's send", "[server][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  std::chrono::nanoseconds per_byte{};
+  std::chrono::nanoseconds served_at{};
+  std::stop_source stop;
+  auto const router = socket_at(
+      [&per_byte](http::websocket socket) -> task<> {
+        auto const sending = [](http::websocket copy) -> task<> {
+          static_cast<void>(co_await quoll::test::code_thrown_by(copy.send_text("a long message, 18 s")));
+        };
+
+        // A byte every 0.9 s: the send moves, and holds the turn past the handler, outside the connection's stop.
+        per_byte = 900ms;
+        quoll::async::co_spawn(co_await quoll::async::current_executor(), sending(socket), quoll::async::detached);
+        co_await quoll::async::yield();
+      },
+      {.ping_interval = 0s});
+
+  auto const serving = [&]() -> task<int> {
+    co_await http::server{router}.serve_connection(paced_writes{std::move(server_end), per_byte});
+    served_at = time.now();
+    co_return 1;
+  };
+  auto const client = [&]() -> task<int> {
+    auto const answer = co_await send_then_read(client_end, handshake());
+
+    REQUIRE(answer.response.status == http::status::switching_protocols);
+    co_await quoll::async::sleep_for(2s);
+    stop.request_stop();
+    co_return 1;
+  };
+
+  static_cast<void>(quoll::test::run(time, quoll::async::when_all(serving(), client()), stop.get_token()));
+
+  // The handler's close, waiting for the turn, ends with the stop, at 2 s, not with the copy's send.
+  REQUIRE(served_at == 2s);
 }
 
 TEST_CASE("accept_websocket: a handshake as the server drains is answered 503", "[server][websocket]") {

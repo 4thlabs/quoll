@@ -38,6 +38,7 @@
 
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/code_of.hpp>
 #include <quoll/async/detail/held_place.hpp>
 #include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
@@ -230,6 +231,13 @@ async::task<> send_message(std::shared_ptr<state> connection, std::string frame,
   co_await write_frame(connection, std::move(frame), kind);
 }
 
+// What a stop asks of a wait: to end it.
+struct wake_up {
+  std::stop_source *wake;
+
+  void operator()() const noexcept { wake->request_stop(); }
+};
+
 // What the connection sends on its own, a pong, a close, a ping: whole, rather than stopped by the operation it serves,
 // as an answer cut short would leave the peer unanswered, or the stream in the middle of a frame; but stopped by the
 // connection's stop, and its wait for the turn by `turn_stop`. What holds the turn, and its own writes, take no longer
@@ -239,9 +247,13 @@ async::task<bool> send_quietly(std::shared_ptr<state> connection, std::string fr
                                std::stop_token turn_stop = {}) {
   auto const sending = [](std::shared_ptr<state> socket, std::string bytes, frame_kind what,
                           std::stop_token stop) -> async::task<> {
+    // The turn waited for until either stop: stop_scope replaces the connection's stop rather than add to it.
+    std::stop_source either;
+    std::stop_callback const on_connection{socket->connection_stop, wake_up{&either}};
+    std::stop_callback const on_turn{stop, wake_up{&either}};
     async::detail::held_place turn;
 
-    co_await async::detail::stop_scope<void>{turn.take(socket->writes), stop};
+    co_await async::detail::stop_scope<void>{turn.take(socket->writes), either.get_token()};
 
     // Given as the stop came: what it was asked for no longer is.
     if (stop.stop_requested()) {
@@ -381,13 +393,6 @@ async::task<websocket_message> receive_from(std::shared_ptr<state> connection, d
   }
 }
 
-// What a stop asks of a wait: to end it.
-struct wake_up {
-  std::stop_source *wake;
-
-  void operator()() const noexcept { wake->request_stop(); }
-};
-
 // Pings the peer once it has read nothing for `interval`, and stops the handler through `gone` once it has read
 // nothing for another; sends a close with 1001 when the server drains. Runs until `ends` is stopped or the peer's
 // close has come, and only with a timer to wait with.
@@ -496,10 +501,10 @@ async::task<> run_handler(std::function<async::task<>(websocket)> handler, webso
   co_await async::detail::stop_scope<void>{handler(std::move(socket)), std::move(stop)};
 }
 
-// Whether `failure` is a send refused after a close left, rather than after a frame cut short. Read once the handler is
-// over: what it wrote of the state is behind when_all.
+// Whether `failure` is a send refused after a close, one that left or the peer's, rather than after a frame cut short.
+// Read once the handler is over: what it wrote of the state is behind when_all.
 [[nodiscard]] bool refused_after_a_close(state const &connection, std::exception_ptr const &failure) {
-  return connection.sending == detail::sending_state::closed &&
+  return (connection.sending == detail::sending_state::closed || connection.close_came.load()) &&
          async::detail::code_of(failure) == make_error_code(error::websocket_closed);
 }
 
