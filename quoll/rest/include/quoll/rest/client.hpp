@@ -256,15 +256,14 @@ private:
 
       auto request = detail::build_request<route>(args, credentials_);
 
-      // One the contract declares stays, a third-party API's own media type say, and then the answer's is not checked:
-      // the API says what its stream is.
-      bool const declared = request.fields.contains("Accept");
-
-      if (!declared) {
+      // One the contract declares stays, a third-party API's own media type say, which the answer may then carry.
+      if (!request.fields.contains("Accept")) {
         request.fields.set("Accept", "text/event-stream");
       }
 
-      return detail::open_events<route>(transport_, std::move(request), !declared);
+      auto accepted = std::string{request.fields.find("Accept").value_or("")};
+
+      return detail::open_events<route>(transport_, std::move(request), std::move(accepted));
     }
   }
 

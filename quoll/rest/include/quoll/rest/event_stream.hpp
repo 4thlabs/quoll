@@ -51,6 +51,7 @@
 #include <chrono>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -75,8 +76,8 @@ namespace quoll::rest {
  * decode throws call_error, holding it as the body of its response, and reading goes on. A `T` that holds views into
  * its event (a `std::string_view` Glaze reads) is valid up to the next next(), for as long as the stream.
  *
- * Moved, not copied. One next() at a time, its decoding included: one asked while another is pending throws
- * std::logic_error. Thread safety: as http::event_reader.
+ * Moved, not copied: one moved from throws std::logic_error from next(). One next() at a time, its decoding included:
+ * one asked while another is pending throws std::logic_error. Thread safety: as http::event_reader.
  */
 template <class T, class EventCodec = json_codec>
 class event_stream {
@@ -90,6 +91,10 @@ public:
    * @throws call_error, from the task, for an event that does not decode; as http::event_reader::next() otherwise.
    */
   [[nodiscard]] async::task<std::optional<T>> next() {
+    if (!state_) {
+      throw std::logic_error{"quoll::rest::event_stream: next() once moved from"};
+    }
+
     // Its turn, for the whole of it: the read and the decoding, which the text kept here outlives.
     http::detail::one_at_a_time turn{std::shared_ptr<std::atomic<bool>>{state_, &state_->busy},
                                      "quoll::rest::event_stream: next() while another is pending"};

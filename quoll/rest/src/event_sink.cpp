@@ -105,6 +105,10 @@ async::task<> sink_retry(std::shared_ptr<event_sink_state> state, http::detail::
 }
 
 async::task<> sink_answer(std::shared_ptr<event_sink_state> state, http::response refusal) {
+  if (!state->out || state->closed.load()) {
+    throw std::logic_error{"quoll::rest::event_sink: an answer once the stream has started or ended"};
+  }
+
   auto &out = *state->out;
 
   out.status = refusal.status;
@@ -133,8 +137,9 @@ async::task<> sink_finish(std::shared_ptr<event_sink_state> state) {
 }
 
 void sink_close(event_sink_state &state) noexcept {
-  // An operation kept or spawned past the service would write to a connection gone: it throws instead. What writes
-  // to the connection goes now, while it is there, rather than with the last such operation.
+  // An operation kept or spawned past the service, not running yet, would write to a connection gone: it throws
+  // instead. What writes to the connection goes now, while it is there, rather than with the last such operation. One
+  // already writing on another task holds its writer still: past its service, it is the misuse the sink says.
   state.closed = true;
 
   auto out = std::exchange(state.out, std::nullopt);

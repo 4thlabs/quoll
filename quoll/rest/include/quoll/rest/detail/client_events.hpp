@@ -39,6 +39,7 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/http/event_reader.hpp>
+#include <quoll/http/fields.hpp>
 #include <quoll/http/is_event_stream.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/status.hpp>
@@ -50,6 +51,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace quoll::rest::detail {
@@ -58,19 +60,22 @@ namespace quoll::rest::detail {
 template <class Endpoint>
 using event_stream_of = event_stream<typename events_part_of<Endpoint>::type, typename events_part_of<Endpoint>::codec>;
 
+// Whether a 200 is the stream asked for: a `text/event-stream`, or of a media type the request's Accept named (a
+// third-party API's own), case and parameters aside.
+[[nodiscard]] bool is_accepted_stream(http::fields const &fields, std::string_view accepted);
+
 // What `streamed`, which is no stream of events, is, with `reason` and what came of its body, up to 64 KiB, an error's
 // problem rather than a download: none for a 200, which may never end. A stop or a timeout while it reads goes on as
 // such.
 [[nodiscard]] async::task<unexpected_response> refusal_of(http::streamed_response streamed, std::string reason);
 
-// The events of the response to `request`, or call_error for any other answer, its body read up to a bound. Its
-// Content-Type is checked unless the contract declared what it accepts.
+// The events of the response to `request`, or call_error for any other answer, its body read up to a bound.
 template <class Route, class Transport>
 [[nodiscard]] async::task<event_stream_of<typename Route::endpoint>>
-open_events(std::shared_ptr<Transport const> transport, http::request request, bool check_media_type) {
+open_events(std::shared_ptr<Transport const> transport, http::request request, std::string accepted) {
   auto streamed = co_await transport->stream(std::move(request));
 
-  if (streamed.status == http::status::ok && (!check_media_type || http::is_event_stream(streamed.fields))) {
+  if (streamed.status == http::status::ok && is_accepted_stream(streamed.fields, accepted)) {
     co_return event_stream_of<typename Route::endpoint>{http::event_reader{std::move(streamed.body)}};
   }
 

@@ -1055,8 +1055,15 @@ TEST_CASE("rest events: a value decoded into views of its event is valid until t
   auto const reading = [&client]() -> task<std::string> {
     auto stream = co_await client.subscribe<changes::viewed>();
     auto const first = co_await stream.next();
+
+    // Turns of the loop pass, the stream moved: the view still reads its event.
+    for (int turn = 0; turn < 8; ++turn) {
+      co_await async::yield();
+    }
+
+    auto moved = std::move(stream);
     std::string const word{first.value().word};
-    auto const second = co_await stream.next();
+    auto const second = co_await moved.next();
 
     co_return word + "|" + std::string{second.value().word};
   };
@@ -1137,4 +1144,52 @@ TEST_CASE("rest events: a next() asked while one decodes is refused", "[rest][ss
   };
 
   REQUIRE(quoll::test::run(reading()).value() == "refused;first");
+}
+
+TEST_CASE("rest events: a contract's own Accept takes its media type, not any 200", "[rest][sse]") {
+  http::router router;
+
+  router.get("/secured", [](http::request) {
+    http::response response;
+
+    response.fields.set("Content-Type", "application/json");
+    response.body = R"({"not":"a stream"})";
+    return response;
+  });
+
+  rest::client<changes::secured::api, streaming_transport> client{streaming_transport{std::move(router)}};
+
+  client.credentials<rest::bearer_auth>("token");
+
+  auto const reading = [&client]() -> task<std::string> {
+    try {
+      static_cast<void>(co_await client.subscribe<changes::secured::feed>("application/vnd.changes+event-stream"));
+    } catch (rest::call_error const &failed) {
+      co_return failed.failure().reason;
+    }
+
+    co_return "subscribed";
+  };
+
+  REQUIRE(quoll::test::run(reading()).value() == "not an event stream: Content-Type application/json");
+}
+
+TEST_CASE("rest events: next() on a stream moved from is refused", "[rest][sse]") {
+  changes_client const client{streaming_transport{make_router()}};
+
+  auto const reading = [&client]() -> task<bool> {
+    auto stream = co_await client.subscribe<changes::none>();
+    auto const moved = std::move(stream);
+
+    try {
+      // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move): what is tested.
+      static_cast<void>(stream.next());
+    } catch (std::logic_error const &) {
+      co_return true;
+    }
+
+    co_return false;
+  };
+
+  REQUIRE(quoll::test::run(reading()) == true);
 }

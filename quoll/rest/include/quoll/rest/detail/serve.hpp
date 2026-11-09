@@ -481,6 +481,8 @@ template <class Route, class State, class Input>
     }
 
     if constexpr (has_events<typename Route::endpoint>) {
+      // Its name is the router's, which the stream may outlive.
+      in.match.name = {};
       co_return events_response<Route>(state, std::move(input), std::move(*arguments));
     } else {
       co_return co_await answer<Route>(*state, std::move(*arguments));

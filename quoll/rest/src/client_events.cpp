@@ -34,10 +34,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/http/detail/ascii.hpp>
+#include <quoll/http/is_event_stream.hpp>
+#include <quoll/rest/detail/arguments.hpp>
 #include <quoll/rest/detail/client_events.hpp>
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -48,6 +52,28 @@ namespace {
 constexpr std::size_t max_refusal_body = std::size_t{64} * 1024;
 
 } // namespace
+
+bool is_accepted_stream(http::fields const &fields, std::string_view accepted) {
+  if (http::is_event_stream(fields)) {
+    return true;
+  }
+
+  auto const given = media_type(fields.find("Content-Type").value_or(""));
+
+  // Each media type the Accept names, but for a wildcard, which names no stream.
+  while (!accepted.empty()) {
+    auto const comma = accepted.find(',');
+    auto const one = media_type(accepted.substr(0, comma));
+
+    if (!given.empty() && !one.contains('*') && http::detail::iequals(one, given)) {
+      return true;
+    }
+
+    accepted = comma == std::string_view::npos ? std::string_view{} : accepted.substr(comma + 1);
+  }
+
+  return false;
+}
 
 async::task<unexpected_response> refusal_of(http::streamed_response streamed, std::string reason) {
   http::response received;
