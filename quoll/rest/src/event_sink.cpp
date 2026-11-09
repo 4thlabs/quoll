@@ -39,6 +39,7 @@
 #include <quoll/rest/event_sink.hpp>
 
 #include <atomic>
+#include <cstdint>
 #include <stdexcept>
 #include <utility>
 
@@ -46,27 +47,35 @@ namespace quoll::rest::detail {
 
 namespace {
 
-// Counts an operation running, for the stream to wait for, on every way out of it.
+constexpr std::uint32_t closed_bit = std::uint32_t{1} << 31U;
+
+// An operation running, counted for the stream to wait for, on every way out of it: refused, in the same atomic step,
+// once the sink is closed.
 class running {
 public:
-  explicit running(event_sink_state &state) noexcept : state_(&state) { ++state_->running; }
+  explicit running(event_sink_state &state) : state_(&state) {
+    auto seen = state_->activity.load();
+
+    do {
+      if ((seen & closed_bit) != 0) {
+        throw std::logic_error{"quoll::rest::event_sink: an operation the service did not await before it ended"};
+      }
+    } while (!state_->activity.compare_exchange_weak(seen, seen + 1));
+  }
 
   running(running const &) = delete;
   running &operator=(running const &) = delete;
   running(running &&) = delete;
   running &operator=(running &&) = delete;
 
-  ~running() { --state_->running; }
+  ~running() { --state_->activity; }
 
 private:
   event_sink_state *state_;
 };
 
+// The writer, made with the first operation: only while one runs, or once none can.
 [[nodiscard]] http::event_writer &writer_of(event_sink_state &state) {
-  if (state.closed.load()) {
-    throw std::logic_error{"quoll::rest::event_sink: an operation run once its service has ended"};
-  }
-
   if (!state.events) {
     state.events.emplace(std::move(*state.out));
     state.out.reset();
@@ -125,9 +134,19 @@ async::task<> sink_retry(std::shared_ptr<event_sink_state> state, http::detail::
   co_await writer_of(*state).retry(delay);
 }
 
+async::task<> sink_drain(std::shared_ptr<event_sink_state> state) {
+  // Closed to what has not run yet, at once; then what runs, on a task of the service's own, ends: it writes to the
+  // connection, which goes with the stream. Turns of the loop, as it ends on its own executor.
+  state->activity.fetch_or(closed_bit);
+
+  while ((state->activity.load() & ~closed_bit) != 0) {
+    co_await async::yield();
+  }
+}
+
 async::task<> sink_answer(std::shared_ptr<event_sink_state> state, http::response refusal) {
-  if (!state->out || state->closed.load()) {
-    throw std::logic_error{"quoll::rest::event_sink: an answer once the stream has started or ended"};
+  if (!state->out) {
+    throw std::logic_error{"quoll::rest::event_sink: an answer once the stream has started"};
   }
 
   auto &out = *state->out;
@@ -142,33 +161,17 @@ async::task<> sink_answer(std::shared_ptr<event_sink_state> state, http::respons
 }
 
 async::task<> sink_finish(std::shared_ptr<event_sink_state> state) {
-  if (!state->events && !state->busy.load()) {
-    co_await sink_open(state, sink_turn(state));
-  }
-
-  // An unused response_writer, kept by an operation asked and not run: dropped through an event_writer, so that its
-  // head is a stream's, with no event. Then closed.
-  if (state->out) {
-    http::event_writer const unused{std::move(*state->out)};
-
-    state->out.reset();
+  // Drained: none runs, none can. A stream with no event is still one: its head, so that a client reads it as such.
+  if (!state->events) {
+    co_await writer_of(*state).open();
   }
 
   sink_close(*state);
 }
 
-async::task<> sink_drain(std::shared_ptr<event_sink_state> state) {
-  // Turns of the loop, as an operation on a task of its own ends on its own executor.
-  while (state->running.load() > 0) {
-    co_await async::yield();
-  }
-}
-
 void sink_close(event_sink_state &state) noexcept {
-  // An operation kept or spawned past the service, not running yet, would write to a connection gone: it throws
-  // instead. What writes to the connection goes now, while it is there, rather than with the last such operation. One
-  // already writing on another task holds its writer still: past its service, it is the misuse the sink says.
-  state.closed = true;
+  // What writes to the connection goes now, while it is there, rather than with an operation kept past the service.
+  state.activity.fetch_or(closed_bit);
 
   auto out = std::exchange(state.out, std::nullopt);
   auto events = std::exchange(state.events, std::nullopt);

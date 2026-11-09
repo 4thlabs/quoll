@@ -397,29 +397,30 @@ template <class Route, class Validators, class... Services>
   try {
     co_await call();
   } catch (http_error const &error) {
-    if (!answers_as_an_error(error.status()) || sink.started()) {
-      failure = std::current_exception();
-    } else {
+    if (answers_as_an_error(error.status())) {
       refused = error_response<Route>(error);
     }
+
+    failure = std::current_exception();
   } catch (...) {
     failure = std::current_exception();
   }
 
-  // An operation of the sink still writing, on a task of the service's own, ends before the stream does: it writes to
-  // the connection, which goes with the stream.
+  // Closed to operations not running yet, and those running ended: they write to the connection, which goes with
+  // the stream. Then whether it has started is known for good.
   co_await event_sink_access::drain(sink);
+
+  if (refused && !sink.started()) {
+    co_await event_sink_access::answer(sink, std::move(*refused));
+    co_return;
+  }
 
   if (failure) {
     std::rethrow_exception(failure);
   }
 
-  if (refused) {
-    co_await event_sink_access::answer(sink, std::move(*refused));
-  } else {
-    // A stream with no event is still one: its head, so that a client reads it as such, and its end.
-    co_await event_sink_access::finish(sink);
-  }
+  // A stream with no event is still one: its head, so that a client reads it as such, and its end.
+  co_await event_sink_access::finish(sink);
 }
 
 // The answer of an endpoint with events<>: its stream, run once the router has answered.

@@ -48,6 +48,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -66,10 +67,9 @@ struct event_sink_state {
   std::optional<http::response_writer> out;
   std::optional<http::event_writer> events;
   std::atomic<bool> busy = false;
-  // The operations running, which the stream waits for before it ends.
-  std::atomic<int> running = 0;
-  // Set once the service has ended: an operation that runs after it would write to a connection gone.
-  std::atomic<bool> closed = false;
+  // The operations running, which the stream waits for before it ends, and its top bit, set once the service has
+  // ended: one atomic word, so that an operation starts only while the sink is open, and closing sees it.
+  std::atomic<std::uint32_t> activity = 0;
 };
 
 // The turn of an operation, taken when it is asked, so that operations run in that order (see http::event_writer).
@@ -88,11 +88,11 @@ struct event_sink_state {
 // The answer to an http_error thrown before the stream started.
 [[nodiscard]] async::task<> sink_answer(std::shared_ptr<event_sink_state> state, http::response refusal);
 
-// Once the service has ended: the head of a stream with no event, unless one has started it or is asked.
+// Once drained: the head of a stream with no event, unless one has started it, then the sink closed.
 [[nodiscard]] async::task<> sink_finish(std::shared_ptr<event_sink_state> state);
 
-// Once the service has ended: the operations running, on tasks of the service's own, ended. One kept and not run does
-// not count: it throws once the sink is closed.
+// Once the service has ended: the sink closed to operations not running yet, which then throw, and those running, on
+// tasks of the service's own, ended.
 [[nodiscard]] async::task<> sink_drain(std::shared_ptr<event_sink_state> state);
 
 // Closes the sink: what writes to the connection goes now, and an operation run later throws.
@@ -140,7 +140,9 @@ private:
  * from the loop that sends, as http::event_writer explains. One operation at a time: one asked while another is pending
  * throws std::logic_error.
  *
- * It lives as long as the service's task, which mount() awaits: neither stored nor moved. A service that ends with no
+ * It lives as long as the service's task, which mount() awaits: neither stored nor moved. Its operations are awaited
+ * by the service, on its task or one of its own: when it ends, the stream waits for those running, and one not running
+ * yet, kept or spawned past it, throws std::logic_error when it runs. A service that ends with no
  * event still answers a stream, with none. Thread safety: none, as it makes its writer with its first operation: from
  * the service's task, or one task at a time.
  */

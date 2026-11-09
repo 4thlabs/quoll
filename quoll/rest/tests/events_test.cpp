@@ -58,6 +58,7 @@
 #include <quoll/rest.hpp>
 #include <quoll/server/server.hpp>
 #include <quoll/test/memory_network.hpp>
+#include <quoll/test/overloaded.hpp>
 #include <quoll/test/read_until_closed.hpp>
 #include <quoll/test/run.hpp>
 
@@ -65,6 +66,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <expected>
 #include <functional>
 #include <memory>
@@ -1233,7 +1235,7 @@ TEST_CASE("rest events: an operation running on a task of its own ends before th
   auto const running = [&out, &sent]() -> task<std::string> {
     rest::event_sink<change> events{http::response_writer{out}};
 
-    // Spawned, then left as the service returns: what mount then does waits for it.
+    // Spawned and running, a turn of the loop later, when the service returns: what mount then does waits for it.
     async::co_spawn(co_await async::current_executor(), events.send({.id = 1, .what = "spawned"}), async::detached);
     co_await async::yield();
     co_await rest::detail::event_sink_access::drain(events);
@@ -1243,4 +1245,32 @@ TEST_CASE("rest events: an operation running on a task of its own ends before th
   };
 
   REQUIRE(quoll::test::run(running()).value() == "data: {\"id\":1,\"what\":\"spawned\"}\n\n");
+}
+
+TEST_CASE("rest events: an operation not running yet when its service returns is refused when it runs", "[rest][sse]") {
+  std::string sent;
+  yielding_sink sink{&sent};
+  http::body_stream out{sink};
+  std::exception_ptr failure;
+
+  auto const running = [&out, &failure]() -> task<bool> {
+    rest::event_sink<change> events{http::response_writer{out}};
+
+    // Spawned, and not run yet when the service returns: refused rather than write to a connection gone.
+    async::co_spawn(
+        co_await async::current_executor(), events.send({.id = 1, .what = "late"}),
+        quoll::test::overloaded{[] {}, [&failure](std::exception_ptr error) { failure = std::move(error); }});
+    co_await rest::detail::event_sink_access::drain(events);
+
+    // Its turn now comes.
+    for (int turn = 0; turn < 4; ++turn) {
+      co_await async::yield();
+    }
+
+    co_return failure != nullptr;
+  };
+
+  REQUIRE(quoll::test::run(running()) == true);
+  REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::logic_error);
+  REQUIRE(sent.empty());
 }
