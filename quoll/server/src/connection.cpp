@@ -77,6 +77,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -1238,8 +1239,35 @@ async::task<bool> send_written_by_handler(paced_stream &stream, http::response &
 
 // How a connection ends. A stream that failed or a peer that has gone are owed nothing: on a stuck one, trying would
 // take another write timeout. A connection whose wait was ended stops sending, and nothing is on its way yet. After a
-// last response, what is on its way is read, in stages as RFC 9112, 9.6 asks.
-enum class connection_end { nothing_owed, stop_sending, linger };
+// last response, what is on its way is read, in stages as RFC 9112, 9.6 asks. A connection that switched protocols is
+// another's, its response's `upgrade`.
+enum class connection_end { nothing_owed, stop_sending, linger, upgraded };
+
+// What takes a connection over once it has switched protocols, and what came on it after the request.
+struct taken_over {
+  std::function<async::task<>(io::any_stream, std::string)> handler;
+  std::string received;
+};
+
+// What is wrong with taking the connection over with `response`, or nullptr. Only a 101 answering a request that asked
+// to switch, in HTTP/1.1 and with nothing of its own to follow it, can: the peer would read the protocol's bytes as
+// something else otherwise.
+[[nodiscard]] char const *cannot_switch(http::response const &response, bool asked, http::verb method,
+                                        http::version version) noexcept {
+  if (!asked || method == http::verb::head || speaks_http_1_0(response, version)) {
+    return "quoll::http::server: a protocol switch the request did not ask for";
+  }
+
+  if (response.status != http::status::switching_protocols) {
+    return "quoll::http::server: a protocol switch with a status other than 101";
+  }
+
+  if (!response.body.empty() || response.body_writer || response.late_head_writer) {
+    return "quoll::http::server: a protocol switch with a body";
+  }
+
+  return nullptr;
+}
 
 async::task<std::error_code> stop_sending(io::any_stream &stream) { co_return (co_await stream.shutdown_send()).error; }
 
@@ -1264,7 +1292,7 @@ async::task<std::error_code> drop_what_comes(io::any_stream &stream, std::chrono
 
 // Requests and their responses, up to how the connection ends.
 async::task<connection_end> serve_requests(io::any_stream &stream, http::router const &router,
-                                           connection_options const &options) {
+                                           connection_options const &options, taken_over &taken) {
   std::string buffer;
   http::request_parser parser{options.limits};
   paced_stream paced{stream, parser, options};
@@ -1314,6 +1342,8 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
 
     std::optional<streamed_body> body;
     auto keep_alive = false;
+    // Whether the request asks to switch protocols, its body read: a body still coming is not.
+    auto asks_to_switch = false;
     http::request request;
 
     if (parser.body_streamed()) {
@@ -1322,6 +1352,7 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
       body.emplace(paced, buffer, parser, continue_owed);
     } else {
       keep_alive = parser.keep_alive() && !parser.upgrade();
+      asks_to_switch = parser.upgrade();
       request = parser.release();
     }
 
@@ -1342,6 +1373,25 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
 
       // What it left unread, or could not tell apart from the next request, ends the connection.
       keep_alive = body->read_to_its_end();
+    }
+
+    if (response.upgrade) {
+      if (auto const *const wrong = cannot_switch(response, asks_to_switch, method, version)) {
+        if (options.on_handler_error) {
+          options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
+        }
+
+        response = http::detail::status_response(http::status::internal_server_error);
+      } else {
+        if (co_await send_response(paced, response, true, version, &options)) {
+          co_return connection_end::nothing_owed;
+        }
+
+        // What came after the request is the new protocol's.
+        taken.handler = std::move(response.upgrade);
+        taken.received = std::move(buffer);
+        co_return connection_end::upgraded;
+      }
     }
 
     keep_alive = keep_alive && !http::detail::closes_connection(response.fields) && !options.drain.stop_requested();
@@ -1446,12 +1496,36 @@ async::task<> end_connection(io::any_stream &stream, connection_options const &o
   }
 }
 
+// The connection, run by what took it over, with what it throws reported as a handler's would be.
+async::task<> run_taken_over(io::any_stream stream, taken_over taken, connection_options const &options) {
+  auto const stop_token = co_await async::current_stop_token();
+
+  try {
+    co_await taken.handler(std::move(stream), std::move(taken.received));
+  } catch (std::system_error const &thrown) {
+    // What a stop throws is no failure, unlike what goes wrong during one.
+    if (options.on_handler_error && !(stop_token.stop_requested() && thrown.code() == std::errc::operation_canceled)) {
+      options.on_handler_error(std::current_exception());
+    }
+  } catch (...) {
+    if (options.on_handler_error) {
+      options.on_handler_error(std::current_exception());
+    }
+  }
+}
+
 } // namespace
 
 namespace detail {
 
 async::task<> serve_connection(io::any_stream stream, http::router const &router, connection_options const &options) {
-  auto const end = co_await serve_requests(stream, router, options);
+  taken_over taken;
+  auto const end = co_await serve_requests(stream, router, options, taken);
+
+  if (end == connection_end::upgraded) {
+    co_await run_taken_over(std::move(stream), std::move(taken), options);
+    co_return;
+  }
 
   co_await end_connection(stream, options, end);
 }

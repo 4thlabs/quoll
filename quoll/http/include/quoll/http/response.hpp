@@ -37,11 +37,14 @@
 #ifndef QUOLL_HTTP_RESPONSE_HPP
 #define QUOLL_HTTP_RESPONSE_HPP
 
+#include <quoll/async/task.hpp>
 #include <quoll/http/body_stream.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/version.hpp>
+#include <quoll/io/any_stream.hpp>
 
+#include <functional>
 #include <string>
 
 namespace quoll::http {
@@ -69,6 +72,13 @@ struct response {
    * passing `head()` on.
    */
   http::body_writer late_head_writer{};
+  /**
+   * @brief What takes the connection over once this response has left, for a 101 that answers a request asking to
+   * switch protocols, as http::accept_websocket sets it: the stream, and what came on it after the request. What
+   * serves a router over a connection runs it, in the task of that connection; a response with it that is not such an
+   * answer is replaced with a 500. Nothing else runs it.
+   */
+  std::function<async::task<>(io::any_stream stream, std::string received)> upgrade{};
 };
 
 } // namespace quoll::http

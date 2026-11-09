@@ -73,6 +73,8 @@ public:
       return "WebSocket text that is not UTF-8";
     case error::websocket_too_large:
       return "WebSocket message too large";
+    case error::websocket_closed:
+      return "WebSocket connection closed";
     }
     return "unknown quoll.http error";
   }

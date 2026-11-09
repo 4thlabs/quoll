@@ -31,6 +31,7 @@ endif()
 quoll_declare_module(
   NAME http
   SOURCES
+    src/accept_websocket.cpp
     src/body_reader.cpp
     src/connection_field.cpp
     src/error.cpp
@@ -49,6 +50,7 @@ quoll_declare_module(
     src/router.cpp
     src/serializer.cpp
     src/utf8.cpp
+    src/websocket.cpp
     src/websocket_handshake.cpp
     src/websocket_parser.cpp
     src/websocket_rules.cpp
@@ -71,6 +73,7 @@ quoll_declare_tests(
     tests/stream_test.cpp
     tests/streamed_response_test.cpp
     tests/websocket_handshake_test.cpp
+    tests/websocket_test.cpp
     tests/websocket_parser_test.cpp
   DEPS
     quoll::http

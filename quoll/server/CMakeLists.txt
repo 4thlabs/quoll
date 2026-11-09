@@ -14,6 +14,7 @@ quoll_declare_tests(
     tests/serve_connection_test.cpp
     tests/server_test.cpp
     tests/static_files_test.cpp
+    tests/websocket_server_test.cpp
   DEPS
     quoll::server
 )

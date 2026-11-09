@@ -447,5 +447,5 @@ OpenSSL throws `std::logic_error` here (see `QUOLL_TLS` in
 
 ## Not there yet
 
-Server-sent events and WebSocket are on [the roadmap](PLAN.md#roadmap), not in Quoll today. Nor are tunnels: a 2xx answer to
-CONNECT, which would be one, answers 501.
+Server-sent events and WebSocket are in [Streaming](streaming.md). Tunnels are not: a 2xx answer to CONNECT, which would be
+one, answers 501.
