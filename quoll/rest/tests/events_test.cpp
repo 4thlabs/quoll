@@ -248,11 +248,12 @@ struct gathering_sink {
 // The pieces a writer gave, one a read, a turn of the loop after each is asked; then the end, or a failure.
 class pieces_source {
 public:
-  pieces_source(std::vector<std::string> pieces, std::error_code failure)
-      : pieces_(std::move(pieces)), failure_(failure) {}
+  pieces_source(std::vector<std::string> pieces, std::error_code failure, std::shared_ptr<std::size_t> reads)
+      : pieces_(std::move(pieces)), failure_(failure), reads_(std::move(reads)) {}
 
   [[nodiscard]] task<std::optional<std::string_view>> read() {
     co_await async::yield();
+    ++*reads_;
 
     if (at_ == pieces_.size()) {
       if (failure_) {
@@ -269,6 +270,8 @@ private:
   std::vector<std::string> pieces_;
   std::size_t at_ = 0;
   std::error_code failure_;
+  // Counted where the transport sees it: how far a reader read.
+  std::shared_ptr<std::size_t> reads_;
 };
 
 // A router as a transport that streams: what a writer of the response gives comes as pieces of its body, once the
@@ -281,14 +284,18 @@ public:
   [[nodiscard]] task<http::response> send(http::request request) const { return local_.send(std::move(request)); }
 
   [[nodiscard]] task<http::streamed_response> stream(http::request request) const {
-    return streamed(router_, std::move(request), asked_, failure_);
+    return streamed(router_, std::move(request), asked_, failure_, reads_);
   }
 
   [[nodiscard]] http::request const &last_asked() const { return *asked_; }
 
+  // The reads of the last body, its end included.
+  [[nodiscard]] std::size_t reads() const { return *reads_; }
+
 private:
   static task<http::streamed_response> streamed(http::router router, http::request request,
-                                                std::shared_ptr<http::request> asked, std::error_code failure) {
+                                                std::shared_ptr<http::request> asked, std::error_code failure,
+                                                std::shared_ptr<std::size_t> reads) {
     *asked = request;
 
     auto answer = co_await router.dispatch(std::move(request));
@@ -306,7 +313,8 @@ private:
 
     out.status = got.status;
     out.fields = std::move(got.fields);
-    out.body = http::response_body{std::make_shared<pieces_source>(std::move(got.pieces), failure)};
+    *reads = 0;
+    out.body = http::response_body{std::make_shared<pieces_source>(std::move(got.pieces), failure, std::move(reads))};
     out.trailers = std::make_shared<http::fields const>();
     co_return out;
   }
@@ -315,6 +323,7 @@ private:
   http::router router_;
   std::shared_ptr<http::request> asked_ = std::make_shared<http::request>();
   std::error_code failure_;
+  std::shared_ptr<std::size_t> reads_ = std::make_shared<std::size_t>(0);
 };
 
 static_assert(http::HttpTransport<streaming_transport>);
@@ -596,6 +605,8 @@ TEST_CASE("rest events: a refusal's body is read no further than its bound, of p
   changes_client const client{streaming_transport{unavailable_in_pieces()}};
 
   REQUIRE(quoll::test::run(refusal_of(client)).value() == "undeclared status 503 (its body read up to 64 KiB)|65536");
+  // 64 pieces of a KiB, and no read after: a body that never ends would not hold it.
+  REQUIRE(client.transport().reads() == 64);
 }
 
 TEST_CASE("rest events: a refusal's body cut short is said so", "[rest][sse]") {
