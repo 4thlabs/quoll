@@ -429,8 +429,9 @@ given first, a memory stream in a test say. The server's 101 is checked, its `Se
 extension, no subprotocol but one offered, and what it chose is in `handshake.fields`; any other answer
 throws `http::websocket_refused`, whose `response()` it is. The connection and the handshake take no
 longer than `options.handshake_timeout`, 30 seconds by default. A client's end masks what it sends, and
-sends no ping on its own: one that wants to find a server gone pings it from a task beside what
-receives.
+sends no ping on its own; `receive()` answers pings but does not give pongs. A server that vanished
+without a word is found by a write that waits `ping_interval` with nothing taken, or by what the
+application expects of it, a message within some time, waited for beside what receives.
 
 ## In a test
 

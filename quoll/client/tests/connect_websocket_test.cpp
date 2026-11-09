@@ -42,11 +42,13 @@
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/async/yield.hpp>
 #include <quoll/client/connect_websocket.hpp>
 #include <quoll/client/websocket_refused.hpp>
 #include <quoll/http/accept_websocket.hpp>
 #include <quoll/http/detail/websocket_key.hpp>
 #include <quoll/http/error.hpp>
+#include <quoll/http/format_websocket_frame.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
@@ -57,6 +59,7 @@
 #include <quoll/http/websocket_handshake.hpp>
 #include <quoll/http/websocket_message.hpp>
 #include <quoll/io/any_stream.hpp>
+#include <quoll/io/byte_stream.hpp>
 #include <quoll/io/connector.hpp>
 #include <quoll/io/io_result.hpp>
 #include <quoll/io/memory_stream.hpp>
@@ -253,6 +256,8 @@ private:
   io::memory_stream inner_;
 };
 
+static_assert(io::ByteStream<unwritable>);
+
 // A stream whose writes fail on this side, with the peer still there and silent.
 class failing_writes {
 public:
@@ -267,6 +272,8 @@ public:
 private:
   io::memory_stream inner_;
 };
+
+static_assert(io::ByteStream<failing_writes>);
 
 // A connector whose streams cannot write, to a peer kept in `kept`.
 class failing_connector {
@@ -330,6 +337,8 @@ private:
   bool answers_;
 };
 
+static_assert(io::ByteStream<broken_on_write>);
+
 // A connector whose streams break as the handshake is written: see broken_on_write.
 class breaking_connector {
 public:
@@ -364,6 +373,8 @@ private:
   io::memory_stream inner_;
   std::weak_ptr<bool const> connector_;
 };
+
+static_assert(io::ByteStream<owned_by_connector>);
 
 // A connector to `server`, whose streams point into it.
 class owning_connector {
@@ -1252,4 +1263,58 @@ TEST_CASE("connect_websocket: what the serializer refuses is said once for conne
     REQUIRE(reason.starts_with("quoll::http::connect_websocket: "));
     REQUIRE_FALSE(reason.contains("quoll::http: "));
   }
+}
+
+TEST_CASE("connect_websocket: a frame in the same read as the 101 is the first message", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  // One write of both: they come in one read.
+  memory_server server{loop.get_executor(),
+                       answering_with_accept({}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                                                 "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n" +
+                                                     http::format_websocket_frame(websocket_opcode::text, "first")),
+                       0,
+                       {},
+                       {}};
+
+  auto const receiving = [&]() -> task<websocket_message> {
+    auto connected = co_await http::connect_websocket(memory_connector{server}, "ws://h/");
+
+    co_return co_await connected.socket.receive();
+  };
+
+  REQUIRE(quoll::test::run(loop, receiving()) == websocket_message{websocket_opcode::text, "first"});
+}
+
+TEST_CASE("connect_websocket: an interim answer with a body is read whole before the 101", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  // Its body split across two writes, the 101 behind the second: a head alone read first.
+  memory_server server{loop.get_executor(),
+                       [](io::memory_stream stream) -> task<> {
+                         std::string buffer;
+                         http::request_parser parser;
+
+                         static_cast<void>(co_await http::read(stream, buffer, parser));
+
+                         auto const request = parser.release();
+                         auto const first = std::string{"HTTP/1.1 150 Interim\r\nContent-Length: 4\r\n\r\nab"};
+                         auto const then =
+                             "cdHTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                             "Connection: Upgrade\r\nSec-WebSocket-Accept: " +
+                             http::websocket_accept(request.fields.find("Sec-WebSocket-Key").value_or("")) + "\r\n\r\n";
+
+                         (void)co_await io::write(stream, std::as_bytes(std::span{first}));
+                         co_await quoll::async::yield();
+                         (void)co_await io::write(stream, std::as_bytes(std::span{then}));
+                       },
+                       0,
+                       {},
+                       {}};
+
+  auto const connecting = [&]() -> task<http::status> {
+    auto connected = co_await http::connect_websocket(memory_connector{server}, "ws://h/");
+
+    co_return connected.handshake.status;
+  };
+
+  REQUIRE(quoll::test::run(loop, connecting()) == http::status::switching_protocols);
 }

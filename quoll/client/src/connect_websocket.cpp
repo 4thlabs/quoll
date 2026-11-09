@@ -55,6 +55,7 @@
 #include <quoll/http/verb.hpp>
 #include <quoll/http/version.hpp>
 #include <quoll/http/websocket_handshake.hpp>
+#include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/network_connector.hpp>
 #include <quoll/io/write.hpp>
 
@@ -143,6 +144,8 @@ private:
   io::any_stream stream_;
 };
 
+static_assert(io::HalfClosableStream<keeping_connector>);
+
 // What broke the handshake as it was sent.
 [[noreturn]] void throw_unsent(std::error_code unsent) {
   throw std::system_error{unsent, "quoll::http::connect_websocket: cannot send the handshake"};
@@ -166,16 +169,19 @@ private:
   for (auto interim = 0;; ++interim) {
     response_parser parser{options.limits};
 
-    // A body is only a refusal's, judged by its head: not read, as one may end only with the connection, or be large.
-    parser.set_body_streaming([](response const &) { return true; });
+    // A final answer's body is only a refusal's, judged by its head: not read, as one may end only with the connection,
+    // or be large. An interim one is read whole, as http::client does, so that what follows it is the next answer.
+    parser.set_body_streaming([](response const &head) { return !is_informational(head.status); });
 
     if (auto const failed = co_await http::read(stream, buffer, parser)) {
       // The write's failure, when what ended the read is only the peer having gone.
       auto const sending = unsent && detail::peer_has_gone(failed);
 
-      throw std::system_error{sending ? unsent : failed,
-                              sending ? "quoll::http::connect_websocket: cannot send the handshake"
-                                      : "quoll::http::connect_websocket: cannot read the server's answer"};
+      if (sending) {
+        throw_unsent(unsent);
+      }
+
+      throw std::system_error{failed, "quoll::http::connect_websocket: cannot read the server's answer"};
     }
 
     // Its head alone, what came of a refusal's body with it dropped, as how much did depends on how the bytes came.
