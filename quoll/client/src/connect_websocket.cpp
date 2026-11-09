@@ -39,7 +39,8 @@
 #include <quoll/client/detail/connect_websocket.hpp>
 #include <quoll/client/websocket_refused.hpp>
 
-#include <quoll/client/detail/exchange_rules.hpp>
+#include <quoll/client/detail/max_interim_responses.hpp>
+#include <quoll/client/detail/peer_has_gone.hpp>
 
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/http/detail/ascii.hpp>

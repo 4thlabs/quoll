@@ -34,15 +34,12 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_CLIENT_DETAIL_EXCHANGE_RULES_HPP
-#define QUOLL_CLIENT_DETAIL_EXCHANGE_RULES_HPP
+#ifndef QUOLL_CLIENT_DETAIL_PEER_HAS_GONE_HPP
+#define QUOLL_CLIENT_DETAIL_PEER_HAS_GONE_HPP
 
 #include <system_error>
 
 namespace quoll::http::detail {
-
-// Interim responses read before the final one, against a server sending them forever.
-inline constexpr int max_interim_responses = 8;
 
 // How a stream shows that its peer has gone. A kept connection can then be replaced, and a read ends by itself, however
 // long it would otherwise wait, so that what was on its way to a server that went may still have an answer to read.
@@ -50,4 +47,4 @@ inline constexpr int max_interim_responses = 8;
 
 } // namespace quoll::http::detail
 
-#endif // QUOLL_CLIENT_DETAIL_EXCHANGE_RULES_HPP
+#endif // QUOLL_CLIENT_DETAIL_PEER_HAS_GONE_HPP

@@ -49,7 +49,8 @@
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
-#include <quoll/client/detail/exchange_rules.hpp>
+#include <quoll/client/detail/max_interim_responses.hpp>
+#include <quoll/client/detail/peer_has_gone.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>

@@ -55,7 +55,10 @@ struct websocket_connect_options {
    * it a body (`Content-Length`, `Transfer-Encoding`).
    */
   http::fields fields{};
-  /** @brief What the connection accepts, and how long a write may wait with nothing taken. */
+  /**
+   * @brief What the connection accepts, and how long a write may wait with nothing taken: its `ping_interval`, as a
+   * client sends no ping on its own.
+   */
   websocket_options websocket{};
   /** @brief How long connecting and the handshake may take, both, given a timer; zero: no limit. */
   std::chrono::nanoseconds handshake_timeout = std::chrono::seconds{30};

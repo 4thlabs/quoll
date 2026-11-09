@@ -34,9 +34,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/co_spawn.hpp>
+#include <quoll/async/current_executor.hpp>
+#include <quoll/async/detached.hpp>
+#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/when_all.hpp>
 #include <quoll/client/connect_websocket.hpp>
 #include <quoll/client/websocket_refused.hpp>
 #include <quoll/http/accept_websocket.hpp>
@@ -77,6 +82,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -377,6 +383,25 @@ private:
 };
 
 static_assert(io::Connector<owning_connector>);
+
+// A connector to a server it runs on the executor that connects: for an executor with a timer, as a runtime's.
+class spawning_connector {
+public:
+  explicit spawning_connector(std::function<task<>(io::memory_stream)> serve) : serve_(std::move(serve)) {}
+
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    auto [client_end, server_end] = io::make_memory_stream_pair();
+
+    quoll::async::co_spawn(co_await quoll::async::current_executor(), serve_(std::move(server_end)),
+                           quoll::async::detached);
+    co_return io::any_stream{std::move(client_end)};
+  }
+
+private:
+  std::function<task<>(io::memory_stream)> serve_;
+};
+
+static_assert(io::Connector<spawning_connector>);
 
 // A connector to a peer that answered `answer` and went, before reading anything.
 class refusing_connector {
@@ -1125,5 +1150,68 @@ TEST_CASE("connect_websocket: a URL with no path asks for /", "[client][websocke
   SECTION("a query alone") {
     REQUIRE(refusal(server, loop, "ws://h?x=1") == "400");
     REQUIRE(sent.target == "/?x=1");
+  }
+}
+
+TEST_CASE("connect_websocket: ws through a connector with TLS connects without it", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  http::request sent;
+  memory_server server{loop.get_executor(), recording(sent), 0, {}, {}};
+  bool used_tls = false;
+
+  auto const connecting = [&]() -> task<int> {
+    try {
+      static_cast<void>(co_await http::connect_websocket(tls_memory_connector{server, used_tls}, "ws://h/"));
+    } catch (http::websocket_refused const &) {
+      co_return 1;
+    }
+
+    co_return 0;
+  };
+
+  REQUIRE(quoll::test::run(loop, connecting()) == 1);
+  REQUIRE_FALSE(used_tls);
+  REQUIRE(server.destination == "h:80");
+}
+
+TEST_CASE("connect_websocket: under a timer, a refusal keeps its type and a stop stays a stop", "[client][websocket]") {
+  quoll::test::virtual_time time;
+
+  SECTION("a refusal") {
+    auto const connecting = [&]() -> task<std::string> {
+      try {
+        static_cast<void>(co_await http::connect_websocket(
+            spawning_connector{answering("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")}, "ws://h/"));
+      } catch (http::websocket_refused const &refused) {
+        co_return std::to_string(static_cast<int>(refused.response().status));
+      }
+
+      co_return std::string{};
+    };
+
+    REQUIRE(quoll::test::run(time, connecting()) == "403");
+  }
+
+  SECTION("a stop of the caller's, before the limit") {
+    std::stop_source stop;
+    std::optional<io::memory_stream> kept;
+
+    auto const connecting = [&]() -> task<std::error_code> {
+      co_return co_await quoll::async::detail::stop_scope<std::error_code>{
+          quoll::test::code_thrown_by(http::connect_websocket(silent_connector{&kept}, "ws://h/")), stop.get_token()};
+    };
+    auto const stopping = [&]() -> task<> {
+      co_await quoll::async::sleep_for(1s);
+      stop.request_stop();
+    };
+
+    auto const both = [&]() -> task<std::error_code> {
+      auto [code, stopped] = co_await quoll::async::when_all(connecting(), stopping());
+
+      co_return code;
+    };
+
+    REQUIRE(quoll::test::run(time, both()) == std::errc::operation_canceled);
+    REQUIRE(time.now() == 1s);
   }
 }

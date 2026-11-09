@@ -43,7 +43,7 @@
 
 namespace quoll::test {
 
-// A WebSocket handler that sends back each message, as text, until the close.
+// A WebSocket handler that sends back each message, text as text and binary as binary, until the close.
 inline async::task<> websocket_echo(http::websocket socket) {
   for (;;) {
     auto message = co_await socket.receive();
@@ -52,7 +52,11 @@ inline async::task<> websocket_echo(http::websocket socket) {
       co_return;
     }
 
-    co_await socket.send_text(message.data);
+    if (message.opcode == http::websocket_opcode::binary) {
+      co_await socket.send_binary(message.data);
+    } else {
+      co_await socket.send_text(message.data);
+    }
   }
 }
 

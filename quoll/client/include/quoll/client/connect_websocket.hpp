@@ -73,8 +73,9 @@ namespace quoll::http {
  * client sends no ping on its own: one that wants to find a server gone pings it from a task beside what receives.
  *
  * @throws std::invalid_argument, when called, for another URL, a field of the handshake's own, a subprotocol offered
- * that is no token, a request that would not serialize, or `wss` with a connector that is no io::TlsConnector; and
- * what std::random_device throws, when called, if the key cannot be drawn.
+ * that is no token or twice, a `Sec-WebSocket-Protocol` that names none, a request that would not serialize, or `wss`
+ * with a connector that is no io::TlsConnector; and what std::random_device throws, when called, if the key cannot be
+ * drawn, as each send may later for its mask.
  */
 template <io::Connector Connector>
 [[nodiscard]] async::task<connected_websocket> connect_websocket(Connector connector, std::string_view url,
