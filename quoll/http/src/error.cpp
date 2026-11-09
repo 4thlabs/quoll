@@ -67,6 +67,12 @@ public:
       return "too many HTTP redirects";
     case error::event_too_large:
       return "server-sent event too large";
+    case error::websocket_protocol:
+      return "WebSocket protocol error";
+    case error::websocket_invalid_text:
+      return "WebSocket text that is not UTF-8";
+    case error::websocket_too_large:
+      return "WebSocket message too large";
     }
     return "unknown quoll.http error";
   }

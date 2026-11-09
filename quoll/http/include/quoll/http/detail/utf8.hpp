@@ -37,6 +37,8 @@
 #ifndef QUOLL_HTTP_DETAIL_UTF8_HPP
 #define QUOLL_HTTP_DETAIL_UTF8_HPP
 
+#include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -44,6 +46,10 @@ namespace quoll::http::detail {
 
 // Whether `text` is UTF-8: no overlong form, no surrogate, nothing past U+10FFFF.
 [[nodiscard]] bool is_utf8(std::string_view text) noexcept;
+
+// How much of `text` is whole UTF-8, the rest a character it cuts short, that more text may end; none if it is not
+// UTF-8 whatever follows.
+[[nodiscard]] std::optional<std::size_t> utf8_prefix(std::string_view text) noexcept;
 
 // Appends `text` to `out`, each maximal invalid subpart replaced by U+FFFD, as the Encoding Standard's decoder does.
 void append_repaired_utf8(std::string &out, std::string_view text);

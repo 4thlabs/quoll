@@ -45,6 +45,7 @@
 #include <quoll/http/event_writer.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/format_event.hpp>
+#include <quoll/http/format_websocket_frame.hpp>
 #include <quoll/http/is_event_stream.hpp>
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/next.hpp>
@@ -66,6 +67,9 @@
 #include <quoll/http/transport.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/http/version.hpp>
+#include <quoll/http/websocket_handshake.hpp>
+#include <quoll/http/websocket_message.hpp>
+#include <quoll/http/websocket_parser.hpp>
 #include <quoll/http/write.hpp>
 
 #endif // QUOLL_HTTP_HPP
