@@ -63,6 +63,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <chrono>
 #include <concepts>
 #include <cstdint>
@@ -660,4 +661,83 @@ TEST_CASE("connect_websocket: a subprotocol the server names empty is refused", 
   options.fields.set("Sec-WebSocket-Protocol", "chat,");
 
   REQUIRE(refusal(server, loop, "ws://h/", options) == "101");
+}
+
+TEST_CASE("connect_websocket: a refusal is judged by its head, its body left unread", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  // No length: its body would end with a connection the server keeps open.
+  memory_server server{loop.get_executor(),
+                       [](io::memory_stream stream) -> task<> {
+                         std::string buffer;
+                         http::request_parser parser;
+
+                         static_cast<void>(co_await http::read(stream, buffer, parser));
+
+                         auto const refusal = std::string{"HTTP/1.1 403 Forbidden\r\n\r\nno end"};
+
+                         (void)co_await io::write(stream, std::as_bytes(std::span{refusal}));
+
+                         // Open for as long as the client is there: it sends nothing more.
+                         std::array<char, 16> rest{};
+
+                         static_cast<void>(co_await stream.read_some(std::as_writable_bytes(std::span{rest})));
+                       },
+                       0,
+                       {},
+                       {}};
+
+  REQUIRE(refusal(server, loop, "ws://h/") == "403");
+}
+
+TEST_CASE("connect_websocket: what a 101 may not name, or name twice", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  std::string answer;
+  http::websocket_connect_options options;
+
+  SECTION("a subprotocol, none offered") { answer = "Sec-WebSocket-Protocol: chat\r\n"; }
+
+  SECTION("two subprotocols") {
+    options.fields.set("Sec-WebSocket-Protocol", "chat, other");
+    answer = "Sec-WebSocket-Protocol: chat\r\nSec-WebSocket-Protocol: other\r\n";
+  }
+
+  SECTION("two accepts") { answer = "Sec-WebSocket-Accept: {accept}\r\n"; }
+
+  memory_server server{loop.get_executor(),
+                       answering_with_accept({}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                                                 "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n" +
+                                                     answer + "\r\n"),
+                       0,
+                       {},
+                       {}};
+
+  REQUIRE(refusal(server, loop, "ws://h/", options) == "101");
+}
+
+TEST_CASE("connect_websocket: each handshake sends a key of its own, and Host as the URL names it",
+          "[client][websocket]") {
+  quoll::async::run_loop loop;
+  http::request first;
+  http::request second;
+  memory_server to_first{loop.get_executor(), recording(first), 0, {}, {}};
+  memory_server to_second{loop.get_executor(), recording(second), 0, {}, {}};
+
+  REQUIRE(refusal(to_first, loop, "ws://h/") == "400");
+  REQUIRE(refusal(to_second, loop, "ws://[::1]:8080/") == "400");
+  REQUIRE(first.fields.find("Sec-WebSocket-Key") != second.fields.find("Sec-WebSocket-Key"));
+  REQUIRE(second.fields.find("Host") == "[::1]:8080");
+}
+
+TEST_CASE("connect_websocket: what is refused in a URL says so for connect_websocket", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  memory_server server{loop.get_executor(), answering(""), 0, {}, {}};
+
+  for (auto const *const url : {"ws://h:99999/", "ws://bad host/", "ws:///path"}) {
+    try {
+      static_cast<void>(http::connect_websocket(memory_connector{server}, url));
+      FAIL("refused");
+    } catch (std::invalid_argument const &refused) {
+      REQUIRE(std::string_view{refused.what()}.starts_with("quoll::http::connect_websocket: "));
+    }
+  }
 }

@@ -50,12 +50,12 @@
 #include <quoll/http/verb.hpp>
 #include <quoll/http/websocket_handshake.hpp>
 #include <quoll/http/websocket_parser.hpp>
-#include <quoll/io/error.hpp>
 #include <quoll/io/network_connector.hpp>
 #include <quoll/io/write.hpp>
 
 #include <algorithm>
 #include <array>
+#include <memory>
 #include <ranges>
 #include <span>
 #include <stdexcept>
@@ -89,9 +89,16 @@ constexpr std::array handshake_fields{std::string_view{"Host"},
     return false;
   }
 
+  // One of each, as two would leave which one counts to whoever reads them.
+  auto const count = [&answer](std::string_view name) {
+    return std::ranges::count_if(answer.fields,
+                                 [name](auto const &field) { return detail::iequals(field.name, name); });
+  };
+
   auto const accept = answer.fields.find("Sec-WebSocket-Accept");
 
-  if (!accept || detail::trim(*accept) != websocket_accept(key)) {
+  if (count("Sec-WebSocket-Accept") != 1 || count("Sec-WebSocket-Protocol") > 1 ||
+      detail::trim(*accept) != websocket_accept(key)) {
     return false;
   }
 
@@ -122,6 +129,9 @@ async::task<connected_websocket> shake_hands(detail::connector_handle connector,
   for (auto interim = 0;; ++interim) {
     response_parser parser{options.limits};
 
+    // A body is only a refusal's, judged by its head: not read, as one may end only with the connection, or be large.
+    parser.set_body_streaming([](response const &) { return true; });
+
     if (auto const failed = co_await http::read(stream, buffer, parser)) {
       // The write's failure, when what ended the read is only the peer having gone.
       auto const sending = unsent && detail::peer_has_gone(failed);
@@ -131,7 +141,7 @@ async::task<connected_websocket> shake_hands(detail::connector_handle connector,
                                       : "quoll::http::connect_websocket: cannot read the server's answer"};
     }
 
-    auto answer = parser.release();
+    auto answer = parser.body_streamed() ? parser.head() : parser.release();
 
     if (is_informational(answer.status) && answer.status != status::switching_protocols) {
       if (interim == detail::max_interim_responses) {
@@ -157,7 +167,7 @@ async::task<connected_websocket> shake_hands(detail::connector_handle connector,
 websocket_refused::websocket_refused(http::response answer)
     : std::runtime_error{"quoll::http::connect_websocket: the server answered " +
                          std::to_string(static_cast<int>(answer.status)) + ", not the WebSocket asked for"},
-      response_(std::move(answer)) {}
+      response_(std::make_shared<http::response const>(std::move(answer))) {}
 
 namespace detail {
 

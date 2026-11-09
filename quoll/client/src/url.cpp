@@ -413,7 +413,6 @@ websocket_target parse_websocket_url(std::string_view url) {
 
   websocket_target result{std::move(server), std::string{path} + std::string{query}};
 
-  result.server.prefix.clear();
   return result;
 }
 

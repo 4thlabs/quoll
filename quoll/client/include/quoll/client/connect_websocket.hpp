@@ -37,6 +37,7 @@
 #ifndef QUOLL_CLIENT_CONNECT_WEBSOCKET_HPP
 #define QUOLL_CLIENT_CONNECT_WEBSOCKET_HPP
 
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/client/detail/client_backend.hpp>
 #include <quoll/client/detail/url.hpp>
@@ -44,12 +45,12 @@
 #include <quoll/http/parser.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/websocket.hpp>
-#include <quoll/io/any_stream.hpp>
 #include <quoll/io/connector.hpp>
 #include <quoll/io/tls_connector.hpp>
 #include <quoll/io/tls_options.hpp>
 
 #include <chrono>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -77,10 +78,11 @@ struct websocket_connect_options {
   io::tls_client_options tls{};
 };
 
-/** @brief What http::connect_websocket gives: the connection, and the server's 101, with what it chose in its fields.
- */
+/** @brief What http::connect_websocket gives: the connection, and the server's 101. */
 struct connected_websocket {
+  /** @brief The connection, a client's end. */
   websocket socket;
+  /** @brief The server's 101, with what it chose in its fields: `Sec-WebSocket-Protocol`, cookies... */
   response handshake;
 };
 
@@ -92,11 +94,16 @@ class websocket_refused : public std::runtime_error {
 public:
   explicit websocket_refused(http::response answer);
 
-  /** @brief The server's answer. */
-  [[nodiscard]] http::response const &response() const noexcept { return response_; }
+  // Copies and no moves: an exception does not throw on its way to a handler, and one moved from stays whole.
+  websocket_refused(websocket_refused const &) noexcept = default;
+  websocket_refused &operator=(websocket_refused const &) noexcept = default;
+  ~websocket_refused() override = default;
+
+  /** @brief The server's answer: its head, the body of a refusal left unread. */
+  [[nodiscard]] http::response const &response() const noexcept QUOLL_LIFETIMEBOUND { return *response_; }
 
 private:
-  http::response response_;
+  std::shared_ptr<http::response const> response_;
 };
 
 namespace detail {

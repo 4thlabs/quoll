@@ -47,14 +47,12 @@
 #include <quoll/http/streamed_response.hpp>
 #include <quoll/http/streaming_transport.hpp>
 #include <quoll/http/transport.hpp>
-#include <quoll/io/any_stream.hpp>
 #include <quoll/io/connector.hpp>
 #include <quoll/io/tls_connector.hpp>
 #include <quoll/io/tls_options.hpp>
 
 #include <concepts>
 #include <cstdint>
-#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
