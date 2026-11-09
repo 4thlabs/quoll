@@ -37,6 +37,7 @@
 #include <quoll/http/detail/utf8.hpp>
 
 #include <cstddef>
+#include <optional>
 
 namespace quoll::http::detail {
 
@@ -44,8 +45,10 @@ namespace {
 
 constexpr std::string_view replacement = "\xEF\xBF\xBD";
 
-// The length of the valid sequence at `position`, or of its maximal subpart, negated, when it is not one.
-[[nodiscard]] std::ptrdiff_t sequence_at(std::string_view text, std::size_t position) noexcept {
+// The length of the valid sequence at `position`, or of its maximal subpart, negated, when it is not one; `truncated`
+// set when that subpart only lacks what comes after the text.
+[[nodiscard]] std::ptrdiff_t sequence_at(std::string_view text, std::size_t position,
+                                         bool *truncated = nullptr) noexcept {
   auto const lead = static_cast<unsigned char>(text[position]);
 
   if (lead < 0x80U) {
@@ -85,6 +88,10 @@ constexpr std::string_view replacement = "\xEF\xBF\xBD";
 
   auto const length = static_cast<std::ptrdiff_t>(taken);
 
+  if (truncated != nullptr) {
+    *truncated = taken <= continuations && position + taken == text.size();
+  }
+
   return taken == continuations + 1 ? length : -length;
 }
 
@@ -102,6 +109,25 @@ bool is_utf8(std::string_view text) noexcept {
   }
 
   return true;
+}
+
+std::optional<std::size_t> utf8_prefix(std::string_view text) noexcept {
+  for (std::size_t position = 0; position < text.size();) {
+    bool truncated = false;
+    auto const length = sequence_at(text, position, &truncated);
+
+    if (length < 0) {
+      if (truncated) {
+        return position;
+      }
+
+      return std::nullopt;
+    }
+
+    position += static_cast<std::size_t>(length);
+  }
+
+  return text.size();
 }
 
 void append_repaired_utf8(std::string &out, std::string_view text) {

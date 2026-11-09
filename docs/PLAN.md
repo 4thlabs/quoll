@@ -285,9 +285,12 @@ WASM builds.
 - Signing in through an OIDC provider and sessions, a shared secret in a program's configuration for a machine on a
   closed network, and a local account with a password, decided on 2026-11-07 against the "no store of passwords" proposed
   before: its hashing is part of the cryptography to settle below.
-- Cryptography: nothing in Quoll hashes, signs or draws secure random numbers. OIDC needs ID tokens checked against the
-  provider's keys, a nonce and PKCE, and session ids from a secure source. **To settle at its start:** OpenSSL, as TLS uses, or
-  something else, and what a build with `QUOLL_TLS` off does. None of it written by hand.
+- Cryptography: nothing in Quoll hashes, signs or draws secure random numbers for security. OIDC needs ID tokens checked
+  against the provider's keys, a nonce and PKCE, and session ids from a secure source. **To settle at its start:** OpenSSL,
+  as TLS uses, or something else, and what a build with `QUOLL_TLS` off does. None of it written by hand. WebSocket's
+  handshake is no cryptography, decided on 2026-11-09: its `Sec-WebSocket-Accept` is an SHA-1 RFC 6455 uses as an interop
+  check, written by hand in `quoll::http`, and a client's masks, which keep proxies from reading frames as requests, come
+  from `std::random_device`; so that WebSocket runs with or without TLS.
 - What the REST DSL lacks: validators answer `bool`, and a service takes only the endpoint's arguments, so that a handler of
   `GET /me` cannot learn who calls; and a scheme cannot be a cookie, as `rest::security` accepts only `api_key<>`,
   `api_key_query<>` and `bearer_auth`. A validator's result reaching the service, and a cookie scheme, shown to the maintainer.

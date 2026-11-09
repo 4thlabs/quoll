@@ -39,6 +39,7 @@ quoll_declare_module(
     src/event_writer.cpp
     src/fields.cpp
     src/format_event.cpp
+    src/format_websocket_frame.cpp
     src/is_event_stream.cpp
     src/local_transport.cpp
     src/one_at_a_time.cpp
@@ -48,6 +49,9 @@ quoll_declare_module(
     src/router.cpp
     src/serializer.cpp
     src/utf8.cpp
+    src/websocket_handshake.cpp
+    src/websocket_parser.cpp
+    src/websocket_rules.cpp
   DEPS
     quoll::io
   PRIVATE_DEPS
@@ -66,6 +70,8 @@ quoll_declare_tests(
     tests/serializer_test.cpp
     tests/stream_test.cpp
     tests/streamed_response_test.cpp
+    tests/websocket_handshake_test.cpp
+    tests/websocket_parser_test.cpp
   DEPS
     quoll::http
 )

@@ -49,6 +49,9 @@ namespace quoll::http::detail {
 // Whether a Connection field of a message names `token`.
 [[nodiscard]] bool connection_names(fields const &message_fields, std::string_view token);
 
+// Whether a field `name` of a message names `token` among its comma-separated values, case aside.
+[[nodiscard]] bool field_names(fields const &message_fields, std::string_view name, std::string_view token);
+
 } // namespace quoll::http::detail
 
 #endif // QUOLL_HTTP_DETAIL_CONNECTION_FIELD_HPP

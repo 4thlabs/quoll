@@ -63,6 +63,12 @@ enum class error {
   too_many_redirects,
   /** @brief An event of a `text/event-stream` holds more than an http::event_parser may. */
   event_too_large,
+  /** @brief A WebSocket peer broke the protocol (RFC 6455): a close with 1002. */
+  websocket_protocol,
+  /** @brief A WebSocket text message is not UTF-8: a close with 1007. */
+  websocket_invalid_text,
+  /** @brief A WebSocket message holds more than an http::websocket_parser may: a close with 1009. */
+  websocket_too_large,
 };
 
 /** @brief The category of http::error codes. */

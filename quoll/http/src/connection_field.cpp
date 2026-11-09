@@ -43,20 +43,24 @@
 
 namespace quoll::http::detail {
 
-bool connection_names(fields const &message_fields, std::string_view name) {
+bool field_names(fields const &message_fields, std::string_view name, std::string_view token) {
   for (auto const &entry : message_fields) {
-    if (!iequals(entry.name, "Connection")) {
+    if (!iequals(entry.name, name)) {
       continue;
     }
 
-    for (auto const token : std::views::split(std::string_view{entry.value}, ',')) {
-      if (iequals(trim(std::string_view{token.begin(), token.end()}), name)) {
+    for (auto const each : std::views::split(std::string_view{entry.value}, ',')) {
+      if (iequals(trim(std::string_view{each.begin(), each.end()}), token)) {
         return true;
       }
     }
   }
 
   return false;
+}
+
+bool connection_names(fields const &message_fields, std::string_view token) {
+  return field_names(message_fields, "Connection", token);
 }
 
 bool closes_connection(fields const &message_fields) { return connection_names(message_fields, "close"); }

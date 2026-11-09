@@ -10,6 +10,6 @@ endfunction()
 add_custom_target(quoll_fuzzers)
 
 foreach(target IN ITEMS client event_parser request_parser response_parser rest_client rest_server router serve_connection unfolding_client
-                       unfolding_server)
+                       unfolding_server websocket_parser)
   quoll_add_fuzzer(${target})
 endforeach()
