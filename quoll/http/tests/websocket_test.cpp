@@ -262,6 +262,22 @@ private:
   io::memory_stream inner_;
 };
 
+// A stream that reads what its peer sends, and whose writes throw a failure with a code of zero.
+class throwing_on_write {
+public:
+  explicit throwing_on_write(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
+
+  [[nodiscard]] static task<io::io_result> write_some(std::span<std::byte const> /*data*/) {
+    throw std::system_error{std::error_code{}, "the write broke"};
+    co_return io::io_result{};
+  }
+
+private:
+  io::memory_stream inner_;
+};
+
 // A stream that reads what its peer sends, and whose writes fail as on a connection the peer reset.
 class reset_on_write {
 public:
@@ -1017,25 +1033,32 @@ TEST_CASE("websocket: a client's read that throws as the peer is taken as gone t
   REQUIRE(quoll::test::run(time, again()) == std::errc::io_error);
 }
 
-TEST_CASE("websocket: a client's keep-alive ends with the connection", "[http][websocket]") {
+TEST_CASE("websocket: a client's keep-alive ends with its receive()", "[http][websocket]") {
   quoll::test::virtual_time time;
   auto [client_end, server_end] = io::make_memory_stream_pair();
-  std::optional<http::websocket> client{std::in_place, io::any_stream{std::move(client_end)}, websocket_role::client,
-                                        std::string{}, http::websocket_options{.ping_interval = 1s}};
+  http::websocket client{io::any_stream{std::move(client_end)}, websocket_role::client, {}, {.ping_interval = 1s}};
 
-  // A message read, then the last copy goes as the keep-alive waits for its next tick: it holds nothing of the
-  // connection, and ends with it, so that the run drains.
+  // The message is there: the receive() ends at once, and its keep-alive with it, so that the run drains then.
   auto const once = [&]() -> task<websocket_message> {
     co_await send_raw(server_end, http::format_websocket_frame(websocket_opcode::text, "one"));
-
-    auto message = co_await client->receive();
-
-    co_await quoll::async::sleep_for(100ms);
-    client.reset();
-    co_return message;
+    co_return co_await client.receive();
   };
 
   REQUIRE(quoll::test::run(time, once()) == text("one"));
-  // At once, rather than at its tick.
-  REQUIRE(time.now() == 100ms);
+  REQUIRE(time.now() == 0s);
+}
+
+TEST_CASE("websocket: a client's ping whose write fails with a code of zero ends its receive() all the same",
+          "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{
+      io::any_stream{throwing_on_write{std::move(client_end)}}, websocket_role::client, {}, {.ping_interval = 1s}};
+
+  auto const broken = [&]() -> task<std::error_code> {
+    co_return co_await quoll::test::code_thrown_by(client.receive());
+  };
+
+  REQUIRE(quoll::test::run(time, broken()) == std::errc::io_error);
+  REQUIRE(time.now() == 1s);
 }

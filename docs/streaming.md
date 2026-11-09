@@ -429,9 +429,9 @@ given first, a memory stream in a test say. The server's 101 is checked, its `Se
 extension, no subprotocol but one offered, and what it chose is in `handshake.fields`; any other answer
 throws `http::websocket_refused`, whose `response()` it is. The connection and the handshake take no
 longer than `options.handshake_timeout`, 30 seconds by default. A client's end masks what it sends, and
-keeps itself alive while its `receive()`s read, as a server does: while one reads, a server that
-sent nothing for `options.websocket.ping_interval`, 30 seconds by default, is pinged, and one that sent
-nothing for another is taken as gone. The `receive()` then throws `std::errc::timed_out`, or the failure
+keeps itself alive while a `receive()` waits, as a server does: at the end of each
+`options.websocket.ping_interval`, 30 seconds by default, a server that sent nothing in it is pinged, and
+one that sent nothing since is taken as gone, within two to three intervals of silence. The `receive()` then throws `std::errc::timed_out`, or the failure
 of the ping that could not leave, and receiving has ended. So a client that only receives finds a server
 that vanished without a word, a network cut or a host down; zero leaves that to the application.
 

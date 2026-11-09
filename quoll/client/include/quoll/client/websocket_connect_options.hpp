@@ -57,7 +57,7 @@ struct websocket_connect_options {
   http::fields fields{};
   /**
    * @brief What the connection accepts, and its `ping_interval`: how long the server may send nothing, while a
-   * receive() reads, before it is pinged, then before it is taken as gone, and how long a write may wait with nothing
+   * receive() waits, before it is pinged, then before it is taken as gone, and how long a write may wait with nothing
    * taken.
    */
   websocket_options websocket{};

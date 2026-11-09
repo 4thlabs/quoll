@@ -62,8 +62,9 @@ struct websocket_options {
   std::size_t max_message_size = websocket_parser::default_max_message_size;
   /**
    * @brief How long the peer may send nothing before it is pinged, and then before it is taken as gone; zero, never,
-   * for a peer the application watches itself. For a connection http::accept_websocket hands over, all along, a peer
-   * gone stopping the handler; for any other, a client's, while a receive() reads, which then throws why. For any
+   * for a peer the application watches itself, each counted at the end of an interval (see websocket). For a connection
+   * http::accept_websocket hands over, all along, a peer gone stopping the handler; for any other, a client's, while a
+   * receive() waits, which then throws why. For any
    * connection with a timer, how long a write may wait with nothing taken before the peer is taken as gone: this, or
    * 30 seconds where it is zero.
    */
@@ -102,11 +103,12 @@ struct websocket_options {
  * unsent. A receive() stopped, or failed, ends receiving: a stream such as TLS does not take a read up again once it
  * was stopped, so the next one throws the same. Without a timer, nothing here times out.
  *
- * A connection no server watches, a client's, keeps itself alive while its receive()s read, as a server's does beside
- * its handler, given a timer: a peer that sent nothing for ping_interval is pinged, and one that sent nothing for
- * another, or for one after a close has left, is taken as gone. The receive() pending then throws
- * std::errc::timed_out, or the failure of the ping that could not leave, and so does every one after it. The ping goes
- * on its own: a receive() never waits for it.
+ * A connection no server watches, a client's, keeps itself alive while a receive() waits, as a server's does beside
+ * its handler, given a timer: at the end of each ping_interval from the receive()'s start, a peer that sent nothing in
+ * it is pinged, and one that sent nothing since it was pinged, or since a close has left, is taken as gone, so that a
+ * peer silent since just after the end of one is pinged within two intervals and taken as gone within three. The
+ * receive() then throws std::errc::timed_out, or the failure of the ping that could not leave, and so does every one
+ * after it. The ping goes on its own: a receive() never waits for it.
  *
  * Copied, not moved: its copies are the same connection, as http::client's are, which a task receiving and another
  * sending may each hold. An operation holds what it works on from when it is called, so that every copy may go before
@@ -114,7 +116,7 @@ struct websocket_options {
  * another asked while one is pending throwing std::logic_error, in every build.
  *
  * Thread safety: that of the stream, which an asio socket does not share between threads. What a receive() and a send
- * do, and a client's keep-alive, which runs on the executor of the receive() that started it, takes turns as long as
+ * do, and a client's keep-alive, which runs on the executor of the receive() it watches, takes turns as long as
  * they run on one executor that runs a handler at a time: the strand of its own a server gives each connection, where
  * its handler runs, or an executor of quoll::runtime, a strand on several threads, where a client runs, and the tasks
  * they await through when_all. A task on another executor, one that others send through to broadcast say, would reach

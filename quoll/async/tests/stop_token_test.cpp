@@ -36,6 +36,7 @@
 
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/either_stop.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
@@ -171,4 +172,40 @@ TEST_CASE("when_all forwards the awaiter's stop request to its children", "[asyn
   REQUIRE(steps);
   REQUIRE(std::get<0>(*steps) < max_steps);
   REQUIRE(std::get<1>(*steps) < max_steps);
+}
+
+TEST_CASE("either_stop: stopped once either of its two is, and at once for one stopped already", "[async][stop]") {
+  std::stop_source first;
+  std::stop_source second;
+
+  SECTION("the first") {
+    quoll::async::detail::either_stop const either{first.get_token(), second.get_token()};
+
+    REQUIRE_FALSE(either.token().stop_requested());
+    first.request_stop();
+    REQUIRE(either.token().stop_requested());
+  }
+
+  SECTION("the second") {
+    quoll::async::detail::either_stop const either{first.get_token(), second.get_token()};
+
+    second.request_stop();
+    REQUIRE(either.token().stop_requested());
+  }
+
+  SECTION("one stopped before") {
+    second.request_stop();
+
+    quoll::async::detail::either_stop const either{first.get_token(), second.get_token()};
+
+    REQUIRE(either.token().stop_requested());
+  }
+
+  SECTION("one that cannot stop") {
+    quoll::async::detail::either_stop const either{std::stop_token{}, second.get_token()};
+
+    REQUIRE_FALSE(either.token().stop_requested());
+    second.request_stop();
+    REQUIRE(either.token().stop_requested());
+  }
 }

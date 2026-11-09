@@ -71,8 +71,8 @@ namespace quoll::http {
  * take no longer than `options.handshake_timeout`, past which std::errc::timed_out is thrown; a network failure throws
  * the stream's error. Without a timer in the executor, nothing limits them. To end the connection cleanly, close() it
  * and receive() the server's answer: a websocket whose last copy goes without that cuts the connection with no close.
- * While a receive() reads, a server that sent nothing for `options.websocket.ping_interval` is pinged, and one that
- * sent nothing for another is taken as gone, the receive() throwing std::errc::timed_out, as websocket_options says.
+ * While a receive() waits, a server that sent nothing for `options.websocket.ping_interval` is pinged, and one that
+ * sent nothing since is taken as gone, the receive() throwing std::errc::timed_out, as http::websocket says.
  *
  * @throws std::invalid_argument, when called, for another URL, a field of the handshake's own, a subprotocol offered
  * that is no token or twice, a `Sec-WebSocket-Protocol` that names none, a request that would not serialize, or `wss`
