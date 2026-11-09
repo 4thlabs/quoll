@@ -726,6 +726,28 @@ private:
   bool stopped_ = false;
 };
 
+// What the handler being caught threw, told to the application, but for what a stop throws: no failure, unlike what
+// goes wrong during one. Called in a catch block.
+void report_failure(connection_options const &options, std::stop_token const &stop_token) {
+  if (!options.on_handler_error) {
+    return;
+  }
+
+  auto const failure = std::current_exception();
+
+  try {
+    std::rethrow_exception(failure);
+  } catch (std::system_error const &thrown) {
+    if (stop_token.stop_requested() && thrown.code() == std::errc::operation_canceled) {
+      return;
+    }
+  } catch (...) {
+    // Reported, whatever it is.
+  }
+
+  options.on_handler_error(failure);
+}
+
 // The router's response, or 500 if a handler or a middleware threw, reported to the application's callback if it gave
 // one.
 async::task<http::response> respond(http::router const &router, http::request request,
@@ -737,15 +759,8 @@ async::task<http::response> respond(http::router const &router, http::request re
                                        body != nullptr ? http::body_reader{*body} : http::body_reader{});
   } catch (body_not_read const &) {
     // No failure of the handler's, which only let it through.
-  } catch (std::system_error const &thrown) {
-    // What a stop throws is no failure either, unlike what goes wrong during one.
-    if (options.on_handler_error && !(stop_token.stop_requested() && thrown.code() == std::errc::operation_canceled)) {
-      options.on_handler_error(std::current_exception());
-    }
   } catch (...) {
-    if (options.on_handler_error) {
-      options.on_handler_error(std::current_exception());
-    }
+    report_failure(options, stop_token);
   }
 
   co_return http::detail::status_response(http::status::internal_server_error);
@@ -973,15 +988,8 @@ async::task<writer_end> run_writer(http::body_writer writer, http::response &res
     // No failure of the writer's, which only let it through.
   } catch (body_not_read const &) {
     // Nor is this, from a writer reading the request.
-  } catch (std::system_error const &thrown) {
-    // What a stop throws is no failure either, unlike what goes wrong during one.
-    if (options.on_handler_error && !(stop_token.stop_requested() && thrown.code() == std::errc::operation_canceled)) {
-      options.on_handler_error(std::current_exception());
-    }
   } catch (...) {
-    if (options.on_handler_error) {
-      options.on_handler_error(std::current_exception());
-    }
+    report_failure(options, stop_token);
   }
 
   nothing_left = !sink.started();
@@ -1245,7 +1253,7 @@ enum class connection_end { nothing_owed, stop_sending, linger, upgraded };
 
 // What takes a connection over once it has switched protocols, and what came on it after the request.
 struct taken_over {
-  std::function<async::task<>(io::any_stream, std::string)> handler;
+  http::upgrade_handler handler;
   std::string received;
 };
 
@@ -1287,6 +1295,21 @@ async::task<std::error_code> drop_what_comes(io::any_stream &stream, std::chrono
     if (received.error) {
       co_return received.error;
     }
+  }
+}
+
+// The 101 written, or nothing if it cannot be, the application being told: it must not switch then, as a 500 goes in
+// its place.
+[[nodiscard]] std::optional<async::task<std::error_code>>
+switch_protocols(paced_stream &stream, http::response const &response, connection_options const &options) {
+  try {
+    return http::write(stream, response);
+  } catch (std::invalid_argument const &) {
+    if (options.on_handler_error) {
+      options.on_handler_error(std::current_exception());
+    }
+
+    return std::nullopt;
   }
 }
 
@@ -1382,8 +1405,10 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
         }
 
         response = http::detail::status_response(http::status::internal_server_error);
-      } else {
-        if (co_await send_response(paced, response, true, version, &options)) {
+      } else if (auto switching = switch_protocols(paced, response, options)) {
+        paced.writing().start_again();
+
+        if (co_await paced.patiently_writing(std::move(*switching))) {
           co_return connection_end::nothing_owed;
         }
 
@@ -1391,6 +1416,8 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
         taken.handler = std::move(response.upgrade);
         taken.received = std::move(buffer);
         co_return connection_end::upgraded;
+      } else {
+        response = http::detail::status_response(http::status::internal_server_error);
       }
     }
 
@@ -1496,21 +1523,14 @@ async::task<> end_connection(io::any_stream &stream, connection_options const &o
   }
 }
 
-// The connection, run by what took it over, with what it throws reported as a handler's would be.
+// The connection, run by what took it over, told of a drain, with what it throws reported as a handler's would be.
 async::task<> run_taken_over(io::any_stream stream, taken_over taken, connection_options const &options) {
   auto const stop_token = co_await async::current_stop_token();
 
   try {
-    co_await taken.handler(std::move(stream), std::move(taken.received));
-  } catch (std::system_error const &thrown) {
-    // What a stop throws is no failure, unlike what goes wrong during one.
-    if (options.on_handler_error && !(stop_token.stop_requested() && thrown.code() == std::errc::operation_canceled)) {
-      options.on_handler_error(std::current_exception());
-    }
+    co_await taken.handler(std::move(stream), std::move(taken.received), options.drain);
   } catch (...) {
-    if (options.on_handler_error) {
-      options.on_handler_error(std::current_exception());
-    }
+    report_failure(options, stop_token);
   }
 }
 

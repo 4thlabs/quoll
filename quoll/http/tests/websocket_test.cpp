@@ -244,6 +244,11 @@ TEST_CASE("websocket: the peer's close is answered, and is the last message", "[
 
       // Sent once: a close() after it sends nothing more.
       co_await server.close();
+
+      // A server ends its side first, while the connection is still there: the peer reads to its end.
+      auto const rest = co_await quoll::test::read_until_closed(client_end);
+
+      REQUIRE(rest.empty());
       co_return 1;
     };
 

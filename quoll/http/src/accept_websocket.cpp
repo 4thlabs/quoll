@@ -38,13 +38,15 @@
 
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
+#include <quoll/http/detail/serve_websocket.hpp>
 #include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/http/websocket_handshake.hpp>
-#include <quoll/http/websocket_parser.hpp>
+#include <quoll/io/any_stream.hpp>
 
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <utility>
 
@@ -58,12 +60,6 @@ namespace {
 
   return message.method == verb::get && version && detail::trim(*version) != "13" &&
          detail::field_names(message.fields, "Upgrade", "websocket");
-}
-
-// All it runs on held by its frame: the handler, a copy of the response's, outlives the task it gives.
-async::task<> run_websocket(std::function<async::task<>(websocket)> handler, io::any_stream stream,
-                            std::string received, websocket_options options) {
-  co_await handler(websocket{std::move(stream), websocket_role::server, std::move(received), options});
 }
 
 } // namespace
@@ -91,8 +87,10 @@ response accept_websocket(request const &message, std::function<async::task<>(we
   accepted.fields.set("Upgrade", "websocket");
   accepted.fields.set("Connection", "Upgrade");
   accepted.fields.set("Sec-WebSocket-Accept", websocket_accept(message.fields.find("Sec-WebSocket-Key").value_or("")));
-  accepted.upgrade = [handler = std::move(handler), options](io::any_stream stream, std::string received) {
-    return run_websocket(handler, std::move(stream), std::move(received), options);
+  // A copy of the handler for each run, held by the frame that calls it, rather than this lambda's.
+  accepted.upgrade = [handler = std::move(handler), options](io::any_stream stream, std::string received,
+                                                             std::stop_token drain) {
+    return detail::serve_websocket(handler, std::move(stream), std::move(received), options, std::move(drain));
   };
 
   return accepted;

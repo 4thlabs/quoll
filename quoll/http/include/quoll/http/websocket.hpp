@@ -42,6 +42,7 @@
 #include <quoll/http/websocket_parser.hpp>
 #include <quoll/io/any_stream.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -52,12 +53,18 @@ namespace quoll::http {
 
 namespace detail {
 struct websocket_state;
+struct websocket_access;
 } // namespace detail
 
 /** @brief What a WebSocket connection accepts from its peer. */
 struct websocket_options {
   /** @brief The most a message holds, its fragments joined: a larger one closes the connection with 1009. */
   std::size_t max_message_size = websocket_parser::default_max_message_size;
+  /**
+   * @brief For a connection http::accept_websocket hands over: how long it may stay quiet before it is pinged, and
+   * then before it is taken as gone, which stops its handler. Zero: never, for a peer the application watches itself.
+   */
+  std::chrono::nanoseconds ping_interval = std::chrono::seconds{30};
 };
 
 /**
@@ -86,10 +93,10 @@ struct websocket_options {
  * message throws std::system_error with `http::error::websocket_closed`, as does all that follows a frame cut short,
  * by a stop or a failure of the stream; a close() then does nothing.
  *
- * Nothing here times out: a peer may stay quiet for as long as it likes, which is what a WebSocket is for. To find one
- * that has gone, or keep a proxy from closing a quiet connection, ping() it every so often from a task beside what receives, and
- * stop what receives if nothing came meanwhile: a receive() stopped, or failed, ends receiving, as what it read of a
- * frame cannot be taken up again.
+ * Nothing here times out, as a peer may stay quiet for as long as it likes: http::accept_websocket pings a quiet one,
+ * and stops the handler of one that has gone (see websocket_options::ping_interval). What it reads to tell is what
+ * receive() reads: a handler that only sends receives beside it all the same, which also answers the peer's pings and
+ * close. A receive() stopped, or failed, ends receiving, as what it read of a frame cannot be taken up again.
  *
  * Moved, not copied: one moved from throws std::logic_error when asked anything. An operation holds what it works on
  * from when it is called, so that the connection may move, or go, before it ends: the stream closes once the last of
@@ -145,6 +152,8 @@ public:
   [[nodiscard]] async::task<> close(std::uint16_t code = 1000, std::string_view reason = {});
 
 private:
+  friend struct detail::websocket_access;
+
   // std::logic_error for a connection moved from.
   void check_usable() const;
 

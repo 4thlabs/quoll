@@ -71,9 +71,15 @@ namespace quoll::http {
  * to complete: a subprotocol the request offers in `Sec-WebSocket-Protocol`, chosen in the fields, or a status of its
  * own, which then refuses the handshake.
  *
- * The handler runs in the task of the connection, as a request's handler does: stopping a server waits for it up to
- * its `shutdown_timeout`, then stops what it awaits. Its exceptions go to `connection_options::on_handler_error`. The
- * timeouts of the connection no longer apply, as a WebSocket may stay quiet: see http::websocket.
+ * The handler runs in the task of the connection, on its strand, as a request's handler does. The timeouts of the
+ * connection no longer apply, as a WebSocket may stay quiet: a peer quiet for websocket_options::ping_interval, 30
+ * seconds by default, is pinged, and one that stays so for another, gone or half-open, has its handler stopped, which
+ * frees the connection. That needs the handler to receive, which is also what answers the peer. Stopping a server
+ * sends a close with 1001 (going away) as it starts to drain, which a handler that receives sees as the last message
+ * once the peer has answered it, then waits for the handler up to its `shutdown_timeout`, and stops what it awaits.
+ *
+ * What the handler throws goes to `connection_options::on_handler_error`, but for what a peer gone, silent, or breaking
+ * the protocol throws through it, which is no failure of the handler's.
  *
  * @throws std::invalid_argument for an empty handler.
  */
