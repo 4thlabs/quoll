@@ -431,6 +431,12 @@ TEST_CASE("connect_websocket: what cannot be asked is refused when it is called"
 
   http::websocket_connect_options with_a_body;
 
+  http::websocket_connect_options no_token;
+
+  no_token.fields.set("Sec-WebSocket-Protocol", "chat, my chat");
+
+  REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", no_token), std::invalid_argument);
+
   // Chunks, which the serializer would write after the head.
   with_a_body.fields.set("Transfer-Encoding", "chunked");
 
@@ -687,6 +693,19 @@ TEST_CASE("connect_websocket: a refusal is judged by its head, its body left unr
                        {}};
 
   REQUIRE(refusal(server, loop, "ws://h/") == "403");
+
+  // Its head alone, whatever of the body came with it.
+  auto const body = [&]() -> task<std::string> {
+    try {
+      static_cast<void>(co_await http::connect_websocket(memory_connector{server}, "ws://h/"));
+    } catch (http::websocket_refused const &refused) {
+      co_return refused.response().body;
+    }
+
+    co_return std::string{"connected"};
+  };
+
+  REQUIRE(quoll::test::run(loop, body()).value().empty());
 }
 
 TEST_CASE("connect_websocket: what a 101 may not name, or name twice", "[client][websocket]") {

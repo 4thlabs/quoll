@@ -392,7 +392,8 @@ websocket_target parse_websocket_url(std::string_view url) {
   auto const slash = before.find('/');
   auto const path = slash == std::string_view::npos ? std::string_view{"/"} : before.substr(slash);
 
-  // Its server and path checked as an http one's are, what is refused said for connect_websocket.
+  // Its server checked as an http one's is, what is refused said for connect_websocket. Its path is no prefix with a
+  // boundary to keep, but the whole target, the caller's own: checked by the serializer, as any request's.
   origin server;
 
   try {

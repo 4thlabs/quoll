@@ -145,8 +145,9 @@ struct websocket_handshake {
  * stream's error. A client sends no ping on its own: one that wants to find a server gone pings it from a task beside
  * what receives.
  *
- * @throws std::invalid_argument, when called, for another URL, a field of the handshake's own, a request that would
- * not serialize, or `wss` with a connector that is no io::TlsConnector.
+ * @throws std::invalid_argument, when called, for another URL, a field of the handshake's own, a subprotocol offered
+ * that is no token, a request that would not serialize, or `wss` with a connector that is no io::TlsConnector; and
+ * std::system_error, when called, if the source of randomness the key comes from fails.
  */
 template <io::Connector Connector>
 [[nodiscard]] async::task<connected_websocket> connect_websocket(Connector connector, std::string_view url,
@@ -166,7 +167,8 @@ template <io::Connector Connector>
 
 /**
  * @brief connect_websocket() through the network of the executor that connects (io::network_connector), as
- * quoll::runtime provides it.
+ * quoll::runtime provides it natively. In a browser, which offers no network, it throws std::logic_error as it
+ * connects: a browser's WebSocket is not there yet.
  */
 [[nodiscard]] async::task<connected_websocket> connect_websocket(std::string_view url,
                                                                  websocket_connect_options options = {});

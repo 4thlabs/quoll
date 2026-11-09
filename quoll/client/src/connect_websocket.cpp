@@ -141,7 +141,10 @@ async::task<connected_websocket> shake_hands(detail::connector_handle connector,
                                       : "quoll::http::connect_websocket: cannot read the server's answer"};
     }
 
-    auto answer = parser.body_streamed() ? parser.head() : parser.release();
+    // Its head alone, what came of a refusal's body with it dropped, as how much did depends on how the bytes came.
+    auto answer = parser.head();
+
+    answer.body.clear();
 
     if (is_informational(answer.status) && answer.status != status::switching_protocols) {
       if (interim == detail::max_interim_responses) {
@@ -185,9 +188,19 @@ websocket_handshake prepare_websocket_handshake(websocket_target const &where, h
 
     for (auto const member : std::views::split(std::string_view{field.value}, ',')) {
       // An empty member offers nothing, nor may a server choose it.
-      if (auto const token = trim(std::string_view{member.begin(), member.end()}); !token.empty()) {
-        handshake.offered.emplace_back(token);
+      auto const token = trim(std::string_view{member.begin(), member.end()});
+
+      if (token.empty()) {
+        continue;
       }
+
+      // One no server could choose (RFC 6455, 4.1: a token).
+      if (!is_token(token)) {
+        throw std::invalid_argument{"quoll::http::connect_websocket: a subprotocol that is no token: " +
+                                    std::string{token}};
+      }
+
+      handshake.offered.emplace_back(token);
     }
   }
 
