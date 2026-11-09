@@ -192,7 +192,7 @@ TEST_CASE("slots: try_acquire takes a free place, and none while what waits keep
   };
 
   auto const both = [&]() -> task<int> {
-    auto const [got, refused] = co_await quoll::async::when_all(waits(), [&]() -> task<bool> {
+    auto const [got, taken] = co_await quoll::async::when_all(waits(), [&]() -> task<bool> {
       // The waiter is queued: the place given back goes to it, not to what asks without waiting.
       co_await quoll::async::yield();
       places.release();
@@ -202,7 +202,7 @@ TEST_CASE("slots: try_acquire takes a free place, and none while what waits keep
       co_return taken;
     }());
 
-    co_return got + (refused ? 10 : 0);
+    co_return got + (taken ? 10 : 0);
   };
 
   REQUIRE(quoll::test::run(both()) == 1);

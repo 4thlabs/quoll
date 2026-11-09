@@ -910,9 +910,9 @@ TEST_CASE("accept_websocket: a peer that takes nothing has its handler stopped",
       },
       {.ping_interval = 1s}, read_to_the_end);
 
-  // Pinged at 1 s, the ping waits behind the message, which does not move: gone at 2 s.
-  REQUIRE(ended_at == 2s);
-  REQUIRE(ended == std::errc::operation_canceled);
+  // Its message waits a second with nothing taken: gone then, the send throwing.
+  REQUIRE(ended_at == 1s);
+  REQUIRE(ended == std::errc::timed_out);
   REQUIRE(reported.empty());
 }
 
@@ -1388,6 +1388,37 @@ TEST_CASE("accept_websocket: the peer's close is answered, whatever stops the re
       });
 
   REQUIRE(answered);
+  REQUIRE(reported.empty());
+}
+
+TEST_CASE("accept_websocket: a send stuck on a peer that closed holds neither the turn nor the receive()",
+          "[server][websocket]") {
+  auto received = false;
+
+  auto const [ended_at, reported] = run_paced(
+      [&received](http::websocket socket, std::chrono::nanoseconds &per_byte) -> task<> {
+        auto const sending = [&socket]() -> task<> {
+          static_cast<void>(co_await code_thrown_by(socket.send_text("never taken")));
+        };
+        auto const receiving = [&socket, &received]() -> task<> {
+          received = (co_await socket.receive()) == websocket_message{websocket_opcode::close, "", 1000};
+        };
+
+        per_byte = no_reading;
+        static_cast<void>(co_await quoll::async::when_all(sending(), receiving()));
+      },
+      {.ping_interval = 0s},
+      [](io::memory_stream &client, std::string) -> task<int> {
+        auto const close = http::format_websocket_close(1000, "", mask);
+
+        (void)co_await io::write(client, std::as_bytes(std::span{close}));
+        static_cast<void>(co_await quoll::test::read_until_closed(client));
+        co_return 1;
+      });
+
+  // The send gives up after 30 s with nothing taken, and the close's answer, behind it, is then no more to send.
+  REQUIRE(ended_at == 30s);
+  REQUIRE(received);
   REQUIRE(reported.empty());
 }
 

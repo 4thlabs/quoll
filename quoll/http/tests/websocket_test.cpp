@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/run_loop.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
@@ -69,6 +70,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -399,10 +401,10 @@ TEST_CASE("websocket: a read that brings nothing, with no error, ends receiving"
 
 namespace {
 
-// A stream whose first write takes a byte, then says it was stopped: a frame left in its middle.
+// A stream whose first write takes a byte as the operation is stopped, and says so: a frame left in its middle.
 class cut_after_a_byte {
 public:
-  explicit cut_after_a_byte(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
+  cut_after_a_byte(io::memory_stream inner, std::stop_source &stop) noexcept : inner_(std::move(inner)), stop_(&stop) {}
 
   [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
 
@@ -410,6 +412,7 @@ public:
     if (std::exchange(first_, false)) {
       auto const sent = co_await inner_.write_some(data.first(1));
 
+      stop_->request_stop();
       co_return io::io_result{std::make_error_code(std::errc::operation_canceled), sent.transferred};
     }
 
@@ -418,6 +421,7 @@ public:
 
 private:
   io::memory_stream inner_;
+  std::stop_source *stop_;
   bool first_ = true;
 };
 
@@ -449,18 +453,14 @@ private:
 
 TEST_CASE("websocket: what left of a frame before an error leaves it cut", "[http][websocket]") {
   auto [client_end, server_end] = io::make_memory_stream_pair();
-  http::websocket server{io::any_stream{cut_after_a_byte{std::move(server_end)}}, websocket_role::server};
+  std::stop_source stop;
+  http::websocket server{io::any_stream{cut_after_a_byte{std::move(server_end), stop}}, websocket_role::server};
+  quoll::async::run_loop loop;
 
-  auto const sending = [&]() -> task<int> {
-    auto const stopped = co_await code_thrown_by(server.send_text("cut"));
-    auto const next = co_await code_thrown_by(server.send_text("next"));
-
-    REQUIRE(stopped == std::errc::operation_canceled);
-    REQUIRE(next == http::error::websocket_closed);
-    co_return 1;
-  };
-
-  REQUIRE(quoll::test::run(sending()) == 1);
+  // Stopped by its own operation's stop, as a byte had left.
+  REQUIRE(quoll::test::run(loop, code_thrown_by(server.send_text("cut")), stop.get_token()) ==
+          std::errc::operation_canceled);
+  REQUIRE(quoll::test::run(code_thrown_by(server.send_text("next"))) == http::error::websocket_closed);
 }
 
 TEST_CASE("websocket: a pong left waiting goes when the send ahead of it fails", "[http][websocket]") {
