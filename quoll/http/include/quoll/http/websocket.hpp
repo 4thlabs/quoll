@@ -104,11 +104,12 @@ struct websocket_options {
  * was stopped, so the next one throws the same. Without a timer, nothing here times out.
  *
  * A connection no server watches, a client's, keeps itself alive while a receive() waits, as a server's does beside
- * its handler, given a timer: at the end of each ping_interval from the receive()'s start, a peer that sent nothing in
- * it is pinged, and one that sent nothing since it was pinged, or since a close has left, is taken as gone, so that a
- * peer silent since just after the end of one is pinged within two intervals and taken as gone within three. The
- * receive() then throws std::errc::timed_out, or the failure of the ping that could not leave, and so does every one
- * after it. The ping goes on its own: a receive() never waits for it.
+ * its handler, given a timer: at the end of each ping_interval from about the receive()'s first read, a peer that sent
+ * nothing in it is pinged, and one that sent nothing since it was pinged, or since a close has left, is taken as gone,
+ * so that a peer silent since just after the end of one is pinged within two intervals and taken as gone within
+ * three. The receive() then throws std::errc::timed_out, the failure of the ping that could not leave, or io_error for
+ * a keep-alive that failed with no code, and so does every one after it. The ping goes on its own: a receive() waits
+ * for it only to send a pong or a close of its own, which take their turn behind it.
  *
  * Copied, not moved: its copies are the same connection, as http::client's are, which a task receiving and another
  * sending may each hold. An operation holds what it works on from when it is called, so that every copy may go before
@@ -137,8 +138,8 @@ public:
   /**
    * @brief The next text or binary message, or the peer's close (`opcode` close, with its code and reason), the last.
    *
-   * @throws std::system_error with an http::error for a peer that breaks the protocol, the stream's error, or
-   * std::errc::timed_out for a peer the keep-alive took as gone (see websocket_options::ping_interval), and
+   * @throws std::system_error with an http::error for a peer that breaks the protocol, the stream's error, or, for a
+   * peer the keep-alive took as gone, std::errc::timed_out or why its ping could not leave (see websocket), and
    * std::logic_error asked again after the close, or while another receive() is pending, through any copy.
    */
   [[nodiscard]] async::task<websocket_message> receive();
