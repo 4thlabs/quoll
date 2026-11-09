@@ -54,6 +54,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace quoll::http {
 
@@ -62,7 +63,8 @@ struct websocket_connect_options {
   /**
    * @brief Fields the handshake carries besides its own: `Origin`, `Sec-WebSocket-Protocol` with the subprotocols
    * offered, `Authorization`... Those of the handshake itself (`Host`, `Upgrade`, `Connection`, `Sec-WebSocket-Key`,
-   * `Sec-WebSocket-Version`, `Sec-WebSocket-Extensions`) are refused.
+   * `Sec-WebSocket-Version`, `Sec-WebSocket-Extensions`, `Sec-WebSocket-Accept`) are refused, and those that would give
+   * it a body (`Content-Length`, `Transfer-Encoding`).
    */
   http::fields fields{};
   /** @brief What the connection accepts, and how long a write may wait with nothing taken. */
@@ -99,12 +101,11 @@ private:
 
 namespace detail {
 
-// A client's handshake, ready to send: its request on the wire, its key, and the subprotocols it offers, the values of
-// its `Sec-WebSocket-Protocol` fields joined with commas.
+// A client's handshake, ready to send: its request on the wire, its key, and the subprotocols it offers.
 struct websocket_handshake {
   std::string wire;
   std::string key;
-  std::string offered;
+  std::vector<std::string> offered;
 };
 
 // The handshake to `where` with `fields`, checked: std::invalid_argument for a field of the handshake's own, or a
@@ -150,7 +151,7 @@ template <io::Connector Connector>
   }
 
   // Before any connection: what would not serialize is refused here.
-  auto handshake = detail::prepare_websocket_handshake(where, options.fields);
+  auto handshake = detail::prepare_websocket_handshake(where, std::move(options.fields));
 
   return detail::connect_websocket_through(detail::make_connector_handle(std::move(connector)), where.server,
                                            std::move(handshake), std::move(options));

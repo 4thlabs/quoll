@@ -231,6 +231,51 @@ private:
   io::memory_stream inner_;
 };
 
+// A stream whose writes fail on this side, with the peer still there and silent.
+class failing_writes {
+public:
+  explicit failing_writes(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) {
+    co_return io::io_result{std::make_error_code(std::errc::io_error), 0};
+  }
+
+private:
+  io::memory_stream inner_;
+};
+
+// A connector whose streams cannot write, to a peer kept in `kept`.
+class failing_connector {
+public:
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    auto [client_end, server_end] = io::make_memory_stream_pair();
+
+    *kept_ = std::move(server_end);
+    co_return io::any_stream{failing_writes{std::move(client_end)}};
+  }
+
+  std::optional<io::memory_stream> *kept_;
+};
+
+static_assert(io::Connector<failing_connector>);
+
+// A server that keeps the handshake it was sent in `sent`, and refuses it.
+std::function<task<>(io::memory_stream)> recording(http::request &sent) {
+  return [&sent](io::memory_stream stream) -> task<> {
+    std::string buffer;
+    http::request_parser parser;
+
+    static_cast<void>(co_await http::read(stream, buffer, parser));
+    sent = parser.release();
+
+    auto const refusal = std::string{"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"};
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{refusal}));
+  };
+}
+
 // A connector to a peer that answered `answer` and went, before reading anything.
 class refusing_connector {
 public:
@@ -382,6 +427,13 @@ TEST_CASE("connect_websocket: what cannot be asked is refused when it is called"
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/#part"), std::invalid_argument);
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/?a b"), std::invalid_argument);
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", reserved), std::invalid_argument);
+
+  http::websocket_connect_options with_a_body;
+
+  // Chunks, which the serializer would write after the head.
+  with_a_body.fields.set("Transfer-Encoding", "chunked");
+
+  REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", with_a_body), std::invalid_argument);
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "wss://h/"), std::invalid_argument);
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://bad host/"), std::invalid_argument);
 
@@ -518,11 +570,20 @@ TEST_CASE("connect_websocket: a refusal that came as the handshake could not be 
   REQUIRE(quoll::test::run(loop, connecting()) == "Bearer");
 }
 
-TEST_CASE("connect_websocket: more interim answers than a server needs", "[client][websocket]") {
+TEST_CASE("connect_websocket: interim answers, up to eight", "[client][websocket]") {
   quoll::async::run_loop loop;
   std::string hints;
+  auto count = 0;
+  std::error_code expected;
 
-  for (auto count = 0; count < 9; ++count) {
+  SECTION("eight") { count = 8; }
+
+  SECTION("nine are too many") {
+    count = 9;
+    expected = http::error::bad_message;
+  }
+
+  for (auto hint = 0; hint < count; ++hint) {
     hints += "HTTP/1.1 103 Early Hints\r\n\r\n";
   }
 
@@ -537,7 +598,7 @@ TEST_CASE("connect_websocket: more interim answers than a server needs", "[clien
     co_return co_await quoll::test::code_thrown_by(http::connect_websocket(memory_connector{server}, "ws://h/"));
   };
 
-  REQUIRE(quoll::test::run(loop, connecting()) == http::error::bad_message);
+  REQUIRE(quoll::test::run(loop, connecting()) == expected);
 }
 
 TEST_CASE("connect_websocket: a 101 that does not name the WebSocket is refused", "[client][websocket]") {
@@ -555,4 +616,48 @@ TEST_CASE("connect_websocket: a 101 that does not name the WebSocket is refused"
   memory_server server{loop.get_executor(), answering_with_accept({}, answer), 0, {}, {}};
 
   REQUIRE(refusal(server, loop, "ws://h/") == "101");
+}
+
+TEST_CASE("connect_websocket: a write that fails on this side is thrown, not waited past", "[client][websocket]") {
+  std::optional<io::memory_stream> kept;
+
+  auto const connecting = [&]() -> task<std::error_code> {
+    co_return co_await quoll::test::code_thrown_by(http::connect_websocket(failing_connector{&kept}, "ws://h/"));
+  };
+
+  // No timer on a run_loop: waiting for an answer would never end.
+  REQUIRE(quoll::test::run(connecting()) == std::errc::io_error);
+}
+
+TEST_CASE("connect_websocket: the handshake as it is sent", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  http::request sent;
+  memory_server server{loop.get_executor(), recording(sent), 0, {}, {}};
+  http::websocket_connect_options options;
+
+  options.fields.set("Origin", "https://app.example");
+
+  // A target the serializer takes, encoded slash and empty segment included, as no path prefix is.
+  REQUIRE(refusal(server, loop, "ws://h:8080/files/a%2Fb//c?x=1", options) == "400");
+  REQUIRE(sent.target == "/files/a%2Fb//c?x=1");
+  REQUIRE(sent.fields.find("Host") == "h:8080");
+  REQUIRE(sent.fields.find("Origin") == "https://app.example");
+  REQUIRE(sent.fields.find("Sec-WebSocket-Version") == "13");
+  REQUIRE(sent.fields.find("Upgrade") == "websocket");
+}
+
+TEST_CASE("connect_websocket: a subprotocol the server names empty is refused", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  memory_server server{loop.get_executor(),
+                       answering_with_accept({}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                                                 "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n"
+                                                 "Sec-WebSocket-Protocol: \r\n\r\n"),
+                       0,
+                       {},
+                       {}};
+  http::websocket_connect_options options;
+
+  options.fields.set("Sec-WebSocket-Protocol", "chat,");
+
+  REQUIRE(refusal(server, loop, "ws://h/", options) == "101");
 }

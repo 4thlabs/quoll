@@ -36,6 +36,8 @@
 
 #include <quoll/client/connect_websocket.hpp>
 
+#include <quoll/client/detail/exchange_rules.hpp>
+
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
@@ -61,34 +63,27 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace quoll::http {
 
 namespace {
 
+// The handshake's own fields, and what would give it a body, which it has none of (RFC 6455, 4.1).
 constexpr std::array handshake_fields{std::string_view{"Host"},
                                       std::string_view{"Upgrade"},
                                       std::string_view{"Connection"},
                                       std::string_view{"Sec-WebSocket-Key"},
                                       std::string_view{"Sec-WebSocket-Version"},
-                                      std::string_view{"Sec-WebSocket-Extensions"}};
-
-// Whether `token` is among the comma-separated subprotocols `offered`, compared as they are, as RFC 6455 has them.
-[[nodiscard]] bool offers(std::string_view offered, std::string_view token) {
-  return std::ranges::any_of(std::views::split(offered, ','), [token](auto const member) {
-    return detail::trim(std::string_view{member.begin(), member.end()}) == token;
-  });
-}
-
-// Whether a read failed for the peer having gone, which a write that failed before it explains better.
-[[nodiscard]] bool peer_has_gone(std::error_code error) noexcept {
-  return error == io::error::end_of_stream || error == std::errc::connection_reset || error == std::errc::broken_pipe ||
-         error == std::errc::connection_aborted || error == std::errc::not_connected ||
-         error == std::errc::network_reset;
-}
+                                      std::string_view{"Sec-WebSocket-Extensions"},
+                                      std::string_view{"Sec-WebSocket-Accept"},
+                                      std::string_view{"Content-Length"},
+                                      std::string_view{"Transfer-Encoding"}};
 
 // Whether `answer` switches to the WebSocket the handshake with `key`, offering `offered`, asked for (RFC 6455, 4.1).
-[[nodiscard]] bool switches(http::response const &answer, std::string_view key, std::string_view offered) {
+// A subprotocol is compared as it is, as RFC 6455 has them.
+[[nodiscard]] bool switches(http::response const &answer, std::string_view key,
+                            std::vector<std::string> const &offered) {
   if (answer.status != status::switching_protocols || !detail::field_names(answer.fields, "Upgrade", "websocket") ||
       !detail::connection_names(answer.fields, "upgrade")) {
     return false;
@@ -107,18 +102,21 @@ constexpr std::array handshake_fields{std::string_view{"Host"},
 
   auto const protocol = answer.fields.find("Sec-WebSocket-Protocol");
 
-  return !protocol || offers(offered, detail::trim(*protocol));
+  return !protocol || std::ranges::find(offered, detail::trim(*protocol)) != offered.end();
 }
-
-// Interim answers skipped before the 101, against a server sending them for ever.
-constexpr int max_interim_answers = 8;
 
 async::task<connected_websocket> shake_hands(detail::connector_handle connector, detail::origin server,
                                              detail::websocket_handshake handshake, websocket_connect_options options) {
   auto stream =
       co_await connector.open(connector.connector.get(), server.host, server.port, server.secure, options.tls);
-  // Kept rather than thrown at once: a server refusing as it reads may have answered, which says more.
+  // Kept rather than thrown at once when the peer has gone: a server refusing as it read may have answered, which says
+  // more. Any other failure is this side's, and nothing would come.
   auto const unsent = (co_await io::write(stream, std::as_bytes(std::span{handshake.wire}))).error;
+
+  if (unsent && !detail::peer_has_gone(unsent)) {
+    throw std::system_error{unsent, "quoll::http::connect_websocket: cannot send the handshake"};
+  }
+
   std::string buffer;
 
   for (auto interim = 0;; ++interim) {
@@ -126,7 +124,7 @@ async::task<connected_websocket> shake_hands(detail::connector_handle connector,
 
     if (auto const failed = co_await http::read(stream, buffer, parser)) {
       // The write's failure, when what ended the read is only the peer having gone.
-      auto const sending = unsent && peer_has_gone(failed);
+      auto const sending = unsent && detail::peer_has_gone(failed);
 
       throw std::system_error{sending ? unsent : failed,
                               sending ? "quoll::http::connect_websocket: cannot send the handshake"
@@ -136,7 +134,7 @@ async::task<connected_websocket> shake_hands(detail::connector_handle connector,
     auto answer = parser.release();
 
     if (is_informational(answer.status) && answer.status != status::switching_protocols) {
-      if (interim == max_interim_answers) {
+      if (interim == detail::max_interim_responses) {
         throw std::system_error{make_error_code(error::bad_message),
                                 "quoll::http::connect_websocket: too many interim answers"};
       }
@@ -164,17 +162,22 @@ websocket_refused::websocket_refused(http::response answer)
 namespace detail {
 
 websocket_handshake prepare_websocket_handshake(websocket_target const &where, http::fields fields) {
+  websocket_handshake handshake{.wire = {}, .key = random_websocket_key(), .offered = {}};
+
   for (auto const &field : fields) {
     if (std::ranges::any_of(handshake_fields, [&field](std::string_view name) { return iequals(field.name, name); })) {
       throw std::invalid_argument{"quoll::http::connect_websocket: a field of the handshake's own: " + field.name};
     }
-  }
 
-  websocket_handshake handshake{.wire = {}, .key = random_websocket_key(), .offered = {}};
+    if (!iequals(field.name, "Sec-WebSocket-Protocol")) {
+      continue;
+    }
 
-  for (auto const &field : fields) {
-    if (iequals(field.name, "Sec-WebSocket-Protocol")) {
-      handshake.offered += field.value + ',';
+    for (auto const member : std::views::split(std::string_view{field.value}, ',')) {
+      // An empty member offers nothing, nor may a server choose it.
+      if (auto const token = trim(std::string_view{member.begin(), member.end()}); !token.empty()) {
+        handshake.offered.emplace_back(token);
+      }
     }
   }
 

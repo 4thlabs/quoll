@@ -49,6 +49,7 @@
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/client/detail/exchange_rules.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
@@ -192,16 +193,8 @@ struct prepared_request {
   }
 }
 
-// Interim responses read before the final one, against a server sending them forever.
-constexpr int max_interim_responses = 8;
-
-// How a stream shows that its peer has gone. A kept connection can then be replaced, and a read ends by itself, however
-// long it would otherwise wait, so that what was on its way to a server that went may still have an answer to read.
-[[nodiscard]] bool peer_has_gone(std::error_code error) noexcept {
-  return error == io::error::end_of_stream || error == std::errc::connection_reset || error == std::errc::broken_pipe ||
-         error == std::errc::connection_aborted || error == std::errc::not_connected ||
-         error == std::errc::network_reset;
-}
+using detail::max_interim_responses;
+using detail::peer_has_gone;
 
 // A write that fails for the connection's sake, however a socket or TLS says so, leaves the server's answer a chance,
 // with something to end the wait for it if the connection stays open. What this side decided ends things at once.
@@ -1056,5 +1049,15 @@ async::task<response> client::put(std::string target, std::string body, std::str
 async::task<response> client::patch(std::string target, std::string body, std::string_view content_type) const {
   return send(simple_request(verb::patch, std::move(target), std::move(body), content_type));
 }
+
+namespace detail {
+
+bool peer_has_gone(std::error_code error) noexcept {
+  return error == io::error::end_of_stream || error == std::errc::connection_reset || error == std::errc::broken_pipe ||
+         error == std::errc::connection_aborted || error == std::errc::not_connected ||
+         error == std::errc::network_reset;
+}
+
+} // namespace detail
 
 } // namespace quoll::http

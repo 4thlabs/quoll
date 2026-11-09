@@ -396,7 +396,9 @@ websocket_target parse_websocket_url(std::string_view url) {
   origin server;
 
   try {
-    server = parse_url((secure ? std::string{"https://"} : std::string{"http://"}) + std::string{before});
+    // The authority alone: the path is a target, which the handshake's serializer checks as one, not a prefix.
+    server =
+        parse_url((secure ? std::string{"https://"} : std::string{"http://"}) + std::string{before.substr(0, slash)});
     static_cast<void>(host_field(server.host, server.port));
   } catch (std::invalid_argument const &refused) {
     constexpr std::string_view client_prefix = "quoll::http::client: ";
