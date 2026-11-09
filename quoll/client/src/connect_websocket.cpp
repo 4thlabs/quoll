@@ -155,8 +155,13 @@ async::task<connected_websocket> shake_hands(detail::connector_handle connector,
       continue;
     }
 
-    if (unsent || !switches(answer, handshake.key, handshake.offered)) {
+    if (!switches(answer, handshake.key, handshake.offered)) {
       throw websocket_refused{std::move(answer)};
+    }
+
+    // A switch to a handshake that could not be sent whole is no connection to use: what broke it says why.
+    if (unsent) {
+      throw std::system_error{unsent, "quoll::http::connect_websocket: cannot send the handshake"};
     }
 
     // What came after the 101 is the WebSocket's.

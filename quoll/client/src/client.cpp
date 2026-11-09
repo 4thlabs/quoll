@@ -193,9 +193,6 @@ struct prepared_request {
   }
 }
 
-using detail::max_interim_responses;
-using detail::peer_has_gone;
-
 // A write that fails for the connection's sake, however a socket or TLS says so, leaves the server's answer a chance,
 // with something to end the wait for it if the connection stays open. What this side decided ends things at once.
 [[nodiscard]] bool answer_may_still_come(std::error_code error) noexcept {
@@ -994,6 +991,12 @@ client_backend make_client_backend(connector_handle connector, std::string host,
           &operations};
 }
 
+bool peer_has_gone(std::error_code error) noexcept {
+  return error == io::error::end_of_stream || error == std::errc::connection_reset || error == std::errc::broken_pipe ||
+         error == std::errc::connection_aborted || error == std::errc::not_connected ||
+         error == std::errc::network_reset;
+}
+
 } // namespace quoll::http::detail
 
 namespace quoll::http {
@@ -1049,15 +1052,5 @@ async::task<response> client::put(std::string target, std::string body, std::str
 async::task<response> client::patch(std::string target, std::string body, std::string_view content_type) const {
   return send(simple_request(verb::patch, std::move(target), std::move(body), content_type));
 }
-
-namespace detail {
-
-bool peer_has_gone(std::error_code error) noexcept {
-  return error == io::error::end_of_stream || error == std::errc::connection_reset || error == std::errc::broken_pipe ||
-         error == std::errc::connection_aborted || error == std::errc::not_connected ||
-         error == std::errc::network_reset;
-}
-
-} // namespace detail
 
 } // namespace quoll::http

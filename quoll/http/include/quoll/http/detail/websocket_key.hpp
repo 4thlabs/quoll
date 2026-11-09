@@ -41,8 +41,7 @@
 
 namespace quoll::http::detail {
 
-// A `Sec-WebSocket-Key` for a client's handshake: 16 bytes from a strong source of randomness, in base64 (RFC 6455,
-// 4.1).
+// A `Sec-WebSocket-Key` for a client's handshake: 16 bytes from std::random_device, in base64 (RFC 6455, 4.1).
 [[nodiscard]] std::string random_websocket_key();
 
 } // namespace quoll::http::detail

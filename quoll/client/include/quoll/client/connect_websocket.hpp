@@ -70,7 +70,7 @@ struct websocket_connect_options {
   http::fields fields{};
   /** @brief What the connection accepts, and how long a write may wait with nothing taken. */
   websocket_options websocket{};
-  /** @brief How long connecting and the handshake may take, both; zero: no limit. */
+  /** @brief How long connecting and the handshake may take, both, given a timer; zero: no limit. */
   std::chrono::nanoseconds handshake_timeout = std::chrono::seconds{30};
   /** @brief Size limits of the server's answer to the handshake. */
   http::parse_limits limits{};
@@ -142,12 +142,12 @@ struct websocket_handshake {
  * interim answers before it (103) are skipped. Anything else throws http::websocket_refused, with the server's answer,
  * even one that came as the handshake could not be sent whole. The connection and the handshake take no
  * longer than `options.handshake_timeout`, past which std::errc::timed_out is thrown; a network failure throws the
- * stream's error. A client sends no ping on its own: one that wants to find a server gone pings it from a task beside
- * what receives.
+ * stream's error. Without a timer in the executor, nothing limits them. A client sends no ping on its own: one that
+ * wants to find a server gone pings it from a task beside what receives.
  *
  * @throws std::invalid_argument, when called, for another URL, a field of the handshake's own, a subprotocol offered
  * that is no token, a request that would not serialize, or `wss` with a connector that is no io::TlsConnector; and
- * std::system_error, when called, if the source of randomness the key comes from fails.
+ * what std::random_device throws, when called, if the key cannot be drawn.
  */
 template <io::Connector Connector>
 [[nodiscard]] async::task<connected_websocket> connect_websocket(Connector connector, std::string_view url,

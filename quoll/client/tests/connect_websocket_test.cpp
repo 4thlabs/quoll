@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/run_loop.hpp>
+#include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/client/connect_websocket.hpp>
 #include <quoll/http/accept_websocket.hpp>
@@ -143,6 +144,17 @@ public:
 };
 
 static_assert(io::Connector<silent_connector>);
+
+// A connector whose connections never open, until they are stopped.
+class stuck_connector {
+public:
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    co_await quoll::async::sleep_for(24h);
+    throw std::logic_error{"connected"};
+  }
+};
+
+static_assert(io::Connector<stuck_connector>);
 
 // A connector to a memory server that says whether a connection asked for TLS, which it does not do. Its inner
 // connector is a member: a coroutine called on a temporary would read it once that has gone.
@@ -759,4 +771,39 @@ TEST_CASE("connect_websocket: what is refused in a URL says so for connect_webso
       REQUIRE(std::string_view{refused.what()}.starts_with("quoll::http::connect_websocket: "));
     }
   }
+}
+
+TEST_CASE("connect_websocket: the handshake's limit bounds connecting too", "[client][websocket]") {
+  quoll::test::virtual_time time;
+  http::websocket_connect_options options;
+
+  options.handshake_timeout = 1s;
+
+  auto const connecting = [&]() -> task<std::error_code> {
+    co_return co_await quoll::test::code_thrown_by(
+        http::connect_websocket(stuck_connector{}, "ws://h/", std::move(options)));
+  };
+
+  REQUIRE(quoll::test::run(time, connecting()) == std::errc::timed_out);
+  REQUIRE(time.now() == 1s);
+}
+
+TEST_CASE("connect_websocket: wss on its default port names no port in Host", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  http::request sent;
+  memory_server server{loop.get_executor(), recording(sent), 0, {}, {}};
+  bool used_tls = false;
+
+  auto const connecting = [&]() -> task<std::string> {
+    try {
+      static_cast<void>(co_await http::connect_websocket(tls_memory_connector{server, used_tls}, "wss://h/"));
+    } catch (http::websocket_refused const &) {
+      co_return std::string{sent.fields.find("Host").value_or("")};
+    }
+
+    co_return std::string{};
+  };
+
+  REQUIRE(quoll::test::run(loop, connecting()) == "h");
+  REQUIRE(used_tls);
 }
