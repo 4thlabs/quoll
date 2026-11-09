@@ -45,6 +45,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -61,7 +62,7 @@ struct connector_handle {
 template <io::Connector Connector>
 [[nodiscard]] connector_handle make_connector_handle(Connector connector) {
   return {std::make_shared<Connector const>(std::move(connector)),
-          [](void const *erased, std::string const &to, std::uint16_t on, [[maybe_unused]] bool use_tls,
+          [](void const *erased, std::string const &to, std::uint16_t on, bool use_tls,
              [[maybe_unused]] io::tls_client_options const &tls) -> async::task<io::any_stream> {
             auto const &target = *static_cast<Connector const *>(erased);
 
@@ -69,6 +70,9 @@ template <io::Connector Connector>
               if (use_tls) {
                 return target.connect_tls(to, on, tls);
               }
+            } else if (use_tls) {
+              // What calls it refuses this first: a plain connection in place of a TLS one is never what was asked.
+              throw std::logic_error{"quoll::http: this connector cannot open TLS connections"};
             }
 
             return target.connect(to, on);

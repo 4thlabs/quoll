@@ -39,11 +39,15 @@
 #include <quoll/async/detached.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/run_loop.hpp>
+#include <quoll/async/service.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/client/connect_websocket.hpp>
+#include <quoll/client/connected_websocket.hpp>
+#include <quoll/client/detail/connector_handle.hpp>
+#include <quoll/client/websocket_connect_options.hpp>
 #include <quoll/client/websocket_refused.hpp>
 #include <quoll/http/accept_websocket.hpp>
 #include <quoll/http/detail/websocket_key.hpp>
@@ -58,16 +62,20 @@
 #include <quoll/http/websocket.hpp>
 #include <quoll/http/websocket_handshake.hpp>
 #include <quoll/http/websocket_message.hpp>
+#include <quoll/io/any_listener.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/byte_stream.hpp>
 #include <quoll/io/connector.hpp>
 #include <quoll/io/io_result.hpp>
 #include <quoll/io/memory_stream.hpp>
+#include <quoll/io/network.hpp>
+#include <quoll/io/network_ref.hpp>
 #include <quoll/io/tls_connector.hpp>
 #include <quoll/io/tls_options.hpp>
 #include <quoll/io/write.hpp>
 #include <quoll/test/code_thrown_by.hpp>
 #include <quoll/test/memory_network.hpp>
+#include <quoll/test/overloaded.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
 #include <quoll/test/websocket_echo.hpp>
@@ -80,6 +88,7 @@
 #include <chrono>
 #include <concepts>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -304,6 +313,49 @@ std::function<task<>(io::memory_stream)> recording(http::request &sent) {
     (void)co_await io::write(stream, std::as_bytes(std::span{refusal}));
   };
 }
+
+// A network whose connections go to `server`, which listens nowhere.
+struct memory_network {
+  memory_server *server;
+
+  [[nodiscard]] task<io::any_stream> connect(std::string host, std::uint16_t port) const {
+    return connect_to(server, std::move(host), port);
+  }
+
+  [[noreturn]] static io::any_listener listen(std::string const & /*address*/, std::uint16_t /*port*/) {
+    throw std::logic_error{"memory_network: listens nowhere"};
+  }
+
+private:
+  // By value: the network is gone by the time the task runs.
+  static task<io::any_stream> connect_to(memory_server *server, std::string host, std::uint16_t port) {
+    co_return co_await memory_connector{*server}.connect(std::move(host), port);
+  }
+};
+
+static_assert(io::Network<memory_network>);
+
+// An executor of a run_loop offering a memory_network, as an I/O loop's executor offers its own.
+class network_executor {
+public:
+  using services = quoll::async::service_list<io::network_ref>;
+
+  explicit network_executor(memory_server &server) : loop_(server.executor), network_{&server} {}
+
+  void post(quoll::async::work_item &item) const { loop_.post(item); }
+
+  [[nodiscard]] io::network_ref query(quoll::async::service_tag<io::network_ref> /*tag*/) const {
+    return io::network_ref{network_};
+  }
+
+  [[nodiscard]] bool operator==(network_executor const &other) const noexcept {
+    return loop_ == other.loop_ && network_.server == other.network_.server;
+  }
+
+private:
+  quoll::async::run_loop::executor loop_;
+  memory_network network_;
+};
 
 // A stream that takes nothing of a write, broken by the peer as it reads: the 101 the handshake it was given calls
 // for, then gone, if `answers`; gone with nothing otherwise.
@@ -609,6 +661,7 @@ TEST_CASE("connect_websocket: what cannot be asked is refused when it is called"
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", with_a_body), std::invalid_argument);
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "wss://h/"), std::invalid_argument);
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://bad host/"), std::invalid_argument);
+  REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://user@h/"), std::invalid_argument);
 
   // What a proxy could read as another server, as it is, decoded, without its dot segments, or with a backslash.
   for (auto const *const url : {"ws://h//evil.example/x", "ws://h/%2F/evil.example/x", "ws://h/.//evil.example/x",
@@ -718,13 +771,52 @@ TEST_CASE("connect_websocket: interim answers before the 101 are skipped, throug
 }
 
 TEST_CASE("connect_websocket: by URL alone, through the executor's network", "[client][websocket]") {
-  // A run_loop offers none: the overload goes to it all the same.
-  auto const connecting = []() -> task<int> {
-    static_cast<void>(co_await http::connect_websocket("ws://h/"));
+  quoll::async::run_loop loop;
+  http::router router;
+
+  router.get("/", [](http::request request) { return http::accept_websocket(request, quoll::test::websocket_echo); });
+
+  memory_server server{loop.get_executor(), quoll::test::serving(router), 0, {}, {}};
+  std::optional<http::status> status;
+  std::exception_ptr failure;
+
+  auto const connecting = []() -> task<http::status> {
+    auto connected = co_await http::connect_websocket("ws://h:8080/");
+
+    co_await connected.socket.close();
+    static_cast<void>(co_await connected.socket.receive());
+    co_return connected.handshake.status;
+  };
+
+  co_spawn(network_executor{server}, connecting(),
+           quoll::test::overloaded{[&](http::status answer) { status = answer; },
+                                   [&](std::exception_ptr error) { failure = std::move(error); }});
+  loop.run();
+
+  REQUIRE_FALSE(failure);
+  REQUIRE(status == http::status::switching_protocols);
+  REQUIRE(server.destination == "h:8080");
+}
+
+TEST_CASE("connect_websocket: by URL alone, with no network to go through", "[client][websocket]") {
+  // A run_loop offers none, nor TLS: what the overload goes to says so.
+  auto const connecting = [](std::string url) -> task<int> {
+    static_cast<void>(co_await http::connect_websocket(url));
     co_return 1;
   };
 
-  REQUIRE_THROWS_AS(quoll::test::run(connecting()), std::logic_error);
+  REQUIRE_THROWS_AS(quoll::test::run(connecting("ws://h/")), std::logic_error);
+  REQUIRE_THROWS_AS(quoll::test::run(connecting("wss://h/")), std::logic_error);
+}
+
+TEST_CASE("connect_websocket: a connector handle refuses TLS it cannot give", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  http::request sent;
+  memory_server server{loop.get_executor(), recording(sent), 0, {}, {}};
+  auto const handle = http::detail::make_connector_handle(memory_connector{server});
+
+  REQUIRE_THROWS_AS(handle.open(handle.connector.get(), "h", 443, true, {}), std::logic_error);
+  REQUIRE(server.connections == 0);
 }
 
 TEST_CASE("connect_websocket: each handshake has a key of its own", "[client][websocket]") {
@@ -838,6 +930,11 @@ TEST_CASE("connect_websocket: the handshake as it is sent", "[client][websocket]
   REQUIRE(sent.fields.find("Upgrade") == "websocket");
   REQUIRE(sent.fields.find("Connection") == "Upgrade");
   REQUIRE(sent.fields.find("Sec-WebSocket-Key").value_or("").size() == 24);
+
+  // A scheme in capitals, as a scheme's case does not count (RFC 3986, 3.1).
+  REQUIRE(refusal(server, loop, "WS://h/") == "400");
+  REQUIRE(sent.fields.find("Host") == "h");
+  REQUIRE(sent.target == "/");
 }
 
 TEST_CASE("connect_websocket: a subprotocol the server names empty is refused", "[client][websocket]") {
@@ -1156,6 +1253,17 @@ TEST_CASE("connect_websocket: the subprotocols offered go out as checked", "[cli
 
   REQUIRE(refusal(server, loop, "ws://h/", options) == "400");
   REQUIRE(sent.fields.find("Sec-WebSocket-Protocol") == "chat, superchat");
+
+  http::websocket_connect_options in_two;
+
+  // Two fields, sent as one.
+  in_two.fields.add("Sec-WebSocket-Protocol", "chat");
+  in_two.fields.add("Sec-WebSocket-Protocol", "superchat");
+
+  REQUIRE(refusal(server, loop, "ws://h/", in_two) == "400");
+  REQUIRE(sent.fields.find("Sec-WebSocket-Protocol") == "chat, superchat");
+  REQUIRE(std::ranges::count_if(sent.fields,
+                                [](auto const &field) { return field.name == "Sec-WebSocket-Protocol"; }) == 1);
 }
 
 TEST_CASE("connect_websocket: a 101 in HTTP/1.0 is no switch", "[client][websocket]") {
