@@ -38,6 +38,7 @@
 #define QUOLL_REST_EVENT_STREAM_HPP
 
 #include <quoll/async/task.hpp>
+#include <quoll/http/detail/one_at_a_time.hpp>
 #include <quoll/http/event_reader.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/server_sent_event.hpp>
@@ -46,6 +47,7 @@
 #include <quoll/rest/json_codec.hpp>
 #include <quoll/rest/unexpected_response.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <optional>
@@ -73,7 +75,8 @@ namespace quoll::rest {
  * decode throws call_error, holding it as the body of its response, and reading goes on. A `T` that holds views into
  * its event (a `std::string_view` Glaze reads) is valid up to the next next(), for as long as the stream.
  *
- * Moved, not copied. Thread safety: as http::event_reader.
+ * Moved, not copied. One next() at a time, its decoding included: one asked while another is pending throws
+ * std::logic_error. Thread safety: as http::event_reader.
  */
 template <class T, class EventCodec = json_codec>
 class event_stream {
@@ -86,7 +89,13 @@ public:
    *
    * @throws call_error, from the task, for an event that does not decode; as http::event_reader::next() otherwise.
    */
-  [[nodiscard]] async::task<std::optional<T>> next() { return decoded(events_.next(), data_); }
+  [[nodiscard]] async::task<std::optional<T>> next() {
+    // Its turn, for the whole of it: the read and the decoding, which the text kept here outlives.
+    http::detail::one_at_a_time turn{std::shared_ptr<std::atomic<bool>>{state_, &state_->busy},
+                                     "quoll::rest::event_stream: next() while another is pending"};
+
+    return decoded(std::move(turn), events_.next(), state_);
+  }
 
   /** @brief The id of the last complete event, empty if none: what to resume from. */
   [[nodiscard]] std::string last_event_id() const { return events_.last_event_id(); }
@@ -95,9 +104,19 @@ public:
   [[nodiscard]] std::optional<std::chrono::milliseconds> retry() const noexcept { return events_.retry(); }
 
 private:
-  // No `this`: the reader's task holds what it reads, and `data` the event's text, which a `T` may point into.
-  [[nodiscard]] static async::task<std::optional<T>> decoded(async::task<std::optional<http::server_sent_event>> next,
-                                                             std::shared_ptr<std::string> data) {
+  // What a stream keeps: the text of the last event, until the next, which a value decoded into views of it points
+  // into; and the turn of one next() at a time, held until its value is made.
+  struct state {
+    std::string data;
+    std::atomic<bool> busy = false;
+  };
+
+  // No `this`: the reader's task holds what it reads, and `kept` the event's text, which a `T` may point into.
+  [[nodiscard]] static async::task<std::optional<T>> decoded(http::detail::one_at_a_time turn,
+                                                             async::task<std::optional<http::server_sent_event>> next,
+                                                             std::shared_ptr<state> kept) {
+    auto const held = std::move(turn);
+    auto *const data = &kept->data;
     auto event = co_await std::move(next);
 
     if (!event) {
@@ -121,8 +140,7 @@ private:
   }
 
   http::event_reader events_;
-  // The text of the last event, kept until the next: what a value decoded into views of it points into.
-  std::shared_ptr<std::string> data_ = std::make_shared<std::string>();
+  std::shared_ptr<state> state_ = std::make_shared<state>();
 };
 
 } // namespace quoll::rest

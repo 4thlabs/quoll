@@ -62,6 +62,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -1076,4 +1078,63 @@ TEST_CASE("rest events: an operation kept by a service that fails, dropped later
   REQUIRE(answer.starts_with("HTTP/1.1 500"));
   // Dropped once the connection is gone: under ASan, what it held must not reach it.
   held->reset();
+}
+
+namespace {
+
+// A codec that runs something while it decodes: another next() of the stream, say.
+struct reentrant_codec {
+  static constexpr std::string_view content_type = "text/plain";
+
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables): set by the one test that uses it.
+  static inline std::function<void()> during_decode;
+
+  [[nodiscard]] std::string encode(std::string const &value) const { return value; }
+
+  template <class T>
+  [[nodiscard]] std::expected<T, rest::decode_error> decode(std::string_view body) const {
+    if (during_decode) {
+      during_decode();
+    }
+
+    return T{body};
+  }
+};
+
+} // namespace
+
+TEST_CASE("rest events: a next() asked while one decodes is refused", "[rest][sse]") {
+  http::router router;
+
+  router.get("/reentrant", [](http::response_writer out) -> task<> {
+    http::event_writer events{std::move(out)};
+
+    co_await events.send({.data = "first"});
+    co_await events.send({.data = "second"});
+  });
+
+  using reentrant = rest::endpoint<"reentrant", verb::get, "/reentrant", rest::events<std::string, reentrant_codec>>;
+
+  rest::client<rest::api<"", reentrant>, streaming_transport> const client{streaming_transport{std::move(router)}};
+
+  auto const reading = [&client]() -> task<std::string> {
+    auto stream = co_await client.subscribe<reentrant>();
+    std::string seen;
+
+    reentrant_codec::during_decode = [&stream, &seen] {
+      try {
+        static_cast<void>(stream.next());
+        seen += "accepted;";
+      } catch (std::logic_error const &) {
+        seen += "refused;";
+      }
+    };
+
+    auto const first = co_await stream.next();
+
+    reentrant_codec::during_decode = nullptr;
+    co_return seen + first.value();
+  };
+
+  REQUIRE(quoll::test::run(reading()).value() == "refused;first");
 }
