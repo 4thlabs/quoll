@@ -86,8 +86,9 @@ namespace quoll::http {
  * stops what it awaits.
  *
  * Once the handler is over, a close goes, unless one did: 1000, or 1011 if the handler threw; then the server's side
- * is shut. What the handler throws goes to `connection_options::on_handler_error`, but for what a stop throws: a peer
- * gone, or breaking the protocol, makes receive() throw, which a handler catches if that is no failure of its own.
+ * is shut. What the handler throws goes to `connection_options::on_handler_error`, but for what a stop throws, and a
+ * send refused after a close, the peer's or a drain's, which is how the connection ends: a peer gone, or breaking the
+ * protocol, makes receive() throw, which a handler catches if that is no failure of its own.
  * Pinging and the 1001 of a drain need a timer, which quoll::runtime has.
  *
  * @throws std::invalid_argument for an empty handler.

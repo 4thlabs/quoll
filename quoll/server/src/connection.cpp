@@ -39,6 +39,7 @@
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
@@ -735,14 +736,8 @@ void report_failure(connection_options const &options, std::stop_token const &st
 
   auto const failure = std::current_exception();
 
-  try {
-    std::rethrow_exception(failure);
-  } catch (std::system_error const &thrown) {
-    if (stop_token.stop_requested() && thrown.code() == std::errc::operation_canceled) {
-      return;
-    }
-  } catch (...) {
-    // Reported, whatever it is.
+  if (stop_token.stop_requested() && async::detail::is_a_stop(failure)) {
+    return;
   }
 
   options.on_handler_error(failure);
@@ -1247,11 +1242,11 @@ async::task<bool> send_written_by_handler(paced_stream &stream, http::response &
 
 // How a connection ends. A stream that failed or a peer that has gone are owed nothing: on a stuck one, trying would
 // take another write timeout. A connection whose wait was ended stops sending, and nothing is on its way yet. After a
-// last response, what is on its way is read, in stages as RFC 9112, 9.6 asks. A connection that switched protocols is
-// another's, its response's `upgrade`.
-enum class connection_end { nothing_owed, stop_sending, linger, upgraded };
+// last response, what is on its way is read, in stages as RFC 9112, 9.6 asks.
+enum class connection_end { nothing_owed, stop_sending, linger };
 
-// What takes a connection over once it has switched protocols, and what came on it after the request.
+// What takes a connection over once it has switched protocols, and what came on it after the request: no handler, no
+// switch.
 struct taken_over {
   http::upgrade_handler handler;
   std::string received;
@@ -1298,10 +1293,20 @@ async::task<std::error_code> drop_what_comes(io::any_stream &stream, std::chrono
   }
 }
 
-// The 101 written, or nothing if it cannot be, the application being told: it must not switch then, as a 500 goes in
-// its place.
-[[nodiscard]] std::optional<async::task<std::error_code>>
-switch_protocols(paced_stream &stream, http::response const &response, connection_options const &options) {
+// The 101 written, or nothing if it may not be (see cannot_switch()) or cannot be serialized, the application being
+// told: it must not switch then, as a 500 goes in its place.
+[[nodiscard]] std::optional<async::task<std::error_code>> switch_protocols(paced_stream &stream,
+                                                                           http::response const &response, bool asked,
+                                                                           http::verb method, http::version version,
+                                                                           connection_options const &options) {
+  if (auto const *const wrong = cannot_switch(response, asked, method, version)) {
+    if (options.on_handler_error) {
+      options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
+    }
+
+    return std::nullopt;
+  }
+
   try {
     return http::write(stream, response);
   } catch (std::invalid_argument const &) {
@@ -1374,12 +1379,13 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
       request = parser.head();
       body.emplace(paced, buffer, parser, continue_owed);
     } else {
-      keep_alive = parser.keep_alive() && !parser.upgrade();
-      asks_to_switch = parser.upgrade();
+      auto const upgrade = parser.upgrade();
+
+      keep_alive = parser.keep_alive() && !upgrade;
       request = parser.release();
       // llhttp says so of every CONNECT too, which names no protocol: a switch is only to one an Upgrade field names
       // (RFC 9110, 7.8), and a CONNECT is a tunnel, which is not offered.
-      asks_to_switch = asks_to_switch && request.method != http::verb::connect && request.fields.contains("Upgrade");
+      asks_to_switch = upgrade && request.method != http::verb::connect && request.fields.contains("Upgrade");
     }
 
     auto const method = request.method;
@@ -1405,13 +1411,7 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
       if (options.drain.stop_requested()) {
         // No connection to start as the server stops: the client may try another.
         response = http::detail::status_response(http::status::service_unavailable);
-      } else if (auto const *const wrong = cannot_switch(response, asks_to_switch, method, version)) {
-        if (options.on_handler_error) {
-          options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
-        }
-
-        response = http::detail::status_response(http::status::internal_server_error);
-      } else if (auto switching = switch_protocols(paced, response, options)) {
+      } else if (auto switching = switch_protocols(paced, response, asks_to_switch, method, version, options)) {
         paced.writing().start_again();
 
         if (co_await paced.patiently_writing(std::move(*switching))) {
@@ -1421,7 +1421,7 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
         // What came after the request is the new protocol's.
         taken.handler = std::move(response.upgrade);
         taken.received = std::move(buffer);
-        co_return connection_end::upgraded;
+        co_return connection_end::nothing_owed;
       } else {
         response = http::detail::status_response(http::status::internal_server_error);
       }
@@ -1548,7 +1548,7 @@ async::task<> serve_connection(io::any_stream stream, http::router const &router
   taken_over taken;
   auto const end = co_await serve_requests(stream, router, options, taken);
 
-  if (end == connection_end::upgraded) {
+  if (taken.handler) {
     co_await run_taken_over(std::move(stream), std::move(taken), options);
     co_return;
   }
