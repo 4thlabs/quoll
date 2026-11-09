@@ -41,7 +41,6 @@
 #include <quoll/async/detail/stop_on_exit.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/synchronized.hpp>
-#include <quoll/async/sleep_for.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
@@ -90,7 +89,7 @@ struct websocket_state {
   // What ended receiving, which a receive() asked after it throws again.
   std::error_code failure;
   bool close_received = false;
-  // Counts the reads that brought something, which tells a peer alive.
+  // Counts the reads that brought something and the writes that took something, which tell a peer alive.
   std::atomic<std::uint64_t> activity = 0;
 
   // What the peer, or its stream, failed with first: what it throws through a handler is no failure of the handler's.
@@ -102,6 +101,8 @@ struct websocket_state {
   bool sending_over = false;
   // The stream's sending side is shut.
   bool sending_shut = false;
+  // The close sent was the handler's own, by close(): a send refused after it is the handler's doing.
+  bool closed_by_handler = false;
 
   // Where a client's masks come from, by any operation, on any thread; none for a server, which masks nothing.
   std::unique_ptr<async::detail::synchronized<std::random_device>> masks;
@@ -133,24 +134,9 @@ void record_peer_failure(state &connection, std::error_code code) {
   });
 }
 
-// What a frame is to what sends it once nothing more may be sent: a message refused, an answer or a close dropped.
-enum class frame_kind : std::uint8_t { message, answer, close };
-
-// The turn to send, taken: given back as it goes.
-class write_turn {
-public:
-  explicit write_turn(async::detail::slots &writes) noexcept : writes_(&writes) {}
-
-  write_turn(write_turn const &) = delete;
-  write_turn &operator=(write_turn const &) = delete;
-  write_turn(write_turn &&) = delete;
-  write_turn &operator=(write_turn &&) = delete;
-
-  ~write_turn() { writes_->release(); }
-
-private:
-  async::detail::slots *writes_;
-};
+// What a frame is to what sends it once nothing more may be sent: a message refused, an answer or a close dropped. The
+// handler's own close says so as it leaves.
+enum class frame_kind : std::uint8_t { message, answer, close, own_close };
 
 // The mask of a client's next frame, from a strong source of randomness (RFC 6455, 5.3); none for a server.
 [[nodiscard]] std::optional<websocket_mask> mask_of(state &connection) {
@@ -165,12 +151,9 @@ private:
                         static_cast<std::uint8_t>(bits >> 16U), static_cast<std::uint8_t>(bits >> 24U)};
 }
 
-// `frame` sent, once those asked before it have left.
-async::task<> send_frame(std::shared_ptr<state> connection, std::string frame, frame_kind kind) {
-  co_await connection->writes.acquire();
-
-  write_turn const turn{connection->writes};
-
+// `frame` written, the turn to send held. A loop of its own rather than io::write(): each piece that leaves tells the
+// peer alive, as one slowly taking a long message is.
+async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, frame_kind kind) {
   if (connection->sending_over) {
     if (kind == frame_kind::message) {
       throw std::system_error{make_error_code(error::websocket_closed), "quoll::http::websocket: cannot send"};
@@ -182,14 +165,33 @@ async::task<> send_frame(std::shared_ptr<state> connection, std::string frame, f
   // Before it is written: a frame cut short leaves the stream in its middle, where no other may follow.
   connection->sending_over = true;
 
-  auto const sent = co_await io::write(connection->stream, std::as_bytes(std::span{frame}));
+  auto rest = std::as_bytes(std::span{frame});
 
-  if (sent.error) {
-    record_peer_failure(*connection, sent.error);
-    throw std::system_error{sent.error, "quoll::http::websocket: cannot send"};
+  while (!rest.empty()) {
+    auto const sent = co_await connection->stream.write_some(rest);
+
+    // A stream that takes nothing, or more than it was given, without saying why, breaks its contract: see io::write.
+    if (sent.error || sent.transferred == 0 || sent.transferred > rest.size()) {
+      auto const failure = sent.error ? sent.error : std::make_error_code(std::errc::io_error);
+
+      record_peer_failure(*connection, failure);
+      throw std::system_error{failure, "quoll::http::websocket: cannot send"};
+    }
+
+    connection->activity.fetch_add(1);
+    rest = rest.subspan(sent.transferred);
   }
 
-  connection->sending_over = kind == frame_kind::close;
+  connection->sending_over = kind == frame_kind::close || kind == frame_kind::own_close;
+  connection->closed_by_handler = connection->closed_by_handler || kind == frame_kind::own_close;
+}
+
+// `frame` sent, once those asked before it have left.
+async::task<> send_frame(std::shared_ptr<state> connection, std::string frame, frame_kind kind) {
+  async::detail::held_place turn;
+
+  co_await turn.take(connection->writes);
+  co_await write_frame(connection, std::move(frame), kind);
 }
 
 // What the parser reads next, or how the peer broke the protocol.
@@ -215,9 +217,9 @@ async::task<> send_frame(std::shared_ptr<state> connection, std::string frame, f
 // as a stream refuses it while a read or a write is pending.
 async::task<> end_sending(std::shared_ptr<state> connection) {
   try {
-    co_await connection->writes.acquire();
+    async::detail::held_place turn;
 
-    write_turn const turn{connection->writes};
+    co_await turn.take(connection->writes);
 
     if (!std::exchange(connection->sending_shut, true)) {
       static_cast<void>(co_await connection->stream.shutdown_send());
@@ -312,10 +314,11 @@ async::task<websocket_message> receive_from(std::shared_ptr<state> connection, d
   return connection.peer_failure.with([](std::error_code const &first) { return first; });
 }
 
-// Whether `code`, thrown through a handler, is no failure of its own: a send after a close, the peer's or a drain's, or
-// what the peer's failure led to, the handler stopped once the peer had gone included.
+// Whether `code`, thrown through a handler, is no failure of its own: a send after a close the handler did not send,
+// the peer's or a drain's, or what the peer's failure led to, the handler stopped once the peer had gone included. Read
+// once the handler and the keep-alive are over: what they wrote of the state is behind when_all.
 [[nodiscard]] bool comes_of_the_peer(state &connection, std::error_code code) {
-  if (code == error::websocket_closed) {
+  if (code == error::websocket_closed && !connection.closed_by_handler) {
     return true;
   }
 
@@ -343,45 +346,59 @@ async::task<> run_handler(std::function<async::task<>(websocket)> handler, webso
   co_await handler(std::move(socket));
 }
 
-// Whether `duration` passed, rather than a stop ending the wait.
-async::task<bool> slept(std::chrono::nanoseconds duration) {
-  try {
-    co_await async::sleep_for(duration);
-  } catch (std::system_error const &stopped) {
-    if (stopped.code() != std::errc::operation_canceled) {
-      throw;
-    }
-
-    co_return false;
-  }
-
-  co_return true;
+// How long a close waits to leave, and for the peer's answer: `ping_interval`, or 30 seconds where it is zero, as a
+// peer that no longer reads must not hold a connection whose application has stopped watching it.
+[[nodiscard]] std::chrono::nanoseconds wait_limit(std::chrono::nanoseconds ping_interval) noexcept {
+  return ping_interval > std::chrono::nanoseconds::zero() ? ping_interval
+                                                          : std::chrono::nanoseconds{std::chrono::seconds{30}};
 }
 
-// What a stop asks of a sleep: to wake it.
+// What a stop asks of a wait: to end it.
 struct wake_up {
   std::stop_source *wake;
 
   void operator()() const noexcept { wake->request_stop(); }
 };
 
-// `frame` sent within `limit`, or the peer taken as gone, as one that takes nothing holds the connection; nothing once
-// `ends` is stopped, the handler over.
+// `frame` sent for the keep-alive. Its turn is waited for as long as what is ahead of it moves, as a peer slowly taking
+// a long message is no peer gone, and not once `ends` is stopped, the handler over. Then it goes whole, within `limit`,
+// as a frame cut short would leave the stream in its middle: what does not take it is a peer gone.
 async::task<> send_in_time(std::shared_ptr<state> connection, std::string frame, frame_kind kind,
                            std::chrono::nanoseconds limit, std::stop_token ends) {
-  try {
-    co_await async::detail::stop_scope<void>{async::with_timeout(limit, send_frame(connection, std::move(frame), kind)),
-                                             ends};
-  } catch (std::system_error const &thrown) {
-    // The handler over: nothing is owed, whatever stopped it.
+  async::detail::held_place turn;
+  auto seen = connection->activity.load();
+
+  for (;;) {
+    std::error_code waited;
+
+    try {
+      co_await async::detail::stop_scope<void>{async::with_timeout(limit, turn.take(connection->writes)), ends};
+    } catch (std::system_error const &thrown) {
+      waited = thrown.code();
+    }
+
     if (ends.stop_requested()) {
       co_return;
     }
 
-    if (thrown.code() == std::errc::timed_out) {
-      record_peer_failure(*connection, thrown.code());
+    if (!waited) {
+      break;
     }
 
+    auto const now = connection->activity.load();
+
+    if (waited != std::errc::timed_out || now == seen) {
+      record_peer_failure(*connection, waited);
+      throw std::system_error{waited, "quoll::http::websocket: the peer has gone quiet"};
+    }
+
+    seen = now;
+  }
+
+  try {
+    co_await async::with_timeout(limit, write_frame(connection, std::move(frame), kind));
+  } catch (std::system_error const &thrown) {
+    record_peer_failure(*connection, thrown.code());
     throw;
   }
 }
@@ -391,7 +408,9 @@ async::task<> send_in_time(std::shared_ptr<state> connection, std::string frame,
 // timer to wait with.
 async::task<> keep_alive(std::shared_ptr<state> connection, std::chrono::nanoseconds interval, std::stop_token drain,
                          std::stop_token ends) {
-  if (!(co_await async::current_executor()).query<async::timer_ref>()) {
+  auto const timer = (co_await async::current_executor()).query<async::timer_ref>();
+
+  if (!timer) {
     co_return;
   }
 
@@ -411,7 +430,7 @@ async::task<> keep_alive(std::shared_ptr<state> connection, std::chrono::nanosec
       on_drain.emplace(drain, wake_up{&wake});
     }
 
-    auto const quiet = co_await async::detail::stop_scope<bool>{slept(period), wake.get_token()};
+    auto const quiet = co_await async::detail::stop_scope<bool>{timer->wait_for(period), wake.get_token()};
 
     if (ends.stop_requested()) {
       co_return;
@@ -421,7 +440,7 @@ async::task<> keep_alive(std::shared_ptr<state> connection, std::chrono::nanosec
       drained = true;
 
       co_await send_in_time(connection, format_websocket_close(1001, {}, mask_of(*connection)), frame_kind::close,
-                            period, ends);
+                            wait_limit(interval), ends);
       continue;
     }
 
@@ -446,6 +465,8 @@ async::task<> keep_alive(std::shared_ptr<state> connection, std::chrono::nanosec
 
     co_await send_in_time(connection, format_websocket_frame(websocket_opcode::ping, {}, true, mask_of(*connection)),
                           frame_kind::answer, period, ends);
+    // The ping's own write is no sign of the peer.
+    seen = connection->activity.load();
     pinged = true;
   }
 }
@@ -477,14 +498,42 @@ async::task<> close_and_read(std::shared_ptr<state> connection, bool failed, boo
   connection->receiving.store(false);
 }
 
-// close_and_read(), within `limit` and only with a timer to wait with, then the stream's sending side shut, so that the
-// connection ends behind the close rather than with a reset that may lose it.
+// Whether receiving ended on a peer that broke the protocol, which was sent its close.
+[[nodiscard]] bool broke_the_protocol(state const &connection) noexcept {
+  return connection.failure && connection.failure.category() == http_category();
+}
+
+// What the peer still sends, dropped until it ends, its turn to receive taken: what follows a broken protocol, where
+// no close can be read.
+async::task<> drop_what_comes(std::shared_ptr<state> connection) {
+  if (connection->receiving.exchange(true)) {
+    co_return;
+  }
+
+  std::array<char, 4096> chunk;
+
+  for (;;) {
+    auto const received = co_await connection->stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+    if (received.error || received.transferred == 0) {
+      break;
+    }
+  }
+
+  connection->receiving.store(false);
+}
+
+// The connection, once its handler is over: close_and_read() within `limit`, then the stream's sending side shut, so
+// that it ends behind the close rather than with a reset that may lose it. A peer that broke the protocol has had its
+// close: its side is shut at once, then what it still sends dropped within `limit`. The waits need a timer.
 async::task<> finish(std::shared_ptr<state> connection, bool failed, std::chrono::nanoseconds limit) {
-  auto const timed = limit > std::chrono::nanoseconds::zero() &&
-                     (co_await async::current_executor()).query<async::timer_ref>().has_value();
+  auto const timed = (co_await async::current_executor()).query<async::timer_ref>().has_value();
+  auto const broken = broke_the_protocol(*connection);
 
   try {
-    if (timed) {
+    if (broken) {
+      // Its close went as it was found.
+    } else if (timed) {
       co_await async::with_timeout(limit, close_and_read(connection, failed, true));
     } else {
       co_await close_and_read(connection, failed, false);
@@ -499,8 +548,12 @@ async::task<> finish(std::shared_ptr<state> connection, bool failed, std::chrono
     } else {
       co_await end_sending(connection);
     }
+
+    if (broken && timed) {
+      co_await async::with_timeout(limit, drop_what_comes(connection));
+    }
   } catch (std::system_error const &) {
-    // Nor does a stream that does not take it hold it.
+    // Nor does a stream that does not take it, or a peer that goes on sending, hold it.
   }
 }
 
@@ -522,11 +575,13 @@ async::task<> serve_websocket(std::function<async::task<>(websocket)> handler, i
     failure = std::current_exception();
   }
 
-  // A peer that has failed is owed nothing more, and would only hold the connection longer.
   auto const of_the_peer = failure && caught_of_the_peer(*connection, failure);
+  auto const peer_failure = peer_failure_of(*connection);
 
-  if (!peer_failure_of(*connection)) {
-    co_await finish(connection, failure && !of_the_peer, options.ping_interval);
+  // A peer gone, or silent, is owed nothing more, and would only hold the connection longer; one that broke the
+  // protocol is still there.
+  if (!peer_failure || peer_failure.category() == http_category()) {
+    co_await finish(connection, failure && !of_the_peer, wait_limit(options.ping_interval));
   }
 
   if (failure && !of_the_peer) {
@@ -542,8 +597,6 @@ websocket::websocket(io::any_stream stream, websocket_role role, std::string rec
 }
 
 async::task<websocket_message> websocket::receive() {
-  check_usable();
-
   detail::one_at_a_time turn{std::shared_ptr<std::atomic<bool>>{state_, &state_->receiving},
                              "quoll::http::websocket: a receive() while another is pending"};
 
@@ -556,8 +609,6 @@ async::task<websocket_message> websocket::receive() {
 }
 
 async::task<> websocket::send_text(std::string_view text) {
-  check_usable();
-
   if (!detail::is_utf8(text)) {
     throw std::invalid_argument{"quoll::http::websocket: text that is not UTF-8"};
   }
@@ -567,26 +618,17 @@ async::task<> websocket::send_text(std::string_view text) {
 }
 
 async::task<> websocket::send_binary(std::string_view data) {
-  check_usable();
   return send_frame(state_, format_websocket_frame(websocket_opcode::binary, data, true, mask_of(*state_)),
                     frame_kind::message);
 }
 
 async::task<> websocket::ping(std::string_view data) {
-  check_usable();
   return send_frame(state_, format_websocket_frame(websocket_opcode::ping, data, true, mask_of(*state_)),
                     frame_kind::message);
 }
 
 async::task<> websocket::close(std::uint16_t code, std::string_view reason) {
-  check_usable();
-  return send_frame(state_, format_websocket_close(code, reason, mask_of(*state_)), frame_kind::close);
-}
-
-void websocket::check_usable() const {
-  if (!state_) {
-    throw std::logic_error{"quoll::http::websocket: used once moved from"};
-  }
+  return send_frame(state_, format_websocket_close(code, reason, mask_of(*state_)), frame_kind::own_close);
 }
 
 } // namespace quoll::http

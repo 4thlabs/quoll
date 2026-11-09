@@ -98,9 +98,10 @@ struct websocket_options {
  * receive() reads: a handler that only sends receives beside it all the same, which also answers the peer's pings and
  * close. A receive() stopped, or failed, ends receiving, as what it read of a frame cannot be taken up again.
  *
- * Moved, not copied: one moved from throws std::logic_error when asked anything. An operation holds what it works on
- * from when it is called, so that the connection may move, or go, before it ends: the stream closes once the last of
- * them has. One receive() at a time, another asked while one is pending throwing std::logic_error, in every build.
+ * Copied, not moved: its copies are the same connection, as http::client's are, which a task receiving and another
+ * sending may each hold. An operation holds what it works on from when it is called, so that every copy may go before
+ * it ends: the stream closes once the last of them, and of the operations, has. One receive() at a time, across copies,
+ * another asked while one is pending throwing std::logic_error, in every build.
  *
  * Thread safety: that of the stream, which an asio socket does not share between threads. What a receive() and a send
  * do takes turns as long as they run on one executor that runs a handler at a time: the strand of its own a server
@@ -116,17 +117,15 @@ public:
    */
   websocket(io::any_stream stream, websocket_role role, std::string received = {}, websocket_options options = {});
 
-  websocket(websocket const &) = delete;
-  websocket &operator=(websocket const &) = delete;
-  websocket(websocket &&) noexcept = default;
-  websocket &operator=(websocket &&) noexcept = default;
+  websocket(websocket const &) = default;
+  websocket &operator=(websocket const &) = default;
   ~websocket() = default;
 
   /**
    * @brief The next text or binary message, or the peer's close (`opcode` close, with its code and reason), the last.
    *
    * @throws std::system_error with an http::error for a peer that breaks the protocol, or the stream's error, and
-   * std::logic_error asked again after the close, or while another receive() is pending.
+   * std::logic_error asked again after the close, or while another receive() is pending, through any copy.
    */
   [[nodiscard]] async::task<websocket_message> receive();
 
@@ -154,10 +153,6 @@ public:
 private:
   friend struct detail::websocket_access;
 
-  // std::logic_error for a connection moved from.
-  void check_usable() const;
-
-  // Null once moved from.
   std::shared_ptr<detail::websocket_state> state_;
 };
 

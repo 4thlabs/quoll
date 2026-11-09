@@ -42,6 +42,7 @@
 #include <quoll/async/detail/synchronized.hpp>
 #include <quoll/async/executor_ref.hpp>
 #include <quoll/async/lifetimebound.hpp>
+#include <quoll/async/task.hpp>
 #include <quoll/async/work_item.hpp>
 
 #include <coroutine>
@@ -49,6 +50,7 @@
 #include <optional>
 #include <stop_token>
 #include <system_error>
+#include <utility>
 
 namespace quoll::async::detail {
 
@@ -201,6 +203,35 @@ private:
 };
 
 static_assert(ContextAwaitable<slots::acquire_awaitable>);
+
+// A place of some slots, held until it goes or release(). Thread safety: none, as what holds it.
+class held_place {
+public:
+  held_place() noexcept = default;
+
+  held_place(held_place const &) = delete;
+  held_place &operator=(held_place const &) = delete;
+  held_place(held_place &&) = delete;
+  held_place &operator=(held_place &&) = delete;
+
+  ~held_place() { release(); }
+
+  void release() noexcept {
+    if (places_ != nullptr) {
+      std::exchange(places_, nullptr)->release();
+    }
+  }
+
+  // Owned from the moment it is given, whatever fails around the wait for it: a timeout or a stop that comes as it is
+  // given leaves it held here, not lost. `places` outlives this.
+  [[nodiscard]] task<> take(slots &places QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+    co_await places.acquire();
+    places_ = &places;
+  }
+
+private:
+  slots *places_ = nullptr;
+};
 
 } // namespace quoll::async::detail
 

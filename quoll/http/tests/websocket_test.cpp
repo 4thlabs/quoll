@@ -436,23 +436,23 @@ TEST_CASE("websocket: one receive() at a time, refused when it is asked", "[http
   REQUIRE(quoll::test::run(again()) == text("now"));
 }
 
-TEST_CASE("websocket: an operation goes on once the connection is moved, which leaves the old one unusable",
-          "[http][websocket]") {
+TEST_CASE("websocket: copies are the same connection, and an operation outlives them all", "[http][websocket]") {
   auto [client_end, server_end] = io::make_memory_stream_pair();
-  auto server = server_over(std::move(server_end));
-  std::optional<http::websocket> moved;
+  std::optional<http::websocket> server{server_over(std::move(server_end))};
+  std::optional<http::websocket> copy{*server};
+  auto receiving = std::optional{server->receive()};
 
-  auto const moving = [&]() -> task<websocket_message> {
-    auto receiving = server.receive();
+  // One receive() at a time, whichever copy asks.
+  REQUIRE_THROWS_AS(copy->receive(), std::logic_error);
 
-    moved.emplace(std::move(server));
+  auto const outlived = [&]() -> task<websocket_message> {
+    server.reset();
+    copy.reset();
     co_await send_raw(client_end, http::format_websocket_frame(websocket_opcode::text, "still", true, mask));
-    co_return co_await std::move(receiving);
+    co_return co_await std::move(*receiving);
   };
 
-  REQUIRE(quoll::test::run(moving()) == text("still"));
-  REQUIRE_THROWS_AS(server.receive(), std::logic_error);
-  REQUIRE_THROWS_AS(server.send_text("x"), std::logic_error);
+  REQUIRE(quoll::test::run(outlived()) == text("still"));
 }
 
 TEST_CASE("websocket: what cannot be sent is refused when it is asked", "[http][websocket]") {
