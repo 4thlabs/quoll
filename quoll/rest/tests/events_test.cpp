@@ -1274,3 +1274,31 @@ TEST_CASE("rest events: an operation not running yet when its service returns is
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::logic_error);
   REQUIRE(sent.empty());
 }
+
+TEST_CASE("rest events: an Accept naming one media type that is no event stream takes it not", "[rest][sse]") {
+  http::router router;
+
+  router.get("/secured", [](http::request) {
+    http::response response;
+
+    response.fields.set("Content-Type", "application/json");
+    response.body = R"({"not":"a stream"})";
+    return response;
+  });
+
+  rest::client<changes::secured::api, streaming_transport> client{streaming_transport{std::move(router)}};
+
+  client.credentials<rest::bearer_auth>("token");
+
+  auto const reading = [&client]() -> task<std::string> {
+    try {
+      static_cast<void>(co_await client.subscribe<changes::secured::feed>("application/json"));
+    } catch (rest::call_error const &failed) {
+      co_return failed.failure().reason;
+    }
+
+    co_return "subscribed";
+  };
+
+  REQUIRE(quoll::test::run(reading()).value() == "not an event stream: Content-Type application/json");
+}

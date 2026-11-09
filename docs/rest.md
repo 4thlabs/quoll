@@ -377,7 +377,8 @@ if (auto const id = stream.last_event_id(); !id.empty()) {
 ```
 
 Any other answer throws `call_error`, as from `call`: a declared error, an undeclared status, a 200
-that is no event stream. An event that does not decode throws `call_error` from `next()`, holding
+that is no event stream. A contract that declares its own `Accept` sends it, and takes the one media
+type it names, if an event stream, a third-party API's `application/vnd.example+event-stream` say. An event that does not decode throws `call_error` from `next()`, holding
 it as its body, and reading goes on. `subscribe` needs a transport that gives a response as its head
 comes, `http::client` natively and through `fetch`, not `http::local_transport`. It goes straight
 through it, credentials applied. Interceptors take whole responses: on a client with any, `subscribe`

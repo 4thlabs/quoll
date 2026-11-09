@@ -141,8 +141,9 @@ private:
  * throws std::logic_error.
  *
  * It lives as long as the service's task, which mount() awaits: neither stored nor moved. Its operations are awaited
- * by the service, on its task or one of its own: when it ends, the stream waits for those running, and one not running
- * yet, kept or spawned past it, throws std::logic_error when it runs. A service that ends with no
+ * by the service, on its task or one of its own: when it ends, the stream waits for those running, and one asked
+ * before and not running yet, kept or spawned past it, throws std::logic_error when it runs. The sink itself goes with
+ * the service: a reference to it kept past it dangles, as any to a local does. A service that ends with no
  * event still answers a stream, with none. Thread safety: none, as it makes its writer with its first operation: from
  * the service's task, or one task at a time.
  */

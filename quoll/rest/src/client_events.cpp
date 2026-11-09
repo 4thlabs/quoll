@@ -58,11 +58,11 @@ bool is_accepted_stream(http::fields const &fields, std::string_view accepted) {
     return true;
   }
 
-  // A media type of its own counts when the Accept names it alone: one beside others, `application/json` say, names
-  // what a stream is not.
+  // A media type of its own counts when the Accept names it alone, and it names an event stream: a third-party API's
+  // `application/vnd.example+event-stream`, not `application/json`, which no stream is.
   auto const named = list_elements({accepted});
 
-  if (named.size() != 1 || named.front().contains('*')) {
+  if (named.size() != 1 || named.front().contains('*') || !media_type(named.front()).ends_with("event-stream")) {
     return false;
   }
 

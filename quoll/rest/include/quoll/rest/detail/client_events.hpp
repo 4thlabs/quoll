@@ -59,8 +59,8 @@ namespace quoll::rest::detail {
 template <class Endpoint>
 using event_stream_of = event_stream<typename events_part_of<Endpoint>::type, typename events_part_of<Endpoint>::codec>;
 
-// Whether a 200 is the stream asked for: a `text/event-stream`, or of the one media type the request's Accept named (a
-// third-party API's own), case and parameters aside.
+// Whether a 200 is the stream asked for: a `text/event-stream`, or of the one media type the request's Accept named, an
+// event stream of a third-party API's own, case and parameters aside.
 [[nodiscard]] bool is_accepted_stream(http::fields const &fields, std::string_view accepted);
 
 // What `streamed`, which is no stream of events, is, with `reason` and what came of its body, up to 64 KiB, an error's
