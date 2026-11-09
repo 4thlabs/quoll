@@ -51,6 +51,7 @@
 #include <quoll/http/serializer.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
+#include <quoll/http/version.hpp>
 #include <quoll/http/websocket_handshake.hpp>
 #include <quoll/io/network_connector.hpp>
 #include <quoll/io/write.hpp>
@@ -95,7 +96,8 @@ constexpr std::array handshake_fields{std::string_view{"Host"},
   // `websocket` alone, whatever its case (RFC 6455, 4.1), in one Upgrade field.
   auto const upgrade = answer.fields.find("Upgrade");
 
-  if (answer.status != status::switching_protocols || count("Upgrade") != 1 ||
+  // HTTP/1.1, as HTTP/1.0 has no switch (RFC 9110, 7.8).
+  if (answer.status != status::switching_protocols || answer.version != version::http_1_1 || count("Upgrade") != 1 ||
       !detail::iequals(detail::trim(*upgrade), "websocket") || !detail::connection_names(answer.fields, "upgrade")) {
     return false;
   }
@@ -258,17 +260,23 @@ websocket_handshake prepare_websocket_handshake(websocket_target const &where, h
     std::string offer;
 
     for (auto const &token : handshake.offered) {
-      offer += (offer.empty() ? "" : ", ") + token;
+      if (!offer.empty()) {
+        offer += ", ";
+      }
+
+      offer += token;
     }
 
-    message.fields.erase("Sec-WebSocket-Protocol");
+    // One field in place of all the offer's.
     message.fields.set("Sec-WebSocket-Protocol", std::move(offer));
   }
+
   message.fields.set("Host", host_field(where.server.host, where.server.port, where.server.secure ? 443 : 80));
   message.fields.set("Upgrade", "websocket");
   message.fields.set("Connection", "Upgrade");
   message.fields.set("Sec-WebSocket-Key", handshake.key);
   message.fields.set("Sec-WebSocket-Version", "13");
+
   // What the serializer refuses, said for connect_websocket.
   try {
     handshake.wire = serialize(message);

@@ -1099,3 +1099,15 @@ TEST_CASE("connect_websocket: the subprotocols offered go out as checked", "[cli
   REQUIRE(refusal(server, loop, "ws://h/", options) == "400");
   REQUIRE(sent.fields.find("Sec-WebSocket-Protocol") == "chat, superchat");
 }
+
+TEST_CASE("connect_websocket: a 101 in HTTP/1.0 is no switch", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  memory_server server{loop.get_executor(),
+                       answering_with_accept({}, "HTTP/1.0 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                                                 "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"),
+                       0,
+                       {},
+                       {}};
+
+  REQUIRE(refusal(server, loop, "ws://h/") == "101");
+}

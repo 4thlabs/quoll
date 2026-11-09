@@ -68,8 +68,9 @@ namespace quoll::http {
  * interim answers before it (103) are skipped. Anything else throws http::websocket_refused, with the server's answer,
  * even one that came as the handshake could not be sent whole. The connection and the handshake take no
  * longer than `options.handshake_timeout`, past which std::errc::timed_out is thrown; a network failure throws the
- * stream's error. Without a timer in the executor, nothing limits them. A client sends no ping on its own: one that
- * wants to find a server gone pings it from a task beside what receives.
+ * stream's error. Without a timer in the executor, nothing limits them. To end the connection cleanly, close() it and
+ * receive() the server's answer: a websocket whose last copy goes without that cuts the connection with no close. A
+ * client sends no ping on its own: one that wants to find a server gone pings it from a task beside what receives.
  *
  * @throws std::invalid_argument, when called, for another URL, a field of the handshake's own, a subprotocol offered
  * that is no token, a request that would not serialize, or `wss` with a connector that is no io::TlsConnector; and
