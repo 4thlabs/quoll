@@ -61,10 +61,11 @@ struct websocket_options {
   /** @brief The most a message holds, its fragments joined: a larger one closes the connection with 1009. */
   std::size_t max_message_size = websocket_parser::default_max_message_size;
   /**
-   * @brief For a connection http::accept_websocket hands over: how long the peer may send nothing before it is pinged,
-   * and then before it is taken as gone, which stops the handler; zero, never, for a peer the application watches
-   * itself. For any connection with a timer, how long a write may wait with nothing taken before the peer is taken as
-   * gone: this, or 30 seconds where it is zero.
+   * @brief How long the peer may send nothing before it is pinged, and then before it is taken as gone; zero, never,
+   * for a peer the application watches itself. For a connection http::accept_websocket hands over, all along, a peer
+   * gone stopping the handler; for any other, a client's, while a receive() reads, which then throws why. For any
+   * connection with a timer, how long a write may wait with nothing taken before the peer is taken as gone: this, or
+   * 30 seconds where it is zero.
    */
   std::chrono::nanoseconds ping_interval = std::chrono::seconds{30};
 };
@@ -101,16 +102,23 @@ struct websocket_options {
  * unsent. A receive() stopped, or failed, ends receiving: a stream such as TLS does not take a read up again once it
  * was stopped, so the next one throws the same. Without a timer, nothing here times out.
  *
+ * A connection no server watches, a client's, keeps itself alive while its receive()s read, as a server's does beside
+ * its handler, given a timer: a peer that sent nothing for ping_interval is pinged, and one that sent nothing for
+ * another, or for one after a close has left, is taken as gone. The receive() pending then throws
+ * std::errc::timed_out, or the failure of the ping that could not leave, and so does every one after it. The ping goes
+ * on its own: a receive() never waits for it.
+ *
  * Copied, not moved: its copies are the same connection, as http::client's are, which a task receiving and another
  * sending may each hold. An operation holds what it works on from when it is called, so that every copy may go before
  * it ends: the stream closes once the last of them, and of the operations, has. One receive() at a time, across copies,
  * another asked while one is pending throwing std::logic_error, in every build.
  *
  * Thread safety: that of the stream, which an asio socket does not share between threads. What a receive() and a send
- * do takes turns as long as they run on one executor that runs a handler at a time: the strand of its own a server
- * gives each connection, where its handler runs, and the tasks it awaits through when_all. A task on another executor,
- * one that others send through to broadcast say, would reach the stream at once: what others want sent goes to the
- * handler, which sends it itself.
+ * do, and a client's keep-alive, which runs on the executor of the receive() that started it, takes turns as long as
+ * they run on one executor that runs a handler at a time: the strand of its own a server gives each connection, where
+ * its handler runs, or an executor of quoll::runtime, a strand on several threads, where a client runs, and the tasks
+ * they await through when_all. A task on another executor, one that others send through to broadcast say, would reach
+ * the stream at once: what others want sent goes to the handler, which sends it itself.
  */
 class websocket {
 public:
@@ -127,7 +135,8 @@ public:
   /**
    * @brief The next text or binary message, or the peer's close (`opcode` close, with its code and reason), the last.
    *
-   * @throws std::system_error with an http::error for a peer that breaks the protocol, or the stream's error, and
+   * @throws std::system_error with an http::error for a peer that breaks the protocol, the stream's error, or
+   * std::errc::timed_out for a peer the keep-alive took as gone (see websocket_options::ping_interval), and
    * std::logic_error asked again after the close, or while another receive() is pending, through any copy.
    */
   [[nodiscard]] async::task<websocket_message> receive();

@@ -1487,3 +1487,31 @@ TEST_CASE("connect_websocket: a negative handshake_timeout has expired already",
 
   REQUIRE(quoll::test::run(time, connecting()) == "timed out");
 }
+
+TEST_CASE("connect_websocket: its receive() takes a server that answers no ping as gone", "[client][websocket]") {
+  quoll::test::virtual_time time;
+  http::router router;
+
+  // A handler that never receives: the client's pings go unanswered.
+  router.get("/", [](http::request request) {
+    return http::accept_websocket(request, [](http::websocket) -> task<> { co_await quoll::async::sleep_for(1h); });
+  });
+
+  http::websocket_connect_options options;
+
+  options.websocket.ping_interval = 1s;
+
+  auto const quiet = [&]() -> task<std::pair<std::error_code, std::chrono::nanoseconds>> {
+    auto connected = co_await http::connect_websocket(spawning_connector{quoll::test::serving(router)}, "ws://h/",
+                                                      std::move(options));
+    auto const switched_at = time.now();
+    auto const code = co_await quoll::test::code_thrown_by(connected.socket.receive());
+
+    co_return std::pair{code, time.now() - switched_at};
+  };
+
+  auto const [code, after] = quoll::test::run(time, quiet()).value();
+
+  REQUIRE(code == std::errc::timed_out);
+  REQUIRE(after == 2s);
+}
