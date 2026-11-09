@@ -39,8 +39,14 @@
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/async/yield.hpp>
+#include <quoll/http/accept_websocket.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/format_websocket_frame.hpp>
+#include <quoll/http/local_transport.hpp>
+#include <quoll/http/request.hpp>
+#include <quoll/http/response.hpp>
+#include <quoll/http/router.hpp>
+#include <quoll/http/status.hpp>
 #include <quoll/http/websocket.hpp>
 #include <quoll/http/websocket_message.hpp>
 #include <quoll/http/websocket_parser.hpp>
@@ -500,6 +506,28 @@ TEST_CASE("websocket: the stream closes once the last copy, and the last operati
 
   // No close was sent: the stream itself ends.
   REQUIRE(quoll::test::run(rest()) == "");
+}
+
+TEST_CASE("websocket: local_transport, with no connection to hand over, answers 500 and keeps no upgrade",
+          "[http][websocket]") {
+  http::router router;
+  http::request handshake;
+
+  router.get("/socket", [](http::request request) {
+    return http::accept_websocket(request, [](http::websocket) -> task<> { co_return; });
+  });
+  handshake.target = "/socket";
+  handshake.fields.add("Host", "h");
+  handshake.fields.add("Upgrade", "websocket");
+  handshake.fields.add("Connection", "Upgrade");
+  handshake.fields.add("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+  handshake.fields.add("Sec-WebSocket-Version", "13");
+
+  // A 101 is no final response: replaced with a 500, which carries nothing of it.
+  auto const answer = quoll::test::run(http::local_transport{router}.send(handshake));
+
+  REQUIRE(answer->status == http::status::internal_server_error);
+  REQUIRE_FALSE(answer->upgrade);
 }
 
 TEST_CASE("websocket: what cannot be sent is refused when it is asked", "[http][websocket]") {

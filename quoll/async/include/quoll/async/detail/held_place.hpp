@@ -63,6 +63,16 @@ public:
     }
   }
 
+  // A place, if one is free now, held here: see slots::try_acquire(). `places` outlives this.
+  [[nodiscard]] bool try_take(slots &places) noexcept {
+    if (places_ != nullptr || !places.try_acquire()) {
+      return false;
+    }
+
+    places_ = &places;
+    return true;
+  }
+
   // Owned from the moment it is given, whatever fails around the wait for it: a timeout or a stop that comes as it is
   // given leaves it held here, not lost. `places` outlives this.
   [[nodiscard]] task<> take(slots &places QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {

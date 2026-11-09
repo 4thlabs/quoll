@@ -71,7 +71,9 @@ namespace quoll::http {
  * to complete, with a subprotocol the request offers in `Sec-WebSocket-Protocol`, chosen in the fields. A route that
  * refuses a handshake, for want of credentials say, returns a response of its own instead: one that hands the
  * connection over with a status other than 101 is answered 500. A handshake that comes as the server drains is answered
- * 503.
+ * 503. A browser sends its cookies with a handshake whatever page asks for it, and holds no WebSocket to the same
+ * origin: a route that knows its users by a cookie checks the request's `Origin` against its own before accepting, or a
+ * page of another site acts for them (cross-site WebSocket hijacking).
  *
  * The handler runs in the task of the connection, on its strand, as a request's handler does. The timeouts of the
  * connection no longer apply, as a WebSocket may stay quiet: a peer quiet for websocket_options::ping_interval, 30
@@ -79,9 +81,11 @@ namespace quoll::http {
  * half-open, has its handler stopped, which frees the connection. That needs the handler to keep receiving, which is
  * also what answers the peer: one that waits on something else for longer than an interval receives beside it, through
  * when_all, or sets a longer ping_interval. A task left holding a copy of the websocket past the handler keeps the
- * connection open, out of the keep-alive's watch and the server's count, until it lets go. Stopping a server sends a
- * close with 1001 (going away) as it starts to drain, which a handler that receives sees as the last message once the
- * peer has answered it, then waits for the handler up to its `shutdown_timeout`, and stops what it awaits.
+ * connection open, out of the keep-alive's watch and the server's count, until it lets go. Once a close has left, the
+ * handler's own or a drain's, the peer's answer is waited for as a pong is: one that does not come within
+ * `ping_interval`, or 30 seconds where it is zero, has the handler stopped. Stopping a server sends a close with 1001
+ * (going away) as it starts to drain, which a handler that receives sees as the last message once the peer has answered
+ * it, then waits for the handler up to its `shutdown_timeout`, and stops what it awaits.
  *
  * Once the handler is over, a close goes, unless one did: 1000, or 1011 if the handler threw. What the peer sends is
  * then read up to its close, and the server's side shut, so that the close is not lost to a reset, each step within

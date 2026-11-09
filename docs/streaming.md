@@ -380,7 +380,10 @@ The route answers 101, with the `Sec-WebSocket-Accept` the handshake asks for. A
 handshake gets 400, or 426 with `Sec-WebSocket-Version: 13` for another version, and the handler never
 runs. The response is the route's to complete, with a subprotocol from those the request offers in
 `Sec-WebSocket-Protocol`, say. A route that refuses a handshake, for want of credentials say, returns a
-response of its own instead. Over TLS, as `wss://`, it is the same: the handshake is no cryptography.
+response of its own instead. A browser sends its cookies with a handshake whatever page asks for it, and
+holds no WebSocket to the same origin: a route that knows its users by a cookie checks the request's
+`Origin` against its own before accepting, or a page of another site acts for them (cross-site WebSocket
+hijacking). Over TLS, as `wss://`, it is the same: the handshake is no cryptography.
 
 `receive()` gives each text or binary message, its fragments joined, then the peer's close, the last
 message, with its `close_code` and reason in `data`. It answers pings with pongs, drops pongs, and answers

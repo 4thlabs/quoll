@@ -62,7 +62,9 @@ struct websocket_options {
   std::size_t max_message_size = websocket_parser::default_max_message_size;
   /**
    * @brief For a connection http::accept_websocket hands over: how long it may stay quiet before it is pinged, and
-   * then before it is taken as gone, which stops its handler. Zero: never, for a peer the application watches itself.
+   * then before it is taken as gone, which stops its handler; zero, never, for a peer the application watches itself.
+   * For any connection with a timer, how long what it sends on its own may take to leave: this, or 30 seconds where it
+   * is zero.
    */
   std::chrono::nanoseconds ping_interval = std::chrono::seconds{30};
 };
@@ -93,10 +95,14 @@ struct websocket_options {
  * message throws std::system_error with `http::error::websocket_closed`, as does all that follows a frame cut short,
  * by a stop or a failure of the stream; a close() then does nothing.
  *
- * Nothing here times out, as a peer may stay quiet for as long as it likes: http::accept_websocket pings a quiet one,
- * and stops the handler of one that has gone (see websocket_options::ping_interval). What it reads to tell is what
- * receive() reads: a handler that only sends receives beside it all the same, which also answers the peer's pings and
- * close. A receive() stopped, or failed, ends receiving, as what it read of a frame cannot be taken up again.
+ * A peer may stay quiet for as long as it likes: http::accept_websocket pings a quiet one, and stops the handler of one
+ * that has gone (see websocket_options::ping_interval). What it reads to tell is what receive() reads: a handler that
+ * only sends receives beside it all the same, which also answers the peer's pings and close. What the connection sends
+ * on its own, a pong or the close that answers the peer's, goes whole, whatever stops the receive() that read what it
+ * answers, within websocket_options::ping_interval, or 30 seconds where it is zero, given a timer: a peer that does
+ * not take it by then is taken as gone. A pong does not wait for a long message to leave: it goes behind it, while
+ * receive() reads on. A receive() stopped, or failed, ends receiving, as what it read of a frame cannot be taken up
+ * again.
  *
  * Copied, not moved: its copies are the same connection, as http::client's are, which a task receiving and another
  * sending may each hold. An operation holds what it works on from when it is called, so that every copy may go before
