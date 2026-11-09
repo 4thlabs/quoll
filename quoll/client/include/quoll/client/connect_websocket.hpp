@@ -38,6 +38,7 @@
 #define QUOLL_CLIENT_CONNECT_WEBSOCKET_HPP
 
 #include <quoll/async/task.hpp>
+#include <quoll/client/detail/client_backend.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/parser.hpp>
@@ -49,9 +50,6 @@
 #include <quoll/io/tls_options.hpp>
 
 #include <chrono>
-#include <cstdint>
-#include <functional>
-#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -101,23 +99,22 @@ private:
 
 namespace detail {
 
-// What opens the stream of a WebSocket, a connector and where to, held by the frame that awaits what it gives.
-using websocket_opener = std::function<async::task<io::any_stream>()>;
-
-// A client's handshake, ready to send: its request on the wire, its key, and the subprotocols it offers.
+// A client's handshake, ready to send: its request on the wire, its key, and the subprotocols it offers, the values of
+// its `Sec-WebSocket-Protocol` fields joined with commas.
 struct websocket_handshake {
   std::string wire;
   std::string key;
-  http::fields offered;
+  std::string offered;
 };
 
 // The handshake to `where` with `fields`, checked: std::invalid_argument for a field of the handshake's own, or a
 // request that would not serialize.
 [[nodiscard]] websocket_handshake prepare_websocket_handshake(websocket_target const &where, http::fields fields);
 
-// The rest of connect_websocket(), on the stream `open` gives, compiled once.
-[[nodiscard]] async::task<connected_websocket>
-connect_websocket_through(websocket_opener open, websocket_handshake handshake, websocket_connect_options options);
+// The rest of connect_websocket(), through `connector` to `server`, compiled once.
+[[nodiscard]] async::task<connected_websocket> connect_websocket_through(connector_handle connector, origin server,
+                                                                         websocket_handshake handshake,
+                                                                         websocket_connect_options options);
 
 } // namespace detail
 
@@ -155,23 +152,8 @@ template <io::Connector Connector>
   // Before any connection: what would not serialize is refused here.
   auto handshake = detail::prepare_websocket_handshake(where, options.fields);
 
-  // A copy of all it needs, as the task it gives may outlive what this was called with; the connector shared, as one
-  // may move without copying.
-  detail::websocket_opener open = [connector = std::make_shared<Connector const>(std::move(connector)),
-                                   host = where.server.host, port = where.server.port, secure = where.server.secure,
-                                   tls = options.tls]() -> async::task<io::any_stream> {
-    if constexpr (io::TlsConnector<Connector>) {
-      if (secure) {
-        return connector->connect_tls(host, port, tls);
-      }
-    }
-
-    // Only a connector with TLS reads it.
-    static_cast<void>(secure);
-    return connector->connect(host, port);
-  };
-
-  return detail::connect_websocket_through(std::move(open), std::move(handshake), std::move(options));
+  return detail::connect_websocket_through(detail::make_connector_handle(std::move(connector)), where.server,
+                                           std::move(handshake), std::move(options));
 }
 
 /**

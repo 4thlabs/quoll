@@ -39,5 +39,6 @@
 
 #include <quoll/client/client.hpp>
 #include <quoll/client/client_options.hpp>
+#include <quoll/client/connect_websocket.hpp>
 
 #endif // QUOLL_CLIENT_HPP

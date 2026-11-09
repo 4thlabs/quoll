@@ -48,12 +48,12 @@
 #include <quoll/http/verb.hpp>
 #include <quoll/http/websocket_handshake.hpp>
 #include <quoll/http/websocket_parser.hpp>
+#include <quoll/io/error.hpp>
 #include <quoll/io/network_connector.hpp>
 #include <quoll/io/write.hpp>
 
 #include <algorithm>
 #include <array>
-#include <optional>
 #include <ranges>
 #include <span>
 #include <stdexcept>
@@ -73,25 +73,22 @@ constexpr std::array handshake_fields{std::string_view{"Host"},
                                       std::string_view{"Sec-WebSocket-Version"},
                                       std::string_view{"Sec-WebSocket-Extensions"}};
 
-// Whether `token` is among the comma-separated subprotocols `fields` offer.
-[[nodiscard]] bool offered(http::fields const &fields, std::string_view token) {
-  for (auto const &field : fields) {
-    if (!detail::iequals(field.name, "Sec-WebSocket-Protocol")) {
-      continue;
-    }
-
-    for (auto const member : std::views::split(std::string_view{field.value}, ',')) {
-      if (detail::trim(std::string_view{member.begin(), member.end()}) == token) {
-        return true;
-      }
-    }
-  }
-
-  return false;
+// Whether `token` is among the comma-separated subprotocols `offered`, compared as they are, as RFC 6455 has them.
+[[nodiscard]] bool offers(std::string_view offered, std::string_view token) {
+  return std::ranges::any_of(std::views::split(offered, ','), [token](auto const member) {
+    return detail::trim(std::string_view{member.begin(), member.end()}) == token;
+  });
 }
 
-// Whether `answer` switches to the WebSocket the handshake with `key` and `fields` asked for (RFC 6455, 4.1).
-[[nodiscard]] bool switches(http::response const &answer, std::string_view key, http::fields const &fields) {
+// Whether a read failed for the peer having gone, which a write that failed before it explains better.
+[[nodiscard]] bool peer_has_gone(std::error_code error) noexcept {
+  return error == io::error::end_of_stream || error == std::errc::connection_reset || error == std::errc::broken_pipe ||
+         error == std::errc::connection_aborted || error == std::errc::not_connected ||
+         error == std::errc::network_reset;
+}
+
+// Whether `answer` switches to the WebSocket the handshake with `key`, offering `offered`, asked for (RFC 6455, 4.1).
+[[nodiscard]] bool switches(http::response const &answer, std::string_view key, std::string_view offered) {
   if (answer.status != status::switching_protocols || !detail::field_names(answer.fields, "Upgrade", "websocket") ||
       !detail::connection_names(answer.fields, "upgrade")) {
     return false;
@@ -110,15 +107,16 @@ constexpr std::array handshake_fields{std::string_view{"Host"},
 
   auto const protocol = answer.fields.find("Sec-WebSocket-Protocol");
 
-  return !protocol || offered(fields, detail::trim(*protocol));
+  return !protocol || offers(offered, detail::trim(*protocol));
 }
 
 // Interim answers skipped before the 101, against a server sending them for ever.
 constexpr int max_interim_answers = 8;
 
-async::task<connected_websocket> shake_hands(detail::websocket_opener open, detail::websocket_handshake handshake,
-                                             websocket_connect_options options) {
-  auto stream = co_await open();
+async::task<connected_websocket> shake_hands(detail::connector_handle connector, detail::origin server,
+                                             detail::websocket_handshake handshake, websocket_connect_options options) {
+  auto stream =
+      co_await connector.open(connector.connector.get(), server.host, server.port, server.secure, options.tls);
   // Kept rather than thrown at once: a server refusing as it reads may have answered, which says more.
   auto const unsent = (co_await io::write(stream, std::as_bytes(std::span{handshake.wire}))).error;
   std::string buffer;
@@ -127,9 +125,12 @@ async::task<connected_websocket> shake_hands(detail::websocket_opener open, deta
     response_parser parser{options.limits};
 
     if (auto const failed = co_await http::read(stream, buffer, parser)) {
-      throw std::system_error{unsent ? unsent : failed,
-                              unsent ? "quoll::http::connect_websocket: cannot send the handshake"
-                                     : "quoll::http::connect_websocket: cannot read the server's answer"};
+      // The write's failure, when what ended the read is only the peer having gone.
+      auto const sending = unsent && peer_has_gone(failed);
+
+      throw std::system_error{sending ? unsent : failed,
+                              sending ? "quoll::http::connect_websocket: cannot send the handshake"
+                                      : "quoll::http::connect_websocket: cannot read the server's answer"};
     }
 
     auto answer = parser.release();
@@ -169,7 +170,14 @@ websocket_handshake prepare_websocket_handshake(websocket_target const &where, h
     }
   }
 
-  websocket_handshake handshake{.wire = {}, .key = random_websocket_key(), .offered = fields};
+  websocket_handshake handshake{.wire = {}, .key = random_websocket_key(), .offered = {}};
+
+  for (auto const &field : fields) {
+    if (iequals(field.name, "Sec-WebSocket-Protocol")) {
+      handshake.offered += field.value + ',';
+    }
+  }
+
   request message;
 
   message.method = verb::get;
@@ -184,12 +192,13 @@ websocket_handshake prepare_websocket_handshake(websocket_target const &where, h
   return handshake;
 }
 
-async::task<connected_websocket> connect_websocket_through(websocket_opener open, websocket_handshake handshake,
+async::task<connected_websocket> connect_websocket_through(connector_handle connector, origin server,
+                                                           websocket_handshake handshake,
                                                            websocket_connect_options options) {
   auto const limit = options.handshake_timeout;
 
   co_return co_await async::detail::with_optional_timeout(
-      limit, shake_hands(std::move(open), std::move(handshake), std::move(options)));
+      limit, shake_hands(std::move(connector), std::move(server), std::move(handshake), std::move(options)));
 }
 
 } // namespace detail

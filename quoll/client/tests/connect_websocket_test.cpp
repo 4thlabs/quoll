@@ -39,6 +39,7 @@
 #include <quoll/client/connect_websocket.hpp>
 #include <quoll/http/accept_websocket.hpp>
 #include <quoll/http/detail/websocket_key.hpp>
+#include <quoll/http/error.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
@@ -50,6 +51,7 @@
 #include <quoll/http/websocket_message.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/connector.hpp>
+#include <quoll/io/io_result.hpp>
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/io/tls_connector.hpp>
 #include <quoll/io/tls_options.hpp>
@@ -64,6 +66,7 @@
 #include <chrono>
 #include <concepts>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -194,6 +197,57 @@ task<> early_hints_then_switch(io::memory_stream stream) {
 
   (void)co_await io::write(stream, std::as_bytes(std::span{answer}));
 }
+
+// A server that answers the handshake with `before`, then with `answer`, `{accept}` in it replaced with the
+// Sec-WebSocket-Accept the handshake's key calls for.
+std::function<task<>(io::memory_stream)> answering_with_accept(std::string before, std::string answer) {
+  return [before = std::move(before), answer = std::move(answer)](io::memory_stream stream) -> task<> {
+    std::string buffer;
+    http::request_parser parser;
+
+    static_cast<void>(co_await http::read(stream, buffer, parser));
+
+    auto const request = parser.release();
+    auto const accept = http::websocket_accept(request.fields.find("Sec-WebSocket-Key").value_or(""));
+    auto wire = before + answer;
+
+    wire.replace(wire.find("{accept}"), std::string_view{"{accept}"}.size(), accept);
+    (void)co_await io::write(stream, std::as_bytes(std::span{wire}));
+  };
+}
+
+// A stream that cannot write, a peer that refused as it read, and reads what that peer sent before it went.
+class unwritable {
+public:
+  explicit unwritable(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const>) {
+    co_return io::io_result{std::make_error_code(std::errc::broken_pipe), 0};
+  }
+
+private:
+  io::memory_stream inner_;
+};
+
+// A connector to a peer that answered `answer` and went, before reading anything.
+class refusing_connector {
+public:
+  explicit refusing_connector(std::string answer) : answer_(std::move(answer)) {}
+
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    auto [client_end, server_end] = io::make_memory_stream_pair();
+
+    (void)co_await io::write(server_end, std::as_bytes(std::span{answer_}));
+    co_return io::any_stream{unwritable{std::move(client_end)}};
+  }
+
+private:
+  std::string answer_;
+};
+
+static_assert(io::Connector<refusing_connector>);
 
 } // namespace
 
@@ -443,4 +497,62 @@ TEST_CASE("connect_websocket: each handshake has a key of its own", "[client][we
   // 16 bytes in base64, as a server reads them.
   REQUIRE(http::is_websocket_upgrade(handshake));
   REQUIRE(first != second);
+}
+
+TEST_CASE("connect_websocket: a refusal that came as the handshake could not be sent is the one thrown",
+          "[client][websocket]") {
+  quoll::async::run_loop loop;
+
+  auto const connecting = [&]() -> task<std::string> {
+    try {
+      static_cast<void>(co_await http::connect_websocket(
+          refusing_connector{"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer\r\nContent-Length: 0\r\n\r\n"},
+          "ws://h/"));
+    } catch (http::websocket_refused const &refused) {
+      co_return std::string{refused.response().fields.find("WWW-Authenticate").value_or("")};
+    }
+
+    co_return std::string{};
+  };
+
+  REQUIRE(quoll::test::run(loop, connecting()) == "Bearer");
+}
+
+TEST_CASE("connect_websocket: more interim answers than a server needs", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  std::string hints;
+
+  for (auto count = 0; count < 9; ++count) {
+    hints += "HTTP/1.1 103 Early Hints\r\n\r\n";
+  }
+
+  memory_server server{loop.get_executor(),
+                       answering_with_accept(hints, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                                                    "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"),
+                       0,
+                       {},
+                       {}};
+
+  auto const connecting = [&]() -> task<std::error_code> {
+    co_return co_await quoll::test::code_thrown_by(http::connect_websocket(memory_connector{server}, "ws://h/"));
+  };
+
+  REQUIRE(quoll::test::run(loop, connecting()) == http::error::bad_message);
+}
+
+TEST_CASE("connect_websocket: a 101 that does not name the WebSocket is refused", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  std::string answer;
+
+  SECTION("no Upgrade") {
+    answer = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n";
+  }
+
+  SECTION("no Connection: Upgrade") {
+    answer = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: {accept}\r\n\r\n";
+  }
+
+  memory_server server{loop.get_executor(), answering_with_accept({}, answer), 0, {}, {}};
+
+  REQUIRE(refusal(server, loop, "ws://h/") == "101");
 }

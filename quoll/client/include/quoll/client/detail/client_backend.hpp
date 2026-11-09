@@ -43,12 +43,15 @@
 #include <quoll/http/response.hpp>
 #include <quoll/http/streamed_response.hpp>
 #include <quoll/io/any_stream.hpp>
+#include <quoll/io/connector.hpp>
+#include <quoll/io/tls_connector.hpp>
 #include <quoll/io/tls_options.hpp>
 
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace quoll::http::detail {
 
@@ -58,6 +61,24 @@ struct connector_handle {
   async::task<io::any_stream> (*open)(void const *connector, std::string const &host, std::uint16_t port, bool secure,
                                       io::tls_client_options const &tls);
 };
+
+// `connector`, erased: shared, as one may move without copying, and opened with TLS when asked, if it can.
+template <io::Connector Connector>
+[[nodiscard]] connector_handle make_connector_handle(Connector connector) {
+  return {std::make_shared<Connector const>(std::move(connector)),
+          [](void const *erased, std::string const &to, std::uint16_t on, [[maybe_unused]] bool use_tls,
+             [[maybe_unused]] io::tls_client_options const &tls) -> async::task<io::any_stream> {
+            auto const &target = *static_cast<Connector const *>(erased);
+
+            if constexpr (io::TlsConnector<Connector>) {
+              if (use_tls) {
+                return target.connect_tls(to, on, tls);
+              }
+            }
+
+            return target.connect(to, on);
+          }};
+}
 
 // What a client does, compiled once: over a connector, or through the platform of the executor.
 struct client_operations {

@@ -288,22 +288,9 @@ private:
   [[nodiscard]] static detail::client_backend make_backend(Connector connector, std::string host, std::uint16_t port,
                                                            bool secure, std::string prefix,
                                                            client_options const &options) {
-    detail::connector_handle handle{
-        std::make_shared<Connector const>(std::move(connector)),
-        [](void const *erased, std::string const &to, std::uint16_t on, [[maybe_unused]] bool use_tls,
-           [[maybe_unused]] io::tls_client_options const &tls) -> async::task<io::any_stream> {
-          auto const &target = *static_cast<Connector const *>(erased);
 
-          if constexpr (io::TlsConnector<Connector>) {
-            if (use_tls) {
-              return target.connect_tls(to, on, tls);
-            }
-          }
-
-          return target.connect(to, on);
-        }};
-
-    return detail::make_client_backend(std::move(handle), std::move(host), port, secure, std::move(prefix), options);
+    return detail::make_client_backend(detail::make_connector_handle(std::move(connector)), std::move(host), port,
+                                       secure, std::move(prefix), options);
   }
 
   detail::client_backend backend_;

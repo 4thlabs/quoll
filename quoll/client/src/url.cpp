@@ -385,18 +385,9 @@ websocket_target parse_websocket_url(std::string_view url) {
     throw std::invalid_argument{"quoll::http::connect_websocket: a WebSocket URL has no fragment"};
   }
 
+  // A query is checked as a request's target is, as the handshake is built.
   auto const question = rest.find('?');
   auto const query = question == std::string_view::npos ? std::string_view{} : rest.substr(question);
-
-  // What a request line could not carry as itself.
-  if (std::ranges::any_of(query, [](char letter) {
-        auto const byte = static_cast<unsigned char>(letter);
-
-        return byte <= 0x20U || byte == 0x7FU;
-      })) {
-    throw std::invalid_argument{"quoll::http::connect_websocket: the query holds a space or a control character"};
-  }
-
   auto const before = rest.substr(0, question);
   auto const slash = before.find('/');
   auto const path = slash == std::string_view::npos ? std::string_view{"/"} : before.substr(slash);
@@ -406,6 +397,7 @@ websocket_target parse_websocket_url(std::string_view url) {
 
   try {
     server = parse_url((secure ? std::string{"https://"} : std::string{"http://"}) + std::string{before});
+    static_cast<void>(host_field(server.host, server.port));
   } catch (std::invalid_argument const &refused) {
     constexpr std::string_view client_prefix = "quoll::http::client: ";
     std::string_view reason = refused.what();
