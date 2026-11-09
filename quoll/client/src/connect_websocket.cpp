@@ -52,7 +52,6 @@
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/http/websocket_handshake.hpp>
-#include <quoll/http/websocket_parser.hpp>
 #include <quoll/io/network_connector.hpp>
 #include <quoll/io/write.hpp>
 

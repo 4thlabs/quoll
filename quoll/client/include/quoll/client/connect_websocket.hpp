@@ -43,7 +43,6 @@
 #include <quoll/client/detail/connect_websocket.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/client/websocket_connect_options.hpp>
-#include <quoll/client/websocket_refused.hpp>
 #include <quoll/io/connector.hpp>
 #include <quoll/io/tls_connector.hpp>
 

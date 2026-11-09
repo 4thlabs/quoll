@@ -89,6 +89,7 @@ quoll_declare_tests(
     tests/asio_test.cpp
     tests/threads_test.cpp
     tests/tls_test.cpp
+    tests/websocket_test.cpp
   DEPS
     quoll_asio_test_tls
     quoll::asio

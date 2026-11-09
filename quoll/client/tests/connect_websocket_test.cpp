@@ -38,6 +38,7 @@
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/client/connect_websocket.hpp>
+#include <quoll/client/websocket_refused.hpp>
 #include <quoll/http/accept_websocket.hpp>
 #include <quoll/http/detail/websocket_key.hpp>
 #include <quoll/http/error.hpp>
@@ -148,21 +149,29 @@ static_assert(io::Connector<stuck_connector>);
 // connector is a member: a coroutine called on a temporary would read it once that has gone.
 class tls_memory_connector {
 public:
-  tls_memory_connector(memory_server &server, bool &used_tls) noexcept : inner_(server), used_tls_(&used_tls) {}
+  tls_memory_connector(memory_server &server, bool &used_tls, std::string *trusted = nullptr) noexcept
+      : inner_(server), used_tls_(&used_tls), trusted_(trusted) {}
 
   [[nodiscard]] task<io::any_stream> connect(std::string host, std::uint16_t port) const {
     return inner_.connect(std::move(host), port);
   }
 
   [[nodiscard]] task<io::any_stream> connect_tls(std::string host, std::uint16_t port,
-                                                 io::tls_client_options const &) const {
+                                                 io::tls_client_options const &tls) const {
     *used_tls_ = true;
+
+    // What a copy of it, as connect_websocket keeps, was asked to trust.
+    if (trusted_ != nullptr) {
+      *trusted_ = tls.ca_file;
+    }
+
     return inner_.connect(std::move(host), port);
   }
 
 private:
   memory_connector inner_;
   bool *used_tls_;
+  std::string *trusted_;
 };
 
 static_assert(io::TlsConnector<tls_memory_connector>);
@@ -871,5 +880,64 @@ TEST_CASE("connect_websocket: each field of the handshake's own is refused", "[c
     options.fields.set(name, "1");
 
     REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", options), std::invalid_argument);
+  }
+}
+
+TEST_CASE("connect_websocket: its options reach what they say", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  http::router router;
+
+  router.get("/", [](http::request request) {
+    return http::accept_websocket(request, [](http::websocket socket) -> task<> {
+      co_await socket.send_text("12345");
+
+      while ((co_await socket.receive()).opcode != websocket_opcode::close) {
+      }
+    });
+  });
+
+  memory_server server{loop.get_executor(), quoll::test::serving(router), 0, {}, {}};
+  http::websocket_connect_options options;
+
+  SECTION("websocket: the most a message holds") {
+    options.websocket.max_message_size = 4;
+
+    auto const receiving = [&]() -> task<std::error_code> {
+      auto connected = co_await http::connect_websocket(memory_connector{server}, "ws://h/", std::move(options));
+
+      co_return co_await quoll::test::code_thrown_by(connected.socket.receive());
+    };
+
+    REQUIRE(quoll::test::run(loop, receiving()) == http::error::websocket_too_large);
+  }
+
+  SECTION("limits: the size of the server's answer") {
+    options.limits.max_header_size = 32;
+
+    auto const connecting = [&]() -> task<std::error_code> {
+      co_return co_await quoll::test::code_thrown_by(
+          http::connect_websocket(memory_connector{server}, "ws://h/", std::move(options)));
+    };
+
+    REQUIRE(quoll::test::run(loop, connecting()) == http::error::header_too_large);
+  }
+
+  SECTION("tls: what the connection trusts") {
+    bool used_tls = false;
+    std::string trusted;
+
+    options.tls.ca_file = "authorities.pem";
+
+    auto const connecting = [&]() -> task<int> {
+      auto connected = co_await http::connect_websocket(tls_memory_connector{server, used_tls, &trusted}, "wss://h/",
+                                                        std::move(options));
+
+      co_await connected.socket.close();
+      static_cast<void>(co_await connected.socket.receive());
+      co_return 1;
+    };
+
+    REQUIRE(quoll::test::run(loop, connecting()) == 1);
+    REQUIRE(trusted == "authorities.pem");
   }
 }

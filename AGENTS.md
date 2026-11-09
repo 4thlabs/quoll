@@ -87,7 +87,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   `quoll_main_tests()` in `tests/CMakeLists.txt`).
   Helpers shared by the tests of every module live in `tests/support/quoll/test/` (`quoll::test::run` runs a
   task on a run_loop or a `virtual_time`, whose timer jumps to the next deadline instead of waiting;
-  `quoll::test::memory_renderer`, `quoll::test::memory_server` and `memory_connector`, an `http::client` reaching an `http::server` over memory streams, `quoll::test::overloaded`, `quoll::test::check`, `quoll::test::code_thrown_by`, the code of what a task throws, and `quoll::test::next_websocket_message`, for a peer that speaks bytes): use them rather than copying them into a test file.
+  `quoll::test::memory_renderer`, `quoll::test::memory_server` and `memory_connector`, an `http::client` reaching an `http::server` over memory streams, `quoll::test::overloaded`, `quoll::test::check`, `quoll::test::code_thrown_by`, the code of what a task throws, `quoll::test::next_websocket_message`, for a peer that speaks bytes, and `quoll::test::websocket_echo`): use them rather than copying them into a test file.
 - What must not compile (the compile-time checks of an API, `static_assert` messages included) is tested too: one source
   per case under `tests/compile_fail/`, starting with `// expect: <message>`, declared with
   `quoll_declare_compile_fail_tests(SOURCES ... DEPS ...)`. Each becomes a ctest `compile_fail.<case>` that compiles it
