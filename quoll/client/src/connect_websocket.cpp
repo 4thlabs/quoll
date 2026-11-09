@@ -43,6 +43,7 @@
 #include <quoll/client/detail/peer_has_gone.hpp>
 
 #include <quoll/async/detail/optional_timeout.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/detail/websocket_key.hpp>
@@ -127,11 +128,15 @@ public:
   keeping_connector(io::any_stream stream, std::shared_ptr<void const> connector) noexcept
       : connector_(std::move(connector)), stream_(std::move(stream)) {}
 
-  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return stream_.read_some(buffer); }
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+    return stream_.read_some(buffer);
+  }
 
-  [[nodiscard]] auto write_some(std::span<std::byte const> data) { return stream_.write_some(data); }
+  [[nodiscard]] auto write_some(std::span<std::byte const> data QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+    return stream_.write_some(data);
+  }
 
-  [[nodiscard]] auto shutdown_send() { return stream_.shutdown_send(); }
+  [[nodiscard]] auto shutdown_send() QUOLL_LIFETIMEBOUND { return stream_.shutdown_send(); }
 
 private:
   std::shared_ptr<void const> connector_;
@@ -282,7 +287,14 @@ websocket_handshake prepare_websocket_handshake(websocket_target const &where, h
   try {
     handshake.wire = serialize(message);
   } catch (std::invalid_argument const &refused) {
-    throw std::invalid_argument{std::string{"quoll::http::connect_websocket: "} + refused.what()};
+    constexpr std::string_view http_prefix = "quoll::http: ";
+    std::string_view reason = refused.what();
+
+    if (reason.starts_with(http_prefix)) {
+      reason.remove_prefix(http_prefix.size());
+    }
+
+    throw std::invalid_argument{"quoll::http::connect_websocket: " + std::string{reason}};
   }
 
   return handshake;

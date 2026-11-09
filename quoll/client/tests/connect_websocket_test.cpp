@@ -1215,3 +1215,41 @@ TEST_CASE("connect_websocket: under a timer, a refusal keeps its type and a stop
     REQUIRE(time.now() == 1s);
   }
 }
+
+TEST_CASE("connect_websocket: a 101 names the WebSocket in any case, Upgrade among other connection options",
+          "[client][websocket]") {
+  quoll::async::run_loop loop;
+  memory_server server{
+      loop.get_executor(),
+      answering_with_accept({}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: WebSocket\r\n"
+                                "Connection: keep-alive, Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"),
+      0,
+      {},
+      {}};
+
+  auto const connecting = [&]() -> task<http::status> {
+    auto connected = co_await http::connect_websocket(memory_connector{server}, "ws://h/");
+
+    co_return connected.handshake.status;
+  };
+
+  REQUIRE(quoll::test::run(loop, connecting()) == http::status::switching_protocols);
+}
+
+TEST_CASE("connect_websocket: what the serializer refuses is said once for connect_websocket", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  memory_server server{loop.get_executor(), answering(""), 0, {}, {}};
+  http::websocket_connect_options broken;
+
+  broken.fields.set("X-Broken", "a\r\nb");
+
+  try {
+    static_cast<void>(http::connect_websocket(memory_connector{server}, "ws://h/", broken));
+    FAIL("refused");
+  } catch (std::invalid_argument const &refused) {
+    auto const reason = std::string_view{refused.what()};
+
+    REQUIRE(reason.starts_with("quoll::http::connect_websocket: "));
+    REQUIRE_FALSE(reason.contains("quoll::http: "));
+  }
+}
