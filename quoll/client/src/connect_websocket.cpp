@@ -36,6 +36,9 @@
 
 #include <quoll/client/connect_websocket.hpp>
 
+#include <quoll/client/detail/connect_websocket.hpp>
+#include <quoll/client/websocket_refused.hpp>
+
 #include <quoll/client/detail/exchange_rules.hpp>
 
 #include <quoll/async/detail/optional_timeout.hpp>
@@ -112,8 +115,9 @@ constexpr std::array handshake_fields{std::string_view{"Host"},
   return !protocol || std::ranges::find(offered, detail::trim(*protocol)) != offered.end();
 }
 
-async::task<connected_websocket> shake_hands(detail::connector_handle connector, detail::origin server,
-                                             detail::websocket_handshake handshake, websocket_connect_options options) {
+[[nodiscard]] async::task<connected_websocket> shake_hands(detail::connector_handle connector, detail::origin server,
+                                                           detail::websocket_handshake handshake,
+                                                           websocket_connect_options options) {
   auto stream =
       co_await connector.open(connector.connector.get(), server.host, server.port, server.secure, options.tls);
   // Kept rather than thrown at once when the peer has gone: a server refusing as it read may have answered, which says

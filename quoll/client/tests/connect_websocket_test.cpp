@@ -61,6 +61,7 @@
 #include <quoll/test/memory_network.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
+#include <quoll/test/websocket_echo.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -89,19 +90,6 @@ using quoll::async::task;
 using quoll::test::memory_connector;
 using quoll::test::memory_server;
 using namespace std::chrono_literals;
-
-// Each message until the close, sent back.
-task<> echo(http::websocket socket) {
-  for (;;) {
-    auto message = co_await socket.receive();
-
-    if (message.opcode == websocket_opcode::close) {
-      co_return;
-    }
-
-    co_await socket.send_text(message.data);
-  }
-}
 
 // A server that answers the handshake with `raw`, whatever it asked.
 std::function<task<>(io::memory_stream)> answering(std::string raw) {
@@ -136,11 +124,11 @@ public:
   [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
     auto [client_end, server_end] = io::make_memory_stream_pair();
 
-    *kept_ = std::move(server_end);
+    *kept = std::move(server_end);
     co_return io::any_stream{std::move(client_end)};
   }
 
-  std::optional<io::memory_stream> *kept_;
+  std::optional<io::memory_stream> *kept;
 };
 
 static_assert(io::Connector<silent_connector>);
@@ -265,11 +253,11 @@ public:
   [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
     auto [client_end, server_end] = io::make_memory_stream_pair();
 
-    *kept_ = std::move(server_end);
+    *kept = std::move(server_end);
     co_return io::any_stream{failing_writes{std::move(client_end)}};
   }
 
-  std::optional<io::memory_stream> *kept_;
+  std::optional<io::memory_stream> *kept;
 };
 
 static_assert(io::Connector<failing_connector>);
@@ -288,6 +276,52 @@ std::function<task<>(io::memory_stream)> recording(http::request &sent) {
     (void)co_await io::write(stream, std::as_bytes(std::span{refusal}));
   };
 }
+
+// A stream that takes nothing of a write, broken by the peer as it reads: the 101 the handshake it was given calls
+// for, then gone, if `answers`; gone with nothing otherwise.
+class broken_on_write {
+public:
+  broken_on_write(io::memory_stream inner, io::memory_stream peer, bool answers) noexcept
+      : inner_(std::move(inner)), peer_(std::move(peer)), answers_(answers) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
+    if (peer_ && answers_) {
+      auto const sent = std::string_view{reinterpret_cast<char const *>(data.data()), data.size()};
+      auto const name = std::string_view{"Sec-WebSocket-Key: "};
+      auto const start = sent.find(name) + name.size();
+      auto const key = sent.substr(start, sent.find("\r\n", start) - start);
+      auto const answer = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                          "Sec-WebSocket-Accept: " +
+                          http::websocket_accept(key) + "\r\n\r\n";
+
+      (void)co_await io::write(*peer_, std::as_bytes(std::span{answer}));
+    }
+
+    peer_.reset();
+    co_return io::io_result{std::make_error_code(std::errc::broken_pipe), 0};
+  }
+
+private:
+  io::memory_stream inner_;
+  std::optional<io::memory_stream> peer_;
+  bool answers_;
+};
+
+// A connector whose streams break as the handshake is written: see broken_on_write.
+class breaking_connector {
+public:
+  [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+    auto [client_end, server_end] = io::make_memory_stream_pair();
+
+    co_return io::any_stream{broken_on_write{std::move(client_end), std::move(server_end), answers}};
+  }
+
+  bool answers;
+};
+
+static_assert(io::Connector<breaking_connector>);
 
 // A connector to a peer that answered `answer` and went, before reading anything.
 class refusing_connector {
@@ -316,7 +350,7 @@ TEST_CASE("connect_websocket: opens a WebSocket to a server, which answers what 
 
   router.get("/room", [&target](http::request request) {
     target = request.target;
-    return http::accept_websocket(request, echo);
+    return http::accept_websocket(request, quoll::test::websocket_echo);
   });
 
   memory_server server{loop.get_executor(), quoll::test::serving(router), 0, {}, {}};
@@ -351,7 +385,7 @@ TEST_CASE("connect_websocket: a subprotocol chosen is one offered", "[client][we
   http::router router;
 
   router.get("/", [&chosen](http::request request) {
-    auto response = http::accept_websocket(request, echo);
+    auto response = http::accept_websocket(request, quoll::test::websocket_echo);
 
     response.fields.set("Sec-WebSocket-Protocol", chosen);
     return response;
@@ -417,7 +451,7 @@ TEST_CASE("connect_websocket: what is no switch to the WebSocket asked for is re
     http::router router;
 
     router.get("/", [](http::request request) {
-      auto response = http::accept_websocket(request, echo);
+      auto response = http::accept_websocket(request, quoll::test::websocket_echo);
 
       response.fields.set("Sec-WebSocket-Extensions", "permessage-deflate");
       return response;
@@ -513,7 +547,7 @@ TEST_CASE("connect_websocket: wss connects with TLS, on 443", "[client][websocke
   http::router router;
   bool used_tls = false;
 
-  router.get("/", [](http::request request) { return http::accept_websocket(request, echo); });
+  router.get("/", [](http::request request) { return http::accept_websocket(request, quoll::test::websocket_echo); });
 
   memory_server server{loop.get_executor(), quoll::test::serving(router), 0, {}, {}};
 
@@ -663,6 +697,8 @@ TEST_CASE("connect_websocket: the handshake as it is sent", "[client][websocket]
   REQUIRE(sent.fields.find("Origin") == "https://app.example");
   REQUIRE(sent.fields.find("Sec-WebSocket-Version") == "13");
   REQUIRE(sent.fields.find("Upgrade") == "websocket");
+  REQUIRE(sent.fields.find("Connection") == "Upgrade");
+  REQUIRE(sent.fields.find("Sec-WebSocket-Key").value_or("").size() == 24);
 }
 
 TEST_CASE("connect_websocket: a subprotocol the server names empty is refused", "[client][websocket]") {
@@ -806,4 +842,34 @@ TEST_CASE("connect_websocket: wss on its default port names no port in Host", "[
 
   REQUIRE(quoll::test::run(loop, connecting()) == "h");
   REQUIRE(used_tls);
+}
+
+TEST_CASE("connect_websocket: a handshake that could not be sent says so", "[client][websocket]") {
+  auto answers = false;
+
+  // Its 101 is no connection to use; with nothing come, the write's error says more than the end of the stream.
+  SECTION("a 101 came all the same") { answers = true; }
+
+  SECTION("nothing came") { answers = false; }
+
+  auto const connecting = [answers]() -> task<std::error_code> {
+    co_return co_await quoll::test::code_thrown_by(http::connect_websocket(breaking_connector{answers}, "ws://h/"));
+  };
+
+  REQUIRE(quoll::test::run(connecting()) == std::errc::broken_pipe);
+}
+
+TEST_CASE("connect_websocket: each field of the handshake's own is refused", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  memory_server server{loop.get_executor(), answering(""), 0, {}, {}};
+
+  for (auto const *const name :
+       {"Host", "Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Extensions",
+        "Sec-WebSocket-Accept", "Content-Length", "Transfer-Encoding"}) {
+    http::websocket_connect_options options;
+
+    options.fields.set(name, "1");
+
+    REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", options), std::invalid_argument);
+  }
 }

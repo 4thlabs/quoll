@@ -71,6 +71,7 @@
 #include <quoll/test/read_until_closed.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
+#include <quoll/test/websocket_echo.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -153,19 +154,6 @@ task<answered> send_then_read(io::memory_stream &client, std::string sent, http:
   co_return answered{parser.release(), std::move(buffer)};
 }
 
-// Each message until the close, sent back.
-task<> echo(http::websocket socket) {
-  for (;;) {
-    auto message = co_await socket.receive();
-
-    if (message.opcode == websocket_opcode::close) {
-      co_return;
-    }
-
-    co_await socket.send_text(message.data);
-  }
-}
-
 // What a server with `router` and `options` reported, as it served `client`'s exchange on `context`.
 template <class Context, class Client>
 std::vector<std::string> served_on(Context &context, http::router const &router, Client client,
@@ -215,7 +203,7 @@ task<> receive_all(http::websocket socket, std::error_code &ended) {
 } // namespace
 
 TEST_CASE("accept_websocket: a handshake hands the connection over to its handler", "[server][websocket]") {
-  auto const router = socket_at(echo);
+  auto const router = socket_at(quoll::test::websocket_echo);
 
   auto const reported = served(router, [](io::memory_stream &client) -> task<int> {
     auto [response, after] = co_await send_then_read(client, handshake());
