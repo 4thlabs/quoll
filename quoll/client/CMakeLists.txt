@@ -5,6 +5,7 @@ quoll_declare_module(
     src/connect_websocket.cpp
     src/platform.cpp
     src/url.cpp
+    src/websocket_refused.cpp
   DEPS
     quoll::http
 )

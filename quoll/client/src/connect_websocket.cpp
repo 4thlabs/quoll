@@ -137,6 +137,11 @@ private:
   io::any_stream stream_;
 };
 
+// What broke the handshake as it was sent.
+[[noreturn]] void throw_unsent(std::error_code unsent) {
+  throw std::system_error{unsent, "quoll::http::connect_websocket: cannot send the handshake"};
+}
+
 [[nodiscard]] async::task<connected_websocket> shake_hands(detail::connector_handle connector, detail::origin server,
                                                            detail::websocket_handshake handshake,
                                                            websocket_connect_options options) {
@@ -147,7 +152,7 @@ private:
   auto const unsent = (co_await io::write(stream, std::as_bytes(std::span{handshake.wire}))).error;
 
   if (unsent && !detail::peer_has_gone(unsent)) {
-    throw std::system_error{unsent, "quoll::http::connect_websocket: cannot send the handshake"};
+    throw_unsent(unsent);
   }
 
   std::string buffer;
@@ -187,7 +192,7 @@ private:
 
     // A switch to a handshake that could not be sent whole is no connection to use: what broke it says why.
     if (unsent) {
-      throw std::system_error{unsent, "quoll::http::connect_websocket: cannot send the handshake"};
+      throw_unsent(unsent);
     }
 
     // What came after the 101 is the WebSocket's.
@@ -199,11 +204,6 @@ private:
 }
 
 } // namespace
-
-websocket_refused::websocket_refused(http::response answer)
-    : std::runtime_error{"quoll::http::connect_websocket: the server answered " +
-                         std::to_string(static_cast<int>(answer.status)) + ", not the WebSocket asked for"},
-      response_(std::make_shared<http::response const>(std::move(answer))) {}
 
 namespace detail {
 
@@ -290,9 +290,10 @@ websocket_handshake prepare_websocket_handshake(websocket_target const &where, h
 async::task<connected_websocket> connect_websocket_through(connector_handle connector, origin server,
                                                            websocket_handshake handshake,
                                                            websocket_connect_options options) {
+  // Read before what holds it is moved; every argument goes by value into the task.
   auto const limit = options.handshake_timeout;
 
-  co_return co_await async::detail::with_optional_timeout(
+  return async::detail::with_optional_timeout(
       limit, shake_hands(std::move(connector), std::move(server), std::move(handshake), std::move(options)));
 }
 

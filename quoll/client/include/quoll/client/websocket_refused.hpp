@@ -53,6 +53,7 @@ namespace quoll::http {
  */
 class websocket_refused : public std::runtime_error {
 public:
+  /** @brief Refused with `answer`, the server's. */
   explicit websocket_refused(http::response answer);
 
   // Copies and no moves: an exception does not throw on its way to a handler, and one moved from stays whole.

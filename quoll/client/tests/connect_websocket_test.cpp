@@ -1111,3 +1111,19 @@ TEST_CASE("connect_websocket: a 101 in HTTP/1.0 is no switch", "[client][websock
 
   REQUIRE(refusal(server, loop, "ws://h/") == "101");
 }
+
+TEST_CASE("connect_websocket: a URL with no path asks for /", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  http::request sent;
+  memory_server server{loop.get_executor(), recording(sent), 0, {}, {}};
+
+  SECTION("nothing after the host") {
+    REQUIRE(refusal(server, loop, "ws://h") == "400");
+    REQUIRE(sent.target == "/");
+  }
+
+  SECTION("a query alone") {
+    REQUIRE(refusal(server, loop, "ws://h?x=1") == "400");
+    REQUIRE(sent.target == "/?x=1");
+  }
+}

@@ -50,7 +50,6 @@
 #include <quoll/http/transport.hpp>
 #include <quoll/io/connector.hpp>
 #include <quoll/io/tls_connector.hpp>
-#include <quoll/io/tls_options.hpp>
 
 #include <concepts>
 #include <cstdint>
