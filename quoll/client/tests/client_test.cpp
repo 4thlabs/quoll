@@ -73,6 +73,7 @@
 #include <quoll/io/tls_options.hpp>
 #include <quoll/io/write.hpp>
 #include <quoll/server/server.hpp>
+#include <quoll/test/memory_network.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
@@ -109,37 +110,9 @@ namespace io = quoll::io;
 using async::task;
 using http::verb;
 
-// The server end of the connections opened by a memory_connector: each one is served on the loop by `serve`.
-struct memory_server {
-  async::run_loop::executor executor;
-  std::function<task<>(io::memory_stream)> serve;
-  int connections = 0;
-  // Where the last connection went, as `host:port`.
-  std::string destination;
-  std::exception_ptr failure;
-};
-
-class memory_connector {
-public:
-  explicit memory_connector(memory_server &server) noexcept : server_(&server) {}
-
-  [[nodiscard]] task<io::any_stream> connect(std::string host, std::uint16_t port) const {
-    auto *const server = server_;
-    auto [client_end, server_end] = io::make_memory_stream_pair();
-
-    ++server->connections;
-    server->destination = host + ':' + std::to_string(port);
-    co_spawn(
-        server->executor, server->serve(std::move(server_end)),
-        quoll::test::overloaded{[] {}, [server](std::exception_ptr error) { server->failure = std::move(error); }});
-    co_return io::any_stream{std::move(client_end)};
-  }
-
-private:
-  memory_server *server_;
-};
-
-static_assert(io::Connector<memory_connector>);
+using quoll::test::memory_connector;
+using quoll::test::memory_server;
+using quoll::test::serving;
 static_assert(http::HttpTransport<http::client>);
 
 http::router make_router() {
@@ -1815,11 +1788,6 @@ read_whole stream_from(std::function<task<>(io::memory_stream)> serve, std::stri
   REQUIRE(out);
   out->connections = server.connections;
   return std::move(*out);
-}
-
-std::function<task<>(io::memory_stream)> serving(http::router const &router) {
-  return
-      [&router](io::memory_stream stream) { return quoll::http::server{router}.serve_connection(std::move(stream)); };
 }
 
 } // namespace

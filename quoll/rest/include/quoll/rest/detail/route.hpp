@@ -174,6 +174,8 @@ struct route {
   static_assert(count_bodies(parts{}) == 0 || Endpoint::method != http::verb::trace,
                 "quoll::rest::with: a TRACE endpoint gets a body<> (RFC 9110, 9.3.8)");
   static_assert(distinct_statuses(parts{}), "quoll::rest::with: the endpoint gets two returns<> with the same status");
+  static_assert(count_events(parts{}) == 0 || !any_success_response(parts{}),
+                "quoll::rest::with: an endpoint with events<> gets another success, where only errors may come");
 
   // The arguments of a call and of the service: path parameters, then argument parts in order.
   using arguments = as_tuple_t<concat_t<typename path_argument_types<Path>::type,

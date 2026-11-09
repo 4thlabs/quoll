@@ -46,6 +46,10 @@
 #include <quoll/rest/credential.hpp>
 #include <quoll/rest/decode_error.hpp>
 #include <quoll/rest/endpoint.hpp>
+#include <quoll/rest/event_options.hpp>
+#include <quoll/rest/event_sink.hpp>
+#include <quoll/rest/event_stream.hpp>
+#include <quoll/rest/events.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/form_codec.hpp>
 #include <quoll/rest/header.hpp>

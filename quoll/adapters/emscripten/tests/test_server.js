@@ -41,8 +41,9 @@
 // - /status/<code>: that status;
 // - /open: its head at once, then what quoll_test_server_write() writes, up to quoll_test_server_end() or the cut of
 //   quoll_test_server_cut();
+// - /events: the same, as a text/event-stream;
 // - anything else: 200, with the request's body as body ("hello over fetch" if empty).
-// Every response but those of /hang, /gzip and /open tells the request's method, target and x-test field in x-method,
+// Every response but those of /hang, /gzip, /open and /events tells the request's method, target and x-test field in x-method,
 // x-target and x-test.
 
 addToLibrary({
@@ -73,13 +74,13 @@ addToLibrary({
           return;
         }
 
-        if (request.url === '/open') {
+        if (request.url === '/open' || request.url === '/events') {
           quollTestServer.open = response;
           quollTestServer.closed = false;
           response.on('close', () => {
             quollTestServer.closed = true;
           });
-          response.writeHead(200, { 'x-open': 'yes' });
+          response.writeHead(200, request.url === '/events' ? { 'content-type': 'text/event-stream' } : { 'x-open': 'yes' });
           response.flushHeaders();
           return;
         }

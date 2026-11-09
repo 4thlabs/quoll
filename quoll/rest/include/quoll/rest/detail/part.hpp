@@ -50,16 +50,30 @@
 
 namespace quoll::rest::detail {
 
-// What a part of an endpoint is: something the caller passes (query, header, body), a declared response, or the
-// security schemes it requires.
+// What a part of an endpoint is: something the caller passes (query, header, body), a declared response, a stream of
+// events, or the security schemes it requires.
 struct argument_part {};
 
 struct response_part {};
 
 struct security_part {};
 
+// A response that is a stream of events (events<>).
+struct events_part {};
+
 template <class P>
 concept Part = requires { typename P::part_category; };
+
+// The category of a member of with<>, none for one that is no part.
+template <class Member>
+struct part_category_of {
+  using type = void;
+};
+
+template <Part Member>
+struct part_category_of<Member> {
+  using type = typename Member::part_category;
+};
 
 template <class P>
 struct is_argument_part : std::bool_constant<std::same_as<typename P::part_category, argument_part>> {};
@@ -80,6 +94,39 @@ template <class P>
 template <class... Parts>
 [[nodiscard]] consteval bool any_body_response(type_list<Parts...>) {
   return (declares_a_body_response<Parts>() || ...);
+}
+
+template <class P>
+struct is_events_part : std::bool_constant<std::same_as<typename P::part_category, events_part>> {};
+
+template <class... Parts>
+[[nodiscard]] consteval std::size_t count_events(type_list<Parts...>) {
+  return (std::size_t{0} + ... + (is_events_part<Parts>::value ? 1 : 0));
+}
+
+// The events<> part of an endpoint, if it has one.
+template <class Endpoint>
+using events_of = filter_t<is_events_part, typename Endpoint::parts>;
+
+template <class Endpoint>
+inline constexpr bool has_events = events_of<Endpoint>::size > 0;
+
+// The events<> part of an endpoint that has one.
+template <class Endpoint>
+using events_part_of = typename front<events_of<Endpoint>>::type;
+
+// Whether one of `Parts` declares what is no error, below 400: a success or a redirect, which events<> leaves no room
+// for.
+template <class... Parts>
+[[nodiscard]] consteval bool any_success_response(type_list<Parts...>) {
+  return ([]<class P>() {
+    if constexpr (std::same_as<typename P::part_category, response_part>) {
+      return static_cast<int>(P::status) < 400;
+    } else {
+      return false;
+    }
+  }.template operator()<Parts>() ||
+          ...);
 }
 
 template <class P>

@@ -92,6 +92,7 @@ What does not hold fails to compile, with a message that says so. These are some
 | `header<"Name", T>`         | A request header field, by the same rules.                                                                                           |
 | `body<T, Codec>`            | The request body, at most one, none on GET, HEAD or TRACE. JSON by default. CONNECT is no operation of an API.                       |
 | `returns<T, Status, Codec>` | A declared response, one per status from 200 to 599. 200 and JSON by default, `void` for no body, as on 204, 205, 304 and HEAD. Without any, the endpoint answers 204. |
+| `events<T, Codec>`          | A stream of server-sent events, each a `T`, rather than one body: see [Events](#events). JSON by default; error responses only beside it. |
 | `security<Schemes...>`      | The security schemes required: `api_key<"Header">`, `api_key_query<"param">` or `bearer_auth`. They are not arguments.               |
 
 ### Arguments
@@ -210,7 +211,9 @@ Credentials first, then the arguments, then the service. These errors are
 | A service throws anything else      | 500, as from any handler; `on_handler_error` is told     | None                                          |
 
 A middleware of the router runs outside of this: what it throws is no `http_error`, and it answers a
-problem by returning a response. What a service throws goes through it, a stop or a timeout too. Over a
+problem by returning a response. What a service throws goes through it, a stop or a timeout too, but
+for a service of `events<>`, which runs once the middlewares have returned, as a handler writing its
+response does. Over a
 `http::local_transport`, it reaches the caller, as there is no connection to answer.
 
 A service takes exactly the arguments of its endpoint, by value or by reference: one taking a narrower type, or
@@ -322,6 +325,66 @@ which `quoll::runtime` has; a `delay` of zero waits for nothing.
 
 A copy of the client shares the interceptors it had, and one added after to either is its own. A scope keeps those the
 client had when it was made, and takes none of its own: make the scope from a client that has them.
+
+## Events
+
+An endpoint declaring `rest::events<T>` answers with a stream of server-sent events, each a `T`
+encoded by the codec, JSON by default, rather than one body. It may declare error responses beside
+it, but no other success:
+
+```cpp
+using feed = rest::endpoint<"changes.feed", http::verb::get, "/changes", rest::query<"count", int>,
+                            rest::header<"Last-Event-ID", std::optional<std::string>>, rest::events<change>,
+                            rest::returns<rest::problem, http::status::not_found>>;
+```
+
+Its service takes a `rest::event_sink<T>` by reference after its arguments, and returns a `task<>`:
+
+```cpp
+async::task<> operator()(feed, int count, std::optional<std::string> last_id, rest::event_sink<change> &events) {
+  // What may refuse the request comes first: an http_error here answers, a 404 say.
+  auto const pending = co_await changes.after(last_id, count);
+
+  co_await events.open();
+
+  for (auto const &next : pending) {
+    co_await events.send(next, {.id = std::to_string(next.id)});   // an id is text
+  }
+}
+```
+
+It runs once the router has answered, as a handler writing its response in pieces does (see
+[Streaming](streaming.md#server-sent-events)). An `http_error` before the stream starts, with `open()`
+or the first event, comment or retry, answers as from any service, a declared 404 say; after it, the
+stream is cut. To HEAD, the service runs up to its first write, as such a handler does, so that the
+status is the one GET would get. `send(value, {.type, .id})`,
+`comment()` and `retry()` go through an `http::event_writer`: one at a time, and the comments that
+keep a quiet stream alive come from the loop that sends.
+
+A client reads them with `subscribe`, once the head of the stream has come:
+
+```cpp
+auto stream = co_await api.subscribe<feed>(20, last_seen);
+
+while (auto const change = co_await stream.next()) {
+  show(*change);
+}
+
+// To resume from, when connecting again: kept if the stream ended before an event with an id.
+if (auto const id = stream.last_event_id(); !id.empty()) {
+  last_seen = id;
+}
+```
+
+Any other answer throws `call_error`, as from `call`: a declared error, an undeclared status, a 200
+that is no event stream. A contract that declares its own `Accept` sends it, and takes the one media
+type it names, if an event stream, a third-party API's `application/vnd.example+event-stream` say. An event that does not decode throws `call_error` from `next()`, holding
+it as its body, and reading goes on. `subscribe` needs a transport that gives a response as its head
+comes, `http::client` natively and through `fetch`, not `http::local_transport`. It goes straight
+through it, credentials applied. Interceptors take whole responses: on a client with any, `subscribe`
+throws `std::logic_error`, rather than go out without what they add; subscribe through a client
+without them. It does not connect
+again on its own: resuming is an argument of the contract, `Last-Event-ID` above.
 
 ## Codecs
 

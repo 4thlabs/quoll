@@ -28,7 +28,7 @@ router of the same program; llhttp is compiled and exported as `quoll::llhttp`),
 takes over a `Listener` or listens on a port, `static_files`, a middleware),
 `quoll::client` (in `quoll::http`: `client`, an `HttpTransport` over a `Connector` with keep-alive connections, built from an
 `http[s]://` URL), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `http::client` by default, and the
-contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates; and the codecs: `json_codec` on
+contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates, and `events<T>` with its `event_sink` and the client's `subscribe`; and the codecs: `json_codec` on
 Glaze, `text_codec`, `param_traits`), `quoll::ui` (a prototype: elements, decorators, `state`, `to_html`, `app` and the `Renderer`
 concept), the adapters `quoll::asio` (asio executor offering the network, a timer, threads for blocking work and TLS, `tcp_stream`, `tls_stream`, connector and acceptors,
 `runtime`; native only, its runtime hides asio from a program, its streams and acceptors need standalone asio, TLS needs OpenSSL) and `quoll::emscripten` (JavaScript event loop executor offering
@@ -87,7 +87,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   `quoll_main_tests()` in `tests/CMakeLists.txt`).
   Helpers shared by the tests of every module live in `tests/support/quoll/test/` (`quoll::test::run` runs a
   task on a run_loop or a `virtual_time`, whose timer jumps to the next deadline instead of waiting;
-  `quoll::test::memory_renderer`, `quoll::test::overloaded`, `quoll::test::check`): use them rather than copying them into a test file.
+  `quoll::test::memory_renderer`, `quoll::test::memory_server` and `memory_connector`, an `http::client` reaching an `http::server` over memory streams, `quoll::test::overloaded`, `quoll::test::check`): use them rather than copying them into a test file.
 - What must not compile (the compile-time checks of an API, `static_assert` messages included) is tested too: one source
   per case under `tests/compile_fail/`, starting with `// expect: <message>`, declared with
   `quoll_declare_compile_fail_tests(SOURCES ... DEPS ...)`. Each becomes a ctest `compile_fail.<case>` that compiles it

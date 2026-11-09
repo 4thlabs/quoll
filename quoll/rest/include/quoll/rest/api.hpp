@@ -45,6 +45,7 @@
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
 
+#include <concepts>
 #include <string_view>
 
 namespace quoll::rest {
@@ -59,6 +60,8 @@ template <class... Members>
 struct with {
   static_assert(((detail::Part<Members> || detail::Api<Members> || detail::Endpoint<Members>) && ...),
                 "quoll::rest::with: a member is neither a part nor an api<> or endpoint<>");
+  static_assert(((!std::same_as<typename detail::part_category_of<Members>::type, detail::events_part>) && ...),
+                "quoll::rest::with: events<> is a part of one endpoint, not one to share");
 
   using contract_category = detail::with_category;
   using members = detail::type_list<Members...>;
