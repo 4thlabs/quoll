@@ -117,14 +117,22 @@ async::task<> sink_answer(std::shared_ptr<event_sink_state> state, http::respons
 }
 
 async::task<> sink_finish(std::shared_ptr<event_sink_state> state) {
-  // An operation still to run, kept or spawned past the service, would write to a connection gone: it throws instead.
-  if (state->events || state->busy.load()) {
-    state->closed = true;
-    co_return;
+  if (!state->events && !state->busy.load()) {
+    co_await sink_open(state, sink_turn(state));
   }
 
-  co_await sink_open(state, sink_turn(state));
+  // An operation kept or spawned past the service would write to a connection gone: it throws instead. And what
+  // writes to it goes now, while it is there, rather than with the last such operation: an unused response_writer,
+  // dropped through an event_writer so that its head is a stream's, with no event.
   state->closed = true;
+
+  if (state->out) {
+    http::event_writer const unused{std::move(*state->out)};
+
+    state->out.reset();
+  }
+
+  state->events.reset();
 }
 
 } // namespace quoll::rest::detail

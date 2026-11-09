@@ -119,7 +119,12 @@ using opened = endpoint<"changes.opened", verb::get, "/opened", events<change>, 
 // A filter read from the body as a view into it: what makes the request live as long as the stream.
 using search = endpoint<"changes.search", verb::post, "/search", body<filter>, events<change>>;
 
-using api = rest::api<"/changes", feed, broken, cut, none, checked, failing, paced, opened, search>;
+// An operation kept past its service, in the service.
+using kept = endpoint<"changes.kept", verb::get, "/kept", events<change>>;
+// What a client decodes as views into its events.
+using viewed = endpoint<"changes.viewed", verb::get, "/viewed", events<filter>>;
+
+using api = rest::api<"/changes", feed, broken, cut, none, checked, failing, paced, opened, search, kept, viewed>;
 
 // The same feeds, scoped under one name.
 namespace named {
@@ -140,6 +145,18 @@ using api = rest::api<"", feed>;
 struct changes_service {
   // Lets paced send its second event.
   std::shared_ptr<bool> released = std::make_shared<bool>(false);
+  // What kept keeps past its end.
+  std::shared_ptr<std::optional<quoll::async::task<>>> held = std::make_shared<std::optional<quoll::async::task<>>>();
+
+  quoll::async::task<> operator()(changes::kept, rest::event_sink<change> &events) const {
+    held->emplace(events.send({.id = 1, .what = "never"}));
+    co_return;
+  }
+
+  quoll::async::task<> operator()(changes::viewed, rest::event_sink<filter> &events) const {
+    co_await events.send({.word = "a word long enough to leave the buffer"});
+    co_await events.send({.word = "another word long enough to leave it"});
+  }
 
   quoll::async::task<> operator()(changes::paced, rest::event_sink<change> &events) const {
     co_await events.send({.id = 1, .what = "first"});
@@ -1001,4 +1018,38 @@ TEST_CASE("rest events: a sink operation that runs once its service has ended th
 
   REQUIRE(quoll::test::run(running()).value() == "refused");
   REQUIRE(sent.empty());
+}
+
+TEST_CASE("rest events: an operation kept past its service, dropped later, leaves the connection alone",
+          "[rest][sse]") {
+  changes_service const service;
+  auto const held = service.held;
+  http::router router;
+
+  rest::mount<changes::all>(router, service);
+
+  auto const answer = answer_to(router, get("/changes/kept"));
+
+  // A stream with no event: the operation kept never ran, and the connection has ended.
+  REQUIRE(answer.starts_with("HTTP/1.1 200"));
+  REQUIRE(answer.find("Content-Type: text/event-stream\r\n") != std::string::npos);
+  REQUIRE(answer.find("data:") == std::string::npos);
+  // Dropped once the connection is gone: under ASan, what it held must not reach it.
+  held->reset();
+}
+
+TEST_CASE("rest events: a value decoded into views of its event is valid until the next one", "[rest][sse]") {
+  changes_client const client{streaming_transport{make_router()}};
+
+  auto const reading = [&client]() -> task<std::string> {
+    auto stream = co_await client.subscribe<changes::viewed>();
+    auto const first = co_await stream.next();
+    std::string const word{first.value().word};
+    auto const second = co_await stream.next();
+
+    co_return word + "|" + std::string{second.value().word};
+  };
+
+  REQUIRE(quoll::test::run(reading()).value() ==
+          "a word long enough to leave the buffer|another word long enough to leave it");
 }

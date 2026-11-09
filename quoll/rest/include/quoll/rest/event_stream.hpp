@@ -47,6 +47,7 @@
 #include <quoll/rest/unexpected_response.hpp>
 
 #include <chrono>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -69,7 +70,8 @@ namespace quoll::rest {
  * endpoint (a `header<"Last-Event-ID", std::optional<std::string>>` say). An event's type is not handed over: one
  * endpoint, one type, every event decoded as `T`, a heartbeat of a third-party API's own type included, which then
  * throws as an event that does not decode. Reading fails, and ends, as http::event_reader says; an event that does not
- * decode throws call_error, holding it as the body of its response, and reading goes on.
+ * decode throws call_error, holding it as the body of its response, and reading goes on. A `T` that holds views into
+ * its event (a `std::string_view` Glaze reads) is valid up to the next next(), for as long as the stream.
  *
  * Moved, not copied. Thread safety: as http::event_reader.
  */
@@ -84,7 +86,7 @@ public:
    *
    * @throws call_error, from the task, for an event that does not decode; as http::event_reader::next() otherwise.
    */
-  [[nodiscard]] async::task<std::optional<T>> next() { return decoded(events_.next()); }
+  [[nodiscard]] async::task<std::optional<T>> next() { return decoded(events_.next(), data_); }
 
   /** @brief The id of the last complete event, empty if none: what to resume from. */
   [[nodiscard]] std::string last_event_id() const { return events_.last_event_id(); }
@@ -93,21 +95,24 @@ public:
   [[nodiscard]] std::optional<std::chrono::milliseconds> retry() const noexcept { return events_.retry(); }
 
 private:
-  // No `this`: the reader's task holds what it reads.
-  [[nodiscard]] static async::task<std::optional<T>> decoded(async::task<std::optional<http::server_sent_event>> next) {
+  // No `this`: the reader's task holds what it reads, and `data` the event's text, which a `T` may point into.
+  [[nodiscard]] static async::task<std::optional<T>> decoded(async::task<std::optional<http::server_sent_event>> next,
+                                                             std::shared_ptr<std::string> data) {
     auto event = co_await std::move(next);
 
     if (!event) {
       co_return std::nullopt;
     }
 
-    auto value = EventCodec{}.template decode<T>(event->data);
+    *data = std::move(event->data);
+
+    auto value = EventCodec{}.template decode<T>(*data);
 
     if (!value) {
       http::response received;
 
       received.status = http::status::ok;
-      received.body = std::move(event->data);
+      received.body = *data;
 
       detail::fail(unexpected_response{std::move(received), "invalid event: " + value.error().message});
     }
@@ -116,6 +121,8 @@ private:
   }
 
   http::event_reader events_;
+  // The text of the last event, kept until the next: what a value decoded into views of it points into.
+  std::shared_ptr<std::string> data_ = std::make_shared<std::string>();
 };
 
 } // namespace quoll::rest
