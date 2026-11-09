@@ -52,15 +52,16 @@ constexpr std::size_t kept_capacity = std::size_t{64} * 1024;
 
 [[nodiscard]] constexpr std::uint8_t byte(char value) noexcept { return static_cast<std::uint8_t>(value); }
 
-[[nodiscard]] constexpr bool is_known_opcode(std::uint8_t value) noexcept {
-  return value <= 0x2 || (value >= 0x8 && value <= 0xA);
-}
-
 } // namespace
 
 void websocket_parser::feed(std::string_view bytes) {
   if (failure_) {
     throw std::system_error{failure_, "quoll::http::websocket_parser"};
+  }
+
+  // Nothing is read after a close: what still comes is dropped, whether next() was asked again or not.
+  if (closed_) {
+    return;
   }
 
   // Messages not taken yet: one piece after another, they would only grow.
@@ -122,7 +123,7 @@ std::optional<websocket_message> websocket_parser::frame(bool &whole) {
   auto const raw_opcode = static_cast<std::uint8_t>(first & 0x0FU);
 
   // No extension is agreed: its bits stay clear.
-  if ((first & 0x70U) != 0 || !is_known_opcode(raw_opcode)) {
+  if ((first & 0x70U) != 0 || !detail::is_known_opcode(raw_opcode)) {
     fail(error::websocket_protocol);
   }
 
@@ -250,26 +251,23 @@ std::optional<websocket_message> websocket_parser::frame(bool &whole) {
 
   switch (opcode) {
   case websocket_opcode::close: {
-    websocket_message message{.opcode = opcode, .data = {}, .close_code = 1005};
-
     closed_ = true;
 
-    if (payload.size() == 1) {
+    switch (detail::check_close_payload(payload)) {
+    case detail::close_payload::broken:
       fail(error::websocket_protocol);
+    case detail::close_payload::not_text:
+      fail(error::websocket_invalid_text);
+    case detail::close_payload::valid:
+      break;
     }
 
-    if (payload.size() >= 2) {
-      message.close_code = static_cast<std::uint16_t>((byte(payload[0]) << 8U) | byte(payload[1]));
+    websocket_message message{.opcode = opcode, .data = {}, .close_code = 1005};
 
-      if (!detail::may_send_close_code(message.close_code)) {
-        fail(error::websocket_protocol);
-      }
-
-      message.data = payload.substr(2);
-
-      if (!detail::is_utf8(message.data)) {
-        fail(error::websocket_invalid_text);
-      }
+    if (!payload.empty()) {
+      message.close_code = detail::close_code_in(payload);
+      payload.erase(0, 2);
+      message.data = std::move(payload);
     }
 
     return message;

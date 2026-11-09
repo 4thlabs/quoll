@@ -101,6 +101,17 @@ constexpr http::websocket_mask key{0x37, 0xfa, 0x21, 0x3d};
   return out;
 }
 
+// The error next() fails with, none if it does not.
+[[nodiscard]] std::error_code failure_code(http::websocket_parser &parser) {
+  try {
+    static_cast<void>(parser.next());
+  } catch (std::system_error const &failure) {
+    return failure.code();
+  }
+
+  return {};
+}
+
 [[nodiscard]] http::websocket_message text(std::string data) {
   return {.opcode = websocket_opcode::text, .data = std::move(data), .close_code = 0};
 }
@@ -308,7 +319,14 @@ TEST_CASE("websocket_parser: text that is not UTF-8 fails at its first fragment,
                                            "abc",
                                            false));
 
-  REQUIRE_THROWS_AS(parser.next(), std::system_error);
+  REQUIRE(failure_code(parser) == http::error::websocket_invalid_text);
+
+  // A fragment ending in two bytes no character starts with, though cut: refused, not carried over.
+  http::websocket_parser cut_wrong{websocket_role::client};
+
+  cut_wrong.feed(http::format_websocket_frame(websocket_opcode::text, "a\xE0\x80", false));
+
+  REQUIRE(failure_code(cut_wrong) == http::error::websocket_invalid_text);
 
   // A character cut between two fragments is no failure: they read as they come.
   http::websocket_parser cut{websocket_role::client};
@@ -322,7 +340,7 @@ TEST_CASE("websocket_parser: text that is not UTF-8 fails at its first fragment,
 
   // One never ended at the last is.
   cut.feed(http::format_websocket_frame(websocket_opcode::continuation, "c\xE2", true));
-  REQUIRE_THROWS_AS(cut.next(), std::system_error);
+  REQUIRE(failure_code(cut) == http::error::websocket_invalid_text);
 }
 
 TEST_CASE("websocket_parser: the close codes a peer may send, at their bounds", "[http][websocket]") {
@@ -365,4 +383,16 @@ TEST_CASE("format_websocket_frame: an opcode RFC 6455 does not name, or a close 
   REQUIRE_THROWS_AS(http::format_websocket_frame(websocket_opcode::close, "\x03\xED"), std::invalid_argument);
   REQUIRE_THROWS_AS(http::format_websocket_frame(websocket_opcode::close, "\x03\xE8\xFF"), std::invalid_argument);
   REQUIRE(http::format_websocket_frame(websocket_opcode::close, "") == std::string{"\x88\x00", 2});
+}
+
+TEST_CASE("websocket_parser: bytes fed after the close is read, with no next() between, are dropped",
+          "[http][websocket]") {
+  http::websocket_parser parser{websocket_role::client};
+
+  parser.feed(http::format_websocket_close(1000) + http::format_websocket_frame(websocket_opcode::text, "x"));
+
+  REQUIRE(parser.next());
+  REQUIRE(parser.closed());
+  REQUIRE_NOTHROW(parser.feed(http::format_websocket_frame(websocket_opcode::text, "more")));
+  REQUIRE_FALSE(parser.next());
 }

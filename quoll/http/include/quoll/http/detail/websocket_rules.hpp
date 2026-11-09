@@ -41,6 +41,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 
 namespace quoll::http::detail {
 
@@ -49,6 +50,10 @@ namespace quoll::http::detail {
 // The most a control frame (close, ping, pong) holds (5.5).
 inline constexpr std::size_t max_control_payload = 125;
 
+[[nodiscard]] constexpr bool is_known_opcode(std::uint8_t opcode) noexcept {
+  return opcode <= 0x2 || (opcode >= 0x8 && opcode <= 0xA);
+}
+
 [[nodiscard]] constexpr bool is_control(websocket_opcode opcode) noexcept {
   return static_cast<std::uint8_t>(opcode) >= 0x8;
 }
@@ -56,6 +61,17 @@ inline constexpr std::size_t max_control_payload = 125;
 // The codes a peer may send in a close (7.4): not 1004, 1005, 1006 or 1015, nor what no one has named.
 [[nodiscard]] constexpr bool may_send_close_code(std::uint16_t code) noexcept {
   return (code >= 1000 && code <= 1003) || (code >= 1007 && code <= 1014) || (code >= 3000 && code <= 4999);
+}
+
+// What a close's payload is (5.5.1): none, or a code a peer may send and a reason in UTF-8.
+enum class close_payload : std::uint8_t { valid, broken, not_text };
+
+[[nodiscard]] close_payload check_close_payload(std::string_view payload) noexcept;
+
+// The code a close's payload of two bytes or more starts with.
+[[nodiscard]] constexpr std::uint16_t close_code_in(std::string_view payload) noexcept {
+  return static_cast<std::uint16_t>((static_cast<std::uint8_t>(payload[0]) << 8U) |
+                                    static_cast<std::uint8_t>(payload[1]));
 }
 
 } // namespace quoll::http::detail

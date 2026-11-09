@@ -51,6 +51,7 @@ quoll_declare_module(
     src/utf8.cpp
     src/websocket_handshake.cpp
     src/websocket_parser.cpp
+    src/websocket_rules.cpp
   DEPS
     quoll::io
   PRIVATE_DEPS

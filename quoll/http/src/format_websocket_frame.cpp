@@ -45,21 +45,13 @@ namespace quoll::http {
 
 std::string format_websocket_frame(websocket_opcode opcode, std::string_view payload, bool fin,
                                    std::optional<websocket_mask> mask) {
-  auto const raw = static_cast<std::uint8_t>(opcode);
-
-  if (raw > 0x2 && (raw < 0x8 || raw > 0xA)) {
+  if (!detail::is_known_opcode(static_cast<std::uint8_t>(opcode))) {
     throw std::invalid_argument{"quoll::http::format_websocket_frame: an opcode RFC 6455 does not name"};
   }
 
   // What a peer would read as a close it must refuse: a byte alone, a code no one sends, a reason not UTF-8.
-  if (opcode == websocket_opcode::close && !payload.empty()) {
-    auto const code = payload.size() >= 2 ? static_cast<std::uint16_t>((static_cast<std::uint8_t>(payload[0]) << 8U) |
-                                                                       static_cast<std::uint8_t>(payload[1]))
-                                          : std::uint16_t{0};
-
-    if (payload.size() < 2 || !detail::may_send_close_code(code) || !detail::is_utf8(payload.substr(2))) {
-      throw std::invalid_argument{"quoll::http::format_websocket_frame: a close a peer would refuse"};
-    }
+  if (opcode == websocket_opcode::close && detail::check_close_payload(payload) != detail::close_payload::valid) {
+    throw std::invalid_argument{"quoll::http::format_websocket_frame: a close a peer would refuse"};
   }
 
   if (detail::is_control(opcode) && (!fin || payload.size() > detail::max_control_payload)) {
