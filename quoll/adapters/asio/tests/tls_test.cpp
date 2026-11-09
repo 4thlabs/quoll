@@ -37,16 +37,12 @@
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/client/client.hpp>
-#include <quoll/client/connect_websocket.hpp>
-#include <quoll/http/accept_websocket.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/verb.hpp>
-#include <quoll/http/websocket_message.hpp>
 #include <quoll/io/connect_tls.hpp>
 #include <quoll/io/listen_tls.hpp>
 #include <quoll/server/server.hpp>
 #include <quoll/test/run_task.hpp>
-#include <quoll/test/websocket_echo.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -96,10 +92,13 @@ http::request make_request(http::verb method, std::string target, std::string bo
 #include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/runtime_options.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/client/connect_websocket.hpp>
+#include <quoll/http/accept_websocket.hpp>
 #include <quoll/http/body_reader.hpp>
 #include <quoll/http/body_stream.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/router.hpp>
+#include <quoll/http/websocket_message.hpp>
 #include <quoll/io/any_listener.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/connect.hpp>
@@ -108,6 +107,7 @@ http::request make_request(http::verb method, std::string target, std::string bo
 #include <quoll/io/tls_options.hpp>
 #include <quoll/io/write.hpp>
 #include <quoll/test/overloaded.hpp>
+#include <quoll/test/websocket_echo.hpp>
 
 #include <array>
 #include <atomic>
