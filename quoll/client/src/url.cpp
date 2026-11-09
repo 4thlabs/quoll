@@ -401,9 +401,23 @@ websocket_target parse_websocket_url(std::string_view url) {
   auto const slash = before.find('/');
   auto const path = slash == std::string_view::npos ? std::string_view{"/"} : before.substr(slash);
 
-  // Its server and path checked as an http one's are.
-  websocket_target result{parse_url((secure ? std::string{"https://"} : std::string{"http://"}) + std::string{before}),
-                          std::string{path} + std::string{query}};
+  // Its server and path checked as an http one's are, what is refused said for connect_websocket.
+  origin server;
+
+  try {
+    server = parse_url((secure ? std::string{"https://"} : std::string{"http://"}) + std::string{before});
+  } catch (std::invalid_argument const &refused) {
+    constexpr std::string_view client_prefix = "quoll::http::client: ";
+    std::string_view reason = refused.what();
+
+    if (reason.starts_with(client_prefix)) {
+      reason.remove_prefix(client_prefix.size());
+    }
+
+    throw std::invalid_argument{"quoll::http::connect_websocket: " + std::string{reason}};
+  }
+
+  websocket_target result{std::move(server), std::string{path} + std::string{query}};
 
   result.server.prefix.clear();
   return result;

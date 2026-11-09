@@ -51,6 +51,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -103,12 +104,20 @@ namespace detail {
 // What opens the stream of a WebSocket, a connector and where to, held by the frame that awaits what it gives.
 using websocket_opener = std::function<async::task<io::any_stream>()>;
 
-// The rest of connect_websocket(), on the stream `open` gives, compiled once.
-[[nodiscard]] async::task<connected_websocket> connect_websocket_through(websocket_opener open, websocket_target where,
-                                                                         websocket_connect_options options);
+// A client's handshake, ready to send: its request on the wire, its key, and the subprotocols it offers.
+struct websocket_handshake {
+  std::string wire;
+  std::string key;
+  http::fields offered;
+};
 
-// std::invalid_argument for a field of the handshake's own.
-void check_handshake_fields(http::fields const &fields);
+// The handshake to `where` with `fields`, checked: std::invalid_argument for a field of the handshake's own, or a
+// request that would not serialize.
+[[nodiscard]] websocket_handshake prepare_websocket_handshake(websocket_target const &where, http::fields fields);
+
+// The rest of connect_websocket(), on the stream `open` gives, compiled once.
+[[nodiscard]] async::task<connected_websocket>
+connect_websocket_through(websocket_opener open, websocket_handshake handshake, websocket_connect_options options);
 
 } // namespace detail
 
@@ -124,40 +133,45 @@ void check_handshake_fields(http::fields const &fields);
  * auto const answer = co_await socket.receive();
  * @endcode
  *
- * The server's 101 is checked: its `Sec-WebSocket-Accept`, no extension, no subprotocol but one the fields offered.
- * Anything else throws http::websocket_refused, with the server's answer. The connection and the handshake take no
+ * The server's 101 is checked: its `Sec-WebSocket-Accept`, no extension, no subprotocol but one the fields offered;
+ * interim answers before it (103) are skipped. Anything else throws http::websocket_refused, with the server's answer,
+ * even one that came as the handshake could not be sent whole. The connection and the handshake take no
  * longer than `options.handshake_timeout`, past which std::errc::timed_out is thrown; a network failure throws the
  * stream's error. A client sends no ping on its own: one that wants to find a server gone pings it from a task beside
  * what receives.
  *
- * @throws std::invalid_argument, when called, for another URL, a field of the handshake's own, or `wss` with a
- * connector that is no io::TlsConnector.
+ * @throws std::invalid_argument, when called, for another URL, a field of the handshake's own, a request that would
+ * not serialize, or `wss` with a connector that is no io::TlsConnector.
  */
 template <io::Connector Connector>
 [[nodiscard]] async::task<connected_websocket> connect_websocket(Connector connector, std::string_view url,
                                                                  websocket_connect_options options = {}) {
-  auto where = detail::parse_websocket_url(url);
-
-  detail::check_handshake_fields(options.fields);
+  auto const where = detail::parse_websocket_url(url);
 
   if (where.server.secure && !io::TlsConnector<Connector>) {
     throw std::invalid_argument{"quoll::http::connect_websocket: this connector cannot open wss connections"};
   }
 
-  // A copy of all it needs, as the task it gives may outlive what this was called with.
-  detail::websocket_opener open = [connector = std::move(connector), host = where.server.host, port = where.server.port,
-                                   secure = where.server.secure, tls = options.tls]() -> async::task<io::any_stream> {
+  // Before any connection: what would not serialize is refused here.
+  auto handshake = detail::prepare_websocket_handshake(where, options.fields);
+
+  // A copy of all it needs, as the task it gives may outlive what this was called with; the connector shared, as one
+  // may move without copying.
+  detail::websocket_opener open = [connector = std::make_shared<Connector const>(std::move(connector)),
+                                   host = where.server.host, port = where.server.port, secure = where.server.secure,
+                                   tls = options.tls]() -> async::task<io::any_stream> {
     if constexpr (io::TlsConnector<Connector>) {
       if (secure) {
-        return connector.connect_tls(host, port, tls);
+        return connector->connect_tls(host, port, tls);
       }
     }
 
+    // Only a connector with TLS reads it.
     static_cast<void>(secure);
-    return connector.connect(host, port);
+    return connector->connect(host, port);
   };
 
-  return detail::connect_websocket_through(std::move(open), std::move(where), std::move(options));
+  return detail::connect_websocket_through(std::move(open), std::move(handshake), std::move(options));
 }
 
 /**

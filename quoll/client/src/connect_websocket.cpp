@@ -40,19 +40,22 @@
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
 #include <quoll/http/detail/websocket_key.hpp>
+#include <quoll/http/error.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
+#include <quoll/http/serializer.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/http/websocket_handshake.hpp>
 #include <quoll/http/websocket_parser.hpp>
-#include <quoll/http/write.hpp>
 #include <quoll/io/network_connector.hpp>
+#include <quoll/io/write.hpp>
 
 #include <algorithm>
 #include <array>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -110,44 +113,44 @@ constexpr std::array handshake_fields{std::string_view{"Host"},
   return !protocol || offered(fields, detail::trim(*protocol));
 }
 
-async::task<connected_websocket> shake_hands(detail::websocket_opener open, detail::websocket_target where,
+// Interim answers skipped before the 101, against a server sending them for ever.
+constexpr int max_interim_answers = 8;
+
+async::task<connected_websocket> shake_hands(detail::websocket_opener open, detail::websocket_handshake handshake,
                                              websocket_connect_options options) {
   auto stream = co_await open();
-  auto const key = detail::random_websocket_key();
-  request handshake;
-
-  handshake.method = verb::get;
-  handshake.target = std::move(where.target);
-  handshake.fields = std::move(options.fields);
-  handshake.fields.set("Host",
-                       detail::host_field(where.server.host, where.server.port, where.server.secure ? 443 : 80));
-  handshake.fields.set("Upgrade", "websocket");
-  handshake.fields.set("Connection", "Upgrade");
-  handshake.fields.set("Sec-WebSocket-Key", key);
-  handshake.fields.set("Sec-WebSocket-Version", "13");
-
-  if (auto const failed = co_await http::write(stream, handshake)) {
-    throw std::system_error{failed, "quoll::http::connect_websocket: cannot send the handshake"};
-  }
-
+  // Kept rather than thrown at once: a server refusing as it reads may have answered, which says more.
+  auto const unsent = (co_await io::write(stream, std::as_bytes(std::span{handshake.wire}))).error;
   std::string buffer;
-  response_parser parser{options.limits};
 
-  parser.set_request_method(verb::get);
+  for (auto interim = 0;; ++interim) {
+    response_parser parser{options.limits};
 
-  if (auto const failed = co_await http::read(stream, buffer, parser)) {
-    throw std::system_error{failed, "quoll::http::connect_websocket: cannot read the server's answer"};
+    if (auto const failed = co_await http::read(stream, buffer, parser)) {
+      throw std::system_error{unsent ? unsent : failed,
+                              unsent ? "quoll::http::connect_websocket: cannot send the handshake"
+                                     : "quoll::http::connect_websocket: cannot read the server's answer"};
+    }
+
+    auto answer = parser.release();
+
+    if (is_informational(answer.status) && answer.status != status::switching_protocols) {
+      if (interim == max_interim_answers) {
+        throw std::system_error{make_error_code(error::bad_message),
+                                "quoll::http::connect_websocket: too many interim answers"};
+      }
+
+      continue;
+    }
+
+    if (unsent || !switches(answer, handshake.key, handshake.offered)) {
+      throw websocket_refused{std::move(answer)};
+    }
+
+    // What came after the 101 is the WebSocket's.
+    co_return connected_websocket{
+        websocket{std::move(stream), websocket_role::client, std::move(buffer), options.websocket}, std::move(answer)};
   }
-
-  auto answer = parser.release();
-
-  if (!switches(answer, key, handshake.fields)) {
-    throw websocket_refused{std::move(answer)};
-  }
-
-  // What came after the 101 is the WebSocket's.
-  co_return connected_websocket{
-      websocket{std::move(stream), websocket_role::client, std::move(buffer), options.websocket}, std::move(answer)};
 }
 
 } // namespace
@@ -159,20 +162,34 @@ websocket_refused::websocket_refused(http::response answer)
 
 namespace detail {
 
-void check_handshake_fields(http::fields const &fields) {
+websocket_handshake prepare_websocket_handshake(websocket_target const &where, http::fields fields) {
   for (auto const &field : fields) {
     if (std::ranges::any_of(handshake_fields, [&field](std::string_view name) { return iequals(field.name, name); })) {
       throw std::invalid_argument{"quoll::http::connect_websocket: a field of the handshake's own: " + field.name};
     }
   }
+
+  websocket_handshake handshake{.wire = {}, .key = random_websocket_key(), .offered = fields};
+  request message;
+
+  message.method = verb::get;
+  message.target = where.target;
+  message.fields = std::move(fields);
+  message.fields.set("Host", host_field(where.server.host, where.server.port, where.server.secure ? 443 : 80));
+  message.fields.set("Upgrade", "websocket");
+  message.fields.set("Connection", "Upgrade");
+  message.fields.set("Sec-WebSocket-Key", handshake.key);
+  message.fields.set("Sec-WebSocket-Version", "13");
+  handshake.wire = serialize(message);
+  return handshake;
 }
 
-async::task<connected_websocket> connect_websocket_through(websocket_opener open, websocket_target where,
+async::task<connected_websocket> connect_websocket_through(websocket_opener open, websocket_handshake handshake,
                                                            websocket_connect_options options) {
   auto const limit = options.handshake_timeout;
 
   co_return co_await async::detail::with_optional_timeout(
-      limit, shake_hands(std::move(open), std::move(where), std::move(options)));
+      limit, shake_hands(std::move(open), std::move(handshake), std::move(options)));
 }
 
 } // namespace detail
