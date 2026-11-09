@@ -89,6 +89,25 @@ struct event_sink_state {
 // Once the service has ended: the head of a stream with no event, unless one has started it or is asked.
 [[nodiscard]] async::task<> sink_finish(std::shared_ptr<event_sink_state> state);
 
+// Closes the sink: what writes to the connection goes now, and an operation run later throws.
+void sink_close(event_sink_state &state) noexcept;
+
+// Closes a sink when it goes, on every way out of the stream.
+class sink_closing {
+public:
+  explicit sink_closing(std::shared_ptr<event_sink_state> state) noexcept : state_(std::move(state)) {}
+
+  sink_closing(sink_closing const &) = delete;
+  sink_closing &operator=(sink_closing const &) = delete;
+  sink_closing(sink_closing &&) = delete;
+  sink_closing &operator=(sink_closing &&) = delete;
+
+  ~sink_closing() { sink_close(*state_); }
+
+private:
+  std::shared_ptr<event_sink_state> state_;
+};
+
 } // namespace detail
 
 /**
@@ -183,6 +202,11 @@ struct event_sink_access {
   template <class T, class EventCodec>
   [[nodiscard]] static async::task<> finish(event_sink<T, EventCodec> const &sink) {
     return sink_finish(sink.state_);
+  }
+
+  template <class T, class EventCodec>
+  [[nodiscard]] static sink_closing closing(event_sink<T, EventCodec> const &sink) noexcept {
+    return sink_closing{sink.state_};
   }
 };
 

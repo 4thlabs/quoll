@@ -115,8 +115,8 @@ inline constexpr bool has_events = events_of<Endpoint>::size > 0;
 template <class Endpoint>
 using events_part_of = typename front<events_of<Endpoint>>::type;
 
-// Whether one of `Parts` declares what is no error (below 400): a success, or a redirect: a returns<> with a 2xx
-// status.
+// Whether one of `Parts` declares what is no error, below 400: a success or a redirect, which events<> leaves no room
+// for.
 template <class... Parts>
 [[nodiscard]] consteval bool any_success_response(type_list<Parts...>) {
   return ([]<class P>() {

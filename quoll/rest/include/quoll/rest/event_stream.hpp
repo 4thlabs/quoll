@@ -79,7 +79,7 @@ template <class T, class EventCodec = json_codec>
 class event_stream {
 public:
   /** @brief Reads `events`; a client's `subscribe` makes one. */
-  explicit event_stream(http::event_reader events) noexcept : events_(std::move(events)) {}
+  explicit event_stream(http::event_reader events) : events_(std::move(events)) {}
 
   /**
    * @brief The next value, or nothing once the stream has ended.

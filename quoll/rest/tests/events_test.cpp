@@ -121,10 +121,13 @@ using search = endpoint<"changes.search", verb::post, "/search", body<filter>, e
 
 // An operation kept past its service, in the service.
 using kept = endpoint<"changes.kept", verb::get, "/kept", events<change>>;
+// The same, the service failing after.
+using kept_then_failing = endpoint<"changes.kept_then_failing", verb::get, "/kept-then-failing", events<change>>;
 // What a client decodes as views into its events.
 using viewed = endpoint<"changes.viewed", verb::get, "/viewed", events<filter>>;
 
-using api = rest::api<"/changes", feed, broken, cut, none, checked, failing, paced, opened, search, kept, viewed>;
+using api = rest::api<"/changes", feed, broken, cut, none, checked, failing, paced, opened, search, kept,
+                      kept_then_failing, viewed>;
 
 // The same feeds, scoped under one name.
 namespace named {
@@ -150,6 +153,12 @@ struct changes_service {
 
   quoll::async::task<> operator()(changes::kept, rest::event_sink<change> &events) const {
     held->emplace(events.send({.id = 1, .what = "never"}));
+    co_return;
+  }
+
+  quoll::async::task<> operator()(changes::kept_then_failing, rest::event_sink<change> &events) const {
+    held->emplace(events.comment());
+    throw std::runtime_error{"after keeping an operation"};
     co_return;
   }
 
@@ -1052,4 +1061,19 @@ TEST_CASE("rest events: a value decoded into views of its event is valid until t
 
   REQUIRE(quoll::test::run(reading()).value() ==
           "a word long enough to leave the buffer|another word long enough to leave it");
+}
+
+TEST_CASE("rest events: an operation kept by a service that fails, dropped later, leaves the connection alone",
+          "[rest][sse]") {
+  changes_service const service;
+  auto const held = service.held;
+  http::router router;
+
+  rest::mount<changes::all>(router, service);
+
+  auto const answer = answer_to(router, get("/changes/kept-then-failing"));
+
+  REQUIRE(answer.starts_with("HTTP/1.1 500"));
+  // Dropped once the connection is gone: under ASan, what it held must not reach it.
+  held->reset();
 }

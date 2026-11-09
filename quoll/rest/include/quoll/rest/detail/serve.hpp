@@ -375,6 +375,9 @@ template <class Route, class Validators, class... Services>
 
   auto &service = std::get<index>(state->services);
   sink_type sink{http::response_writer{out}};
+  // Closed on every way out, a throw included, while the connection is there: an operation kept past the service, run
+  // or dropped later, never reaches it.
+  auto const closing = event_sink_access::closing(sink);
   auto call = [&] {
     return std::apply([&](auto &...each) { return std::invoke(service, endpoint{}, std::move(each)..., sink); },
                       held->values);
