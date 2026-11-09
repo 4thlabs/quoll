@@ -45,6 +45,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <stop_token>
 #include <system_error>
 #include <vector>
@@ -180,45 +181,23 @@ TEST_CASE("slots: a stop coming after a place was given leaves it to what waited
   REQUIRE(places.available() == 1);
 }
 
-TEST_CASE("slots: try_acquire takes a free place, and none while what waits keeps its turn", "[async][slots]") {
+TEST_CASE("held_place: a place taken is held until it goes", "[async][slots]") {
   slots places{1};
 
-  REQUIRE(places.try_acquire());
-  REQUIRE_FALSE(places.try_acquire());
+  auto const holding = [&]() -> task<std::size_t> {
+    {
+      quoll::async::detail::held_place held;
 
-  auto const waits = [&]() -> task<int> {
-    co_await places.acquire();
-    co_return 1;
+      co_await held.take(places);
+
+      // Held: none free.
+      if (places.available() != 0) {
+        co_return 10;
+      }
+    }
+
+    co_return places.available();
   };
 
-  auto const both = [&]() -> task<int> {
-    auto const [got, taken] = co_await quoll::async::when_all(waits(), [&]() -> task<bool> {
-      // The waiter is queued: the place given back goes to it, not to what asks without waiting.
-      co_await quoll::async::yield();
-      places.release();
-
-      auto const taken = places.try_acquire();
-
-      co_return taken;
-    }());
-
-    co_return got + (taken ? 10 : 0);
-  };
-
-  REQUIRE(quoll::test::run(both()) == 1);
-  REQUIRE(places.available() == 0);
-}
-
-TEST_CASE("held_place: try_take holds a free place until it goes, and gives it back", "[async][slots]") {
-  slots places{1};
-
-  {
-    quoll::async::detail::held_place held;
-
-    REQUIRE(held.try_take(places));
-    REQUIRE_FALSE(held.try_take(places));
-    REQUIRE(places.available() == 0);
-  }
-
-  REQUIRE(places.available() == 1);
+  REQUIRE(quoll::test::run(holding()) == 1);
 }

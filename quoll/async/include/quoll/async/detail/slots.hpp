@@ -165,18 +165,6 @@ public:
     }
   }
 
-  /** @brief A place, if one is free now, without waiting: what waits keeps its turn, as none is free while it does. */
-  [[nodiscard]] bool try_acquire() noexcept {
-    return state_.with([](queue &state) {
-      if (state.free == 0) {
-        return false;
-      }
-
-      --state.free;
-      return true;
-    });
-  }
-
   /** @brief How many places are free now, which others may change as soon as this returns. */
   [[nodiscard]] std::size_t available() const {
     return state_.with([](queue const &state) { return state.free; });

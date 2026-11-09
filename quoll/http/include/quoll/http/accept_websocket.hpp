@@ -76,26 +76,19 @@ namespace quoll::http {
  * page of another site acts for them (cross-site WebSocket hijacking).
  *
  * The handler runs in the task of the connection, on its strand, as a request's handler does. The timeouts of the
- * connection no longer apply, as a WebSocket may stay quiet: a peer quiet for websocket_options::ping_interval, 30
- * seconds by default, is pinged, and one that stays so for another, or does not take a ping within it, gone or
- * half-open, has its handler stopped, which frees the connection. That needs the handler to keep receiving, which is
- * also what answers the peer: one that waits on something else for longer than an interval receives beside it, through
- * when_all, or sets a longer ping_interval. A task left holding a copy of the websocket past the handler keeps the
- * connection open, out of the keep-alive's watch and the server's count, until it lets go. Once a close has left, the
- * handler's own or a drain's, the peer's answer is waited for as a pong is: one that does not come within
- * `ping_interval`, or 30 seconds where it is zero, has the handler stopped. Stopping a server sends a close with 1001
- * (going away) as it starts to drain, which a handler that receives sees as the last message once the peer has answered
- * it, then waits for the handler up to its `shutdown_timeout`, and stops what it awaits.
+ * connection no longer apply, as a WebSocket may stay quiet. A peer that has sent nothing for
+ * websocket_options::ping_interval, 30 seconds by default, is pinged; one that still sends nothing for as long, gone or
+ * half-open, has the handler stopped, which frees the connection. What counts is what receive() reads: a handler keeps
+ * receiving, which also answers the peer, beside what else it does, through when_all. A task left holding a copy of the
+ * websocket past the handler keeps the connection open, out of the keep-alive's watch and the server's count, until it
+ * lets go. Stopping a server sends a close with 1001 (going away) as it starts to drain, which a handler that receives
+ * sees as the last message once the peer has answered it, then waits for the handler up to its `shutdown_timeout`, and
+ * stops what it awaits.
  *
- * Once the handler is over, a close goes, unless one did: 1000, or 1011 if the handler threw. What the peer sends is
- * then read up to its close, and the server's side shut, so that the close is not lost to a reset, each step within
- * `ping_interval`, or 30 seconds where it is zero. A peer that broke the protocol has had its close: the server's side
- * is shut at once, and what the peer still sends dropped for as long. Pinging, the 1001 of a drain and that wait need a
- * timer, which quoll::runtime has.
- *
- * What the handler throws goes to `connection_options::on_handler_error`, but for what a peer gone, silent, or breaking
- * the protocol throws through it, and for a send refused after a close the handler did not send, the peer's or a
- * drain's: none is a failure of the handler's.
+ * Once the handler is over, a close goes, unless one did: 1000, or 1011 if the handler threw; then the server's side
+ * is shut. What the handler throws goes to `connection_options::on_handler_error`, but for what a stop throws: a peer
+ * gone, or breaking the protocol, makes receive() throw, which a handler catches if that is no failure of its own.
+ * Pinging and the 1001 of a drain need a timer, which quoll::runtime has.
  *
  * @throws std::invalid_argument for an empty handler.
  */

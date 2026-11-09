@@ -45,7 +45,7 @@
 
 namespace quoll::async::detail {
 
-// A place of some slots, held until it goes or release(). Thread safety: none, as what holds it.
+// A place of some slots, held until it goes or release(). Thread safety: none, as the one task that holds it.
 class held_place {
 public:
   held_place() noexcept = default;
@@ -61,16 +61,6 @@ public:
     if (places_ != nullptr) {
       std::exchange(places_, nullptr)->release();
     }
-  }
-
-  // A place, if one is free now, held here: see slots::try_acquire(). `places` outlives this.
-  [[nodiscard]] bool try_take(slots &places) noexcept {
-    if (places_ != nullptr || !places.try_acquire()) {
-      return false;
-    }
-
-    places_ = &places;
-    return true;
   }
 
   // Owned from the moment it is given, whatever fails around the wait for it: a timeout or a stop that comes as it is
