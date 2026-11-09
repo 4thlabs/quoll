@@ -86,16 +86,19 @@ constexpr std::array handshake_fields{std::string_view{"Host"},
 // A subprotocol is compared as it is, as RFC 6455 has them.
 [[nodiscard]] bool switches(http::response const &answer, std::string_view key,
                             std::vector<std::string> const &offered) {
-  if (answer.status != status::switching_protocols || !detail::field_names(answer.fields, "Upgrade", "websocket") ||
-      !detail::connection_names(answer.fields, "upgrade")) {
-    return false;
-  }
-
   // One of each, as two would leave which one counts to whoever reads them.
   auto const count = [&answer](std::string_view name) {
     return std::ranges::count_if(answer.fields,
                                  [name](auto const &field) { return detail::iequals(field.name, name); });
   };
+
+  // `websocket` alone, whatever its case (RFC 6455, 4.1), in one Upgrade field.
+  auto const upgrade = answer.fields.find("Upgrade");
+
+  if (answer.status != status::switching_protocols || count("Upgrade") != 1 ||
+      !detail::iequals(detail::trim(*upgrade), "websocket") || !detail::connection_names(answer.fields, "upgrade")) {
+    return false;
+  }
 
   auto const accept = answer.fields.find("Sec-WebSocket-Accept");
 
@@ -145,7 +148,7 @@ constexpr std::array handshake_fields{std::string_view{"Host"},
     }
 
     // Its head alone, what came of a refusal's body with it dropped, as how much did depends on how the bytes came.
-    auto answer = parser.head();
+    auto answer = parser.done() ? parser.release() : parser.head();
 
     answer.body.clear();
 

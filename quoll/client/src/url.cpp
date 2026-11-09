@@ -392,6 +392,11 @@ websocket_target parse_websocket_url(std::string_view url) {
   auto const slash = before.find('/');
   auto const path = slash == std::string_view::npos ? std::string_view{"/"} : before.substr(slash);
 
+  // What a proxy could read as another server: `//host/...`, a reference to a network path.
+  if (path.starts_with("//")) {
+    throw std::invalid_argument{"quoll::http::connect_websocket: a path a proxy could read as another server"};
+  }
+
   // Its server checked as an http one's is, what is refused said for connect_websocket. Its path is no prefix with a
   // boundary to keep, but the whole target, the caller's own: checked by the serializer, as any request's.
   origin server;

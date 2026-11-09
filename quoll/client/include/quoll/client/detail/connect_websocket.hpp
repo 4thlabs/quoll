@@ -39,7 +39,7 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/client/connected_websocket.hpp>
-#include <quoll/client/detail/client_backend.hpp>
+#include <quoll/client/detail/connector_handle.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/client/websocket_connect_options.hpp>
 #include <quoll/http/fields.hpp>

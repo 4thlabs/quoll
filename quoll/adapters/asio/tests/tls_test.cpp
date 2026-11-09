@@ -37,12 +37,16 @@
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/client/client.hpp>
+#include <quoll/client/connect_websocket.hpp>
+#include <quoll/http/accept_websocket.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/verb.hpp>
+#include <quoll/http/websocket_message.hpp>
 #include <quoll/io/connect_tls.hpp>
 #include <quoll/io/listen_tls.hpp>
 #include <quoll/server/server.hpp>
 #include <quoll/test/run_task.hpp>
+#include <quoll/test/websocket_echo.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -362,6 +366,50 @@ task<std::string> listen_and_get(std::uint16_t port) {
 
 TEST_CASE("TLS: a client calls a server, checking its certificate against an authority", "[tls][asio][runtime]") {
   REQUIRE(run_task(with_server<std::string>(server_certificate(), get_body(trusting_the_authority()))) == "hello");
+}
+
+// A client opening a WebSocket over TLS, trusting the authority, to an http::server serving one over TLS: what it
+// sends comes back, then both ends close.
+task<std::string> websocket_over_tls() {
+  http::router router;
+
+  router.get("/echo",
+             [](http::request request) { return http::accept_websocket(request, quoll::test::websocket_echo); });
+
+  auto listener = co_await io::listen_tls(0, server_certificate());
+  auto const url = "wss://127.0.0.1:" + std::to_string(listener.local_port().value()) + "/echo";
+  http::server const server{router};
+  std::stop_source stop;
+
+  auto const serving = [&]() -> task<> {
+    co_await stop_scope<void>{server.serve(std::move(listener)), stop.get_token()};
+  };
+  auto const talking = [&]() -> task<std::string> {
+    stop_on_exit const stop_server{stop};
+    http::websocket_connect_options options;
+
+    options.tls = trusting_the_authority().tls;
+
+    auto [socket, handshake] = co_await http::connect_websocket(url, std::move(options));
+
+    co_await socket.send_text("over TLS");
+
+    auto const answer = co_await socket.receive();
+
+    co_await socket.close();
+
+    auto const closed = co_await socket.receive();
+
+    co_return closed.opcode == http::websocket_opcode::close ? answer.data : std::string{};
+  };
+
+  auto [served, answer] = co_await when_all(serving(), talking());
+
+  co_return answer;
+}
+
+TEST_CASE("TLS: a WebSocket client and server talk over TLS", "[tls][asio][runtime][websocket]") {
+  REQUIRE(run_task(websocket_over_tls()) == "over TLS");
 }
 
 TEST_CASE("TLS: http::server serves over TLS with a certificate", "[tls][asio][runtime][server]") {

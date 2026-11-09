@@ -39,8 +39,8 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/client/connected_websocket.hpp>
-#include <quoll/client/detail/client_backend.hpp>
 #include <quoll/client/detail/connect_websocket.hpp>
+#include <quoll/client/detail/connector_handle.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/client/websocket_connect_options.hpp>
 #include <quoll/io/connector.hpp>
@@ -78,7 +78,7 @@ namespace quoll::http {
 template <io::Connector Connector>
 [[nodiscard]] async::task<connected_websocket> connect_websocket(Connector connector, std::string_view url,
                                                                  websocket_connect_options options = {}) {
-  auto const where = detail::parse_websocket_url(url);
+  auto where = detail::parse_websocket_url(url);
 
   if (where.server.secure && !io::TlsConnector<Connector>) {
     throw std::invalid_argument{"quoll::http::connect_websocket: this connector cannot open wss connections"};
@@ -87,7 +87,7 @@ template <io::Connector Connector>
   // Before any connection: what would not serialize is refused here.
   auto handshake = detail::prepare_websocket_handshake(where, std::move(options.fields));
 
-  return detail::connect_websocket_through(detail::make_connector_handle(std::move(connector)), where.server,
+  return detail::connect_websocket_through(detail::make_connector_handle(std::move(connector)), std::move(where.server),
                                            std::move(handshake), std::move(options));
 }
 

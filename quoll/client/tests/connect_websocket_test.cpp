@@ -66,7 +66,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <concepts>
 #include <cstdint>
@@ -221,7 +223,10 @@ std::function<task<>(io::memory_stream)> answering_with_accept(std::string befor
     auto const accept = http::websocket_accept(request.fields.find("Sec-WebSocket-Key").value_or(""));
     auto wire = before + answer;
 
-    wire.replace(wire.find("{accept}"), std::string_view{"{accept}"}.size(), accept);
+    // Each one, as a test of two accepts names it twice.
+    for (auto at = wire.find("{accept}"); at != std::string::npos; at = wire.find("{accept}")) {
+      wire.replace(at, std::string_view{"{accept}"}.size(), accept);
+    }
     (void)co_await io::write(stream, std::as_bytes(std::span{wire}));
   };
 }
@@ -498,6 +503,8 @@ TEST_CASE("connect_websocket: what cannot be asked is refused when it is called"
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", with_a_body), std::invalid_argument);
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "wss://h/"), std::invalid_argument);
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://bad host/"), std::invalid_argument);
+  // What a proxy could read as another server.
+  REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h//evil.example/x"), std::invalid_argument);
 
   http::websocket_connect_options broken;
 
@@ -777,7 +784,9 @@ TEST_CASE("connect_websocket: what a 101 may not name, or name twice", "[client]
     answer = "Sec-WebSocket-Protocol: chat\r\nSec-WebSocket-Protocol: other\r\n";
   }
 
-  SECTION("two accepts") { answer = "Sec-WebSocket-Accept: {accept}\r\n"; }
+  SECTION("two accepts, both right") { answer = "Sec-WebSocket-Accept: {accept}\r\n"; }
+
+  SECTION("an Upgrade to another protocol") { answer = "Upgrade: h2c\r\n"; }
 
   memory_server server{loop.get_executor(),
                        answering_with_accept({}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
@@ -880,6 +889,17 @@ TEST_CASE("connect_websocket: each field of the handshake's own is refused", "[c
     options.fields.set(name, "1");
 
     REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", options), std::invalid_argument);
+
+    // Whatever its case.
+    http::websocket_connect_options lower;
+    auto lower_name = std::string{name};
+
+    std::ranges::transform(lower_name, lower_name.begin(), [](char letter) {
+      return static_cast<char>(std::tolower(static_cast<unsigned char>(letter)));
+    });
+    lower.fields.add(lower_name, "1");
+
+    REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", lower), std::invalid_argument);
   }
 }
 
