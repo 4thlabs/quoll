@@ -280,7 +280,7 @@ websocket_handshake prepare_websocket_handshake(websocket_target const &where, h
     }
 
     // One field in place of all the offer's.
-    message.fields.set("Sec-WebSocket-Protocol", std::move(offer));
+    message.fields.set("Sec-WebSocket-Protocol", offer);
   }
 
   message.fields.set("Host", host_field(where.server.host, where.server.port, where.server.secure ? 443 : 80));

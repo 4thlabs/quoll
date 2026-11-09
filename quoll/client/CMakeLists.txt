@@ -3,6 +3,7 @@ quoll_declare_module(
   SOURCES
     src/client.cpp
     src/connect_websocket.cpp
+    src/peer_has_gone.cpp
     src/platform.cpp
     src/url.cpp
     src/websocket_refused.cpp

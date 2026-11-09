@@ -286,7 +286,6 @@ private:
   [[nodiscard]] static detail::client_backend make_backend(Connector connector, std::string host, std::uint16_t port,
                                                            bool secure, std::string prefix,
                                                            client_options const &options) {
-
     return detail::make_client_backend(detail::make_connector_handle(std::move(connector)), std::move(host), port,
                                        secure, std::move(prefix), options);
   }

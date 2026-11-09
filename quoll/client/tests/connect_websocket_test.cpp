@@ -478,7 +478,10 @@ TEST_CASE("connect_websocket: a subprotocol chosen is one offered", "[client][we
   router.get("/", [&chosen](http::request request) {
     auto response = http::accept_websocket(request, quoll::test::websocket_echo);
 
-    response.fields.set("Sec-WebSocket-Protocol", chosen);
+    if (!chosen.empty()) {
+      response.fields.set("Sec-WebSocket-Protocol", chosen);
+    }
+
     return response;
   });
 
@@ -501,8 +504,26 @@ TEST_CASE("connect_websocket: a subprotocol chosen is one offered", "[client][we
     REQUIRE(quoll::test::run(loop, connecting()) == "superchat");
   }
 
+  SECTION("none, of those offered") {
+    auto const connecting = [&]() -> task<bool> {
+      auto connected = co_await http::connect_websocket(memory_connector{server}, "ws://h/", options);
+
+      co_await connected.socket.close();
+      static_cast<void>(co_await connected.socket.receive());
+      co_return connected.handshake.fields.contains("Sec-WebSocket-Protocol");
+    };
+
+    REQUIRE_FALSE(quoll::test::run(loop, connecting()).value());
+  }
+
   SECTION("one not offered is refused") {
     chosen = "other";
+
+    REQUIRE(refusal(server, loop, "ws://h/", options) == "101");
+  }
+
+  SECTION("one offered, in another case, is refused") {
+    chosen = "Chat";
 
     REQUIRE(refusal(server, loop, "ws://h/", options) == "101");
   }

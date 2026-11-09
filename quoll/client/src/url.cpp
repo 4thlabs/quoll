@@ -422,9 +422,7 @@ websocket_target parse_websocket_url(std::string_view url) {
     throw std::invalid_argument{"quoll::http::connect_websocket: " + std::string{reason}};
   }
 
-  websocket_target result{std::move(server), std::string{path} + std::string{query}};
-
-  return result;
+  return {std::move(server), std::string{path} + std::string{query}};
 }
 
 origin parse_url(std::string_view url) {
