@@ -95,6 +95,7 @@ TEST_CASE("is_websocket_upgrade: what asks for one, and what does not", "[http][
   REQUIRE_FALSE(without([](http::request &message) { message.fields.erase("Host"); }));
   REQUIRE_FALSE(
       without([](http::request &message) { message.fields.add("Sec-WebSocket-Key", "AAAAAAAAAAAAAAAAAAAAAA=="); }));
+  REQUIRE_FALSE(without([](http::request &message) { message.fields.add("Sec-WebSocket-Version", "8"); }));
   // Padding bits set in the last digit: no key of 16 bytes.
   REQUIRE_FALSE(
       without([](http::request &message) { message.fields.set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZR=="); }));

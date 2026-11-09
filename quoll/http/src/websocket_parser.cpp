@@ -40,6 +40,7 @@
 #include <quoll/http/websocket_parser.hpp>
 
 #include <algorithm>
+#include <span>
 #include <stdexcept>
 #include <utility>
 
@@ -205,9 +206,7 @@ std::optional<websocket_message> websocket_parser::frame(bool &whole) {
     out.append(rest.substr(header, size));
 
     if (masked) {
-      for (std::size_t index = 0; index < size; ++index) {
-        out[from + index] = static_cast<char>(byte(out[from + index]) ^ byte(key[index % 4]));
-      }
+      detail::apply_mask(std::span{out}.subspan(from), {byte(key[0]), byte(key[1]), byte(key[2]), byte(key[3])});
     }
   };
 
@@ -251,8 +250,7 @@ std::optional<websocket_message> websocket_parser::frame(bool &whole) {
 
   switch (opcode) {
   case websocket_opcode::close: {
-    closed_ = true;
-
+    // Closed only by a close it reads whole: a broken one is a failure, not an end.
     switch (detail::check_close_payload(payload)) {
     case detail::close_payload::broken:
       fail(error::websocket_protocol);
@@ -263,6 +261,8 @@ std::optional<websocket_message> websocket_parser::frame(bool &whole) {
     }
 
     websocket_message message{.opcode = opcode, .data = {}, .close_code = 1005};
+
+    closed_ = true;
 
     if (!payload.empty()) {
       message.close_code = detail::close_code_in(payload);

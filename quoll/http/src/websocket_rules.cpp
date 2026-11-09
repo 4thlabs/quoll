@@ -39,6 +39,12 @@
 
 namespace quoll::http::detail {
 
+void apply_mask(std::span<char> bytes, std::array<std::uint8_t, 4> const &key, std::size_t offset) noexcept {
+  for (std::size_t index = 0; index < bytes.size(); ++index) {
+    bytes[index] = static_cast<char>(static_cast<std::uint8_t>(bytes[index]) ^ key[(offset + index) % 4]);
+  }
+}
+
 close_payload check_close_payload(std::string_view payload) noexcept {
   if (payload.empty()) {
     return close_payload::valid;

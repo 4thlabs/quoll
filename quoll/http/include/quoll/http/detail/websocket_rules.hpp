@@ -39,8 +39,10 @@
 
 #include <quoll/http/websocket_message.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string_view>
 
 namespace quoll::http::detail {
@@ -62,6 +64,9 @@ inline constexpr std::size_t max_control_payload = 125;
 [[nodiscard]] constexpr bool may_send_close_code(std::uint16_t code) noexcept {
   return (code >= 1000 && code <= 1003) || (code >= 1007 && code <= 1014) || (code >= 3000 && code <= 4999);
 }
+
+// XORs `bytes` with `key` (5.3), the first of them the `offset`th of the payload: masking and unmasking alike.
+void apply_mask(std::span<char> bytes, std::array<std::uint8_t, 4> const &key, std::size_t offset = 0) noexcept;
 
 // What a close's payload is (5.5.1): none, or a code a peer may send and a reason in UTF-8.
 enum class close_payload : std::uint8_t { valid, broken, not_text };

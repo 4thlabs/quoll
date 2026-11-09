@@ -396,3 +396,22 @@ TEST_CASE("websocket_parser: bytes fed after the close is read, with no next() b
   REQUIRE_NOTHROW(parser.feed(http::format_websocket_frame(websocket_opcode::text, "more")));
   REQUIRE_FALSE(parser.next());
 }
+
+TEST_CASE("websocket_parser: a broken close is a failure, not an end", "[http][websocket]") {
+  http::websocket_parser parser{websocket_role::client};
+
+  parser.feed(raw_close("\x03"));
+
+  REQUIRE(failure_code(parser) == http::error::websocket_protocol);
+  REQUIRE_FALSE(parser.closed());
+}
+
+TEST_CASE("websocket_parser: to a server, masked text cut in the middle of a character, joined", "[http][websocket]") {
+  auto const bytes = http::format_websocket_frame(websocket_opcode::text, "a\xE2\x82", false, key) +
+                     http::format_websocket_frame(websocket_opcode::ping, "p", true, key) +
+                     http::format_websocket_frame(websocket_opcode::continuation, "\xAC", true, key);
+
+  REQUIRE(messages_of(websocket_role::server, bytes, 1) ==
+          std::vector{http::websocket_message{.opcode = websocket_opcode::ping, .data = "p", .close_code = 0},
+                      text("a\xE2\x82\xAC")});
+}

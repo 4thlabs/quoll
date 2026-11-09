@@ -39,6 +39,7 @@
 #include <quoll/http/format_websocket_frame.hpp>
 
 #include <cstddef>
+#include <span>
 #include <stdexcept>
 
 namespace quoll::http {
@@ -60,6 +61,7 @@ std::string format_websocket_frame(websocket_opcode opcode, std::string_view pay
 
   std::string out;
 
+  // The longest head: two bytes, eight of length and four of mask.
   out.reserve(payload.size() + 14);
   out.push_back(static_cast<char>((fin ? 0x80U : 0U) | static_cast<std::uint8_t>(opcode)));
 
@@ -90,20 +92,19 @@ std::string format_websocket_frame(websocket_opcode opcode, std::string_view pay
     out.push_back(static_cast<char>(key));
   }
 
-  for (std::size_t index = 0; index < payload.size(); ++index) {
-    out.push_back(static_cast<char>(static_cast<std::uint8_t>(payload[index]) ^ (*mask)[index % 4]));
-  }
+  // Copied whole, then masked in place.
+  auto const from = out.size();
 
+  out.append(payload);
+  detail::apply_mask(std::span{out}.subspan(from), *mask);
   return out;
 }
 
 std::string format_websocket_close(std::uint16_t code, std::string_view reason, std::optional<websocket_mask> mask) {
-  if (!detail::may_send_close_code(code)) {
-    throw std::invalid_argument{"quoll::http::format_websocket_close: a code no one may send"};
-  }
-
-  if (reason.size() > 123 || !detail::is_utf8(reason)) {
-    throw std::invalid_argument{"quoll::http::format_websocket_close: a reason is UTF-8, of 123 bytes at most"};
+  // The code and the reason are checked as a close's payload is, by format_websocket_frame; only the length here, as
+  // the code takes two of a control frame's bytes.
+  if (reason.size() > detail::max_control_payload - 2) {
+    throw std::invalid_argument{"quoll::http::format_websocket_close: a reason of 123 bytes at most"};
   }
 
   std::string payload;

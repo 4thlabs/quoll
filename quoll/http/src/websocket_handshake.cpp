@@ -166,12 +166,15 @@ constexpr std::string_view base64_digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij
 } // namespace
 
 bool is_websocket_upgrade(request const &message) noexcept {
-  // One key: two would leave which one the accept answers to whoever reads them.
-  auto const keys = std::ranges::count_if(
-      message.fields, [](auto const &entry) { return detail::iequals(entry.name, "Sec-WebSocket-Key"); });
+  // One key and one version: two would leave which one counts to whoever reads them.
+  auto const once = [&message](std::string_view name) {
+    return std::ranges::count_if(message.fields,
+                                 [name](auto const &entry) { return detail::iequals(entry.name, name); }) == 1;
+  };
 
   return message.method == verb::get && message.version == version::http_1_1 && message.fields.contains("Host") &&
-         keys == 1 && detail::field_names(message.fields, "Upgrade", "websocket") &&
+         once("Sec-WebSocket-Key") && once("Sec-WebSocket-Version") &&
+         detail::field_names(message.fields, "Upgrade", "websocket") &&
          detail::connection_names(message.fields, "upgrade") &&
          detail::trim(message.fields.find("Sec-WebSocket-Version").value_or("")) == "13" &&
          is_key(detail::trim(message.fields.find("Sec-WebSocket-Key").value_or("")));

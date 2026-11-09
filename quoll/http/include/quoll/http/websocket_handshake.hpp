@@ -46,7 +46,8 @@ namespace quoll::http {
 
 /**
  * @brief Whether `message` asks for a WebSocket (RFC 6455, 4.2.1): a GET in HTTP/1.1 with a `Host`, `Upgrade:
- * websocket`, `Connection: Upgrade`, `Sec-WebSocket-Version: 13`, and one `Sec-WebSocket-Key` of 16 bytes in base64.
+ * websocket`, `Connection: Upgrade`, one `Sec-WebSocket-Version: 13`, and one `Sec-WebSocket-Key` of 16 bytes in
+ * base64.
  */
 [[nodiscard]] bool is_websocket_upgrade(request const &message) noexcept;
 
