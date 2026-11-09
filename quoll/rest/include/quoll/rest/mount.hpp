@@ -123,8 +123,10 @@ template <class... Args>
  * arguments, returns a task<>, and sends its events through it, after the router has answered: an http_error before the
  * stream starts (open() or the first event) answers as from any service, after it the stream is cut. It runs as the
  * response's `late_head_writer`: a middleware that sets a `body_writer` of its own replaces it, and the service is not
- * called. Each endpoint has
- * exactly one service, and each security scheme of the api a validator: otherwise mount() does not compile.
+ * called.
+ *
+ * Each endpoint has exactly one service, and each security scheme of the api a validator: otherwise mount() does not
+ * compile.
  *
  * For each request: credentials (401 if missing or rejected, with the `WWW-Authenticate` challenge of the scheme:
  * `Bearer`, or `ApiKey header="X-Api-Key"` / `ApiKey query="key"` for keys, which have no registered scheme), then

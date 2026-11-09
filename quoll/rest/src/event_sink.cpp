@@ -38,6 +38,7 @@
 #include <quoll/rest/event_sink.hpp>
 
 #include <atomic>
+#include <stdexcept>
 #include <utility>
 
 namespace quoll::rest::detail {
@@ -45,6 +46,10 @@ namespace quoll::rest::detail {
 namespace {
 
 [[nodiscard]] http::event_writer &writer_of(event_sink_state &state) {
+  if (state.closed.load()) {
+    throw std::logic_error{"quoll::rest::event_sink: an operation run once its service has ended"};
+  }
+
   if (!state.events) {
     state.events.emplace(std::move(*state.out));
     state.out.reset();
@@ -112,12 +117,14 @@ async::task<> sink_answer(std::shared_ptr<event_sink_state> state, http::respons
 }
 
 async::task<> sink_finish(std::shared_ptr<event_sink_state> state) {
-  // An operation asked and still to run starts it, or answers its own failure.
+  // An operation still to run, kept or spawned past the service, would write to a connection gone: it throws instead.
   if (state->events || state->busy.load()) {
+    state->closed = true;
     co_return;
   }
 
   co_await sink_open(state, sink_turn(state));
+  state->closed = true;
 }
 
 } // namespace quoll::rest::detail

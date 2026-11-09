@@ -82,6 +82,11 @@ struct change {
   bool operator==(change const &) const = default;
 };
 
+// Read by Glaze as a view into the request's body.
+struct filter {
+  std::string_view word;
+};
+
 namespace rest = quoll::rest;
 
 using quoll::http::status;
@@ -111,7 +116,10 @@ using paced = endpoint<"changes.paced", verb::get, "/paced", events<change>>;
 // open() asked and not awaited, then a refusal.
 using opened = endpoint<"changes.opened", verb::get, "/opened", events<change>, returns<problem, status::not_found>>;
 
-using api = rest::api<"/changes", feed, broken, cut, none, checked, failing, paced, opened>;
+// A filter read from the body as a view into it: what makes the request live as long as the stream.
+using search = endpoint<"changes.search", verb::post, "/search", body<filter>, events<change>>;
+
+using api = rest::api<"/changes", feed, broken, cut, none, checked, failing, paced, opened, search>;
 
 // The same feeds, scoped under one name.
 namespace named {
@@ -141,6 +149,11 @@ struct changes_service {
     }
 
     co_await events.send({.id = 2, .what = "second"});
+  }
+
+  quoll::async::task<> operator()(changes::search, filter wanted, rest::event_sink<change> &events) const {
+    co_await quoll::async::yield();
+    co_await events.send({.id = 1, .what = std::string{wanted.word}});
   }
 
   quoll::async::task<> operator()(changes::opened, rest::event_sink<change> &events) const {
@@ -645,7 +658,7 @@ TEST_CASE("rest events: a stop while a refusal is read goes on as a stop, not as
   REQUIRE(quoll::test::run(reading()).value() == "canceled");
 }
 
-TEST_CASE("rest events: HEAD gets the status GET would, its service run up to its first write", "[rest][sse]") {
+TEST_CASE("rest events: HEAD gets the status and head GET would, no event", "[rest][sse]") {
   auto const head = [](std::string_view target) {
     return answer_to(make_router(),
                      "HEAD " + std::string{target} + " HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
@@ -954,4 +967,38 @@ TEST_CASE("rest events: a comment or a retry refused leaves the stream unstarted
   REQUIRE(quoll::test::run(refused_before_start([](rest::event_sink<change> &events) {
             return events.retry(std::chrono::milliseconds{-1});
           })).value() == "refused;not started");
+}
+
+TEST_CASE("rest events: an argument that points into the request reads it whole, as the stream runs", "[rest][sse]") {
+  auto const answer = answer_to(make_router(), "POST /changes/search HTTP/1.1\r\nHost: x\r\nConnection: close\r\n"
+                                               "Content-Type: application/json\r\nContent-Length: 32\r\n\r\n"
+                                               "{\"word\":\"a word long enough xx\"}");
+
+  REQUIRE(answer.starts_with("HTTP/1.1 200"));
+  REQUIRE(answer.find(R"(data: {"id":1,"what":"a word long enough xx"})") != std::string::npos);
+}
+
+TEST_CASE("rest events: a sink operation that runs once its service has ended throws", "[rest][sse]") {
+  std::string sent;
+  yielding_sink sink{&sent};
+  http::body_stream out{sink};
+
+  auto const running = [&out]() -> task<std::string> {
+    rest::event_sink<change> events{http::response_writer{out}};
+    auto late = events.send({.id = 1, .what = "late"});
+
+    // What mount does once the service has ended, with an operation kept past it.
+    co_await rest::detail::event_sink_access::finish(events);
+
+    try {
+      co_await std::move(late);
+    } catch (std::logic_error const &) {
+      co_return "refused";
+    }
+
+    co_return "sent";
+  };
+
+  REQUIRE(quoll::test::run(running()).value() == "refused");
+  REQUIRE(sent.empty());
 }

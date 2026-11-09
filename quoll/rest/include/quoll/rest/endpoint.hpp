@@ -88,6 +88,7 @@ struct endpoint {
                 "quoll::rest::endpoint: an endpoint with events<> declares no other success, only error responses");
   static_assert(detail::count_events(detail::type_list<Parts...>{}) == 0 || Method != http::verb::head,
                 "quoll::rest::endpoint: a response to HEAD has no events");
+
   using contract_category = detail::endpoint_category;
   using parts = detail::type_list<Parts...>;
 

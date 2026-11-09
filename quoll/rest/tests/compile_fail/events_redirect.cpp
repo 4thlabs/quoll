@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::mount: an endpoint with events<> declares its errors as 4xx or 5xx, a problem or no body
+// expect: quoll::rest::endpoint: an endpoint with events<> declares no other success, only error responses
 //
 // A redirect the service could not answer: an http_error answers errors only.
 

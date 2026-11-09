@@ -66,6 +66,8 @@ struct event_sink_state {
   std::optional<http::response_writer> out;
   std::optional<http::event_writer> events;
   std::atomic<bool> busy = false;
+  // Set once the service has ended: an operation that runs after it would write to a connection gone.
+  std::atomic<bool> closed = false;
 };
 
 // The turn of an operation, taken when it is asked, so that operations run in that order (see http::event_writer).
