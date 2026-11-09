@@ -362,12 +362,6 @@ task<std::string> listen_and_get(std::uint16_t port) {
   co_return body;
 }
 
-} // namespace
-
-TEST_CASE("TLS: a client calls a server, checking its certificate against an authority", "[tls][asio][runtime]") {
-  REQUIRE(run_task(with_server<std::string>(server_certificate(), get_body(trusting_the_authority()))) == "hello");
-}
-
 // A client opening a WebSocket over TLS, trusting the authority, to an http::server serving one over TLS: what it
 // sends comes back, then both ends close.
 task<std::string> websocket_over_tls() {
@@ -406,6 +400,12 @@ task<std::string> websocket_over_tls() {
   auto [served, answer] = co_await when_all(serving(), talking());
 
   co_return answer;
+}
+
+} // namespace
+
+TEST_CASE("TLS: a client calls a server, checking its certificate against an authority", "[tls][asio][runtime]") {
+  REQUIRE(run_task(with_server<std::string>(server_certificate(), get_body(trusting_the_authority()))) == "hello");
 }
 
 TEST_CASE("TLS: a WebSocket client and server talk over TLS", "[tls][asio][runtime][websocket]") {

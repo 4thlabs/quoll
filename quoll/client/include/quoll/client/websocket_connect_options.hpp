@@ -60,7 +60,8 @@ struct websocket_connect_options {
    * client sends no ping on its own.
    */
   websocket_options websocket{};
-  /** @brief How long connecting and the handshake may take, both, given a timer; zero, or less: no limit. */
+  /** @brief How long connecting and the handshake may take, both, given a timer; zero: no limit, and a negative one has
+   * expired already, as with_timeout() has it. */
   std::chrono::nanoseconds handshake_timeout = std::chrono::seconds{30};
   /** @brief Size limits of the server's answer to the handshake. */
   http::parse_limits limits{};

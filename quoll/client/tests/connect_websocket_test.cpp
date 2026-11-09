@@ -588,6 +588,7 @@ TEST_CASE("connect_websocket: what cannot be asked is refused when it is called"
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", with_a_body), std::invalid_argument);
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "wss://h/"), std::invalid_argument);
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://bad host/"), std::invalid_argument);
+
   // What a proxy could read as another server, as it is, decoded, without its dot segments, or with a backslash.
   for (auto const *const url : {"ws://h//evil.example/x", "ws://h/%2F/evil.example/x", "ws://h/.//evil.example/x",
                                 "ws://h/./%2Fevil.example", "ws://h/\\evil.example"}) {
@@ -1331,7 +1332,7 @@ TEST_CASE("connect_websocket: a 101 whose one Upgrade names another protocol is 
   REQUIRE(refusal(server, loop, "ws://h/") == "101");
 }
 
-TEST_CASE("connect_websocket: a negative handshake_timeout is no limit, as zero", "[client][websocket]") {
+TEST_CASE("connect_websocket: a negative handshake_timeout has expired already", "[client][websocket]") {
   quoll::test::virtual_time time;
   http::websocket_connect_options options;
 
@@ -1339,7 +1340,7 @@ TEST_CASE("connect_websocket: a negative handshake_timeout is no limit, as zero"
 
   auto const connecting = [&]() -> task<std::string> {
     try {
-      // A server that answers after a second: a limit expired at once would end the wait before.
+      // A server that answers after a second: no limit would wait for its refusal.
       auto const late = [](io::memory_stream stream) -> task<> {
         co_await quoll::async::sleep_for(1s);
         co_await answering("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")(std::move(stream));
@@ -1348,10 +1349,12 @@ TEST_CASE("connect_websocket: a negative handshake_timeout is no limit, as zero"
       static_cast<void>(co_await http::connect_websocket(spawning_connector{late}, "ws://h/", std::move(options)));
     } catch (http::websocket_refused const &refused) {
       co_return std::to_string(static_cast<int>(refused.response().status));
+    } catch (std::system_error const &error) {
+      co_return error.code() == std::errc::timed_out ? "timed out" : error.what();
     }
 
     co_return std::string{};
   };
 
-  REQUIRE(quoll::test::run(time, connecting()) == "403");
+  REQUIRE(quoll::test::run(time, connecting()) == "timed out");
 }

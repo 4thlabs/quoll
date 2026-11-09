@@ -61,7 +61,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <memory>
 #include <ranges>
 #include <span>
@@ -311,8 +310,7 @@ async::task<connected_websocket> connect_websocket_through(connector_handle conn
                                                            websocket_handshake handshake,
                                                            websocket_connect_options options) {
   // Read before what holds it is moved; every argument goes by value into the task.
-  // Zero or less: no limit.
-  auto const limit = std::max(options.handshake_timeout, std::chrono::nanoseconds::zero());
+  auto const limit = options.handshake_timeout;
 
   return async::detail::with_optional_timeout(
       limit, shake_hands(std::move(connector), std::move(server), std::move(handshake), std::move(options)));
