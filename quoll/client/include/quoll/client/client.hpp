@@ -40,6 +40,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/client/client_options.hpp>
 #include <quoll/client/detail/client_backend.hpp>
+#include <quoll/client/detail/connector_handle.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/http/detail/number.hpp>
 #include <quoll/http/request.hpp>

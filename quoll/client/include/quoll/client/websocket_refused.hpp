@@ -48,6 +48,8 @@ namespace quoll::http {
 /**
  * @brief Thrown by http::connect_websocket for a server that does not switch to a WebSocket: any other answer, or a 101
  * that is not what the handshake asked for. Its response says which.
+ *
+ * Thread safety: its copies share one response, never changed, which they may read from any thread.
  */
 class websocket_refused : public std::runtime_error {
 public:

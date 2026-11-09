@@ -227,6 +227,7 @@ std::function<task<>(io::memory_stream)> answering_with_accept(std::string befor
     for (auto at = wire.find("{accept}"); at != std::string::npos; at = wire.find("{accept}")) {
       wire.replace(at, std::string_view{"{accept}"}.size(), accept);
     }
+
     (void)co_await io::write(stream, std::as_bytes(std::span{wire}));
   };
 }
@@ -336,6 +337,46 @@ public:
 };
 
 static_assert(io::Connector<breaking_connector>);
+
+// A stream that writes only while what owns it, its connector, is there: one that points into its connector.
+class owned_by_connector {
+public:
+  owned_by_connector(io::memory_stream inner, std::weak_ptr<bool const> connector) noexcept
+      : inner_(std::move(inner)), connector_(std::move(connector)) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
+    if (connector_.expired()) {
+      co_return io::io_result{std::make_error_code(std::errc::bad_file_descriptor), 0};
+    }
+
+    co_return co_await inner_.write_some(data);
+  }
+
+private:
+  io::memory_stream inner_;
+  std::weak_ptr<bool const> connector_;
+};
+
+// A connector to `server`, whose streams point into it.
+class owning_connector {
+public:
+  explicit owning_connector(memory_server &server) : inner_(server), alive_(std::make_shared<bool const>(true)) {}
+
+  [[nodiscard]] task<io::any_stream> connect(std::string host, std::uint16_t port) const {
+    auto stream = co_await inner_.connect(std::move(host), port);
+    auto *const memory = stream.target<io::memory_stream>();
+
+    co_return io::any_stream{owned_by_connector{std::move(*memory), alive_}};
+  }
+
+private:
+  memory_connector inner_;
+  std::shared_ptr<bool const> alive_;
+};
+
+static_assert(io::Connector<owning_connector>);
 
 // A connector to a peer that answered `answer` and went, before reading anything.
 class refusing_connector {
@@ -489,13 +530,21 @@ TEST_CASE("connect_websocket: what cannot be asked is refused when it is called"
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/?a b"), std::invalid_argument);
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", reserved), std::invalid_argument);
 
-  http::websocket_connect_options with_a_body;
-
   http::websocket_connect_options no_token;
 
   no_token.fields.set("Sec-WebSocket-Protocol", "chat, my chat");
 
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", no_token), std::invalid_argument);
+
+  http::websocket_connect_options twice_in_two;
+
+  // Across two fields too.
+  twice_in_two.fields.add("Sec-WebSocket-Protocol", "chat");
+  twice_in_two.fields.add("Sec-WebSocket-Protocol", "chat");
+
+  REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", twice_in_two), std::invalid_argument);
+
+  http::websocket_connect_options with_a_body;
 
   // Chunks, which the serializer would write after the head.
   with_a_body.fields.set("Transfer-Encoding", "chunked");
@@ -1013,4 +1062,40 @@ TEST_CASE("connect_websocket: a handshake_timeout of zero waits as long as the s
 
   REQUIRE(quoll::test::run(time, connecting()) == "403");
   REQUIRE(time.now() == 60s);
+}
+
+TEST_CASE("connect_websocket: the connector lives as long as the stream it opened", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  http::router router;
+
+  router.get("/", [](http::request request) { return http::accept_websocket(request, quoll::test::websocket_echo); });
+
+  memory_server server{loop.get_executor(), quoll::test::serving(router), 0, {}, {}};
+
+  // Its streams write only while it is there: past the handshake, the WebSocket's sends need it.
+  auto const talking = [&]() -> task<websocket_message> {
+    auto connected = co_await http::connect_websocket(owning_connector{server}, "ws://h/");
+
+    co_await connected.socket.send_text("still there");
+
+    auto answer = co_await connected.socket.receive();
+
+    co_await connected.socket.close();
+    static_cast<void>(co_await connected.socket.receive());
+    co_return answer;
+  };
+
+  REQUIRE(quoll::test::run(loop, talking()) == websocket_message{websocket_opcode::text, "still there"});
+}
+
+TEST_CASE("connect_websocket: the subprotocols offered go out as checked", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  http::request sent;
+  memory_server server{loop.get_executor(), recording(sent), 0, {}, {}};
+  http::websocket_connect_options options;
+
+  options.fields.set("Sec-WebSocket-Protocol", "chat,, superchat ,");
+
+  REQUIRE(refusal(server, loop, "ws://h/", options) == "400");
+  REQUIRE(sent.fields.find("Sec-WebSocket-Protocol") == "chat, superchat");
 }

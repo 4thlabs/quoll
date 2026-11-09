@@ -117,6 +117,24 @@ constexpr std::array handshake_fields{std::string_view{"Host"},
   return !protocol || std::ranges::find(offered, detail::trim(*protocol)) != offered.end();
 }
 
+// A stream that keeps the connector that opened it alive, as an http::client keeps its own for as long as its
+// connections: a stream may point into what its connector owns. The stream goes first. Thread safety: the stream's.
+class keeping_connector {
+public:
+  keeping_connector(io::any_stream stream, std::shared_ptr<void const> connector) noexcept
+      : connector_(std::move(connector)), stream_(std::move(stream)) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return stream_.read_some(buffer); }
+
+  [[nodiscard]] auto write_some(std::span<std::byte const> data) { return stream_.write_some(data); }
+
+  [[nodiscard]] auto shutdown_send() { return stream_.shutdown_send(); }
+
+private:
+  std::shared_ptr<void const> connector_;
+  io::any_stream stream_;
+};
+
 [[nodiscard]] async::task<connected_websocket> shake_hands(detail::connector_handle connector, detail::origin server,
                                                            detail::websocket_handshake handshake,
                                                            websocket_connect_options options) {
@@ -172,7 +190,9 @@ constexpr std::array handshake_fields{std::string_view{"Host"},
 
     // What came after the 101 is the WebSocket's.
     co_return connected_websocket{
-        websocket{std::move(stream), websocket_role::client, std::move(buffer), options.websocket}, std::move(answer)};
+        websocket{io::any_stream{keeping_connector{std::move(stream), std::move(connector.connector)}},
+                  websocket_role::client, std::move(buffer), options.websocket},
+        std::move(answer)};
   }
 }
 
@@ -232,12 +252,30 @@ websocket_handshake prepare_websocket_handshake(websocket_target const &where, h
   message.method = verb::get;
   message.target = where.target;
   message.fields = std::move(fields);
+
+  // As checked: the tokens once each, with no empty member, which a sender may not write (RFC 9110, 5.6.1).
+  if (!handshake.offered.empty()) {
+    std::string offer;
+
+    for (auto const &token : handshake.offered) {
+      offer += (offer.empty() ? "" : ", ") + token;
+    }
+
+    message.fields.erase("Sec-WebSocket-Protocol");
+    message.fields.set("Sec-WebSocket-Protocol", std::move(offer));
+  }
   message.fields.set("Host", host_field(where.server.host, where.server.port, where.server.secure ? 443 : 80));
   message.fields.set("Upgrade", "websocket");
   message.fields.set("Connection", "Upgrade");
   message.fields.set("Sec-WebSocket-Key", handshake.key);
   message.fields.set("Sec-WebSocket-Version", "13");
-  handshake.wire = serialize(message);
+  // What the serializer refuses, said for connect_websocket.
+  try {
+    handshake.wire = serialize(message);
+  } catch (std::invalid_argument const &refused) {
+    throw std::invalid_argument{std::string{"quoll::http::connect_websocket: "} + refused.what()};
+  }
+
   return handshake;
 }
 
