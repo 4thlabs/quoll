@@ -1318,3 +1318,40 @@ TEST_CASE("connect_websocket: an interim answer with a body is read whole before
 
   REQUIRE(quoll::test::run(loop, connecting()) == http::status::switching_protocols);
 }
+
+TEST_CASE("connect_websocket: a 101 whose one Upgrade names another protocol is refused", "[client][websocket]") {
+  quoll::async::run_loop loop;
+  memory_server server{loop.get_executor(),
+                       answering_with_accept({}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: h2c\r\n"
+                                                 "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"),
+                       0,
+                       {},
+                       {}};
+
+  REQUIRE(refusal(server, loop, "ws://h/") == "101");
+}
+
+TEST_CASE("connect_websocket: a negative handshake_timeout is no limit, as zero", "[client][websocket]") {
+  quoll::test::virtual_time time;
+  http::websocket_connect_options options;
+
+  options.handshake_timeout = -1s;
+
+  auto const connecting = [&]() -> task<std::string> {
+    try {
+      // A server that answers after a second: a limit expired at once would end the wait before.
+      auto const late = [](io::memory_stream stream) -> task<> {
+        co_await quoll::async::sleep_for(1s);
+        co_await answering("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")(std::move(stream));
+      };
+
+      static_cast<void>(co_await http::connect_websocket(spawning_connector{late}, "ws://h/", std::move(options)));
+    } catch (http::websocket_refused const &refused) {
+      co_return std::to_string(static_cast<int>(refused.response().status));
+    }
+
+    co_return std::string{};
+  };
+
+  REQUIRE(quoll::test::run(time, connecting()) == "403");
+}
