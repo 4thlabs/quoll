@@ -65,6 +65,7 @@
 #include <atomic>
 #include <concepts>
 #include <cstddef>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -391,15 +392,26 @@ template <class Route, class Validators, class... Services>
       "quoll::rest::mount: an endpoint with events<> declares its errors as 4xx or 5xx, a problem or no body");
 
   std::optional<http::response> refused;
+  std::exception_ptr failure;
 
   try {
     co_await call();
   } catch (http_error const &error) {
     if (!answers_as_an_error(error.status()) || sink.started()) {
-      throw;
+      failure = std::current_exception();
+    } else {
+      refused = error_response<Route>(error);
     }
+  } catch (...) {
+    failure = std::current_exception();
+  }
 
-    refused = error_response<Route>(error);
+  // An operation of the sink still writing, on a task of the service's own, ends before the stream does: it writes to
+  // the connection, which goes with the stream.
+  co_await event_sink_access::drain(sink);
+
+  if (failure) {
+    std::rethrow_exception(failure);
   }
 
   if (refused) {

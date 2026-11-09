@@ -66,6 +66,8 @@ struct event_sink_state {
   std::optional<http::response_writer> out;
   std::optional<http::event_writer> events;
   std::atomic<bool> busy = false;
+  // The operations running, which the stream waits for before it ends.
+  std::atomic<int> running = 0;
   // Set once the service has ended: an operation that runs after it would write to a connection gone.
   std::atomic<bool> closed = false;
 };
@@ -88,6 +90,10 @@ struct event_sink_state {
 
 // Once the service has ended: the head of a stream with no event, unless one has started it or is asked.
 [[nodiscard]] async::task<> sink_finish(std::shared_ptr<event_sink_state> state);
+
+// Once the service has ended: the operations running, on tasks of the service's own, ended. One kept and not run does
+// not count: it throws once the sink is closed.
+[[nodiscard]] async::task<> sink_drain(std::shared_ptr<event_sink_state> state);
 
 // Closes the sink: what writes to the connection goes now, and an operation run later throws.
 void sink_close(event_sink_state &state) noexcept;
@@ -202,6 +208,11 @@ struct event_sink_access {
   template <class T, class EventCodec>
   [[nodiscard]] static async::task<> finish(event_sink<T, EventCodec> const &sink) {
     return sink_finish(sink.state_);
+  }
+
+  template <class T, class EventCodec>
+  [[nodiscard]] static async::task<> drain(event_sink<T, EventCodec> const &sink) {
+    return sink_drain(sink.state_);
   }
 
   template <class T, class EventCodec>

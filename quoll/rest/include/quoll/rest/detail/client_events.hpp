@@ -40,7 +40,6 @@
 #include <quoll/async/task.hpp>
 #include <quoll/http/event_reader.hpp>
 #include <quoll/http/fields.hpp>
-#include <quoll/http/is_event_stream.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/streamed_response.hpp>
@@ -60,7 +59,7 @@ namespace quoll::rest::detail {
 template <class Endpoint>
 using event_stream_of = event_stream<typename events_part_of<Endpoint>::type, typename events_part_of<Endpoint>::codec>;
 
-// Whether a 200 is the stream asked for: a `text/event-stream`, or of a media type the request's Accept named (a
+// Whether a 200 is the stream asked for: a `text/event-stream`, or of the one media type the request's Accept named (a
 // third-party API's own), case and parameters aside.
 [[nodiscard]] bool is_accepted_stream(http::fields const &fields, std::string_view accepted);
 

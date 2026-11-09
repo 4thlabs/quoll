@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/yield.hpp>
 #include <quoll/http/format_event.hpp>
 #include <quoll/rest/event_sink.hpp>
 
@@ -44,6 +45,22 @@
 namespace quoll::rest::detail {
 
 namespace {
+
+// Counts an operation running, for the stream to wait for, on every way out of it.
+class running {
+public:
+  explicit running(event_sink_state &state) noexcept : state_(&state) { ++state_->running; }
+
+  running(running const &) = delete;
+  running &operator=(running const &) = delete;
+  running(running &&) = delete;
+  running &operator=(running &&) = delete;
+
+  ~running() { --state_->running; }
+
+private:
+  event_sink_state *state_;
+};
 
 [[nodiscard]] http::event_writer &writer_of(event_sink_state &state) {
   if (state.closed.load()) {
@@ -67,6 +84,7 @@ http::detail::one_at_a_time sink_turn(std::shared_ptr<event_sink_state> const &s
 
 async::task<> sink_open(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn) {
   auto const held = std::move(turn);
+  running const counted{*state};
 
   co_await writer_of(*state).open();
 }
@@ -74,6 +92,7 @@ async::task<> sink_open(std::shared_ptr<event_sink_state> state, http::detail::o
 async::task<> sink_send(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn,
                         http::server_sent_event event) {
   auto const held = std::move(turn);
+  running const counted{*state};
 
   if (!state->events) {
     static_cast<void>(http::format_event(event));
@@ -85,6 +104,7 @@ async::task<> sink_send(std::shared_ptr<event_sink_state> state, http::detail::o
 async::task<> sink_comment(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn,
                            std::string text) {
   auto const held = std::move(turn);
+  running const counted{*state};
 
   if (!state->events) {
     static_cast<void>(http::format_comment(text));
@@ -96,6 +116,7 @@ async::task<> sink_comment(std::shared_ptr<event_sink_state> state, http::detail
 async::task<> sink_retry(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn,
                          std::chrono::milliseconds delay) {
   auto const held = std::move(turn);
+  running const counted{*state};
 
   if (!state->events) {
     static_cast<void>(http::format_retry(delay));
@@ -134,6 +155,13 @@ async::task<> sink_finish(std::shared_ptr<event_sink_state> state) {
   }
 
   sink_close(*state);
+}
+
+async::task<> sink_drain(std::shared_ptr<event_sink_state> state) {
+  // Turns of the loop, as an operation on a task of its own ends on its own executor.
+  while (state->running.load() > 0) {
+    co_await async::yield();
+  }
 }
 
 void sink_close(event_sink_state &state) noexcept {

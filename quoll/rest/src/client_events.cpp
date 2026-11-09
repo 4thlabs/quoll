@@ -58,21 +58,17 @@ bool is_accepted_stream(http::fields const &fields, std::string_view accepted) {
     return true;
   }
 
-  auto const given = media_type(fields.find("Content-Type").value_or(""));
+  // A media type of its own counts when the Accept names it alone: one beside others, `application/json` say, names
+  // what a stream is not.
+  auto const named = list_elements({accepted});
 
-  // Each media type the Accept names, but for a wildcard, which names no stream.
-  while (!accepted.empty()) {
-    auto const comma = accepted.find(',');
-    auto const one = media_type(accepted.substr(0, comma));
-
-    if (!given.empty() && !one.contains('*') && http::detail::iequals(one, given)) {
-      return true;
-    }
-
-    accepted = comma == std::string_view::npos ? std::string_view{} : accepted.substr(comma + 1);
+  if (named.size() != 1 || named.front().contains('*')) {
+    return false;
   }
 
-  return false;
+  auto const given = media_type(fields.find("Content-Type").value_or(""));
+
+  return !given.empty() && http::detail::iequals(media_type(named.front()), given);
 }
 
 async::task<unexpected_response> refusal_of(http::streamed_response streamed, std::string reason) {

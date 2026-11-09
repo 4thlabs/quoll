@@ -34,6 +34,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/co_spawn.hpp>
+#include <quoll/async/current_executor.hpp>
+#include <quoll/async/detached.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
@@ -826,7 +829,7 @@ TEST_CASE("rest events: a 204 is said to be no stream", "[rest][sse]") {
   REQUIRE(quoll::test::run(refusal_of(client)).value() == "no stream: 204 No Content|0");
 }
 
-TEST_CASE("rest events: a contract's own Accept takes the stream whatever its media type", "[rest][sse]") {
+TEST_CASE("rest events: a contract's own Accept takes the one media type it names", "[rest][sse]") {
   http::router router;
 
   router.get("/secured", [](http::response_writer out) -> task<> {
@@ -1192,4 +1195,52 @@ TEST_CASE("rest events: next() on a stream moved from is refused", "[rest][sse]"
   };
 
   REQUIRE(quoll::test::run(reading()) == true);
+}
+
+TEST_CASE("rest events: an Accept naming several media types takes text/event-stream only", "[rest][sse]") {
+  http::router router;
+
+  router.get("/secured", [](http::request) {
+    http::response response;
+
+    response.fields.set("Content-Type", "application/json");
+    response.body = R"({"not":"a stream"})";
+    return response;
+  });
+
+  rest::client<changes::secured::api, streaming_transport> client{streaming_transport{std::move(router)}};
+
+  client.credentials<rest::bearer_auth>("token");
+
+  auto const reading = [&client]() -> task<std::string> {
+    try {
+      static_cast<void>(co_await client.subscribe<changes::secured::feed>("application/json, text/event-stream"));
+    } catch (rest::call_error const &failed) {
+      co_return failed.failure().reason;
+    }
+
+    co_return "subscribed";
+  };
+
+  REQUIRE(quoll::test::run(reading()).value() == "not an event stream: Content-Type application/json");
+}
+
+TEST_CASE("rest events: an operation running on a task of its own ends before the stream does", "[rest][sse]") {
+  std::string sent;
+  yielding_sink sink{&sent};
+  http::body_stream out{sink};
+
+  auto const running = [&out, &sent]() -> task<std::string> {
+    rest::event_sink<change> events{http::response_writer{out}};
+
+    // Spawned, then left as the service returns: what mount then does waits for it.
+    async::co_spawn(co_await async::current_executor(), events.send({.id = 1, .what = "spawned"}), async::detached);
+    co_await async::yield();
+    co_await rest::detail::event_sink_access::drain(events);
+
+    // Already whole: closing now leaves nothing writing.
+    co_return sent;
+  };
+
+  REQUIRE(quoll::test::run(running()).value() == "data: {\"id\":1,\"what\":\"spawned\"}\n\n");
 }
