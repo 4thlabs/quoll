@@ -49,6 +49,8 @@
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/client/detail/max_interim_responses.hpp>
+#include <quoll/client/detail/peer_has_gone.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/connection_field.hpp>
@@ -63,7 +65,6 @@
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
 #include <quoll/http/version.hpp>
-#include <quoll/io/error.hpp>
 #include <quoll/io/write.hpp>
 
 #include <algorithm>
@@ -190,17 +191,6 @@ struct prepared_request {
   default:
     return false;
   }
-}
-
-// Interim responses read before the final one, against a server sending them forever.
-constexpr int max_interim_responses = 8;
-
-// How a stream shows that its peer has gone. A kept connection can then be replaced, and a read ends by itself, however
-// long it would otherwise wait, so that what was on its way to a server that went may still have an answer to read.
-[[nodiscard]] bool peer_has_gone(std::error_code error) noexcept {
-  return error == io::error::end_of_stream || error == std::errc::connection_reset || error == std::errc::broken_pipe ||
-         error == std::errc::connection_aborted || error == std::errc::not_connected ||
-         error == std::errc::network_reset;
 }
 
 // A write that fails for the connection's sake, however a socket or TLS says so, leaves the server's answer a chance,

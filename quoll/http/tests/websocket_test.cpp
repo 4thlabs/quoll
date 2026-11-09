@@ -173,6 +173,29 @@ TEST_CASE("websocket: messages go both ways, masked by a client and not by a ser
   REQUIRE(quoll::test::run(talk()) == 1);
 }
 
+TEST_CASE("websocket: a client masks what it sends on its own, its pong and its close", "[http][websocket]") {
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{io::any_stream{std::move(client_end)}, websocket_role::client};
+  // A server's end reads only masked frames.
+  http::websocket_parser from_client{websocket_role::server};
+
+  auto const answered = [&]() -> task<int> {
+    co_await send_raw(server_end, http::format_websocket_frame(websocket_opcode::ping, "?"));
+    co_await send_raw(server_end, http::format_websocket_close(1000));
+
+    auto const closed = co_await client.receive();
+    auto const pong = co_await quoll::test::next_websocket_message(server_end, from_client);
+    auto const close = co_await quoll::test::next_websocket_message(server_end, from_client);
+
+    REQUIRE(closed == close_with(1000));
+    REQUIRE(pong == websocket_message{websocket_opcode::pong, "?"});
+    REQUIRE(close == close_with(1000));
+    co_return 1;
+  };
+
+  REQUIRE(quoll::test::run(answered()) == 1);
+}
+
 TEST_CASE("websocket: what came with the handshake is read first", "[http][websocket]") {
   auto [client_end, server_end] = io::make_memory_stream_pair();
   http::websocket server{io::any_stream{std::move(server_end)}, websocket_role::server,

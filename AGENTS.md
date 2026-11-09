@@ -27,7 +27,7 @@ current_executor and current_stop_token, executor services, co_spawn, on an exec
 router of the same program; llhttp is compiled and exported as `quoll::llhttp`), `quoll::server` (in `quoll::http`: `server` holds routes or a copy of a router, a handle shared with its tasks, and serves a byte stream,
 takes over a `Listener` or listens on a port, `static_files`, a middleware),
 `quoll::client` (in `quoll::http`: `client`, an `HttpTransport` over a `Connector` with keep-alive connections, built from an
-`http[s]://` URL), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `http::client` by default, and the
+`http[s]://` URL, and `connect_websocket` from a `ws[s]://` one), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `http::client` by default, and the
 contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates, and `events<T>` with its `event_sink` and the client's `subscribe`; and the codecs: `json_codec` on
 Glaze, `text_codec`, `param_traits`), `quoll::ui` (a prototype: elements, decorators, `state`, `to_html`, `app` and the `Renderer`
 concept), the adapters `quoll::asio` (asio executor offering the network, a timer, threads for blocking work and TLS, `tcp_stream`, `tls_stream`, connector and acceptors,
@@ -87,7 +87,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   `quoll_main_tests()` in `tests/CMakeLists.txt`).
   Helpers shared by the tests of every module live in `tests/support/quoll/test/` (`quoll::test::run` runs a
   task on a run_loop or a `virtual_time`, whose timer jumps to the next deadline instead of waiting;
-  `quoll::test::memory_renderer`, `quoll::test::memory_server` and `memory_connector`, an `http::client` reaching an `http::server` over memory streams, `quoll::test::overloaded`, `quoll::test::check`): use them rather than copying them into a test file.
+  `quoll::test::memory_renderer`, `quoll::test::memory_server` and `memory_connector`, an `http::client` reaching an `http::server` over memory streams, `quoll::test::overloaded`, `quoll::test::check`, `quoll::test::code_thrown_by`, the code of what a task throws, `quoll::test::next_websocket_message`, for a peer that speaks bytes, and `quoll::test::websocket_echo`): use them rather than copying them into a test file.
 - What must not compile (the compile-time checks of an API, `static_assert` messages included) is tested too: one source
   per case under `tests/compile_fail/`, starting with `// expect: <message>`, declared with
   `quoll_declare_compile_fail_tests(SOURCES ... DEPS ...)`. Each becomes a ctest `compile_fail.<case>` that compiles it

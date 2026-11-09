@@ -408,7 +408,30 @@ Pinging and the 1001 of a drain need a timer, which `quoll::runtime` has.
 Underneath, `response::upgrade`, an `http::upgrade_handler`, is what takes a connection over once a 101 has left,
 which the server runs only for a request that asked to switch: any other response with it is replaced with a 500. `http::websocket_parser`,
 `format_websocket_frame` and `format_websocket_close` read and write frames with no IO, for a transport of one's own.
-A WebSocket client, natively and in a browser, is not there yet.
+A browser WebSocket is not there yet.
+
+A client opens one with `http::connect_websocket`, on a connection of its own, natively:
+
+```cpp
+http::websocket_connect_options options;
+
+options.fields.set("Sec-WebSocket-Protocol", "chat");
+
+auto [socket, handshake] = co_await http::connect_websocket("wss://chat.example.com/room?id=4", options);
+
+co_await socket.send_text("hello");
+
+auto const answer = co_await socket.receive();
+```
+
+It goes through the network of the executor, as `quoll::runtime` provides it, or through a connector
+given first, a memory stream in a test say. The server's 101 is checked, its `Sec-WebSocket-Accept`, no
+extension, no subprotocol but one offered, and what it chose is in `handshake.fields`; any other answer
+throws `http::websocket_refused`, whose `response()` it is. The connection and the handshake take no
+longer than `options.handshake_timeout`, 30 seconds by default. A client's end masks what it sends, and
+sends no ping on its own; `receive()` answers pings but does not give pongs. A server that vanished
+without a word is found by a write that waits `ping_interval` with nothing taken, or by what the
+application expects of it, a message within some time, waited for beside what receives.
 
 ## In a test
 

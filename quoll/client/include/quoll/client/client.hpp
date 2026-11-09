@@ -40,6 +40,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/client/client_options.hpp>
 #include <quoll/client/detail/client_backend.hpp>
+#include <quoll/client/detail/connector_handle.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/http/detail/number.hpp>
 #include <quoll/http/request.hpp>
@@ -47,14 +48,11 @@
 #include <quoll/http/streamed_response.hpp>
 #include <quoll/http/streaming_transport.hpp>
 #include <quoll/http/transport.hpp>
-#include <quoll/io/any_stream.hpp>
 #include <quoll/io/connector.hpp>
 #include <quoll/io/tls_connector.hpp>
-#include <quoll/io/tls_options.hpp>
 
 #include <concepts>
 #include <cstdint>
-#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -288,22 +286,8 @@ private:
   [[nodiscard]] static detail::client_backend make_backend(Connector connector, std::string host, std::uint16_t port,
                                                            bool secure, std::string prefix,
                                                            client_options const &options) {
-    detail::connector_handle handle{
-        std::make_shared<Connector const>(std::move(connector)),
-        [](void const *erased, std::string const &to, std::uint16_t on, [[maybe_unused]] bool use_tls,
-           [[maybe_unused]] io::tls_client_options const &tls) -> async::task<io::any_stream> {
-          auto const &target = *static_cast<Connector const *>(erased);
-
-          if constexpr (io::TlsConnector<Connector>) {
-            if (use_tls) {
-              return target.connect_tls(to, on, tls);
-            }
-          }
-
-          return target.connect(to, on);
-        }};
-
-    return detail::make_client_backend(std::move(handle), std::move(host), port, secure, std::move(prefix), options);
+    return detail::make_client_backend(detail::make_connector_handle(std::move(connector)), std::move(host), port,
+                                       secure, std::move(prefix), options);
   }
 
   detail::client_backend backend_;

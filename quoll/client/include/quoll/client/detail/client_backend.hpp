@@ -39,11 +39,10 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/client/client_options.hpp>
+#include <quoll/client/detail/connector_handle.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/streamed_response.hpp>
-#include <quoll/io/any_stream.hpp>
-#include <quoll/io/tls_options.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -51,13 +50,6 @@
 #include <string_view>
 
 namespace quoll::http::detail {
-
-// A connector, whichever it is: the core owns it through this.
-struct connector_handle {
-  std::shared_ptr<void const> connector;
-  async::task<io::any_stream> (*open)(void const *connector, std::string const &host, std::uint16_t port, bool secure,
-                                      io::tls_client_options const &tls);
-};
 
 // What a client does, compiled once: over a connector, or through the platform of the executor.
 struct client_operations {

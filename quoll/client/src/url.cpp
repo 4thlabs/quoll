@@ -367,6 +367,64 @@ void check_origin_form(std::string_view target) {
   }
 }
 
+websocket_target parse_websocket_url(std::string_view url) {
+  constexpr std::string_view plain_scheme = "ws://";
+  constexpr std::string_view tls_scheme = "wss://";
+
+  auto const secure =
+      url.size() >= tls_scheme.size() && http::detail::iequals(url.substr(0, tls_scheme.size()), tls_scheme);
+
+  if (!secure &&
+      (url.size() < plain_scheme.size() || !http::detail::iequals(url.substr(0, plain_scheme.size()), plain_scheme))) {
+    throw std::invalid_argument{"quoll::http::connect_websocket: the URL is not ws[s]://host[:port][/path][?query]"};
+  }
+
+  auto const rest = url.substr(secure ? tls_scheme.size() : plain_scheme.size());
+
+  if (rest.find('#') != std::string_view::npos) {
+    throw std::invalid_argument{"quoll::http::connect_websocket: a WebSocket URL has no fragment"};
+  }
+
+  // A query is checked as a request's target is, as the handshake is built.
+  auto const question = rest.find('?');
+  auto const query = question == std::string_view::npos ? std::string_view{} : rest.substr(question);
+  auto const before = rest.substr(0, question);
+  auto const slash = before.find('/');
+  auto const path = slash == std::string_view::npos ? std::string_view{"/"} : before.substr(slash);
+
+  // What a proxy could read as another server, `//host/...`, a reference to a network path, once it has decoded it and
+  // taken its dot segments out as a parser does, a backslash read as a slash.
+  if (!read_as_a_parser_does(path)) {
+    throw std::invalid_argument{"quoll::http::connect_websocket: a NUL or an invalid escape in the path"};
+  }
+
+  if (!reads_as_itself(path)) {
+    throw std::invalid_argument{"quoll::http::connect_websocket: a path a proxy could read as another server"};
+  }
+
+  // Its server checked as an http one's is, what is refused said for connect_websocket. Its path is no prefix with a
+  // boundary to keep, but the whole target, the caller's own: checked by the serializer, as any request's.
+  origin server;
+
+  try {
+    // The authority alone: the path is a target, which the handshake's serializer checks as one, not a prefix.
+    server =
+        parse_url((secure ? std::string{"https://"} : std::string{"http://"}) + std::string{before.substr(0, slash)});
+    static_cast<void>(host_field(server.host, server.port));
+  } catch (std::invalid_argument const &refused) {
+    constexpr std::string_view client_prefix = "quoll::http::client: ";
+    std::string_view reason = refused.what();
+
+    if (reason.starts_with(client_prefix)) {
+      reason.remove_prefix(client_prefix.size());
+    }
+
+    throw std::invalid_argument{"quoll::http::connect_websocket: " + std::string{reason}};
+  }
+
+  return {std::move(server), std::string{path} + std::string{query}};
+}
+
 origin parse_url(std::string_view url) {
   constexpr std::string_view plain_scheme = "http://";
   constexpr std::string_view tls_scheme = "https://";

@@ -71,7 +71,7 @@ struct websocket_options {
 
 /**
  * @brief A WebSocket connection, once its handshake is over: messages received and sent in both directions at once
- * (RFC 6455). A server gets one from http::accept_websocket.
+ * (RFC 6455). A server gets one from http::accept_websocket, a client from http::connect_websocket.
  *
  * @code
  * for (;;) {
