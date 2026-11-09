@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/run_loop.hpp>
+#include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/http/accept_websocket.hpp>
@@ -55,6 +56,7 @@
 #include <quoll/http/websocket_parser.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/error.hpp>
+#include <quoll/io/io_result.hpp>
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/io/write.hpp>
 #include <quoll/server/connection_options.hpp>
@@ -67,6 +69,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <exception>
 #include <functional>
 #include <optional>
@@ -263,10 +266,13 @@ TEST_CASE("accept_websocket: frames sent right behind the handshake reach the ha
 
     REQUIRE(response.status == http::status::switching_protocols);
 
-    // The handler is over, and its connection with it.
+    // The handler is over, and its connection with it, behind the close it did not send.
     auto const rest = co_await quoll::test::read_until_closed(client);
+    http::websocket_parser from_server{websocket_role::client};
 
-    REQUIRE(after + rest == "");
+    from_server.feed(after + rest);
+
+    REQUIRE(from_server.next() == websocket_message{websocket_opcode::close, "", 1000});
     co_return 1;
   }));
 
@@ -470,13 +476,44 @@ TEST_CASE("serve_connection: what a WebSocket handler throws is reported, but fo
     auto const router = socket_at([](http::websocket) -> task<> { throw std::runtime_error{"handler failure"}; });
 
     auto const reported = served(router, [](io::memory_stream &client) -> task<int> {
-      auto const answer = co_await send_then_read(client, handshake());
+      auto answer = co_await send_then_read(client, handshake());
+      http::websocket_parser from_server{websocket_role::client};
+
+      from_server.feed(answer.after);
+
+      auto const close = co_await next_from_server(client, from_server);
+
+      REQUIRE(answer.response.status == http::status::switching_protocols);
+      REQUIRE(close == websocket_message{websocket_opcode::close, "", 1011});
+      co_return 1;
+    });
+
+    REQUIRE(reported == std::vector<std::string>{"handler failure"});
+  }
+
+  SECTION("a send after the peer's close") {
+    std::error_code refused;
+    auto const router = socket_at([&refused](http::websocket socket) -> task<> {
+      static_cast<void>(co_await socket.receive());
+
+      try {
+        co_await socket.send_text("late");
+      } catch (std::system_error const &thrown) {
+        refused = thrown.code();
+        throw;
+      }
+    });
+
+    auto const reported = served(router, [](io::memory_stream &client) -> task<int> {
+      auto const sent = handshake(http::format_websocket_close(1000, "", mask));
+      auto const answer = co_await send_then_read(client, sent);
 
       REQUIRE(answer.response.status == http::status::switching_protocols);
       co_return 1;
     });
 
-    REQUIRE(reported == std::vector<std::string>{"handler failure"});
+    REQUIRE(refused == http::error::websocket_closed);
+    REQUIRE(reported.empty());
   }
 
   SECTION("a peer gone") {
@@ -620,4 +657,134 @@ TEST_CASE("accept_websocket: a drain sends a close with 1001, which the handler 
   REQUIRE_FALSE(ended);
   REQUIRE(reported.empty());
   REQUIRE(time.now() == 0s);
+}
+
+namespace {
+
+// A server's stream whose writes, once `stalled`, take nothing until they are stopped: a peer that no longer reads.
+class stalling {
+public:
+  stalling(io::memory_stream inner, bool const &stalled) noexcept : inner_(std::move(inner)), stalled_(&stalled) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
+    if (*stalled_) {
+      try {
+        co_await quoll::async::sleep_for(24h);
+      } catch (std::system_error const &stopped) {
+        co_return io::io_result{stopped.code(), 0};
+      }
+    }
+
+    co_return co_await inner_.write_some(data);
+  }
+
+  [[nodiscard]] task<io::io_result> shutdown_send() { co_return co_await inner_.shutdown_send(); }
+
+private:
+  io::memory_stream inner_;
+  bool const *stalled_;
+};
+
+// When the connection ended on `time`, its handler, which stalls the stream, run by a server over a `stalling` stream
+// with a ping every second, and what the server reported.
+template <class Handler>
+std::pair<std::chrono::nanoseconds, std::vector<std::string>> stalled_end(Handler handler) {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  auto stalled = false;
+  std::vector<std::string> reported;
+  http::connection_options options;
+  auto const router =
+      socket_at([&stalled, &handler](http::websocket socket) { return handler(std::move(socket), stalled); },
+                {.ping_interval = 1s});
+
+  options.on_handler_error = [&reported](std::exception_ptr const &failure) {
+    try {
+      std::rethrow_exception(failure);
+    } catch (std::exception const &thrown) {
+      reported.emplace_back(thrown.what());
+    }
+  };
+
+  auto const client = [&]() -> task<int> {
+    auto const answer = co_await send_then_read(client_end, handshake());
+
+    REQUIRE(answer.response.status == http::status::switching_protocols);
+    static_cast<void>(co_await quoll::test::read_until_closed(client_end));
+    co_return 1;
+  };
+
+  auto const outcome =
+      quoll::test::run(time, quoll::async::when_all(http::server{router, {.connection = options}}.serve_connection(
+                                                        stalling{std::move(server_end), stalled}),
+                                                    client()));
+
+  REQUIRE(std::get<1>(outcome.value()) == 1);
+  return {time.now(), reported};
+}
+
+} // namespace
+
+TEST_CASE("accept_websocket: a peer that takes nothing has its handler stopped", "[server][websocket]") {
+  std::error_code ended;
+
+  auto const [ended_at, reported] = stalled_end([&ended](http::websocket socket, bool &stalled) -> task<> {
+    stalled = true;
+
+    try {
+      co_await socket.send_text("never taken");
+    } catch (std::system_error const &thrown) {
+      ended = thrown.code();
+      throw;
+    }
+  });
+
+  // Pinged at 1 s, the ping waits behind the message: not taken at 2 s.
+  REQUIRE(ended_at == 2s);
+  REQUIRE(ended == std::errc::operation_canceled);
+  REQUIRE(reported.empty());
+}
+
+TEST_CASE("accept_websocket: a ping still pending as the handler ends is no failure", "[server][websocket]") {
+  auto const [ended_at, reported] = stalled_end([](http::websocket, bool &stalled) -> task<> {
+    stalled = true;
+    co_await quoll::async::sleep_for(1500ms);
+  });
+
+  // Over at 1.5 s, then a second for the peer's close, which does not come.
+  REQUIRE(ended_at == 2500ms);
+  REQUIRE(reported.empty());
+}
+
+TEST_CASE("accept_websocket: a handshake as the server drains is answered 503", "[server][websocket]") {
+  auto ran = false;
+  std::stop_source drain;
+  http::connection_options options;
+  http::router router;
+  quoll::async::run_loop loop;
+
+  // The drain starts as the request is answered: one asked before it would not have been read.
+  router.get("/socket", [&ran, &drain](http::request request) {
+    drain.request_stop();
+    return http::accept_websocket(request, [&ran](http::websocket) -> task<> {
+      ran = true;
+      co_return;
+    });
+  });
+  options.drain = drain.get_token();
+
+  auto const reported = served_on(
+      loop, router,
+      [](io::memory_stream &client) -> task<int> {
+        auto const answer = co_await send_then_read(client, handshake());
+
+        REQUIRE(answer.response.status == http::status::service_unavailable);
+        co_return 1;
+      },
+      options);
+
+  REQUIRE_FALSE(ran);
+  REQUIRE(reported.empty());
 }

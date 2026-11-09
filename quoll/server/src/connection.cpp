@@ -1399,7 +1399,10 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
     }
 
     if (response.upgrade) {
-      if (auto const *const wrong = cannot_switch(response, asks_to_switch, method, version)) {
+      if (options.drain.stop_requested()) {
+        // No connection to start as the server stops: the client may try another.
+        response = http::detail::status_response(http::status::service_unavailable);
+      } else if (auto const *const wrong = cannot_switch(response, asks_to_switch, method, version)) {
         if (options.on_handler_error) {
           options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
         }
