@@ -321,12 +321,12 @@ async::task<> send_message(std::shared_ptr<state> connection, std::string frame,
 // than wait_limit with nothing taken. Why it could not leave, the stream's failure, which the next operation finds out
 // too; none once it left, or for a stop of `turn_stop`.
 async::task<std::error_code> send_quietly(std::shared_ptr<state> connection, std::string frame, frame_kind kind,
-                                          std::stop_token turn_stop = {}, bool started_counts = false) {
-  // Set once the frame starts to leave: with `started_counts`, what fails then is told whatever stopped the turn's
-  // wait since, as a client's keep-alive wants to know that its ping could not leave.
+                                          std::stop_token turn_stop = {}, bool *started = nullptr) {
+  // Set once the frame starts to leave. Given `started`, which says so, what fails then is told whatever stopped the
+  // turn's wait since, as a client's keep-alive wants to know whether its ping left.
   auto writing = false;
   auto const sending = [](std::shared_ptr<state> socket, std::string bytes, frame_kind what, std::stop_token stop,
-                          bool &started) -> async::task<> {
+                          bool &leaving) -> async::task<> {
     // The turn waited for until either stop.
     async::detail::either_stop const either{socket->connection_stop, stop};
     async::detail::held_place turn;
@@ -338,7 +338,7 @@ async::task<std::error_code> send_quietly(std::shared_ptr<state> connection, std
       co_return;
     }
 
-    started = true;
+    leaving = true;
     co_await write_frame(socket, std::move(bytes), what);
   };
 
@@ -349,11 +349,19 @@ async::task<std::error_code> send_quietly(std::shared_ptr<state> connection, std
     co_await async::detail::stop_scope<void>{sending(std::move(connection), std::move(frame), kind, turn_stop, writing),
                                              std::move(connection_stop)};
   } catch (std::system_error const &thrown) {
-    if (turn_stop.stop_requested() && !(started_counts && writing)) {
+    if (started != nullptr) {
+      *started = writing;
+    }
+
+    if (turn_stop.stop_requested() && !(started != nullptr && writing)) {
       co_return std::error_code{};
     }
 
     co_return code_or_io_error(thrown.code());
+  }
+
+  if (started != nullptr) {
+    *started = writing;
   }
 
   co_return std::error_code{};
@@ -793,17 +801,18 @@ async::task<> watch_alone(std::weak_ptr<state> watched) {
     // Whole, and waited for: its interval starts once it has left. Its wait for the turn ends with its receive(), as
     // nothing would read the answer then. Dropped once sending has ended, as an answer is, and the peer judged by what
     // it sends.
-    auto const turn_stop = connection->receive_done.get_token();
+    auto started = false;
     auto const failed = co_await send_quietly(connection, frame_of(*connection, websocket_opcode::ping, {}),
-                                              frame_kind::answer, turn_stop, true);
+                                              frame_kind::answer, connection->receive_done.get_token(), &started);
 
     if (failed) {
       take_as_gone(*connection, failed);
       co_return;
     }
 
-    // Given up as its receive() ended before it had the turn: it never left, and counts for nothing.
-    count.pinged = !turn_stop.stop_requested();
+    // Given up as its receive() ended before it had the turn, it never left, and counts for nothing; once it had, it
+    // left whole, or was dropped as sending had ended.
+    count.pinged = started;
   }
 }
 
