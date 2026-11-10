@@ -89,7 +89,7 @@ http::client client{"https://api.example.com",
 
 | Option                 | Default   | What it does                                                                                          |
 | ---------------------- | --------- | ----------------------------------------------------------------------------------------------------- |
-| `max_idle_connections` | 8         | Connections kept open once their response is read. Zero closes each connection after its response.    |
+| `max_idle_connections` | 8         | Connections kept open once their response is read, the one idle for longest closed past it. Zero closes each connection after its response. |
 | `max_connections`      | 0         | How many connections are open at once, in use or idle. Zero: no limit.                                |
 | `max_idle_for_non_idempotent` | 1 s | How long a connection may have been idle for a POST, a PATCH or another method not idempotent to take it. Zero: such a request always opens its own. |
 | `max_redirects`        | 0         | How many redirects a request follows. Zero: a 3xx response is a result like the others.               |
@@ -131,7 +131,7 @@ connection with a reader always waiting on it, which Quoll's client does not hav
 | Method                                 | When its idle connection turns out closed before any response, or answers 408                            |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | GET, HEAD, PUT, DELETE, OPTIONS, TRACE | The request is sent again, once, on a new connection, and the other idle connections, older, are closed |
-| POST, PATCH and the others             | Sent again on a new connection only if none of it was written. Otherwise the request fails with the stream's error, or the 408 is its response, and its connection is not kept: the server may have received it, so it is not sent twice, and the caller decides. The older idle connections are closed |
+| POST, PATCH and the others             | Sent again on a new connection only if its write failed with none of it sent, whatever the server had sent there before closing. Over TCP, a write to a connection the server has just closed is most often accepted all the same. Otherwise the request fails with the stream's error, or the 408 is its response, and its connection is not kept: the server may have received it, so it is not sent twice, and the caller decides. The older idle connections are closed |
 
 A request that times out is not sent again, as the server may be working on it, and its connection is
 closed. Nothing else is retried: a connection that fails otherwise is a failure of the request.

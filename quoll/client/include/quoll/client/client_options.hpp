@@ -62,7 +62,7 @@ struct client_options {
   http::parse_limits limits{.max_streamed_body_size = std::numeric_limits<std::uint64_t>::max()};
   /**
    * @brief Connections kept open once their response is read, for the next requests (keep-alive); 0 closes each
-   * connection after its response.
+   * connection after its response. Past it, the one idle for longest is closed.
    */
   std::size_t max_idle_connections = 8;
   /**

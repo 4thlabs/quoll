@@ -579,6 +579,59 @@ TEST_CASE("http::client: a POST takes only a connection idle for less than its i
   }
 }
 
+TEST_CASE("http::client: a full pool closes its oldest connection rather than the one given back", "[client][timer]") {
+  virtual_time time;
+  slow_network network{.time = &time};
+
+  auto const send = [&]() -> task<std::string> {
+    http::client const client{slow_connector{network}, "example.com", 80, {.max_idle_connections = 1}};
+    auto const first = co_await client.send(make_request(verb::get, "/"));
+
+    REQUIRE(first.body == "ok");
+    co_await async::sleep_for(2s);
+
+    // Past its idle time: the first POST opens its own connection, which the second one takes.
+    auto const second = co_await client.send(make_request(verb::post, "/", "ping"));
+    auto const third = co_await client.send(make_request(verb::post, "/", "ping"));
+
+    co_return second.body + third.body;
+  };
+
+  REQUIRE(quoll::test::run(time, send()) == "okok");
+  REQUIRE(network.connections == 2);
+}
+
+TEST_CASE("http::client: a POST takes no connection given back on another clock, ahead of its own", "[client][timer]") {
+  virtual_time ahead;
+  virtual_time behind;
+  slow_network network{.time = &ahead};
+
+  {
+    http::client const client{slow_connector{network}, "example.com", 80};
+
+    auto const get = [&]() -> task<std::string> {
+      co_await async::sleep_for(10s);
+      co_return (co_await client.send(make_request(verb::get, "/"))).body;
+    };
+
+    REQUIRE(quoll::test::run(ahead, get()) == "ok");
+
+    // Ten seconds before it was given back, on this clock: nothing tells how long it has been idle.
+    network.time = &behind;
+
+    auto const post = [&]() -> task<std::string> {
+      co_return (co_await client.send(make_request(verb::post, "/", "ping"))).body;
+    };
+
+    REQUIRE(quoll::test::run(behind, post()) == "ok");
+    REQUIRE(network.connections == 2);
+  }
+
+  // The servers of both connections see them closed with the client.
+  ahead.run();
+  behind.run();
+}
+
 TEST_CASE("http::client: with no idle time for them, a POST opens its own connection", "[client]") {
   auto const result = roundtrip(
       {make_request(verb::get, "/hello"), make_request(verb::post, "/echo", "ping"), make_request(verb::get, "/hello")},
@@ -760,6 +813,91 @@ TEST_CASE("http::client: a POST none of which was written goes again, whatever t
 
     REQUIRE(quoll::test::run(loop, posting()) == "ok");
     REQUIRE(server.connections == 2);
+  }
+}
+
+namespace {
+
+// Answers a request, then, with `time_out`, sends a 408 as the connection idles, and counts in `late` a request it
+// reads after, before closing.
+task<> answer_then_count(io::memory_stream stream, bool time_out, int &late) {
+  std::string buffer;
+  http::request_parser parser;
+
+  if (co_await http::read(stream, buffer, parser)) {
+    co_return;
+  }
+
+  (void)parser.release();
+
+  std::string const ok = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+  std::string const timeout = "HTTP/1.1 408 Request Timeout\r\nContent-Length: 0\r\n\r\n";
+
+  (void)co_await io::write(stream, std::as_bytes(std::span{ok}));
+
+  if (time_out) {
+    co_await async::yield();
+    (void)co_await io::write(stream, std::as_bytes(std::span{timeout}));
+  }
+
+  http::request_parser next;
+
+  if (!co_await http::read(stream, buffer, next)) {
+    ++late;
+  }
+}
+
+task<> stream_to_end(http::client client, http::request request) {
+  auto response = co_await client.stream(std::move(request));
+
+  while (co_await response.body.read()) {
+  }
+}
+
+} // namespace
+
+TEST_CASE("http::client: a POST whose idle connection turns out closed, or times out, closes the older idle ones",
+          "[client]") {
+  for (auto const time_out : {false, true}) {
+    for (auto const streamed : {false, true}) {
+      async::run_loop loop;
+      auto late = 0;
+      memory_server server{
+          loop.get_executor(),
+          [&](io::memory_stream stream) { return answer_then_count(std::move(stream), time_out, late); },
+          0,
+          {},
+          {}};
+
+      auto const sending = [&]() -> task<std::string> {
+        http::client const client{memory_connector{server}, "example.com", 80};
+
+        // Two idle connections; the 408s come.
+        static_cast<void>(co_await async::when_all(client.send(make_request(verb::get, "/")),
+                                                   client.send(make_request(verb::get, "/"))));
+
+        for (auto turn = 0; turn < 16; ++turn) {
+          co_await async::yield();
+        }
+
+        // On the newer: read, and closed or answered 408.
+        auto post = make_request(verb::post, "/", "ping");
+
+        if (streamed) {
+          static_cast<void>(co_await quoll::test::code_thrown_by(stream_to_end(client, std::move(post))));
+        } else {
+          static_cast<void>(co_await quoll::test::code_thrown_by(client.send(std::move(post))));
+        }
+
+        // The older is closed, rather than taken.
+        co_return (co_await client.send(make_request(verb::get, "/"))).body;
+      };
+
+      INFO("time_out " << time_out << ", streamed " << streamed);
+      REQUIRE(quoll::test::run(loop, sending()) == "ok");
+      REQUIRE(late == 1);
+      REQUIRE(server.connections == 3);
+    }
   }
 }
 
