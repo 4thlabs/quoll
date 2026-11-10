@@ -112,7 +112,8 @@ struct websocket_options {
  * leave, as the next interval starts once it has. The receive() then throws std::errc::timed_out, the failure of the
  * ping that could not leave, or io_error for a keep-alive that failed, and so do every one after it that has to read
  * and every send, but one after the connection's own close, which says http::error::websocket_closed as before, a
- * frame that comes at the very end of the interval included, which Beast takes as late too. The ping
+ * frame that comes at the very end of the interval included, which Beast takes as late too, but for one a read had
+ * already brought, which is given, as what is read is. The ping
  * goes on its own: a receive() waits for it only to send a pong or a close of its own, which take their turn behind it.
  *
  * Copied, not moved: its copies are the same connection, as http::client's are, which a task receiving and another
