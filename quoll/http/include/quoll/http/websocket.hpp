@@ -103,9 +103,9 @@ struct websocket_options {
  * unsent. A receive() stopped, or failed, ends receiving: a stream such as TLS does not take a read up again once it
  * was stopped, so the next one throws the same. Without a timer, nothing here times out.
  *
- * A client's connection, as http::connect_websocket gives one, keeps itself alive while a receive() waits, given a
- * timer, as a server's does beside its handler. One keep-alive at a time, started by a receive() as it first reads,
- * and ending once none reads:
+ * A client's connection, as http::connect_websocket gives one, or one built by hand, keeps itself alive while a
+ * receive() waits, given a timer and a ping_interval, as a server's does beside its handler. One keep-alive at a time,
+ * started by a receive() as it first reads, and ending once none reads:
  *
  * - At the end of each ping_interval, a peer that sent nothing in it is pinged. A new interval starts from what was
  *   read as a receive() ends, and once a ping has left: a ping that waits for the turn behind a send, or takes long to

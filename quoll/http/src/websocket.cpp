@@ -840,8 +840,10 @@ async::task<> watch_alone_quietly(std::weak_ptr<state> watched) {
   } catch (...) {
     auto const code = async::detail::code_of(std::current_exception());
 
-    // take_as_gone() makes what says none, or a stop's, io_error.
+    // take_as_gone() makes what says none, or a stop's, io_error. Cleared here too, for a keep-alive that failed
+    // before its watching_mark was made.
     if (auto const connection = watched.lock()) {
+      connection->watching = false;
       take_as_gone(*connection, code.value_or(std::error_code{}));
     }
   }

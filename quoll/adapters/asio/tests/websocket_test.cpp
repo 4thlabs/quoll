@@ -111,10 +111,11 @@ task<std::string> echo_over_tcp() {
 task<std::error_code> unanswered_over_tcp() {
   http::router router;
 
-  // A handler that never receives: the client's pings go unanswered.
+  // A handler that never receives: the client's pings go unanswered. It ends in 5 s, which a receive() whose keep-alive
+  // failed would wait for.
   router.get("/quiet", [](http::request request) {
     return http::accept_websocket(
-        request, [](http::websocket) -> task<> { co_await quoll::async::sleep_for(std::chrono::seconds{30}); });
+        request, [](http::websocket) -> task<> { co_await quoll::async::sleep_for(std::chrono::seconds{5}); });
   });
 
   auto listener = co_await io::listen(0);
