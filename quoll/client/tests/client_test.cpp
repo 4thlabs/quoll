@@ -391,6 +391,28 @@ task<std::error_code> send_gets(slow_network &network, http::client_options opti
   co_return std::error_code{};
 }
 
+// Pieces of `size` `count` times, counting its runs.
+http::body_writer pieces_of(std::size_t size, int count, int *runs = nullptr) {
+  return [size, count, runs](http::body_stream out) -> task<> {
+    std::string const piece(size, 'x');
+
+    if (runs != nullptr) {
+      ++*runs;
+    }
+
+    for (auto index = 0; index < count; ++index) {
+      co_await out.write(piece);
+    }
+  };
+}
+
+http::request upload_of(http::body_writer writer, verb method = verb::post, std::string target = "/echo") {
+  auto request = make_request(method, std::move(target));
+
+  request.body_writer = std::move(writer);
+  return request;
+}
+
 } // namespace
 
 TEST_CASE("http::client: requests reuse a connection kept alive", "[client]") {
@@ -405,13 +427,13 @@ TEST_CASE("http::client: requests reuse a connection kept alive", "[client]") {
   REQUIRE(result.destination == "example.com:80");
 }
 
-TEST_CASE("http::client: a POST opens its own connection, kept for the next requests", "[client]") {
+TEST_CASE("http::client: a POST takes an idle connection, as any request whose body is whole", "[client]") {
   auto const result = roundtrip({make_request(verb::get, "/hello"), make_request(verb::post, "/echo", "ping"),
                                  make_request(verb::get, "/hello"), make_request(verb::get, "/hello")});
 
   REQUIRE(result.responses.size() == 4);
   REQUIRE(result.responses[1].body == "ping");
-  REQUIRE(result.connections == 2);
+  REQUIRE(result.connections == 1);
 }
 
 TEST_CASE("http::client: the Host field names the server, and its port unless it is 80", "[client]") {
@@ -502,12 +524,13 @@ TEST_CASE("http::client: an idempotent request goes again when its kept connecti
     REQUIRE(result.connections == 2);
   }
 
-  // A POST, which cannot be sent twice, does not take the idle connection.
+  // A POST takes the idle connection too, but is not sent again, as the server may have received it: the stream's
+  // failure is the request's, for the caller to decide on.
   auto const post = roundtrip(answering({ok}, true), {make_request(verb::get, "/"), make_request(verb::post, "/")});
 
-  REQUIRE_FALSE(post.error);
-  REQUIRE(post.responses.size() == 2);
-  REQUIRE(post.connections == 2);
+  REQUIRE(post.error);
+  REQUIRE(post.responses.size() == 1);
+  REQUIRE(post.connections == 1);
 }
 
 namespace {
@@ -977,14 +1000,14 @@ TEST_CASE("http::client: an idle connection makes room for a new one at the limi
   auto const bodies = quoll::test::run(loop, [](memory_server &target) -> task<std::vector<std::string>> {
     http::client client{memory_connector{target}, "example.com", 80, at_most(1)};
     auto first = co_await client.send(make_request(verb::get, "/hello"));
-    // A POST opens its own connection: the idle one goes first.
-    auto second = co_await client.send(make_request(verb::post, "/echo", "ping"));
+    // A body in pieces opens its own connection: the idle one goes first.
+    auto second = co_await client.send(upload_of(pieces_of(4, 1)));
 
     co_await async::yield();
     co_return std::vector<std::string>{first.body, second.body};
   }(counted.server));
 
-  REQUIRE(bodies == std::vector<std::string>{"hello", "ping"});
+  REQUIRE(bodies == std::vector<std::string>{"hello", "xxxx"});
   REQUIRE(counted.server.connections == 2);
   REQUIRE(counted.most_open == 1);
 }
@@ -996,15 +1019,15 @@ TEST_CASE("http::client: only what is idle past the limit makes room", "[client]
     http::client client{memory_connector{target}, "example.com", 80, at_most(2)};
     auto [first, second] = co_await async::when_all(client.send(make_request(verb::get, "/hello")),
                                                     client.send(make_request(verb::get, "/hello")));
-    // Two idle, one more to open: one of them goes, and the other is reused after it.
-    auto third = co_await client.send(make_request(verb::post, "/echo", "ping"));
+    // Two idle, one more to open for a body in pieces: one of them goes, and the other is reused after it.
+    auto third = co_await client.send(upload_of(pieces_of(4, 1)));
     auto fourth = co_await client.send(make_request(verb::get, "/hello"));
 
     co_await async::yield();
     co_return std::vector<std::string>{first.body, second.body, third.body, fourth.body};
   }(counted.server));
 
-  REQUIRE(bodies == std::vector<std::string>{"hello", "hello", "ping", "hello"});
+  REQUIRE(bodies == std::vector<std::string>{"hello", "hello", "xxxx", "hello"});
   REQUIRE(counted.server.connections == 3);
   REQUIRE(counted.most_open == 2);
 }
@@ -1291,13 +1314,13 @@ TEST_CASE("http::client: the same Location twice is followed", "[client]") {
   REQUIRE(out.seen.at(1).target == "/next");
 }
 
-TEST_CASE("http::client: a POST sent again by a 307 goes on its own connection", "[client]") {
+TEST_CASE("http::client: a POST sent again by a 307 takes the connection kept", "[client]") {
   auto const out = follow({redirect_to(307, "/next"), std::string{reply_done}},
                           make_request(verb::post, "/start", "ping"), following(1));
 
   REQUIRE(!out.result.error);
   REQUIRE(out.result.responses.at(0).body == "done");
-  REQUIRE(out.result.connections == 2);
+  REQUIRE(out.result.connections == 1);
   REQUIRE(out.seen.size() == 2);
   REQUIRE(out.seen[1].method == verb::post);
   REQUIRE(out.seen[1].body == "ping");
@@ -2725,8 +2748,8 @@ TEST_CASE("http::client: stream() keeps and takes an idle connection as send() d
 
   SECTION("a GET takes it") { REQUIRE(twice(answering({whole, whole}, true), verb::get) == 1); }
 
-  SECTION("a POST does not, as what it does may not be done twice") {
-    REQUIRE(twice(answering({whole, whole}, true), verb::post) == 2);
+  SECTION("a POST takes it too, as any request whose body is whole") {
+    REQUIRE(twice(answering({whole, whole}, true), verb::post) == 1);
   }
 
   SECTION("one the server closed is replaced") { REQUIRE(twice(answering({whole}), verb::get) == 2); }
@@ -2784,21 +2807,6 @@ TEST_CASE("http::client: what stops stream() before the head", "[client][timer]"
 
 namespace {
 
-// Pieces of `size` `count` times, counting its runs.
-http::body_writer pieces_of(std::size_t size, int count, int *runs = nullptr) {
-  return [size, count, runs](http::body_stream out) -> task<> {
-    std::string const piece(size, 'x');
-
-    if (runs != nullptr) {
-      ++*runs;
-    }
-
-    for (auto index = 0; index < count; ++index) {
-      co_await out.write(piece);
-    }
-  };
-}
-
 // Writes until something stops it, saying what did.
 http::body_writer writing_until_stopped(std::string &stopped_by) {
   return [&stopped_by](http::body_stream out) -> task<> {
@@ -2812,13 +2820,6 @@ http::body_writer writing_until_stopped(std::string &stopped_by) {
       throw;
     }
   };
-}
-
-http::request upload_of(http::body_writer writer, verb method = verb::post, std::string target = "/echo") {
-  auto request = make_request(method, std::move(target));
-
-  request.body_writer = std::move(writer);
-  return request;
 }
 
 http::router make_upload_router() {

@@ -120,13 +120,14 @@ requests reuse them. A request waits for no other: it opens a new connection whe
 it (`Connection: close`, HTTP/1.0), a response delimited by the end of the stream, a switch of protocol
 or a stream error.
 
-A server may close an idle connection at any time, which shows only once a request is sent on it.
-So only requests whose method is idempotent take an idle connection:
+A server may close an idle connection at any time, which shows only once a request is sent on it. Every
+request whose body is whole takes an idle connection, as Go's client and Boost.Burl do; one whose body comes
+in pieces (`body_writer`) has one of its own, as its writer runs once:
 
-| Method                                 | Connection                                       | When an idle connection turns out closed before any response, or answers 408                            |
-| -------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| GET, HEAD, PUT, DELETE, OPTIONS, TRACE | An idle one if there is one                      | The request is sent again, once, on a new connection, and the other idle connections, older, are closed |
-| POST, PATCH and the others             | A new one, kept afterwards for the next requests | Does not arise, as the server may have received such a request                                          |
+| Method                                 | When its idle connection turns out closed before any response, or answers 408                            |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| GET, HEAD, PUT, DELETE, OPTIONS, TRACE | The request is sent again, once, on a new connection, and the other idle connections, older, are closed |
+| POST, PATCH and the others             | The request fails with the stream's error, or the 408 is its response: the server may have received it, so it is not sent twice, and the caller decides; the older idle connections are closed |
 
 A request that times out is not sent again, as the server may be working on it, and its connection is
 closed. Nothing else is retried: a connection that fails otherwise is a failure of the request.

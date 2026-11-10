@@ -22,8 +22,8 @@ other fields that Quoll does not.
 **What costs more:**
 
 - **A new connection.** A request on a connection of its own is several times slower than on a kept one.
-  A POST opens one every time, as [it may not be sent twice](client.md#keep-alive-and-retries) on a
-  connection found closed, which is most of what a REST POST costs.
+  Every request whose body is whole takes a kept connection, a POST included, which [is not sent twice](client.md#keep-alive-and-retries)
+  when that connection turns out closed: it fails, for its caller to decide. A body in pieces opens one of its own.
 - **JSON** costs little beside that: a REST GET stays close to a plain GET.
 - **TLS** costs its handshake: close to plain HTTP on a kept connection, and tens of times slower with a
   connection each.
