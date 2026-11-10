@@ -263,6 +263,10 @@ TEST_CASE("threads: a stop from another thread unwinds the chain on a worker, it
     REQUIRE(one.get());
   }
 
+  // A worker may still be in its registration of a thread, the chain it stops unwound already on another one: the
+  // workers are joined before the registry goes.
+  pool.join();
+
   REQUIRE(unwound.load() == tasks);
 }
 

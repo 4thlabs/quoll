@@ -50,6 +50,7 @@
 #include <quoll/http/verb.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/connector.hpp>
+#include <quoll/test/code_thrown_by.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
 
@@ -61,7 +62,6 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
-#include <system_error>
 
 namespace {
 
@@ -133,15 +133,13 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
   http::client const client{unfolding_connector{&steps, answer}, "fuzz.example", 80, options};
 
   // Two sends, the second taking the connection the first kept, if any: their kinds from the second byte.
+  // What a stream failing or a timeout throws, and a stop the send ends on, are codes there.
   for (unsigned send = 0; send < 2; ++send) {
-    try {
-      quoll::fuzz::require(quoll::test::run(time,
-                                            client.send(make_request(static_cast<std::uint8_t>(kinds >> (2U * send)))),
-                                            stop.get_token())
-                               .has_value());
-    } catch (std::system_error const &) {
-      // What a stream failing, a timeout or a stop ends a send with.
-    }
+    quoll::fuzz::require(quoll::test::run(time,
+                                          quoll::test::code_thrown_by(client.send(
+                                              make_request(static_cast<std::uint8_t>(kinds >> (2U * send))))),
+                                          stop.get_token())
+                             .has_value());
   }
 
   return 0;
