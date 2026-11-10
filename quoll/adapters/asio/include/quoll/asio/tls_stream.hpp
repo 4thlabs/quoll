@@ -43,10 +43,12 @@
 #include <quoll/asio/detail/basic_stream.hpp>
 #include <quoll/asio/detail/io_error.hpp>
 #include <quoll/asio/detail/operation.hpp>
+#include <quoll/asio/detail/poll_socket.hpp>
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
+#include <quoll/io/pollable_stream.hpp>
 
 #include <asio/buffer.hpp>
 #include <asio/ip/tcp.hpp>
@@ -134,6 +136,20 @@ public:
    */
   [[nodiscard]] async::task<io::io_result> shutdown_send() { return shut_down(checked_state()); }
 
+  /**
+   * @brief What a read started now would do: see io::PollableStream. Ready when OpenSSL holds bytes of the session not
+   * yet read, or when the socket has any, a record or TLS's closing message, as a peek that does not wait tells.
+   */
+  [[nodiscard]] io::read_readiness poll_read() noexcept {
+    auto &session = checked_state().stream;
+
+    if (::SSL_has_pending(session.native_handle()) == 1) {
+      return io::read_readiness::ready;
+    }
+
+    return detail::poll_socket(session.next_layer());
+  }
+
   /** @brief The session, for what OpenSSL offers. */
   [[nodiscard]] session_type &session() noexcept { return checked_state().stream; }
 
@@ -195,6 +211,7 @@ private:
 static_assert(async::ContextAwaitable<tls_stream::read_awaitable>);
 static_assert(async::ContextAwaitable<tls_stream::write_awaitable>);
 static_assert(io::HalfClosableStream<tls_stream>);
+static_assert(io::PollableStream<tls_stream>);
 
 } // namespace quoll::asio
 

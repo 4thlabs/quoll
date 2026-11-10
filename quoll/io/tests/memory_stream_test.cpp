@@ -158,6 +158,23 @@ TEST_CASE("memory_stream: a read gets what the peer wrote", "[io][memory_stream]
   REQUIRE(read->text == "hello");
 }
 
+TEST_CASE("memory_stream: poll_read tells what a read would do, reading nothing", "[io][memory_stream]") {
+  auto [left, right] = io::make_memory_stream_pair();
+
+  static_assert(io::PollableStream<io::memory_stream>);
+  REQUIRE(left.poll_read() == io::read_readiness::would_wait);
+  REQUIRE(run(write_once(right, "hello")));
+  REQUIRE(left.poll_read() == io::read_readiness::ready);
+  REQUIRE(left.poll_read() == io::read_readiness::ready);
+  REQUIRE(run(read_once(left))->text == "hello");
+  REQUIRE(left.poll_read() == io::read_readiness::would_wait);
+
+  right.close();
+
+  REQUIRE(left.poll_read() == io::read_readiness::ready);
+  REQUIRE(run(read_once(left))->error == io::error::end_of_stream);
+}
+
 TEST_CASE("memory_stream: both directions are independent", "[io][memory_stream]") {
   auto [left, right] = io::make_memory_stream_pair();
 

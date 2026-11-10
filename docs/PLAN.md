@@ -351,20 +351,21 @@ changes only what the harness shows. Candidates:
   ask. With frames recycled that task allocates nothing in steady state, and changing it changes no handler.
 - The size of a native binary, 19 % larger since step 1, as static libraries link whole objects: `--gc-sections`, link-time
   optimization.
-- Idle connections are only found closed when a request uses them: closing them after an idle time. A POST reuses one
-  idle for less than a second (decided below); finding a closed one before writing, as Go's reader on idle connections
-  does, would let it reuse any.
+- Idle connections are found closed only as a request takes one, with a peek (decided below): closing them after an idle
+  time.
 
 *Done when:* figures are published against that baseline, and each change is justified by a measure.
 
 ## Decided
 
-- **A POST takes an idle connection only if its last request was sent less than a second ago** (2026-11-10,
-  `client_options::max_idle_for_non_idempotent`), and any request found on a closed connection with none of it written goes
-  again on a new one, as hyper does; a POST written is not, even answered 408. Go's client lets a POST take any idle
-  connection, as a reader always waiting on it tells a closed one before the request is written; Quoll's client has no
-  such reader, and the maintainer chose the recency rule over adding one: well below the servers' idle timeouts, a
-  connection that recent is rarely closed, and a POST written on one found closed fails rather than go twice.
+- **An idle connection is checked before it is used again, as curl does** (2026-11-10): a peek of its socket that does not
+  wait (`io::PollableStream`) finds one the server closed, or that carries bytes nothing asked for, which is closed. A
+  POST then takes an idle connection as Go's client does, if its stream can be checked; one found closed with none of it
+  written goes again on a new one, as hyper does, and a POST written is never sent twice, even answered 408. Go and hyper
+  keep a reader waiting on each idle connection instead: a task per connection, to stop before each use, which the peek
+  needs not. Chosen by the maintainer ("reprendre la bonne solution") over a first rule, a POST taking only a connection
+  used less than a second before, which reviews kept finding holes in: a server closing within the second, a response
+  read slowly.
 - **Using the JavaScript libraries a page needs is a requirement of the UI** (2026-11-07), whatever form it takes: see step
   6.
 - **`samples/github` is step 4's real API** (2026-11-07), and a client of Docker over a Unix socket comes later, in no step

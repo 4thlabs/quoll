@@ -72,6 +72,7 @@
 #include <quoll/io/error.hpp>
 #include <quoll/io/io_result.hpp>
 #include <quoll/io/listen.hpp>
+#include <quoll/io/pollable_stream.hpp>
 #include <quoll/io/write.hpp>
 #include <quoll/rest.hpp>
 #include <quoll/server/server.hpp>
@@ -87,6 +88,7 @@
 #include <asio/io_context.hpp>
 #include <asio/ip/address_v4.hpp>
 #include <asio/ip/tcp.hpp>
+#include <asio/write.hpp>
 
 #include <asio/post.hpp>
 #include <asio/strand.hpp>
@@ -653,6 +655,58 @@ TEST_CASE("asio: the peer closing its socket is the end of the stream", "[asio]"
   REQUIRE(read);
   REQUIRE(read->error == io::error::end_of_stream);
   REQUIRE(read->transferred == 0U);
+}
+
+TEST_CASE("asio: poll_read tells a quiet connection from one with bytes or closed, reading nothing", "[asio]") {
+  using namespace std::chrono_literals;
+
+  ::asio::io_context context;
+  auto acceptor = listen(context);
+  tcp::socket peer{context};
+  std::optional<std::string> trace;
+  std::exception_ptr failure;
+
+  // What the peer did takes a moment to arrive.
+  auto const settled = [](io::any_stream &stream, io::read_readiness wanted) {
+    for (auto turn = 0; turn < 1000 && stream.poll_read() != wanted; ++turn) {
+      std::this_thread::sleep_for(1ms);
+    }
+
+    return stream.poll_read() == wanted;
+  };
+
+  auto const probe = [&](quoll::asio::connector connector, std::uint16_t port) -> task<std::string> {
+    auto stream = co_await connector.connect("127.0.0.1", port);
+    std::array<char, 16> chunk{};
+    std::string seen;
+
+    while (!peer.is_open()) {
+      co_await quoll::async::yield();
+    }
+
+    seen += settled(stream, io::read_readiness::would_wait) ? "quiet" : "?";
+    ::asio::write(peer, ::asio::buffer(std::string_view{"x"}));
+    seen += settled(stream, io::read_readiness::ready) ? ",ready" : ",?";
+
+    // The peek took nothing: the byte is still there to read.
+    auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+    seen += "," + std::string(chunk.data(), read.transferred);
+    seen += stream.poll_read() == io::read_readiness::would_wait ? ",quiet" : ",?";
+    peer.close();
+    seen += settled(stream, io::read_readiness::ready) ? ",ready" : ",?";
+
+    auto const ended = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+    seen += ended.error == io::error::end_of_stream ? ",end" : ",?";
+    co_return seen;
+  };
+
+  acceptor.async_accept(peer, [](std::error_code error) { check(error); });
+  spawn(context, probe(quoll::asio::connector{context.get_executor()}, port_of(acceptor)), trace, failure);
+  run(context, failure);
+
+  REQUIRE(trace == "quiet,ready,x,quiet,ready,end");
 }
 
 TEST_CASE("asio: a stop request cancels a pending read", "[asio]") {
