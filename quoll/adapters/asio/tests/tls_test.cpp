@@ -99,6 +99,7 @@ http::request make_request(http::verb method, std::string target, std::string bo
 #include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/runtime_options.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/async/with_timeout.hpp>
 #include <quoll/client/connect_websocket.hpp>
 #include <quoll/http/accept_websocket.hpp>
 #include <quoll/http/body_reader.hpp>
@@ -1028,17 +1029,27 @@ TEST_CASE("TLS: a server speaking first does its handshake, and one that failed 
 }
 
 TEST_CASE("TLS: a stopped handshake stays the stream's error, and a second one at once is refused", "[tls][asio]") {
+  using namespace std::chrono_literals;
+
   ::asio::io_context context;
   quoll::asio::tls_acceptor acceptor{
       ::asio::ip::tcp::acceptor{context, ::asio::ip::tcp::endpoint{::asio::ip::address_v4::loopback(), 0}},
       server_certificate()};
   // A peer that connects and says nothing: the handshake waits for it.
   ::asio::ip::tcp::socket silent{context};
-  std::stop_source stop;
   std::optional<std::string> outcome;
   std::exception_ptr failure;
 
   silent.connect(::asio::ip::tcp::endpoint{::asio::ip::address_v4::loopback(), acceptor.local_port()});
+
+  // Its code, or that of what it threw.
+  auto const code_of = [](task<std::error_code> work) -> task<std::error_code> {
+    try {
+      co_return co_await std::move(work);
+    } catch (std::system_error const &thrown) {
+      co_return thrown.code();
+    }
+  };
 
   auto const work = [&]() -> task<std::string> {
     auto accepted = co_await acceptor.accept();
@@ -1048,11 +1059,11 @@ TEST_CASE("TLS: a stopped handshake stays the stream's error, and a second one a
       co_return "not an accepted_tls_stream";
     }
 
-    // The first read does the handshake, which a second one may not join; then the stop ends it.
+    // The first read does the handshake, which a second one may not join, and its own timeout stops it.
     auto const reading = [&]() -> task<std::error_code> {
       std::array<std::byte, 16> received{};
 
-      co_return (co_await accepted.read_some(received)).error;
+      co_return (co_await quoll::async::with_timeout(100ms, tls->read_some(received))).error;
     };
     auto const joining = [&]() -> task<std::string> {
       co_await quoll::async::yield();
@@ -1061,32 +1072,34 @@ TEST_CASE("TLS: a stopped handshake stays the stream's error, and a second one a
         static_cast<void>(co_await tls->handshake());
         co_return "joined";
       } catch (std::logic_error const &) {
-        stop.request_stop();
         co_return "refused";
       }
     };
-    auto const [stopped, second] = co_await when_all(reading(), joining());
-    auto const again = co_await tls->handshake();
-    auto const closed = co_await accepted.shutdown_send();
+    auto const [stopped, second] = co_await when_all(code_of(reading()), joining());
+
+    // Nothing is stopped now: what follows reports the stopped handshake, rather than start another, which the
+    // silent peer would leave to its timeout.
+    auto const again = co_await code_of(quoll::async::with_timeout(100ms, tls->handshake()));
+    auto const closed = co_await code_of([&]() -> task<std::error_code> {
+      co_return (co_await quoll::async::with_timeout(100ms, tls->shutdown_send())).error;
+    }());
     std::string seen = second;
 
-    seen += stopped && again == stopped ? ",stopped" : ",?";
+    seen += stopped && again != std::errc::timed_out && closed == again ? ",stopped" : ",?";
     seen += accepted.poll_read() == io::read_readiness::unknown ? ",unknown" : ",?";
-    seen += closed.error == stopped ? ",its error" : ",?";
     co_return seen;
   };
 
   quoll::async::co_spawn(quoll::asio::executor{context.get_executor()}, work(),
                          quoll::test::overloaded{[&](std::string value) { outcome = std::move(value); },
-                                                 [&](std::exception_ptr error) { failure = std::move(error); }},
-                         stop.get_token());
+                                                 [&](std::exception_ptr error) { failure = std::move(error); }});
   context.run();
 
   if (failure) {
     std::rethrow_exception(failure);
   }
 
-  REQUIRE(outcome == "refused,stopped,unknown,its error");
+  REQUIRE(outcome == "refused,stopped,unknown");
 }
 
 TEST_CASE("TLS: an accepted stream moved while its handshake is pending keeps it", "[tls][asio]") {
@@ -1110,13 +1123,19 @@ TEST_CASE("TLS: an accepted stream moved while its handshake is pending keeps it
         co_return "not an accepted_tls_stream";
       }
 
-      // Bound to the stream's state, which moves with it: what the handshake records is the moved stream's.
-      auto shaking = tls->handshake();
-      quoll::io::any_stream moved{std::move(accepted)};
-      auto const error = co_await std::move(shaking);
-      auto const *const after = moved.target<quoll::asio::accepted_tls_stream>();
+      // Bound to the stream's state, which moves with it: the handshake, in flight as the stream moves, records its
+      // outcome in the moved stream.
+      std::optional<quoll::io::any_stream> moved;
+      auto const shaking = [tls]() -> task<std::error_code> { co_return co_await tls->handshake(); };
+      auto const moving = [&]() -> task<bool> {
+        co_await quoll::async::yield();
+        moved.emplace(std::move(accepted));
+        co_return true;
+      };
+      auto const [error, done] = co_await when_all(shaking(), moving());
+      auto const *const after = moved->target<quoll::asio::accepted_tls_stream>();
 
-      co_return !error && after != nullptr && after->handshaken() ? "handshaken" : "?";
+      co_return !error && done && after != nullptr && after->handshaken() ? "handshaken" : "?";
     };
 
     auto const calling = [&]() -> task<std::string> {

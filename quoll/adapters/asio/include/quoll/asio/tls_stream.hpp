@@ -45,6 +45,7 @@
 #include <quoll/asio/detail/operation.hpp>
 #include <quoll/asio/detail/poll_socket.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
@@ -156,10 +157,10 @@ public:
   }
 
   /** @brief The session, for what OpenSSL offers. */
-  [[nodiscard]] session_type &session() noexcept { return checked_state().stream; }
+  [[nodiscard]] session_type &session() noexcept QUOLL_LIFETIMEBOUND { return checked_state().stream; }
 
   /** @copydoc session */
-  [[nodiscard]] session_type const &session() const noexcept { return checked_state().stream; }
+  [[nodiscard]] session_type const &session() const noexcept QUOLL_LIFETIMEBOUND { return checked_state().stream; }
 
 private:
   // On the state, bound at the call: the stream may move before its task runs.
