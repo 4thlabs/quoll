@@ -238,7 +238,13 @@ public:
       : inner_(std::move(inner)), delay_(delay) {}
 
   [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
-    co_await quoll::async::sleep_for(delay_);
+    // A stopped write says so, as a stream does.
+    try {
+      co_await quoll::async::sleep_for(delay_);
+    } catch (std::system_error const &stopped) {
+      co_return io::io_result{stopped.code(), 0};
+    }
+
     co_return co_await inner_.write_some(data.first(std::min<std::size_t>(data.size(), 1)));
   }
 
@@ -1324,4 +1330,30 @@ TEST_CASE("websocket: a client's close() fails at once once its peer was taken a
   };
 
   REQUIRE(quoll::test::run(time, after()) == std::errc::timed_out);
+}
+
+TEST_CASE("websocket: a client's send under way ends as its peer is taken as gone", "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{
+      io::any_stream{taking_slowly{std::move(client_end), 400ms}}, websocket_role::client, {}, {.ping_interval = 1s}};
+
+  // The ping of 1 s leaves at 3.4 s, a byte every 400 ms; the send of 1.5 s, behind it, is still leaving when the peer
+  // is taken as gone at 4.4 s: it ends then, with why, rather than seconds later.
+  auto const both = [&]() -> task<std::pair<std::error_code, std::error_code>> {
+    auto const sending = [&]() -> task<std::error_code> {
+      co_await quoll::async::sleep_for(1500ms);
+      co_return co_await quoll::test::code_thrown_by(client.send_text(std::string(20, 'x')));
+    };
+
+    auto [received, sent] = co_await quoll::async::when_all(quoll::test::code_thrown_by(client.receive()), sending());
+
+    co_return std::pair{received, sent};
+  };
+
+  auto const [received, sent] = quoll::test::run(time, both()).value();
+
+  REQUIRE(received == std::errc::timed_out);
+  REQUIRE(sent == std::errc::timed_out);
+  REQUIRE(time.now() == 4400ms);
 }

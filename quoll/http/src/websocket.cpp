@@ -98,7 +98,10 @@ struct websocket_state {
         ping_interval(options.ping_interval) {
     if (end == websocket_role::client) {
       masks = std::make_unique<async::detail::synchronized<std::random_device>>();
-      // From the start, so that a send before the first receive() follows the verdict too.
+    }
+
+    // From the start, so that a send before the first receive() follows the verdict too; none with no keep-alive.
+    if (options.ping_interval > std::chrono::nanoseconds::zero()) {
       gone = std::stop_source{};
     }
   }
@@ -138,8 +141,9 @@ struct websocket_state {
   // started by a receive() as it first reads and ending once none reads, woken by `receive_done`, which each receive()
   // makes and stops as it ends. Taking the peer as gone, it says why in `gone_why`, then stops `gone`, which ends what
   // reads and what sends. `ping_interval` zero, none, as serve_websocket sets it, which watches the connection beside
-  // its handler. `gone` is made with a client's state, and `receive_done` by each receive() that runs it, so that a
-  // server's connection makes neither. All of it is on the executor the connection's operations take turns on.
+  // its handler. `gone` is made with a state that has a ping interval, and `receive_done` by each receive() that runs
+  // it, so that a server's connection keeps neither. All of it is on the executor the connection's operations take
+  // turns on.
   std::chrono::nanoseconds ping_interval;
   bool watching = false;
   std::stop_source receive_done{std::nostopstate};
@@ -199,6 +203,20 @@ async::task<io::io_result> write_once(std::shared_ptr<state> connection, std::sp
 // `frame` written, the turn to send held. A loop of its own rather than io::write(): each write may wait wait_limit
 // with nothing taken, past which the send throws std::errc::timed_out, so that no turn is held longer than the peer
 // goes on taking.
+// One write within wait_limit, and within `stop` once it can stop, which replaces the caller's: see write_frame().
+// `rest` belongs to write_frame's frame, which awaits this at once.
+async::task<io::io_result> write_within(std::shared_ptr<state> connection, std::span<std::byte const> rest,
+                                        std::stop_token stop) {
+  auto const limit = connection->wait_limit;
+
+  if (!stop.stop_possible()) {
+    co_return co_await async::detail::with_optional_timeout(limit, write_once(std::move(connection), rest));
+  }
+
+  co_return co_await async::detail::stop_scope<io::io_result>{
+      async::detail::with_optional_timeout(limit, write_once(std::move(connection), rest)), std::move(stop)};
+}
+
 async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, frame_kind kind) {
   // The peer taken as gone by the keep-alive: what would be sent finds it out at once, as Beast's would on its closed
   // socket.
@@ -221,23 +239,20 @@ async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, 
   auto rest = std::as_bytes(std::span{frame});
   auto const caller = co_await async::current_stop_token();
 
+  // A write under way ends as the keep-alive takes the peer as gone, as the caller's stop ends it: what it writes
+  // under, chosen once for the frame.
+  std::optional<async::detail::either_stop> either;
+  std::stop_token gone_stop;
+
+  if (connection->gone.stop_possible() && caller.stop_possible()) {
+    either.emplace(caller, connection->gone.get_token());
+    gone_stop = either->token();
+  } else if (connection->gone.stop_possible()) {
+    gone_stop = connection->gone.get_token();
+  }
+
   while (!rest.empty()) {
-    io::io_result sent{};
-
-    // A write under way ends as the keep-alive takes the peer as gone, as the caller's stop ends it.
-    if (connection->gone.stop_possible() && caller.stop_possible()) {
-      async::detail::either_stop const stop{caller, connection->gone.get_token()};
-
-      sent = co_await async::detail::stop_scope<io::io_result>{
-          async::detail::with_optional_timeout(connection->wait_limit, write_once(connection, rest)), stop.token()};
-    } else if (connection->gone.stop_possible()) {
-      sent = co_await async::detail::stop_scope<io::io_result>{
-          async::detail::with_optional_timeout(connection->wait_limit, write_once(connection, rest)),
-          connection->gone.get_token()};
-    } else {
-      sent = co_await async::detail::with_optional_timeout(connection->wait_limit, write_once(connection, rest));
-    }
-
+    auto const sent = co_await write_within(connection, rest, gone_stop);
     auto const fits = sent.transferred <= rest.size();
 
     // From its first byte, the frame is under way, until it has left whole.
@@ -437,8 +452,13 @@ async::task<websocket_message> receive_next(std::shared_ptr<state> connection, b
     if (watch) {
       watch = false;
 
-      if (!connection->watching && !(co_await async::current_stop_token()).stop_requested()) {
-        co_await start_watch(connection);
+      // Apart: GCC 13 would await the token even with a keep-alive running.
+      if (!connection->watching) {
+        auto const stop = co_await async::current_stop_token();
+
+        if (!stop.stop_requested()) {
+          co_await start_watch(connection);
+        }
       }
     }
 
@@ -473,10 +493,6 @@ async::task<websocket_message> receive_watched(std::shared_ptr<state> connection
   // Nothing to watch with.
   if (!(co_await async::current_executor()).query<async::timer_ref>()) {
     co_return co_await receive_next(connection);
-  }
-
-  if (!connection->gone.stop_possible()) {
-    connection->gone = std::stop_source{};
   }
 
   connection->receive_done = std::stop_source{};
@@ -827,8 +843,9 @@ async::task<> serve_websocket(std::function<async::task<>(websocket)> handler, i
 
   // Before any operation: what is sent whole follows it.
   connection->connection_stop = co_await async::current_stop_token();
-  // Watched beside the handler below rather than by its receive()s.
+  // Watched beside the handler below rather than by its receive()s, which no verdict of theirs stops.
   connection->ping_interval = std::chrono::nanoseconds::zero();
+  connection->gone = std::stop_source{std::nostopstate};
 
   // What stops the handler: the connection's stop, or the keep-alive finding the peer gone.
   std::stop_source handler_stop;
