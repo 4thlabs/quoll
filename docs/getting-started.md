@@ -282,11 +282,11 @@ try {
 }
 ```
 
-A stop request is no failure, and no exception: the task ends on it. What it awaits does not resume it,
+A stop request is no failure, and no exception: the task ends on it, as [Async](async.md#stopping-a-task) says
+in full. What it awaits does not resume it,
 no `catch` sees the stop, and its frames are destroyed, their locals with them: what it holds is let go
-as its destructors run. A loop that catches everything and tries again cannot turn a stop into a spin, through Quoll's tasks;
-the streams, listeners and connectors of `quoll::io` awaited directly still say a stop with
-`std::errc::operation_canceled` in their result, until they move to it (#151).
+as its destructors run. A loop that catches everything and tries again, or goes on after an error code, cannot turn a stop into
+a spin: no exception and no result says it.
 The root learns of it, `async::detached` with no word, a handler of your own through its
 `async::stopped_t` case. To do something once stopped, as joining tasks or answering, ask for it:
 
@@ -305,6 +305,7 @@ thrown by what has no stop to end it, a closed socket or a read after a cancelle
 
 ## Where to go next
 
+- [Async](async.md), for tasks, timeouts and what a stop does.
 - [Server](server.md) and [Client](client.md), for HTTP by hand.
 - [REST](rest.md), for an API described once.
 - [Streaming](streaming.md), for bodies that do not fit in memory.

@@ -52,7 +52,7 @@ namespace quoll::io {
  *
  * `connect(host, port)` returns a task producing the connected stream, type-erased so that a client does not depend
  * on the transport. A failure to resolve or to connect is reported by the task's exception (std::system_error), and
- * a stop request on the awaiter's context abandons the attempt.
+ * a stop request on the awaiter's context abandons the attempt, which ends the awaiter on the stop.
  */
 template <class C>
 concept Connector = requires(C const &connector, std::string host, std::uint16_t port) {

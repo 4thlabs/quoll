@@ -58,7 +58,7 @@ namespace quoll::asio {
  *
  * Takes a listening acceptor over. Each accepted connection is a tcp_stream on the acceptor's executor, handed over as
  * an io::any_stream. A failure to accept throws std::system_error from the task, with asio's error code; a stop
- * request, from any thread, abandons the wait, with `std::errc::operation_canceled`. The executor runs one handler at
+ * request, from any thread, abandons the wait, which ends the awaiter on the stop. The executor runs one handler at
  * a time (an io_context run by one thread, or a strand). On an io_context run by several threads, as
  * `runtime.context()` may be, give it a strand, and `socket_strands` for each connection's own.
  *

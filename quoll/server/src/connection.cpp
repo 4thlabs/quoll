@@ -1369,9 +1369,20 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
 
     // A pipelined request has already started.
     if (buffer.empty()) {
-      auto const wait = co_await async::detail::stop_scope<waited>{
-          async::detail::with_optional_timeout(options.idle_timeout, wait_for_request(stream, buffer)),
-          idle_stop.token()};
+      // A drain, a stop or the idle timeout ends the wait, as the peer closing its side does: what follows is owed the
+      // end of this one.
+      auto wait = waited::over;
+
+      try {
+        wait = (co_await async::detail::owned_chain<waited>{
+                    async::detail::with_optional_timeout(options.idle_timeout, wait_for_request(stream, buffer)),
+                    idle_stop.token()})
+                   .value_or(waited::over);
+      } catch (std::system_error const &thrown) {
+        if (thrown.code() != std::errc::timed_out) {
+          throw;
+        }
+      }
 
       if (wait != waited::request) {
         co_return wait == waited::over ? connection_end::stop_sending : connection_end::nothing_owed;

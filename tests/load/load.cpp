@@ -52,6 +52,7 @@
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/runtime_options.hpp>
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
@@ -396,18 +397,24 @@ struct raw_answer {
   bool closed = false;
 };
 
-// Reads until the server closes, or a read fails: a read the timeout cancelled says it kept the connection, which
-// quoll::test::read_until_closed would not tell from a close.
+task<io::io_result> read_piece(io::any_stream &stream QUOLL_LIFETIMEBOUND, std::span<char> chunk) {
+  co_return co_await stream.read_some(std::as_writable_bytes(chunk));
+}
+
+// Reads until the server closes, or a read fails: a read the timeout stopped, which ends on the stop here, says it kept
+// the connection, which quoll::test::read_until_closed would not tell from a close.
 task<raw_answer> read_answer(io::any_stream &stream QUOLL_LIFETIMEBOUND) {
   raw_answer answer;
   std::array<char, 256> chunk{};
 
   while (true) {
-    auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+    auto const attempt = co_await async::stopped_as_optional(read_piece(stream, chunk));
 
-    if (read.error == std::errc::operation_canceled) {
+    if (!attempt) {
       co_return answer;
     }
+
+    auto const &read = *attempt;
 
     if (read.error || read.transferred == 0) {
       answer.closed = true;

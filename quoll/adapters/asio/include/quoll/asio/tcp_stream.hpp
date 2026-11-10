@@ -59,7 +59,7 @@ namespace quoll::asio {
  *
  * Operations complete on the socket's executor, then resume their coroutine on its own executor, which may be
  * another one (a thread pool). A stop request on the awaiter's context, from any thread, cancels the pending
- * operation, which then reports `std::errc::operation_canceled`. The peer closing its side is
+ * operation, which then ends its awaiter on the stop, with no result. The peer closing its side is
  * `io::error::end_of_stream`. Like any asio I/O object, the socket needs an executor that runs one handler at a time:
  * an io_context run by one thread, or a strand.
  *

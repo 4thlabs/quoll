@@ -275,9 +275,12 @@ TEST_CASE("any_stream: a stop request reaches the wrapped read", "[io][any_strea
   quoll::async::run_loop loop;
   std::stop_source source;
   std::optional<received> read;
+  auto stopped = false;
 
   co_spawn(loop.get_executor(), read_once(stream),
-           overloaded{[&](received value) { read = std::move(value); }, [](std::exception_ptr) {}}, source.get_token());
+           overloaded{[&](received value) { read = std::move(value); }, [](std::exception_ptr) {},
+                      [&stopped](quoll::async::stopped_t) { stopped = true; }},
+           source.get_token());
   loop.run();
 
   REQUIRE_FALSE(read);
@@ -285,8 +288,9 @@ TEST_CASE("any_stream: a stop request reaches the wrapped read", "[io][any_strea
   source.request_stop();
   loop.run();
 
-  REQUIRE(read);
-  REQUIRE(read->error == std::errc::operation_canceled);
+  // Ended on the stop: the read gives nothing, and what awaited it does not resume.
+  REQUIRE(stopped);
+  REQUIRE_FALSE(read);
 }
 
 TEST_CASE("any_stream: reading and writing do not allocate", "[io][any_stream]") {

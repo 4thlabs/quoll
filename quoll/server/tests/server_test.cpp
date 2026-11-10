@@ -36,6 +36,7 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detail/chain_owner.hpp>
 #include <quoll/async/detail/end_stopped.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/sleep_for.hpp>
@@ -89,7 +90,7 @@ using http::verb;
 using quoll::async::task;
 using quoll::test::overloaded;
 
-// Completes once stop is requested: an accept with no peer coming.
+// Ends on the stop once one is requested: an accept with no peer coming, a read with nothing coming, as a socket's.
 class wait_for_stop {
 public:
   wait_for_stop() = default;
@@ -106,7 +107,7 @@ public:
   void await_suspend(std::coroutine_handle<> handle, quoll::async::await_context const &context) {
     item_.handle = handle;
     context_ = &context;
-    // Invoked at once if stop was already requested: post() never resumes inline.
+    // Invoked at once if stop was already requested: the owner is posted, and never unwinds inline.
     callback_.emplace(context.stop_token, waker{this});
   }
 
@@ -116,7 +117,7 @@ private:
   struct waker {
     wait_for_stop *self;
 
-    void operator()() const noexcept { self->context_->executor.post(self->item_); }
+    void operator()() const noexcept { quoll::async::detail::stop_chain(self->context_->owner); }
   };
 
   quoll::async::work_item item_;
@@ -144,8 +145,9 @@ struct canned_listener {
       co_return stream;
     }
 
+    // Ends on the stop, and does not resume: what follows is for the compiler, as a task of a value ends on a return.
     co_await wait_for_stop{};
-    throw std::system_error{std::make_error_code(std::errc::operation_canceled), "canned_listener"};
+    throw std::logic_error{"canned_listener: resumed after a stop"};
   }
 };
 

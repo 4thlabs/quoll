@@ -12,6 +12,7 @@
 
   <p>
     <a href="docs/getting-started.md">Getting started</a> ·
+    <a href="docs/async.md">Async</a> ·
     <a href="docs/server.md">Server</a> ·
     <a href="docs/client.md">Client</a> ·
     <a href="docs/streaming.md">Streaming</a> ·

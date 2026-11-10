@@ -46,10 +46,6 @@ namespace quoll::async {
  * A stop is no exception: the coroutines of a stopped task do not resume, no `catch` sees it, and their frames are
  * destroyed, their locals with them. Only the root learns of it, through this, or a coroutine that asked to, through
  * stopped_as_optional().
- *
- * The streams, listeners and connectors of quoll::io, awaited directly, still say a stop with
- * std::errc::operation_canceled, in their result or thrown, until they move to it (#151); what awaits them through a
- * task does not see it.
  */
 struct stopped_t {
   explicit stopped_t() = default;
