@@ -780,34 +780,103 @@ TEST_CASE("http::client: a POST whose idle connection turns out closed as it goe
   REQUIRE(server.connections == 3);
 }
 
-TEST_CASE("http::client: an idle connection found closed closes the older idle ones", "[client]") {
+namespace {
+
+// A memory stream its check always finds quiet, as one the server closes just after it: what then shows only as a
+// request goes. Counts the writes of all.
+class blind_stream {
+public:
+  blind_stream(io::memory_stream inner, std::shared_ptr<int> writes) noexcept
+      : inner_(std::move(inner)), writes_(std::move(writes)) {}
+
+  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte> buffer) {
+    co_return co_await inner_.read_some(buffer);
+  }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
+    ++*writes_;
+    co_return co_await inner_.write_some(data);
+  }
+
+  [[nodiscard]] io::read_readiness poll_read() const noexcept { return io::read_readiness::would_wait; }
+
+private:
+  io::memory_stream inner_;
+  std::shared_ptr<int> writes_;
+};
+
+static_assert(io::PollableStream<blind_stream>);
+
+class blind_connector {
+public:
+  blind_connector(memory_server &server, std::shared_ptr<int> writes) noexcept
+      : inner_(server), writes_(std::move(writes)) {}
+
+  [[nodiscard]] task<io::any_stream> connect(std::string host, std::uint16_t port) const {
+    auto made = co_await inner_.connect(std::move(host), port);
+
+    co_return io::any_stream{blind_stream{std::move(*made.target<io::memory_stream>()), writes_}};
+  }
+
+private:
+  memory_connector inner_;
+  std::shared_ptr<int> writes_;
+};
+
+// The writes of `requests`, sent after two GETs at once, then two more GETs at once, on a client whose checks see
+// nothing, its first two connections served by `first_two`, the next by the router.
+int writes_past_two(std::function<task<>(io::memory_stream)> first_two, http::request request, http::status expected) {
   async::run_loop loop;
   auto const router = make_router();
   auto served = 0;
-  // The first two connections answer once, then close; the next ones serve the router.
+  auto writes = std::make_shared<int>(0);
   memory_server server{loop.get_executor(),
                        [&](io::memory_stream stream) {
-                         return ++served <= 2 ? answer(std::move(stream),
-                                                       {"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"}, false)
+                         return ++served <= 2 ? first_two(std::move(stream))
                                               : quoll::http::server{router}.serve_connection(std::move(stream));
                        },
                        0,
                        {},
                        {}};
-  auto const bodies = quoll::test::run(loop, [](memory_server &target) -> task<std::vector<std::string>> {
-    http::client client{memory_connector{target}, "example.com", 80};
-    auto [first, second] =
-        co_await async::when_all(client.send(make_request(verb::get, "/")), client.send(make_request(verb::get, "/")));
-    // Finds the last idle connection closed, closes the other one, and connects.
-    auto third = co_await client.send(make_request(verb::get, "/hello"));
-    // Reuses the new connection.
-    auto fourth = co_await client.send(make_request(verb::get, "/hello"));
 
-    co_return std::vector<std::string>{first.body, second.body, third.body, fourth.body};
-  }(server));
+  auto const sending = [&]() -> task<bool> {
+    http::client const client{blind_connector{server, writes}, "example.com", 80};
 
-  REQUIRE(bodies == std::vector<std::string>{"ok", "ok", "hello", "hello"});
-  REQUIRE(server.connections == 3);
+    static_cast<void>(
+        co_await async::when_all(client.send(make_request(verb::get, "/")), client.send(make_request(verb::get, "/"))));
+
+    // On the newer: closed, or answered 408; the older is closed with it.
+    auto const third = co_await client.send(std::move(request));
+
+    REQUIRE(third.status == expected);
+
+    // Two at once, which would take the older if it were left.
+    auto const [fourth, fifth] = co_await async::when_all(client.send(make_request(verb::get, "/hello")),
+                                                          client.send(make_request(verb::get, "/hello")));
+
+    co_return fourth.body == "hello" && fifth.body == "hello";
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()).value_or(false));
+  return *writes;
+}
+
+} // namespace
+
+TEST_CASE("http::client: an idle connection that turns out closed, or answers 408, closes the older idle ones",
+          "[client]") {
+  // A GET on a connection found closed as it goes: it goes again, on a third connection, which one of the two last
+  // GETs takes, the other opening a fourth. Six writes, and a seventh if the older were taken.
+  auto const closing = [](io::memory_stream stream) {
+    return answer(std::move(stream), {"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"}, false);
+  };
+
+  REQUIRE(writes_past_two(closing, make_request(verb::get, "/hello"), http::status::ok) == 6);
+
+  // A POST answered 408: its response, and its connection is not kept, so that the two last GETs open their own. Five
+  // writes, and a sixth if the older were taken.
+  REQUIRE(writes_past_two(answer_then_time_out_open, make_request(verb::post, "/"), http::status::request_timeout) ==
+          5);
 }
 
 TEST_CASE("http::client: a response that cannot be read fails, and its connection is dropped", "[client]") {
@@ -4188,14 +4257,16 @@ TEST_CASE("http::client: a POST opens its own connection when its stream cannot 
       {},
       {}};
 
-  // resetting_stream, over a memory stream, is no PollableStream: a GET still takes its connection.
+  // resetting_stream, over a memory stream, is no PollableStream: a GET still takes its connection, and the POST leaves
+  // it in the pool, which then holds both, for two GETs at once.
   auto const sending = [&]() -> task<std::string> {
     http::client const client{resetting_connector{server}, "example.com", 80};
     auto const first = co_await client.send(make_request(verb::get, "/hello"));
     auto const second = co_await client.send(make_request(verb::post, "/echo", "ping"));
-    auto const third = co_await client.send(make_request(verb::get, "/hello"));
+    auto const [third, fourth] = co_await async::when_all(client.send(make_request(verb::get, "/hello")),
+                                                          client.send(make_request(verb::get, "/hello")));
 
-    co_return first.body + second.body + third.body;
+    co_return first.body + second.body + third.body + fourth.body;
   };
 
   REQUIRE(quoll::test::run(loop, sending()).has_value());

@@ -388,6 +388,8 @@ TEST_CASE("any_stream: poll_read goes to a stream that can, and is unknown on on
   quoll::io::any_stream plain{fixed_stream<8>{}};
 
   static_assert(!quoll::io::PollableStream<fixed_stream<8>>);
+  REQUIRE(polled.pollable());
+  REQUIRE_FALSE(plain.pollable());
   REQUIRE(polled.poll_read() == quoll::io::read_readiness::would_wait);
   REQUIRE(plain.poll_read() == quoll::io::read_readiness::unknown);
 
@@ -399,6 +401,7 @@ TEST_CASE("any_stream: poll_read goes to a stream that can, and is unknown on on
   auto const moved = std::move(polled);
 
   REQUIRE(polled.poll_read() == quoll::io::read_readiness::unknown); // NOLINT(bugprone-use-after-move)
+  REQUIRE_FALSE(polled.pollable());                                  // NOLINT(bugprone-use-after-move)
 }
 
 TEST_CASE("any_stream: target() recovers the wrapped stream by its exact type", "[io][any_stream]") {

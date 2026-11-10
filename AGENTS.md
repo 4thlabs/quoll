@@ -19,7 +19,7 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 Exploration. Modules so far: `quoll::async` (task, executor_ref, any_executor, await_context with stop token,
 current_executor and current_stop_token, executor services, co_spawn, on an executor or, in a coroutine, on `this_executor` by default, and its `detached` handler, when_all, run_loop,
 `Timer` and `timer_ref`, `sleep_for`, `with_timeout`, `Offloader`, `offloader_ref` and `offload` for blocking work),
-`quoll::io` (`ByteStream`, `HalfClosableStream`, `Connector`, `Listener`, `BoundListener` and `Network` concepts, `any_stream` /
+`quoll::io` (`ByteStream`, `HalfClosableStream`, `PollableStream` with its `read_readiness`, `Connector`, `Listener`, `BoundListener` and `Network` concepts, `any_stream` /
 `any_listener` type erasure, `io::network_ref` with `io::connect` / `io::listen` through the executor's network,
 `io::network_connector`, TLS options with `TlsNetwork`, `tls_network_ref`, `TlsConnector`, `io::connect_tls` and
 `io::listen_tls`, in-memory stream pair, `io::write`), `quoll::http` (messages, llhttp parser, serializer, server-sent events: `event_writer`, `event_reader` and `is_event_stream`, over `event_parser`, `format_event`, `format_retry` and `format_comment`, WebSocket frames: `websocket_parser` and `close_code_of`, `format_websocket_frame` and `format_websocket_close`, `is_websocket_upgrade` and `websocket_accept`, and WebSocket connections: `websocket`, and `accept_websocket` for a server, through `response::upgrade`,
