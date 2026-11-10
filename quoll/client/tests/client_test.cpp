@@ -614,6 +614,43 @@ task<> answer_then_time_out_open(io::memory_stream stream) {
 
 } // namespace
 
+TEST_CASE("http::client: a connection idle for longer than max_idle_time is not used again", "[client][timer]") {
+  // On the clock of the executor's timer, virtual here; given back past a body read through stream() too.
+  auto const connections_after = [](std::chrono::nanoseconds idle, verb method, bool streamed) {
+    virtual_time time;
+    slow_network network{.time = &time};
+
+    auto const send = [&]() -> task<std::string> {
+      http::client const client{slow_connector{network}, "example.com", 80, {.max_idle_time = 90s}};
+
+      co_await async::sleep_for(5s);
+
+      if (streamed) {
+        auto first = co_await client.stream(make_request(verb::get, "/"));
+
+        while (co_await first.body.read()) {
+        }
+      } else {
+        static_cast<void>(co_await client.send(make_request(verb::get, "/")));
+      }
+
+      co_await async::sleep_for(idle);
+      co_return (co_await client.send(make_request(method, "/", "ping"))).body;
+    };
+
+    REQUIRE(quoll::test::run(time, send()) == "ok");
+    return network.connections;
+  };
+
+  for (auto const method : {verb::get, verb::post}) {
+    for (auto const streamed : {false, true}) {
+      INFO("streamed " << streamed);
+      REQUIRE(connections_after(89s, method, streamed) == 1);
+      REQUIRE(connections_after(90s, method, streamed) == 2);
+    }
+  }
+}
+
 TEST_CASE("http::client: a 408 sent on an idle connection is found before a POST takes it", "[client]") {
   // Closing the connection or not: the check sees bytes nothing asked for, and the POST goes on a new connection.
   auto const serve =
@@ -782,12 +819,13 @@ TEST_CASE("http::client: a POST whose idle connection turns out closed as it goe
 
 namespace {
 
-// A memory stream its check always finds quiet, as one the server closes just after it: what then shows only as a
-// request goes. Counts the writes of all.
+// A memory stream its check always finds as `seen`, quiet by default, as one the server closes just after it: what
+// then shows only as a request goes. Counts the writes of all.
 class blind_stream {
 public:
-  blind_stream(io::memory_stream inner, std::shared_ptr<int> writes) noexcept
-      : inner_(std::move(inner)), writes_(std::move(writes)) {}
+  blind_stream(io::memory_stream inner, std::shared_ptr<int> writes,
+               io::read_readiness seen = io::read_readiness::would_wait) noexcept
+      : inner_(std::move(inner)), writes_(std::move(writes)), seen_(seen) {}
 
   [[nodiscard]] task<io::io_result> read_some(std::span<std::byte> buffer) {
     co_return co_await inner_.read_some(buffer);
@@ -798,29 +836,32 @@ public:
     co_return co_await inner_.write_some(data);
   }
 
-  [[nodiscard]] io::read_readiness poll_read() const noexcept { return io::read_readiness::would_wait; }
+  [[nodiscard]] io::read_readiness poll_read() const noexcept { return seen_; }
 
 private:
   io::memory_stream inner_;
   std::shared_ptr<int> writes_;
+  io::read_readiness seen_;
 };
 
 static_assert(io::PollableStream<blind_stream>);
 
 class blind_connector {
 public:
-  blind_connector(memory_server &server, std::shared_ptr<int> writes) noexcept
-      : inner_(server), writes_(std::move(writes)) {}
+  blind_connector(memory_server &server, std::shared_ptr<int> writes,
+                  io::read_readiness seen = io::read_readiness::would_wait) noexcept
+      : inner_(server), writes_(std::move(writes)), seen_(seen) {}
 
   [[nodiscard]] task<io::any_stream> connect(std::string host, std::uint16_t port) const {
     auto made = co_await inner_.connect(std::move(host), port);
 
-    co_return io::any_stream{blind_stream{std::move(*made.target<io::memory_stream>()), writes_}};
+    co_return io::any_stream{blind_stream{std::move(*made.target<io::memory_stream>()), writes_, seen_}};
   }
 
 private:
   memory_connector inner_;
   std::shared_ptr<int> writes_;
+  io::read_readiness seen_;
 };
 
 // The writes of `requests`, sent after two GETs at once, then two more GETs at once, on a client whose checks see
@@ -4305,7 +4346,33 @@ TEST_CASE("http::client: a POST opens its own connection when its stream cannot 
     co_return first.body + second.body + third.body + fourth.body;
   };
 
-  REQUIRE(quoll::test::run(loop, sending()).has_value());
+  REQUIRE(quoll::test::run(loop, sending()) == "hellopinghellohello");
+  REQUIRE(server.connections == 2);
+}
+
+TEST_CASE("http::client: a POST leaves an idle connection its check cannot tell about for a GET", "[client]") {
+  async::run_loop loop;
+  auto const router = make_router();
+  auto writes = std::make_shared<int>(0);
+  memory_server server{
+      loop.get_executor(),
+      [&](io::memory_stream stream) { return quoll::http::server{router}.serve_connection(std::move(stream)); },
+      0,
+      {},
+      {}};
+
+  // A stream that can be checked, whose check answers unknown all the same.
+  auto const sending = [&]() -> task<std::string> {
+    http::client const client{blind_connector{server, writes, io::read_readiness::unknown}, "example.com", 80};
+    auto const first = co_await client.send(make_request(verb::get, "/hello"));
+    auto const second = co_await client.send(make_request(verb::post, "/echo", "ping"));
+    auto const [third, fourth] = co_await async::when_all(client.send(make_request(verb::get, "/hello")),
+                                                          client.send(make_request(verb::get, "/hello")));
+
+    co_return first.body + second.body + third.body + fourth.body;
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()) == "hellopinghellohello");
   REQUIRE(server.connections == 2);
 }
 

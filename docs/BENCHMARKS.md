@@ -39,7 +39,7 @@ What it shows, for the performance step:
 
 - A client's POST opened a connection each time when these figures were taken, as it may not be sent twice on one found
   closed: a REST POST cost a connection, and JSON costs little beside it (REST GET against GET). Since, a POST takes an
-  idle connection once a peek of its socket has found it open, as curl does.
+  idle connection once a poll of its socket has found it open, as curl does.
 - A new connection has a p99 of about 1 ms against a p50 of 42 µs. Not explained yet.
 - Most allocations of a GET are on the server.
 - A body in pieces takes about 4 allocations per piece of 4 KiB, all on the side that streams it, against 16 before

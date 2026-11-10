@@ -66,6 +66,13 @@ struct client_options {
    */
   std::size_t max_idle_connections = 8;
   /**
+   * @brief How long a connection may stay idle and still be used again, as Go's `IdleConnTimeout` (90 s) and curl's
+   * `CURLOPT_MAXAGE_CONN` say: a NAT, a firewall or a load balancer may drop one with no word, which nothing on the
+   * connection shows, and a request on it would wait for its `response_timeout`. Zero: no limit. On the clock of the
+   * executor's timer, or `std::chrono::steady_clock` without one.
+   */
+  std::chrono::nanoseconds max_idle_time = std::chrono::seconds{90};
+  /**
    * @brief How many connections are open at once, in use or idle; 0: no limit. Past it, a request waits for a request
    * on a connection to end, and an idle connection is closed to make room for a new one. An http::streamed_response
    * counts until its body has come to its end or it goes: read or drop one before a request that needs its place. A

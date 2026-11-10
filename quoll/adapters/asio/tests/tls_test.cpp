@@ -618,14 +618,15 @@ TEST_CASE("TLS: a POST takes a kept connection, and a new one once the server ha
     auto const kept = co_await client.send(make_request(http::verb::post, "/echo", "kept"));
 
     // Found closed by its check, past the server's idle time: on a new one, rather than failed.
-    co_await quoll::async::sleep_for(100ms);
+    co_await quoll::async::sleep_for(800ms);
 
     auto const renewed = co_await client.send(make_request(http::verb::post, "/echo", "renewed"));
 
     co_return kept.body + "," + renewed.body;
   };
 
-  REQUIRE(run_task(with_server<std::string>(server_certificate(), call, idle_for(20ms), &accepted)) == "kept,renewed");
+  // An idle time a slow build reaches no request within, but for the one it waits past.
+  REQUIRE(run_task(with_server<std::string>(server_certificate(), call, idle_for(300ms), &accepted)) == "kept,renewed");
   REQUIRE(accepted == 2);
 }
 
@@ -712,7 +713,7 @@ TEST_CASE("TLS: poll_read finds TLS's closing message on a connection the server
     seen += buffer.empty() && stream.poll_read() == io::read_readiness::would_wait ? "quiet" : "?";
 
     // Past the server's idle time, which closes it with TLS's closing message.
-    co_await quoll::async::sleep_for(200ms);
+    co_await quoll::async::sleep_for(800ms);
     seen += stream.poll_read() == io::read_readiness::ready ? ",ready" : ",?";
 
     std::array<char, 64> chunk{};
@@ -722,7 +723,7 @@ TEST_CASE("TLS: poll_read finds TLS's closing message on a connection the server
     co_return seen;
   };
 
-  REQUIRE(run_task(with_server<std::string>(server_certificate(), call, idle_for(20ms))) == "quiet,ready,end");
+  REQUIRE(run_task(with_server<std::string>(server_certificate(), call, idle_for(300ms))) == "quiet,ready,end");
 }
 
 TEST_CASE("TLS: a client closing its side gets TLS's closing message back", "[tls][asio][runtime]") {

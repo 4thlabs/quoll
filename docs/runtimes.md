@@ -195,7 +195,7 @@ What `fetch` does for you, and what it does not let you do:
 | Fields received      | As received                                   | In lower case, repeated ones combined, without those describing the bytes on the wire (`Content-Encoding`, `Content-Length`, `Transfer-Encoding`). |
 | Body received        | As received                                   | Decoded: decompressed and de-chunked.                                                                                                              |
 | HTTP version         | As received                                   | Not known: `http_1_1`.                                                                                                                             |
-| Options              | [`client_options`](client.md#options)         | `limits` and `response_timeout` apply. `max_connections`, `max_idle_connections`, `max_redirects`, `connect_timeout` and `tls` have no effect, as the browser decides, and it always checks certificates.                                                      |
+| Options              | [`client_options`](client.md#options)         | `limits` and `response_timeout` apply. `max_connections`, `max_idle_connections`, `max_idle_time`, `max_redirects`, `connect_timeout` and `tls` have no effect, as the browser decides, and it always checks certificates.                                                      |
 
 A failure to get a response (a network error, a refused connection, CORS) throws `std::system_error`
 with `std::errc::io_error` and `fetch`'s message. A stop request aborts the fetch, with

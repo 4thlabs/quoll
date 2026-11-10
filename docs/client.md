@@ -90,6 +90,7 @@ http::client client{"https://api.example.com",
 | Option                 | Default   | What it does                                                                                          |
 | ---------------------- | --------- | ----------------------------------------------------------------------------------------------------- |
 | `max_idle_connections` | 8         | Connections kept open once their response is read. Zero closes each connection after its response.    |
+| `max_idle_time`        | 90 s      | How long a connection may stay idle and still be used again. Zero: no limit.                          |
 | `max_connections`      | 0         | How many connections are open at once, in use or idle. Zero: no limit.                                |
 | `max_redirects`        | 0         | How many redirects a request follows. Zero: a 3xx response is a result like the others.               |
 | `connect_timeout`      | 30 s      | How long opening a connection may take, name resolution included, and waiting for `max_connections`.  |
@@ -122,7 +123,9 @@ or a stream error.
 
 A server may close an idle connection at any time. Every request whose body is whole takes an idle
 connection, as Go's client and Boost.Burl do; one whose body comes in pieces (`body_writer`) has one of its
-own, as its writer runs once. The idle connection is checked first, as curl does, with a peek of the socket
+own, as its writer runs once. One idle for longer than `max_idle_time`, 90 s by default as with Go's
+client, is closed instead: a NAT or a load balancer may have dropped it with no word, which nothing on the
+connection shows. The idle connection is checked first, as curl does, with a poll of the socket
 that does not wait (`io::PollableStream`): one the server closed, or that carries bytes nothing asked for,
 as a 408 sent before closing it, is closed, and the next, older, is checked. A request that is
 not idempotent takes only a connection its stream can check, as `tcp_stream`, `tls_stream` and

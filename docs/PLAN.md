@@ -351,21 +351,22 @@ changes only what the harness shows. Candidates:
   ask. With frames recycled that task allocates nothing in steady state, and changing it changes no handler.
 - The size of a native binary, 19 % larger since step 1, as static libraries link whole objects: `--gc-sections`, link-time
   optimization.
-- Idle connections are found closed only as a request takes one, with a peek (decided below): closing them after an idle
-  time.
+- Idle connections are found closed only as a request takes one, with a poll (decided below), and one idle for longer than
+  `max_idle_time` is not used again: closing them as that time passes, with no request to find them.
 
 *Done when:* figures are published against that baseline, and each change is justified by a measure.
 
 ## Decided
 
-- **An idle connection is checked before it is used again, as curl does** (2026-11-10): a peek of its socket that does not
+- **An idle connection is checked before it is used again, as curl does** (2026-11-10): a poll of its socket that does not
   wait (`io::PollableStream`) finds one the server closed, or that carries bytes nothing asked for, which is closed. A
   POST then takes an idle connection as Go's client does, if its stream can be checked; one found closed with none of it
   written goes again on a new one, as hyper does, and a POST written is never sent twice, even answered 408. Go and hyper
-  keep a reader waiting on each idle connection instead: a task per connection, to stop before each use, which the peek
+  keep a reader waiting on each idle connection instead: a task per connection, to stop before each use, which the poll
   needs not. Chosen by the maintainer ("reprendre la bonne solution") over a first rule, a POST taking only a connection
   used less than a second before, which reviews kept finding holes in: a server closing within the second, a response
-  read slowly.
+  read slowly. One idle for longer than `client_options::max_idle_time`, 90 s as Go's `IdleConnTimeout`, is not
+  used again, as no check sees a connection something on the way dropped with no word.
 - **Using the JavaScript libraries a page needs is a requirement of the UI** (2026-11-07), whatever form it takes: see step
   6.
 - **`samples/github` is step 4's real API** (2026-11-07), and a client of Docker over a Unix socket comes later, in no step
