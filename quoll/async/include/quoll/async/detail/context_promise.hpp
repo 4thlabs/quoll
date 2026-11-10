@@ -80,13 +80,22 @@ public:
                   "quoll: co_await std::move(task): a task awaited by name could be dropped while it runs, or "
                   "started again");
     // As one holding a task: awaited by name, it could be moved elsewhere while it waits, its task with it.
-    static_assert(!awaited_as_a_temporary_v<std::remove_cvref_t<A>> || !std::is_lvalue_reference_v<A>,
+    static_assert(is_task_v<std::remove_cvref_t<A>> || !awaited_as_a_temporary_v<std::remove_cvref_t<A>> ||
+                      !std::is_lvalue_reference_v<A>,
                   "quoll: co_await std::move(...): what holds a task, awaited by name, could be moved while it waits");
 
     return context_adapter<A>{std::forward<A>(awaitable), *context_};
   }
 
   void set_context(await_context const &context) noexcept { context_ = &context; }
+
+  // Whether the chain the frame belongs to was asked to stop.
+  [[nodiscard]] bool stop_requested() const noexcept {
+    return context_ != nullptr && context_->stop_token.stop_requested();
+  }
+
+  // The owner of the chain the frame belongs to, which unwinds it once it ended on a stop.
+  [[nodiscard]] chain_owner *owner() const noexcept { return context_ != nullptr ? context_->owner : nullptr; }
 
   // Whether the frame is being destroyed suspended, as the chain it belongs to unwinds from its owner.
   [[nodiscard]] bool unwinding() const noexcept {

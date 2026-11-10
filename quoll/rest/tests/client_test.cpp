@@ -48,6 +48,7 @@
 #include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -806,9 +807,9 @@ TEST_CASE("retry: a stop request ends the call between attempts, whatever the tr
   transport.shared->script = {http::status::service_unavailable, http::status::service_unavailable};
   stop.request_stop();
 
-  // The transport answers 503 even so: retry sees the stop before sending again.
-  REQUIRE_THROWS_AS(quoll::test::run(loop, completes(client.call<users::remove>(1)), stop.get_token()),
-                    std::system_error);
+  // The transport answers 503 even so: retry sees the stop before sending again, and the call ends on it.
+  REQUIRE_THROWS_WITH(quoll::test::run(loop, completes(client.call<users::remove>(1)), stop.get_token()),
+                      "quoll::test::run: the task ended on a stop");
   REQUIRE(transport.shared->sent == 1);
 }
 

@@ -34,12 +34,15 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/detail/end_stopped.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/http/detail/one_at_a_time.hpp>
 #include <quoll/http/event_reader.hpp>
 
 #include <exception>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 
 namespace quoll::http {
@@ -80,7 +83,17 @@ async::task<std::optional<server_sent_event>> event_reader::read_next(std::share
         co_return event;
       }
 
-      auto const piece = co_await reading->body.read();
+      auto const read = co_await async::stopped_as_optional(reading->body.read());
+
+      // Stopped: reading ends here too, as for a failure, and the reader ends on the stop.
+      if (!read) {
+        reading->failure = std::make_exception_ptr(std::system_error{
+            std::make_error_code(std::errc::operation_canceled), "quoll::http::event_reader: stopped"});
+        reading->body = response_body{};
+        co_await async::detail::end_stopped{};
+      }
+
+      auto const &piece = *read;
 
       if (!piece) {
         co_return std::nullopt;

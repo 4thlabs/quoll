@@ -41,12 +41,15 @@
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/code_of.hpp>
 #include <quoll/async/detail/either_stop.hpp>
+#include <quoll/async/detail/end_stopped.hpp>
 #include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
+#include <quoll/async/detail/owned_chain.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/report.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
@@ -446,19 +449,21 @@ private:
 
     limit.operation_begins();
 
-    try {
-      auto results = co_await async::when_all(async::detail::timeout_work(std::move(work), state), watch(limit, state));
+    auto results = co_await async::when_all(async::detail::timeout_work(std::move(work), state), watch(limit, state));
 
-      limit.operation_over();
-      co_return std::get<0>(std::move(results));
-    } catch (std::system_error const &error) {
-      if (state.expired && error.code() == std::errc::operation_canceled) {
-        throw std::system_error{std::make_error_code(std::errc::timed_out),
-                                "quoll::http::server: the peer took too long"};
-      }
+    limit.operation_over();
 
-      throw;
+    if (auto &done = std::get<0>(results)) {
+      co_return *done;
     }
+
+    // A stop of the connection is no timeout, even if the time ran out meanwhile.
+    if (state.expired && !stop_token.stop_requested()) {
+      throw std::system_error{std::make_error_code(std::errc::timed_out),
+                              "quoll::http::server: the peer took too long"};
+    }
+
+    co_await async::detail::end_stopped{};
   }
 
   io::any_stream *stream_;
@@ -657,10 +662,19 @@ public:
 
     stream_->reading().next_piece();
 
-    auto const read =
-        co_await as_request_read(stream_->patiently_reading(http::read_body(*stream_, *buffer_, *parser_, piece_)));
+    auto const attempt = co_await async::stopped_as_optional(
+        as_request_read(stream_->patiently_reading(http::read_body(*stream_, *buffer_, *parser_, piece_))));
 
     read_to_its_end_ = ends_on_a_next_request(*parser_);
+
+    // Ended on a stop, as a handler's own timeout ends it: what follows says the same of a cancellation, and the read
+    // ends on the stop.
+    if (!attempt) {
+      stopped_ = true;
+      co_await async::detail::end_stopped{};
+    }
+
+    auto const &read = *attempt;
 
     if (read.error == std::errc::operation_canceled) {
       // Whoever cancels it, as a handler's own timeout does, says what happens next: the body is not at fault, and the
@@ -1506,7 +1520,8 @@ async::task<> linger(io::any_stream &stream, connection_options const &options) 
 
   async::detail::either_stop const stop{stop_token, options.drain};
 
-  (void)co_await async::detail::stop_scope<std::error_code>{
+  // Its stop, or a drain, ends it here, as the time running out does.
+  (void)co_await async::detail::owned_chain<std::error_code>{
       async::with_timeout(options.lingering_time, drop_what_comes(stream, options.lingering_timeout)), stop.token()};
 }
 

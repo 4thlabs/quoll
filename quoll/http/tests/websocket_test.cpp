@@ -34,7 +34,6 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/service.hpp>
 #include <quoll/async/sleep_for.hpp>
@@ -64,6 +63,7 @@
 #include <quoll/test/next_websocket_message.hpp>
 #include <quoll/test/read_until_closed.hpp>
 #include <quoll/test/run.hpp>
+#include <quoll/test/under_stop.hpp>
 #include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -264,7 +264,7 @@ public:
   [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
 
   [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> /*data*/) const {
-    co_await quoll::async::detail::stop_scope<void>{quoll::async::sleep_for(delay_), std::stop_token{}};
+    co_await quoll::test::under_stop(quoll::async::sleep_for(delay_), std::stop_token{});
     co_return io::io_result{std::make_error_code(std::errc::connection_reset), 0};
   }
 
@@ -932,7 +932,7 @@ TEST_CASE("websocket: a client's receive() ends with its caller's stop, past a p
       stop.request_stop();
     };
     auto const receiving = [&]() -> task<websocket_message> {
-      co_return co_await quoll::async::detail::stop_scope<websocket_message>{client.receive(), stop.get_token()};
+      co_return co_await quoll::test::under_stop(client.receive(), stop.get_token());
     };
     auto const peer = [&]() -> task<> { ping = co_await quoll::test::next_websocket_message(server_end, from_client); };
 
@@ -977,7 +977,7 @@ TEST_CASE("websocket: a client's receive() never waits for its ping, which goes 
     };
     auto const receiving = [&]() -> task<std::error_code> {
       auto const code = co_await quoll::test::code_thrown_by([&]() -> task<websocket_message> {
-        co_return co_await quoll::async::detail::stop_scope<websocket_message>{client.receive(), stop.get_token()};
+        co_return co_await quoll::test::under_stop(client.receive(), stop.get_token());
       }());
 
       ended_at = time.now();
@@ -1242,9 +1242,8 @@ TEST_CASE("websocket: a client's keep-alive with sending ended judges the peer b
   // answer is, and the peer, which sends nothing, is taken as gone an interval later, as a server's is.
   auto const cut = [&]() -> task<std::error_code> {
     auto const sending = [&]() -> task<std::error_code> {
-      co_return co_await quoll::test::code_thrown_by([&]() -> task<> {
-        co_await quoll::async::detail::stop_scope<void>{client.send_text("cut short"), stop.get_token()};
-      }());
+      co_return co_await quoll::test::code_thrown_by(
+          [&]() -> task<> { co_await quoll::test::under_stop(client.send_text("cut short"), stop.get_token()); }());
     };
     auto const stopping = [&]() -> task<> {
       co_await quoll::async::sleep_for(500ms);

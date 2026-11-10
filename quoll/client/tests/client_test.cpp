@@ -38,10 +38,11 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/detached.hpp>
+#include <quoll/async/detail/end_stopped.hpp>
 #include <quoll/async/detail/slots.hpp>
-#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
@@ -77,6 +78,7 @@
 #include <quoll/test/memory_network.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/test/run.hpp>
+#include <quoll/test/under_stop.hpp>
 #include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -378,18 +380,15 @@ http::request get_root() {
 
 // The error `count` requests end with, one after the other on one client: none if they all succeed. The client,
 // and its idle connections, are gone when the task ends.
-task<std::error_code> send_gets(slow_network &network, http::client_options options, int count = 1) {
-  http::client const client{slow_connector{network}, "server", 80, options};
-
-  try {
-    for (auto sent = 0; sent < count; ++sent) {
-      (void)co_await client.send(get_root());
-    }
-  } catch (std::system_error const &failure) {
-    co_return failure.code();
+task<> send_in_turn(http::client client, int count) {
+  for (auto sent = 0; sent < count; ++sent) {
+    (void)co_await client.send(get_root());
   }
+}
 
-  co_return std::error_code{};
+task<std::error_code> send_gets(slow_network &network, http::client_options options, int count = 1) {
+  co_return co_await quoll::test::code_thrown_by(
+      send_in_turn(http::client{slow_connector{network}, "server", 80, options}, count));
 }
 
 // Pieces of `size` `count` times, counting its runs.
@@ -1425,8 +1424,8 @@ TEST_CASE("http::client: a stop ends a wait for a free connection, and the next 
 
     auto const waits = [&]() -> task<std::string> {
       try {
-        static_cast<void>(co_await async::detail::stop_scope<http::response>{client.send(make_request(verb::get, "/")),
-                                                                             stopping.get_token()});
+        static_cast<void>(
+            co_await quoll::test::under_stop(client.send(make_request(verb::get, "/")), stopping.get_token()));
         co_return "answered";
       } catch (std::system_error const &failure) {
         co_return failure.code() == std::errc::operation_canceled ? "stopped" : "failed";
@@ -1822,8 +1821,8 @@ TEST_CASE("http::client: a stop ends a chain on a later request", "[client][time
 
     auto const sends = [&]() -> task<std::string> {
       try {
-        static_cast<void>(co_await async::detail::stop_scope<http::response>{client.send(make_request(verb::get, "/")),
-                                                                             stopping.get_token()});
+        static_cast<void>(
+            co_await quoll::test::under_stop(client.send(make_request(verb::get, "/")), stopping.get_token()));
         co_return "answered";
       } catch (std::system_error const &failure) {
         ended = time.now();
@@ -3160,18 +3159,31 @@ TEST_CASE("http::client: what stops stream() before the head", "[client][timer]"
 namespace {
 
 // Writes until something stops it, saying what did.
-http::body_writer writing_until_stopped(std::string &stopped_by) {
-  return [&stopped_by](http::body_stream out) -> task<> {
-    try {
-      for (;;) {
-        co_await out.write("x");
-        co_await async::yield();
-      }
-    } catch (std::system_error const &thrown) {
-      stopped_by = thrown.code() == std::errc::operation_canceled ? "a stop" : "a failed write";
-      throw;
+task<> writing_for_ever(http::body_stream out) {
+  for (;;) {
+    co_await out.write("x");
+    co_await async::yield();
+  }
+}
+
+// `work`, saying in `stopped_by` what ended it: a stop, which it ends on all the same, as the writer would, or a
+// failure.
+task<> telling(task<> work, std::string &stopped_by) {
+  try {
+    if (co_await async::stopped_as_optional(std::move(work))) {
+      co_return;
     }
-  };
+  } catch (std::system_error const &thrown) {
+    stopped_by = thrown.code() == std::errc::operation_canceled ? "a stop" : "a failed write";
+    throw;
+  }
+
+  stopped_by = "a stop";
+  co_await async::detail::end_stopped{};
+}
+
+http::body_writer writing_until_stopped(std::string &stopped_by) {
+  return [&stopped_by](http::body_stream out) { return telling(writing_for_ever(std::move(out)), stopped_by); };
 }
 
 http::router make_upload_router() {
@@ -3593,7 +3605,7 @@ TEST_CASE("http::client: an answer before the end of a body_writer stops it", "[
     REQUIRE(after(answering_at_the_head(refused, true), by_send_quietly) == "no");
   }
 
-  SECTION("a writer that takes no notice, then ends well") {
+  SECTION("a writer that would take no notice is stopped all the same: no catch of its sees the stop") {
     auto const carrying_on = [&stopped_by](http::body_stream out) -> task<> {
       for (auto turn = 0; turn < 64; ++turn) {
         try {
@@ -3621,7 +3633,7 @@ TEST_CASE("http::client: an answer before the end of a body_writer stops it", "[
     auto const got = after(answering_at_the_head(refused, false, &received), by_send_too);
 
     REQUIRE(got == "no");
-    REQUIRE(stopped_by == "taken no notice of");
+    REQUIRE(stopped_by.empty());
     // A body that was cut must not read as whole.
     REQUIRE(received.find("0\r\n\r\n") == std::string::npos);
   }
@@ -3806,14 +3818,7 @@ TEST_CASE("http::client: the timeouts of a body_writer", "[client][timer]") {
 
   SECTION("a stop request reaches the writer") {
     std::string stopped_by;
-    auto const writer = [&stopped_by](http::body_stream) -> task<> {
-      try {
-        co_await async::sleep_for(1h);
-      } catch (std::system_error const &thrown) {
-        stopped_by = thrown.code() == std::errc::operation_canceled ? "a stop" : "something else";
-        throw;
-      }
-    };
+    auto const writer = [&stopped_by](http::body_stream) { return telling(async::sleep_for(1h), stopped_by); };
 
     REQUIRE(quoll::test::run(time, outcome_of(upload_of(writer), {.response_timeout = 0s}, 2s)) == "timed out at 2");
     REQUIRE(stopped_by == "a stop");
@@ -4643,7 +4648,7 @@ TEST_CASE("http::client: a request stopped already leaves a kept connection alon
 
   auto const stopped_with = [&](auto request) -> task<std::error_code> {
     try {
-      co_await async::detail::stop_scope<void>{std::move(request), stopped.get_token()};
+      co_await quoll::test::under_stop(std::move(request), stopped.get_token());
     } catch (std::system_error const &thrown) {
       co_return thrown.code();
     }
@@ -4899,11 +4904,16 @@ TEST_CASE("event_reader: after a failure, next() fails the same, not as one pend
       std::stop_source stop;
       std::exception_ptr first;
       bool finished = false;
+      bool stopped = false;
 
       co_spawn(co_await async::current_executor(), events.next(),
                quoll::test::overloaded{[&finished](std::optional<http::server_sent_event>) { finished = true; },
                                        [&first, &finished](std::exception_ptr error) {
                                          first = std::move(error);
+                                         finished = true;
+                                       },
+                                       [&stopped, &finished](async::stopped_t) {
+                                         stopped = true;
                                          finished = true;
                                        }},
                stop.get_token());
@@ -4914,17 +4924,13 @@ TEST_CASE("event_reader: after a failure, next() fails the same, not as one pend
         co_await async::yield();
       }
 
-      if (!first) {
-        co_return "not stopped";
+      // Stopped while it waited on the body, not failed some other way.
+      if (first) {
+        co_return "failed otherwise";
       }
 
-      // Stopped while it waited on the body, not failed some other way.
-      try {
-        std::rethrow_exception(first);
-      } catch (std::system_error const &failure) {
-        if (failure.code() != std::errc::operation_canceled) {
-          co_return "failed otherwise";
-        }
+      if (!stopped) {
+        co_return "not stopped";
       }
 
       // The flag is down again: the second fails as the reading does, not as one pending.

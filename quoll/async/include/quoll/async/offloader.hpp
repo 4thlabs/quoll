@@ -49,7 +49,7 @@ namespace quoll::async {
  *
  * `offload(work, argument)` calls `work(argument)` on another thread, and completes on the awaiter's executor once it
  * has returned, which `work` must do without throwing. A stop request cancels what has not started, in line behind
- * other work too, and then throws std::system_error (std::errc::operation_canceled); what has started runs to its end.
+ * other work too, and the awaiter ends on the stop; what has started runs to its end.
  */
 template <class T>
 concept Offloader = requires(T const &offloader, void (*work)(void *) noexcept, void *argument) {

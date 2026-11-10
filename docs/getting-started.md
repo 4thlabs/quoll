@@ -224,7 +224,7 @@ If you are writing both sides of an API, or calling one with typed requests and 
   gives what comes of it to a handler: its value, the exception it threw, or `async::stopped` if it ended
   on a stop, a case every handler has. With `async::detached`, for a task beside the main one, a value
   is dropped, a stop says nothing, and an exception is written to stderr while the program goes on, as tokio
-  does, unless it is `std::errc::operation_canceled`, what a stop request throws, which says nothing either.
+  does, unless it is `std::errc::operation_canceled`, which says nothing either.
   `async::set_report_sink` sends those lines elsewhere.
 - **`runtime.run()`** returns once the tasks have ended. An executor kept in `main()` would keep it
   running, so give `get_executor()` straight to `co_spawn`.
@@ -254,8 +254,8 @@ co_await async::sleep_for(100ms);
 
 `with_timeout` asks the task to stop and waits for it to end, so that nothing it refers to is left
 behind. A task that does not look at its stop token runs to its end, and then gives its result.
-Quoll's own operations look at it: a sleep, a connection, a read or a write. When a timeout expires,
-the task's `operation_canceled` becomes a `std::system_error` with `std::errc::timed_out`.
+Quoll's own operations look at it: a sleep, a connection, a read or a write. When a timeout expires and
+the task ends on its stop, `with_timeout` throws a `std::system_error` with `std::errc::timed_out`.
 
 A task that runs on its own, while the coroutine goes on:
 
@@ -278,20 +278,30 @@ try {
 
   std::cout << response.body << '\n';
 } catch (std::system_error const &failure) {
-  // A stop request ends the task, rather than being one more failure to carry on from.
-  if (failure.code() == std::errc::operation_canceled) {
-    throw;
-  }
-
   std::cerr << "no answer: " << failure.what() << '\n';
 }
 ```
 
-A stop request is no failure: what the task awaits throws `std::system_error` with
-`std::errc::operation_canceled`, and that ends the task, with `async::detached` as well, and the program
-goes on. Catch it only to do something before the task ends, and let it out again. `async::detached`
-ignores that error whatever caused it, a closed socket or a read after a cancelled one too: a task that
-cares can check `co_await async::current_stop_token()` to tell them apart.
+A stop request is no failure, and no exception: the task ends on it. What it awaits does not resume it,
+no `catch` sees the stop, and its frames are destroyed, their locals with them: what it holds is let go
+as its destructors run. A loop that catches everything and tries again cannot turn a stop into a spin, through Quoll's tasks;
+the streams, listeners and connectors of `quoll::io` awaited directly still say a stop with
+`std::errc::operation_canceled` in their result, until they move to it (#151).
+The root learns of it, `async::detached` with no word, a handler of your own through its
+`async::stopped_t` case. To do something once stopped, as joining tasks or answering, ask for it:
+
+```cpp
+auto const response = co_await async::stopped_as_optional(client.get("/hello"));
+
+if (!response) {
+  std::cerr << "stopped before an answer\n";  // runs: the stop ended get(), not this coroutine
+  co_return;
+}
+```
+
+The stop still stands there: what the coroutine awaits next, if it looks at the stop, ends on it at once.
+A destructor cannot `co_await`, so what must still be done once stopped is done there, as above. `async::detached` also ignores `std::errc::operation_canceled`
+thrown by what has no stop to end it, a closed socket or a read after a cancelled one.
 
 ## Where to go next
 

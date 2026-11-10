@@ -65,7 +65,7 @@ namespace quoll::async {
  * no loop to hold up or no other thread to go to (run_loop, a browser's event loop), `work` runs right there.
  * `work` and what it refers to must not need the loop's thread: what it touches, nothing else touches until the task
  * completes. A stop request cancels it before it starts, with
- * std::system_error (std::errc::operation_canceled), on any executor, and does not interrupt it once started.
+ * the awaiter ending on the stop, on any executor, and does not interrupt it once started.
  */
 template <class F>
   requires std::invocable<F &>

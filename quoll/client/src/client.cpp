@@ -40,15 +40,17 @@
 
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/end_stopped.hpp>
 #include <quoll/async/detail/held_place.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
+#include <quoll/async/detail/owned_chain.hpp>
 #include <quoll/async/detail/slots.hpp>
 #include <quoll/async/detail/stop_on_exit.hpp>
-#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/synchronized.hpp>
 #include <quoll/async/executor_ref.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/client/detail/max_interim_responses.hpp>
@@ -235,9 +237,11 @@ public:
     auto const outer = co_await async::current_stop_token();
     std::stop_callback const follow{outer, [this] { stop_.request_stop(); }};
 
+    // Under stop_, which an answer or the caller's stop requests: a stop there ends the writing, not the request.
     try {
-      co_await async::detail::stop_scope<void>{request_->writer(http::body_stream{*this}), stop_.get_token()};
-      co_await async::detail::stop_scope<void>{finish(), stop_.get_token()};
+      if (co_await async::detail::owned_chain<void>{request_->writer(http::body_stream{*this}), stop_.get_token()}) {
+        static_cast<void>(co_await async::detail::owned_chain<void>{finish(), stop_.get_token()});
+      }
     } catch (std::system_error const &thrown) {
       // The server closing is no failure yet, unlike what the writer makes of it.
       if (!stop_.stop_requested() && !(thrown.code() == failure_ && answer_may_still_come(failure_))) {
@@ -264,7 +268,7 @@ public:
     }
 
     try {
-      co_await async::detail::stop_scope<void>{async::sleep_for(timeout_), stop_.get_token()};
+      static_cast<void>(co_await async::detail::owned_chain<void>{async::sleep_for(timeout_), stop_.get_token()});
     } catch (std::system_error const &) {
       // A stop ends the wait; a timer that fails leaves nothing else to limit it.
       if (!stop_.stop_requested()) {
@@ -927,9 +931,14 @@ public:
     piece_.clear();
 
     try {
-      co_await async::detail::with_optional_timeout(shared_->options.response_timeout, read_piece());
+      // A stop too: a stream does not take it up again, and over TLS its session is gone. The read ends on it.
+      if (!co_await async::stopped_as_optional(
+              async::detail::with_optional_timeout(shared_->options.response_timeout, read_piece()))) {
+        fail(std::make_error_code(std::errc::operation_canceled));
+        co_await async::detail::end_stopped{};
+      }
     } catch (std::system_error const &thrown) {
-      // A cancellation too: a stream does not take it up again, and over TLS its session is gone.
+      // A cancellation too, as above.
       fail(thrown.code());
       throw;
     } catch (...) {

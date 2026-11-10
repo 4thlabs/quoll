@@ -46,6 +46,7 @@
 #include <quoll/http/is_event_stream.hpp>
 #include <quoll/http/response_body.hpp>
 #include <quoll/http/server_sent_event.hpp>
+#include <quoll/test/code_thrown_by.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
 
@@ -176,17 +177,8 @@ TEST_CASE("event_reader: a stop request ends the reading, and lets the body go",
 
   stop.request_stop();
 
-  auto const read = [&events]() -> async::task<std::error_code> {
-    try {
-      static_cast<void>(co_await events.next());
-    } catch (std::system_error const &failed) {
-      co_return failed.code();
-    }
-
-    co_return std::error_code{};
-  };
-
-  REQUIRE(quoll::test::run(loop, read(), stop.get_token()) == std::errc::operation_canceled);
+  REQUIRE(quoll::test::run(loop, quoll::test::code_thrown_by(events.next()), stop.get_token()) ==
+          std::errc::operation_canceled);
   REQUIRE(source.use_count() == 1);
 }
 

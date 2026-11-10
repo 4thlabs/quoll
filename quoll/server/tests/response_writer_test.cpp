@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detail/owned_chain.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
@@ -400,16 +401,30 @@ TEST_CASE("response_writer: a stop request ends a handler waiting after its firs
 
   virtual_time time;
 
+  // Its frame is unwound by the stop: what it holds then says when.
+  class when_unwound {
+  public:
+    when_unwound(virtual_time const &clock, std::chrono::nanoseconds &at) noexcept : clock_(&clock), at_(&at) {}
+
+    when_unwound(when_unwound const &) = delete;
+    when_unwound(when_unwound &&) = delete;
+    when_unwound &operator=(when_unwound const &) = delete;
+    when_unwound &operator=(when_unwound &&) = delete;
+
+    ~when_unwound() { *at_ = clock_->now(); }
+
+  private:
+    virtual_time const *clock_;
+    std::chrono::nanoseconds *at_;
+  };
+
   router.get("/slow", [&](http::response_writer out) -> task<> {
     co_await out.write("started");
 
-    try {
-      co_await async::sleep_for(1h);
-    } catch (std::system_error const &failure) {
-      ended_with = failure.code();
-      stopped_at = time.now();
-      throw;
-    }
+    when_unwound const watched{time, stopped_at};
+
+    co_await async::sleep_for(1h);
+    ended_with = std::make_error_code(std::errc::interrupted);
   });
 
   http::server const server{router};
@@ -426,14 +441,15 @@ TEST_CASE("response_writer: a stop request ends a handler waiting after its firs
     co_await async::sleep_for(1s);
     stop.request_stop();
   };
-  auto const ignored = quoll::test::overloaded{[] {}, [](std::exception_ptr const &) {}};
+  auto const ignored = quoll::test::overloaded{[] {}, [](std::exception_ptr const &) {}, [](async::stopped_t) {}};
 
   async::co_spawn(time.get_executor(), server.serve_connection(std::move(ours)), ignored, stop.get_token());
   async::co_spawn(time.get_executor(), peer(std::move(client)), ignored);
   async::co_spawn(time.get_executor(), stopping(), ignored);
   time.run();
 
-  REQUIRE(ended_with == std::errc::operation_canceled);
+  // Ended on the stop: nothing after its sleep ran.
+  REQUIRE_FALSE(ended_with);
   REQUIRE(stopped_at == 1s);
   REQUIRE(received.find("started") != std::string::npos);
 }
@@ -498,7 +514,7 @@ TEST_CASE("response_writer: a stop request before its first write answers nothin
     co_await async::sleep_for(1s);
     stop.request_stop();
   };
-  auto const ignored = quoll::test::overloaded{[] {}, [](std::exception_ptr const &) {}};
+  auto const ignored = quoll::test::overloaded{[] {}, [](std::exception_ptr const &) {}, [](async::stopped_t) {}};
 
   async::co_spawn(time.get_executor(), server.serve_connection(std::move(ours)), ignored, stop.get_token());
   async::co_spawn(time.get_executor(), peer(std::move(client)), ignored);
@@ -629,7 +645,7 @@ TEST_CASE("response_writer: a drain that began while it waited closes the connec
     co_await async::sleep_for(1s);
     drain.request_stop();
   };
-  auto const ignored = quoll::test::overloaded{[] {}, [](std::exception_ptr const &) {}};
+  auto const ignored = quoll::test::overloaded{[] {}, [](std::exception_ptr const &) {}, [](async::stopped_t) {}};
 
   async::co_spawn(time.get_executor(), server.serve_connection(std::move(ours)), ignored);
   async::co_spawn(time.get_executor(), peer(std::move(client)), ignored);
@@ -1251,25 +1267,15 @@ TEST_CASE("response_writer: through local_transport, a write that failed in a ta
           "[server][timer]") {
   http::router router;
 
-  // Stopped by the timeout around it, not by the transport's token, and what it threw goes no further.
+  // Stopped by a stop of its own, not by the transport's token, and the writer makes nothing of it.
   auto const writing_late = [](http::body_stream out) -> task<> {
     co_await out.write("prefix");
 
-    auto const late = [&out]() -> task<> {
-      try {
-        co_await async::sleep_for(1h);
-      } catch (std::system_error const &) {
-        // Goes on.
-      }
+    auto const late = [&out]() -> task<> { co_await out.write("suffix"); };
+    std::stop_source own;
 
-      co_await out.write("suffix");
-    };
-
-    try {
-      co_await async::with_timeout(1s, late());
-    } catch (std::system_error const &) {
-      // Makes nothing of it.
-    }
+    own.request_stop();
+    static_cast<void>(co_await async::detail::owned_chain<void>{late(), own.get_token()});
   };
 
   router.get("/writer", [writing_late](http::request) {

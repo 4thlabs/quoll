@@ -796,6 +796,60 @@ TEST_CASE("serve: a connection ending on a stop is no failure: no callback hears
   REQUIRE(quoll::test::reports().empty());
 }
 
+TEST_CASE("serve: a handler catching all around a sleep does not see the server's stop, which ends it",
+          "[server][stopped][timer]") {
+  auto router = make_router();
+  quoll::test::virtual_time time;
+  auto [client, server] = io::make_memory_stream_pair();
+  canned_listener listener;
+  std::stop_source source;
+  auto caught = 0;
+  auto turns = 0;
+  auto served = false;
+
+  // Bounded, so that the trap #151 closes, a handler catching the stop and sleeping again at once, ends the test.
+  router.add(verb::get, "/retries", "retries",
+             [&caught, &turns](http::request, http::route_match) -> task<http::response> {
+               while (turns < 1000) {
+                 ++turns;
+
+                 try {
+                   co_await quoll::async::sleep_for(std::chrono::hours{1});
+                 } catch (std::exception const &) {
+                   ++caught;
+                 }
+               }
+
+               co_return http::response{};
+             });
+  listener.streams.emplace_back(std::move(server));
+
+  auto const ask = [](io::memory_stream stream) -> task<std::string> {
+    http::request request;
+
+    request.target = "/retries";
+    request.fields.add("Host", "x");
+    (void)co_await http::write(stream, request);
+    co_return co_await quoll::test::read_until_closed(stream);
+  };
+  auto const stopping = [&source]() -> task<> {
+    co_await quoll::async::sleep_for(std::chrono::seconds{1});
+    source.request_stop();
+  };
+
+  quoll::async::co_spawn(time.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
+                         overloaded{[&served] { served = true; }, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(time.get_executor(), ask(std::move(client)),
+                         overloaded{[](std::string) {}, [](std::exception_ptr) {}});
+  quoll::async::co_spawn(time.get_executor(), stopping(), overloaded{[] {}, [](std::exception_ptr) {}});
+  time.run();
+
+  // serve() ends as it does on a stop, its connection joined, with the handler gone through once, its catch unseen.
+  REQUIRE(served);
+  REQUIRE(turns == 1);
+  REQUIRE(caught == 0);
+}
+
 TEST_CASE("serve: with callbacks, nothing is reported", "[server]") {
   auto router = make_router();
   quoll::async::run_loop loop;

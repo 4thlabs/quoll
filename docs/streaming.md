@@ -48,7 +48,7 @@ handed over.
 | The body is too large                     | Past `limits.max_streamed_body_size`, 1 GiB by default: a length that announces it is refused before the handler runs, otherwise `read()` throws. Either way, the request answers 413.                                                                                                           |
 | The body is cut short or the stream fails | `read()` throws `std::system_error`, and goes on throwing. The request is then answered as one refused as it is read would be, whatever the handler made of it, as it could not know what the connection can still carry.                                                                        |
 | The handler stops reading on its own      | A cancellation of the read, as its own `async::with_timeout` is, ends the reading: a stream does not take it up again, and `read()` then throws. The handler's response stands, and the connection closes after it. Over TLS, whose session a cancelled read leaves unusable, it may not arrive. |
-| A stop request on the connection          | `read()` throws `operation_canceled`. That is no failure of the handler: `on_handler_error` is not told, and no 500 goes out.                                                                                                                                                                    |
+| A stop request on the connection          | `read()` ends the handler on the stop: no `catch` sees it. That is no failure of the handler: `on_handler_error` is not told, and no 500 goes out.                                                                                                                                               |
 
 A handler with a patience of its own:
 
@@ -153,7 +153,7 @@ With `Expect: 100-continue`, `100 Continue` leaves before such a writer starts.
 | The writer ends short of its `Content-Length` | As the two rows above: a 500 if it wrote nothing, and otherwise the connection is cut. `on_handler_error` is told either way.                                                                    |
 | The peer is gone, or a piece does not leave   | `write()` throws `std::system_error`, and goes on throwing. Let through the writer, it ends the connection, and is no failure of the writer's.                                                   |
 | A piece takes too long to leave               | `write_timeout` and `min_write_rate` apply as in [Server](server.md#connection_options), across the pieces. Past it, the connection closes. The time the writer takes between pieces is its own. |
-| A stop request on the connection              | What the writer awaits throws `operation_canceled`, a `write()` or a wait of its own. That is no failure of the writer: the connection ends, and `on_handler_error` is not told.                 |
+| A stop request on the connection              | What the writer awaits ends it on the stop, a `write()` or a wait of its own: no `catch` sees it. That is no failure of the writer: the connection ends, and `on_handler_error` is not told.     |
 
 ## Reading a response
 
@@ -197,7 +197,7 @@ Connections and retries are as in `send()` up to the head. From there:
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | The connection closes during the body | `body.read()` throws `std::system_error`, as what came is the caller's, and it is not tried again. The connection closes, and leaves its place to others.     |
 | A piece takes too long to come        | `response_timeout` applies up to the head, then per piece: a transfer takes as long as it keeps coming. Past it, `body.read()` throws `std::errc::timed_out`. |
-| A stop request or a cancellation      | `body.read()` throws `std::errc::operation_canceled`, and the connection closes. Reading ends there, as a stream does not take it up again.                   |
+| A stop request or a cancellation      | `body.read()` ends the task on the stop, and the connection closes. Reading ends there, as a stream does not take it up again: a later `read()` throws `std::errc::operation_canceled`.|
 
 ## Writing a request
 
@@ -234,7 +234,7 @@ writing until that response is whole, then stops the writer through its stop tok
 | The writer throws anything else                  | The connection is cut, and it comes out of the task.                                                                                               |
 | The writer ends short of its `Content-Length`    | The same.                                                                                                                                          |
 | A piece takes too long                           | `response_timeout` applies to each piece, then to the response from the end of the body. The time the writer takes between pieces is its own.      |
-| A stop request or a timeout on the task          | `std::errc::operation_canceled` or `std::errc::timed_out`, and the connection closes.                                                              |
+| A stop request or a timeout on the task          | The task ends on the stop, or throws `std::errc::timed_out`, and the connection closes.                                                            |
 
 `send()` throws `std::invalid_argument`, before its task runs, for a request with both a `body` and a
 `body_writer`, or over HTTP/1.0 with no `Content-Length`.
@@ -276,7 +276,7 @@ gives, so that nothing holds the body whole. The rest differs from what a connec
 | When                            | What happens                                                                                                                                                                                                                                             |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A read fails                    | `body.read()` throws `std::system_error` with `std::errc::io_error` and `fetch`'s message, what came before it first. The next reads throw the same, and the fetch is aborted and released.                                                              |
-| A stop request during a read    | The fetch is aborted, and `body.read()` throws `std::errc::operation_canceled`. The next reads throw the same.                                                                                                                                           |
+| A stop request during a read    | The fetch is aborted, and `body.read()` ends the task on the stop. The next reads throw `std::errc::operation_canceled`.                                                                                                                                 |
 | The server goes quiet           | `response_timeout` applies to each piece, as it does natively. `async::with_timeout` around a read ends the reading as a whole, not that piece: it throws `std::errc::timed_out`, the fetch is aborted, and the next reads throw `std::errc::operation_canceled`. |
 | Giving up on a body             | The last copy of `body` to go before the end aborts the fetch and releases it.                                                                                                                                                                           |
 | The end of the body, or no body | The fetch is released at once.                                                                                                                                                                                                                           |

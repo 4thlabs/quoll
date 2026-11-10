@@ -45,8 +45,9 @@ namespace quoll::ui {
 /** @brief What an app does with what its handlers throw. */
 struct app_options {
   /**
-   * @brief Called with what a handler threw, other than `operation_canceled`, on the executor; must not throw. Empty:
-   * its message goes to the standard error, which is the console in a browser.
+   * @brief Called with what a handler threw, other than `operation_canceled`, on the executor; a handler that ended on
+   * a stop is no failure, and is not told; must not throw. Empty: its message goes to the standard error, which is the
+   * console in a browser.
    */
   std::function<void(std::exception_ptr)> on_error{};
 };

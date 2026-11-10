@@ -109,8 +109,8 @@ namespace quoll::http {
  * throws std::system_error from the task, with the stream's error (`std::errc::connection_reset`...), the parser's
  * (`http::error::partial_message`, `http::error::body_too_large`, `http::error::bad_message` past 8 interim
  * responses...), `http::error::too_many_redirects` or `io::error::end_of_stream`. A stop request on the awaiter's
- * context abandons the request, with `std::errc::operation_canceled`, and closes its connection; a timeout does the
- * same, with `std::errc::timed_out` (see client_options).
+ * context abandons the request, which ends the awaiter on the stop, and closes its connection; a timeout does the
+ * same, but throws `std::errc::timed_out` (see client_options).
  *
  * Copies share their connections. The task copies what it needs: the client does not have to outlive it.
  *

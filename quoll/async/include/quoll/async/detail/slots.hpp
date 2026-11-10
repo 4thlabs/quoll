@@ -39,6 +39,7 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/detail/chain_owner.hpp>
 #include <quoll/async/detail/synchronized.hpp>
 #include <quoll/async/executor_ref.hpp>
 #include <quoll/async/lifetimebound.hpp>
@@ -48,12 +49,11 @@
 #include <cstddef>
 #include <optional>
 #include <stop_token>
-#include <system_error>
 
 namespace quoll::async::detail {
 
 // A number of places taken and given back, what waits for one waiting its turn, first come, first served. A stop
-// request on what waits ends its wait with std::errc::operation_canceled. Thread safety: all of it from any thread, but
+// request on what waits ends its chain on a stop: it does not resume. Thread safety: all of it from any thread, but
 // release() and a stop request post what waits to its own executor from their thread, so that with an executor whose
 // post() is not thread-safe (a run_loop) both keep to its own thread. The slots outlive what waits, and a wait is not
 // destroyed before it resumes, like any suspended chain of tasks.
@@ -76,39 +76,45 @@ public:
 
     [[nodiscard]] bool await_ready() const noexcept { return false; }
 
-    // False, resuming the awaiter at once, with a place or stopped. The stop callback comes before the queue: once
-    // queued, release() may resume the coroutine on another thread, and this frame may be gone.
+    // False, resuming the awaiter at once, with a place. Stopped, it ends the chain, which its owner unwinds. The stop
+    // callback comes before the queue: once queued, release() may resume the coroutine on another thread, or a stop end
+    // its chain, and this frame may be gone.
     [[nodiscard]] bool await_suspend(std::coroutine_handle<> handle, await_context const &context) {
+      enum class outcome { placed, queued, stopped };
+
       item_.handle = handle;
       executor_.emplace(context.executor);
+      chain_ = context.owner;
 
       if (context.stop_token.stop_possible()) {
         stop_callback_.emplace(context.stop_token, canceller{this});
       }
 
-      return owner_->state_.with([this, &context](queue &state) {
+      auto const waited = owner_->state_.with([this, &context](queue &state) {
         if (context.stop_token.stop_requested()) {
-          canceled_ = true;
-          return false;
+          return outcome::stopped;
         }
 
         if (state.free > 0) {
           --state.free;
-          return false;
+          return outcome::placed;
         }
 
         state.append(this);
-        return true;
+        return outcome::queued;
       });
+
+      if (waited == outcome::stopped) {
+        stop_chain(context.owner);
+        return true;
+      }
+
+      return waited == outcome::queued;
     }
 
     void await_resume() {
       // Waits for a callback running on another thread, which may be reading this.
       stop_callback_.reset();
-
-      if (canceled_) {
-        throw std::system_error{std::make_error_code(std::errc::operation_canceled)};
-      }
     }
 
   private:
@@ -118,17 +124,11 @@ public:
       acquire_awaitable *self;
 
       void operator()() const noexcept {
-        auto const removed = self->owner_->state_.with([this](queue &state) {
-          if (!state.remove(self)) {
-            return false;
-          }
+        auto const removed = self->owner_->state_.with([this](queue &state) { return state.remove(self); });
 
-          self->canceled_ = true;
-          return true;
-        });
-
+        // Out of the queue: nothing else resumes it, and nothing of it is touched after.
         if (removed) {
-          self->executor_->post(self->item_);
+          stop_chain(self->chain_);
         }
       }
     };
@@ -139,7 +139,7 @@ public:
     acquire_awaitable *previous_ = nullptr;
     acquire_awaitable *next_ = nullptr;
     bool queued_ = false;
-    bool canceled_ = false;
+    chain_owner *chain_ = nullptr;
     std::optional<std::stop_callback<canceller>> stop_callback_{};
   };
 

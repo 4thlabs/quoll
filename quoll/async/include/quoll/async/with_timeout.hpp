@@ -39,6 +39,7 @@
 
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/end_stopped.hpp>
 #include <quoll/async/detail/require_service.hpp>
 #include <quoll/async/detail/saturated.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
@@ -59,12 +60,13 @@ namespace quoll::async {
  * @brief Runs `work`, and requests it to stop if it has not finished after `asked`, through the timer of the executor
  * it runs on (as quoll::runtime provides it).
  *
- * Returns what `work` returns and rethrows what it throws, with one exception: when the timeout has expired, its
- * std::errc::operation_canceled becomes std::errc::timed_out (a std::system_error). Stopping is cooperative: `work` is
+ * Returns what `work` returns and rethrows what it throws. When the timeout has expired and `work` ends on its stop, it
+ * throws std::system_error with std::errc::timed_out: a failure the awaiter handles. Stopping is cooperative: `work` is
  * always awaited to its end, so that nothing it refers to is left behind, and the timeout only ends it as soon as it
  * observes its stop token; a `work` that finishes anyway still gives its result, as it did the job. A stop request of
- * the awaiter stops `work` too, and stays an operation_canceled. Throws std::logic_error, before running `work`, if the
- * executor offers no timer.
+ * the awaiter stops `work` too, and ends the awaiter on a stop, as any stop, even with the timer expired meanwhile; so
+ * does a stop `work` ends on of its own, with neither asked for, which passes on as any stopped task's. Throws
+ * std::logic_error, before running `work`, if the executor offers no timer.
  */
 template <class Rep, class Period, class T>
 [[nodiscard]] task<T> with_timeout(std::chrono::duration<Rep, Period> asked, task<T> work) {
@@ -75,21 +77,25 @@ template <class Rep, class Period, class T>
   detail::timeout_state state;
   std::stop_callback const forward_stop{stop_token, detail::timeout_stop_forwarder{&state}};
 
-  try {
-    // The work comes first: when it ends before suspending, the timer is not even started.
-    [[maybe_unused]] auto results = co_await when_all(detail::timeout_work(std::move(work), state),
-                                                      detail::timeout_watchdog(timer, timeout, state));
+  // The work comes first: when it ends before suspending, the timer is not even started.
+  auto results =
+      co_await when_all(detail::timeout_work(std::move(work), state), detail::timeout_watchdog(timer, timeout, state));
+  auto &done = std::get<0>(results);
 
-    if constexpr (!std::is_void_v<T>) {
-      co_return std::get<0>(std::move(results));
+  if (done) {
+    if constexpr (std::is_void_v<T>) {
+      co_return;
+    } else {
+      co_return std::move(*done);
     }
-  } catch (std::system_error const &error) {
-    if (state.expired && error.code() == std::errc::operation_canceled) {
-      throw std::system_error{std::make_error_code(std::errc::timed_out), "quoll::async::with_timeout"};
-    }
-
-    throw;
   }
+
+  // A stop of the awaiter is no timeout, even if the timer expired meanwhile.
+  if (state.expired && !stop_token.stop_requested()) {
+    throw std::system_error{std::make_error_code(std::errc::timed_out), "quoll::async::with_timeout"};
+  }
+
+  co_await detail::end_stopped{};
 }
 
 } // namespace quoll::async

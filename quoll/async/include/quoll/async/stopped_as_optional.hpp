@@ -62,8 +62,8 @@ namespace quoll::async {
  *
  * Gives what `work` returns, `std::monostate` for a `task<>`, and rethrows what it throws. `work` runs on the awaiter's
  * executor, under its stop token. Awaited as a temporary, `co_await std::move(seen)` for one held by name, which a
- * static_assert asks for, once. Quoll's own operations still end on a stop with
- * std::errc::operation_canceled until they move to it (#151).
+ * static_assert asks for, once. A task that ends on std::errc::operation_canceled while its stop is requested ends on
+ * the stop too.
  */
 template <class T>
 [[nodiscard]] detail::owned_chain<T> stopped_as_optional(task<T> work) noexcept {

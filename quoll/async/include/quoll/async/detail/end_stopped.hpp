@@ -42,6 +42,7 @@
 #include <quoll/async/detail/chain_owner.hpp>
 
 #include <coroutine>
+#include <exception>
 
 namespace quoll::async::detail {
 
@@ -56,8 +57,8 @@ struct [[nodiscard]] end_stopped {
     stop_chain(context.owner);
   }
 
-  // Never called: the awaiter does not resume.
-  void await_resume() const noexcept {}
+  // Never called: the awaiter does not resume. So that a coroutine of a value may end on it.
+  [[noreturn]] void await_resume() const noexcept { std::terminate(); }
 };
 
 static_assert(ContextAwaitable<end_stopped>);

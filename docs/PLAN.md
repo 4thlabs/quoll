@@ -586,7 +586,7 @@ their loop (`executor.query<io::network_ref>()`), so `io::connect` / `io::listen
 Time (2026-11-04): a timer is one more service of the executor (`executor.query<async::timer_ref>()`), a `steady_timer`
 natively and `setTimeout` in the browser. Applications call `async::sleep_for(duration)` and
 `async::with_timeout(duration, task)`. A timeout stops the task and awaits its end: nothing it refers to is left behind,
-so a task only ends early if it observes its stop token. Its `operation_canceled` then becomes `timed_out`; a task that
+so a task only ends early if it observes its stop token. Its end on that stop then becomes `timed_out`; a task that
 finishes anyway still gives its result. The server and the client have timeouts by default (server: idle 60 s, read and
 write 30 s; client: connect 30 s, response 60 s), which zero disables. They do not apply on an executor without a timer.
 

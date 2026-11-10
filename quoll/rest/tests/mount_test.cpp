@@ -48,6 +48,7 @@
 #include <quoll/io/write.hpp>
 #include <quoll/rest.hpp>
 #include <quoll/server/server.hpp>
+#include <quoll/test/code_thrown_by.hpp>
 #include <quoll/test/read_until_closed.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
@@ -537,17 +538,8 @@ TEST_CASE("mount: a stop or a timeout goes through a route, not into a 500", "[r
 
     stop.request_stop();
 
-    auto const dispatching = [&]() -> task<std::error_code> {
-      try {
-        (void)co_await router.dispatch(make_request());
-      } catch (std::system_error const &thrown) {
-        co_return thrown.code();
-      }
-
-      co_return std::error_code{};
-    };
-
-    REQUIRE(quoll::test::run(time, dispatching(), stop.get_token()).value() == std::errc::operation_canceled);
+    REQUIRE(quoll::test::run(time, quoll::test::code_thrown_by(router.dispatch(make_request())), stop.get_token())
+                .value() == std::errc::operation_canceled);
   }
 
   SECTION("a typed client timing a call out hears the timeout") {

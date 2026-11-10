@@ -41,8 +41,8 @@
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/detail/chain_owner.hpp>
+#include <quoll/async/detail/owned_chain.hpp>
 #include <quoll/async/detail/slots.hpp>
-#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/synchronized.hpp>
 #include <quoll/async/stopped.hpp>
 #include <quoll/async/task.hpp>
@@ -310,12 +310,9 @@ TEST_CASE("slots: a stop from another thread ends a wait, as it starts or later"
       co_return 1;
     };
 
+    // The wait ends on its stop, which its own chain absorbs.
     auto const stopped = [&waits](quoll::async::detail::slots &slots, std::stop_token token) -> task<int> {
-      try {
-        co_return co_await quoll::async::detail::stop_scope<int>{waits(slots), std::move(token)};
-      } catch (std::system_error const &failure) {
-        co_return failure.code() == std::errc::operation_canceled ? 2 : 3;
-      }
+      co_return (co_await quoll::async::detail::owned_chain<int>{waits(slots), std::move(token)}).value_or(2);
     };
 
     auto future = spawn(pool, stopped(places, stopping.get_token()));

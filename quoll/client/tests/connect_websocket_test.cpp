@@ -37,7 +37,6 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/detached.hpp>
-#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/service.hpp>
 #include <quoll/async/sleep_for.hpp>
@@ -77,6 +76,7 @@
 #include <quoll/test/memory_network.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/test/run.hpp>
+#include <quoll/test/under_stop.hpp>
 #include <quoll/test/virtual_time.hpp>
 #include <quoll/test/websocket_echo.hpp>
 
@@ -1338,8 +1338,8 @@ TEST_CASE("connect_websocket: under a timer, a refusal keeps its type and a stop
     std::optional<io::memory_stream> kept;
 
     auto const connecting = [&]() -> task<std::error_code> {
-      co_return co_await quoll::async::detail::stop_scope<std::error_code>{
-          quoll::test::code_thrown_by(http::connect_websocket(silent_connector{&kept}, "ws://h/")), stop.get_token()};
+      co_return co_await quoll::test::under_stop(
+          quoll::test::code_thrown_by(http::connect_websocket(silent_connector{&kept}, "ws://h/")), stop.get_token());
     };
     auto const stopping = [&]() -> task<> {
       co_await quoll::async::sleep_for(1s);

@@ -47,7 +47,6 @@
 
 #include <coroutine>
 #include <optional>
-#include <stdexcept>
 #include <stop_token>
 #include <type_traits>
 #include <utility>
@@ -71,28 +70,22 @@ public:
   owned_chain &operator=(owned_chain const &) = delete;
   owned_chain &operator=(owned_chain &&) = delete;
 
-  // Moved into the awaiting coroutine before it suspends, when nothing has its address yet. One awaited already stays
-  // so, moved: awaiting it again throws, rather than run its task again.
+  // Moved into the awaiting coroutine before it suspends, when nothing has its address yet: awaited as a temporary only
+  // (see awaited_as_a_temporary_v), it is never moved once awaited, and the one moved from has no task left.
   owned_chain(owned_chain &&other) noexcept
-      : stop_token_(std::move(other.stop_token_)), work_(std::move(other.work_)), started_(other.started_) {}
+      : stop_token_(std::move(other.stop_token_)), work_(std::move(other.work_)) {}
 
   // Never with its task suspended but once await_resume() has unwound it: a stop reaches the nearest owner, which
   // nothing above unwinds.
   ~owned_chain() = default;
 
-  /** @throws std::logic_error for a task with no frame, moved from. */
+  /** @throws std::logic_error for a task with no frame: moved from, a second co_await of it included. */
   [[nodiscard]] bool await_ready() const { return work_.await_ready(); }
 
-  /** @throws std::logic_error if awaited already: its task has run, and would run again. */
   [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> awaiter, await_context const &context) {
-    if (started_) {
-      throw std::logic_error{"quoll::async::stopped_as_optional: awaited twice"};
-    }
-
     owner_.bind(awaiter, context.executor);
     context_.emplace(
         await_context{context.executor, stop_token_ ? std::move(*stop_token_) : context.stop_token, &owner_});
-    started_ = true;
     return awaiting::suspend(work_, awaiter, *context_);
   }
 
@@ -120,7 +113,6 @@ private:
   std::optional<await_context> context_;
   std::optional<std::stop_token> stop_token_;
   task<T> work_;
-  bool started_ = false;
 };
 
 template <class T>

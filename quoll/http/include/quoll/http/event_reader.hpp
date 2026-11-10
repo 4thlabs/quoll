@@ -76,9 +76,10 @@ class one_at_a_time;
  * The status and the `Content-Type` are for the caller to check, which knows what else it accepts. When the stream
  * ends, next() gives nothing, and last_event_id() and retry() say how to ask for the rest: it does not connect again
  * on its own. A read that fails, or an event larger than it holds, throws from next() (see response_body and
- * event_parser), and reading ends there, as it does on a stop request or a timeout around it: the reader lets go of the
- * body, which closes the connection once no other copy of it is left, and every next() after throws the same, as the
- * body gave it: `operation_canceled` for a timeout around next(), which the caller saw as `timed_out`. To notice a
+ * event_parser), and reading ends there, as it does on a stop request or a timeout around it, which ends next() on a
+ * stop: the reader lets go of the body, which closes the connection once no other copy of it is left, and every next()
+ * after throws the same, as the body gave it, and `operation_canceled` after a stop, the timeout's included, which the
+ * caller saw as `timed_out`. To notice a
  * stream gone quiet and keep reading, rely on the transport's own timeout instead,
  * http::client_options::response_timeout, which a server's comments keep from running out.
  *
