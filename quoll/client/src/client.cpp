@@ -125,6 +125,17 @@ public:
     });
   }
 
+  // Puts back one take() gave, in its place, as if it had not been taken; closes it if the pool is full.
+  void put_back(idle_connection idle) {
+    state_.with([&](state &pool) {
+      if (pool.idle.size() < capacity_) {
+        auto const at = std::ranges::upper_bound(pool.idle, idle.given_back, {}, &idle_connection::given_back);
+
+        pool.idle.insert(at, std::move(idle));
+      }
+    });
+  }
+
   // Closes the idle connections past `count`, the oldest first, past the lock.
   void keep_at_most(std::size_t count) {
     auto const closed = state_.with([count](state &pool) {
@@ -575,7 +586,7 @@ struct idle_attempt {
     }
 
     if (readiness == io::read_readiness::unknown) {
-      shared.pool.give_back(std::move(idle->connection));
+      shared.pool.put_back(std::move(*idle));
       return std::nullopt;
     }
   }

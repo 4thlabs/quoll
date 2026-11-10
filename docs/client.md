@@ -87,15 +87,15 @@ http::client client{"https://api.example.com",
                     {.max_connections = 16, .max_redirects = 3, .response_timeout = 5s}};
 ```
 
-| Option                 | Default   | What it does                                                                                                                                |
-| ---------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `max_idle_connections` | 8         | Connections kept open once their response is read. Zero closes each connection after its response. |
-| `max_connections`      | 0         | How many connections are open at once, in use or idle. Zero: no limit.                                                                      |
-| `max_redirects`        | 0         | How many redirects a request follows. Zero: a 3xx response is a result like the others.                                                     |
-| `connect_timeout`      | 30 s      | How long opening a connection may take, name resolution included, and waiting for `max_connections`.                                        |
-| `response_timeout`     | 60 s      | How long a request may take once on a connection, from sending it to reading the end of its response.                                       |
-| `limits`               | see below | The sizes of a response, against servers sending unbounded ones.                                                                            |
-| `tls`                  | see below | How the servers of `https://` URLs are checked.                                                                                             |
+| Option                 | Default   | What it does                                                                                          |
+| ---------------------- | --------- | ----------------------------------------------------------------------------------------------------- |
+| `max_idle_connections` | 8         | Connections kept open once their response is read. Zero closes each connection after its response.    |
+| `max_connections`      | 0         | How many connections are open at once, in use or idle. Zero: no limit.                                |
+| `max_redirects`        | 0         | How many redirects a request follows. Zero: a 3xx response is a result like the others.               |
+| `connect_timeout`      | 30 s      | How long opening a connection may take, name resolution included, and waiting for `max_connections`.  |
+| `response_timeout`     | 60 s      | How long a request may take once on a connection, from sending it to reading the end of its response. |
+| `limits`               | see below | The sizes of a response, against servers sending unbounded ones.                                      |
+| `tls`                  | see below | How the servers of `https://` URLs are checked.                                                       |
 
 `limits` are those of the [server](server.md#limits), bounding responses: 64 KiB of header, 100 fields,
 8 MiB of body. A body read through [`stream()`](streaming.md#reading-a-response) has no limit by
@@ -124,16 +124,20 @@ A server may close an idle connection at any time. Every request whose body is w
 connection, as Go's client and Boost.Burl do; one whose body comes in pieces (`body_writer`) has one of its
 own, as its writer runs once. The idle connection is checked first, as curl does, with a peek of the socket
 that does not wait (`io::PollableStream`): one the server closed, or that carries bytes nothing asked for,
-as a 408 sent before closing it, is closed with the older ones, and the next is tried. A request that is
+as a 408 sent before closing it, is closed, and the next, older, is checked. A request that is
 not idempotent takes only a connection its stream can check, as `tcp_stream`, `tls_stream` and
 `memory_stream` can; through another, it opens its own.
 
-The server may still close the connection as the request goes:
+The server may still close the connection as the request goes, which no check can see coming:
 
 | Method                                 | When its idle connection turns out closed before any response, or answers 408                            |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | GET, HEAD, PUT, DELETE, OPTIONS, TRACE | The request is sent again, once, on a new connection, and the other idle connections, older, are closed |
-| POST, PATCH and the others             | Sent again on a new connection only if its write failed with none of it sent, whatever the server had sent there before closing. Over TCP, a write to a connection the server has just closed is most often accepted all the same. Otherwise the request fails with the stream's error, or the 408 is its response, and its connection is not kept: the server may have received it, and even a 408 closing the connection may come once it has done its work, so it is not sent twice, and the caller decides. The older idle connections are closed |
+| POST, PATCH and the others             | Sent again on a new connection only if none of it was written; otherwise it fails, or the 408 is its response, and the older idle connections are closed |
+
+A POST of which anything was written is not sent twice: the server may have received it, and even a
+408 closing the connection may come once it has done its work, so the caller decides; a connection that
+answered a 408 is not kept, as the server may answer the POST on it after.
 
 A request that times out is not sent again, as the server may be working on it, and its connection is
 closed. Nothing else is retried: a connection that fails otherwise is a failure of the request.

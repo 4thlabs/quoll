@@ -138,12 +138,15 @@ public:
 
   /**
    * @brief What a read started now would do: see io::PollableStream. Ready when OpenSSL holds bytes of the session not
-   * yet read, or when the socket has any, a record or TLS's closing message, as a peek that does not wait tells.
+   * yet read, processed or not, or when the socket has any, a record or TLS's closing message, as a poll that does not
+   * wait tells.
    */
   [[nodiscard]] io::read_readiness poll_read() noexcept {
     auto &session = checked_state().stream;
+    auto *const ssl = session.native_handle();
 
-    if (::SSL_has_pending(session.native_handle()) == 1) {
+    // Records asio has read from the socket and handed to OpenSSL's input, or that OpenSSL has taken in.
+    if (::SSL_has_pending(ssl) == 1 || ::BIO_ctrl_pending(::SSL_get_rbio(ssl)) > 0) {
       return io::read_readiness::ready;
     }
 
