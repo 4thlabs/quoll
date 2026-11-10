@@ -38,6 +38,7 @@
 #define QUOLL_TEST_ENDING_THE_RUN_HPP
 
 #include <quoll/async/detail/is_a_stop.hpp>
+#include <quoll/async/detail/report.hpp>
 #include <quoll/async/report.hpp>
 
 #include <exception>

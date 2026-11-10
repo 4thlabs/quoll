@@ -36,6 +36,7 @@
 
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/detached.hpp>
+#include <quoll/async/detail/report.hpp>
 #include <quoll/async/report.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
@@ -207,7 +208,7 @@ TEST_CASE("report: at most ten lines a second, and what went past them is counte
   auto const reported = quoll::test::reports();
 
   REQUIRE(reported.size() == 12);
-  REQUIRE(reported[10] == "quoll: 3 more reports left out in the second before\n");
+  REQUIRE(reported[10] == "quoll: 3 more reports left out since the last line written\n");
   REQUIRE(reported[11] == "quoll: one of many: 13\n");
 }
 
@@ -226,6 +227,6 @@ TEST_CASE("report: what ends a program goes past the limit, with what was left o
   auto const reported = quoll::test::reports();
 
   REQUIRE(reported.size() == 12);
-  REQUIRE(reported[10] == "quoll: 2 more reports left out in the second before\n");
+  REQUIRE(reported[10] == "quoll: 2 more reports left out since the last line written\n");
   REQUIRE(reported[11] == "quoll: the end: why\n");
 }

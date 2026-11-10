@@ -41,6 +41,7 @@
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/is_a_stop.hpp>
+#include <quoll/async/detail/report.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/report.hpp>
@@ -144,8 +145,8 @@ struct shared_options {
   std::stop_source drain;
 };
 
-// The outcome of a connection spawned by serve(): it ends by itself, and a failure only ends it, reported to the
-// application's callback if it gave one.
+// The outcome of a connection spawned by serve(): it ends by itself, and a failure only ends it, told to the
+// application's callback, or written out with none.
 struct connection_outcome {
   std::shared_ptr<shared_options> shared;
 
@@ -288,11 +289,15 @@ async::task<> serve_accepting(io::any_listener listener, std::shared_ptr<server_
 
       // Tried again with no callback to tell: said once, until a connection is accepted again.
       if (!accept_error && !one_connection_failure(error) && !accepts_retried) {
-        // Once: past the limit of lines a second, which peers may fill.
-        async::detail::report_always(out_of_resources(error)
-                                         ? "cannot accept connections for want of resources, trying again every 100 ms"
-                                         : "an accept failed on the network, trying again every 100 ms",
-                                     failure);
+        // Once a streak. Running out of something lasts, and goes past the limit of lines a second, which peers may
+        // fill; what one connection on its way may cause, a peer may cause at will, and stays within it.
+        if (out_of_resources(error)) {
+          async::detail::report_always("cannot accept connections for want of resources, trying again every 100 ms",
+                                       failure);
+        } else {
+          async::report("an accept failed on the network, trying again every 100 ms", failure);
+        }
+
         accepts_retried = true;
       }
 

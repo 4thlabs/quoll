@@ -87,8 +87,9 @@ public:
 
   // Set again for each run of a case, a section's or a generator's, so that each has its own ten lines a second.
   void testCasePartialStarting(Catch::TestCaseInfo const &, std::uint64_t) override {
-    quoll::test::clear_reports();
+    // The sink first: setting it tells the one it replaces of what the run before left out, here the same.
     quoll::async::set_report_sink(&quoll::test::keep_report);
+    quoll::test::clear_reports();
   }
 };
 

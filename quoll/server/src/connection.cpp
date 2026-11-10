@@ -1527,7 +1527,6 @@ async::task<> end_connection(io::any_stream &stream, connection_options const &o
   }
 }
 
-// The connection, run by what took it over, told of a drain, with what it throws reported as a handler's would be.
 // What the peer of a connection taken over causes at will, and lets out of a handler reading it: its stream gone or
 // cut, a message that breaks the protocol, a keep-alive given up on it. No bug of the handler's, which only let it
 // through.
@@ -1543,6 +1542,7 @@ async::task<> end_connection(io::any_stream &stream, connection_options const &o
          *code == std::errc::connection_aborted || *code == std::errc::timed_out;
 }
 
+// The connection, run by what took it over, told of a drain, with what it throws reported as a handler's would be.
 async::task<> run_taken_over(io::any_stream stream, taken_over taken, connection_options const &options) {
   auto const stop_token = co_await async::current_stop_token();
 

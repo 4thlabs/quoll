@@ -37,6 +37,7 @@
 #include <quoll/emscripten/runtime.hpp>
 
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detail/report.hpp>
 #include <quoll/async/report.hpp>
 #include <quoll/async/task.hpp>
 

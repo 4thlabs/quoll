@@ -37,7 +37,6 @@
 #ifndef QUOLL_ASYNC_REPORT_HPP
 #define QUOLL_ASYNC_REPORT_HPP
 
-#include <chrono>
 #include <exception>
 #include <string_view>
 
@@ -47,7 +46,8 @@ namespace quoll::async {
  * @brief Writes one line saying `what` happened and what `failure` says, for a failure nothing else takes: an exception
  * a task spawned with async::detached let escape, or one a server's callbacks were not given. To stderr, or to the sink
  * set_report_sink() set. At most ten lines a second, as a peer may cause them at will: those past it are counted, and
- * the next line, if one comes, says how many went. Never throws. Thread safety: may be called from any thread.
+ * the next line, if one comes, says how many went since the last line written. Never throws. Thread safety: may be
+ * called from any thread.
  */
 void report(std::string_view what, std::exception_ptr const &failure) noexcept;
 
@@ -62,19 +62,6 @@ using report_sink = void (*)(std::string_view line) noexcept;
  * safety: may be called from any thread.
  */
 report_sink set_report_sink(report_sink sink) noexcept;
-
-namespace detail {
-
-/** @brief report(), past the limit of lines a second, as what ends a program: with how many were left out first. */
-void report_always(std::string_view what, std::exception_ptr const &failure) noexcept;
-
-/** @brief The clock report() counts its seconds on; null for std::chrono::steady_clock. */
-using report_clock = std::chrono::steady_clock::time_point (*)() noexcept;
-
-/** @brief Counts report()'s seconds on `clock`, and returns the clock it replaces: for a test. */
-report_clock set_report_clock(report_clock clock) noexcept;
-
-} // namespace detail
 
 } // namespace quoll::async
 
