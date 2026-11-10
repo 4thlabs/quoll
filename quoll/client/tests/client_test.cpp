@@ -4247,8 +4247,6 @@ post_outcome post_on_checked(taken second, std::string_view last, bool streamed)
 TEST_CASE("http::client: a POST on a connection the server closes as it goes is sent again only if none of it left",
           "[client]") {
   auto const streamed = GENERATE(false, true);
-  auto const closing_timeout = "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-
   INFO("streamed " << streamed);
 
   // The server read none of it: it goes again on a new connection.
@@ -4388,8 +4386,7 @@ TEST_CASE("http::client: a POST opens its own connection when its stream cannot 
   REQUIRE(server.connections == 2);
 }
 
-TEST_CASE("http::client: a POST closes an idle connection its check cannot tell about, as one found closed",
-          "[client]") {
+TEST_CASE("http::client: a POST leaves an idle connection its check cannot tell about for a GET", "[client]") {
   async::run_loop loop;
   auto const router = make_router();
   auto writes = std::make_shared<int>(0);
@@ -4400,8 +4397,8 @@ TEST_CASE("http::client: a POST closes an idle connection its check cannot tell 
       {},
       {}};
 
-  // A stream that can be checked, whose check answers unknown all the same: the POST closes the connection, and of the
-  // two GETs at once one takes the POST's, the other opening a third.
+  // A stream that can be checked, whose check answers unknown all the same: the POST leaves the connection in the pool,
+  // which then holds both, for two GETs at once.
   auto const sending = [&]() -> task<std::string> {
     http::client const client{blind_connector{server, writes, io::read_readiness::unknown}, "example.com", 80};
     auto const first = co_await client.send(make_request(verb::get, "/hello"));
@@ -4413,7 +4410,7 @@ TEST_CASE("http::client: a POST closes an idle connection its check cannot tell 
   };
 
   REQUIRE(quoll::test::run(loop, sending()) == "hellopinghellohello");
-  REQUIRE(server.connections == 3);
+  REQUIRE(server.connections == 2);
 }
 
 TEST_CASE("http::client: a connection whose request could not leave is not kept", "[client]") {
