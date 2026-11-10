@@ -22,7 +22,7 @@ other fields that Quoll does not.
 **What costs more:**
 
 - **A new connection.** A request on a connection of its own is several times slower than on a kept one.
-  Every request whose body is whole takes a kept connection, a POST included, once a peek of its socket has found it
+  Every request whose body is whole takes a kept connection, a POST included, once a poll of its socket has found it
   open. A POST [is not sent twice](client.md#keep-alive-and-retries) when the server closes that connection as it goes,
   once some of it was written: it fails, for its caller to decide. A body in pieces opens one of its own.
 - **JSON** costs little beside that: a REST GET stays close to a plain GET.
