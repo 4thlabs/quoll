@@ -677,12 +677,12 @@ struct budget {
 constexpr budget budgets[] = {
     {"GET, one connection", 22.0},
     {"GET, one connection each", 48.0},
-    {"POST 1 MiB, echoed", 63.0},
-    {"POST 1 MiB, read in pieces", 821.0},
+    {"POST 1 MiB, echoed", 48.0},
+    {"POST 1 MiB, read in pieces", 806.0},
     {"GET 1 MiB, written in pieces", 800.0},
     {"GET a file of 1 MiB", 121.0},
     {"REST GET, JSON", 37.0},
-    {"REST POST, JSON", 64.0},
+    {"REST POST, JSON", 49.0},
 };
 
 int run_allocations(bool check) {
