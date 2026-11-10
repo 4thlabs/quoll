@@ -168,6 +168,23 @@ using state = detail::websocket_state;
   return code ? code : std::make_error_code(std::errc::io_error);
 }
 
+// The peer taken as gone by the keep-alive of a connection no server watches, saying why, then stopping `gone`, which
+// ends what reads and what sends: the first verdict stands, as what reads may have read it already.
+void take_as_gone(state &connection, std::error_code why) noexcept {
+  if (connection.gone.stop_requested()) {
+    return;
+  }
+
+  // A stop's code, or none, is no stop of a caller's: the keep-alive failed.
+  connection.gone_why = why && why != std::errc::operation_canceled ? why : std::make_error_code(std::errc::io_error);
+  connection.gone.request_stop();
+}
+
+// Throws why the peer was taken as gone.
+[[noreturn]] void throw_gone(state const &connection) {
+  throw std::system_error{connection.gone_why, "quoll::http::websocket: the peer is gone"};
+}
+
 // What a frame is to what sends it once nothing more may be sent: a message refused, an answer or a close dropped.
 enum class frame_kind : std::uint8_t { message, answer, close };
 
@@ -242,7 +259,7 @@ async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, 
   // Beast's would on its closed socket.
   if (connection->gone.stop_requested()) {
     if (kind != frame_kind::answer) {
-      throw std::system_error{connection->gone_why, "quoll::http::websocket: the peer is gone"};
+      throw_gone(*connection);
     }
 
     co_return;
@@ -489,7 +506,7 @@ async::task<websocket_message> receive_next(std::shared_ptr<state> connection, w
     // The peer taken as gone while no receive() read, by a ping that failed: what is parsed is given, but no read
     // follows, whatever this one runs on.
     if (connection->gone.stop_requested()) {
-      throw std::system_error{connection->gone_why, "quoll::http::websocket: the peer is gone"};
+      throw_gone(*connection);
     }
 
     // As the first read starts: its end, which a keep-alive running watches; a keep-alive, unless one runs, and none
@@ -549,7 +566,7 @@ async::task<websocket_message> receive_watched(std::shared_ptr<state> connection
   } catch (std::system_error const &) {
     // Stopped as the peer was taken as gone, a stop of the caller's beside it included, as what follows says so too.
     if (gone.stop_requested() && async::detail::is_a_stop(std::current_exception())) {
-      throw std::system_error{connection->gone_why, "quoll::http::websocket: the peer is gone"};
+      throw_gone(*connection);
     }
 
     throw;
@@ -677,17 +694,6 @@ async::task<> keep_alive(std::shared_ptr<state> connection, std::chrono::nanosec
     gone.request_stop();
     throw;
   }
-}
-
-// The peer taken as gone by the keep-alive of a connection no server watches, saying why, then stopping `gone`, which
-// ends what reads and what sends: the first verdict stands, as what reads may have read it already.
-void take_as_gone(state &connection, std::error_code why) noexcept {
-  if (connection.gone.stop_requested()) {
-    return;
-  }
-
-  connection.gone_why = why;
-  connection.gone.request_stop();
 }
 
 // Whether the keep-alive of a connection no server watches has nothing left to watch: no receive() reads, as the last
@@ -834,12 +840,9 @@ async::task<> watch_alone_quietly(std::weak_ptr<state> watched) {
   } catch (...) {
     auto const code = async::detail::code_of(std::current_exception());
 
-    // What a stop throws there is no stop of the receive()'s: the keep-alive failed, as it did with no code.
-    auto const why =
-        code && *code && *code != std::errc::operation_canceled ? *code : std::make_error_code(std::errc::io_error);
-
+    // take_as_gone() makes what says none, or a stop's, io_error.
     if (auto const connection = watched.lock()) {
-      take_as_gone(*connection, why);
+      take_as_gone(*connection, code.value_or(std::error_code{}));
     }
   }
 }

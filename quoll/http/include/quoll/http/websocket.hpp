@@ -103,18 +103,22 @@ struct websocket_options {
  * unsent. A receive() stopped, or failed, ends receiving: a stream such as TLS does not take a read up again once it
  * was stopped, so the next one throws the same. Without a timer, nothing here times out.
  *
- * A client's connection, as http::connect_websocket gives one, keeps itself alive while a receive() waits, as a
- * server's does beside its handler, given a timer, with one keep-alive at a time,
- * started by a receive() as it first reads and ending once none reads: at the end of each ping_interval, a peer that
- * sent nothing in it is pinged, and one that sent nothing since its ping left, or was dropped as sending had ended, or
- * since a close has left, is taken as gone, so that a peer silent since just after the end of one is pinged within two
- * intervals and taken as gone within three, but for the time its ping waits for the turn behind a send or takes to
- * leave, as the next interval starts once it has. The receive() then throws std::errc::timed_out, the failure of the
- * ping that could not leave, or io_error for a keep-alive that failed, and so do every one after it that has to read
- * and every send, but one after the connection's own close, which says http::error::websocket_closed as before, a
- * frame that comes at the very end of the interval included, which Beast takes as late too, but for one a read had
- * already brought, which is given, as what is read is. The ping
- * goes on its own: a receive() waits for it only to send a pong or a close of its own, which take their turn behind it.
+ * A client's connection, as http::connect_websocket gives one, keeps itself alive while a receive() waits, given a
+ * timer, as a server's does beside its handler. One keep-alive at a time, started by a receive() as it first reads,
+ * and ending once none reads:
+ *
+ * - At the end of each ping_interval, a peer that sent nothing in it is pinged. A new interval starts from what was
+ *   read as a receive() ends, and once a ping has left: a ping that waits for the turn behind a send, or takes long to
+ *   leave, delays the verdict.
+ * - A peer that sent nothing since its ping left, or was dropped as sending had ended, or since a close has left, is
+ *   taken as gone: within two to three intervals of silence. A frame that comes at the very end of the interval is
+ *   late, as Beast takes it too, unless a read had already brought it.
+ * - Then the receive() throws std::errc::timed_out, the failure of the ping that could not leave, or io_error for a
+ *   keep-alive that failed, and so do every receive() after it that has to read, and every send, but one after the
+ *   connection's own close, which says http::error::websocket_closed as before. What a read had already brought is
+ *   given first.
+ * - The ping goes on its own: a receive() waits for it only to send a pong or a close of its own, which take their
+ *   turn behind it.
  *
  * Copied, not moved: its copies are the same connection, as http::client's are, which a task receiving and another
  * sending may each hold. An operation holds what it works on from when it is called, so that every copy may go before
@@ -123,7 +127,8 @@ struct websocket_options {
  *
  * Thread safety: that of the stream, which an asio socket does not share between threads. What a receive() and a send
  * do, and a client's keep-alive, which runs on the executor of the receive() that started it, takes turns as long as
- * they all run on one executor that runs a handler at a time, a strand where it runs on several threads: the strand of
+ * they all run on one executor that runs a handler at a time, one after the other as at once, a strand where it runs
+ * on several threads: the strand of
  * its own a server gives each connection, where its handler runs, or an executor of quoll::runtime, a strand on
  * several threads, where a client runs, and the tasks they await through when_all. A task on another executor, one
  * that others send through to broadcast say, would reach the stream at once: what others want sent goes to the

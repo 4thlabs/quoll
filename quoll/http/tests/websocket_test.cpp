@@ -289,6 +289,22 @@ private:
   io::memory_stream inner_;
 };
 
+// A stream that reads what its peer sends, and whose writes throw the code of a stop, as one cancelled elsewhere.
+class cancelled_on_write {
+public:
+  explicit cancelled_on_write(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
+
+  [[nodiscard]] static task<io::io_result> write_some(std::span<std::byte const> /*data*/) {
+    throw std::system_error{std::make_error_code(std::errc::operation_canceled), "the write was cancelled"};
+    co_return io::io_result{};
+  }
+
+private:
+  io::memory_stream inner_;
+};
+
 // A stream that reads what its peer sends, and whose writes fail as on a connection the peer reset.
 class reset_on_write {
 public:
@@ -1553,4 +1569,20 @@ TEST_CASE(
 
   REQUIRE(quoll::test::run(time, quiet()) == std::errc::timed_out);
   REQUIRE(time.now() == 2500ms);
+}
+
+TEST_CASE("websocket: a client's ping whose write throws a stop's code takes the peer as gone, as no stop",
+          "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{
+      io::any_stream{cancelled_on_write{std::move(client_end)}}, websocket_role::client, {}, {.ping_interval = 1s}};
+
+  // What the caller would take as its own stop is the keep-alive's failure: io_error.
+  auto const cancelled = [&]() -> task<std::error_code> {
+    co_return co_await quoll::test::code_thrown_by(client.receive());
+  };
+
+  REQUIRE(quoll::test::run(time, cancelled()) == std::errc::io_error);
+  REQUIRE(time.now() == 1s);
 }
