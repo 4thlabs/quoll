@@ -237,7 +237,8 @@ function(quoll_main_tests)
 
   CPMAddPackage("gh:catchorg/Catch2@3.8.1")
 
-  add_executable(quoll_tests ${sources})
+  # With what every test case shares: the listener keeping what async::report() writes (see quoll/test/reports.hpp).
+  add_executable(quoll_tests ${sources} ${PROJECT_SOURCE_DIR}/tests/support/quoll/test/reports.cpp)
   target_link_libraries(quoll_tests PRIVATE Catch2::Catch2WithMain quoll_warnings ${deps})
   # Helpers shared by the tests of every module (quoll/test/...).
   target_include_directories(quoll_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)

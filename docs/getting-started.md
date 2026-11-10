@@ -159,8 +159,7 @@ async::task<> serve_hello() {
 int main() {
   quoll::runtime runtime;
 
-  async::co_spawn(runtime.get_executor(), serve_hello(), async::detached, runtime.get_stop_token());
-  runtime.run();
+  return runtime.run(serve_hello());
 }
 ```
 
@@ -196,8 +195,7 @@ async::task<> say_hello() {
 int main() {
   quoll::runtime runtime;
 
-  async::co_spawn(runtime.get_executor(), say_hello(), async::detached);
-  runtime.run();
+  return runtime.run(say_hello());
 }
 ```
 
@@ -218,10 +216,14 @@ If you are writing both sides of an API, or calling one with typed requests and 
 - **`async::task<T>`** is a coroutine producing a `T`, or nothing for `async::task<>`. It is lazy: it starts
   when awaited, and destroying one that never ran does not run it. An exception it lets out is
   thrown again at its `co_await`.
+- **`runtime.run(task)`** runs the program's main task with `get_stop_token()`, until the tasks have
+  ended, and returns what `main()` returns: `EXIT_SUCCESS`, or `EXIT_FAILURE` once what the task let out
+  is written to stderr, but for a stop, as a tokio `main` that returns an error.
 - **`async::co_spawn`** runs a task from outside a coroutine, from the executor and never inline, and
-  gives what comes of it to a handler. With `async::detached`, a value is dropped, and an exception
-  is written to stderr while the program goes on, as tokio does, unless it is `std::errc::operation_canceled`, what a
-  stop request throws, which says nothing.
+  gives what comes of it to a handler. With `async::detached`, for a task beside the main one, a value
+  is dropped, and an exception is written to stderr while the program goes on, as tokio does, unless it is
+  `std::errc::operation_canceled`, what a stop request throws, which says nothing. `async::set_report_sink`
+  sends those lines elsewhere.
 - **`runtime.run()`** returns once the tasks have ended. An executor kept in `main()` would keep it
   running, so give `get_executor()` straight to `co_spawn`.
 - **`runtime.get_stop_token()`** is stopped by the first SIGINT or SIGTERM. Given to `co_spawn`, it

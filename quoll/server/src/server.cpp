@@ -41,9 +41,9 @@
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/is_a_stop.hpp>
-#include <quoll/async/detail/report.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/task_group.hpp>
+#include <quoll/async/report.hpp>
 #include <quoll/async/strands_ref.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
@@ -160,7 +160,7 @@ struct connection_outcome {
     if (shared->state->options.on_connection_error) {
       shared->state->options.on_connection_error(std::move(failure));
     } else if (!async::detail::is_a_stop(failure)) {
-      async::detail::report("a connection ended on an exception", failure);
+      async::report("a connection ended on an exception", failure);
     }
 
     ended();
@@ -287,7 +287,7 @@ async::task<> serve_accepting(io::any_listener listener, std::shared_ptr<server_
 
       // Tried again with no callback to tell: said once, until a connection is accepted again.
       if (!accept_error && !one_connection_failure(error) && !accepts_retried) {
-        async::detail::report("cannot accept connections, trying again every 100 ms", failure);
+        async::report("cannot accept connections, trying again every 100 ms", failure);
         accepts_retried = true;
       }
 

@@ -45,15 +45,15 @@
 
 namespace quoll::test {
 
-// What async::detail::report() wrote during the test case that runs: the test binary keeps it there rather than on
-// stderr, which a test throwing on purpose would fill (see reports_test.cpp, which sets it so for every case).
+// What async::report() wrote during the test case that runs: the test binary keeps it there rather than on
+// stderr, which a test throwing on purpose would fill (see reports.cpp, which sets it so for every case).
 inline async::detail::synchronized<std::vector<std::string>> &report_store() {
   static async::detail::synchronized<std::vector<std::string>> store;
 
   return store;
 }
 
-// The sink the test binary gives async::detail::set_report_sink().
+// The sink the test binary gives async::set_report_sink().
 inline void keep_report(std::string_view line) noexcept {
   try {
     report_store().with([&](std::vector<std::string> &kept) { kept.emplace_back(line); });

@@ -545,7 +545,7 @@ zero-allocation `any_stream`.
 
 Program entry point (2026-11-03): application code names no adapter. `main()` creates the build's runtime
 (`quoll::runtime`, the adapter chosen with `QUOLL_RUNTIME`, asio natively), spawns the program's main coroutine on it
-(`co_spawn(runtime.get_executor(), task, quoll::async::detached, runtime.get_stop_token())`, the token stopped by
+(`return runtime.run(task);`, since 2026-11-10, which spawns it with `runtime.get_stop_token()`, the token stopped by
 Ctrl-C) and runs it; servers, clients and their connections live in that coroutine. Executors carry the services of
 their loop (`executor.query<io::network_ref>()`), so `io::connect` / `io::listen`, `http::server{router}.listen(port)` and
 `rest::client<api>{"http://host:port"}` need no executor, connector or acceptor handed to them.

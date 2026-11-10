@@ -87,6 +87,5 @@ quoll::async::task<> use_notes(std::string url) {
 int main(int argc, char **argv) {
   quoll::runtime runtime;
 
-  co_spawn(runtime.get_executor(), use_notes(argc > 1 ? argv[1] : "http://127.0.0.1:8080"), quoll::async::detached);
-  runtime.run();
+  return runtime.run(use_notes(argc > 1 ? argv[1] : "http://127.0.0.1:8080"));
 }

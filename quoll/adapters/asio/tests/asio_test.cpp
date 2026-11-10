@@ -79,6 +79,7 @@
 #include <quoll/server/static_files.hpp>
 #include <quoll/test/check.hpp>
 #include <quoll/test/overloaded.hpp>
+#include <quoll/test/reports.hpp>
 #include <quoll/test/run_task.hpp>
 
 #include <asio/any_io_executor.hpp>
@@ -107,6 +108,7 @@
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -1494,6 +1496,41 @@ TEST_CASE("asio::runtime runs until the work its tasks started has ended", "[asi
 
   REQUIRE(run_task(leave_work_running(yields)) == 7);
   REQUIRE(yields == 100);
+}
+
+TEST_CASE("asio::runtime: run(task) is the program's exit status, and reports what the task let escape",
+          "[asio][runtime]") {
+  auto const succeeding = []() -> task<> { co_await quoll::async::yield(); };
+  auto const failing = []() -> task<> {
+    co_await quoll::async::yield();
+    throw std::runtime_error{"no port"};
+  };
+  auto const stopped = []() -> task<> {
+    co_await quoll::async::yield();
+    throw std::system_error{std::make_error_code(std::errc::operation_canceled), "stopped"};
+  };
+
+  {
+    quoll::asio::runtime runtime;
+
+    REQUIRE(runtime.run(succeeding()) == EXIT_SUCCESS);
+  }
+
+  {
+    quoll::asio::runtime runtime;
+
+    REQUIRE(runtime.run(failing()) == EXIT_FAILURE);
+  }
+
+  {
+    quoll::asio::runtime runtime;
+
+    // What a Ctrl-C ends: no failure.
+    REQUIRE(runtime.run(stopped()) == EXIT_SUCCESS);
+  }
+
+  REQUIRE(quoll::test::reports() ==
+          std::vector<std::string>{"quoll: the program's main task ended on an exception: no port\n"});
 }
 
 TEST_CASE("asio::runtime offers its loop's network to its tasks", "[asio][runtime]") {

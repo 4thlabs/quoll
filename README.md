@@ -118,14 +118,8 @@ async::task<> call() {
 int main(int argc, char **) {
   quoll::runtime runtime;
 
-  if (argc > 1) {
-    async::co_spawn(runtime.get_executor(), call(), async::detached);
-  } else {
-    // Ctrl-C stops this token, which shuts the server down.
-    async::co_spawn(runtime.get_executor(), serve(), async::detached, runtime.get_stop_token());
-  }
-
-  runtime.run();
+  // Runs it with a stop token Ctrl-C stops, which shuts the server down; fails the program if it fails.
+  return runtime.run(argc > 1 ? call() : serve());
 }
 ```
 

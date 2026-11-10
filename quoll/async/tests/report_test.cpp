@@ -36,39 +36,27 @@
 
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/detached.hpp>
-#include <quoll/async/detail/report.hpp>
+#include <quoll/async/report.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/test/reports.hpp>
 
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/reporters/catch_reporter_event_listener.hpp>
-#include <catch2/reporters/catch_reporter_registrars.hpp>
 
+#if !defined(__EMSCRIPTEN__)
+#include <unistd.h>
+#endif
+
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdio>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
-
-namespace {
-
-// For every test case of the binary: what is reported goes to quoll::test::reports(), not to stderr, which the tests
-// that throw on purpose would fill.
-class keeping_reports : public Catch::EventListenerBase {
-public:
-  using Catch::EventListenerBase::EventListenerBase;
-
-  void testRunStarting(Catch::TestRunInfo const &) override {
-    quoll::async::detail::set_report_sink(&quoll::test::keep_report);
-  }
-
-  void testCaseStarting(Catch::TestCaseInfo const &) override { quoll::test::clear_reports(); }
-};
-
-} // namespace
-
-CATCH_REGISTER_LISTENER(keeping_reports)
 
 namespace {
 
@@ -122,14 +110,62 @@ TEST_CASE("detached: a stop is no failure, and an exception of any type is repor
                                "type that is no std::exception\n"});
 }
 
-TEST_CASE("report: to the sink set, and to stderr once it is given back", "[async]") {
-  auto const kept = quoll::async::detail::set_report_sink(nullptr);
+TEST_CASE("report: to the sink set, and to stderr with none", "[async]") {
+  // Given back however the test ends, for the cases after it.
+  struct restoring {
+    quoll::async::report_sink kept = quoll::async::set_report_sink(nullptr);
 
-  REQUIRE(kept == &quoll::test::keep_report);
+    restoring() = default;
+    restoring(restoring const &) = delete;
+    restoring(restoring &&) = delete;
+    restoring &operator=(restoring const &) = delete;
+    restoring &operator=(restoring &&) = delete;
 
-  // To stderr, which this test does not read: it only shows that nothing throws, and that the sink comes back.
-  quoll::async::detail::report("a test of report()", std::make_exception_ptr(std::runtime_error{"on stderr"}));
-  REQUIRE(quoll::async::detail::set_report_sink(kept) == nullptr);
-  quoll::async::detail::report("a test of report()", std::make_exception_ptr(std::runtime_error{"kept"}));
+    ~restoring() { quoll::async::set_report_sink(kept); }
+  } const restore;
+
+  REQUIRE(restore.kept == &quoll::test::keep_report);
+
+#if !defined(__EMSCRIPTEN__)
+  // What reaches stderr, read back through a pipe put in its place.
+  std::fflush(stderr);
+
+  std::array<int, 2> pipe_ends{};
+
+  REQUIRE(::pipe(pipe_ends.data()) == 0);
+
+  auto const saved = ::dup(STDERR_FILENO);
+
+  REQUIRE(::dup2(pipe_ends[1], STDERR_FILENO) == STDERR_FILENO);
+  quoll::async::report("a test of report()", std::make_exception_ptr(std::runtime_error{"on stderr"}));
+  std::fflush(stderr);
+  ::dup2(saved, STDERR_FILENO);
+  ::close(saved);
+  ::close(pipe_ends[1]);
+
+  std::array<char, 128> read_back{};
+  auto const got = ::read(pipe_ends[0], read_back.data(), read_back.size());
+
+  ::close(pipe_ends[0]);
+  REQUIRE(std::string_view{read_back.data(), static_cast<std::size_t>(got)} ==
+          "quoll: a test of report(): on stderr\n");
+#endif
+
+  REQUIRE(quoll::async::set_report_sink(&quoll::test::keep_report) == nullptr);
+  quoll::async::report("a test of report()", std::make_exception_ptr(std::runtime_error{"kept"}));
   REQUIRE(quoll::test::reports() == std::vector<std::string>{"quoll: a test of report(): kept\n"});
+}
+
+TEST_CASE("report: at most ten lines a second, and what went past them is counted", "[async]") {
+  // In far less than a second: one second's ten at most, or two if one ends among them, but never all of them.
+  for (auto line = 0; line < 25; ++line) {
+    quoll::async::report("one of many", std::make_exception_ptr(std::runtime_error{std::to_string(line)}));
+  }
+
+  auto const reported = quoll::test::reports();
+  auto const written =
+      std::ranges::count_if(reported, [](std::string const &line) { return line.starts_with("quoll: one of many: "); });
+
+  REQUIRE(written <= 20);
+  REQUIRE(written < 25);
 }

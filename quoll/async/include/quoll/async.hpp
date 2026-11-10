@@ -52,6 +52,7 @@
 #include <quoll/async/offload.hpp>
 #include <quoll/async/offloader.hpp>
 #include <quoll/async/offloader_ref.hpp>
+#include <quoll/async/report.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/runtime_options.hpp>
 #include <quoll/async/service.hpp>

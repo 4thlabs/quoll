@@ -747,7 +747,8 @@ TEST_CASE("serve: with no callback, a handler that throws and a connection that 
 
   REQUIRE(reported.size() == 2);
   REQUIRE(std::ranges::count(reported, "quoll: a connection ended on an exception: broken stream\n") == 1);
-  REQUIRE(std::ranges::count(reported, "quoll: a handler threw, answered 500: a bug of the handler\n") == 1);
+  REQUIRE(std::ranges::count(reported,
+                             "quoll: a handler or a middleware threw, answered 500: a bug of the handler\n") == 1);
 }
 
 TEST_CASE("serve: with callbacks, nothing is reported", "[server]") {

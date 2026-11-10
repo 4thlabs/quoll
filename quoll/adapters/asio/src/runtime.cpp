@@ -40,6 +40,10 @@
 
 #include <quoll/asio/executor.hpp>
 #include <quoll/async/any_executor.hpp>
+#include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detail/is_a_stop.hpp>
+#include <quoll/async/report.hpp>
+#include <quoll/async/task.hpp>
 
 #include <asio/executor_work_guard.hpp>
 #include <asio/io_context.hpp>
@@ -49,8 +53,10 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <csignal>
 #include <cstddef>
+#include <cstdlib>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -388,6 +394,28 @@ void runtime::run() {
   if (refused) {
     std::rethrow_exception(refused);
   }
+}
+
+int runtime::run(async::task<> main) {
+  // Set on the loop's threads, read once they are joined.
+  std::atomic<bool> failed{false};
+
+  struct outcome {
+    std::atomic<bool> *failed;
+
+    void operator()() const noexcept {}
+
+    void operator()(std::exception_ptr const &failure) const noexcept {
+      if (!async::detail::is_a_stop(failure)) {
+        async::report("the program's main task ended on an exception", failure);
+        failed->store(true);
+      }
+    }
+  };
+
+  async::co_spawn(get_executor(), std::move(main), outcome{&failed}, get_stop_token());
+  run();
+  return failed.load() ? EXIT_FAILURE : EXIT_SUCCESS;
 }
 
 ::asio::io_context &runtime::context() noexcept { return state_->context; }
