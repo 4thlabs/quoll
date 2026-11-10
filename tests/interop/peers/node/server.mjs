@@ -2,12 +2,20 @@
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
 
+// Each connection's number, for the checks of a kept connection.
+const connections = new WeakMap();
+let connected = 0;
+
 const server = http.createServer((request, response) => {
   const url = new URL(request.url, 'http://x');
   const pieces = url.pathname.match(/^\/pieces\/(\d+)$/);
   const events = url.pathname.match(/^\/events\/(\d+)$/);
 
-  if (url.pathname === '/hello') {
+  if (!connections.has(request.socket)) connections.set(request.socket, ++connected);
+
+  if (url.pathname === '/connection') {
+    response.end(String(connections.get(request.socket)));
+  } else if (url.pathname === '/hello') {
     response.end('hello');
   } else if (url.pathname === '/echo' && request.method === 'POST') {
     const parts = [];

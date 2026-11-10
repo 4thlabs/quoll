@@ -3,6 +3,11 @@
 from aiohttp import web, WSMsgType
 
 
+async def connection(request):
+    """The connection's identity, for the checks of a kept connection."""
+    return web.Response(text=str(id(request.transport)))
+
+
 async def hello(request):
     return web.Response(text="hello")
 
@@ -52,6 +57,7 @@ async def ws(request):
 
 app = web.Application(client_max_size=64 * 1024 * 1024)
 app.add_routes([
+    web.get("/connection", connection),
     web.get("/hello", hello),
     web.post("/echo", echo),
     web.get(r"/pieces/{count:\d+}", pieces),

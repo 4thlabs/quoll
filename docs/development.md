@@ -89,11 +89,11 @@ cmake --build build-bench --target quoll_bench -j"$(nproc)"
 build-bench/tests/bench/quoll_bench allocations --check
 
 # Against third-party clients and servers, each in a container of its own, as interop.yml runs it every night: curl,
-# Python, Node, aiohttp, nginx as a proxy, Autobahn's WebSocket suite each way. QUOLL_RUN runs Quoll's two programs
-# where the containers reach them as "quoll", on the Docker network quoll-interop (see tests/interop/run.sh).
+# Python, Node, aiohttp, nginx as a proxy, Autobahn's WebSocket suite each way. Quoll's two programs run in the container
+# QUOLL_CONTAINER, which the script joins to the Docker network quoll-interop as "quoll" (see tests/interop/run.sh).
 cmake -B build-interop-bin -DQUOLL_INTEROP=ON -DQUOLL_BUILD_TESTS=OFF -DQUOLL_BUILD_SAMPLES=OFF
 cmake --build build-interop-bin --target quoll_interop_server quoll_interop_client -j"$(nproc)"
-QUOLL_RUN="docker exec quoll-work" tests/interop/run.sh "$PWD/build-interop-bin/tests/interop"
+QUOLL_CONTAINER=quoll-work tests/interop/run.sh "$PWD/build-interop-bin/tests/interop"
 ```
 
 Format what you touch, and only that, with the repository's `.clang-format`:

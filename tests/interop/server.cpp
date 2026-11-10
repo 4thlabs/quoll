@@ -45,10 +45,9 @@
 #include <quoll/http/response.hpp>
 #include <quoll/http/response_writer.hpp>
 #include <quoll/http/router.hpp>
-#include <quoll/http/websocket.hpp>
-#include <quoll/http/websocket_message.hpp>
 #include <quoll/runtime.hpp>
 #include <quoll/server/server.hpp>
+#include <quoll/test/websocket_echo.hpp>
 
 #include <cstdint>
 #include <iostream>
@@ -59,23 +58,6 @@ namespace {
 
 namespace async = quoll::async;
 namespace http = quoll::http;
-
-// Every message back as it came, text or binary, as Autobahn's fuzzing client asks of a server.
-async::task<> echo(http::websocket socket) {
-  for (;;) {
-    auto message = co_await socket.receive();
-
-    if (message.opcode == http::websocket_opcode::close) {
-      co_return;
-    }
-
-    if (message.opcode == http::websocket_opcode::binary) {
-      co_await socket.send_binary(message.data);
-    } else {
-      co_await socket.send_text(message.data);
-    }
-  }
-}
 
 http::router make_router() {
   http::router router;
@@ -122,7 +104,9 @@ http::router make_router() {
   });
   router.get("/ws", [](http::request request) {
     // Autobahn sends messages of up to 16 MiB.
-    return http::accept_websocket(request, echo, {.max_message_size = std::size_t{64} * 1024 * 1024});
+    // Every message back as it came, text or binary, as Autobahn's fuzzing client asks of a server.
+    return http::accept_websocket(request, quoll::test::websocket_echo,
+                                  {.max_message_size = std::size_t{64} * 1024 * 1024});
   });
   return router;
 }

@@ -1,4 +1,6 @@
-// Node's own client (fetch, undici; the global WebSocket) against Quoll's server, at QUOLL_URL.
+// Node's own clients (fetch, undici; node:http; the global WebSocket) against Quoll's server, at QUOLL_URL.
+import http from 'node:http';
+
 const base = process.env.QUOLL_URL;
 let failures = 0;
 
@@ -26,6 +28,28 @@ await check('fetch GET /hello', async () => {
 });
 await check('fetch five GETs, kept alive', async () => {
   for (let turn = 0; turn < 5; ++turn) expect((await (await fetch(`${base}/hello`)).text()) === 'hello', `GET ${turn}`);
+});
+await check('node:http GETs and POSTs on one kept connection', async () => {
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+  const sockets = new Set();
+  const send = (method, path, body) =>
+    new Promise((resolve, reject) => {
+      const request = http.request(`${base}${path}`, { method, agent }, (response) => {
+        const parts = [];
+
+        response.on('data', (part) => parts.push(part));
+        response.on('end', () => resolve(Buffer.concat(parts).toString()));
+      });
+
+      request.on('socket', (socket) => sockets.add(socket));
+      request.on('error', reject);
+      request.end(body);
+    });
+
+  for (let turn = 0; turn < 5; ++turn) expect((await send('GET', '/hello')) === 'hello', `GET ${turn}`);
+  expect((await send('POST', '/echo', 'kept')) === 'kept', 'POST');
+  agent.destroy();
+  expect(sockets.size === 1, `${sockets.size} connections`);
 });
 await check('fetch POST echoed', async () => {
   const response = await fetch(`${base}/echo`, { method: 'POST', body: 'ping', headers: { 'Content-Type': 'text/plain' } });
