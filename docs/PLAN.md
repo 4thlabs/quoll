@@ -359,12 +359,12 @@ changes only what the harness shows. Candidates:
 
 ## Decided
 
-- **A POST takes an idle connection only if it was given back less than a second ago** (2026-11-10,
+- **A POST takes an idle connection only if its last request was sent less than a second ago** (2026-11-10,
   `client_options::max_idle_for_non_idempotent`), and any request found on a closed connection with none of it written goes
-  again on a new one, as hyper does. Go's client lets a POST take any idle connection, as a reader always waiting on it tells
-  a closed one before the request is written; Quoll's client has no such reader, and the maintainer chose the recency rule
-  over adding one: well below the servers' idle timeouts, a connection that recent is rarely closed, and a POST written on
-  one found closed fails rather than go twice.
+  again on a new one, as hyper does, as does one answered 408 with `Connection: close` (RFC 9110, 15.5.9). Go's client lets
+  a POST take any idle connection, as a reader always waiting on it tells a closed one before the request is written;
+  Quoll's client has no such reader, and the maintainer chose the recency rule over adding one: well below the servers' idle
+  timeouts, a connection that recent is rarely closed, and a POST written on one found closed fails rather than go twice.
 - **Using the JavaScript libraries a page needs is a requirement of the UI** (2026-11-07), whatever form it takes: see step
   6.
 - **`samples/github` is step 4's real API** (2026-11-07), and a client of Docker over a Unix socket comes later, in no step
