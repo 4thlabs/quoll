@@ -1357,3 +1357,22 @@ TEST_CASE("websocket: a client's send under way ends as its peer is taken as gon
   REQUIRE(sent == std::errc::timed_out);
   REQUIRE(time.now() == 4400ms);
 }
+
+TEST_CASE("websocket: a client's send after its own close says so, even once its peer was taken as gone",
+          "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{io::any_stream{std::move(client_end)}, websocket_role::client, {}, {.ping_interval = 1s}};
+
+  // The close is not answered: gone at 1 s; a send then is one after its own close.
+  auto const after = [&]() -> task<std::error_code> {
+    co_await client.close();
+
+    auto const gone = co_await quoll::test::code_thrown_by(client.receive());
+
+    REQUIRE(gone == std::errc::timed_out);
+    co_return co_await quoll::test::code_thrown_by(client.send_text("late"));
+  };
+
+  REQUIRE(quoll::test::run(time, after()) == http::error::websocket_closed);
+}

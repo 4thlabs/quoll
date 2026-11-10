@@ -431,7 +431,8 @@ throws `http::websocket_refused`, whose `response()` it is. The connection and t
 longer than `options.handshake_timeout`, 30 seconds by default. A client's end masks what it sends, and
 keeps itself alive while a `receive()` waits, as a server does: at the end of each
 `options.websocket.ping_interval`, 30 seconds by default, a server that sent nothing in it is pinged, and
-one that sent nothing since is taken as gone, within two to three intervals of silence. The `receive()` then throws `std::errc::timed_out`, or the failure
+one that sent nothing since is taken as gone, within two to three intervals of silence, and the time
+its ping waits behind a send or takes to leave. The `receive()` then throws `std::errc::timed_out`, or the failure
 of the ping that could not leave, and receiving has ended. So a client that only receives finds a server
 that vanished without a word, a network cut or a host down; zero leaves that to the application.
 
