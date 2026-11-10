@@ -70,11 +70,13 @@ namespace quoll::http {
  * is idle. A connection is not reused after a request or a response that closes it (`Connection: close`, HTTP/1.0), a
  * response delimited by the end of the stream, a switch of protocol, or a stream error.
  *
- * A server may close an idle connection at any time, which shows only once a request is sent on it. Only the requests
- * whose method is idempotent (GET, HEAD, PUT, DELETE, OPTIONS, TRACE) take an idle connection: when it turns out
- * closed before any response (or answers 408 Request Timeout, sent before closing it), the request is sent again,
- * once, on a new connection, and the other idle connections, older, are closed too. The other requests (POST,
- * PATCH...), which the server may have received, open a new connection, kept afterwards for the next requests.
+ * A server may close an idle connection at any time, which shows only once a request is sent on it. Every request
+ * whose body is whole takes an idle connection, as Go's client and Boost.Burl do; one whose body comes in pieces opens
+ * its own, as its writer runs once. When the idle one turns out closed before any response (or answers 408 Request
+ * Timeout, sent before closing it), the other idle connections, older, are closed too, and a request whose method is
+ * idempotent (GET, HEAD, PUT, DELETE, OPTIONS, TRACE) is sent again, once, on a new connection. The others (POST,
+ * PATCH...), which the server may have received, are not: they fail with the stream's error, or the 408 is their
+ * response, for their caller to decide.
  *
  * Over TLS, a server closing without TLS's closing message is `std::errc::connection_reset`. It changes nothing for a
  * response whose length is known, nor for a kept connection, but it fails a response delimited by the end of the

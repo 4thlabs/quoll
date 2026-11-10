@@ -524,18 +524,32 @@ void make_room(client_core &shared) {
 
   throw_if_stopped(co_await async::current_stop_token());
 
-  if (idempotent(request.method) && !request.writer) {
+  // An idle connection for any request whose body is whole, as Go's and Boost.Burl's clients do; one whose body comes
+  // in pieces has its own, as a writer runs once. One the server closed meanwhile shows only now: an idempotent
+  // request goes again on a new one, and another fails, as the server may have received it, for its caller to decide.
+  if (!request.writer) {
     if (auto idle = shared->pool.take()) {
-      auto response = co_await async::detail::with_optional_timeout(
-          shared->options.response_timeout,
-          exchange(shared->pool, shared->options.limits, idle->connection, request, true));
+      auto const given_back = idle->given_back;
+      std::optional<http::response> response;
+
+      try {
+        response = co_await async::detail::with_optional_timeout(
+            shared->options.response_timeout,
+            exchange(shared->pool, shared->options.limits, idle->connection, request, idempotent(request.method)));
+      } catch (std::system_error const &thrown) {
+        // Closed by the server after some idle time: the connections idle for longer are likely closed as well.
+        if (peer_has_gone(thrown.code())) {
+          shared->pool.close_older_than(given_back);
+        }
+
+        throw;
+      }
 
       if (response) {
         co_return std::move(*response);
       }
 
-      // Closed by the server after some idle time: the connections idle for longer are likely closed as well.
-      shared->pool.close_older_than(idle->given_back);
+      shared->pool.close_older_than(given_back);
     }
   }
 
@@ -912,17 +926,30 @@ private:
 
   throw_if_stopped(co_await async::current_stop_token());
 
-  if (idempotent(request.method) && !request.writer) {
+  // As in send_prepared(): an idle connection for any request whose body is whole, sent again on a new one only when
+  // idempotent.
+  if (!request.writer) {
     if (auto idle = shared->pool.take()) {
       auto const given_back = idle->given_back;
-      auto const started = co_await async::detail::with_optional_timeout(
-          shared->options.response_timeout, stream->start(std::move(idle->connection), request, true));
+      auto started = false;
+
+      try {
+        started = co_await async::detail::with_optional_timeout(
+            shared->options.response_timeout,
+            stream->start(std::move(idle->connection), request, idempotent(request.method)));
+      } catch (std::system_error const &thrown) {
+        // Closed by the server after some idle time: the connections idle for longer are likely closed as well.
+        if (peer_has_gone(thrown.code())) {
+          shared->pool.close_older_than(given_back);
+        }
+
+        throw;
+      }
 
       if (started) {
         co_return stream->take_head(stream);
       }
 
-      // Closed by the server after some idle time: the connections idle for longer are likely closed as well.
       shared->pool.close_older_than(given_back);
     }
   }
