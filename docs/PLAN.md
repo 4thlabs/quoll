@@ -49,13 +49,18 @@ One pull request per topic, under the rule in [`AGENTS.md`](../AGENTS.md). A new
 before much is built on it. Points marked "To settle" and the [open questions](#open-questions) are the maintainer's to
 decide. Steps marked *(maintainer merges)* are big architecture changes.
 
-**Current step: 5.** Step 0 only waits for the maintainer.
+**Current step: 6.** Step 0 only waits for the maintainer, and step 5's WebSocket in the browser and in the REST DSL for
+a page that needs them.
 
 ### Done
 
 `async`, `io`, `http`, `client`, `server` and `rest`, with timeouts by default and TLS (a client GET and a REST client
 over TCP, over `fetch`, and through OpenSSL). A first `quoll::ui` with its DOM renderer, Tailwind through Vite, and two
 levels of hot reload, in the sample `ui_notes`. In CI: `clang-tidy`, the standard library's checks, Apple Clang on macOS, Codex's review and a protected `main`.
+
+SSE and WebSocket (step 5, but for WebSocket in the browser and in the REST DSL): typed events in the REST DSL, natively
+and through `fetch`, WebSocket natively, their parsers fuzzed, and every night against third-party clients and servers and
+Autobahn's suite.
 
 REST from a command-line program (step 4): a client's scopes and interceptors, form and bytes codecs, `open_enum` for the
 values an enum does not know, and `samples/github`, calling GitHub natively and in Node through `fetch`.
@@ -205,6 +210,13 @@ SSE is done on 2026-11-09: the parser and its formatting, fuzzed (#123), `http::
 over the transports (#124), and `rest::events<T>`, its `event_sink` and the client's `subscribe`, natively and through
 `fetch`, run in Node by CI as the browser's stand-in, as for step 3.
 
+WebSocket is done natively on 2026-11-10: its frames, fuzzed, and its handshake (#126), `http::websocket` and
+`accept_websocket` through `response::upgrade` (#127), `connect_websocket` (#128), which keeps itself alive as Beast does
+(#129). The interop tests run every night (#150): Quoll's server against curl, Python and Node as clients, its client against
+Node's and Python's servers, Quoll's client and server through nginx as a proxy, and Autobahn's suite both ways, without its
+permessage-deflate cases, as Quoll offers no extension. Left: the browser's WebSocket and a WebSocket shape in the REST DSL,
+which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10).
+
 *Done when:* each runs end to end, natively and in the browser, with its frame parsing fuzzed.
 
 ### Step 6: the UI DSL, complete
@@ -223,6 +235,8 @@ over the transports (#124), and `rest::events<T>`, its `event_sink` and the clie
   without a copy where it counts, npm packages through the Vite build, loaded on demand. Plain DOM libraries and web
   components come this way; those tied to React cannot.
 - A trial on a real screen of an application, chosen with the maintainer at the start of this step.
+- WebSocket in the browser and in the REST DSL, left from step 5, if that screen needs them; if it does not, the maintainer
+  says where they go once the step ends, and step 5 is done.
 
 *Done when:* that screen runs with the base components and a JavaScript library loaded on demand, called from C++ and
 calling back, mounted and unmounted, with what it lacks listed.
@@ -358,6 +372,15 @@ changes only what the harness shows. Candidates:
 
 ## Decided
 
+- **The interop tests close the protocol layer, and step 6 comes next** (2026-11-10), as the maintainer asked, tired of
+  reimplementing HTTP, server-sent events and WebSocket: once Quoll's ends hold against third-party clients and servers
+  (#150), the protocol code takes the fixes of its bugs, those the interop tests and reviews find included, of what touches
+  security or stability, and what a step lists (WebSocket in the browser and in the REST DSL, left from step 5 for a page
+  that needs them; step 11's performance), but no new feature of its own. Swapping the stack was not worth it: the work is
+  done, Beast does nothing for the browser, and Boost.Http is still what the [HTTP layer](#http-layer) set aside. What stays
+  open is ticketed by module: the async core (#145), the client (#146, with closing idle connections as their time passes,
+  a candidate of step 11), the server (#147), and HTTP's differential parsing and request smuggling scanners (#149). A
+  feature an issue holds waits for a step to list it, or for the maintainer.
 - **An idle connection is checked before it is used again, as curl does** (2026-11-10): a poll of its socket that does not
   wait (`io::PollableStream`) finds one the server closed, or that carries bytes nothing asked for, which is closed. A
   POST then takes an idle connection as Go's client does, if its stream can be checked; one found closed with none of it
