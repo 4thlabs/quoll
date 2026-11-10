@@ -20,6 +20,9 @@ network=${QUOLL_NETWORK:-quoll-interop}
 container=${QUOLL_CONTAINER:-quoll-work}
 run="docker exec $container"
 port=18080
+# Autobahn's release, and the cases it holds but for 12 and 13 (permessage-deflate), which each report must hold.
+autobahn=crossbario/autobahn-testsuite:25.10.1@sha256:519915fb568b04c9383f70a1c405ae3ff44ab9e35835b085239c258b6fac3074
+autobahn_cases=301
 failed=""
 
 mkdir -p "$out"
@@ -28,7 +31,8 @@ docker network inspect "$network" >/dev/null 2>&1 || docker network create "$net
 docker network connect --alias quoll "$network" "$container" 2>/dev/null || true
 
 say() { printf '\n== %s\n' "$*"; }
-fail() { failed="$failed $1"; }
+# Each section once, however many of its steps failed.
+fail() { case " $failed " in *" $1 "*) ;; *) failed="$failed $1" ;; esac; }
 
 # A run, bounded, so that one that hangs fails rather than holds the rest: within the container, where the program runs.
 in_quoll() { $run timeout 600 "$@"; }
@@ -75,11 +79,17 @@ stop_peer() { docker rm -f "$1" >/dev/null 2>&1; }
 # Autobahn's reports of a former run, which its container wrote as root: removed from a container too.
 clear_reports() { docker run --rm -v "$out:/reports" alpine:3 rm -rf "/reports/$1"; }
 
-# Autobahn's report, its summary: each case's behaviour, and those that failed.
+# Autobahn's report, its summary: each case's behaviour, those that failed, and whether it holds every case, as one that
+# never reached Autobahn is missing from it. No report, or one cut short, is a failure.
 autobahn_summary() {
   docker run --rm -v "$out:/reports" python:3.12-slim python3 -c "
-import json, sys, collections
-index = json.load(open('/reports/$1/index.json'))
+import json, sys, collections, os
+if not os.path.exists('/reports/$1/index.json'):
+    sys.exit('   no report')
+try:
+    index = json.load(open('/reports/$1/index.json'))
+except ValueError as error:
+    sys.exit(f'   a report cut short: {error}')
 counts = collections.Counter()
 bad = []
 for agent, cases in index.items():
@@ -90,9 +100,12 @@ for agent, cases in index.items():
         if result['behavior'] not in fine or result['behaviorClose'] not in fine:
             bad.append((case, result['behavior'], result['behaviorClose']))
 print(dict(counts))
+miscounted = sum(counts.values()) != $autobahn_cases
+if miscounted:
+    print('  ', sum(counts.values()), 'cases in the report, $autobahn_cases expected')
 for case, behavior, close in sorted(bad, key=lambda b: [int(x) for x in b[0].split('.')]):
     print('  ', case, behavior, close)
-sys.exit(1 if bad or not counts else 0)
+sys.exit(1 if bad or miscounted else 0)
 "
 }
 
@@ -134,13 +147,11 @@ for one in $what; do
       say "Autobahn's fuzzing client -> Quoll's WebSocket server"
       start_quoll_server || { fail autobahn-server; continue; }
       clear_reports server
-      if in_peer -v "$peers/autobahn:/config:ro" -v "$out:/reports" \
-        crossbario/autobahn-testsuite wstest -m fuzzingclient -s /config/fuzzingclient.json >"$out/autobahn-server.log" 2>&1; then
-        autobahn_summary server || fail autobahn-server
-      else
-        tail -20 "$out/autobahn-server.log"
-        fail autobahn-server
-      fi
+      # The summary whatever the run's end, which says what it did run.
+      in_peer -v "$peers/autobahn:/config:ro" -v "$out:/reports" \
+        $autobahn wstest -m fuzzingclient -s /config/fuzzingclient.json >"$out/autobahn-server.log" 2>&1 ||
+        { tail -20 "$out/autobahn-server.log"; fail autobahn-server; }
+      autobahn_summary server || fail autobahn-server
       ;;
     node-server)
       say "Quoll's client -> Node's server (node:http, ws)"
@@ -171,13 +182,16 @@ for one in $what; do
     autobahn-client)
       say "Quoll's WebSocket client -> Autobahn's fuzzing server"
       clear_reports client
-      start_peer quoll-autobahn -v "$peers/autobahn:/config:ro" -v "$out:/reports" crossbario/autobahn-testsuite \
-        wstest -m fuzzingserver -s /config/fuzzingserver.json
-      if wait_for quoll-autobahn 9001 &&
-        in_quoll "$bin/quoll_interop_client" autobahn ws://quoll-autobahn:9001 >"$out/autobahn-client.log" 2>&1; then
+      if ! start_peer quoll-autobahn -v "$peers/autobahn:/config:ro" -v "$out:/reports" $autobahn \
+        wstest -m fuzzingserver -s /config/fuzzingserver.json; then
+        echo "Autobahn's fuzzing server did not start"
+        fail autobahn-client
+      elif wait_for quoll-autobahn 9001; then
+        in_quoll "$bin/quoll_interop_client" autobahn ws://quoll-autobahn:9001 >"$out/autobahn-client.log" 2>&1 ||
+          { tail -20 "$out/autobahn-client.log"; fail autobahn-client; }
         autobahn_summary client || fail autobahn-client
       else
-        tail -20 "$out/autobahn-client.log"
+        docker logs --tail 20 quoll-autobahn
         fail autobahn-client
       fi
       stop_peer quoll-autobahn
