@@ -632,6 +632,43 @@ TEST_CASE("http::client: a POST counts a connection idle from its last request, 
   }
 }
 
+TEST_CASE("http::client: a POST takes a recent connection given back before one sent earlier", "[client][timer]") {
+  virtual_time time;
+  slow_network network{.time = &time, .body_delay = 1200ms};
+
+  auto const send = [&]() -> task<std::string> {
+    http::client const client{slow_connector{network}, "example.com", 80, {.max_idle_for_non_idempotent = 1s}};
+
+    // Sent at 0, read until 1.2 s: given back last.
+    auto const slow = [&]() -> task<std::string> {
+      auto response = co_await client.stream(make_request(verb::get, "/"));
+      std::string body;
+
+      while (auto const piece = co_await response.body.read()) {
+        body += *piece;
+      }
+
+      co_return body;
+    };
+    // Sent at 0.5 s and answered at once.
+    auto const quick = [&]() -> task<std::string> {
+      co_await async::sleep_for(500ms);
+      network.body_delay = 0s;
+      co_return (co_await client.send(make_request(verb::get, "/"))).body;
+    };
+    auto const [first, second] = co_await async::when_all(slow(), quick());
+
+    REQUIRE(first + second == "okok");
+    co_await async::sleep_for(100ms);
+
+    // At 1.3 s: the quick one, idle for 0.8 s, and not the slow one, sent 1.3 s before.
+    co_return (co_await client.send(make_request(verb::post, "/", "ping"))).body;
+  };
+
+  REQUIRE(quoll::test::run(time, send()) == "ok");
+  REQUIRE(network.connections == 2);
+}
+
 TEST_CASE("http::client: a full pool closes its oldest connection rather than the one given back", "[client][timer]") {
   virtual_time time;
   slow_network network{.time = &time};

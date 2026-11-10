@@ -109,39 +109,43 @@ public:
   struct idle_connection {
     io::any_stream connection;
     std::uint64_t given_back;
-    std::chrono::nanoseconds at;
+    std::chrono::nanoseconds sent_at;
   };
 
   explicit connection_pool(std::size_t capacity) : capacity_(capacity) {}
 
-  // How recently a connection's last request must have been sent for it to be taken: less than `within` before now,
-  // on the clock of `executor`.
+  // How recently a connection's last request must have been sent for it to be taken: less than `within` before `now`,
+  // on idle_clock().
   struct recency {
-    async::executor_ref executor;
+    std::chrono::nanoseconds now;
     std::chrono::nanoseconds within;
   };
 
-  // The connection used last, the least likely to have been closed by the server for being idle; given `recent`, only
-  // if its last request went that recently. The clock is read under the lock, so that a connection given back
-  // meanwhile, on another thread, is not seen sent later than now.
+  // The connection used last, the least likely to have been closed by the server for being idle; given `recent`, the
+  // one given back last of those whose last request went that recently, which a response read slowly may have given
+  // back after one sent later. One sent after `now`, on an executor with another clock or meanwhile on another thread,
+  // is not taken, as nothing tells how long it has been idle.
   [[nodiscard]] std::optional<idle_connection> take(std::optional<recency> recent = std::nullopt) {
     return state_.with([recent](state &pool) -> std::optional<idle_connection> {
-      if (pool.idle.empty()) {
+      auto const recent_enough = [recent](idle_connection const &kept) {
+        if (!recent) {
+          return true;
+        }
+
+        auto const idle_for = recent->now - kept.sent_at;
+
+        return idle_for >= std::chrono::nanoseconds::zero() && idle_for < recent->within;
+      };
+      auto const found = std::ranges::find_if(pool.idle.rbegin(), pool.idle.rend(), recent_enough);
+
+      if (found == pool.idle.rend()) {
         return std::nullopt;
       }
 
-      // Before now on the clock: given back on an executor with another clock, of which nothing can be told.
-      if (recent) {
-        auto const idle_for = idle_clock(recent->executor) - pool.idle.back().at;
+      auto const at = std::prev(found.base());
+      auto kept = std::move(*at);
 
-        if (idle_for < std::chrono::nanoseconds::zero() || idle_for >= recent->within) {
-          return std::nullopt;
-        }
-      }
-
-      auto kept = std::move(pool.idle.back());
-
-      pool.idle.pop_back();
+      pool.idle.erase(at);
       return kept;
     });
   }
@@ -449,7 +453,12 @@ exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
          io::any_stream &connection QUOLL_LIFETIMEBOUND, prepared_request const &request QUOLL_LIFETIMEBOUND,
          attempt on, bool *reusable QUOLL_LIFETIMEBOUND = nullptr) {
   std::error_code unsent;
-  auto const sent_at = idle_clock(co_await async::current_executor());
+  // Only for a connection that may go back to the pool.
+  std::chrono::nanoseconds sent_at{};
+
+  if (reusable == nullptr && request.keep_alive) {
+    sent_at = idle_clock(co_await async::current_executor());
+  }
 
   // Its request is on its way, and its connection stays with what sends it.
   if (reusable == nullptr) {
@@ -621,7 +630,8 @@ struct idle_attempt {
   }
 
   auto const within = shared.options.max_idle_for_non_idempotent;
-  auto idle = within > std::chrono::nanoseconds::zero() ? shared.pool.take({{executor, within}}) : std::nullopt;
+  auto idle =
+      within > std::chrono::nanoseconds::zero() ? shared.pool.take({{idle_clock(executor), within}}) : std::nullopt;
 
   return idle ? std::optional<idle_attempt>{{std::move(*idle), attempt::idle_once}} : std::nullopt;
 }
