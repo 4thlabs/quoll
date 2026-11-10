@@ -467,6 +467,12 @@ async::task<websocket_message> receive_next(std::shared_ptr<state> connection, b
       }
     }
 
+    // The peer taken as gone while no receive() read, by a ping that failed: what is parsed is given, but no read
+    // follows, whatever this one runs on.
+    if (connection->gone.stop_requested()) {
+      throw std::system_error{connection->gone_why, "quoll::http::websocket: the peer is gone"};
+    }
+
     // None for a read about to be stopped, by the caller or a peer gone.
     if (watch) {
       watch = false;
@@ -544,22 +550,17 @@ async::task<websocket_message> receive_from(std::shared_ptr<state> connection, d
     throw std::system_error{connection->failure, "quoll::http::websocket: receiving has ended"};
   }
 
-  // The peer taken as gone while no receive() read, by a ping that failed: receiving has ended too, whatever this one
-  // runs on.
-  if (connection->gone.stop_requested()) {
-    connection->failure = connection->gone_why;
-    throw std::system_error{connection->failure, "quoll::http::websocket: the peer is gone"};
-  }
-
   try {
-    if (connection->ping_interval <= std::chrono::nanoseconds::zero()) {
+    // `gone` says whether its receive()s watch the connection.
+    if (!connection->gone.stop_possible()) {
       co_return co_await receive_next(connection);
     }
 
     co_return co_await receive_watched(connection);
   } catch (std::system_error const &thrown) {
-    // A code of zero as a failure with none, so that receiving ends all the same.
-    connection->failure = code_or_io_error(thrown.code());
+    // A code of zero as a failure with none, so that receiving ends all the same; a verdict, whatever stop came
+    // beside it, so that the receive()s after it say why.
+    connection->failure = connection->gone.stop_requested() ? connection->gone_why : code_or_io_error(thrown.code());
     throw;
   }
 }
@@ -682,7 +683,8 @@ void take_as_gone(state &connection, std::error_code why) noexcept {
 }
 
 // Clears `watching` as the keep-alive of a connection no server watches ends, however it ends: the next receive()
-// starts another.
+// starts another. Thread safety: that of the connection's state, on the strand its operations and its keep-alive run
+// on.
 class watching_mark {
 public:
   explicit watching_mark(std::weak_ptr<state> watched) noexcept : watched_(std::move(watched)) {}

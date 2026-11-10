@@ -1426,3 +1426,41 @@ TEST_CASE("websocket: a client's receive() with no timer to watch with follows a
 
   REQUIRE(quoll::test::run(loop, later()) == std::errc::connection_reset);
 }
+
+TEST_CASE("websocket: a client's messages already read are given after a verdict, then no read follows",
+          "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{
+      io::any_stream{reset_late{std::move(client_end), 500ms}}, websocket_role::client, {}, {.ping_interval = 1s}};
+
+  // Two messages in one piece at 1.2 s, the first ending its receive(); the ping of 1 s fails at 1.5 s: the second,
+  // already read, is given, and the next receive() says why the peer is gone.
+  auto const both = [&]() -> task<std::pair<websocket_message, std::error_code>> {
+    auto const peer = [&]() -> task<> {
+      co_await quoll::async::sleep_for(1200ms);
+      co_await send_raw(server_end, http::format_websocket_frame(websocket_opcode::text, "one") +
+                                        http::format_websocket_frame(websocket_opcode::text, "two"));
+    };
+    auto const receiving = [&]() -> task<std::pair<websocket_message, std::error_code>> {
+      auto const first = co_await client.receive();
+
+      REQUIRE(first == text("one"));
+      co_await quoll::async::sleep_for(1s);
+
+      auto second = co_await client.receive();
+      auto const after = co_await quoll::test::code_thrown_by(client.receive());
+
+      co_return std::pair{std::move(second), after};
+    };
+
+    auto [sent, received] = co_await quoll::async::when_all(peer(), receiving());
+
+    co_return received;
+  };
+
+  auto const [second, after] = quoll::test::run(time, both()).value();
+
+  REQUIRE(second == text("two"));
+  REQUIRE(after == std::errc::connection_reset);
+}
