@@ -320,6 +320,8 @@ struct slow_network {
   int connections = 0;
   // What to answer first, raw, before the plain answers.
   std::vector<std::string> first_replies{};
+  // How long the body of a plain answer comes after its head, if at all.
+  std::chrono::nanoseconds body_delay = 0s;
 };
 
 task<> answer_slowly(io::memory_stream stream, slow_network &network) {
@@ -339,6 +341,15 @@ task<> answer_slowly(io::memory_stream stream, slow_network &network) {
     if (!network.first_replies.empty()) {
       response = std::move(network.first_replies.front());
       network.first_replies.erase(network.first_replies.begin());
+    } else if (network.body_delay > 0s) {
+      std::string const head = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n";
+
+      if ((co_await io::write(stream, std::as_bytes(std::span{head}))).error) {
+        co_return;
+      }
+
+      co_await async::sleep_for(network.body_delay);
+      response = "ok";
     }
 
     if ((co_await io::write(stream, std::as_bytes(std::span{response}))).error) {
@@ -542,31 +553,37 @@ TEST_CASE("http::client: an idempotent request goes again when its kept connecti
 }
 
 TEST_CASE("http::client: a POST takes only a connection idle for less than its idle time", "[client][timer]") {
-  // On the clock of the executor's timer, virtual here.
+  // On the clock of the executor's timer, virtual here, from when the connection was given back: past a response read
+  // through stream(), its body after its head, as through send().
   auto const connections_after = [](std::chrono::nanoseconds idle, bool streamed) {
     virtual_time time;
-    slow_network network{.time = &time};
+    slow_network network{.time = &time, .body_delay = streamed ? 1ms : 0ns};
 
     auto const send = [&]() -> task<std::string> {
       http::client const client{slow_connector{network}, "example.com", 80, {.max_idle_for_non_idempotent = 1s}};
+      auto const body_of = [&](http::request request) -> task<std::string> {
+        if (!streamed) {
+          co_return (co_await client.send(std::move(request))).body;
+        }
 
-      auto const first = co_await client.send(make_request(verb::get, "/"));
+        auto response = co_await client.stream(std::move(request));
+        std::string body;
 
-      REQUIRE(first.body == "ok");
+        while (auto const piece = co_await response.body.read()) {
+          body += *piece;
+        }
+
+        co_return body;
+      };
+
+      // Given back well after the clock's origin.
+      co_await async::sleep_for(5s);
+
+      auto const first = co_await body_of(make_request(verb::get, "/"));
+
+      REQUIRE(first == "ok");
       co_await async::sleep_for(idle);
-
-      if (!streamed) {
-        co_return (co_await client.send(make_request(verb::post, "/", "ping"))).body;
-      }
-
-      auto response = co_await client.stream(make_request(verb::post, "/", "ping"));
-      std::string body;
-
-      while (auto const piece = co_await response.body.read()) {
-        body += *piece;
-      }
-
-      co_return body;
+      co_return co_await body_of(make_request(verb::post, "/", "ping"));
     };
 
     REQUIRE(quoll::test::run(time, send()) == "ok");
@@ -574,6 +591,7 @@ TEST_CASE("http::client: a POST takes only a connection idle for less than its i
   };
 
   for (auto const streamed : {false, true}) {
+    INFO("streamed " << streamed);
     REQUIRE(connections_after(999ms, streamed) == 1);
     REQUIRE(connections_after(1s, streamed) == 2);
   }
@@ -4127,6 +4145,74 @@ TEST_CASE("http::client: a server closing during a write is what the caller hear
   };
 
   REQUIRE(quoll::test::run(loop, sending()) == io::error::end_of_stream);
+}
+
+TEST_CASE("http::client: a POST partly written on an idle connection the server left is not sent again", "[client]") {
+  async::run_loop loop;
+  auto connections = std::make_shared<int>(0);
+
+  // Answers its first request, then takes half of the next one and is gone.
+  class cut_in_the_second {
+  public:
+    [[nodiscard]] task<io::io_result> read_some(std::span<std::byte> buffer) {
+      if (replies_ == 0) {
+        co_return io::io_result{io::make_error_code(io::error::end_of_stream), 0};
+      }
+
+      std::string_view const reply = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+
+      --replies_;
+      std::memcpy(buffer.data(), reply.data(), reply.size());
+      co_return io::io_result{{}, reply.size()};
+    }
+
+    [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> bytes) {
+      auto const write = writes_++;
+
+      if (write == 0) {
+        ++replies_;
+        co_return io::io_result{{}, bytes.size()};
+      }
+
+      if (write == 1) {
+        co_return io::io_result{{}, bytes.size() / 2};
+      }
+
+      co_return io::io_result{std::make_error_code(std::errc::broken_pipe), 0};
+    }
+
+  private:
+    int replies_ = 0;
+    int writes_ = 0;
+  };
+
+  struct counting {
+    std::shared_ptr<int> count;
+
+    [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
+      ++*count;
+      co_return io::any_stream{cut_in_the_second{}};
+    }
+  };
+
+  http::client const client{counting{connections}, "example.com", 80};
+  auto const streamed = GENERATE(false, true);
+
+  auto const posting = [&]() -> task<std::error_code> {
+    auto const first = co_await client.send(make_request(verb::get, "/"));
+
+    REQUIRE(first.body == "ok");
+
+    if (streamed) {
+      co_return co_await quoll::test::code_thrown_by(stream_to_end(client, make_request(verb::post, "/", "ping")));
+    }
+
+    co_return co_await quoll::test::code_thrown_by(client.send(make_request(verb::post, "/", "ping")));
+  };
+
+  // The server may have read what was written: the stream's failure is the request's.
+  REQUIRE(quoll::test::run(loop, posting()) == std::errc::broken_pipe);
+  REQUIRE(*connections == 1);
 }
 
 TEST_CASE("http::client: a connection whose request could not leave is not kept", "[client]") {
