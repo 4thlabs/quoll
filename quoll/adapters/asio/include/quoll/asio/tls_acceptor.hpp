@@ -40,14 +40,13 @@
 // Only with OpenSSL: see QUOLL_TLS in this adapter's CMakeLists.txt.
 #if defined(QUOLL_ASIO_TLS)
 
+#include <quoll/asio/accepted_tls_stream.hpp>
 #include <quoll/asio/detail/accept.hpp>
 #include <quoll/asio/detail/tls_connect.hpp>
 #include <quoll/asio/tls_stream.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/bound_listener.hpp>
-#include <quoll/io/half_closable_stream.hpp>
-#include <quoll/io/io_result.hpp>
 #include <quoll/io/tls_options.hpp>
 
 #include <asio/ip/tcp.hpp>
@@ -58,7 +57,6 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <span>
 #include <utility>
 
 namespace quoll::asio {
@@ -75,54 +73,20 @@ namespace detail {
   return context;
 }
 
-// A session accepted by a tls_acceptor: its handshake takes place on its first read, in the connection's own task. In
-// the accept loop, a slow peer would hold every other one back; here, the timeouts of a read apply to it too.
-class accepted_tls_stream {
-public:
-  accepted_tls_stream(tls_stream stream, std::shared_ptr<::asio::ssl::context> context) noexcept
-      : stream_(std::move(stream)), context_(std::move(context)) {}
-
-  [[nodiscard]] async::task<io::io_result> read_some(std::span<std::byte> buffer) {
-    if (!shaken_hands_) {
-      if (auto const error = co_await stream_.handshake(tls_stream::session_type::server)) {
-        co_return io::io_result{error, 0};
-      }
-
-      shaken_hands_ = true;
-    }
-
-    co_return co_await stream_.read_some(buffer);
-  }
-
-  // A server answers what it has read: the handshake has taken place.
-  [[nodiscard]] auto write_some(std::span<std::byte const> data) {
-    assert(shaken_hands_ && "accepted_tls_stream written to before its first read");
-    return stream_.write_some(data);
-  }
-
-  [[nodiscard]] auto shutdown_send() { return stream_.shutdown_send(); }
-
-private:
-  tls_stream stream_;
-  std::shared_ptr<::asio::ssl::context> context_;
-  bool shaken_hands_ = false;
-};
-
-static_assert(io::HalfClosableStream<accepted_tls_stream>);
-
 // On the state and a context of its own, bound at the call: the acceptor may move while an accept is pending.
 inline async::task<io::any_stream> accept_tls(acceptor_state &state, std::shared_ptr<::asio::ssl::context> context) {
   auto socket = co_await accept_socket(state);
 
   co_return io::any_stream{
-      accepted_tls_stream{tls_stream{tls_stream::session_type{std::move(socket), *context}}, std::move(context)}};
+      asio::accepted_tls_stream{tls_stream{tls_stream::session_type{std::move(socket), *context}}, std::move(context)}};
 }
 
 } // namespace detail
 
 /**
  * @brief Listener accepting TLS connections with asio, for a server (quoll::http::server): as an acceptor, with a
- * certificate. Each connection's handshake takes place on its first read.
+ * certificate. Each connection's handshake takes place on its first read: accept() gives an io::any_stream over an
+ * accepted_tls_stream, which `target<asio::accepted_tls_stream>()` recovers, and its stream() the session.
  *
  * Move-only; the acceptor lives on the heap, so moving it is allowed while an accept is pending. Destroying it, or its
  * io_context, is not. One accept at a time. Thread safety: none, like the acceptor.
@@ -141,7 +105,7 @@ public:
       : state_(std::make_unique<detail::acceptor_state>(std::move(listening), std::move(socket_strands))),
         context_(detail::server_context(options)) {}
 
-  /** @brief The next connection a peer opens. */
+  /** @brief The next connection a peer opens, an accepted_tls_stream. */
   [[nodiscard]] async::task<io::any_stream> accept() { return detail::accept_tls(checked_state(), context_); }
 
   /** @brief The port it accepts on: the one the system picked when it was bound to port 0. */

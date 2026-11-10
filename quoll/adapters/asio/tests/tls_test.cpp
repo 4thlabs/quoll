@@ -86,6 +86,10 @@ http::request make_request(http::verb method, std::string target, std::string bo
 #include <asio/ssl/context.hpp>
 #include <asio/ssl/verify_mode.hpp>
 #include <asio/write.hpp>
+
+#include <openssl/ssl.h>
+
+#include <quoll/asio/accepted_tls_stream.hpp>
 #include <quoll/asio/executor.hpp>
 #include <quoll/asio/runtime.hpp>
 #include <quoll/asio/tls_acceptor.hpp>
@@ -844,6 +848,82 @@ TEST_CASE("TLS: poll_read is ready once the peer's closing message is read, its 
   }
 
   REQUIRE(outcome == "end,ready");
+}
+
+TEST_CASE("TLS: what a tls_acceptor accepts is an accepted_tls_stream, its session there once handshaken",
+          "[tls][asio]") {
+  ::asio::io_context context;
+  quoll::asio::tls_acceptor acceptor{
+      ::asio::ip::tcp::acceptor{context, ::asio::ip::tcp::endpoint{::asio::ip::address_v4::loopback(), 0}},
+      server_certificate()};
+  ::asio::ip::tcp::endpoint const endpoint{::asio::ip::address_v4::loopback(), acceptor.local_port()};
+  ::asio::ssl::context client_context{::asio::ssl::context::tls_client};
+  std::optional<std::string> outcome;
+  std::exception_ptr failure;
+
+  client_context.set_verify_mode(::asio::ssl::verify_none);
+
+  auto const work = [&]() -> task<std::string> {
+    auto const serving = [&]() -> task<std::string> {
+      auto accepted = co_await acceptor.accept();
+      auto *const tls = accepted.target<quoll::asio::accepted_tls_stream>();
+
+      if (tls == nullptr) {
+        co_return "not an accepted_tls_stream";
+      }
+
+      std::string seen = tls->handshaken() ? "handshaken" : "not yet";
+      std::array<std::byte, 1> nothing{};
+
+      // A server answers what it has read.
+      try {
+        static_cast<void>(tls->write_some(nothing));
+        seen += ",written";
+      } catch (std::logic_error const &) {
+        seen += ",refused";
+      }
+
+      std::array<char, 16> received{};
+      auto const read = co_await accepted.read_some(std::as_writable_bytes(std::span{received}));
+
+      seen += "," + std::string(received.data(), read.transferred);
+      seen += tls->handshaken() ? ",handshaken" : ",not yet";
+      seen += std::string{","} + ::SSL_get_version(tls->stream().session().native_handle());
+      co_return seen;
+    };
+
+    auto const calling = [&]() -> task<std::string> {
+      ::asio::ip::tcp::socket socket{context};
+
+      socket.connect(endpoint);
+
+      quoll::asio::tls_stream stream{quoll::asio::tls_stream::session_type{std::move(socket), client_context}};
+
+      if (auto const error = co_await stream.handshake(quoll::asio::tls_stream::session_type::client)) {
+        co_return error.message();
+      }
+
+      std::string const hello = "hello";
+
+      static_cast<void>(co_await io::write(stream, std::as_bytes(std::span{hello})));
+      co_return "";
+    };
+
+    auto [server, client] = co_await when_all(serving(), calling());
+
+    co_return server + client;
+  };
+
+  quoll::async::co_spawn(quoll::asio::executor{context.get_executor()}, work(),
+                         quoll::test::overloaded{[&](std::string value) { outcome = std::move(value); },
+                                                 [&](std::exception_ptr error) { failure = std::move(error); }});
+  context.run();
+
+  if (failure) {
+    std::rethrow_exception(failure);
+  }
+
+  REQUIRE(outcome == "not yet,refused,hello,handshaken,TLSv1.3");
 }
 
 TEST_CASE("TLS: a stream moved before its handshake and its shutdown run keeps them", "[tls][asio]") {
