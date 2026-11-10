@@ -283,10 +283,12 @@ async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, 
 
     // A stream that takes nothing, or more than it was given, without saying why, breaks its contract: see io::write.
     if (sent.error || sent.transferred == 0 || !fits) {
-      // A stop that is not the operation's is the keep-alive's, or the limit's.
-      auto const stopped = sent.error == std::errc::operation_canceled && !caller.stop_requested();
-      auto const gone = stopped && connection->gone.stop_requested();
-      auto const timed_out = stopped && !gone;
+      // A stop that is not the operation's is the keep-alive's, or the limit's; the keep-alive's beside the caller's
+      // is the verdict, as a receive() says it then.
+      auto const cancelled = sent.error == std::errc::operation_canceled;
+      auto const gone = cancelled && connection->gone.stop_requested();
+      auto const timed_out = cancelled && !gone && !caller.stop_requested();
+      auto const stopped = gone || timed_out;
       auto const failure = gone        ? connection->gone_why
                            : timed_out ? std::make_error_code(std::errc::timed_out)
                                        : code_or_io_error(sent.error);
@@ -432,7 +434,8 @@ void feed(state &connection, std::string_view bytes) {
 async::task<> start_watch(std::shared_ptr<state> connection);
 
 // What a receive() of a connection no server watches makes as it first reads: the end its keep-alive watches, which
-// the receive() stops as it ends, and whether a keep-alive may start, with a timer to wait with.
+// the receive() stops as it ends, and whether a keep-alive may start, with a timer to wait with. Thread safety: that
+// of the receive()'s frame, which holds it.
 struct watched_read {
   bool may_watch = false;
   std::stop_source done{std::nostopstate};
@@ -716,7 +719,8 @@ private:
   std::weak_ptr<state> watched_;
 };
 
-// Where a keep-alive of a connection no server watches stands between its waits.
+// Where a keep-alive of a connection no server watches stands between its waits. Thread safety: that of the
+// keep-alive's frame, which holds it.
 struct watch_count {
   std::uint64_t seen = 0;
   bool pinged = false;
