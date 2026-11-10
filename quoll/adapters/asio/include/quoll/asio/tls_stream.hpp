@@ -158,6 +158,9 @@ public:
   /** @brief The session, for what OpenSSL offers. */
   [[nodiscard]] session_type &session() noexcept { return checked_state().stream; }
 
+  /** @copydoc session */
+  [[nodiscard]] session_type const &session() const noexcept { return checked_state().stream; }
+
 private:
   // On the state, bound at the call: the stream may move before its task runs.
   static async::task<std::error_code> shake_hands(detail::stream_state<session_type> &state,

@@ -873,11 +873,13 @@ TEST_CASE("TLS: what a tls_acceptor accepts is an accepted_tls_stream, its sessi
       }
 
       std::string seen = tls->handshaken() ? "handshaken" : "not yet";
-      std::array<std::byte, 1> nothing{};
+      std::string const answer = "hi";
 
-      // A server answers what it has read.
+      seen += accepted.poll_read() == io::read_readiness::unknown ? ",unknown" : ",?";
+
+      // A server answers what it has read, through what accept() gave: the stream stays usable.
       try {
-        static_cast<void>(tls->write_some(nothing));
+        static_cast<void>(accepted.write_some(std::as_bytes(std::span{answer})));
         seen += ",written";
       } catch (std::logic_error const &) {
         seen += ",refused";
@@ -888,7 +890,9 @@ TEST_CASE("TLS: what a tls_acceptor accepts is an accepted_tls_stream, its sessi
 
       seen += "," + std::string(received.data(), read.transferred);
       seen += tls->handshaken() ? ",handshaken" : ",not yet";
-      seen += std::string{","} + ::SSL_get_version(tls->stream().session().native_handle());
+      seen += accepted.poll_read() == io::read_readiness::would_wait ? ",quiet" : ",?";
+      seen += ::SSL_is_init_finished(tls->session().native_handle()) == 1 ? ",negotiated" : ",?";
+      seen += (co_await io::write(accepted, std::as_bytes(std::span{answer}))).error ? ",?" : ",answered";
       co_return seen;
     };
 
@@ -904,9 +908,13 @@ TEST_CASE("TLS: what a tls_acceptor accepts is an accepted_tls_stream, its sessi
       }
 
       std::string const hello = "hello";
+      std::array<char, 16> received{};
 
       static_cast<void>(co_await io::write(stream, std::as_bytes(std::span{hello})));
-      co_return "";
+
+      auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{received}));
+
+      co_return "," + std::string(received.data(), read.transferred);
     };
 
     auto [server, client] = co_await when_all(serving(), calling());
@@ -923,7 +931,90 @@ TEST_CASE("TLS: what a tls_acceptor accepts is an accepted_tls_stream, its sessi
     std::rethrow_exception(failure);
   }
 
-  REQUIRE(outcome == "not yet,refused,hello,handshaken,TLSv1.3");
+  REQUIRE(outcome == "not yet,unknown,refused,hello,handshaken,quiet,negotiated,answered,hi");
+}
+
+TEST_CASE("TLS: a server speaking first does its handshake, and one that failed stays the stream's error",
+          "[tls][asio]") {
+  ::asio::io_context context;
+  quoll::asio::tls_acceptor acceptor{
+      ::asio::ip::tcp::acceptor{context, ::asio::ip::tcp::endpoint{::asio::ip::address_v4::loopback(), 0}},
+      server_certificate()};
+  ::asio::ip::tcp::endpoint const endpoint{::asio::ip::address_v4::loopback(), acceptor.local_port()};
+  ::asio::ssl::context client_context{::asio::ssl::context::tls_client};
+  std::optional<std::string> outcome;
+  std::exception_ptr failure;
+
+  client_context.set_verify_mode(::asio::ssl::verify_none);
+
+  auto const work = [&]() -> task<std::string> {
+    // The first peer speaks TLS and is greeted; the second sends no TLS at all.
+    auto const serving = [&]() -> task<std::string> {
+      std::string seen;
+
+      {
+        auto accepted = co_await acceptor.accept();
+        auto *const tls = accepted.target<quoll::asio::accepted_tls_stream>();
+        std::string const greeting = "ready";
+
+        seen += (co_await tls->handshake()) ? "?" : "handshaken";
+        seen += (co_await io::write(accepted, std::as_bytes(std::span{greeting}))).error ? ",?" : ",greeted";
+      }
+
+      auto accepted = co_await acceptor.accept();
+      auto *const tls = accepted.target<quoll::asio::accepted_tls_stream>();
+      std::array<char, 16> received{};
+      auto const first = co_await tls->handshake();
+      auto const read = co_await accepted.read_some(std::as_writable_bytes(std::span{received}));
+      auto const again = co_await tls->handshake();
+
+      seen += first && read.error == first && again == first ? ",failed alike" : ",?";
+
+      try {
+        static_cast<void>(accepted.write_some(std::as_bytes(std::span{received})));
+        seen += ",written";
+      } catch (std::system_error const &thrown) {
+        seen += thrown.code() == first ? ",its error" : ",?";
+      }
+
+      co_return seen;
+    };
+
+    auto const calling = [&]() -> task<std::string> {
+      ::asio::ip::tcp::socket socket{context};
+
+      socket.connect(endpoint);
+
+      quoll::asio::tls_stream stream{quoll::asio::tls_stream::session_type{std::move(socket), client_context}};
+
+      if (auto const error = co_await stream.handshake(quoll::asio::tls_stream::session_type::client)) {
+        co_return error.message();
+      }
+
+      std::array<char, 16> received{};
+      auto const read = co_await stream.read_some(std::as_writable_bytes(std::span{received}));
+      ::asio::ip::tcp::socket plain{context};
+
+      plain.connect(endpoint);
+      ::asio::write(plain, ::asio::buffer(std::string_view{"GET / HTTP/1.1\r\n\r\n"}));
+      co_return "," + std::string(received.data(), read.transferred);
+    };
+
+    auto [server, client] = co_await when_all(serving(), calling());
+
+    co_return server + client;
+  };
+
+  quoll::async::co_spawn(quoll::asio::executor{context.get_executor()}, work(),
+                         quoll::test::overloaded{[&](std::string value) { outcome = std::move(value); },
+                                                 [&](std::exception_ptr error) { failure = std::move(error); }});
+  context.run();
+
+  if (failure) {
+    std::rethrow_exception(failure);
+  }
+
+  REQUIRE(outcome == "handshaken,greeted,failed alike,its error,ready");
 }
 
 TEST_CASE("TLS: a stream moved before its handshake and its shutdown run keeps them", "[tls][asio]") {
