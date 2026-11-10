@@ -1634,3 +1634,28 @@ TEST_CASE("websocket: a client's send under way on a stream that throws its stop
   REQUIRE(sent == std::errc::timed_out);
   REQUIRE(time.now() == 2600ms);
 }
+
+TEST_CASE("websocket: a client's write that its limit ends on a stream that throws its stop cuts sending",
+          "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{
+      io::any_stream{throwing_its_stop{std::move(client_end), 2s}}, websocket_role::client, {}, {.ping_interval = 1s}};
+  std::chrono::nanoseconds second_at{};
+
+  // A byte every 2 s, past the limit of 1 s with nothing taken: the first send times out at 1 s, the stream throwing
+  // its stop; the next is refused then, rather than wait for a peer known to take nothing.
+  auto const twice = [&]() -> task<std::pair<std::error_code, std::error_code>> {
+    auto const first = co_await quoll::test::code_thrown_by(client.send_text("one"));
+    auto const second = co_await quoll::test::code_thrown_by(client.send_text("two"));
+
+    second_at = time.now();
+    co_return std::pair{first, second};
+  };
+
+  auto const [first, second] = quoll::test::run(time, twice()).value();
+
+  REQUIRE(first == std::errc::timed_out);
+  REQUIRE(second == http::error::websocket_closed);
+  REQUIRE(second_at == 1s);
+}

@@ -106,8 +106,8 @@ task<std::string> echo_over_tcp() {
   co_return answer;
 }
 
-// A client whose server answers none of its pings, over TCP on a runtime of several threads: its keep-alive, on the
-// strand of the task that receives, takes the server as gone, which the receive() throws.
+// A client whose server answers none of its pings, over TCP on a runtime of several threads: its keep-alive takes the
+// server as gone, which the receive() throws. That it takes turns with the receive() is for the TSan job to check.
 task<std::error_code> unanswered_over_tcp() {
   http::router router;
 
