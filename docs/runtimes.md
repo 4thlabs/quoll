@@ -113,7 +113,7 @@ not be the same class:
 | `quoll::asio::tcp_stream`, `quoll::asio::tls_stream` | Streams over asio sockets                                                                                         |
 | `quoll::asio::connector`                             | A connector opening TCP connections on an asio executor                                                           |
 | `quoll::asio::acceptor`, `quoll::asio::tls_acceptor` | Listeners over an asio acceptor                                                                                   |
-| `quoll::asio::accepted_tls_stream`                   | What a `tls_acceptor` accepts, in an `io::any_stream`: `target<quoll::asio::accepted_tls_stream>()` recovers it, its `stream().session()` the session, once its first read has done the handshake |
+| `quoll::asio::accepted_tls_stream`                   | What a `tls_acceptor` accepts, its session once handshaken                                                        |
 
 Quoll fetches asio 1.38.2 unless an `asio::asio` target exists before it. TLS goes through `asio::ssl`
 and OpenSSL, as `QUOLL_TLS` says when configuring. Without it, what needs TLS throws `std::logic_error`

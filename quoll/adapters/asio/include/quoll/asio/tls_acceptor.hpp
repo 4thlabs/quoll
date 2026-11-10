@@ -53,7 +53,6 @@
 #include <asio/ssl/context.hpp>
 
 #include <cassert>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
