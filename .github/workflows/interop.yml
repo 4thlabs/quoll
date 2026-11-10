@@ -1,0 +1,77 @@
+name: Interop
+
+# Quoll against third-party clients and servers (tests/interop): curl, Python's requests, httpx, http.client and
+# websockets, Node's fetch and WebSocket, aiohttp's and Node's servers, nginx as a proxy, and Autobahn's WebSocket
+# suite each way. Each runs in a container of its own on one Docker network, with Quoll's programs in another. Too long
+# for every pull request: one touching them runs it, as nothing else does.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tests/interop/**"
+      - ".github/workflows/interop.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CPM_SOURCE_CACHE: ${{ github.workspace }}/.cpm-cache
+
+jobs:
+  interop:
+    name: interop
+    runs-on: ubuntu-24.04
+    # Autobahn's two runs take some minutes each, the images some more.
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Cache CPM sources
+        uses: actions/cache@v4
+        with:
+          path: .cpm-cache
+          key: cpm-${{ hashFiles('**/CMakeLists.txt', 'cmake/**') }}
+
+      - name: Set up ccache
+        uses: ./.github/actions/ccache
+        with:
+          job: interop
+
+      # Plain HTTP and WebSocket: no TLS, so that the programs run in an image with no OpenSSL.
+      - name: Configure
+        run: >-
+          cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DQUOLL_INTEROP=ON -DQUOLL_BUILD_TESTS=OFF
+          -DQUOLL_BUILD_SAMPLES=OFF -DQUOLL_TLS=OFF
+        env:
+          CXX: g++-13
+
+      - name: Build
+        run: cmake --build build --target quoll_interop_server quoll_interop_client --parallel "$(nproc)"
+
+      # Quoll's programs in a container of the network, named as the peers reach them.
+      - name: Start the container of Quoll's programs
+        run: |
+          docker network create quoll-interop
+          docker run -d --name quoll-ci --network quoll-interop --network-alias quoll \
+            -v "$PWD:$PWD" -w "$PWD" ubuntu:24.04 sleep infinity
+
+      - name: Run
+        run: sh tests/interop/run.sh "$PWD/build/tests/interop"
+        env:
+          QUOLL_RUN: docker exec quoll-ci
+
+      - name: Keep Autobahn's reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autobahn-reports
+          path: build-interop/
+          if-no-files-found: ignore
