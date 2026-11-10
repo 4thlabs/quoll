@@ -264,20 +264,17 @@ private:
   std::chrono::nanoseconds delay_;
 };
 
-// A stream whose reads come back 200 ms after they have brought something, whatever stops them meanwhile, as a
-// completion queued behind a timer's does.
-class late_to_resume {
+// A stream that reads what its peer sends, and whose writes fail as on a connection the peer reset, after 500 ms.
+class reset_late {
 public:
-  explicit late_to_resume(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
+  explicit reset_late(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
 
-  [[nodiscard]] task<io::io_result> read_some(std::span<std::byte> buffer) {
-    auto const read = co_await inner_.read_some(buffer);
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
 
-    co_await quoll::async::detail::stop_scope<void>{quoll::async::sleep_for(200ms), std::stop_token{}};
-    co_return read;
+  [[nodiscard]] static task<io::io_result> write_some(std::span<std::byte const> /*data*/) {
+    co_await quoll::async::detail::stop_scope<void>{quoll::async::sleep_for(500ms), std::stop_token{}};
+    co_return io::io_result{std::make_error_code(std::errc::connection_reset), 0};
   }
-
-  [[nodiscard]] auto write_some(std::span<std::byte const> data) { return inner_.write_some(data); }
 
 private:
   io::memory_stream inner_;
@@ -1116,36 +1113,6 @@ TEST_CASE("websocket: a client's keep-alive that fails once its receive() ended 
   REQUIRE(quoll::test::run(context, received()) == text("and after"));
 }
 
-TEST_CASE("websocket: a client's peer taken as gone as its last read had already ended is not", "[http][websocket]") {
-  quoll::test::virtual_time time;
-  auto [client_end, server_end] = io::make_memory_stream_pair();
-  http::websocket client{
-      io::any_stream{late_to_resume{std::move(client_end)}}, websocket_role::client, {}, {.ping_interval = 1s}};
-
-  // Pinged at 1 s with no answer; a message read at 1.9 s comes back at 2.1 s, after the verdict of 2 s: it is given,
-  // and the next receive() starts with no verdict.
-  auto const late = [&]() -> task<websocket_message> {
-    auto const peer = [&]() -> task<> {
-      co_await quoll::async::sleep_for(1900ms);
-      co_await send_raw(server_end, http::format_websocket_frame(websocket_opcode::text, "still here"));
-      co_await quoll::async::sleep_for(600ms);
-      co_await send_raw(server_end, http::format_websocket_frame(websocket_opcode::text, "and here"));
-    };
-    auto const twice = [&]() -> task<websocket_message> {
-      auto first = co_await client.receive();
-
-      REQUIRE(first == text("still here"));
-      co_return co_await client.receive();
-    };
-
-    auto [sent, message] = co_await quoll::async::when_all(peer(), twice());
-
-    co_return message;
-  };
-
-  REQUIRE(quoll::test::run(time, late()) == text("and here"));
-}
-
 TEST_CASE("websocket: a client's keep-alive sends no ping beside one still under way", "[http][websocket]") {
   quoll::test::virtual_time time;
   auto [client_end, server_end] = io::make_memory_stream_pair();
@@ -1188,4 +1155,34 @@ TEST_CASE("websocket: a client's keep-alive sends no ping beside one still under
   };
 
   REQUIRE(quoll::test::run(time, pings()) == 1);
+}
+
+TEST_CASE("websocket: a client's ping that fails once its receive() has ended ends the next with its failure",
+          "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{
+      io::any_stream{reset_late{std::move(client_end)}}, websocket_role::client, {}, {.ping_interval = 1s}};
+
+  // The ping of 1 s fails at 1.5 s; the message of 1.2 s ended its receive() meanwhile: the next one ends with the
+  // reset then, rather than a timeout later.
+  auto const reset = [&]() -> task<std::error_code> {
+    auto const peer = [&]() -> task<> {
+      co_await quoll::async::sleep_for(1200ms);
+      co_await send_raw(server_end, http::format_websocket_frame(websocket_opcode::text, "one"));
+    };
+    auto const twice = [&]() -> task<std::error_code> {
+      auto first = co_await client.receive();
+
+      REQUIRE(first == text("one"));
+      co_return co_await quoll::test::code_thrown_by(client.receive());
+    };
+
+    auto [sent, code] = co_await quoll::async::when_all(peer(), twice());
+
+    co_return code;
+  };
+
+  REQUIRE(quoll::test::run(time, reset()) == std::errc::connection_reset);
+  REQUIRE(time.now() == 1500ms);
 }

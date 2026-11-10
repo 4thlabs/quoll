@@ -254,8 +254,10 @@ async::task<> send_message(std::shared_ptr<state> connection, std::string frame,
 // too; none once it left, or for a stop of `turn_stop`.
 async::task<std::error_code> send_quietly(std::shared_ptr<state> connection, std::string frame, frame_kind kind,
                                           std::stop_token turn_stop = {}) {
-  auto const sending = [](std::shared_ptr<state> socket, std::string bytes, frame_kind what,
-                          std::stop_token stop) -> async::task<> {
+  // Set once the frame starts to leave: what fails then is the frame's, whatever stops the turn's wait.
+  auto writing = false;
+  auto const sending = [](std::shared_ptr<state> socket, std::string bytes, frame_kind what, std::stop_token stop,
+                          bool &started) -> async::task<> {
     // The turn waited for until either stop.
     async::detail::either_stop const either{socket->connection_stop, stop};
     async::detail::held_place turn;
@@ -267,6 +269,7 @@ async::task<std::error_code> send_quietly(std::shared_ptr<state> connection, std
       co_return;
     }
 
+    started = true;
     co_await write_frame(socket, std::move(bytes), what);
   };
 
@@ -274,10 +277,10 @@ async::task<std::error_code> send_quietly(std::shared_ptr<state> connection, std
   auto connection_stop = connection->connection_stop;
 
   try {
-    co_await async::detail::stop_scope<void>{sending(std::move(connection), std::move(frame), kind, turn_stop),
+    co_await async::detail::stop_scope<void>{sending(std::move(connection), std::move(frame), kind, turn_stop, writing),
                                              std::move(connection_stop)};
   } catch (std::system_error const &thrown) {
-    if (turn_stop.stop_requested()) {
+    if (!writing && turn_stop.stop_requested()) {
       co_return std::error_code{};
     }
 
@@ -352,7 +355,8 @@ void feed(state &connection, std::string_view bytes) {
 struct keep_alive_start {
   // Made as the keep-alive starts: a receive() that does not read makes none.
   std::stop_source done{std::nostopstate};
-  bool started = false;
+  // Its start was tried: once a receive().
+  bool tried = false;
 };
 
 // Spawns the keep-alive of a receive(): see receive_watched().
@@ -403,7 +407,8 @@ async::task<websocket_message> receive_next(std::shared_ptr<state> connection, k
     }
 
     // As the first read starts, as Beast arms its timer: a message already there needs no keep-alive.
-    if (start != nullptr && !start->started) {
+    if (start != nullptr && !start->tried) {
+      start->tried = true;
       co_await start_keep_alive(connection, *start);
     }
 
@@ -456,17 +461,7 @@ async::task<websocket_message> receive_watched(std::shared_ptr<state> connection
   async::detail::either_stop const stop{caller, gone};
 
   try {
-    auto message =
-        co_await async::detail::stop_scope<websocket_message>{receive_next(connection, &start), stop.token()};
-
-    // The peer taken as gone as its last read had already brought this: it was not, and the next receive() starts
-    // with no verdict.
-    if (gone.stop_requested()) {
-      connection->gone = std::stop_source{};
-      connection->gone_why = {};
-    }
-
-    co_return message;
+    co_return co_await async::detail::stop_scope<websocket_message>{receive_next(connection, &start), stop.token()};
   } catch (std::system_error const &) {
     // Stopped as the peer was taken as gone, rather than by the caller.
     if (gone.stop_requested() && !caller.stop_requested() && async::detail::is_a_stop(std::current_exception())) {
@@ -479,13 +474,18 @@ async::task<websocket_message> receive_watched(std::shared_ptr<state> connection
 
 async::task<> start_keep_alive(std::shared_ptr<state> connection, keep_alive_start &start) {
   auto const interval = connection->ping_interval;
+  std::stop_source done;
 
-  start.done = std::stop_source{};
+  try {
+    co_await async::co_spawn(async::this_executor,
+                             watch_alone(connection, interval, done.get_token(), connection->gone), async::detached);
+  } catch (...) {
+    // One that cannot be posted leaves this receive() without one, as with no timer, rather than end receiving: no
+    // byte was read. The next receive() tries again.
+    co_return;
+  }
 
-  co_await async::co_spawn(async::this_executor,
-                           watch_alone(connection, interval, start.done.get_token(), connection->gone),
-                           async::detached);
-  start.started = true;
+  start.done = std::move(done);
 }
 
 // `turn` until the frame goes, given back with it.
@@ -528,7 +528,8 @@ async::task<std::error_code> ping_once(std::shared_ptr<state> connection, std::s
   under_way const marked{*connection};
   auto frame = frame_of(*connection, websocket_opcode::ping, {});
 
-  co_return co_await send_quietly(std::move(connection), std::move(frame), frame_kind::answer, std::move(turn_stop));
+  // A copy: `marked` writes to the state as it goes, after the send.
+  co_return co_await send_quietly(connection, std::move(frame), frame_kind::answer, std::move(turn_stop));
 }
 
 // Pings the peer once it has read nothing for `interval`, and takes it as gone once it has read nothing for another, or
