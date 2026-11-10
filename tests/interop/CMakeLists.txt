@@ -4,7 +4,9 @@ if(EMSCRIPTEN)
 endif()
 
 add_executable(quoll_interop_server server.cpp)
+target_include_directories(quoll_interop_server PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
 target_link_libraries(quoll_interop_server PRIVATE quoll::runtime quoll::server quoll_warnings)
 
 add_executable(quoll_interop_client client.cpp)
+target_include_directories(quoll_interop_client PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
 target_link_libraries(quoll_interop_client PRIVATE quoll::client quoll::runtime quoll_warnings)

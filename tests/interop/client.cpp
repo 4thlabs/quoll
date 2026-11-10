@@ -57,6 +57,7 @@
 #include <quoll/http/websocket.hpp>
 #include <quoll/http/websocket_message.hpp>
 #include <quoll/runtime.hpp>
+#include <quoll/test/websocket_echo.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -113,10 +114,16 @@ async::task<> http_checks(std::string base) {
     expect(response.status == http::status::ok, "status " + std::to_string(static_cast<int>(response.status)));
     expect(response.body == "hello", "body \"" + response.body + "\"");
   });
-  co_await check("five GETs on a kept connection", [&]() -> async::task<> {
-    for (auto turn = 0; turn < 5; ++turn) {
-      expect((co_await client.get("/hello")).body == "hello", "GET " + std::to_string(turn));
+  // The peers number their connections at /connection: one for all, a POST among them.
+  co_await check("GETs and a POST on one kept connection", [&]() -> async::task<> {
+    auto const first = (co_await client.get("/connection")).body;
+
+    for (auto turn = 0; turn < 4; ++turn) {
+      expect((co_await client.get("/connection")).body == first, "a new connection at GET " + std::to_string(turn));
     }
+
+    expect((co_await client.post("/echo", "kept", "text/plain")).body == "kept", "POST");
+    expect((co_await client.get("/connection")).body == first, "a new connection after the POST");
   });
   co_await check("three POSTs echoed", [&]() -> async::task<> {
     for (auto turn = 0; turn < 3; ++turn) {
@@ -212,6 +219,9 @@ async::task<> ws_checks(std::string url) {
     co_await socket.send_text(large);
     expect((co_await socket.receive()).data == large, "256 KiB");
     co_await socket.close();
+
+    // The peer's answer to the close, the last message.
+    expect((co_await socket.receive()).opcode == http::websocket_opcode::close, "no close in answer");
   });
 }
 
@@ -231,19 +241,7 @@ async::task<> autobahn(std::string base) {
       auto running =
           co_await http::connect_websocket(base + "/runCase?case=" + std::to_string(index) + "&agent=quoll", options);
 
-      for (;;) {
-        auto message = co_await running.socket.receive();
-
-        if (message.opcode == http::websocket_opcode::close) {
-          break;
-        }
-
-        if (message.opcode == http::websocket_opcode::binary) {
-          co_await running.socket.send_binary(message.data);
-        } else {
-          co_await running.socket.send_text(message.data);
-        }
-      }
+      co_await quoll::test::websocket_echo(std::move(running.socket));
     } catch (std::exception const &failure) {
       // A case that breaks the connection on purpose: what Autobahn judges is in its report.
       std::cout << "case " << index << ": " << failure.what() << std::endl;

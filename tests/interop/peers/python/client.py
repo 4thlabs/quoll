@@ -3,6 +3,7 @@
 import asyncio
 import http.client
 import os
+import socket
 import sys
 import urllib.parse
 
@@ -62,18 +63,50 @@ def httpx_client():
 
 
 def expect_continue():
-    """A POST that waits for 100 Continue before its body, as curl and others send a large one."""
+    """A POST that waits for 100 Continue before its body, as curl and others send a large one: by hand, as
+    http.client sends the body at once."""
     parsed = urllib.parse.urlparse(base)
-    connection = http.client.HTTPConnection(parsed.hostname, parsed.port)
     body = b"y" * 4096
 
-    connection.putrequest("POST", "/echo")
-    connection.putheader("Content-Length", str(len(body)))
-    connection.putheader("Expect", "100-continue")
-    connection.endheaders()
-    connection.send(body)
-    response = connection.getresponse()
-    assert response.status == 200 and response.read() == body
+    with socket.create_connection((parsed.hostname, parsed.port), timeout=10) as connection:
+        connection.sendall(
+            f"POST /echo HTTP/1.1\r\nHost: {parsed.hostname}\r\nContent-Length: {len(body)}\r\n"
+            "Expect: 100-continue\r\n\r\n".encode()
+        )
+        interim = b""
+
+        while b"\r\n\r\n" not in interim:
+            interim += connection.recv(4096)
+
+        assert interim.startswith(b"HTTP/1.1 100 "), interim
+        connection.sendall(body)
+        final = b""
+
+        while not final.endswith(body):
+            part = connection.recv(65536)
+            assert part, final
+            final += part
+
+        assert final.startswith(b"HTTP/1.1 200 "), final[:100]
+
+
+def kept_alive():
+    """Five GETs and two POSTs on one connection, which http.client would open again, silently, if it were closed."""
+    parsed = urllib.parse.urlparse(base)
+    connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=10)
+    first = None
+
+    for turn in range(7):
+        if turn < 5:
+            connection.request("GET", "/hello")
+        else:
+            connection.request("POST", "/echo", body=b"kept")
+
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 200
+        first = first or connection.sock
+        assert connection.sock is first, f"a new connection at request {turn}"
 
 
 def http_1_0():
@@ -97,7 +130,8 @@ def websocket_echo():
             large = "z" * (1024 * 1024)
             await socket.send(large)
             assert await socket.recv() == large
-            await socket.ping()
+            pong = await socket.ping()
+            await asyncio.wait_for(pong, timeout=10)
 
     asyncio.run(talk())
 
@@ -105,7 +139,8 @@ def websocket_echo():
 check("requests: kept alive, POSTs, chunked, pieces, close", requests_session)
 check("requests: server-sent events", requests_events)
 check("httpx: GET, POST, streamed", httpx_client)
-check("http.client: Expect: 100-continue", expect_continue)
+check("raw: Expect: 100-continue, the body after the 100", expect_continue)
+check("http.client: GETs and POSTs on one kept connection", kept_alive)
 check("http.client: HTTP/1.0", http_1_0)
 check("websockets: echo, text, binary, 1 MiB, ping", websocket_echo)
 
