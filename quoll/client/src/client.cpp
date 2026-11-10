@@ -105,10 +105,10 @@ namespace {
 // pool); with a single thread, as under WASM, it is never contended, and std::mutex needs no thread support there.
 class connection_pool {
 public:
-  // A connection from the pool, with when it went there, in order, and when its last request was sent, on the clock.
+  // A connection from the pool, with when its last request was sent, on idle_clock(): the server cannot have seen it
+  // idle for longer, as it went idle once it had answered, however slowly the answer was read.
   struct idle_connection {
     io::any_stream connection;
-    std::uint64_t given_back;
     std::chrono::nanoseconds sent_at;
   };
 
@@ -121,10 +121,9 @@ public:
     std::chrono::nanoseconds within;
   };
 
-  // The connection used last, the least likely to have been closed by the server for being idle; given `recent`, the
-  // one given back last of those whose last request went that recently, which a response read slowly may have given
-  // back after one sent later. One sent after `now`, on an executor with another clock or meanwhile on another thread,
-  // is not taken, as nothing tells how long it has been idle.
+  // The connection sent last, the least likely to have been closed by the server for being idle; given `recent`, the
+  // one sent last of those whose last request went that recently. One sent after `now`, on an executor with another
+  // clock or meanwhile on another thread, is not taken, as nothing tells how long it has been idle.
   [[nodiscard]] std::optional<idle_connection> take(std::optional<recency> recent = std::nullopt) {
     return state_.with([recent](state &pool) -> std::optional<idle_connection> {
       auto const recent_enough = [recent](idle_connection const &kept) {
@@ -150,10 +149,9 @@ public:
     });
   }
 
-  // Keeps `connection` for a next request, whose last one was sent at `sent_at` on idle_clock(): the server cannot have
-  // seen it idle for longer, as it went idle once it had answered, however slowly the answer was read. A full pool
-  // closes its oldest, past the lock, rather than this one, the least likely to be closed by the server, and the only
-  // one a POST may take.
+  // Keeps `connection` for a next request, whose last one was sent at `sent_at`, in the order of the times sent. A full
+  // pool closes the one sent first, past the lock, the most likely to be closed by the server and the last a POST may
+  // take: this one, if it is.
   void give_back(io::any_stream connection, std::chrono::nanoseconds sent_at) {
     if (capacity_ == 0) {
       return;
@@ -163,16 +161,22 @@ public:
       std::optional<idle_connection> dropped;
 
       if (pool.idle.size() >= capacity_) {
+        if (sent_at <= pool.idle.front().sent_at) {
+          return dropped;
+        }
+
         dropped.emplace(std::move(pool.idle.front()));
         pool.idle.erase(pool.idle.begin());
       }
 
-      pool.idle.push_back({std::move(connection), ++pool.given, sent_at});
+      auto const at = std::ranges::upper_bound(pool.idle, sent_at, {}, &idle_connection::sent_at);
+
+      pool.idle.insert(at, {std::move(connection), sent_at});
       return dropped;
     });
   }
 
-  // Closes the idle connections past `count`, the oldest first, past the lock.
+  // Closes the idle connections past `count`, those sent first, past the lock.
   void keep_at_most(std::size_t count) {
     auto const closed = state_.with([count](state &pool) {
       std::vector<idle_connection> past_it;
@@ -188,13 +192,12 @@ public:
     });
   }
 
-  // Closes the connections idle for longer than one that turned out closed, past the lock. Those given back since it
-  // was taken have just been of use.
-  void close_older_than(std::uint64_t given_back) {
-    auto const closed = state_.with([given_back](state &pool) {
+  // Closes the connections idle for longer than one that turned out closed, sent at `sent_at`, past the lock: those
+  // sent before it.
+  void close_older_than(std::chrono::nanoseconds sent_at) {
+    auto const closed = state_.with([sent_at](state &pool) {
       std::vector<idle_connection> older;
-      auto const end = std::ranges::find_if(
-          pool.idle, [given_back](idle_connection const &kept) { return kept.given_back > given_back; });
+      auto const end = std::ranges::upper_bound(pool.idle, sent_at, {}, &idle_connection::sent_at);
 
       older.assign(std::make_move_iterator(pool.idle.begin()), std::make_move_iterator(end));
       pool.idle.erase(pool.idle.begin(), end);
@@ -204,9 +207,8 @@ public:
 
 private:
   struct state {
-    // The oldest first.
+    // The one sent first first.
     std::vector<idle_connection> idle;
-    std::uint64_t given = 0;
   };
 
   async::detail::synchronized<state> state_;
@@ -417,8 +419,8 @@ enum class attempt : std::uint8_t {
   // A new connection: a response or an exception.
   fresh,
   // An idle connection, for a request not sent twice: again only if none of it could be written, as the server then did
-  // not read any of it, or if it is answered 408 with `Connection: close`, as the server then reads none of it. Another
-  // 408 there is its response, and the connection is not kept, as the server may answer the request after it.
+  // not read any of it. A 408 there is its response, and the connection is not kept, as the server may answer the
+  // request after it.
   idle_once,
   // An idle connection, for an idempotent request: again if the connection turns out closed before any response, or
   // answers 408 first, sent by the server before it closed the idle connection.
@@ -430,13 +432,6 @@ enum class attempt : std::uint8_t {
 // before closing, a 408 or a 503, answers none of it.
 [[nodiscard]] constexpr bool goes_again_unsent(attempt on, std::size_t transferred) noexcept {
   return on == attempt::idle_again || (on == attempt::idle_once && transferred == 0);
-}
-
-// On an idle connection answered 408 before any interim response, whether the request goes again on a new one: an
-// idempotent one does, as the server sent it as it closed the idle connection, and so does any other when the 408
-// closes the connection, as the server then reads no request on it (RFC 9110, 15.5.9).
-[[nodiscard]] constexpr bool goes_again_after_408(attempt on, bool closes) noexcept {
-  return on == attempt::idle_again || (on == attempt::idle_once && closes);
 }
 
 // Whether a connection may carry another request after a response of `status`: not one that answered 408 as it was
@@ -515,7 +510,9 @@ exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
 
     auto const timed_out = response.status == http::status::request_timeout;
 
-    if (interim == 0 && timed_out && goes_again_after_408(on, http::detail::closes_connection(response.fields))) {
+    // Sent as the server closed the idle connection: an idempotent request goes again. Another, written, is not, even
+    // if the 408 closes the connection: the server may have answered it so once it had done its work.
+    if (on == attempt::idle_again && interim == 0 && timed_out) {
       co_return std::nullopt;
     }
 
@@ -649,7 +646,7 @@ struct idle_attempt {
   auto const executor = co_await async::current_executor();
 
   if (auto kept = take_idle(*shared, request, executor)) {
-    auto const given_back = kept->idle.given_back;
+    auto const sent_at = kept->idle.sent_at;
     std::optional<http::response> response;
 
     try {
@@ -659,7 +656,7 @@ struct idle_attempt {
     } catch (std::system_error const &thrown) {
       // Closed by the server after some idle time: the connections idle for longer are likely closed as well.
       if (peer_has_gone(thrown.code())) {
-        shared->pool.close_older_than(given_back);
+        shared->pool.close_older_than(sent_at);
       }
 
       throw;
@@ -667,7 +664,7 @@ struct idle_attempt {
 
     // A 408 as the response of a request not sent twice: the same, sent as the server closed the idle connection.
     if (!response || response->status == http::status::request_timeout) {
-      shared->pool.close_older_than(given_back);
+      shared->pool.close_older_than(sent_at);
     }
 
     if (response) {
@@ -987,8 +984,7 @@ private:
         continue;
       }
 
-      co_return !(interim == 0 && status == http::status::request_timeout &&
-                  goes_again_after_408(on, http::detail::closes_connection(parser_->head().fields)));
+      co_return !(on == attempt::idle_again && interim == 0 && status == http::status::request_timeout);
     }
   }
 
@@ -1063,7 +1059,7 @@ private:
 
   // As in send_prepared().
   if (auto kept = take_idle(*shared, request, executor)) {
-    auto const given_back = kept->idle.given_back;
+    auto const sent_at = kept->idle.sent_at;
     auto started = false;
 
     try {
@@ -1072,20 +1068,20 @@ private:
     } catch (std::system_error const &thrown) {
       // Closed by the server after some idle time: the connections idle for longer are likely closed as well.
       if (peer_has_gone(thrown.code())) {
-        shared->pool.close_older_than(given_back);
+        shared->pool.close_older_than(sent_at);
       }
 
       throw;
     }
 
     if (!started) {
-      shared->pool.close_older_than(given_back);
+      shared->pool.close_older_than(sent_at);
     } else {
       auto response = stream->take_head(stream);
 
       // A 408 as the response of a request not sent twice: as in send_prepared().
       if (response.status == http::status::request_timeout) {
-        shared->pool.close_older_than(given_back);
+        shared->pool.close_older_than(sent_at);
       }
 
       co_return response;

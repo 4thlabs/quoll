@@ -322,9 +322,11 @@ struct slow_network {
   std::vector<std::string> first_replies{};
   // How long the body of a plain answer comes after its head, if at all.
   std::chrono::nanoseconds body_delay = 0s;
+  // The connection each request was answered on, from 1, in the order answered.
+  std::vector<int> answered_on{};
 };
 
-task<> answer_slowly(io::memory_stream stream, slow_network &network) {
+task<> answer_slowly(io::memory_stream stream, slow_network &network, int connection) {
   std::string buffer;
 
   for (;;) {
@@ -355,6 +357,8 @@ task<> answer_slowly(io::memory_stream stream, slow_network &network) {
     if ((co_await io::write(stream, std::as_bytes(std::span{response}))).error) {
       co_return;
     }
+
+    network.answered_on.push_back(connection);
   }
 }
 
@@ -369,8 +373,10 @@ public:
 
     auto [client_end, server_end] = io::make_memory_stream_pair();
 
-    ++network->connections;
-    co_spawn(network->time->get_executor(), answer_slowly(std::move(server_end), *network), async::detached);
+    auto const connection = ++network->connections;
+
+    co_spawn(network->time->get_executor(), answer_slowly(std::move(server_end), *network, connection),
+             async::detached);
     co_return io::any_stream{std::move(client_end)};
   }
 
@@ -669,6 +675,51 @@ TEST_CASE("http::client: a POST takes a recent connection given back before one 
   REQUIRE(network.connections == 2);
 }
 
+TEST_CASE("http::client: a POST takes the connection sent last of those recent enough", "[client][timer]") {
+  // With room for one, the pool keeps that one, and closes the other, given back after it.
+  auto const max_idle_connections = GENERATE(std::size_t{8}, std::size_t{1});
+  virtual_time time;
+  slow_network network{.time = &time, .body_delay = 900ms};
+
+  auto const send = [&]() -> task<std::string> {
+    http::client const client{slow_connector{network},
+                              "example.com",
+                              80,
+                              {.max_idle_connections = max_idle_connections, .max_idle_for_non_idempotent = 1s}};
+
+    // The first connection: sent at 0.3 s, read until 1.2 s.
+    auto const slow = [&]() -> task<std::string> {
+      co_await async::sleep_for(300ms);
+
+      auto response = co_await client.stream(make_request(verb::get, "/"));
+      std::string body;
+
+      while (auto const piece = co_await response.body.read()) {
+        body += *piece;
+      }
+
+      co_return body;
+    };
+    // The second: sent at 0.5 s and answered at once.
+    auto const quick = [&]() -> task<std::string> {
+      co_await async::sleep_for(500ms);
+      network.body_delay = 0s;
+      co_return (co_await client.send(make_request(verb::get, "/"))).body;
+    };
+    auto const [first, second] = co_await async::when_all(slow(), quick());
+
+    REQUIRE(first + second == "okok");
+    co_await async::sleep_for(50ms);
+
+    // At 1.25 s both are recent enough: the second, which the server has seen idle for less.
+    co_return (co_await client.send(make_request(verb::post, "/", "ping"))).body;
+  };
+
+  REQUIRE(quoll::test::run(time, send()) == "ok");
+  REQUIRE(network.connections == 2);
+  REQUIRE(network.answered_on.back() == 2);
+}
+
 TEST_CASE("http::client: a full pool closes its oldest connection rather than the one given back", "[client][timer]") {
   virtual_time time;
   slow_network network{.time = &time};
@@ -805,14 +856,15 @@ task<> answer_then_time_out_open(io::memory_stream stream) {
 
 } // namespace
 
-TEST_CASE("http::client: a 408 closing an idle connection sends a POST again, as the server read none of it",
-          "[client]") {
-  // RFC 9110, 15.5.9: the server reads no request after a 408 that closes the connection.
-  auto const result = roundtrip(answer_then_time_out, {make_request(verb::get, "/"), make_request(verb::post, "/")});
+TEST_CASE("http::client: a 408 closing an idle connection is a POST's response too", "[client]") {
+  // A server may answer so once it has done its work: the POST is not sent twice.
+  auto const result = roundtrip(answer_then_time_out, {make_request(verb::get, "/"), make_request(verb::post, "/"),
+                                                       make_request(verb::get, "/")});
 
   REQUIRE_FALSE(result.error);
-  REQUIRE(result.responses.size() == 2);
-  REQUIRE(result.responses[1].status == http::status::ok);
+  REQUIRE(result.responses.size() == 3);
+  REQUIRE(result.responses[1].status == http::status::request_timeout);
+  REQUIRE(result.responses[2].status == http::status::ok);
   REQUIRE(result.connections == 2);
 
   // Through stream() too.
@@ -833,8 +885,8 @@ TEST_CASE("http::client: a 408 closing an idle connection sends a POST again, as
     co_return posted.status;
   };
 
-  REQUIRE(quoll::test::run(loop, streams()) == http::status::ok);
-  REQUIRE(server.connections == 2);
+  REQUIRE(quoll::test::run(loop, streams()) == http::status::request_timeout);
+  REQUIRE(server.connections == 1);
 }
 
 TEST_CASE("http::client: a 408 on an idle connection is a POST's response, and the connection is not kept",
@@ -4255,19 +4307,28 @@ TEST_CASE("http::client: a POST partly written on an idle connection the server 
   async::run_loop loop;
   auto connections = std::make_shared<int>(0);
 
-  // Answers its first request, then takes half of the next one and is gone.
+  // Answers its first request, then takes half of the next one and is gone, with `last` before if not empty.
   class cut_in_the_second {
   public:
+    explicit cut_in_the_second(std::string_view last) noexcept : last_(last) {}
+
     [[nodiscard]] task<io::io_result> read_some(std::span<std::byte> buffer) {
+      std::string_view reply = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+
       if (replies_ == 0) {
-        co_return io::io_result{io::make_error_code(io::error::end_of_stream), 0};
+        if (writes_ < 2 || last_.empty()) {
+          co_return io::io_result{io::make_error_code(io::error::end_of_stream), 0};
+        }
+
+        reply = std::exchange(last_, std::string_view{});
+      } else {
+        --replies_;
       }
 
-      std::string_view const reply = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+      auto const size = std::min(reply.size(), buffer.size());
 
-      --replies_;
-      std::memcpy(buffer.data(), reply.data(), reply.size());
-      co_return io::io_result{{}, reply.size()};
+      std::memcpy(buffer.data(), reply.data(), size);
+      co_return io::io_result{{}, size};
     }
 
     [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> bytes) {
@@ -4286,20 +4347,26 @@ TEST_CASE("http::client: a POST partly written on an idle connection the server 
     }
 
   private:
+    std::string_view last_;
     int replies_ = 0;
     int writes_ = 0;
   };
 
   struct counting {
     std::shared_ptr<int> count;
+    std::string_view last;
 
     [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
       ++*count;
-      co_return io::any_stream{cut_in_the_second{}};
+      co_return io::any_stream{cut_in_the_second{last}};
     }
   };
 
-  http::client const client{counting{connections}, "example.com", 80};
+  // Gone with no word, or with a 408 closing it, which may answer what it read all the same.
+  auto const last =
+      GENERATE(std::string_view{},
+               std::string_view{"HTTP/1.1 408 Request Timeout\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"});
+  http::client const client{counting{connections, last}, "example.com", 80};
   auto const streamed = GENERATE(false, true);
 
   auto const posting = [&]() -> task<std::error_code> {
@@ -4314,8 +4381,15 @@ TEST_CASE("http::client: a POST partly written on an idle connection the server 
     co_return co_await quoll::test::code_thrown_by(client.send(make_request(verb::post, "/", "ping")));
   };
 
-  // The server may have read what was written: the stream's failure is the request's.
-  REQUIRE(quoll::test::run(loop, posting()) == std::errc::broken_pipe);
+  // The server may have read what was written: the stream's failure is the request's, or the 408 its response.
+  auto const failure = quoll::test::run(loop, posting());
+
+  if (last.empty()) {
+    REQUIRE(failure == std::errc::broken_pipe);
+  } else {
+    REQUIRE(failure == std::error_code{});
+  }
+
   REQUIRE(*connections == 1);
 }
 
