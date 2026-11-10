@@ -85,7 +85,7 @@ inline async::task<io::any_stream> accept_tls(acceptor_state &state, std::shared
 /**
  * @brief Listener accepting TLS connections with asio, for a server (quoll::http::server): as an acceptor, with a
  * certificate. Each connection's handshake takes place on its first read: accept() gives an io::any_stream over an
- * accepted_tls_stream, which `target<asio::accepted_tls_stream>()` recovers, and its stream() the session.
+ * accepted_tls_stream, which `target<asio::accepted_tls_stream>()` recovers, and its session() what OpenSSL negotiated.
  *
  * Move-only; the acceptor lives on the heap, so moving it is allowed while an accept is pending. Destroying it, or its
  * io_context, is not. One accept at a time. Thread safety: none, like the acceptor.

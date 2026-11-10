@@ -41,6 +41,7 @@
 #if defined(QUOLL_ASIO_TLS)
 
 #include <quoll/asio/tls_stream.hpp>
+#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
@@ -48,8 +49,10 @@
 
 #include <asio/ssl/context.hpp>
 
+#include <cassert>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <system_error>
@@ -63,81 +66,155 @@ namespace quoll::asio {
  *
  * Its handshake, as a server, takes place on its first read, in the connection's own task rather than in the accept
  * loop, where a slow peer would hold every other one back; the timeouts of a read apply to it too. A server that speaks
- * first calls handshake() before writing: a write before the handshake has completed throws std::logic_error. A
- * handshake that failed or was stopped leaves the session unusable: every later operation reports its error.
+ * first calls handshake() before writing. A handshake that failed or was stopped leaves the session unusable: it is the
+ * error of every later handshake(), read and shutdown_send(), and a write throws it.
  *
- * Move-only, as its tls_stream. Thread safety: none, as its tls_stream.
+ * Move-only. Its state lives on the heap: moving it is cheap, and allowed while an operation is pending; destroying it
+ * is not. One handshake at a time, and no read while one is pending. Thread safety: none, as its tls_stream.
  */
 class accepted_tls_stream {
 public:
   /** @brief Takes over a session on an accepted socket, made from `context`, which it keeps for as long as it lives. */
-  accepted_tls_stream(tls_stream stream, std::shared_ptr<::asio::ssl::context> context) noexcept
-      : context_(std::move(context)), stream_(std::move(stream)) {}
+  accepted_tls_stream(tls_stream stream, std::shared_ptr<::asio::ssl::context> context)
+      : state_(std::make_unique<state>(std::move(context), std::move(stream))) {}
 
   /**
    * @brief Negotiates the session as a server, once: the first read does it if this has not. Reports the error of a
    * handshake that failed or was stopped, again on every later call.
+   * @throws std::logic_error while another handshake is pending.
    */
-  [[nodiscard]] async::task<std::error_code> handshake() {
-    if (!handshaken_ && !failure_) {
-      failure_ = co_await stream_.handshake(tls_stream::session_type::server);
-      handshaken_ = !failure_;
-    }
+  [[nodiscard]] async::task<std::error_code> handshake() QUOLL_LIFETIMEBOUND { return shake_hands(checked_state()); }
 
-    co_return failure_;
-  }
-
-  /** @brief Reads what the peer sent, after the handshake for the first read; a failed handshake is its error. */
-  [[nodiscard]] async::task<io::io_result> read_some(std::span<std::byte> buffer) {
-    if (auto const error = co_await handshake()) {
-      co_return io::io_result{error, 0};
-    }
-
-    co_return co_await stream_.read_some(buffer);
+  /**
+   * @brief Reads what the peer sent, after the handshake for the first read; a failed handshake is its error.
+   * @throws std::logic_error while a handshake is pending.
+   */
+  [[nodiscard]] async::task<io::io_result>
+  read_some(std::span<std::byte> buffer QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+    return read(checked_state(), buffer);
   }
 
   /**
    * @brief Sends some of `data`, once the handshake has completed.
-   * @throws std::logic_error before it has; std::system_error with its error once it has failed.
+   * @throws std::logic_error before it has; std::system_error with its error once it has failed: a server answers
+   * what it has read.
    */
-  [[nodiscard]] tls_stream::write_awaitable write_some(std::span<std::byte const> data) {
-    if (failure_) {
-      throw std::system_error{failure_, "quoll::asio::accepted_tls_stream: its handshake failed"};
-    }
+  [[nodiscard]] tls_stream::write_awaitable
+  write_some(std::span<std::byte const> data QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+    auto &current = checked_state();
 
-    if (!handshaken_) {
+    if (!current.outcome) {
       throw std::logic_error{"quoll::asio::accepted_tls_stream: written to before its handshake"};
     }
 
-    return stream_.write_some(data);
+    if (*current.outcome) {
+      throw std::system_error{*current.outcome, "quoll::asio::accepted_tls_stream: its handshake failed"};
+    }
+
+    return current.stream.write_some(data);
   }
 
-  /** @brief Sends TLS's closing message and stops sending: see tls_stream::shutdown_send(). */
-  [[nodiscard]] async::task<io::io_result> shutdown_send() { return stream_.shutdown_send(); }
+  /** @brief Sends TLS's closing message and stops sending: see tls_stream::shutdown_send(). After a failed handshake,
+   * its error. */
+  [[nodiscard]] async::task<io::io_result> shutdown_send() QUOLL_LIFETIMEBOUND { return shut_down(checked_state()); }
 
   /** @brief What a read started now would do, once handshaken: see tls_stream::poll_read(). Unknown before. */
   [[nodiscard]] io::read_readiness poll_read() noexcept {
-    return handshaken_ ? stream_.poll_read() : io::read_readiness::unknown;
+    auto &current = checked_state();
+
+    return handshaken() ? current.stream.poll_read() : io::read_readiness::unknown;
   }
 
   /** @brief Whether the handshake has completed. */
-  [[nodiscard]] bool handshaken() const noexcept { return handshaken_; }
+  [[nodiscard]] bool handshaken() const noexcept {
+    auto const &current = checked_state();
+
+    return current.outcome && !*current.outcome;
+  }
 
   /**
    * @brief The session, for what OpenSSL negotiated once handshaken(): its peer's certificate, its protocol. Reading
    * or writing through it goes around this stream.
    */
-  [[nodiscard]] tls_stream::session_type &session() noexcept { return stream_.session(); }
+  [[nodiscard]] tls_stream::session_type &session() noexcept QUOLL_LIFETIMEBOUND {
+    return checked_state().stream.session();
+  }
 
   /** @copydoc session */
-  [[nodiscard]] tls_stream::session_type const &session() const noexcept { return stream_.session(); }
+  [[nodiscard]] tls_stream::session_type const &session() const noexcept QUOLL_LIFETIMEBOUND {
+    return checked_state().stream.session();
+  }
 
 private:
-  // Before the session, which is made from it.
-  std::shared_ptr<::asio::ssl::context> context_;
-  tls_stream stream_;
-  std::error_code failure_;
-  bool handshaken_ = false;
+  struct state {
+    state(std::shared_ptr<::asio::ssl::context> made_from, tls_stream accepted) noexcept
+        : context(std::move(made_from)), stream(std::move(accepted)) {}
+
+    // Before the session, which is made from it.
+    std::shared_ptr<::asio::ssl::context> context;
+    tls_stream stream;
+    // None before the handshake; no error once it completed, its error once it failed.
+    std::optional<std::error_code> outcome;
+    bool handshaking = false;
+  };
+
+  // On the state, bound at the call: the stream may move while they are pending.
+  static async::task<std::error_code> shake_hands(state &current) {
+    if (current.outcome) {
+      co_return *current.outcome;
+    }
+
+    if (current.handshaking) {
+      throw std::logic_error{"quoll::asio::accepted_tls_stream: a handshake is already pending"};
+    }
+
+    current.handshaking = true;
+
+    std::error_code error;
+
+    try {
+      error = co_await current.stream.handshake(tls_stream::session_type::server);
+    } catch (std::system_error const &thrown) {
+      // A stop that throws leaves the session as unusable as one returned.
+      current.handshaking = false;
+      current.outcome = thrown.code();
+      throw;
+    }
+
+    current.handshaking = false;
+    current.outcome = error;
+    co_return error;
+  }
+
+  static async::task<io::io_result> read(state &current, std::span<std::byte> buffer) {
+    if (!current.outcome || *current.outcome) {
+      if (auto const error = co_await shake_hands(current)) {
+        co_return io::io_result{error, 0};
+      }
+    }
+
+    co_return co_await current.stream.read_some(buffer);
+  }
+
+  static async::task<io::io_result> shut_down(state &current) {
+    if (current.outcome && *current.outcome) {
+      co_return io::io_result{*current.outcome, 0};
+    }
+
+    co_return co_await current.stream.shutdown_send();
+  }
+
+  [[nodiscard]] state &checked_state() noexcept {
+    assert(state_ && "accepted_tls_stream used after being moved from");
+    return *state_;
+  }
+
+  [[nodiscard]] state const &checked_state() const noexcept {
+    assert(state_ && "accepted_tls_stream used after being moved from");
+    return *state_;
+  }
+
+  std::unique_ptr<state> state_;
 };
 
 static_assert(io::HalfClosableStream<accepted_tls_stream>);
