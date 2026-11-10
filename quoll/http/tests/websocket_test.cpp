@@ -151,9 +151,8 @@ private:
   io::memory_stream inner_;
 };
 
-// How a breaking_timer breaks: its first wait fails, with an exception that carries no code, or with a code of zero,
-// or each wait that is stopped does, rather than return false.
-enum class breaks : std::uint8_t { first_wait, first_wait_with_no_code, when_stopped };
+// How a breaking_timer breaks: its first wait fails, with an exception that carries no code, or with a code of zero.
+enum class breaks : std::uint8_t { first_wait, first_wait_with_no_code };
 
 // A virtual_time whose timer breaks as `how` says, as a timer that fails would; the rest waits as virtual_time's does.
 class breaking_timer {
@@ -168,10 +167,6 @@ public:
     void post(quoll::async::work_item &item) const noexcept { inner_.post(item); }
 
     [[nodiscard]] task<bool> wait_for(std::chrono::nanoseconds duration) const {
-      if (how_ == breaks::when_stopped) {
-        return failed_when_stopped(inner_, duration);
-      }
-
       if ((*waits_)++ == 0) {
         return how_ == breaks::first_wait ? failed() : failed_with_no_code();
       }
@@ -196,16 +191,6 @@ public:
     static task<bool> failed_with_no_code() {
       throw std::system_error{std::error_code{}, "the timer broke"};
       co_return false;
-    }
-
-    // By value: the executor that answered the query may be gone by the time the wait ends.
-    static task<bool> failed_when_stopped(quoll::test::virtual_time::executor inner,
-                                          std::chrono::nanoseconds duration) {
-      if (!co_await inner.wait_for(duration)) {
-        throw std::runtime_error{"the timer broke as it was stopped"};
-      }
-
-      co_return true;
     }
 
     quoll::test::virtual_time::executor inner_;
@@ -1086,44 +1071,16 @@ TEST_CASE("websocket: a client's ping whose write fails with a code of zero ends
   REQUIRE(time.now() == 1s);
 }
 
-TEST_CASE("websocket: a client's keep-alive that fails once its receive() ended changes nothing", "[http][websocket]") {
-  breaking_timer context{breaks::when_stopped};
-  auto [client_end, server_end] = io::make_memory_stream_pair();
-  http::websocket client{io::any_stream{std::move(client_end)}, websocket_role::client, {}, {.ping_interval = 1s}};
-
-  // Each message ends its receive() before the ping is due, which stops its keep-alive's wait: the timer then fails.
-  auto const received = [&]() -> task<websocket_message> {
-    auto const peer = [&]() -> task<> {
-      co_await quoll::async::sleep_for(500ms);
-      co_await send_raw(server_end, http::format_websocket_frame(websocket_opcode::text, "in time"));
-      co_await quoll::async::sleep_for(500ms);
-      co_await send_raw(server_end, http::format_websocket_frame(websocket_opcode::text, "and after"));
-    };
-    auto const twice = [&]() -> task<websocket_message> {
-      auto first = co_await client.receive();
-
-      REQUIRE(first == text("in time"));
-      // What the keep-alive threw as it ended was no failure of the connection's.
-      co_return co_await client.receive();
-    };
-
-    auto [sent, message] = co_await quoll::async::when_all(peer(), twice());
-
-    co_return message;
-  };
-
-  REQUIRE(quoll::test::run(context, received()) == text("and after"));
-}
-
-TEST_CASE("websocket: a client's keep-alive sends no ping beside one still under way", "[http][websocket]") {
+TEST_CASE("websocket: a client's keep-alive sends one ping at a time, across its receive()s", "[http][websocket]") {
   quoll::test::virtual_time time;
   auto [client_end, server_end] = io::make_memory_stream_pair();
   http::websocket client{
       io::any_stream{taking_slowly{std::move(client_end), 400ms}}, websocket_role::client, {}, {.ping_interval = 1s}};
   http::websocket_parser from_client{websocket_role::server};
 
-  // The ping of 1 s takes until 3.4 s; the message of 1.5 s ends that receive(), and the next one's keep-alive, due to
-  // ping at 2.5 s, finds it still under way: it sends none, and takes the peer as gone at 3.5 s.
+  // One keep-alive for the connection: the ping of 1 s takes until 3.4 s, beside the message of 1.5 s that ends its
+  // receive(), and the next receive() starts none of its own. The message counts at the end of the interval after the
+  // ping, 4.4 s: the next ping leaves from 5.4 s to 7.8 s, and the peer is taken as gone at 8.8 s.
   auto const quiet = [&]() -> task<std::error_code> {
     auto const peer = [&]() -> task<> {
       co_await quoll::async::sleep_for(1500ms);
@@ -1142,21 +1099,23 @@ TEST_CASE("websocket: a client's keep-alive sends no ping beside one still under
   };
 
   REQUIRE(quoll::test::run(time, quiet()) == std::errc::timed_out);
-  REQUIRE(time.now() == 3500ms);
+  REQUIRE(time.now() == 8800ms);
 
-  // One ping on the stream, and nothing after it.
+  // Two pings on the stream, one after the other, and nothing after them.
   auto const pings = [&]() -> task<int> {
-    auto const first = co_await quoll::test::next_websocket_message(server_end, from_client);
+    for (auto ping = 0; ping != 2; ++ping) {
+      auto const pinged = co_await quoll::test::next_websocket_message(server_end, from_client);
 
-    REQUIRE(first == websocket_message{websocket_opcode::ping, ""});
+      REQUIRE(pinged == websocket_message{websocket_opcode::ping, ""});
+    }
 
-    auto const second = co_await quoll::test::code_thrown_by(
+    auto const third = co_await quoll::test::code_thrown_by(
         quoll::async::with_timeout(10s, quoll::test::next_websocket_message(server_end, from_client)));
 
-    co_return second == std::errc::timed_out ? 1 : 2;
+    co_return third == std::errc::timed_out ? 2 : 3;
   };
 
-  REQUIRE(quoll::test::run(time, pings()) == 1);
+  REQUIRE(quoll::test::run(time, pings()) == 2);
 }
 
 TEST_CASE("websocket: a client's ping that fails once its receive() has ended ends the next with its failure",
@@ -1166,8 +1125,8 @@ TEST_CASE("websocket: a client's ping that fails once its receive() has ended en
   http::websocket client{
       io::any_stream{reset_late{std::move(client_end), 500ms}}, websocket_role::client, {}, {.ping_interval = 1s}};
 
-  // The ping of 1 s fails at 1.5 s; the message of 1.2 s ended its receive() meanwhile, so that it takes nothing as
-  // gone: the next receive()'s keep-alive pings at 2.2 s, and ends it with the reset at 2.7 s, rather than a timeout.
+  // The ping of 1 s fails at 1.5 s; the message of 1.2 s ended its receive() meanwhile: the keep-alive, the
+  // connection's, ends the next receive() with the reset then.
   auto const reset = [&]() -> task<std::error_code> {
     auto const peer = [&]() -> task<> {
       co_await quoll::async::sleep_for(1200ms);
@@ -1186,18 +1145,18 @@ TEST_CASE("websocket: a client's ping that fails once its receive() has ended en
   };
 
   REQUIRE(quoll::test::run(time, reset()) == std::errc::connection_reset);
-  REQUIRE(time.now() == 2700ms);
+  REQUIRE(time.now() == 1500ms);
 }
 
-TEST_CASE("websocket: a client's keep-alive that counted another's ping as its own gives that ping's failure",
+TEST_CASE("websocket: a client's ping that fails while a later receive() waits ends it with the failure",
           "[http][websocket]") {
   quoll::test::virtual_time time;
   auto [client_end, server_end] = io::make_memory_stream_pair();
   http::websocket client{
       io::any_stream{reset_late{std::move(client_end), 1600ms}}, websocket_role::client, {}, {.ping_interval = 1s}};
 
-  // The ping of 1 s fails at 2.6 s; the message of 1.2 s ended its receive(), and the next one's keep-alive found it
-  // under way at 2.2 s and counted it as its own: its verdict at 3.2 s gives the reset rather than a timeout.
+  // The ping of 1 s fails at 2.6 s, after the message of 1.2 s ended its receive(): the next receive() ends with the
+  // reset then, rather than a timeout later.
   auto const reset = [&]() -> task<std::error_code> {
     auto const peer = [&]() -> task<> {
       co_await quoll::async::sleep_for(1200ms);
@@ -1216,7 +1175,7 @@ TEST_CASE("websocket: a client's keep-alive that counted another's ping as its o
   };
 
   REQUIRE(quoll::test::run(time, reset()) == std::errc::connection_reset);
-  REQUIRE(time.now() == 3200ms);
+  REQUIRE(time.now() == 2600ms);
 }
 
 TEST_CASE("websocket: a client's keep-alive with sending ended judges the peer by what it sends", "[http][websocket]") {
@@ -1272,32 +1231,35 @@ TEST_CASE("websocket: a client's ping refused as its close left waits for the pe
   REQUIRE(time.now() == 3500ms);
 }
 
-TEST_CASE("websocket: a client's keep-alive judges a ping it counted as its own once it has left",
-          "[http][websocket]") {
+TEST_CASE("websocket: a client's keep-alive judges its ping a whole interval after it has left", "[http][websocket]") {
   quoll::test::virtual_time time;
   auto [client_end, server_end] = io::make_memory_stream_pair();
   http::websocket client{
       io::any_stream{taking_slowly{std::move(client_end), 900ms}}, websocket_role::client, {}, {.ping_interval = 1s}};
 
-  // The ping of 1 s takes until 6.4 s, a byte every 900 ms; the next receive()'s keep-alive counts it as its own at
-  // 2.5 s, and judges the peer only at the end of the interval after it left, 6.5 s, rather than at 3.5 s.
+  // The ping of 1 s takes until 6.4 s, a byte every 900 ms: the peer, quiet, is taken as gone an interval after it
+  // left, 7.4 s, rather than at 2 s.
   auto const slow = [&]() -> task<std::error_code> {
-    auto const peer = [&]() -> task<> {
-      co_await quoll::async::sleep_for(1500ms);
-      co_await send_raw(server_end, http::format_websocket_frame(websocket_opcode::text, "one"));
-    };
-    auto const twice = [&]() -> task<std::error_code> {
-      auto first = co_await client.receive();
-
-      REQUIRE(first == text("one"));
-      co_return co_await quoll::test::code_thrown_by(client.receive());
-    };
-
-    auto [sent, code] = co_await quoll::async::when_all(peer(), twice());
-
-    co_return code;
+    co_return co_await quoll::test::code_thrown_by(client.receive());
   };
 
   REQUIRE(quoll::test::run(time, slow()) == std::errc::timed_out);
-  REQUIRE(time.now() == 6500ms);
+  REQUIRE(time.now() == 7400ms);
+}
+
+TEST_CASE("websocket: a client's send fails at once once its peer was taken as gone", "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{io::any_stream{std::move(client_end)}, websocket_role::client, {}, {.ping_interval = 1s}};
+
+  // Gone at 2 s: what is sent then finds it out at once, with why, rather than write into the connection.
+  auto const after = [&]() -> task<std::error_code> {
+    auto const gone = co_await quoll::test::code_thrown_by(client.receive());
+
+    REQUIRE(gone == std::errc::timed_out);
+    co_return co_await quoll::test::code_thrown_by(client.send_text("anyone?"));
+  };
+
+  REQUIRE(quoll::test::run(time, after()) == std::errc::timed_out);
+  REQUIRE(time.now() == 2s);
 }

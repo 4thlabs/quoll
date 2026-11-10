@@ -103,13 +103,14 @@ struct websocket_options {
  * was stopped, so the next one throws the same. Without a timer, nothing here times out.
  *
  * A connection no server watches, a client's, keeps itself alive while a receive() waits, as a server's does beside
- * its handler, given a timer: at the end of each ping_interval from about the receive()'s first read, a peer that sent
- * nothing in it is pinged, and one that sent nothing since it was pinged, or since a close has left, is taken as gone,
- * so that a peer silent since just after the end of one is pinged within two intervals and taken as gone within
- * three. The receive() then throws std::errc::timed_out, the failure of the ping that could not leave, or io_error for
- * a keep-alive that failed with no code, and so does every one after it that has to read, a frame that comes at the
- * very end of the interval included, which Beast takes as late too. The ping goes on its own: a receive() waits
- * for it only to send a pong or a close of its own, which take their turn behind it.
+ * its handler, given a timer, with one keep-alive at a time, started by a receive() as it first reads and ending once
+ * none reads: at the end of each ping_interval, a peer that sent nothing in it is pinged, and one that sent nothing
+ * since its ping left, or since a close has left, is taken as gone, so that a peer silent since just after the end of
+ * one is pinged within two intervals and taken as gone within three. The receive() then throws std::errc::timed_out,
+ * the failure of the ping that could not leave, or io_error for a keep-alive that failed with no code, and so do every
+ * one after it that has to read and every send, a frame that comes at the very end of the interval included, which
+ * Beast takes as late too. The ping goes on its own: a receive() waits for it only to send a pong or a close of its
+ * own, which take their turn behind it.
  *
  * Copied, not moved: its copies are the same connection, as http::client's are, which a task receiving and another
  * sending may each hold. An operation holds what it works on from when it is called, so that every copy may go before
@@ -117,11 +118,12 @@ struct websocket_options {
  * another asked while one is pending throwing std::logic_error, in every build.
  *
  * Thread safety: that of the stream, which an asio socket does not share between threads. What a receive() and a send
- * do, and a client's keep-alive, which runs on the executor of the receive() it watches, takes turns as long as
- * they run on one executor that runs a handler at a time: the strand of its own a server gives each connection, where
- * its handler runs, or an executor of quoll::runtime, a strand on several threads, where a client runs, and the tasks
- * they await through when_all. A task on another executor, one that others send through to broadcast say, would reach
- * the stream at once: what others want sent goes to the handler, which sends it itself.
+ * do, and a client's keep-alive, which runs on the executor of the receive() that started it, takes turns as long as
+ * they all run on one executor that runs a handler at a time, a strand where it runs on several threads: the strand of
+ * its own a server gives each connection, where its handler runs, or an executor of quoll::runtime, a strand on
+ * several threads, where a client runs, and the tasks they await through when_all. A task on another executor, one
+ * that others send through to broadcast say, would reach the stream at once: what others want sent goes to the
+ * handler, which sends it itself.
  */
 class websocket {
 public:
