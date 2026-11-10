@@ -39,6 +39,7 @@
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/either_stop.hpp>
 #include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
@@ -1326,10 +1327,7 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
   paced_stream paced{stream, parser, options};
 
   // What ends the wait for a request: the task's stop request, or a request to drain.
-  std::stop_source idle_stop;
-  auto const stop_waiting = [&idle_stop] { idle_stop.request_stop(); };
-  std::stop_callback const on_stop{co_await async::current_stop_token(), stop_waiting};
-  std::stop_callback const on_drain{options.drain, stop_waiting};
+  async::detail::either_stop const idle_stop{co_await async::current_stop_token(), options.drain};
 
   parser.set_body_streaming([&router](http::request const &head) { return router.reads_body_in_pieces(head); });
 
@@ -1355,7 +1353,7 @@ async::task<connection_end> serve_requests(io::any_stream &stream, http::router 
     if (buffer.empty()) {
       auto const wait = co_await async::detail::stop_scope<waited>{
           async::detail::with_optional_timeout(options.idle_timeout, wait_for_request(stream, buffer)),
-          idle_stop.get_token()};
+          idle_stop.token()};
 
       if (wait != waited::request) {
         co_return wait == waited::over ? connection_end::stop_sending : connection_end::nothing_owed;
@@ -1502,14 +1500,10 @@ async::task<> linger(io::any_stream &stream, connection_options const &options) 
     co_return;
   }
 
-  std::stop_source stop;
-  auto const stop_lingering = [&stop] { stop.request_stop(); };
-  std::stop_callback const on_stop{stop_token, stop_lingering};
-  std::stop_callback const on_drain{options.drain, stop_lingering};
+  async::detail::either_stop const stop{stop_token, options.drain};
 
   (void)co_await async::detail::stop_scope<std::error_code>{
-      async::with_timeout(options.lingering_time, drop_what_comes(stream, options.lingering_timeout)),
-      stop.get_token()};
+      async::with_timeout(options.lingering_time, drop_what_comes(stream, options.lingering_timeout)), stop.token()};
 }
 
 // The last of a connection, once all that it owed has left.

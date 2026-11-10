@@ -65,14 +65,15 @@ namespace quoll::http {
  * @endcode
  *
  * The server's 101 is checked: its `Sec-WebSocket-Accept`, no extension, no subprotocol but one the fields offered;
- * interim answers before it (103) are skipped. Anything else throws http::websocket_refused, with the server's answer,
- * even one that came as the handshake could not be sent whole. The connection and the handshake take no
- * longer than `options.handshake_timeout`, past which std::errc::timed_out is thrown; a network failure throws the
- * stream's error. Without a timer in the executor, nothing limits them. To end the connection cleanly, close() it and
- * receive() the server's answer: a websocket whose last copy goes without that cuts the connection with no close. A
- * client sends no ping on its own, and receive() answers pings but does not give pongs: a server that vanished without
- * a word is found by a write that waits `websocket.ping_interval` with nothing taken, or by what the application
- * expects of it, a message within some time, which it waits for beside what receives.
+ * interim answers before it (103) are skipped, up to eight. Anything else throws http::websocket_refused, with the
+ * server's answer, even one that came as the handshake could not be sent whole; an answer that does not parse, or a
+ * ninth interim one, throws std::system_error with the parser's error (http::error). The connection and the handshake
+ * take no longer than `options.handshake_timeout`, past which std::errc::timed_out is thrown; a network failure throws
+ * the stream's error. Without a timer in the executor, nothing limits them. To end the connection cleanly, close() it
+ * and receive() the server's answer: a websocket whose last copy goes without that cuts the connection with no close.
+ * While a receive() waits, a server that sent nothing for `options.websocket.ping_interval` is pinged, and one that
+ * sent nothing since is taken as gone, the receive() throwing std::errc::timed_out, why its ping could not leave, or
+ * io_error for a keep-alive that failed, as http::websocket says, and every send after it the same.
  *
  * @throws std::invalid_argument, when called, for another URL, a field of the handshake's own, a subprotocol offered
  * that is no token or twice, a `Sec-WebSocket-Protocol` that names none, a request that would not serialize, or `wss`

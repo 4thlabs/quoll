@@ -56,8 +56,9 @@ struct websocket_connect_options {
    */
   http::fields fields{};
   /**
-   * @brief What the connection accepts, and how long a write may wait with nothing taken: its `ping_interval`, as a
-   * client sends no ping on its own.
+   * @brief What the connection accepts, and its `ping_interval`: how long the server may send nothing, while a
+   * receive() waits, before it is pinged, then before it is taken as gone, and how long a write may wait with nothing
+   * taken.
    */
   websocket_options websocket{};
   /** @brief How long connecting and the handshake may take, both, given a timer; zero: no limit, and a negative one has

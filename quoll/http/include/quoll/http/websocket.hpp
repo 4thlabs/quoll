@@ -61,10 +61,12 @@ struct websocket_options {
   /** @brief The most a message holds, its fragments joined: a larger one closes the connection with 1009. */
   std::size_t max_message_size = websocket_parser::default_max_message_size;
   /**
-   * @brief For a connection http::accept_websocket hands over: how long the peer may send nothing before it is pinged,
-   * and then before it is taken as gone, which stops the handler; zero, never, for a peer the application watches
-   * itself. For any connection with a timer, how long a write may wait with nothing taken before the peer is taken as
-   * gone: this, or 30 seconds where it is zero.
+   * @brief How long the peer may send nothing before it is pinged, and then before it is taken as gone; zero, never,
+   * for a peer the application watches itself, each counted at the end of an interval (see websocket). For a connection
+   * http::accept_websocket hands over, all along, a peer gone stopping the handler; for a client's, while a receive()
+   * waits, which then throws why; for a server's built by hand, none, the application watching it. For any connection
+   * with a timer, how long a write may wait with nothing taken before the peer is taken as gone: this, or 30 seconds
+   * where it is zero.
    */
   std::chrono::nanoseconds ping_interval = std::chrono::seconds{30};
 };
@@ -93,7 +95,8 @@ struct websocket_options {
  * Sending goes on while a receive() waits, from a task beside it through when_all: messages leave whole, one at a
  * time, in the order their tasks start. Once a close has gone out, by close() or as the answer to the peer's, a
  * message throws std::system_error with `http::error::websocket_closed`, as does all that follows a frame cut short,
- * by a stop or a failure of the stream; a close() then does nothing.
+ * by a stop or a failure of the stream; a close() then does nothing, but on a client whose peer its keep-alive took as
+ * gone, where it throws why, as every send does (see below).
  *
  * Given a timer, a write that waits websocket_options::ping_interval, or 30 seconds where it is zero, with nothing
  * taken has the peer taken as gone: its frame is cut, and the send throws std::errc::timed_out. A pong, and the close
@@ -101,16 +104,35 @@ struct websocket_options {
  * unsent. A receive() stopped, or failed, ends receiving: a stream such as TLS does not take a read up again once it
  * was stopped, so the next one throws the same. Without a timer, nothing here times out.
  *
+ * A client's connection, as http::connect_websocket gives one, or one built by hand, keeps itself alive while a
+ * receive() waits, given a timer and a ping_interval, as a server's does beside its handler. One keep-alive at a time,
+ * started by a receive() as it first reads, and ending once none reads:
+ *
+ * - At the end of each ping_interval, a peer that sent nothing in it is pinged. A new interval starts from what was
+ *   read as a receive() ends, and once a ping has left: a ping that waits for the turn behind a send, or takes long to
+ *   leave, delays the verdict.
+ * - A peer that sent nothing since its ping left, or was dropped as sending had ended, is taken as gone: within two
+ *   to three intervals of silence. Once a close has left, its answer is waited for as a pong, one interval. A frame
+ *   that comes at the very end of the interval is late, as Beast takes it too, unless a read had already brought it.
+ * - Then the receive() throws std::errc::timed_out, the failure of the ping that could not leave, or io_error for a
+ *   keep-alive that failed, and so do every receive() after it that has to read, and every send, but one after the
+ *   connection's own close, which says http::error::websocket_closed as before, a close() then doing nothing. What a
+ *   read had already brought is given first.
+ * - The ping goes on its own: a receive() waits for it only to send a pong or a close of its own, which take their
+ *   turn behind it.
+ *
  * Copied, not moved: its copies are the same connection, as http::client's are, which a task receiving and another
  * sending may each hold. An operation holds what it works on from when it is called, so that every copy may go before
  * it ends: the stream closes once the last of them, and of the operations, has. One receive() at a time, across copies,
  * another asked while one is pending throwing std::logic_error, in every build.
  *
- * Thread safety: that of the stream, which an asio socket does not share between threads. What a receive() and a send
- * do takes turns as long as they run on one executor that runs a handler at a time: the strand of its own a server
- * gives each connection, where its handler runs, and the tasks it awaits through when_all. A task on another executor,
- * one that others send through to broadcast say, would reach the stream at once: what others want sent goes to the
- * handler, which sends it itself.
+ * Thread safety: that of the stream, which an asio socket does not share between threads. The receive()s and the
+ * sends of a connection, and a client's keep-alive, which runs on the executor of the receive() that started it, take
+ * turns as long as they all run on one executor that runs a handler at a time, whether they overlap or follow one
+ * another. On several threads, that executor is a strand: the one a server gives each connection, where its handler
+ * runs, or an executor of quoll::runtime, where a client runs, with the tasks they await through when_all. A task on
+ * another executor, one that others send through to broadcast say, would reach the stream at once: what others want
+ * sent goes to the handler, which sends it itself.
  */
 class websocket {
 public:
@@ -127,21 +149,29 @@ public:
   /**
    * @brief The next text or binary message, or the peer's close (`opcode` close, with its code and reason), the last.
    *
-   * @throws std::system_error with an http::error for a peer that breaks the protocol, or the stream's error, and
+   * @throws std::system_error with an http::error for a peer that breaks the protocol, the stream's error, or, for a
+   * peer the keep-alive took as gone, std::errc::timed_out or why its ping could not leave (see websocket), and
    * std::logic_error asked again after the close, or while another receive() is pending, through any copy.
    */
   [[nodiscard]] async::task<websocket_message> receive();
 
-  /** @brief Sends `text`, copied. @throws std::invalid_argument, before the task runs, for text that is not UTF-8. */
+  /**
+   * @brief Sends `text`, copied.
+   *
+   * @throws std::invalid_argument, before the task runs, for text that is not UTF-8, and std::system_error with
+   * http::error::websocket_closed after a close or a frame cut short, the stream's error or std::errc::timed_out, or,
+   * on a client whose peer its keep-alive took as gone, why (see websocket).
+   */
   [[nodiscard]] async::task<> send_text(std::string_view text);
 
-  /** @brief Sends `data`, copied. */
+  /** @brief Sends `data`, copied. @throws std::system_error as send_text() does. */
   [[nodiscard]] async::task<> send_binary(std::string_view data);
 
   /**
    * @brief Sends a ping, with `data`, copied, which the peer's pong carries back.
    *
-   * @throws std::invalid_argument, before the task runs, for data longer than 125 bytes.
+   * @throws std::invalid_argument, before the task runs, for data longer than 125 bytes, and std::system_error as
+   * send_text() does.
    */
   [[nodiscard]] async::task<> ping(std::string_view data = {});
 
@@ -149,7 +179,8 @@ public:
    * @brief Sends a close with `code` and `reason`, copied, unless one was sent: nothing is sent after it. The peer's
    * answer comes to receive(), as the last message.
    *
-   * @throws std::invalid_argument, before the task runs, for what format_websocket_close() refuses.
+   * @throws std::invalid_argument, before the task runs, for what format_websocket_close() refuses, and
+   * std::system_error for the stream's error or a timeout, or, on a client whose peer its keep-alive took as gone, why.
    */
   [[nodiscard]] async::task<> close(std::uint16_t code = 1000, std::string_view reason = {});
 
