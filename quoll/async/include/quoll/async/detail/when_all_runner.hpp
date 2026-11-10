@@ -40,6 +40,7 @@
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/detail/context_promise.hpp>
 #include <quoll/async/detail/non_void.hpp>
+#include <quoll/async/detail/owned_chain.hpp>
 #include <quoll/async/detail/when_all_state.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
@@ -47,7 +48,6 @@
 #include <coroutine>
 #include <exception>
 #include <optional>
-#include <type_traits>
 #include <utility>
 
 namespace quoll::async::detail {
@@ -124,15 +124,15 @@ private:
   std::coroutine_handle<promise_type> handle_;
 };
 
+// Owns the chain of its child: a child ending on a stop ends here, and is reported to the state.
 template <class T>
 when_all_runner run_when_all_child(task<T> child, std::optional<non_void_t<T>> &slot QUOLL_LIFETIMEBOUND,
                                    when_all_state &state QUOLL_LIFETIMEBOUND) {
   try {
-    if constexpr (std::is_void_v<T>) {
-      co_await std::move(child);
-      slot.emplace();
+    if (auto result = co_await owned_chain<T>{std::move(child)}) {
+      slot.emplace(std::move(*result));
     } else {
-      slot.emplace(co_await std::move(child));
+      state.stopped();
     }
   } catch (...) {
     state.fail(std::current_exception());

@@ -39,6 +39,7 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/detail/chain_owner.hpp>
 #include <quoll/async/detail/context_adapter.hpp>
 #include <quoll/async/detail/recycled_frame.hpp>
 
@@ -78,6 +79,11 @@ public:
   }
 
   void set_context(await_context const &context) noexcept { context_ = &context; }
+
+  // Whether the frame is being destroyed suspended, as the chain it belongs to unwinds from its owner.
+  [[nodiscard]] bool unwinding() const noexcept {
+    return context_ != nullptr && context_->owner != nullptr && context_->owner->unwinding();
+  }
 
 private:
   await_context const *context_ = nullptr;

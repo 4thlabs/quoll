@@ -39,6 +39,7 @@
 
 #include <quoll/asio/runtime.hpp>
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/stopped.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/test/overloaded.hpp>
 
@@ -49,6 +50,7 @@
 #include <cstdint>
 #include <exception>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 
 namespace quoll::test {
@@ -59,15 +61,21 @@ T run_task(async::task<T> work) {
   asio::runtime runtime;
   std::optional<T> value;
   std::exception_ptr failure;
+  auto stopped = false;
 
   co_spawn(runtime.get_executor(), std::move(work),
            overloaded{[&](T result) { value = std::move(result); },
-                      [&](std::exception_ptr error) { failure = std::move(error); }},
+                      [&](std::exception_ptr error) { failure = std::move(error); },
+                      [&](async::stopped_t) { stopped = true; }},
            runtime.get_stop_token());
   runtime.run();
 
   if (failure) {
     std::rethrow_exception(failure);
+  }
+
+  if (stopped) {
+    throw std::runtime_error{"quoll::test::run_task: the task ended on a stop"};
   }
 
   return std::move(value.value());

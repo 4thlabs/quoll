@@ -37,6 +37,8 @@
 #ifndef QUOLL_ASYNC_COMPLETION_HANDLER_HPP
 #define QUOLL_ASYNC_COMPLETION_HANDLER_HPP
 
+#include <quoll/async/stopped.hpp>
+
 #include <concepts>
 #include <exception>
 #include <type_traits>
@@ -46,12 +48,13 @@ namespace quoll::async {
 /**
  * @brief Receives the outcome of a `task<T>` run by co_spawn.
  *
- * Invocable with the task's value (with nothing for `task<>`) on success, and with a `std::exception_ptr` on failure.
- * An overload set of lambdas fits.
+ * Invocable with the task's value (with nothing for `task<>`) on success, with a `std::exception_ptr` on failure, and
+ * with `stopped_t` when the task ended on a stop. An overload set of lambdas fits.
  */
 template <class H, class T>
-concept CompletionHandler = std::invocable<H &, std::exception_ptr> && ((std::is_void_v<T> && std::invocable<H &>) ||
-                                                                        (!std::is_void_v<T> && std::invocable<H &, T>));
+concept CompletionHandler =
+    std::invocable<H &, std::exception_ptr> && std::invocable<H &, stopped_t> &&
+    ((std::is_void_v<T> && std::invocable<H &>) || (!std::is_void_v<T> && std::invocable<H &, T>));
 
 } // namespace quoll::async
 

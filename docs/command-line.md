@@ -76,8 +76,8 @@ int main() {
 - **A client is copied freely**: its transport and interceptors are shared. A coroutine takes it by value rather than
   by reference, and a scope keeps a copy.
 - **The environment is read in `main`**, before the runtime runs anything, and handed to the task.
-- **The exit status** comes from the task, through the handler `co_spawn` calls at its end: a value it returns, or the
-  exception it threw.
+- **The exit status** comes from the task, through the handler `co_spawn` calls at its end: a value it returns, the
+  exception it threw, or `async::stopped` if it ended on a stop, which nothing asks for here, and so is a failure.
 
 ## Natively and in Node
 

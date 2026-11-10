@@ -41,6 +41,12 @@
 
 #include <stop_token>
 
+namespace quoll::async::detail {
+
+class chain_owner;
+
+} // namespace quoll::async::detail
+
 namespace quoll::async {
 
 /**
@@ -58,6 +64,13 @@ struct await_context {
    * others ignore it. An empty token (the default) never stops.
    */
   std::stop_token stop_token;
+
+  /**
+   * @brief The owner of the chain, which an operation ending on a stop posts instead of resuming its awaiter: the
+   * owner then destroys the chain from the top, without any of its coroutines resuming (see stopped_as_optional).
+   * Set by Quoll where a chain starts (co_spawn, when_all, stopped_as_optional); a program never names it.
+   */
+  detail::chain_owner *owner = nullptr;
 };
 
 } // namespace quoll::async

@@ -45,6 +45,7 @@
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/report.hpp>
+#include <quoll/async/stopped.hpp>
 #include <quoll/async/strands_ref.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
@@ -156,6 +157,9 @@ struct connection_outcome {
   }
 
   void operator()() const noexcept { ended(); }
+
+  // A stop is no failure: neither the application's callback nor stderr hears of it.
+  void operator()(async::stopped_t) const noexcept { ended(); }
 
   void operator()(std::exception_ptr failure) const noexcept {
     if (shared->state->options.on_connection_error) {

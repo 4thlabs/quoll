@@ -42,8 +42,11 @@
 #include <quoll/async/completion_handler.hpp>
 #include <quoll/async/detail/context_adapter.hpp>
 #include <quoll/async/detail/detached.hpp>
+#include <quoll/async/detail/non_void.hpp>
+#include <quoll/async/detail/owned_chain.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/executor_ref.hpp>
+#include <quoll/async/stopped.hpp>
 #include <quoll/async/task.hpp>
 
 #include <cassert>
@@ -60,38 +63,31 @@ namespace quoll::async {
 
 namespace detail {
 
-// The frame owns the executor and the await_context of the whole chain.
+// The frame owns the executor, and owns the chain of the task: it hands the handler its value, its exception, or
+// stopped_t once the chain ended on a stop.
 template <Executor E, class T, CompletionHandler<T> Handler>
 detached spawn_root(E executor, task<T> work, Handler handler, std::stop_token stop_token) {
-  await_context const context{executor_ref{executor}, std::move(stop_token)};
+  // The stop token goes to the chain's own context, moved rather than copied.
+  await_context const context{executor_ref{executor}, {}};
   std::exception_ptr error;
+  // Emplaced rather than assigned: T need not be assignable. Empty inside once the chain ended on a stop.
+  std::optional<std::optional<non_void_t<T>>> outcome;
 
-  if constexpr (std::is_void_v<T>) {
-    try {
-      co_await context_adapter<task<T>>{std::move(work), context};
-    } catch (...) {
-      error = std::current_exception();
-    }
+  try {
+    outcome.emplace(
+        co_await context_adapter<owned_chain<T>>{owned_chain<T>{std::move(work), std::move(stop_token)}, context});
+  } catch (...) {
+    error = std::current_exception();
+  }
 
-    if (error) {
-      std::invoke(handler, std::move(error));
-    } else {
-      std::invoke(handler);
-    }
+  if (error) {
+    std::invoke(handler, std::move(error));
+  } else if (!*outcome) {
+    std::invoke(handler, stopped);
+  } else if constexpr (std::is_void_v<T>) {
+    std::invoke(handler);
   } else {
-    std::optional<T> value;
-
-    try {
-      value.emplace(co_await context_adapter<task<T>>{std::move(work), context});
-    } catch (...) {
-      error = std::current_exception();
-    }
-
-    if (error) {
-      std::invoke(handler, std::move(error));
-    } else {
-      std::invoke(handler, std::move(*value));
-    }
+    std::invoke(handler, std::move(**outcome));
   }
 }
 
@@ -101,8 +97,8 @@ detached spawn_root(E executor, task<T> work, Handler handler, std::stop_token s
  * @brief Runs `work` on `executor` and hands its outcome to `handler`.
  *
  * The task starts from the executor (never inline), and `handler` is invoked on the task's last executor with its
- * value, or with the exception it threw. The executor is copied and lives as long as the task. If `handler` throws,
- * std::terminate is called.
+ * value, with the exception it threw, or with async::stopped if it ended on a stop. The executor is copied and lives as
+ * long as the task. If `handler` throws, std::terminate is called.
  *
  * `stop_token` becomes the stop token of the task's await_context (see current_stop_token()).
  *
@@ -113,6 +109,10 @@ void co_spawn(E const &executor, task<T> work, Handler handler, std::stop_token 
   static_assert(
       !std::convertible_to<T, std::exception_ptr>,
       "quoll::async::co_spawn: a task of std::exception_ptr cannot be told apart from a failure by its handler");
+  static_assert(
+      std::is_void_v<T> || !std::convertible_to<stopped_t, T>,
+      "quoll::async::co_spawn: a task of a type stopped_t converts to cannot be told apart from a stop by its "
+      "handler");
 
   auto root = [&] {
     if constexpr (std::same_as<E, executor_ref>) {

@@ -13,6 +13,7 @@ quoll_declare_tests(
     tests/run_loop_test.cpp
     tests/slots_test.cpp
     tests/stop_token_test.cpp
+    tests/stopped_test.cpp
     tests/synchronized_test.cpp
     tests/task_test.cpp
     tests/timer_test.cpp
@@ -31,7 +32,9 @@ quoll_declare_assert_tests(
 # What the module refuses, with what the compiler says.
 quoll_declare_compile_fail_tests(
   SOURCES
+    tests/compile_fail/co_spawn_converts_from_stopped.cpp
     tests/compile_fail/co_spawn_converts_to_exception_ptr.cpp
+    tests/compile_fail/co_spawn_handler_without_stop.cpp
     tests/compile_fail/synchronized_await.cpp
     tests/compile_fail/synchronized_free_co_await.cpp
     tests/compile_fail/synchronized_rvalue_co_await.cpp

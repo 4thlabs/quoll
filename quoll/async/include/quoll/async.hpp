@@ -57,6 +57,8 @@
 #include <quoll/async/runtime_options.hpp>
 #include <quoll/async/service.hpp>
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/stopped.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/strands.hpp>
 #include <quoll/async/strands_ref.hpp>
 #include <quoll/async/task.hpp>

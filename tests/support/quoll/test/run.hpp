@@ -39,11 +39,13 @@
 
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/run_loop.hpp>
+#include <quoll/async/stopped.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/test/overloaded.hpp>
 
 #include <exception>
 #include <optional>
+#include <stdexcept>
 #include <stop_token>
 #include <type_traits>
 #include <utility>
@@ -53,23 +55,29 @@ namespace quoll::test {
 /**
  * @brief Runs `work` on `context` (a run_loop, a virtual_time) until the context is drained. Returns its value, or
  * nothing if it never completed (it waits for something that did not come); rethrows its exception, so that Catch2
- * reports it.
+ * reports it, and throws std::runtime_error if it ended on a stop.
  */
 template <class Context, class T>
   requires(!std::is_void_v<T>)
 std::optional<T> run(Context &context, async::task<T> work, std::stop_token stop_token = {}) {
   std::optional<T> result;
   std::exception_ptr failure;
+  auto stopped = false;
 
   co_spawn(context.get_executor(), std::move(work),
            overloaded{[&](T value) { result = std::move(value); },
-                      [&](std::exception_ptr error) { failure = std::move(error); }},
+                      [&](std::exception_ptr error) { failure = std::move(error); },
+                      [&](async::stopped_t) { stopped = true; }},
            std::move(stop_token));
   context.run();
 
   // Rethrown here: the handler itself must not throw.
   if (failure) {
     std::rethrow_exception(failure);
+  }
+
+  if (stopped) {
+    throw std::runtime_error{"quoll::test::run: the task ended on a stop"};
   }
 
   return result;

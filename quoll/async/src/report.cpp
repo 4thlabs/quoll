@@ -114,8 +114,12 @@ void write_report(std::string_view what, std::exception_ptr const &failure) {
   std::string line{"quoll: "};
 
   line += what;
-  line += ": ";
-  line += message_of(failure);
+
+  if (failure) {
+    line += ": ";
+    line += message_of(failure);
+  }
+
   line += '\n';
   write(line);
 }

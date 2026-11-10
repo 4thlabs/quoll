@@ -49,18 +49,19 @@
 
 namespace quoll::async::detail {
 
-// Awaits a task under `stop_token` rather than the awaiter's, on the awaiter's executor. Movable until it suspends, so
-// that it can be co_await-ed as a temporary.
+// Awaits a task under `stop_token` rather than the awaiter's, on the awaiter's executor. The task stays in the
+// awaiter's chain: if it ends on a stop, the awaiter does too. Movable until it suspends, so that it can be co_await-ed
+// as a temporary.
 template <class T>
 class [[nodiscard]] stop_scope {
 public:
   stop_scope(task<T> work, std::stop_token stop_token) noexcept
-      : work_(std::move(work)), stop_token_(std::move(stop_token)) {}
+      : stop_token_(std::move(stop_token)), work_(std::move(work)) {}
 
   [[nodiscard]] bool await_ready() const noexcept { return false; }
 
   [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> awaiter, await_context const &context) {
-    context_.emplace(await_context{context.executor, std::move(stop_token_)});
+    context_.emplace(await_context{context.executor, std::move(stop_token_), context.owner});
 
     return awaiting::suspend(work_, awaiter, *context_);
   }
@@ -68,9 +69,10 @@ public:
   T await_resume() { return work_.await_resume(); }
 
 private:
-  task<T> work_;
-  std::stop_token stop_token_;
+  // The context before the task, so that its frames, destroyed first as a chain unwinds, still reach the context.
   std::optional<await_context> context_;
+  std::stop_token stop_token_;
+  task<T> work_;
 };
 
 static_assert(ContextAwaitable<stop_scope<void>>);

@@ -43,6 +43,7 @@
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detached.hpp>
+#include <quoll/async/detail/end_stopped.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/lifetimebound.hpp>
@@ -124,6 +125,7 @@
 #include <thread>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 // The contract of the REST calls over TCP. Not in the unnamed namespace: Glaze reflects types with external linkage.
 namespace asio_test {
@@ -1534,6 +1536,23 @@ TEST_CASE("asio::runtime: run(task) is the program's exit status, and reports wh
   REQUIRE(reported.size() == 2);
   REQUIRE(reported.front() == "quoll: the program's main task ended on an exception: no port\n");
   REQUIRE(reported.back().starts_with("quoll: the program's main task ended on an exception: cut short"));
+}
+
+TEST_CASE("asio::runtime: run(task) ending on a stop nothing asked for is a failure", "[asio][runtime][stopped]") {
+  auto const stopped = []() -> task<> {
+    co_await quoll::async::yield();
+    co_await quoll::async::detail::end_stopped{};
+  };
+
+  {
+    quoll::asio::runtime runtime;
+
+    REQUIRE(runtime.run(stopped()) == EXIT_FAILURE);
+  }
+
+  auto const reported = quoll::test::reports();
+
+  REQUIRE(reported == std::vector<std::string>{"quoll: the program's main task ended on a stop nothing asked for\n"});
 }
 
 TEST_CASE("asio::runtime: run(task) stopped by a Ctrl-C is no failure", "[asio][runtime][timer]") {

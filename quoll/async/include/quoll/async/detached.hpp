@@ -40,6 +40,7 @@
 #include <quoll/async/completion_handler.hpp>
 #include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/report.hpp>
+#include <quoll/async/stopped.hpp>
 
 #include <exception>
 
@@ -49,6 +50,9 @@ namespace quoll::async {
 struct detached_t {
   /** @brief A task without a value completed. */
   void operator()() const noexcept {}
+
+  /** @brief A task ended on a stop, which is no failure. */
+  void operator()(stopped_t) const noexcept {}
 
   /** @brief A task completed with a value, dropped. */
   template <class T>
@@ -73,7 +77,7 @@ struct detached_t {
 /**
  * @brief Completion handler for co_spawn() whose task is on its own, like asio::detached: its value is dropped, and an
  * exception it lets escape is written to stderr, the program going on, unless it is std::errc::operation_canceled, what
- * a stop request throws. To do something else with it, give co_spawn() a handler of your own.
+ * a stop request throws. A stop is ignored. To do something else with it, give co_spawn() a handler of your own.
  *
  * @code
  * co_spawn(runtime.get_executor(), refresh_cache(), quoll::async::detached, runtime.get_stop_token());

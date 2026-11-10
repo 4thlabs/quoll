@@ -237,6 +237,13 @@ struct record_status {
     exit_status = 1;
     ended();
   }
+
+  // Nothing stops it: a stop would come from something else, and is a failure.
+  void operator()(quoll::async::stopped_t) const {
+    std::cerr << "failed: stopped\n";
+    exit_status = 1;
+    ended();
+  }
 };
 
 } // namespace

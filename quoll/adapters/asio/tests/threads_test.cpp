@@ -38,9 +38,13 @@
 // asio's own thread pool, behind quoll::asio::executor.
 
 #include <quoll/asio/executor.hpp>
+#include <quoll/async/await_context.hpp>
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detail/chain_owner.hpp>
 #include <quoll/async/detail/slots.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
+#include <quoll/async/detail/synchronized.hpp>
+#include <quoll/async/stopped.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
@@ -52,6 +56,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <coroutine>
 #include <cstddef>
 #include <exception>
 #include <future>
@@ -113,6 +118,56 @@ task<std::tuple<int, int>> both(int first, int second) {
 task<int> fail() {
   co_await quoll::async::yield();
   throw std::runtime_error{"boom"};
+}
+
+// Threads that end chains on a stop, joined by the test: none lives in a frame, which the stop may destroy at once.
+using stopping_threads = quoll::async::detail::synchronized<std::vector<std::jthread>>;
+
+// Ends its awaiter's chain on a stop from a thread of its own, as a stop callback running on another thread would. The
+// owner may unwind the chain on a worker while that thread is still in stop(), right after the post. Touches nothing of
+// its own once the thread runs.
+class stopped_elsewhere {
+public:
+  explicit stopped_elsewhere(stopping_threads &threads) noexcept : threads_(&threads) {}
+
+  [[nodiscard]] bool await_ready() const noexcept { return false; }
+
+  void await_suspend(std::coroutine_handle<>, quoll::async::await_context const &context) const {
+    auto *const owner = context.owner;
+
+    threads_->with([owner](std::vector<std::jthread> &all) {
+      all.emplace_back([owner] { quoll::async::detail::stop_chain(owner); });
+    });
+  }
+
+  void await_resume() const noexcept {}
+
+private:
+  stopping_threads *threads_;
+};
+
+// Counts its destruction: what a frame destroyed with its locals leaves.
+class counted {
+public:
+  explicit counted(std::atomic<int> &count) noexcept : count_(&count) {}
+
+  counted(counted const &) = delete;
+  counted(counted &&) = delete;
+  counted &operator=(counted const &) = delete;
+  counted &operator=(counted &&) = delete;
+
+  ~counted() { count_->fetch_add(1); }
+
+private:
+  std::atomic<int> *count_;
+};
+
+task<int> stops_from_another_thread(std::atomic<int> &unwound, stopping_threads &threads) {
+  counted const kept{unwound};
+
+  co_await quoll::async::yield();
+  co_await stopped_elsewhere{threads};
+  co_return 0;
 }
 
 } // namespace
@@ -183,6 +238,32 @@ TEST_CASE("threads: when_all joins children resumed on different workers", "[asi
   auto const result = spawn(pool, both(50, 70)).get();
 
   REQUIRE(result == std::tuple{50, 70});
+}
+
+TEST_CASE("threads: a stop from another thread unwinds the chain on a worker, its frames with it",
+          "[asio][threads][stopped]") {
+  ::asio::thread_pool pool{4};
+  // After the pool: its threads are joined first, as one may still be in the pool's post().
+  stopping_threads threads;
+  std::atomic<int> unwound{0};
+  constexpr int tasks = 200;
+  std::vector<std::future<bool>> ended;
+
+  for (int index = 0; index < tasks; ++index) {
+    auto promise = std::make_shared<std::promise<bool>>();
+
+    ended.push_back(promise->get_future());
+    co_spawn(quoll::asio::executor{pool.get_executor()}, stops_from_another_thread(unwound, threads),
+             overloaded{[promise](int) { promise->set_value(false); },
+                        [promise](std::exception_ptr error) { promise->set_exception(std::move(error)); },
+                        [promise](quoll::async::stopped_t) { promise->set_value(true); }});
+  }
+
+  for (auto &one : ended) {
+    REQUIRE(one.get());
+  }
+
+  REQUIRE(unwound.load() == tasks);
 }
 
 TEST_CASE("slots: on many threads, one at a time holds a single place", "[asio][threads]") {

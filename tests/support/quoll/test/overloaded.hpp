@@ -37,12 +37,28 @@
 #ifndef QUOLL_TEST_OVERLOADED_HPP
 #define QUOLL_TEST_OVERLOADED_HPP
 
+#include <quoll/async/stopped.hpp>
+
+#include <concepts>
+#include <cstdio>
+#include <cstdlib>
+
 namespace quoll::test {
 
-/** @brief An overload set of lambdas, e.g. a co_spawn completion handler. */
+/**
+ * @brief An overload set of lambdas, e.g. a co_spawn completion handler. As one, it ends the program on a stop it has
+ * no lambda for, so that a test that expects none cannot miss one: a lambda taking async::stopped_t is chosen first, as
+ * this one is a template.
+ */
 template <class... Fs>
 struct overloaded : Fs... {
   using Fs::operator()...;
+
+  template <std::same_as<async::stopped_t> Stopped>
+  [[noreturn]] void operator()(Stopped) const noexcept {
+    std::fputs("quoll::test::overloaded: a co_spawn handler with no lambda for a stop got one\n", stderr);
+    std::abort();
+  }
 };
 
 } // namespace quoll::test

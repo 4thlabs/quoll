@@ -38,6 +38,7 @@
 
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/stopped.hpp>
 #include <quoll/ui/detail/reconciler.hpp>
 
 #include <cstdio>
@@ -81,6 +82,9 @@ struct app_core::outcome {
   app_core *self;
 
   void operator()() const noexcept { self->tasks_.ended(); }
+
+  // A stop is no failure: on_error does not hear of it.
+  void operator()(async::stopped_t) const noexcept { self->tasks_.ended(); }
 
   void operator()(std::exception_ptr failure) const noexcept {
     self->failed(std::move(failure));
