@@ -87,16 +87,16 @@ http::client client{"https://api.example.com",
                     {.max_connections = 16, .max_redirects = 3, .response_timeout = 5s}};
 ```
 
-| Option                 | Default   | What it does                                                                                          |
-| ---------------------- | --------- | ----------------------------------------------------------------------------------------------------- |
-| `max_idle_connections` | 8         | Connections kept open once their response is read, the one idle for longest closed past it. Zero closes each connection after its response. |
-| `max_connections`      | 0         | How many connections are open at once, in use or idle. Zero: no limit.                                |
-| `max_idle_for_non_idempotent` | 1 s | How long a connection may have been idle for a POST, a PATCH or another method not idempotent to take it. Zero: such a request always opens its own. |
-| `max_redirects`        | 0         | How many redirects a request follows. Zero: a 3xx response is a result like the others.               |
-| `connect_timeout`      | 30 s      | How long opening a connection may take, name resolution included, and waiting for `max_connections`.  |
-| `response_timeout`     | 60 s      | How long a request may take once on a connection, from sending it to reading the end of its response. |
-| `limits`               | see below | The sizes of a response, against servers sending unbounded ones.                                      |
-| `tls`                  | see below | How the servers of `https://` URLs are checked.                                                       |
+| Option                        | Default   | What it does                                                                                                                                         |
+| ----------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `max_idle_connections`        | 8         | Connections kept open once their response is read, the one idle for longest closed past it. Zero closes each connection after its response.          |
+| `max_connections`             | 0         | How many connections are open at once, in use or idle. Zero: no limit.                                                                               |
+| `max_idle_for_non_idempotent` | 1 s       | How long a connection may have been idle for a POST, a PATCH or another method not idempotent to take it. Zero: such a request always opens its own. |
+| `max_redirects`               | 0         | How many redirects a request follows. Zero: a 3xx response is a result like the others.                                                              |
+| `connect_timeout`             | 30 s      | How long opening a connection may take, name resolution included, and waiting for `max_connections`.                                                 |
+| `response_timeout`            | 60 s      | How long a request may take once on a connection, from sending it to reading the end of its response.                                                |
+| `limits`                      | see below | The sizes of a response, against servers sending unbounded ones.                                                                                     |
+| `tls`                         | see below | How the servers of `https://` URLs are checked.                                                                                                      |
 
 `limits` are those of the [server](server.md#limits), bounding responses: 64 KiB of header, 100 fields,
 8 MiB of body. A body read through [`stream()`](streaming.md#reading-a-response) has no limit by
