@@ -4327,6 +4327,41 @@ TEST_CASE("http::client: a POST passes over an idle connection its check finds c
   REQUIRE(server.connections == 2);
 }
 
+TEST_CASE("http::client: a POST with an Idempotency-Key goes again as an idempotent request does", "[client]") {
+  // Written whole on a connection the server then closes with no answer, as Go's client takes such a request.
+  auto const field = GENERATE(std::string_view{"Idempotency-Key"}, std::string_view{"X-Idempotency-Key"});
+  auto const streamed = GENERATE(false, true);
+  async::run_loop loop;
+  auto connections = std::make_shared<int>(0);
+  http::client const client{checked_then_cut_connector{connections, taken::whole, ""}, "example.com", 80};
+
+  auto const posting = [&]() -> task<std::string> {
+    auto const first = co_await client.send(make_request(verb::get, "/"));
+
+    REQUIRE(first.body == "ok");
+
+    auto post = make_request(verb::post, "/", "ping");
+
+    post.fields.add(std::string{field}, "8e1f");
+
+    if (!streamed) {
+      co_return (co_await client.send(std::move(post))).body;
+    }
+
+    auto response = co_await client.stream(std::move(post));
+    std::string body;
+
+    while (auto const piece = co_await response.body.read()) {
+      body += *piece;
+    }
+
+    co_return body;
+  };
+
+  REQUIRE(quoll::test::run(loop, posting()) == "ok");
+  REQUIRE(*connections == 2);
+}
+
 TEST_CASE("http::client: a POST opens its own connection when its stream cannot be checked", "[client]") {
   async::run_loop loop;
   auto const router = make_router();

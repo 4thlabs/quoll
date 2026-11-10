@@ -136,7 +136,7 @@ The server may still close the connection as the request goes, which no check ca
 | Method                                 | When its idle connection turns out closed before any response, or answers 408                            |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | GET, HEAD, PUT, DELETE, OPTIONS, TRACE | The request is sent again, once, on a new connection, and the other idle connections, older, are closed |
-| POST, PATCH and the others             | Sent again on a new connection only if none of it was written; otherwise it fails, or the 408 is its response, and the older idle connections are closed |
+| POST, PATCH and the others             | With an `Idempotency-Key` or an `X-Idempotency-Key` field, as Go's client takes it, as an idempotent request. Otherwise sent again on a new connection only if none of it was written; otherwise it fails, or the 408 is its response, and the older idle connections are closed |
 
 A POST of which anything was written is not sent twice: the server may have received it, and even a
 408 closing the connection may come once it has done its work, so the caller decides; a connection that

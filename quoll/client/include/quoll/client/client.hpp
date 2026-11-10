@@ -80,7 +80,8 @@ namespace quoll::http {
  * The server may still close the connection as the request goes. When it turns out closed before any response (or
  * answers 408 Request Timeout, sent before closing it), the other idle connections, older, are closed too, and a
  * request whose method is idempotent (GET, HEAD, PUT, DELETE, OPTIONS, TRACE) is sent again, once, on a new
- * connection. The others are sent again only if nothing of them was written: otherwise the server may have received
+ * connection, and so is one carrying an `Idempotency-Key` or an `X-Idempotency-Key` field, as Go's client takes it.
+ * The others are sent again only if nothing of them was written: otherwise the server may have received
  * them, so they fail with the stream's error, or the 408 is their response, for their caller to decide, and their
  * connection is not kept.
  *
