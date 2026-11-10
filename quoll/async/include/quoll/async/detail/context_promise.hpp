@@ -61,6 +61,11 @@ inline constexpr bool is_task_v = false;
 template <class T>
 inline constexpr bool is_task_v<task<T>> = true;
 
+// What is awaited only as a temporary, as it holds a task: awaited by name, it could be moved while it waits. A task,
+// and the awaitables that own one (see owned_chain).
+template <class A>
+inline constexpr bool awaited_as_a_temporary_v = is_task_v<A>;
+
 // Base of the promises of coroutines running on an await_context: every co_await hands the context to the awaited
 // ContextAwaitable, and anything else is rejected at compile time.
 class context_promise : public recycled_frame {
@@ -74,6 +79,9 @@ public:
     static_assert(!is_task_v<std::remove_cvref_t<A>> || !std::is_lvalue_reference_v<A>,
                   "quoll: co_await std::move(task): a task awaited by name could be dropped while it runs, or "
                   "started again");
+    // As one holding a task: awaited by name, it could be moved elsewhere while it waits, its task with it.
+    static_assert(!awaited_as_a_temporary_v<std::remove_cvref_t<A>> || !std::is_lvalue_reference_v<A>,
+                  "quoll: co_await std::move(...): what holds a task, awaited by name, could be moved while it waits");
 
     return context_adapter<A>{std::forward<A>(awaitable), *context_};
   }
