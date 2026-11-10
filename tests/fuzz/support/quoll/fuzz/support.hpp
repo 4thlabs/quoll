@@ -251,8 +251,11 @@ public:
 
   [[nodiscard]] awaitable shutdown_send() const noexcept { return {{}}; }
 
-  // A peer that keeps quiet as the connection idles, so that what reuses one, a POST included, runs on the input.
-  [[nodiscard]] io::read_readiness poll_read() const noexcept { return io::read_readiness::would_wait; }
+  // A peer that keeps quiet as the connection idles while input is left, so that what reuses one, a POST included,
+  // runs on it, and is gone at its end, as its next read says, so that what takes it drops it.
+  [[nodiscard]] io::read_readiness poll_read() const noexcept {
+    return input_.empty() ? io::read_readiness::ready : io::read_readiness::would_wait;
+  }
 
 private:
   std::string_view input_;

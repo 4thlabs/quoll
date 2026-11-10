@@ -103,8 +103,9 @@ public:
   explicit connection_pool(std::size_t capacity) : capacity_(capacity) {}
 
   // The connection used last, the least likely to have been closed by the server for being idle; with `checkable`,
-  // only if its stream can tell whether the server closed it (io::PollableStream).
-  [[nodiscard]] std::optional<idle_connection> take(bool checkable = false) {
+  // only if its stream can tell whether the server closed it (io::PollableStream). Only the newest is looked at: a
+  // client's connections all come from its connector, whose streams are of one kind.
+  [[nodiscard]] std::optional<idle_connection> take(bool checkable) {
     return state_.with([checkable](state &pool) -> std::optional<idle_connection> {
       if (pool.idle.empty() || (checkable && !pool.idle.back().connection.pollable())) {
         return std::nullopt;

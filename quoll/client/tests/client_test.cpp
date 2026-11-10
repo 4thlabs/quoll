@@ -3034,7 +3034,7 @@ TEST_CASE("http::client: stream() keeps and takes an idle connection as send() d
     REQUIRE(twice(answering({whole, whole}, true), verb::post) == 1);
   }
 
-  SECTION("a POST whose connection the server closed before it was written goes again on a new one") {
+  SECTION("a POST does not take one the server closed, which its check finds") {
     REQUIRE(twice(answering({whole}), verb::post) == 2);
   }
 
@@ -4245,6 +4245,42 @@ TEST_CASE("http::client: a POST on a connection the server closes as it goes is 
   REQUIRE(timed_out_open.status == http::status::request_timeout);
   REQUIRE(timed_out_open.connections == 1);
   REQUIRE(timed_out_open.next == "ok");
+}
+
+TEST_CASE("http::client: a POST passes over an idle connection its check finds closed, and takes an older one",
+          "[client]") {
+  async::run_loop loop;
+  auto const router = make_router();
+  auto served = 0;
+  // The second connection answers last, so that it is the newest idle one, then closes; the first serves the router.
+  memory_server server{loop.get_executor(),
+                       [&](io::memory_stream stream) -> task<> {
+                         if (++served != 2) {
+                           return quoll::http::server{router}.serve_connection(std::move(stream));
+                         }
+
+                         return [](io::memory_stream on) -> task<> {
+                           for (auto turn = 0; turn < 8; ++turn) {
+                             co_await async::yield();
+                           }
+
+                           co_await answer(std::move(on), {"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"}, false);
+                         }(std::move(stream));
+                       },
+                       0,
+                       {},
+                       {}};
+
+  auto const sending = [&]() -> task<std::string> {
+    http::client const client{memory_connector{server}, "example.com", 80};
+    auto const [first, second] = co_await async::when_all(client.send(make_request(verb::get, "/hello")),
+                                                          client.send(make_request(verb::get, "/hello")));
+
+    co_return first.body + second.body + (co_await client.send(make_request(verb::post, "/echo", "ping"))).body;
+  };
+
+  REQUIRE(quoll::test::run(loop, sending()) == "hellohelloping");
+  REQUIRE(server.connections == 2);
 }
 
 TEST_CASE("http::client: a POST opens its own connection when its stream cannot be checked", "[client]") {
