@@ -57,9 +57,10 @@ enum class read_readiness : std::uint8_t {
 /**
  * @brief A ByteStream that tells, without waiting nor taking anything, what a read started now would do.
  *
- * `poll_read()` reads nothing a read would then miss, and no read or write may be pending while it runs. A connection
- * kept idle between two requests is checked so before it is used again, as curl does: one the peer closed, or that
- * carries bytes nothing asked for, is not. The peer may still close it once poll_read() has answered.
+ * `poll_read()` reads nothing a read would then miss, and no read or write may be pending while it runs. It is
+ * `noexcept`, which the concept asks: a stream whose poll_read() is not is no PollableStream, and checks nothing. A
+ * connection kept idle between two requests is checked so before it is used again, as curl does: one the peer closed,
+ * or that carries bytes nothing asked for, is not. The peer may still close it once poll_read() has answered.
  */
 template <class S>
 concept PollableStream = ByteStream<S> && requires(S &stream) {

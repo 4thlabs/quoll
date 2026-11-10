@@ -139,18 +139,6 @@ public:
     });
   }
 
-  // Puts back one take() gave, in its place, as if it had not been taken; closes it if the pool is full, or if
-  // close_older_than() has closed those up to it meanwhile.
-  void put_back(idle_connection idle) {
-    state_.with([&](state &pool) {
-      if (pool.idle.size() < capacity_ && idle.given_back > pool.closed_through) {
-        auto const at = std::ranges::upper_bound(pool.idle, idle.given_back, {}, &idle_connection::given_back);
-
-        pool.idle.insert(at, std::move(idle));
-      }
-    });
-  }
-
   // Closes the idle connections past `count`, the oldest first, past the lock.
   void keep_at_most(std::size_t count) {
     auto const closed = state_.with([count](state &pool) {
@@ -173,8 +161,6 @@ public:
     auto const closed = state_.with([given_back](state &pool) {
       std::vector<idle_connection> older;
 
-      pool.closed_through = std::max(pool.closed_through, given_back);
-
       auto const end = std::ranges::find_if(
           pool.idle, [given_back](idle_connection const &kept) { return kept.given_back > given_back; });
 
@@ -189,8 +175,6 @@ private:
     // The oldest first.
     std::vector<idle_connection> idle;
     std::uint64_t given = 0;
-    // The latest close_older_than() closed those up to.
-    std::uint64_t closed_through = 0;
   };
 
   async::detail::synchronized<state> state_;
@@ -596,34 +580,34 @@ struct idle_attempt {
 // twice takes only one its stream can check, as one the server closed shows otherwise only once the request is on it;
 // an idempotent one takes any, and goes again on a new one.
 [[nodiscard]] std::optional<idle_attempt> take_idle(client_core &shared, prepared_request const &request,
-                                                    std::chrono::nanoseconds now) {
+                                                    async::executor_ref executor) {
   if (request.writer) {
     return std::nullopt;
   }
 
   auto const on = idempotent(request.method) ? attempt::idle_again : attempt::idle_once;
   auto const max_idle_time = shared.options.max_idle_time;
+  std::optional<std::chrono::nanoseconds> now;
 
   while (auto idle = shared.pool.take(on == attempt::idle_once)) {
+    if (max_idle_time > std::chrono::nanoseconds::zero() && !now) {
+      now = idle_clock(executor);
+    }
+
     // Idle for too long: something on the way may have dropped it with no word, and the older ones with it. One given
     // back after `now` was read, on another thread, has not been idle.
-    if (max_idle_time > std::chrono::nanoseconds::zero() && now > idle->given_at &&
-        now - idle->given_at >= max_idle_time) {
+    if (now && *now > idle->given_at && *now - idle->given_at >= max_idle_time) {
       shared.pool.close_older_than(idle->given_back);
       continue;
     }
 
+    // Unknown from a stream that can be checked, with nothing pending: none of Quoll's says so, and it is closed as
+    // one found closed is, for a request not sent twice.
     auto const readiness = idle->connection.poll_read();
 
     if (readiness == io::read_readiness::would_wait ||
         (readiness == io::read_readiness::unknown && on == attempt::idle_again)) {
       return idle_attempt{std::move(*idle), on};
-    }
-
-    // One its stream cannot check now stays for an idempotent request.
-    if (readiness == io::read_readiness::unknown) {
-      shared.pool.put_back(std::move(*idle));
-      return std::nullopt;
     }
   }
 
@@ -659,7 +643,7 @@ void after_idle_attempt(client_core &shared, std::uint64_t given_back, std::opti
 
   auto const executor = co_await async::current_executor();
 
-  if (auto kept = take_idle(*shared, request, idle_clock(executor))) {
+  if (auto kept = take_idle(*shared, request, executor)) {
     auto const given_back = kept->idle.given_back;
     std::optional<http::response> response;
 
@@ -1061,7 +1045,7 @@ private:
   auto const executor = co_await async::current_executor();
 
   // As in send_prepared().
-  if (auto kept = take_idle(*shared, request, idle_clock(executor))) {
+  if (auto kept = take_idle(*shared, request, executor)) {
     auto const given_back = kept->idle.given_back;
     auto started = false;
 

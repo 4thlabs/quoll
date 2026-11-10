@@ -4353,7 +4353,8 @@ TEST_CASE("http::client: a POST opens its own connection when its stream cannot 
   REQUIRE(server.connections == 2);
 }
 
-TEST_CASE("http::client: a POST leaves an idle connection its check cannot tell about for a GET", "[client]") {
+TEST_CASE("http::client: a POST closes an idle connection its check cannot tell about, as one found closed",
+          "[client]") {
   async::run_loop loop;
   auto const router = make_router();
   auto writes = std::make_shared<int>(0);
@@ -4364,7 +4365,8 @@ TEST_CASE("http::client: a POST leaves an idle connection its check cannot tell 
       {},
       {}};
 
-  // A stream that can be checked, whose check answers unknown all the same.
+  // A stream that can be checked, whose check answers unknown all the same: the POST closes the connection, and of the
+  // two GETs at once one takes the POST's, the other opening a third.
   auto const sending = [&]() -> task<std::string> {
     http::client const client{blind_connector{server, writes, io::read_readiness::unknown}, "example.com", 80};
     auto const first = co_await client.send(make_request(verb::get, "/hello"));
@@ -4376,7 +4378,7 @@ TEST_CASE("http::client: a POST leaves an idle connection its check cannot tell 
   };
 
   REQUIRE(quoll::test::run(loop, sending()) == "hellopinghellohello");
-  REQUIRE(server.connections == 2);
+  REQUIRE(server.connections == 3);
 }
 
 TEST_CASE("http::client: a connection whose request could not leave is not kept", "[client]") {

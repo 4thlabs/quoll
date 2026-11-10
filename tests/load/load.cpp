@@ -552,11 +552,17 @@ task<bool> run_scenario(scenario which, peers const &to QUOLL_LIFETIMEBOUND) {
 // requests. Without TLS in this build, its scenarios are left out.
 task<> client_loop(std::uint16_t port, std::uint16_t secure_port, std::size_t first, steady_clock::time_point deadline,
                    tally &counted QUOLL_LIFETIMEBOUND, reporter &report QUOLL_LIFETIMEBOUND) {
-  http::client const plain{"http://127.0.0.1:" + std::to_string(port)};
+  // Well below the server's idle time, 2 s: a POST would fail on a connection it closes as the POST goes, and the
+  // check before using one again cannot see that coming.
+  http::client_options kept;
+
+  kept.max_idle_time = 1s;
+
+  http::client const plain{"http://127.0.0.1:" + std::to_string(port), kept};
   std::optional<http::client> secure;
 
   if (secure_port != 0) {
-    http::client_options options;
+    auto options = kept;
 
     options.tls.ca_file = std::string{QUOLL_LOAD_TLS_DIR} + "/ca.pem";
     secure.emplace("https://127.0.0.1:" + std::to_string(secure_port), std::move(options));
