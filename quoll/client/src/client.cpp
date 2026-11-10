@@ -610,13 +610,18 @@ struct idle_attempt {
       continue;
     }
 
-    // Unknown from a stream that can be checked, with nothing pending: none of Quoll's says so, and it is closed as
-    // one found closed is, for a request not sent twice.
     auto const readiness = idle->connection.poll_read();
 
     if (readiness == io::read_readiness::would_wait ||
         (readiness == io::read_readiness::unknown && on == attempt::idle_again)) {
       return idle_attempt{std::move(*idle), on};
+    }
+
+    // One its stream cannot tell about, as a wrapper forwarding to one that cannot check, stays for an idempotent
+    // request, and so do the others, which come from the same connector.
+    if (readiness == io::read_readiness::unknown) {
+      shared.pool.give_back(std::move(idle->connection), idle->given_at);
+      return std::nullopt;
     }
   }
 
