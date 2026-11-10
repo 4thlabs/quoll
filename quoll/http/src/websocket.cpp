@@ -141,7 +141,7 @@ struct websocket_state {
   std::error_code gone_why;
   // A keep-alive's ping under way, which another sends none beside, as Beast's idle_pinging: a keep-alive outlives
   // its receive() while it sends one.
-  bool pinging = false;
+  std::atomic<bool> pinging = false;
 };
 
 // What serve_websocket reaches of a connection.
@@ -156,6 +156,11 @@ struct websocket_access {
 namespace {
 
 using state = detail::websocket_state;
+
+// `code`, or io_error for a failure that says none: what failed did, whatever it carried.
+[[nodiscard]] std::error_code code_or_io_error(std::error_code code) noexcept {
+  return code ? code : std::make_error_code(std::errc::io_error);
+}
 
 // What a frame is to what sends it once nothing more may be sent: a message refused, an answer or a close dropped.
 enum class frame_kind : std::uint8_t { message, answer, close };
@@ -285,7 +290,7 @@ async::task<std::error_code> send_quietly(std::shared_ptr<state> connection, std
     }
 
     // A code of zero as a failure with none: the frame did not leave.
-    co_return thrown.code() ? thrown.code() : std::make_error_code(std::errc::io_error);
+    co_return code_or_io_error(thrown.code());
   }
 
   co_return std::error_code{};
@@ -407,9 +412,13 @@ async::task<websocket_message> receive_next(std::shared_ptr<state> connection, k
     }
 
     // As the first read starts, as Beast arms its timer: a message already there needs no keep-alive.
+    // None for a read about to be stopped, by the caller or a peer gone.
     if (start != nullptr && !start->tried) {
       start->tried = true;
-      co_await start_keep_alive(connection, *start);
+
+      if (!(co_await async::current_stop_token()).stop_requested()) {
+        co_await start_keep_alive(connection, *start);
+      }
     }
 
     io::io_result received{};
@@ -505,7 +514,7 @@ async::task<websocket_message> receive_from(std::shared_ptr<state> connection, d
     co_return co_await receive_watched(connection);
   } catch (std::system_error const &thrown) {
     // A code of zero as a failure with none, so that receiving ends all the same.
-    connection->failure = thrown.code() ? thrown.code() : std::make_error_code(std::errc::io_error);
+    connection->failure = code_or_io_error(thrown.code());
     throw;
   }
 }
@@ -515,14 +524,14 @@ async::task<std::error_code> ping_once(std::shared_ptr<state> connection, std::s
   struct under_way {
     state *connection;
 
-    explicit under_way(state &pinged) noexcept : connection(&pinged) { connection->pinging = true; }
+    explicit under_way(state &pinged) noexcept : connection(&pinged) { connection->pinging.store(true); }
 
     under_way(under_way const &) = delete;
     under_way(under_way &&) = delete;
     under_way &operator=(under_way const &) = delete;
     under_way &operator=(under_way &&) = delete;
 
-    ~under_way() { connection->pinging = false; }
+    ~under_way() { connection->pinging.store(false); }
   };
 
   under_way const marked{*connection};
@@ -554,7 +563,12 @@ async::task<> watch_peer(std::weak_ptr<state> watched, std::chrono::nanoseconds 
   auto drained = false;
   // A close has left: the peer's answer is waited for as a pong is.
   auto closing = false;
+  // The first verdict stands, as what reads it may have read it already.
   auto const take_as_gone = [&gone](state &connection, std::error_code why) {
+    if (gone.stop_requested()) {
+      return;
+    }
+
     connection.gone_why = why;
     gone.request_stop();
   };
@@ -603,8 +617,12 @@ async::task<> watch_peer(std::weak_ptr<state> watched, std::chrono::nanoseconds 
 
       auto const failed = co_await send_quietly(connection, close_of(*connection, 1001), frame_kind::close, ends);
 
-      if (failed) {
+      // What it watched over has ended: nothing waits for its verdict, and the next watch finds out for itself.
+      if (failed && !ends.stop_requested()) {
         take_as_gone(*connection, failed);
+      }
+
+      if (failed) {
         co_return;
       }
 
@@ -630,15 +648,19 @@ async::task<> watch_peer(std::weak_ptr<state> watched, std::chrono::nanoseconds 
     }
 
     // The one of a keep-alive that outlived its receive() is still under way: it is this one's, as Beast sends one.
-    if (connection->pinging) {
+    if (connection->pinging.load()) {
       pinged = true;
       continue;
     }
 
     auto const failed = co_await ping_once(connection, ends);
 
-    if (failed) {
+    // As for the close above.
+    if (failed && !ends.stop_requested()) {
       take_as_gone(*connection, failed);
+    }
+
+    if (failed) {
       co_return;
     }
 
@@ -674,8 +696,11 @@ async::task<> watch_alone(std::weak_ptr<state> watched, std::chrono::nanoseconds
     }
 
     if (auto const connection = watched.lock()) {
-      connection->gone_why = code && *code ? *code : std::make_error_code(std::errc::io_error);
-      gone.request_stop();
+      // The first verdict stands.
+      if (!gone.stop_requested()) {
+        connection->gone_why = code_or_io_error(code.value_or(std::error_code{}));
+        gone.request_stop();
+      }
     }
   }
 }

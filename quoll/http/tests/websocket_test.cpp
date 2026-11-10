@@ -1164,8 +1164,8 @@ TEST_CASE("websocket: a client's ping that fails once its receive() has ended en
   http::websocket client{
       io::any_stream{reset_late{std::move(client_end)}}, websocket_role::client, {}, {.ping_interval = 1s}};
 
-  // The ping of 1 s fails at 1.5 s; the message of 1.2 s ended its receive() meanwhile: the next one ends with the
-  // reset then, rather than a timeout later.
+  // The ping of 1 s fails at 1.5 s; the message of 1.2 s ended its receive() meanwhile, so that it takes nothing as
+  // gone: the next receive()'s keep-alive pings at 2.2 s, and ends it with the reset at 2.7 s, rather than a timeout.
   auto const reset = [&]() -> task<std::error_code> {
     auto const peer = [&]() -> task<> {
       co_await quoll::async::sleep_for(1200ms);
@@ -1184,5 +1184,5 @@ TEST_CASE("websocket: a client's ping that fails once its receive() has ended en
   };
 
   REQUIRE(quoll::test::run(time, reset()) == std::errc::connection_reset);
-  REQUIRE(time.now() == 1500ms);
+  REQUIRE(time.now() == 2700ms);
 }
