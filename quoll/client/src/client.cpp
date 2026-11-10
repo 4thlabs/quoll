@@ -93,18 +93,24 @@ namespace {
 // pool); with a single thread, as under WASM, it is never contended, and std::mutex needs no thread support there.
 class connection_pool {
 public:
-  // A connection from the pool, with when it went there.
+  // A connection from the pool, with when it went there: in order, and on the clock.
   struct idle_connection {
     io::any_stream connection;
     std::uint64_t given_back;
+    std::chrono::steady_clock::time_point at;
   };
 
   explicit connection_pool(std::size_t capacity) : capacity_(capacity) {}
 
-  // The connection used last, the least likely to have been closed by the server for being idle.
-  [[nodiscard]] std::optional<idle_connection> take() {
-    return state_.with([](state &pool) -> std::optional<idle_connection> {
+  // The connection used last, the least likely to have been closed by the server for being idle; given `within`, only
+  // if it went there that recently.
+  [[nodiscard]] std::optional<idle_connection> take(std::optional<std::chrono::nanoseconds> within = std::nullopt) {
+    return state_.with([within](state &pool) -> std::optional<idle_connection> {
       if (pool.idle.empty()) {
+        return std::nullopt;
+      }
+
+      if (within && std::chrono::steady_clock::now() - pool.idle.back().at > *within) {
         return std::nullopt;
       }
 
@@ -119,7 +125,7 @@ public:
   void give_back(io::any_stream connection) {
     state_.with([&](state &pool) {
       if (pool.idle.size() < capacity_) {
-        pool.idle.push_back({std::move(connection), ++pool.given});
+        pool.idle.push_back({std::move(connection), ++pool.given, std::chrono::steady_clock::now()});
       }
     });
   }
@@ -364,15 +370,26 @@ template <class T>
   throw;
 }
 
+// On which connection a request goes, and so when it goes again on a new one.
+enum class attempt : std::uint8_t {
+  // A new connection: a response or an exception.
+  fresh,
+  // An idle connection, for a request not sent twice: again only if it could not be written, as the server then did not
+  // read it whole. A 408 there is its response, and the connection is not kept, as the server may answer the request
+  // after it.
+  idle_once,
+  // An idle connection, for an idempotent request: again if the connection turns out closed before any response, or
+  // answers 408 first, sent by the server before it closed the idle connection.
+  idle_again,
+};
+
 // Sends `request` on `connection` and reads its final response, skipping the interim 1xx ones; the connection goes
-// back to `pool` if it can carry another request. With `retry_if_closed` (an idle connection), a connection found
-// closed before any response, or answering 408 first (sent by the server before it closed the idle connection), is
-// not an error: no response, the caller sends the request again on a new connection. Without it, a response or an
-// exception.
+// back to `pool` if it can carry another request. On an idle connection, `on` says when there is no response, and the
+// caller sends the request again on a new connection; otherwise, a response or an exception.
 [[nodiscard]] async::task<std::optional<http::response>>
 exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
          io::any_stream &connection QUOLL_LIFETIMEBOUND, prepared_request const &request QUOLL_LIFETIMEBOUND,
-         bool retry_if_closed, bool *reusable QUOLL_LIFETIMEBOUND = nullptr) {
+         attempt on, bool *reusable QUOLL_LIFETIMEBOUND = nullptr) {
   std::error_code unsent;
 
   // Its request is on its way, and its connection stays with what sends it.
@@ -384,7 +401,7 @@ exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
         throw std::system_error{sent.error, "quoll::http::client: cannot send the request"};
       }
 
-      if (retry_if_closed) {
+      if (on == attempt::idle_again) {
         co_return std::nullopt;
       }
 
@@ -401,7 +418,8 @@ exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
 
   for (;;) {
     if (auto const error = co_await http::read(connection, buffer, parser)) {
-      if (retry_if_closed && interim == 0 && peer_has_gone(error)) {
+      // Gone with no answer: an idempotent request goes again, and so does any that could not be written.
+      if (interim == 0 && peer_has_gone(error) && (on == attempt::idle_again || (on == attempt::idle_once && unsent))) {
         co_return std::nullopt;
       }
 
@@ -425,12 +443,16 @@ exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
       continue;
     }
 
-    if (retry_if_closed && interim == 0 && response.status == http::status::request_timeout) {
+    auto const timed_out_idle = interim == 0 && response.status == http::status::request_timeout;
+
+    if (on == attempt::idle_again && timed_out_idle) {
       co_return std::nullopt;
     }
 
-    // Bytes past the response would be read as the next one: a connection carrying them is not reused.
-    auto const can_go_on = request.keep_alive && keep_alive && !upgrade && buffer.empty() && !unsent;
+    // Bytes past the response would be read as the next one: a connection carrying them is not reused, nor one that
+    // answered 408 as it was idle, on which the server may answer the request after it.
+    auto const can_go_on = request.keep_alive && keep_alive && !upgrade && buffer.empty() && !unsent &&
+                           !(on == attempt::idle_once && timed_out_idle);
 
     if (reusable != nullptr) {
       *reusable = can_go_on;
@@ -454,14 +476,14 @@ exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
 
   try {
     auto [uploaded, answer] = co_await async::when_all(
-        sending.run(), until_answered(sending, exchange(pool, limits, connection, request, false, &reusable)));
+        sending.run(), until_answered(sending, exchange(pool, limits, connection, request, attempt::fresh, &reusable)));
 
     response = std::move(answer);
   } catch (std::system_error const &thrown) {
     throw_what_ended(sending, thrown);
   }
 
-  assert(response && "exchange() without retry_if_closed produced no response");
+  assert(response && "exchange() on a new connection produced no response");
 
   // Once all is over, for its last write to have ended, as what comes next on it would read what a cut one left.
   if (reusable && sending.complete()) {
@@ -514,6 +536,33 @@ void make_room(client_core &shared) {
   }
 }
 
+// An idle connection a request may take, and how it goes on it.
+struct idle_attempt {
+  connection_pool::idle_connection idle;
+  attempt on;
+};
+
+// The idle connection a request takes, as Go's and Boost.Burl's clients do, but for one whose body comes in pieces,
+// which has its own, as a writer runs once. One the server closed meanwhile shows only once the request is on it: an
+// idempotent request takes any, and goes again on a new one; another, which is not sent twice, takes only one that went
+// idle recently, below the servers' idle timeouts, so that it rarely meets one closed.
+[[nodiscard]] std::optional<idle_attempt> take_idle(client_core &shared, prepared_request const &request) {
+  if (request.writer) {
+    return std::nullopt;
+  }
+
+  if (idempotent(request.method)) {
+    auto idle = shared.pool.take();
+
+    return idle ? std::optional<idle_attempt>{{std::move(*idle), attempt::idle_again}} : std::nullopt;
+  }
+
+  auto const within = shared.options.max_idle_for_unsafe_methods;
+  auto idle = within > std::chrono::nanoseconds::zero() ? shared.pool.take(within) : std::nullopt;
+
+  return idle ? std::optional<idle_attempt>{{std::move(*idle), attempt::idle_once}} : std::nullopt;
+}
+
 // The task holds the shared state, not the client.
 [[nodiscard]] async::task<http::response> send_prepared(std::shared_ptr<client_core> shared, prepared_request request) {
   async::detail::held_place place;
@@ -524,32 +573,30 @@ void make_room(client_core &shared) {
 
   throw_if_stopped(co_await async::current_stop_token());
 
-  // An idle connection for any request whose body is whole, as Go's and Boost.Burl's clients do; one whose body comes
-  // in pieces has its own, as a writer runs once. One the server closed meanwhile shows only now: an idempotent
-  // request goes again on a new one, and another fails, as the server may have received it, for its caller to decide.
-  if (!request.writer) {
-    if (auto idle = shared->pool.take()) {
-      auto const given_back = idle->given_back;
-      std::optional<http::response> response;
+  if (auto kept = take_idle(*shared, request)) {
+    auto const given_back = kept->idle.given_back;
+    std::optional<http::response> response;
 
-      try {
-        response = co_await async::detail::with_optional_timeout(
-            shared->options.response_timeout,
-            exchange(shared->pool, shared->options.limits, idle->connection, request, idempotent(request.method)));
-      } catch (std::system_error const &thrown) {
-        // Closed by the server after some idle time: the connections idle for longer are likely closed as well.
-        if (peer_has_gone(thrown.code())) {
-          shared->pool.close_older_than(given_back);
-        }
-
-        throw;
+    try {
+      response = co_await async::detail::with_optional_timeout(
+          shared->options.response_timeout,
+          exchange(shared->pool, shared->options.limits, kept->idle.connection, request, kept->on));
+    } catch (std::system_error const &thrown) {
+      // Closed by the server after some idle time: the connections idle for longer are likely closed as well.
+      if (peer_has_gone(thrown.code())) {
+        shared->pool.close_older_than(given_back);
       }
 
-      if (response) {
-        co_return std::move(*response);
-      }
+      throw;
+    }
 
+    // A 408 as the response of a request not sent twice: the same, sent as the server closed the idle connection.
+    if (!response || response->status == http::status::request_timeout) {
       shared->pool.close_older_than(given_back);
+    }
+
+    if (response) {
+      co_return std::move(*response);
     }
   }
 
@@ -563,10 +610,11 @@ void make_room(client_core &shared) {
   }
 
   auto response = co_await async::detail::with_optional_timeout(
-      shared->options.response_timeout, exchange(shared->pool, shared->options.limits, connection, request, false));
+      shared->options.response_timeout,
+      exchange(shared->pool, shared->options.limits, connection, request, attempt::fresh));
 
-  // Without retry_if_closed, exchange() produces a response or throws.
-  assert(response && "exchange() without retry_if_closed produced no response");
+  // On a new connection, exchange() produces a response or throws.
+  assert(response && "exchange() on a new connection produced no response");
   co_return std::move(*response);
 }
 
@@ -698,10 +746,10 @@ public:
 
   [[nodiscard]] async::detail::held_place &place() noexcept { return place_; }
 
-  // Sends `request` on `connection` and reads the head of its final response. As in exchange(): with `retry_if_closed`,
-  // a connection found closed, or answering 408 first, gives false, and the caller goes on with another.
+  // Sends `request` on `connection` and reads the head of its final response. As in exchange(), on an idle connection,
+  // false when the request goes again on a new one.
   [[nodiscard]] async::task<bool> start(io::any_stream connection, prepared_request const &request QUOLL_LIFETIMEBOUND,
-                                        bool retry_if_closed) QUOLL_LIFETIMEBOUND {
+                                        attempt on) QUOLL_LIFETIMEBOUND {
     auto const sent = co_await io::write(connection, std::as_bytes(std::span{request.wire}));
 
     if (sent.error) {
@@ -709,7 +757,7 @@ public:
         throw std::system_error{sent.error, "quoll::http::client: cannot send the request"};
       }
 
-      if (retry_if_closed) {
+      if (on == attempt::idle_again) {
         co_return false;
       }
     }
@@ -718,8 +766,13 @@ public:
     auto answered = false;
 
     try {
-      answered = co_await read_final_head(connection, request, retry_if_closed);
+      answered = co_await read_final_head(connection, request, on == attempt::idle_again);
     } catch (std::system_error const &thrown) {
+      // As in exchange(): one that could not be written goes again on a new connection.
+      if (sent.error && peer_has_gone(thrown.code()) && on == attempt::idle_once) {
+        co_return false;
+      }
+
       if (sent.error && peer_has_gone(thrown.code())) {
         throw std::system_error{sent.error, "quoll::http::client: cannot send the request"};
       }
@@ -728,8 +781,11 @@ public:
     }
 
     if (answered) {
+      // Nor is a connection kept that answered 408 as it was idle: the server may answer the request after it.
+      auto const timed_out_idle = on == attempt::idle_once && parser_->head().status == http::status::request_timeout;
+
       connection_.emplace(std::move(connection));
-      request_keeps_alive_ = request.keep_alive && !sent.error;
+      request_keeps_alive_ = request.keep_alive && !sent.error && !timed_out_idle;
     }
 
     co_return answered;
@@ -926,31 +982,34 @@ private:
 
   throw_if_stopped(co_await async::current_stop_token());
 
-  // As in send_prepared(): an idle connection for any request whose body is whole, sent again on a new one only when
-  // idempotent.
-  if (!request.writer) {
-    if (auto idle = shared->pool.take()) {
-      auto const given_back = idle->given_back;
-      auto started = false;
+  // As in send_prepared().
+  if (auto kept = take_idle(*shared, request)) {
+    auto const given_back = kept->idle.given_back;
+    auto started = false;
 
-      try {
-        started = co_await async::detail::with_optional_timeout(
-            shared->options.response_timeout,
-            stream->start(std::move(idle->connection), request, idempotent(request.method)));
-      } catch (std::system_error const &thrown) {
-        // Closed by the server after some idle time: the connections idle for longer are likely closed as well.
-        if (peer_has_gone(thrown.code())) {
-          shared->pool.close_older_than(given_back);
-        }
-
-        throw;
+    try {
+      started = co_await async::detail::with_optional_timeout(
+          shared->options.response_timeout, stream->start(std::move(kept->idle.connection), request, kept->on));
+    } catch (std::system_error const &thrown) {
+      // Closed by the server after some idle time: the connections idle for longer are likely closed as well.
+      if (peer_has_gone(thrown.code())) {
+        shared->pool.close_older_than(given_back);
       }
 
-      if (started) {
-        co_return stream->take_head(stream);
-      }
+      throw;
+    }
 
+    if (!started) {
       shared->pool.close_older_than(given_back);
+    } else {
+      auto response = stream->take_head(stream);
+
+      // A 408 as the response of a request not sent twice: as in send_prepared().
+      if (response.status == http::status::request_timeout) {
+        shared->pool.close_older_than(given_back);
+      }
+
+      co_return response;
     }
   }
 
@@ -964,7 +1023,7 @@ private:
   }
 
   static_cast<void>(co_await async::detail::with_optional_timeout(
-      shared->options.response_timeout, stream->start(std::move(connection), request, false)));
+      shared->options.response_timeout, stream->start(std::move(connection), request, attempt::fresh)));
   co_return stream->take_head(stream);
 }
 

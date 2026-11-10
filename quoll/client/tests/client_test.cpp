@@ -524,13 +524,30 @@ TEST_CASE("http::client: an idempotent request goes again when its kept connecti
     REQUIRE(result.connections == 2);
   }
 
-  // A POST takes the idle connection too, but is not sent again, as the server may have received it: the stream's
+  // A POST takes the idle connection too, but is not sent again once the server may have read it: the stream's
   // failure is the request's, for the caller to decide on.
   auto const post = roundtrip(answering({ok}, true), {make_request(verb::get, "/"), make_request(verb::post, "/")});
 
-  REQUIRE(post.error);
+  REQUIRE(post.error == io::error::end_of_stream);
   REQUIRE(post.responses.size() == 1);
   REQUIRE(post.connections == 1);
+
+  // One the server closed before it was written could not be read whole: it goes again.
+  auto const unsent = roundtrip(answering({ok}, false), {make_request(verb::get, "/"), make_request(verb::post, "/")});
+
+  REQUIRE_FALSE(unsent.error);
+  REQUIRE(unsent.responses.size() == 2);
+  REQUIRE(unsent.connections == 2);
+}
+
+TEST_CASE("http::client: with no idle time for them, a POST opens its own connection", "[client]") {
+  auto const result = roundtrip(
+      {make_request(verb::get, "/hello"), make_request(verb::post, "/echo", "ping"), make_request(verb::get, "/hello")},
+      {}, {.max_idle_for_unsafe_methods = std::chrono::nanoseconds::zero()});
+
+  REQUIRE(result.responses.size() == 3);
+  REQUIRE(result.responses[1].body == "ping");
+  REQUIRE(result.connections == 2);
 }
 
 namespace {
@@ -564,6 +581,59 @@ TEST_CASE("http::client: a 408 on an idle connection sends the request again", "
   REQUIRE_FALSE(result.error);
   REQUIRE(result.responses.size() == 2);
   REQUIRE(result.responses[1].status == http::status::ok);
+  REQUIRE(result.connections == 2);
+}
+
+namespace {
+
+// Answers a request, then times the connection out with a 408 that does not close it, then answers what it reads next:
+// a server that would answer a request after the 408 it sent as the connection was idle.
+task<> answer_then_time_out_open(io::memory_stream stream) {
+  std::string buffer;
+  http::request_parser parser;
+
+  if (co_await http::read(stream, buffer, parser)) {
+    co_return;
+  }
+
+  (void)parser.release();
+
+  std::string const ok = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+  std::string const timeout = "HTTP/1.1 408 Request Timeout\r\nContent-Length: 0\r\n\r\n";
+  std::string const late = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nlate";
+
+  (void)co_await io::write(stream, std::as_bytes(std::span{ok}));
+  co_await async::yield();
+  (void)co_await io::write(stream, std::as_bytes(std::span{timeout}));
+
+  if (co_await http::read(stream, buffer, parser)) {
+    co_return;
+  }
+
+  (void)parser.release();
+
+  // After the client has read the 408 alone, and gone on.
+  for (auto turn = 0; turn < 16; ++turn) {
+    co_await async::yield();
+  }
+
+  (void)co_await io::write(stream, std::as_bytes(std::span{late}));
+  (void)co_await http::read(stream, buffer, parser);
+}
+
+} // namespace
+
+TEST_CASE("http::client: a 408 on an idle connection is a POST's response, and the connection is not kept",
+          "[client]") {
+  auto const result = roundtrip(answer_then_time_out_open, {make_request(verb::get, "/"), make_request(verb::post, "/"),
+                                                            make_request(verb::get, "/")});
+
+  // Not sent again, as the server may have read it; nor is the connection the next request goes on, as the server
+  // may answer the POST there after its 408.
+  REQUIRE_FALSE(result.error);
+  REQUIRE(result.responses.size() == 3);
+  REQUIRE(result.responses[1].status == http::status::request_timeout);
+  REQUIRE(result.responses[2].body == "ok");
   REQUIRE(result.connections == 2);
 }
 
