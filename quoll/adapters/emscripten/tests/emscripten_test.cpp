@@ -48,6 +48,7 @@
 #include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/emscripten.hpp>
+#include <quoll/emscripten/detail/js.hpp>
 #include <quoll/emscripten/runtime.hpp>
 #include <quoll/http/event_reader.hpp>
 #include <quoll/http/fields.hpp>
@@ -70,6 +71,7 @@
 #include <quoll/rest/returns.hpp>
 #include <quoll/rest/text_codec.hpp>
 #include <quoll/test/overloaded.hpp>
+#include <quoll/test/reports.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -1419,6 +1421,31 @@ TEST_CASE("http::client through fetch: the status text counts toward the head's 
   REQUIRE_FALSE(run(error_of(http::client{server.url(), {.limits = {.max_header_size = fields + 2}}})));
   REQUIRE(run(error_of(http::client{server.url(), {.limits = {.max_header_size = fields + 1}}})) ==
           http::error::header_too_large);
+}
+
+TEST_CASE("emscripten::runtime: run(task) reports what the task let escape, and fails a Node process", "[emscripten]") {
+  quoll::emscripten::runtime runtime;
+  auto const failing = []() -> task<> {
+    co_await quoll::async::yield();
+    throw std::runtime_error{"no server"};
+  };
+
+  REQUIRE(quoll::emscripten::detail::quoll_emscripten_exit_code() == 0);
+  REQUIRE(runtime.run(failing()) == EXIT_SUCCESS);
+
+  auto const start = emscripten_get_now();
+
+  while (quoll::test::reports().empty() && emscripten_get_now() - start < 10'000.0) {
+    emscripten_sleep(1);
+  }
+
+  auto const failed = quoll::emscripten::detail::quoll_emscripten_exit_code();
+
+  // Given back, or this test binary would end failing.
+  quoll::emscripten::detail::quoll_emscripten_set_exit_code(0);
+  REQUIRE(quoll::test::reports() ==
+          std::vector<std::string>{"quoll: the program's main task ended on an exception: no server\n"});
+  REQUIRE(failed == EXIT_FAILURE);
 }
 
 TEST_CASE("emscripten::runtime takes the options of every runtime, and runs its tasks", "[emscripten]") {

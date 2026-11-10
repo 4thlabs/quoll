@@ -37,6 +37,7 @@
 #ifndef QUOLL_ASYNC_REPORT_HPP
 #define QUOLL_ASYNC_REPORT_HPP
 
+#include <chrono>
 #include <exception>
 #include <string_view>
 
@@ -55,10 +56,24 @@ using report_sink = void (*)(std::string_view line) noexcept;
 
 /**
  * @brief Sends report()'s lines to `sink`, null for stderr, and returns the sink it replaces: to a log of the
- * program's own (syslog, journald), or nowhere. The lines a second count afresh from then. Thread safety: may be called
- * from any thread.
+ * program's own (syslog, journald), or nowhere. The lines a second count afresh from then. A report on another thread
+ * may still call the sink it replaces as it returns: keep that sink valid for as long as the program reports. Thread
+ * safety: may be called from any thread.
  */
 report_sink set_report_sink(report_sink sink) noexcept;
+
+namespace detail {
+
+/** @brief report(), past the limit of lines a second, as what ends a program: with how many were left out first. */
+void report_always(std::string_view what, std::exception_ptr const &failure) noexcept;
+
+/** @brief The clock report() counts its seconds on; null for std::chrono::steady_clock. */
+using report_clock = std::chrono::steady_clock::time_point (*)() noexcept;
+
+/** @brief Counts report()'s seconds on `clock`, and returns the clock it replaces: for a test. */
+report_clock set_report_clock(report_clock clock) noexcept;
+
+} // namespace detail
 
 } // namespace quoll::async
 

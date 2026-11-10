@@ -41,7 +41,7 @@
 #include <quoll/async/report.hpp>
 #include <quoll/async/task.hpp>
 
-#include <emscripten/em_asm.h>
+#include <quoll/emscripten/detail/js.hpp>
 
 #include <cstdlib>
 #include <exception>
@@ -69,12 +69,8 @@ struct program_outcome {
       return;
     }
 
-    async::report("the program's main task ended on an exception", failure);
-    EM_ASM({
-      if (typeof process == = 'object' && process.versions && process.versions.node) {
-        process.exitCode = 1;
-      }
-    });
+    async::detail::report_always("the program's main task ended on an exception", failure);
+    detail::quoll_emscripten_set_exit_code(EXIT_FAILURE);
   }
 };
 

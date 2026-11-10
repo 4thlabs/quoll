@@ -46,6 +46,15 @@ addToLibrary({
     entries: {},
   },
 
+  // The exit status of a Node process, once its loop has drained: none in a browser, which reads as 0.
+  quoll_emscripten_exit_code: () =>
+    typeof process === 'object' && process.versions && process.versions.node ? (process.exitCode ?? 0) : 0,
+  quoll_emscripten_set_exit_code: (code) => {
+    if (typeof process === 'object' && process.versions && process.versions.node) {
+      process.exitCode = code;
+    }
+  },
+
   // Resumes on the event loop, as a microtask: like the continuation of a JavaScript await.
   quoll_emscripten_post__deps: ['$callUserCallback'],
   quoll_emscripten_post: (resume, item) => {

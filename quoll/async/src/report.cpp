@@ -46,6 +46,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace quoll::async {
 
@@ -79,26 +80,54 @@ detail::synchronized<budget> budget_in_use;
   }
 }
 
-void write(std::string const &line) noexcept {
+// What report() counts its seconds on: a test's, or steady_clock's.
+std::atomic<detail::report_clock> clock_in_use{nullptr};
+
+[[nodiscard]] std::chrono::steady_clock::time_point now() noexcept {
+  auto *const clock = clock_in_use.load(std::memory_order_acquire);
+
+  return clock != nullptr ? clock() : std::chrono::steady_clock::now();
+}
+
+void write(std::string_view line) noexcept {
   // One call for the whole line, which another thread's does not cut.
   if (auto *const sink = sink_in_use.load(std::memory_order_acquire)) {
     sink(line);
   } else {
-    std::fputs(line.c_str(), stderr);
+    static_cast<void>(std::fwrite(line.data(), 1, line.size(), stderr));
   }
 }
+
+void write_left_out(std::size_t left_out) {
+  if (left_out > 0) {
+    write("quoll: " + std::to_string(left_out) + " more reports left out in the second before\n");
+  }
+}
+
+void write_report(std::string_view what, std::exception_ptr const &failure) {
+  std::string line{"quoll: "};
+
+  line += what;
+  line += ": ";
+  line += message_of(failure);
+  line += '\n';
+  write(line);
+}
+
+// Out of memory for the line: what it was about goes without its message.
+void write_without_memory() noexcept { write("quoll: a failure that could not be reported whole\n"); }
 
 } // namespace
 
 void report(std::string_view what, std::exception_ptr const &failure) noexcept {
   try {
-    auto const now = std::chrono::steady_clock::now();
-    // How many went before this one, in a second now over; none if this one goes over the limit.
-    auto const before = budget_in_use.with([now](budget &current) -> std::optional<std::size_t> {
-      if (now - current.second >= std::chrono::seconds{1}) {
+    auto const at = now();
+    // How many were left out in a second now over; none if this one goes over the limit.
+    auto const before = budget_in_use.with([at](budget &current) -> std::optional<std::size_t> {
+      if (at - current.second >= std::chrono::seconds{1}) {
         auto const left_out = current.left_out;
 
-        current = budget{.second = now, .written = 1, .left_out = 0};
+        current = budget{.second = at, .written = 1, .left_out = 0};
         return left_out;
       }
 
@@ -115,20 +144,10 @@ void report(std::string_view what, std::exception_ptr const &failure) noexcept {
       return;
     }
 
-    if (*before > 0) {
-      write("quoll: " + std::to_string(*before) + " more reports left out in the second before\n");
-    }
-
-    std::string line{"quoll: "};
-
-    line += what;
-    line += ": ";
-    line += message_of(failure);
-    line += '\n';
-    write(line);
+    write_left_out(*before);
+    write_report(what, failure);
   } catch (...) {
-    // Out of memory for the line: what it was about goes without its message.
-    std::fputs("quoll: a failure that could not be reported whole\n", stderr);
+    write_without_memory();
   }
 }
 
@@ -137,5 +156,24 @@ report_sink set_report_sink(report_sink sink) noexcept {
   budget_in_use.with([](budget &current) { current = budget{}; });
   return sink_in_use.exchange(sink, std::memory_order_acq_rel);
 }
+
+namespace detail {
+
+void report_always(std::string_view what, std::exception_ptr const &failure) noexcept {
+  try {
+    auto const left_out = budget_in_use.with([](budget &current) { return std::exchange(current.left_out, 0); });
+
+    write_left_out(left_out);
+    write_report(what, failure);
+  } catch (...) {
+    write_without_memory();
+  }
+}
+
+report_clock set_report_clock(report_clock clock) noexcept {
+  return clock_in_use.exchange(clock, std::memory_order_acq_rel);
+}
+
+} // namespace detail
 
 } // namespace quoll::async

@@ -397,25 +397,32 @@ void runtime::run() {
 }
 
 int runtime::run(async::task<> main) {
-  // Set on the loop's threads, read once they are joined.
-  std::atomic<bool> failed{false};
+  // Shared with the handler, which runs after run() if run() throws while the task is still under way.
+  auto const failed = std::make_shared<std::atomic<bool>>(false);
 
+  // Once the program's task ends, the others spawned with the runtime's stop token are asked to stop, as a Ctrl-C
+  // would, so that the loop drains rather than run them for ever, as tokio drops its tasks once main has returned.
   struct outcome {
-    std::atomic<bool> *failed;
+    std::shared_ptr<std::atomic<bool>> failed;
+    std::stop_source stop;
 
-    void operator()() const noexcept {}
+    void operator()() const noexcept { stop.request_stop(); }
 
     void operator()(std::exception_ptr const &failure) const noexcept {
       if (!async::detail::is_a_stop(failure)) {
-        async::report("the program's main task ended on an exception", failure);
+        async::detail::report_always("the program's main task ended on an exception", failure);
         failed->store(true);
       }
+
+      stop.request_stop();
     }
   };
 
-  async::co_spawn(get_executor(), std::move(main), outcome{&failed}, get_stop_token());
+  auto const stop_token = get_stop_token();
+
+  async::co_spawn(get_executor(), std::move(main), outcome{failed, state_->stop}, stop_token);
   run();
-  return failed.load() ? EXIT_FAILURE : EXIT_SUCCESS;
+  return failed->load() ? EXIT_FAILURE : EXIT_SUCCESS;
 }
 
 ::asio::io_context &runtime::context() noexcept { return state_->context; }
