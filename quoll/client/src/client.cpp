@@ -403,6 +403,12 @@ enum class attempt : std::uint8_t {
   return on == attempt::idle_again || (on == attempt::idle_once && transferred == 0);
 }
 
+// On an idle connection that turned out closed, or answered 408, before any interim response, whether the request goes
+// again on a new one: an idempotent one does, as the server sent nothing for it.
+[[nodiscard]] constexpr bool goes_again_unanswered(attempt on, int interim) noexcept {
+  return on == attempt::idle_again && interim == 0;
+}
+
 // Whether a connection may carry another request after a response of `status`: not one that answered 408 as it was
 // idle, to a request not sent twice, as the server may answer that request on it after its 408.
 [[nodiscard]] constexpr bool may_go_on_after(attempt on, http::status status) noexcept {
@@ -447,7 +453,7 @@ exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
   for (;;) {
     if (auto const error = co_await http::read(connection, buffer, parser)) {
       // Gone with no answer: an idempotent request goes again.
-      if (interim == 0 && peer_has_gone(error) && on == attempt::idle_again) {
+      if (goes_again_unanswered(on, interim) && peer_has_gone(error)) {
         co_return std::nullopt;
       }
 
@@ -475,7 +481,7 @@ exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
 
     // Sent as the server closed the idle connection: an idempotent request goes again. Another, written, is not, even
     // if the 408 closes the connection: the server may have answered it so once it had done its work.
-    if (on == attempt::idle_again && interim == 0 && timed_out) {
+    if (goes_again_unanswered(on, interim) && timed_out) {
       co_return std::nullopt;
     }
 
@@ -959,7 +965,7 @@ private:
 
     for (;;) {
       if (auto const error = co_await http::read(connection, buffer_, *parser_)) {
-        if (on == attempt::idle_again && interim == 0 && peer_has_gone(error)) {
+        if (goes_again_unanswered(on, interim) && peer_has_gone(error)) {
           co_return false;
         }
 
@@ -978,7 +984,7 @@ private:
         continue;
       }
 
-      co_return !(on == attempt::idle_again && interim == 0 && status == http::status::request_timeout);
+      co_return !(goes_again_unanswered(on, interim) && status == http::status::request_timeout);
     }
   }
 
