@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/detail/report.hpp>
 #include <quoll/async/report.hpp>
 
 #include <quoll/async/detail/synchronized.hpp>
@@ -105,7 +106,7 @@ void write(std::string_view line) noexcept {
 
 void write_left_out(std::size_t left_out) {
   if (left_out > 0) {
-    write("quoll: " + std::to_string(left_out) + " more reports left out in the second before\n");
+    write("quoll: " + std::to_string(left_out) + " more reports left out since the last line written\n");
   }
 }
 

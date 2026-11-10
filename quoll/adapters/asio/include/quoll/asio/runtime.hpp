@@ -199,7 +199,8 @@ public:
    * stop it was asked for, as a Ctrl-C. For `return runtime.run(program());`, as a tokio `main` that returns an error.
    * Once it ends, the tasks spawned with get_stop_token() are asked to stop, as a Ctrl-C would, so that run() returns;
    * one spawned without it keeps the loop running until it ends. A task spawned beside it with async::detached that
-   * fails is reported too, and changes nothing.
+   * fails is reported too, and changes nothing. What run() throws, a handler's exception or a thread refused, it throws
+   * too.
    */
   [[nodiscard]] int run(async::task<> main);
 
