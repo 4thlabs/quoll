@@ -139,10 +139,11 @@ public:
     });
   }
 
-  // Puts back one take() gave, in its place, as if it had not been taken; closes it if the pool is full.
+  // Puts back one take() gave, in its place, as if it had not been taken; closes it if the pool is full, or if
+  // close_older_than() has closed those up to it meanwhile.
   void put_back(idle_connection idle) {
     state_.with([&](state &pool) {
-      if (pool.idle.size() < capacity_) {
+      if (pool.idle.size() < capacity_ && idle.given_back > pool.closed_through) {
         auto const at = std::ranges::upper_bound(pool.idle, idle.given_back, {}, &idle_connection::given_back);
 
         pool.idle.insert(at, std::move(idle));
@@ -171,6 +172,9 @@ public:
   void close_older_than(std::uint64_t given_back) {
     auto const closed = state_.with([given_back](state &pool) {
       std::vector<idle_connection> older;
+
+      pool.closed_through = std::max(pool.closed_through, given_back);
+
       auto const end = std::ranges::find_if(
           pool.idle, [given_back](idle_connection const &kept) { return kept.given_back > given_back; });
 
@@ -185,6 +189,8 @@ private:
     // The oldest first.
     std::vector<idle_connection> idle;
     std::uint64_t given = 0;
+    // The latest close_older_than() closed those up to.
+    std::uint64_t closed_through = 0;
   };
 
   async::detail::synchronized<state> state_;

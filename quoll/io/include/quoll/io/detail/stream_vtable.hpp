@@ -124,8 +124,8 @@ struct stream_vtable {
   void *(*read_some)(void *block, std::span<std::byte> buffer);
   void *(*write_some)(void *block, std::span<std::byte const> data);
   void *(*shutdown_send)(void *block);
+  // Null for a stream that is not a PollableStream.
   read_readiness (*poll_read)(void *block) noexcept;
-  bool pollable;
   awaitable_vtable const *read;
   awaitable_vtable const *write;
   awaitable_vtable const *shutdown;
@@ -146,6 +146,15 @@ template <ByteStream S, bool InPlace>
       std::destroy_at(source);
       return moved;
     };
+  } else {
+    return nullptr;
+  }
+}
+
+template <ByteStream S>
+[[nodiscard]] consteval auto poll_read_for() noexcept -> read_readiness (*)(void *) noexcept {
+  if constexpr (PollableStream<S>) {
+    return [](void *block) noexcept { return static_cast<stream_block<S> *>(block)->stream.poll_read(); };
   } else {
     return nullptr;
   }
@@ -174,14 +183,7 @@ inline constexpr stream_vtable stream_vtable_for{
         return ::new (static_cast<void *>(self.shutdown_slot)) shutdown_not_supported{};
       }
     },
-    [](void *block) noexcept {
-      if constexpr (PollableStream<S>) {
-        return static_cast<stream_block<S> *>(block)->stream.poll_read();
-      } else {
-        return read_readiness::unknown;
-      }
-    },
-    PollableStream<S>,
+    poll_read_for<S>(),
     &awaitable_vtable_for<read_awaitable_t<S>>,
     &awaitable_vtable_for<write_awaitable_t<S>>,
     &awaitable_vtable_for<shutdown_awaitable_t<S>>,
