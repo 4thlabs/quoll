@@ -401,8 +401,18 @@ changes only what the harness shows. Candidates:
   without asio, for tests and as an example, and blocking work goes through `async::offload`. With them goes the question of
   timeouts on connections served on a pool, which had no timer. What its tests checked of `quoll::async` across threads runs
   on asio's own thread pool.
+- **A stop ends a task without an exception** (2026-11-10, #151), decided with the maintainer, as a `catch` around an
+  operation, or a loop going on after an error code, could take a stop for a failure and spin once stopped, which nested UI
+  components, kept until their tasks end, would make common. A task ends with a value, an exception, or on a stop: what ends
+  on a stop resumes nothing, and the owner of the chain (a `co_spawn` root, a `when_all` branch, `stopped_as_optional`)
+  destroys it from the top, as Capy's `abandon` does for a coroutine given up and `std::execution`'s `set_stopped` (P3552)
+  for a stop. Code that must still run once stopped asks for it with `async::stopped_as_optional`; a `co_spawn` handler has a
+  case for `async::stopped_t`; a `when_all` with a failure and a stop ends on the failure. In three pull requests, which the
+  maintainer merges: the mechanism; then a task ending on `operation_canceled` while stopped, the operations of
+  `quoll::async`, and the places that catch it; then the error codes of the streams.
 - **A coroutine frame is destroyed only once it will not resume again** (2026-11-08): by a root as it ends, or by its awaiter
-  once the task has completed, which a task's promise asserts in debug builds, whatever destroys the frame. A program never
+  once the task has completed, or, since #151, suspended, by the owner of its chain after a stop, which a task's promise
+  asserts in debug builds, whatever destroys the frame. A program never
   starts a task itself: its `await_suspend` is private to Quoll's own awaiting. What an awaitable registers from its frame is undone as
   it resumes or is cancelled, never because the frame went, and a work item stays a coroutine to resume. Chosen over giving a
   work item a function to run, so that an awaitable could be destroyed while queued (PR #111): that case was reached only by

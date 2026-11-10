@@ -37,6 +37,8 @@
 #ifndef QUOLL_ASYNC_DETAIL_WHEN_ALL_STATE_HPP
 #define QUOLL_ASYNC_DETAIL_WHEN_ALL_STATE_HPP
 
+#include <quoll/async/detail/chain_owner.hpp>
+
 #include <atomic>
 #include <coroutine>
 #include <cstddef>
@@ -48,7 +50,8 @@ namespace quoll::async::detail {
 
 // Join point of when_all. Children may complete on other threads: the counter is atomic and the first error is
 // published by the release / acquire of the last arrival. The children share a stop source of their own: stopped by
-// the first failure, or by the parent's stop token.
+// the first failure, the first child ending on a stop, or the parent's stop token. A failure wins over a stop: a child
+// that fails stops the others, which may then end on that stop.
 class when_all_state {
 public:
   // One arrival per child, plus one for the parent once it has started them all.
@@ -60,7 +63,10 @@ public:
   when_all_state &operator=(when_all_state &&) = delete;
   ~when_all_state() = default;
 
-  void set_parent(std::coroutine_handle<> parent) noexcept { parent_ = parent; }
+  void set_parent(std::coroutine_handle<> parent, chain_owner *owner) noexcept {
+    parent_ = parent;
+    parent_owner_ = owner;
+  }
 
   void fail(std::exception_ptr error) noexcept {
     if (!failed_.exchange(true, std::memory_order_relaxed)) {
@@ -69,17 +75,29 @@ public:
     }
   }
 
+  // A child ended on a stop: the others stop, and the when_all ends on it unless a child failed.
+  void stopped() noexcept {
+    stopped_.store(true, std::memory_order_relaxed);
+    stop_source_.request_stop();
+  }
+
   void request_stop() noexcept { stop_source_.request_stop(); }
 
   [[nodiscard]] std::stop_token stop_token() const noexcept { return stop_source_.get_token(); }
 
-  // The coroutine to transfer to: the parent for the last arrival, nothing otherwise.
+  // The coroutine to transfer to: the parent for the last arrival, nothing otherwise. The last arrival of a when_all
+  // that ends on a stop resumes nothing either: it hands the stop to the owner of the parent's chain, which unwinds it.
   [[nodiscard]] std::coroutine_handle<> arrive() noexcept {
-    if (remaining_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-      return parent_;
+    if (remaining_.fetch_sub(1, std::memory_order_acq_rel) != 1) {
+      return std::noop_coroutine();
     }
 
-    return std::noop_coroutine();
+    if (stopped_.load(std::memory_order_relaxed) && !failed_.load(std::memory_order_relaxed)) {
+      stop_chain(parent_owner_);
+      return std::noop_coroutine();
+    }
+
+    return parent_;
   }
 
   void rethrow_if_failed() const {
@@ -91,8 +109,10 @@ public:
 private:
   std::atomic<std::size_t> remaining_;
   std::atomic<bool> failed_{false};
+  std::atomic<bool> stopped_{false};
   std::exception_ptr error_;
   std::coroutine_handle<> parent_;
+  chain_owner *parent_owner_ = nullptr;
   std::stop_source stop_source_;
 };
 

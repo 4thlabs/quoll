@@ -63,7 +63,7 @@ public:
   [[nodiscard]] bool await_ready() const noexcept { return false; }
 
   [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> parent, await_context const &context) {
-    state_.set_parent(parent);
+    state_.set_parent(parent, context.owner);
 
     // Every frame is allocated before any child runs: if an allocation throws, nothing has started.
     auto runners = [this]<std::size_t... I>(std::index_sequence<I...>) {
@@ -71,7 +71,8 @@ public:
           run_when_all_child(std::move(std::get<I>(children_)), std::get<I>(slots_), state_)...};
     }(std::index_sequence_for<Ts...>{});
 
-    // Children run on the parent's executor with the stop token of the when_all, linked to the parent's.
+    // Children run on the parent's executor with the stop token of the when_all, linked to the parent's. Each owns its
+    // chain (see run_when_all_child): this context has no owner.
     child_context_.emplace(await_context{context.executor, state_.stop_token()});
     parent_stop_.emplace(context.stop_token, when_all_stop_forwarder{state_});
 

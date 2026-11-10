@@ -221,10 +221,11 @@ If you are writing both sides of an API, or calling one with typed requests and 
   is written to stderr, but for a stop asked for, as a tokio `main` that returns an error. Once it ends,
   the tasks spawned with `get_stop_token()` are asked to stop, so that the program ends.
 - **`async::co_spawn`** runs a task from outside a coroutine, from the executor and never inline, and
-  gives what comes of it to a handler. With `async::detached`, for a task beside the main one, a value
-  is dropped, and an exception is written to stderr while the program goes on, as tokio does, unless it is
-  `std::errc::operation_canceled`, what a stop request throws, which says nothing. `async::set_report_sink`
-  sends those lines elsewhere.
+  gives what comes of it to a handler: its value, the exception it threw, or `async::stopped` if it ended
+  on a stop, a case every handler has. With `async::detached`, for a task beside the main one, a value
+  is dropped, a stop says nothing, and an exception is written to stderr while the program goes on, as tokio
+  does, unless it is `std::errc::operation_canceled`, what a stop request throws, which says nothing either.
+  `async::set_report_sink` sends those lines elsewhere.
 - **`runtime.run()`** returns once the tasks have ended. An executor kept in `main()` would keep it
   running, so give `get_executor()` straight to `co_spawn`.
 - **`runtime.get_stop_token()`** is stopped by the first SIGINT or SIGTERM. Given to `co_spawn`, it

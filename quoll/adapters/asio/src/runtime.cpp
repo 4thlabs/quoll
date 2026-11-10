@@ -44,6 +44,7 @@
 #include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/detail/report.hpp>
 #include <quoll/async/report.hpp>
+#include <quoll/async/stopped.hpp>
 #include <quoll/async/task.hpp>
 
 #include <asio/executor_work_guard.hpp>
@@ -414,6 +415,15 @@ int runtime::run(async::task<> main) {
     void operator()(std::exception_ptr const &failure) const noexcept {
       if (!async::detail::is_a_stop(failure) || !stop.stop_requested()) {
         async::detail::report_always("the program's main task ended on an exception", failure);
+        failed->store(true);
+      }
+
+      stop.request_stop();
+    }
+
+    void operator()(async::stopped_t) const noexcept {
+      if (!stop.stop_requested()) {
+        async::detail::report_always("the program's main task ended on a stop nothing asked for", nullptr);
         failed->store(true);
       }
 

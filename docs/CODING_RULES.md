@@ -71,15 +71,19 @@ guidelines and the C++ Core Guidelines.
   copy. The exceptions are `_ref` wrappers, views, and what an operation acts on, as a stream or the object of a member
   (`http::read(stream, ...)`, `router.dispatch()`). The fast path goes behind it, in `detail`.
 - A coroutine frame is destroyed only once it will not resume again: by a root (`co_spawn`'s, `when_all`'s) as it ends,
-  or before it starts when its start cannot be posted, or by its awaiter, through `async::task`, once it has completed.
+  or before it starts when its start cannot be posted, or by its awaiter, through `async::task`, once it has completed,
+  or suspended, by the owner of its chain after a stop. An operation that ends on a stop resumes nothing: it calls
+  `stop()` on the `async::detail::chain_owner` of its `await_context` (a `co_spawn` root, a `when_all` branch,
+  `stopped_as_optional`), and touches nothing after it; the owner, posted, destroys the chain from the top, the
+  `co_await` under way in each frame first. No `catch` sees a stop, as no coroutine of the chain resumes.
   What an awaitable in it registers (its work item in an executor's queue, an I/O handler, a stop callback) is undone as it
-  resumes or is cancelled, and never outlives the frame. A task's promise asserts it in debug builds, which run the
-  tests, whatever destroys the frame. A program
+  resumes, is cancelled or is destroyed with its frame, and never outlives the frame. A task's promise asserts it in debug
+  builds, which run the tests, whatever destroys the frame. A program
   never starts a task itself: it awaits it with `co_await`, as a temporary (`co_await std::move(work)` for one held by
   name, which a static_assert asks for), or runs it with `co_spawn`, and combines tasks through what Quoll offers
   (`when_all`, `with_timeout`). A task's `await_suspend` is private for that, reached only through
   `async::detail::awaiting`, which a `co_await` and Quoll's own awaiting go through. Quoll's own code destroys no awaitable while it
-  waits; one a test destroys by hand undoes what it can, as a `memory_stream` read not yet woken does. A released root that never resumes leaks its frame, as do those a loop
+  waits, but those of a chain that ended on a stop, as it unwinds; one a test destroys by hand undoes what it can, as a `memory_stream` read not yet woken does. A released root that never resumes leaks its frame, as do those a loop
   destroyed with work pending leaves. What is not a frame, as an object holding a timer or a stop callback, unregisters in
   its destructor, as `std::stop_callback` does.
 - Non-owning parameters as `std::string_view` / `std::span`; ownership through values or `std::unique_ptr`. No raw

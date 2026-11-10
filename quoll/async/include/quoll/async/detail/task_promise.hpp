@@ -114,10 +114,11 @@ protected:
 
   std::variant<std::monostate, non_void_t<T>, std::exception_ptr> result_;
 
-  // A frame is destroyed only once it will not resume again: before it starts, or once it has ended, whatever
-  // destroys it (a task, or a handle held elsewhere). What its awaitables registered points into it until then.
+  // A frame is destroyed only once it will not resume again: before it starts, once it has ended, or suspended as its
+  // chain unwinds after a stop, whatever destroys it (a task, or a handle held elsewhere). What its awaitables
+  // registered points into it until then, and they undo it as they are destroyed.
   ~task_promise_base() {
-    assert((!continuation_ || finished_) &&
+    assert((!continuation_ || finished_ || this->unwinding()) &&
            "quoll::async::task: destroyed while it runs, with what it registered still pointing into its frame");
   }
 

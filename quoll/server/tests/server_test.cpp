@@ -36,6 +36,7 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detail/end_stopped.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
@@ -56,6 +57,7 @@
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/server/server.hpp>
 #include <quoll/test/overloaded.hpp>
+#include <quoll/test/read_until_closed.hpp>
 #include <quoll/test/reports.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
@@ -749,6 +751,49 @@ TEST_CASE("serve: with no callback, a handler that throws and a connection that 
   REQUIRE(std::ranges::count(reported, "quoll: a connection ended on an exception: broken stream\n") == 1);
   REQUIRE(std::ranges::count(reported,
                              "quoll: a handler or a middleware threw, answered 500: a bug of the handler\n") == 1);
+}
+
+TEST_CASE("serve: a connection ending on a stop is no failure: no callback hears of it", "[server][stopped]") {
+  auto router = make_router();
+  quoll::async::run_loop loop;
+  auto [client, server] = io::make_memory_stream_pair();
+  canned_listener listener;
+  std::stop_source source;
+  std::optional<std::string> received;
+  auto told = 0;
+  quoll::http::serve_options options;
+
+  router.add(verb::get, "/fault/stops", "stops", [](http::request, http::route_match) -> task<http::response> {
+    co_await quoll::async::detail::end_stopped{};
+    co_return http::response{};
+  });
+  options.on_connection_error = [&](std::exception_ptr) { ++told; };
+  options.connection.on_handler_error = [&](std::exception_ptr) { ++told; };
+  listener.streams.emplace_back(std::move(server));
+  quoll::async::co_spawn(loop.get_executor(),
+                         quoll::http::server{router, std::move(options)}.serve(std::move(listener)),
+                         overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
+  // The connection goes with its frames: the client reads the end of the stream, with no answer.
+  auto const ask = [](io::memory_stream stream) -> task<std::string> {
+    http::request request;
+
+    request.target = "/fault/stops";
+    request.fields.add("Host", "x");
+    (void)co_await http::write(stream, request);
+    co_return co_await quoll::test::read_until_closed(stream);
+  };
+
+  quoll::async::co_spawn(loop.get_executor(), ask(std::move(client)),
+                         overloaded{[&](std::string answer) {
+                                      received = std::move(answer);
+                                      source.request_stop();
+                                    },
+                                    [&](std::exception_ptr) { source.request_stop(); }});
+  loop.run();
+
+  REQUIRE(received == "");
+  REQUIRE(told == 0);
+  REQUIRE(quoll::test::reports().empty());
 }
 
 TEST_CASE("serve: with callbacks, nothing is reported", "[server]") {

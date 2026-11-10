@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/detail/end_stopped.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/work_item.hpp>
@@ -299,6 +300,15 @@ struct slow_handler {
              }
 
              done = 1;
+           });
+  }
+};
+
+struct handler_ending_on_a_stop {
+  element view() {
+    return button("Stop") | on_click([]() -> task<> {
+             co_await quoll::async::sleep_for(1s);
+             co_await quoll::async::detail::end_stopped{};
            });
   }
 };
@@ -768,6 +778,23 @@ TEST_CASE("ui::app: what a handler throws goes to on_error", "[ui]") {
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::runtime_error);
+}
+
+TEST_CASE("ui::app: a handler ending on a stop is no failure: on_error does not hear of it", "[ui][stopped]") {
+  virtual_time time;
+  memory_renderer const shown;
+  auto told = 0;
+  test_app<handler_ending_on_a_stop> instance{
+      time.get_executor(), shown, {.on_error = [&](std::exception_ptr) { ++told; }}};
+
+  auto const act = [&]() -> task<> {
+    instance.dispatch(shown.find("button"), "click");
+    co_await quoll::async::sleep_for(2s);
+  };
+
+  // The app stops once its tasks have ended: the stopped one counts as ended.
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(told == 0);
 }
 
 TEST_CASE("ui::app: an event for a node that is gone is ignored", "[ui]") {

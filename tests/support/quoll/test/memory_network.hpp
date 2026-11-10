@@ -78,7 +78,8 @@ public:
     ++server->connections;
     server->destination = host + ':' + std::to_string(port);
     co_spawn(server->executor, server->serve(std::move(server_end)),
-             overloaded{[] {}, [server](std::exception_ptr error) { server->failure = std::move(error); }});
+             overloaded{[] {}, [server](std::exception_ptr error) { server->failure = std::move(error); },
+                        [](async::stopped_t) {}});
     co_return io::any_stream{std::move(client_end)};
   }
 

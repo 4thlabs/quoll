@@ -40,6 +40,7 @@
 
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/run_loop.hpp>
+#include <quoll/async/stopped.hpp>
 #include <quoll/async/task.hpp>
 
 #include <cstddef>
@@ -47,6 +48,11 @@
 
 quoll::async::task<std::nullptr_t> nothing();
 
-void spawn(quoll::async::run_loop &loop) {
-  quoll::async::co_spawn(loop.get_executor(), nothing(), [](std::exception_ptr const &) {});
-}
+// A handler for a failure and a stop, which a std::nullptr_t also reaches, as a std::exception_ptr.
+struct on_failure {
+  void operator()(std::exception_ptr const &) const {}
+
+  void operator()(quoll::async::stopped_t) const {}
+};
+
+void spawn(quoll::async::run_loop &loop) { quoll::async::co_spawn(loop.get_executor(), nothing(), on_failure{}); }

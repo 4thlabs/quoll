@@ -51,7 +51,8 @@ namespace quoll::async {
  *
  * The children start in order, each running until its first suspension. The result holds their values in the same
  * order, with std::monostate for a `task<>`. The children share a stop token that follows the awaiter's, and that
- * is also stopped when a child throws. All of them still run to completion, then the first exception is rethrown.
+ * is also stopped when a child throws or ends on a stop. All of them still run to completion, then the first exception
+ * is rethrown; if none threw and one ended on a stop, the when_all ends on a stop too, and its awaiter with it.
  */
 template <class... Ts>
 [[nodiscard]] task<std::tuple<detail::non_void_t<Ts>...>> when_all(task<Ts>... children) {

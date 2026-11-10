@@ -43,8 +43,9 @@
 namespace quoll::async {
 
 /**
- * @brief Writes one line saying `what` happened and what `failure` says, for a failure nothing else takes: an exception
- * a task spawned with async::detached let escape, or one a server's callbacks were not given. To stderr, or to the sink
+ * @brief Writes one line saying `what` happened and what `failure` says, `what` alone for an empty one, for a failure
+ * nothing else takes: an exception a task spawned with async::detached let escape, or one a server's callbacks were not
+ * given. To stderr, or to the sink
  * set_report_sink() set. At most ten lines a second, as a peer may cause them at will: those past it are counted, and
  * the next line, if one comes, says how many went since the last line written. Never throws. Thread safety: may be
  * called from any thread.

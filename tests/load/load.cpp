@@ -669,6 +669,11 @@ int main(int argc, char **argv) {
                                          [&client_failures, &report](std::exception_ptr const &error) {
                                            ++client_failures;
                                            report("a client", describe(error));
+                                         },
+                                         // Nothing stops a client: a stop came from something else.
+                                         [&client_failures, &report](async::stopped_t) {
+                                           ++client_failures;
+                                           report("a client", "ended on a stop");
                                          }});
       }
 

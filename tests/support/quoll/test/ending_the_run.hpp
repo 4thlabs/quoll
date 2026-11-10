@@ -40,6 +40,7 @@
 #include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/detail/report.hpp>
 #include <quoll/async/report.hpp>
+#include <quoll/async/stopped.hpp>
 
 #include <exception>
 
@@ -49,6 +50,8 @@ namespace quoll::test {
 // async::detached did before it reported rather than end the program.
 struct ending_the_run {
   void operator()() const noexcept {}
+
+  void operator()(async::stopped_t) const noexcept {}
 
   void operator()(std::exception_ptr failure) const noexcept {
     if (!async::detail::is_a_stop(failure)) {
