@@ -353,7 +353,7 @@ task<accounts_calls> make_calls(Client &client) {
 
   accounts_calls calls;
 
-  // The POST first: it opens a connection, which the GETs then reuse (a POST never takes an idle one).
+  // The POST first: it opens a connection, which the GETs then reuse.
   calls.opened = co_await client.template call<accounts::open>({.owner = "Grace"});
   calls.found = co_await client.template call<accounts::get>(42);
   calls.missing = (co_await client.template try_call<accounts::get>(7))->template get<http::status::not_found>().detail;

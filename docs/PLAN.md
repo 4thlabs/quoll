@@ -360,7 +360,7 @@ changes only what the harness shows. Candidates:
 ## Decided
 
 - **A POST takes an idle connection only if it was given back less than a second ago** (2026-11-10,
-  `client_options::max_idle_for_unsafe_methods`), and any request found on a closed connection with none of it written goes
+  `client_options::max_idle_for_non_idempotent`), and any request found on a closed connection with none of it written goes
   again on a new one, as hyper does. Go's client lets a POST take any idle connection, as a reader always waiting on it tells
   a closed one before the request is written; Quoll's client has no such reader, and the maintainer chose the recency rule
   over adding one: well below the servers' idle timeouts, a connection that recent is rarely closed, and a POST written on
