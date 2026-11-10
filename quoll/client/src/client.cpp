@@ -105,7 +105,7 @@ namespace {
 // pool); with a single thread, as under WASM, it is never contended, and std::mutex needs no thread support there.
 class connection_pool {
 public:
-  // A connection from the pool, with when it went there: in order, and on idle_clock().
+  // A connection from the pool, with when it went there: in order, and on idle_clock(), read before the lock.
   struct idle_connection {
     io::any_stream connection;
     std::uint64_t given_back;
@@ -187,6 +187,9 @@ struct prepared_request {
   http::verb method = http::verb::get;
   // The request lets its connection carry another one (HTTP/1.1, no `Connection: close`).
   bool keep_alive = false;
+  // The request may be sent twice: its method is idempotent, or it carries an `Idempotency-Key`, as Go's client takes
+  // it.
+  bool replayable = false;
   // A body in pieces: `wire` is then its head.
   http::body_writer writer{};
   http::detail::streamed_framing framing{};
@@ -585,7 +588,7 @@ struct idle_attempt {
     return std::nullopt;
   }
 
-  auto const on = idempotent(request.method) ? attempt::idle_again : attempt::idle_once;
+  auto const on = request.replayable ? attempt::idle_again : attempt::idle_once;
   auto const max_idle_time = shared.options.max_idle_time;
   std::optional<std::chrono::nanoseconds> now;
 
@@ -594,10 +597,10 @@ struct idle_attempt {
       now = idle_clock(executor);
     }
 
-    // Idle for too long: something on the way may have dropped it with no word, and the older ones with it. One given
-    // back after `now` was read, on another thread, has not been idle.
+    // Idle for too long: something on the way may have dropped it with no word. One given back after `now` was read,
+    // on another thread, has not been idle. The others are looked at in turn, as the clock is read before the pool's
+    // lock and their times may not follow their order.
     if (now && *now > idle->given_at && *now - idle->given_at >= max_idle_time) {
-      shared.pool.close_older_than(idle->given_back);
       continue;
     }
 
@@ -686,7 +689,10 @@ void after_idle_attempt(client_core &shared, std::uint64_t given_back, std::opti
   auto const keep_alive = request.version == http::version::http_1_1 &&
                           !http::detail::closes_connection(request.fields) && shared.options.max_idle_connections > 0;
 
-  prepared_request prepared{.method = request.method, .keep_alive = keep_alive};
+  prepared_request prepared{.method = request.method,
+                            .keep_alive = keep_alive,
+                            .replayable = idempotent(request.method) || request.fields.contains("Idempotency-Key") ||
+                                          request.fields.contains("X-Idempotency-Key")};
 
   if (request.body_writer) {
     prepared.framing = http::detail::serialize_streamed_head(request, prepared.wire);
