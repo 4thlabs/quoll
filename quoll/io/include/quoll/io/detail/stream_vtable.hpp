@@ -125,6 +125,7 @@ struct stream_vtable {
   void *(*write_some)(void *block, std::span<std::byte const> data);
   void *(*shutdown_send)(void *block);
   read_readiness (*poll_read)(void *block) noexcept;
+  bool pollable;
   awaitable_vtable const *read;
   awaitable_vtable const *write;
   awaitable_vtable const *shutdown;
@@ -180,6 +181,7 @@ inline constexpr stream_vtable stream_vtable_for{
         return read_readiness::unknown;
       }
     },
+    PollableStream<S>,
     &awaitable_vtable_for<read_awaitable_t<S>>,
     &awaitable_vtable_for<write_awaitable_t<S>>,
     &awaitable_vtable_for<shutdown_awaitable_t<S>>,

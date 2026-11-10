@@ -45,6 +45,8 @@
 #include <winsock2.h>
 #else
 #include <poll.h>
+
+#include <cerrno>
 #endif
 
 namespace quoll::asio::detail {
@@ -62,7 +64,12 @@ namespace quoll::asio::detail {
   auto const found = ::WSAPoll(&polled, 1, 0);
 #else
   ::pollfd polled{socket.native_handle(), POLLIN, 0};
-  auto const found = ::poll(&polled, 1, 0);
+  auto found = ::poll(&polled, 1, 0);
+
+  // A signal before it looked: it looks again.
+  while (found < 0 && errno == EINTR) {
+    found = ::poll(&polled, 1, 0);
+  }
 #endif
 
   return found == 0 ? io::read_readiness::would_wait : io::read_readiness::ready;

@@ -227,6 +227,9 @@ public:
     return vtable_->poll_read(block_);
   }
 
+  /** @brief Whether the wrapped stream is a PollableStream, whose poll_read() can tell; false once moved from. */
+  [[nodiscard]] bool pollable() const noexcept { return vtable_ != nullptr && vtable_->pollable; }
+
   /** @brief The wrapped stream if its type is exactly `S`, otherwise `nullptr`. */
   template <class S>
   [[nodiscard]] S *target() noexcept QUOLL_LIFETIMEBOUND {
