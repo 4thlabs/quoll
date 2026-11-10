@@ -351,13 +351,20 @@ changes only what the harness shows. Candidates:
   ask. With frames recycled that task allocates nothing in steady state, and changing it changes no handler.
 - The size of a native binary, 19 % larger since step 1, as static libraries link whole objects: `--gc-sections`, link-time
   optimization.
-- Idle connections are only found closed when a request uses them: closing them after an idle time, and letting a POST
-  reuse one, which needs a stream that tells a closed peer before writing.
+- Idle connections are only found closed when a request uses them: closing them after an idle time. A POST reuses one
+  idle for less than a second (decided below); finding a closed one before writing, as Go's reader on idle connections
+  does, would let it reuse any.
 
 *Done when:* figures are published against that baseline, and each change is justified by a measure.
 
 ## Decided
 
+- **A POST takes an idle connection only if it was given back less than a second ago** (2026-11-10,
+  `client_options::max_idle_for_unsafe_methods`), and any request found on a closed connection with none of it written goes
+  again on a new one, as hyper does. Go's client lets a POST take any idle connection, as a reader always waiting on it tells
+  a closed one before the request is written; Quoll's client has no such reader, and the maintainer chose the recency rule
+  over adding one: well below the servers' idle timeouts, a connection that recent is rarely closed, and a POST written on
+  one found closed fails rather than go twice.
 - **Using the JavaScript libraries a page needs is a requirement of the UI** (2026-11-07), whatever form it takes: see step
   6.
 - **`samples/github` is step 4's real API** (2026-11-07), and a client of Docker over a Unix socket comes later, in no step

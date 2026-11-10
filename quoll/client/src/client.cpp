@@ -105,12 +105,15 @@ public:
   // The connection used last, the least likely to have been closed by the server for being idle; given `within`, only
   // if it went there that recently.
   [[nodiscard]] std::optional<idle_connection> take(std::optional<std::chrono::nanoseconds> within = std::nullopt) {
-    return state_.with([within](state &pool) -> std::optional<idle_connection> {
+    // On the wall's clock, as a server's idle timeout is; read before the lock.
+    auto const now = within ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+
+    return state_.with([within, now](state &pool) -> std::optional<idle_connection> {
       if (pool.idle.empty()) {
         return std::nullopt;
       }
 
-      if (within && std::chrono::steady_clock::now() - pool.idle.back().at > *within) {
+      if (within && now - pool.idle.back().at > *within) {
         return std::nullopt;
       }
 
@@ -123,9 +126,11 @@ public:
 
   // Keeps `connection` for a next request, or closes it if the pool is full.
   void give_back(io::any_stream connection) {
+    auto const now = std::chrono::steady_clock::now();
+
     state_.with([&](state &pool) {
       if (pool.idle.size() < capacity_) {
-        pool.idle.push_back({std::move(connection), ++pool.given, std::chrono::steady_clock::now()});
+        pool.idle.push_back({std::move(connection), ++pool.given, now});
       }
     });
   }
@@ -391,6 +396,8 @@ exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
          io::any_stream &connection QUOLL_LIFETIMEBOUND, prepared_request const &request QUOLL_LIFETIMEBOUND,
          attempt on, bool *reusable QUOLL_LIFETIMEBOUND = nullptr) {
   std::error_code unsent;
+  // Not a byte of the request left: the server cannot have read any of it.
+  auto nothing_written = false;
 
   // Its request is on its way, and its connection stays with what sends it.
   if (reusable == nullptr) {
@@ -407,6 +414,7 @@ exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
 
       // A server may answer a request it will not read, a 413 or a 503, and go: its answer is there to read.
       unsent = sent.error;
+      nothing_written = sent.transferred == 0;
     }
   }
 
@@ -418,8 +426,9 @@ exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
 
   for (;;) {
     if (auto const error = co_await http::read(connection, buffer, parser)) {
-      // Gone with no answer: an idempotent request goes again, and so does any that could not be written.
-      if (interim == 0 && peer_has_gone(error) && (on == attempt::idle_again || (on == attempt::idle_once && unsent))) {
+      // Gone with no answer: an idempotent request goes again, and so does any of which nothing was written.
+      if (interim == 0 && peer_has_gone(error) &&
+          (on == attempt::idle_again || (on == attempt::idle_once && nothing_written))) {
         co_return std::nullopt;
       }
 
@@ -443,16 +452,19 @@ exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
       continue;
     }
 
-    auto const timed_out_idle = interim == 0 && response.status == http::status::request_timeout;
+    auto const timed_out = response.status == http::status::request_timeout;
 
-    if (on == attempt::idle_again && timed_out_idle) {
+    // Sent as the server closed the idle connection: an idempotent request goes again, and so does any of which
+    // nothing was written, which the server never read.
+    if ((on == attempt::idle_again && interim == 0 && timed_out) ||
+        (on == attempt::idle_once && nothing_written && timed_out)) {
       co_return std::nullopt;
     }
 
     // Bytes past the response would be read as the next one: a connection carrying them is not reused, nor one that
     // answered 408 as it was idle, on which the server may answer the request after it.
     auto const can_go_on = request.keep_alive && keep_alive && !upgrade && buffer.empty() && !unsent &&
-                           !(on == attempt::idle_once && timed_out_idle);
+                           !(on == attempt::idle_once && timed_out);
 
     if (reusable != nullptr) {
       *reusable = can_go_on;
@@ -768,8 +780,8 @@ public:
     try {
       answered = co_await read_final_head(connection, request, on == attempt::idle_again);
     } catch (std::system_error const &thrown) {
-      // As in exchange(): one that could not be written goes again on a new connection.
-      if (sent.error && peer_has_gone(thrown.code()) && on == attempt::idle_once) {
+      // As in exchange(): one of which nothing was written goes again on a new connection.
+      if (sent.error && sent.transferred == 0 && peer_has_gone(thrown.code()) && on == attempt::idle_once) {
         co_return false;
       }
 
@@ -781,8 +793,13 @@ public:
     }
 
     if (answered) {
-      // Nor is a connection kept that answered 408 as it was idle: the server may answer the request after it.
+      // Nor is a connection kept that answered 408 as it was idle: the server may answer the request after it. One of
+      // which nothing was written, which the server never read, goes again on a new one.
       auto const timed_out_idle = on == attempt::idle_once && parser_->head().status == http::status::request_timeout;
+
+      if (timed_out_idle && sent.error && sent.transferred == 0) {
+        co_return false;
+      }
 
       connection_.emplace(std::move(connection));
       request_keeps_alive_ = request.keep_alive && !sent.error && !timed_out_idle;

@@ -540,6 +540,16 @@ TEST_CASE("http::client: an idempotent request goes again when its kept connecti
   REQUIRE(unsent.connections == 2);
 }
 
+TEST_CASE("http::client: a POST takes no connection idle for longer than its idle time", "[client]") {
+  // A nanosecond: any idle connection has waited for longer by the time the POST goes.
+  auto const result = roundtrip(
+      {make_request(verb::get, "/hello"), make_request(verb::post, "/echo", "ping"), make_request(verb::get, "/hello")},
+      {}, {.max_idle_for_unsafe_methods = 1ns});
+
+  REQUIRE(result.responses.size() == 3);
+  REQUIRE(result.connections == 2);
+}
+
 TEST_CASE("http::client: with no idle time for them, a POST opens its own connection", "[client]") {
   auto const result = roundtrip(
       {make_request(verb::get, "/hello"), make_request(verb::post, "/echo", "ping"), make_request(verb::get, "/hello")},
@@ -635,6 +645,34 @@ TEST_CASE("http::client: a 408 on an idle connection is a POST's response, and t
   REQUIRE(result.responses[1].status == http::status::request_timeout);
   REQUIRE(result.responses[2].body == "ok");
   REQUIRE(result.connections == 2);
+}
+
+TEST_CASE("http::client: stream() takes a 408 on an idle connection as a POST's response, keeping no connection",
+          "[client]") {
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), answer_then_time_out_open, 0, {}, {}};
+
+  auto const streams = [&]() -> task<std::pair<http::status, std::string>> {
+    http::client const client{memory_connector{server}, "example.com", 80};
+    auto const first = co_await client.send(make_request(verb::get, "/"));
+
+    REQUIRE(first.body == "ok");
+
+    auto timed_out = co_await client.stream(make_request(verb::post, "/"));
+
+    while (co_await timed_out.body.read()) {
+    }
+
+    auto const next = co_await client.send(make_request(verb::get, "/"));
+
+    co_return std::pair{timed_out.status, next.body};
+  };
+
+  auto const [status, next] = quoll::test::run(loop, streams()).value();
+
+  REQUIRE(status == http::status::request_timeout);
+  REQUIRE(next == "ok");
+  REQUIRE(server.connections == 2);
 }
 
 TEST_CASE("http::client: an idle connection found closed closes the older idle ones", "[client]") {
@@ -2820,6 +2858,14 @@ TEST_CASE("http::client: stream() keeps and takes an idle connection as send() d
 
   SECTION("a POST takes it too, as any request whose body is whole") {
     REQUIRE(twice(answering({whole, whole}, true), verb::post) == 1);
+  }
+
+  SECTION("a POST does not once it has been idle for long") {
+    REQUIRE(twice(answering({whole, whole}, true), verb::post, {.max_idle_for_unsafe_methods = 1ns}) == 2);
+  }
+
+  SECTION("a POST the server closed it before it was written goes again on a new one") {
+    REQUIRE(twice(answering({whole}), verb::post) == 2);
   }
 
   SECTION("one the server closed is replaced") { REQUIRE(twice(answering({whole}), verb::get) == 2); }
