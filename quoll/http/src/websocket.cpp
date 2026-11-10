@@ -98,6 +98,8 @@ struct websocket_state {
         ping_interval(options.ping_interval) {
     if (end == websocket_role::client) {
       masks = std::make_unique<async::detail::synchronized<std::random_device>>();
+      // From the start, so that a send before the first receive() follows the verdict too.
+      gone = std::stop_source{};
     }
   }
 
@@ -136,8 +138,8 @@ struct websocket_state {
   // started by a receive() as it first reads and ending once none reads, woken by `receive_done`, which each receive()
   // makes and stops as it ends. Taking the peer as gone, it says why in `gone_why`, then stops `gone`, which ends what
   // reads and what sends. `ping_interval` zero, none, as serve_websocket sets it, which watches the connection beside
-  // its handler. `gone` and `receive_done` are made by the first receive() that needs them, so that a server's
-  // connection makes none. All of it is on the executor the connection's operations take turns on.
+  // its handler. `gone` is made with a client's state, and `receive_done` by each receive() that runs it, so that a
+  // server's connection makes neither. All of it is on the executor the connection's operations take turns on.
   std::chrono::nanoseconds ping_interval;
   bool watching = false;
   std::stop_source receive_done{std::nostopstate};
@@ -201,7 +203,7 @@ async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, 
   // The peer taken as gone by the keep-alive: what would be sent finds it out at once, as Beast's would on its closed
   // socket.
   if (connection->gone.stop_requested()) {
-    if (kind == frame_kind::message) {
+    if (kind != frame_kind::answer) {
       throw std::system_error{connection->gone_why, "quoll::http::websocket: the peer is gone"};
     }
 
@@ -223,11 +225,15 @@ async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, 
     io::io_result sent{};
 
     // A write under way ends as the keep-alive takes the peer as gone, as the caller's stop ends it.
-    if (connection->gone.stop_possible()) {
+    if (connection->gone.stop_possible() && caller.stop_possible()) {
       async::detail::either_stop const stop{caller, connection->gone.get_token()};
 
       sent = co_await async::detail::stop_scope<io::io_result>{
           async::detail::with_optional_timeout(connection->wait_limit, write_once(connection, rest)), stop.token()};
+    } else if (connection->gone.stop_possible()) {
+      sent = co_await async::detail::stop_scope<io::io_result>{
+          async::detail::with_optional_timeout(connection->wait_limit, write_once(connection, rest)),
+          connection->gone.get_token()};
     } else {
       sent = co_await async::detail::with_optional_timeout(connection->wait_limit, write_once(connection, rest));
     }
@@ -281,9 +287,12 @@ async::task<> send_message(std::shared_ptr<state> connection, std::string frame,
 // than wait_limit with nothing taken. Why it could not leave, the stream's failure, which the next operation finds out
 // too; none once it left, or for a stop of `turn_stop`.
 async::task<std::error_code> send_quietly(std::shared_ptr<state> connection, std::string frame, frame_kind kind,
-                                          std::stop_token turn_stop = {}) {
-  auto const sending = [](std::shared_ptr<state> socket, std::string bytes, frame_kind what,
-                          std::stop_token stop) -> async::task<> {
+                                          std::stop_token turn_stop = {}, bool started_counts = false) {
+  // Set once the frame starts to leave: with `started_counts`, what fails then is told whatever stopped the turn's
+  // wait since, as a client's keep-alive wants to know that its ping could not leave.
+  auto writing = false;
+  auto const sending = [](std::shared_ptr<state> socket, std::string bytes, frame_kind what, std::stop_token stop,
+                          bool &started) -> async::task<> {
     // The turn waited for until either stop.
     async::detail::either_stop const either{socket->connection_stop, stop};
     async::detail::held_place turn;
@@ -295,6 +304,7 @@ async::task<std::error_code> send_quietly(std::shared_ptr<state> connection, std
       co_return;
     }
 
+    started = true;
     co_await write_frame(socket, std::move(bytes), what);
   };
 
@@ -302,10 +312,10 @@ async::task<std::error_code> send_quietly(std::shared_ptr<state> connection, std
   auto connection_stop = connection->connection_stop;
 
   try {
-    co_await async::detail::stop_scope<void>{sending(std::move(connection), std::move(frame), kind, turn_stop),
+    co_await async::detail::stop_scope<void>{sending(std::move(connection), std::move(frame), kind, turn_stop, writing),
                                              std::move(connection_stop)};
   } catch (std::system_error const &thrown) {
-    if (turn_stop.stop_requested()) {
+    if (turn_stop.stop_requested() && !(started_counts && writing)) {
       co_return std::error_code{};
     }
 
@@ -621,6 +631,13 @@ void take_as_gone(state &connection, std::error_code why) {
   connection.gone.request_stop();
 }
 
+// Whether the keep-alive of a connection no server watches has nothing left to watch: no receive() reads, as the last
+// one's end stopped `receive_done` and no other has made a new one, the peer's close came, or the peer is gone.
+[[nodiscard]] bool nothing_to_watch(state const &connection) {
+  return !connection.receive_done.stop_possible() || connection.receive_done.stop_requested() ||
+         connection.close_came.load() || connection.gone.stop_requested();
+}
+
 // The keep-alive of a connection no server watches, a client's: one at a time, started by a receive() as it first
 // reads, unless it runs, and ending once no receive() reads, as what answers a ping is read by a receive() alone; the
 // next receive() starts it again, so that nothing waits once nothing receives. At the end of each interval while a
@@ -675,8 +692,9 @@ async::task<> watch_alone(std::weak_ptr<state> watched) {
     std::optional<std::stop_callback<async::detail::stop_waker>> on_close;
 
     if (auto const connection = watched.lock()) {
-      // Nothing reads what would answer a ping, or nothing is left to watch.
-      if (!connection->receiving.load() || connection->close_came.load() || connection->gone.stop_requested()) {
+      // Nothing reads what would answer a ping, or nothing is left to watch: a receive() asked for but not yet
+      // running has made no `receive_done` of its own, and starts another keep-alive as it reads.
+      if (nothing_to_watch(*connection)) {
         co_return;
       }
 
@@ -699,16 +717,16 @@ async::task<> watch_alone(std::weak_ptr<state> watched) {
     auto const quiet = co_await async::detail::stop_scope<bool>{timer->wait_for(interval), wake.get_token()};
     auto const connection = watched.lock();
 
-    // Woken as its receive() ended, or a close left: looked at again from the top.
-    if (!connection || !quiet) {
-      if (!connection) {
-        co_return;
-      }
+    if (!connection) {
+      co_return;
+    }
 
+    // Woken as its receive() ended, or a close left: looked at again from the top.
+    if (!quiet) {
       continue;
     }
 
-    if (!connection->receiving.load() || connection->close_came.load() || connection->gone.stop_requested()) {
+    if (nothing_to_watch(*connection)) {
       co_return;
     }
 
@@ -726,10 +744,11 @@ async::task<> watch_alone(std::weak_ptr<state> watched) {
       co_return;
     }
 
-    // Whole, and waited for: its interval starts once it has left. Dropped once sending has ended, as an answer is,
-    // and the peer judged by what it sends.
-    auto const failed =
-        co_await send_quietly(connection, frame_of(*connection, websocket_opcode::ping, {}), frame_kind::answer);
+    // Whole, and waited for: its interval starts once it has left. Its wait for the turn ends with its receive(), as
+    // nothing would read the answer then. Dropped once sending has ended, as an answer is, and the peer judged by what
+    // it sends.
+    auto const failed = co_await send_quietly(connection, frame_of(*connection, websocket_opcode::ping, {}),
+                                              frame_kind::answer, connection->receive_done.get_token(), true);
 
     if (failed) {
       take_as_gone(*connection, failed);
