@@ -1524,3 +1524,33 @@ TEST_CASE("websocket: a server's connection built by hand keeps no watch of its 
   REQUIRE(quoll::test::run(time, patient()) == text("at last"));
   REQUIRE(time.now() == 5s);
 }
+
+TEST_CASE(
+    "websocket: a client's keep-alive counts the message that ended a receive() as what its next interval starts from",
+    "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{io::any_stream{std::move(client_end)}, websocket_role::client, {}, {.ping_interval = 1s}};
+
+  // A message at 0.5 s, then nothing: the next receive()'s interval starts then, so that the peer is pinged at 1.5 s
+  // and taken as gone at 2.5 s, rather than an interval later.
+  auto const quiet = [&]() -> task<std::error_code> {
+    auto const peer = [&]() -> task<> {
+      co_await quoll::async::sleep_for(500ms);
+      co_await send_raw(server_end, http::format_websocket_frame(websocket_opcode::text, "one"));
+    };
+    auto const twice = [&]() -> task<std::error_code> {
+      auto const first = co_await client.receive();
+
+      REQUIRE(first == text("one"));
+      co_return co_await quoll::test::code_thrown_by(client.receive());
+    };
+
+    auto [sent, code] = co_await quoll::async::when_all(peer(), twice());
+
+    co_return code;
+  };
+
+  REQUIRE(quoll::test::run(time, quiet()) == std::errc::timed_out);
+  REQUIRE(time.now() == 2500ms);
+}

@@ -65,8 +65,8 @@ struct websocket_options {
    * for a peer the application watches itself, each counted at the end of an interval (see websocket). For a connection
    * http::accept_websocket hands over, all along, a peer gone stopping the handler; for a client's, while a receive()
    * waits, which then throws why; for a server's built by hand, none, the application watching it. For any connection
-   * with a timer, how long a write may wait with nothing
-   * taken before the peer is taken as gone: this, or 30 seconds where it is zero.
+   * with a timer, how long a write may wait with nothing taken before the peer is taken as gone: this, or 30 seconds
+   * where it is zero.
    */
   std::chrono::nanoseconds ping_interval = std::chrono::seconds{30};
 };

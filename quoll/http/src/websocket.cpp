@@ -570,12 +570,9 @@ async::task<websocket_message> receive_from(std::shared_ptr<state> connection, d
 
     co_return co_await receive_watched(connection);
   } catch (std::system_error const &thrown) {
-    // A code of zero as a failure with none, so that receiving ends all the same; a stop that came beside a verdict as
-    // the verdict, so that the receive()s after it say why.
-    auto const stopped_by_the_verdict =
-        connection->gone.stop_requested() && async::detail::is_a_stop(std::current_exception());
-
-    connection->failure = stopped_by_the_verdict ? connection->gone_why : code_or_io_error(thrown.code());
+    // A code of zero as a failure with none, so that receiving ends all the same. A stop beside a verdict was thrown as
+    // the verdict already, by receive_watched().
+    connection->failure = code_or_io_error(thrown.code());
     throw;
   }
 }
@@ -782,8 +779,11 @@ async::task<> watch_alone(std::weak_ptr<state> watched) {
     auto const quiet = co_await async::detail::stop_scope<bool>{timer->wait_for(interval), wake.get_token()};
     auto const connection = watched.lock();
 
-    // Woken as its receive() ended, or a close left: looked at again from the top.
+    // Woken as its receive() ended, or a close left: looked at again from the top, and a new interval starts from
+    // what was read until now, which the message that ended the receive() was.
     if (connection && !quiet) {
+      count.seen = connection->reads_done.load();
+      count.pinged = count.closing;
       continue;
     }
 
