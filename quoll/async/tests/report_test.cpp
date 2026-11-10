@@ -50,7 +50,10 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -156,16 +159,73 @@ TEST_CASE("report: to the sink set, and to stderr with none", "[async]") {
   REQUIRE(quoll::test::reports() == std::vector<std::string>{"quoll: a test of report(): kept\n"});
 }
 
+namespace {
+
+// A clock the test moves by hand, for report()'s seconds.
+std::atomic<std::int64_t> fake_milliseconds{0};
+
+std::chrono::steady_clock::time_point fake_now() noexcept {
+  return std::chrono::steady_clock::time_point{std::chrono::milliseconds{fake_milliseconds.load()}};
+}
+
+// The clock given back however the test ends.
+struct on_fake_clock {
+  quoll::async::detail::report_clock kept = quoll::async::detail::set_report_clock(&fake_now);
+
+  on_fake_clock() = default;
+  on_fake_clock(on_fake_clock const &) = delete;
+  on_fake_clock(on_fake_clock &&) = delete;
+  on_fake_clock &operator=(on_fake_clock const &) = delete;
+  on_fake_clock &operator=(on_fake_clock &&) = delete;
+
+  ~on_fake_clock() { quoll::async::detail::set_report_clock(kept); }
+};
+
+void report_line(int line) {
+  quoll::async::report("one of many", std::make_exception_ptr(std::runtime_error{std::to_string(line)}));
+}
+
+} // namespace
+
 TEST_CASE("report: at most ten lines a second, and what went past them is counted", "[async]") {
-  // In far less than a second: one second's ten at most, or two if one ends among them, but never all of them.
-  for (auto line = 0; line < 25; ++line) {
-    quoll::async::report("one of many", std::make_exception_ptr(std::runtime_error{std::to_string(line)}));
+  on_fake_clock const clock;
+
+  fake_milliseconds = 10'000;
+  quoll::async::set_report_sink(&quoll::test::keep_report);
+
+  for (auto line = 0; line < 13; ++line) {
+    report_line(line);
   }
 
-  auto const reported = quoll::test::reports();
-  auto const written =
-      std::ranges::count_if(reported, [](std::string const &line) { return line.starts_with("quoll: one of many: "); });
+  REQUIRE(quoll::test::reports().size() == 10);
+  REQUIRE(quoll::test::reports().back() == "quoll: one of many: 9\n");
 
-  REQUIRE(written <= 20);
-  REQUIRE(written < 25);
+  // A second on: those left out are said first.
+  fake_milliseconds = 11'500;
+  report_line(13);
+
+  auto const reported = quoll::test::reports();
+
+  REQUIRE(reported.size() == 12);
+  REQUIRE(reported[10] == "quoll: 3 more reports left out in the second before\n");
+  REQUIRE(reported[11] == "quoll: one of many: 13\n");
+}
+
+TEST_CASE("report: what ends a program goes past the limit, with what was left out", "[async]") {
+  on_fake_clock const clock;
+
+  fake_milliseconds = 20'000;
+  quoll::async::set_report_sink(&quoll::test::keep_report);
+
+  for (auto line = 0; line < 12; ++line) {
+    report_line(line);
+  }
+
+  quoll::async::detail::report_always("the end", std::make_exception_ptr(std::runtime_error{"why"}));
+
+  auto const reported = quoll::test::reports();
+
+  REQUIRE(reported.size() == 12);
+  REQUIRE(reported[10] == "quoll: 2 more reports left out in the second before\n");
+  REQUIRE(reported[11] == "quoll: the end: why\n");
 }

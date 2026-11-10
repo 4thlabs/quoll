@@ -825,7 +825,7 @@ TEST_CASE("serve: with no callback, accepts tried again are reported once, until
 
   auto const reported = quoll::test::reports();
   auto const retried = std::ranges::count_if(reported, [](std::string const &line) {
-    return line.starts_with("quoll: cannot accept connections, trying again every 100 ms: ");
+    return line.starts_with("quoll: cannot accept connections for want of resources, trying again every 100 ms: ");
   });
 
   REQUIRE(retried == 2);

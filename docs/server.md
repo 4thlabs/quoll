@@ -363,8 +363,9 @@ A body too large is refused as soon as its head announces it.
 
 `on_accept_error` is a function from `std::error_code` to `async::task<bool>`, so that it may wait first:
 true accepts again, false ends the accept loop by rethrowing the failure. Without one, a failure of
-one connection is skipped, running out of something (file descriptors, memory) is retried after
-100 ms, said once on stderr until a connection goes through, and any other failure is rethrown. A rethrow ends the accept loop, and
+one connection is skipped, running out of something (file descriptors, memory) or trouble on the network
+on a connection's way is retried after 100 ms, said once on stderr until a connection goes through, and
+any other failure is rethrown. A rethrow ends the accept loop, and
 `serve` throws it once its connections have ended.
 
 ## Shutdown

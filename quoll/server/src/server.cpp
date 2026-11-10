@@ -159,7 +159,8 @@ struct connection_outcome {
   void operator()(std::exception_ptr failure) const noexcept {
     if (shared->state->options.on_connection_error) {
       shared->state->options.on_connection_error(std::move(failure));
-    } else if (!async::detail::is_a_stop(failure)) {
+    } else if (!async::detail::is_a_stop(failure) || !shared->drain.stop_requested()) {
+      // But for a stop the server was asked for, as connection_options::on_handler_error's default.
       async::report("a connection ended on an exception", failure);
     }
 
@@ -287,7 +288,10 @@ async::task<> serve_accepting(io::any_listener listener, std::shared_ptr<server_
 
       // Tried again with no callback to tell: said once, until a connection is accepted again.
       if (!accept_error && !one_connection_failure(error) && !accepts_retried) {
-        async::report("cannot accept connections, trying again every 100 ms", failure);
+        async::report(out_of_resources(error)
+                          ? "cannot accept connections for want of resources, trying again every 100 ms"
+                          : "an accept failed on the network, trying again every 100 ms",
+                      failure);
         accepts_retried = true;
       }
 

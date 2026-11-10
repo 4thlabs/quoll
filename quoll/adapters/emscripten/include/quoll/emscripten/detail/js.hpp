@@ -47,6 +47,10 @@ extern "C" {
 
 void quoll_emscripten_post(void (*resume)(void *item), void *item);
 
+// The exit status of a Node process once its loop has drained; nothing in a browser.
+int quoll_emscripten_exit_code();
+void quoll_emscripten_set_exit_code(int code);
+
 // The DOM of an interface. Texts are UTF-8, with their size. `create` returns the instance the others take, or 0 when
 // no element matches `selector`.
 int quoll_emscripten_ui_create(char const *selector);
