@@ -305,6 +305,25 @@ private:
   io::memory_stream inner_;
 };
 
+// A stream that reads what its peer sends, and whose writes take a byte every `delay`, throwing their stop rather
+// than say it, as some streams do.
+class throwing_its_stop {
+public:
+  throwing_its_stop(io::memory_stream inner, std::chrono::nanoseconds delay) noexcept
+      : inner_(std::move(inner)), delay_(delay) {}
+
+  [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
+
+  [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
+    co_await quoll::async::sleep_for(delay_);
+    co_return co_await inner_.write_some(data.first(std::min<std::size_t>(data.size(), 1)));
+  }
+
+private:
+  io::memory_stream inner_;
+  std::chrono::nanoseconds delay_;
+};
+
 // A stream that reads what its peer sends, and whose writes fail as on a connection the peer reset.
 class reset_on_write {
 public:
@@ -1585,4 +1604,33 @@ TEST_CASE("websocket: a client's ping whose write throws a stop's code takes the
 
   REQUIRE(quoll::test::run(time, cancelled()) == std::errc::io_error);
   REQUIRE(time.now() == 1s);
+}
+
+TEST_CASE("websocket: a client's send under way on a stream that throws its stop ends with the verdict",
+          "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{io::any_stream{throwing_its_stop{std::move(client_end), 100ms}},
+                         websocket_role::client,
+                         {},
+                         {.ping_interval = 1s}};
+
+  // The ping of 1 s leaves at 1.6 s, a byte every 100 ms; the send of 1.5 s, behind it, is still leaving when the peer
+  // is taken as gone at 2.6 s: the stream throws the stop, which the send gives as the verdict, as a receive() does.
+  auto const both = [&]() -> task<std::pair<std::error_code, std::error_code>> {
+    auto const sending = [&]() -> task<std::error_code> {
+      co_await quoll::async::sleep_for(1500ms);
+      co_return co_await quoll::test::code_thrown_by(client.send_text(std::string(20, 'x')));
+    };
+
+    auto [received, sent] = co_await quoll::async::when_all(quoll::test::code_thrown_by(client.receive()), sending());
+
+    co_return std::pair{received, sent};
+  };
+
+  auto const [received, sent] = quoll::test::run(time, both()).value();
+
+  REQUIRE(received == std::errc::timed_out);
+  REQUIRE(sent == std::errc::timed_out);
+  REQUIRE(time.now() == 2600ms);
 }

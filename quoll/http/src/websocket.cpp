@@ -176,7 +176,8 @@ void take_as_gone(state &connection, std::error_code why) noexcept {
   }
 
   // A stop's code, or none, is no stop of a caller's: the keep-alive failed.
-  connection.gone_why = why && why != std::errc::operation_canceled ? why : std::make_error_code(std::errc::io_error);
+  connection.gone_why =
+      why == std::errc::operation_canceled ? std::make_error_code(std::errc::io_error) : code_or_io_error(why);
   connection.gone.request_stop();
 }
 
@@ -285,7 +286,17 @@ async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, 
     io::io_result sent{};
 
     if (gone_stop.stop_possible()) {
-      sent = co_await write_within(connection, rest, gone_stop);
+      try {
+        sent = co_await write_within(connection, rest, gone_stop);
+      } catch (std::system_error const &) {
+        // A stream that throws its stop rather than say it: the verdict's, which cut the frame, as said below.
+        if (!connection->gone.stop_requested() || !async::detail::is_a_stop(std::current_exception())) {
+          throw;
+        }
+
+        connection->sending = detail::sending_state::cut;
+        throw_gone(*connection);
+      }
     } else {
       sent = co_await async::detail::with_optional_timeout(connection->wait_limit, write_once(connection, rest));
     }

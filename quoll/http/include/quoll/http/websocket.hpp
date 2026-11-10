@@ -110,13 +110,13 @@ struct websocket_options {
  * - At the end of each ping_interval, a peer that sent nothing in it is pinged. A new interval starts from what was
  *   read as a receive() ends, and once a ping has left: a ping that waits for the turn behind a send, or takes long to
  *   leave, delays the verdict.
- * - A peer that sent nothing since its ping left, or was dropped as sending had ended, or since a close has left, is
- *   taken as gone: within two to three intervals of silence. A frame that comes at the very end of the interval is
- *   late, as Beast takes it too, unless a read had already brought it.
+ * - A peer that sent nothing since its ping left, or was dropped as sending had ended, is taken as gone: within two
+ *   to three intervals of silence. Once a close has left, its answer is waited for as a pong, one interval. A frame
+ *   that comes at the very end of the interval is late, as Beast takes it too, unless a read had already brought it.
  * - Then the receive() throws std::errc::timed_out, the failure of the ping that could not leave, or io_error for a
  *   keep-alive that failed, and so do every receive() after it that has to read, and every send, but one after the
- *   connection's own close, which says http::error::websocket_closed as before. What a read had already brought is
- *   given first.
+ *   connection's own close, which says http::error::websocket_closed as before, a close() then doing nothing. What a
+ *   read had already brought is given first.
  * - The ping goes on its own: a receive() waits for it only to send a pong or a close of its own, which take their
  *   turn behind it.
  *
