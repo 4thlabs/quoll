@@ -40,12 +40,20 @@
 
 namespace quoll::async::detail {
 
+// What a stop callback runs to stop `source` in turn.
+struct stop_waker {
+  std::stop_source *source;
+
+  void operator()() const noexcept { source->request_stop(); }
+};
+
 // A stop requested once either of two is: stop_scope replaces the stop of what it runs rather than add to it, so that
-// two are joined by hand. Neither copied nor moved: its callbacks point to its source.
+// two are joined by hand. Neither copied nor moved: its callbacks point to its source. Thread safety: either may be
+// stopped from any thread, as a std::stop_callback allows; its destructor waits for a callback running on another one.
 class either_stop {
 public:
   either_stop(std::stop_token const &first, std::stop_token const &second)
-      : on_first_(first, wake{&source_}), on_second_(second, wake{&source_}) {}
+      : on_first_(first, stop_waker{&source_}), on_second_(second, stop_waker{&source_}) {}
 
   either_stop(either_stop const &) = delete;
   either_stop(either_stop &&) = delete;
@@ -56,16 +64,10 @@ public:
   [[nodiscard]] std::stop_token token() const noexcept { return source_.get_token(); }
 
 private:
-  struct wake {
-    std::stop_source *source;
-
-    void operator()() const noexcept { source->request_stop(); }
-  };
-
   // Before the callbacks, which may stop it as they are made, and go before it.
   std::stop_source source_;
-  std::stop_callback<wake> on_first_;
-  std::stop_callback<wake> on_second_;
+  std::stop_callback<stop_waker> on_first_;
+  std::stop_callback<stop_waker> on_second_;
 };
 
 } // namespace quoll::async::detail
