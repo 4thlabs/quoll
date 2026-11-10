@@ -108,7 +108,7 @@ struct websocket_options {
  * so that a peer silent since just after the end of one is pinged within two intervals and taken as gone within
  * three. The receive() then throws std::errc::timed_out, the failure of the ping that could not leave, or io_error for
  * a keep-alive that failed with no code, and so does every one after it that has to read, a frame that comes at the
- * very end of the interval included, as Beast closes its stream then. The ping goes on its own: a receive() waits
+ * very end of the interval included, which Beast takes as late too. The ping goes on its own: a receive() waits
  * for it only to send a pong or a close of its own, which take their turn behind it.
  *
  * Copied, not moved: its copies are the same connection, as http::client's are, which a task receiving and another

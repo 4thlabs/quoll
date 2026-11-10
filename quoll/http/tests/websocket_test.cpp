@@ -1271,3 +1271,33 @@ TEST_CASE("websocket: a client's ping refused as its close left waits for the pe
   REQUIRE(quoll::test::run(time, closing()) == close_with(1000));
   REQUIRE(time.now() == 3500ms);
 }
+
+TEST_CASE("websocket: a client's keep-alive judges a ping it counted as its own once it has left",
+          "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{
+      io::any_stream{taking_slowly{std::move(client_end), 900ms}}, websocket_role::client, {}, {.ping_interval = 1s}};
+
+  // The ping of 1 s takes until 6.4 s, a byte every 900 ms; the next receive()'s keep-alive counts it as its own at
+  // 2.5 s, and judges the peer only at the end of the interval after it left, 6.5 s, rather than at 3.5 s.
+  auto const slow = [&]() -> task<std::error_code> {
+    auto const peer = [&]() -> task<> {
+      co_await quoll::async::sleep_for(1500ms);
+      co_await send_raw(server_end, http::format_websocket_frame(websocket_opcode::text, "one"));
+    };
+    auto const twice = [&]() -> task<std::error_code> {
+      auto first = co_await client.receive();
+
+      REQUIRE(first == text("one"));
+      co_return co_await quoll::test::code_thrown_by(client.receive());
+    };
+
+    auto [sent, code] = co_await quoll::async::when_all(peer(), twice());
+
+    co_return code;
+  };
+
+  REQUIRE(quoll::test::run(time, slow()) == std::errc::timed_out);
+  REQUIRE(time.now() == 6500ms);
+}

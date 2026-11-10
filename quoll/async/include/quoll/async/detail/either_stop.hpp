@@ -36,16 +36,11 @@
 #ifndef QUOLL_ASYNC_DETAIL_EITHER_STOP_HPP
 #define QUOLL_ASYNC_DETAIL_EITHER_STOP_HPP
 
+#include <quoll/async/detail/stop_waker.hpp>
+
 #include <stop_token>
 
 namespace quoll::async::detail {
-
-// What a stop callback runs to stop `source` in turn.
-struct stop_waker {
-  std::stop_source *source;
-
-  void operator()() const noexcept { source->request_stop(); }
-};
 
 // A stop requested once either of two is: stop_scope replaces the stop of what it runs rather than add to it, so that
 // two are joined by hand. Neither copied nor moved: its callbacks point to its source. Thread safety: either may be

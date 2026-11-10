@@ -48,6 +48,7 @@
 #include <quoll/async/detail/slots.hpp>
 #include <quoll/async/detail/stop_on_exit.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
+#include <quoll/async/detail/stop_waker.hpp>
 #include <quoll/async/detail/synchronized.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
@@ -552,6 +553,9 @@ async::task<std::error_code> ping_once(std::shared_ptr<state> connection, std::s
 
   under_way const marked{*connection};
   auto frame = frame_of(*connection, websocket_opcode::ping, {});
+
+  // This ping's failure alone, which a keep-alive counting it as its own gives: one at a time.
+  connection->ping_failure = {};
   // `connection` given by copy rather than moved, as `marked` writes to the state through it once the send is over.
   // Dropped once sending has ended, as an answer is: the peer is then judged by what it sends, as a server's is.
   auto const failed = co_await send_quietly(connection, std::move(frame), frame_kind::answer, std::move(turn_stop));
@@ -657,6 +661,12 @@ async::task<> watch_peer(std::weak_ptr<state> watched, std::chrono::nanoseconds 
     // Read nothing since it was pinged, or since a close left: gone, or half-open. A ping of another counted as its own
     // says why it could not leave, if it could not.
     if (pinged) {
+      // A ping of another still under way has not reached the peer yet: its interval starts once it has left, as this
+      // one's own would.
+      if (borrowed && connection->pinging.load()) {
+        continue;
+      }
+
       auto const why =
           borrowed && connection->ping_failure ? connection->ping_failure : std::make_error_code(std::errc::timed_out);
 
