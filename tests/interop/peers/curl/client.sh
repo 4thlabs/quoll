@@ -16,7 +16,7 @@ check() {
 }
 
 check "GET /hello" sh -c "test \"\$(curl -sS --fail $base/hello)\" = hello"
-check "five URLs, one connection" sh -c "curl -sS --fail -o /dev/null -o /dev/null -o /dev/null -o /dev/null -o /dev/null -w '%{num_connects}\n' $base/hello $base/hello $base/hello $base/hello $base/hello | awk '{ connects += \$1 } END { exit !(connects <= 1) }'"
+check "five URLs, one connection" sh -c "curl -sS --fail -o /dev/null -o /dev/null -o /dev/null -o /dev/null -o /dev/null -w '%{http_code} %{num_connects}\n' $base/hello $base/hello $base/hello $base/hello $base/hello > /tmp/connects && awk '{ answered += (\$1 == 200); connects += \$2 } END { exit !(NR == 5 && answered == 5 && connects == 1) }' /tmp/connects || { echo 'status and connections opened, per URL:'; cat /tmp/connects; false; }"
 check "POST echoed" sh -c "test \"\$(curl -sS --fail --data-binary ping $base/echo)\" = ping"
 check "POST of 2 MiB, Expect: 100-continue" sh -c "head -c 2097152 /dev/zero > /tmp/big && curl -sS --fail -v --expect100-timeout 30 --data-binary @/tmp/big -o /tmp/back $base/echo 2>&1 | grep -q '< HTTP/1.1 100' && cmp /tmp/back /tmp/big"
 check "POST chunked" sh -c "test \"\$(printf abc | curl -sS --fail -H 'Transfer-Encoding: chunked' --data-binary @- $base/echo)\" = abc"

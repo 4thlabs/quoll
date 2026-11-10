@@ -45,8 +45,10 @@
 
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/with_timeout.hpp>
 #include <quoll/client/client.hpp>
 #include <quoll/client/connect_websocket.hpp>
+#include <quoll/client/connected_websocket.hpp>
 #include <quoll/client/websocket_connect_options.hpp>
 #include <quoll/http/event_reader.hpp>
 #include <quoll/http/is_event_stream.hpp>
@@ -58,11 +60,13 @@
 #include <quoll/runtime.hpp>
 #include <quoll/test/websocket_echo.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <exception>
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -136,6 +140,14 @@ async::task<> http_checks(std::string base) {
     auto const response = co_await client.post("/echo", body, "application/octet-stream");
 
     expect(response.body.size() == body.size(), "got " + std::to_string(response.body.size()) + " bytes");
+
+    auto const [got, sent] = std::ranges::mismatch(response.body, body);
+
+    if (got != response.body.end()) {
+      throw std::runtime_error{"byte " + std::to_string(got - response.body.begin()) + " is " +
+                               std::to_string(static_cast<unsigned char>(*got)) + ", not " +
+                               std::to_string(static_cast<unsigned char>(*sent))};
+    }
   });
   co_await check("a body in pieces, whole", [&]() -> async::task<> {
     expect((co_await client.get("/pieces/100")).body == expected_pieces(100), "pieces differ");
@@ -230,29 +242,66 @@ async::task<> autobahn(std::string base) {
 
   options.websocket.max_message_size = std::size_t{64} * 1024 * 1024;
 
+  // A bound on each exchange with Autobahn, far above its slowest case: a server that hangs ends the run, counted.
+  auto const bound = std::chrono::seconds{60};
   auto counting = co_await http::connect_websocket(base + "/getCaseCount", options);
   auto const count = std::stoi((co_await counting.socket.receive()).data);
 
   std::cout << "autobahn: " << count << " cases" << std::endl;
 
-  for (auto index = 1; index <= count; ++index) {
-    try {
-      auto running =
-          co_await http::connect_websocket(base + "/runCase?case=" + std::to_string(index) + "&agent=quoll", options);
+  auto not_started = 0;
+  auto in_a_row = 0;
 
-      co_await quoll::test::websocket_echo(std::move(running.socket));
+  for (auto index = 1; index <= count; ++index) {
+    std::optional<http::connected_websocket> running;
+
+    // A case that cannot even start fails the run, once those that can are run and reported.
+    try {
+      running.emplace(co_await async::with_timeout(
+          bound, http::connect_websocket(base + "/runCase?case=" + std::to_string(index) + "&agent=quoll", options)));
+    } catch (std::exception const &failure) {
+      ++not_started;
+      std::cout << "case " << index << " not started: " << failure.what() << std::endl;
+
+      // A server that no longer answers: the cases left are counted rather than waited for one by one.
+      if (++in_a_row == 3) {
+        not_started += count - index;
+        break;
+      }
+
+      continue;
+    }
+
+    in_a_row = 0;
+
+    try {
+      co_await async::with_timeout(bound, quoll::test::websocket_echo(std::move(running->socket)));
     } catch (std::exception const &failure) {
       // A case that breaks the connection on purpose: what Autobahn judges is in its report.
       std::cout << "case " << index << ": " << failure.what() << std::endl;
     }
   }
 
-  auto reporting = co_await http::connect_websocket(base + "/updateReports?agent=quoll", options);
-
+  // The report of what ran, if Autobahn can still write it: its failure is the run's only when every case started.
   try {
-    static_cast<void>(co_await reporting.socket.receive());
-  } catch (std::exception const &) {
-    // It closes once the report is written.
+    auto reporting =
+        co_await async::with_timeout(bound, http::connect_websocket(base + "/updateReports?agent=quoll", options));
+
+    try {
+      static_cast<void>(co_await async::with_timeout(bound, reporting.socket.receive()));
+    } catch (std::exception const &) {
+      // It closes once the report is written.
+    }
+  } catch (std::exception const &failure) {
+    std::cout << "no report: " << failure.what() << std::endl;
+
+    if (not_started == 0) {
+      throw;
+    }
+  }
+
+  if (not_started > 0) {
+    throw std::runtime_error{std::to_string(not_started) + " cases not started"};
   }
 }
 

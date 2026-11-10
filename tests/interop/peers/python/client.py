@@ -104,11 +104,18 @@ def kept_alive():
         else:
             connection.request("POST", "/echo", body=b"kept")
 
+        # As the request has left, before a response that closes the connection clears it.
+        sock = connection.sock
+        assert sock is not None
+        if first is None:
+            first = sock
+
+        assert sock is first, f"a new connection at request {turn}"
+
         response = connection.getresponse()
-        response.read()
+        body = response.read()
         assert response.status == 200
-        first = first or connection.sock
-        assert connection.sock is first, f"a new connection at request {turn}"
+        assert body == (b"hello" if turn < 5 else b"kept"), f"request {turn} got {body[:100]!r}"
 
 
 def http_1_0():
