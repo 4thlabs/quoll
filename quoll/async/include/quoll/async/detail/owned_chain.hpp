@@ -69,9 +69,10 @@ public:
   owned_chain &operator=(owned_chain const &) = delete;
   owned_chain &operator=(owned_chain &&) = delete;
 
-  // Moved into the awaiting coroutine before it suspends, when nothing has its address yet.
+  // Moved into the awaiting coroutine before it suspends, when nothing has its address yet. One awaited already stays
+  // so, moved: awaiting it again throws, rather than run its task again.
   owned_chain(owned_chain &&other) noexcept
-      : stop_token_(std::move(other.stop_token_)), work_(std::move(other.work_)) {}
+      : stop_token_(std::move(other.stop_token_)), work_(std::move(other.work_)), started_(other.started_) {}
 
   // Never with its task suspended but once await_resume() has unwound it: a stop reaches the nearest owner, which
   // nothing above unwinds.
