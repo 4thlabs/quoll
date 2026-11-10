@@ -53,7 +53,6 @@
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/http/websocket.hpp>
 #include <quoll/http/websocket_message.hpp>
 #include <quoll/runtime.hpp>
@@ -61,7 +60,6 @@
 
 #include <chrono>
 #include <cstddef>
-#include <cstdlib>
 #include <exception>
 #include <functional>
 #include <iostream>
@@ -160,7 +158,8 @@ async::task<> http_checks(std::string base) {
     expect((co_await client.get("/close")).body == "bye", "/close");
     expect((co_await client.get("/hello")).body == "hello", "/hello after it");
   });
-  // Past the idle timeouts of Node (5 s) and others: the kept connection is closed, which the client sees first.
+  // Past the idle timeouts of the peers (Node 5 s, nginx and aiohttp set to 3 s): the kept connection is closed, which
+  // the client sees first.
   co_await check("a GET and a POST after 6 s idle", [&]() -> async::task<> {
     co_await async::sleep_for(std::chrono::seconds{6});
     expect((co_await client.get("/hello")).body == "hello", "GET");

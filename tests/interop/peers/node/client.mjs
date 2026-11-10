@@ -26,7 +26,7 @@ await check('fetch GET /hello', async () => {
   expect(response.status === 200, `status ${response.status}`);
   expect((await response.text()) === 'hello', 'body');
 });
-await check('fetch five GETs, kept alive', async () => {
+await check('fetch five GETs', async () => {
   for (let turn = 0; turn < 5; ++turn) expect((await (await fetch(`${base}/hello`)).text()) === 'hello', `GET ${turn}`);
 });
 await check('node:http GETs and POSTs on one kept connection', async () => {
