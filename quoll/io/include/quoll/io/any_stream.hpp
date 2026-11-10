@@ -220,7 +220,7 @@ public:
    * one moved from, or one with an operation pending, reports read_readiness::unknown.
    */
   [[nodiscard]] read_readiness poll_read() noexcept {
-    if (vtable_ == nullptr || reading_ || writing_ || shutting_down_) {
+    if (!pollable() || reading_ || writing_ || shutting_down_) {
       return read_readiness::unknown;
     }
 
@@ -228,7 +228,7 @@ public:
   }
 
   /** @brief Whether the wrapped stream is a PollableStream, whose poll_read() can tell; false once moved from. */
-  [[nodiscard]] bool pollable() const noexcept { return vtable_ != nullptr && vtable_->pollable; }
+  [[nodiscard]] bool pollable() const noexcept { return vtable_ != nullptr && vtable_->poll_read != nullptr; }
 
   /** @brief The wrapped stream if its type is exactly `S`, otherwise `nullptr`. */
   template <class S>

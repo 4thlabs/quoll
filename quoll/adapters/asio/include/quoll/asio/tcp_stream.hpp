@@ -76,7 +76,7 @@ public:
    * socket. */
   [[nodiscard]] async::task<io::io_result> shutdown_send() { return shut_down(checked_state()); }
 
-  /** @brief What a read started now would do, as a peek of the socket that does not wait tells: see
+  /** @brief What a read started now would do, as a poll of the socket that does not wait tells: see
    * io::PollableStream. */
   [[nodiscard]] io::read_readiness poll_read() noexcept { return detail::poll_socket(checked_state().stream); }
 
