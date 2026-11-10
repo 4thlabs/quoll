@@ -34,8 +34,11 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/asio/runtime.hpp>
+#include <quoll/async/co_spawn.hpp>
 #include <quoll/async/detail/stop_on_exit.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
+#include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/client/connect_websocket.hpp>
@@ -45,13 +48,18 @@
 #include <quoll/http/websocket_message.hpp>
 #include <quoll/io/listen.hpp>
 #include <quoll/server/server.hpp>
+#include <quoll/test/overloaded.hpp>
 #include <quoll/test/run_task.hpp>
 #include <quoll/test/websocket_echo.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
+#include <exception>
+#include <optional>
 #include <stop_token>
 #include <string>
+#include <system_error>
 #include <utility>
 
 namespace {
@@ -98,7 +106,66 @@ task<std::string> echo_over_tcp() {
   co_return answer;
 }
 
+// A client whose server answers none of its pings, over TCP on a runtime of several threads: its keep-alive, on the
+// strand of the task that receives, takes the server as gone, which the receive() throws.
+task<std::error_code> unanswered_over_tcp() {
+  http::router router;
+
+  // A handler that never receives: the client's pings go unanswered.
+  router.get("/quiet", [](http::request request) {
+    return http::accept_websocket(
+        request, [](http::websocket) -> task<> { co_await quoll::async::sleep_for(std::chrono::seconds{30}); });
+  });
+
+  auto listener = co_await io::listen(0);
+  auto const url = "ws://127.0.0.1:" + std::to_string(listener.local_port().value()) + "/quiet";
+  http::server const server{router};
+  std::stop_source stop;
+
+  auto const serving = [&]() -> task<> {
+    co_await quoll::async::detail::stop_scope<void>{server.serve(std::move(listener)), stop.get_token()};
+  };
+  auto const receiving = [&]() -> task<std::error_code> {
+    quoll::async::detail::stop_on_exit const stop_server{stop};
+    http::websocket_connect_options options;
+
+    options.websocket.ping_interval = std::chrono::milliseconds{50};
+
+    auto [socket, handshake] = co_await http::connect_websocket(url, std::move(options));
+
+    try {
+      static_cast<void>(co_await socket.receive());
+    } catch (std::system_error const &gone) {
+      co_return gone.code();
+    }
+
+    co_return std::error_code{};
+  };
+
+  auto [served, code] = co_await quoll::async::when_all(serving(), receiving());
+
+  co_return code;
+}
+
 } // namespace
+
+TEST_CASE("asio: a WebSocket client's keep-alive takes a quiet server as gone, on a runtime of several threads",
+          "[asio][websocket]") {
+  quoll::asio::runtime runtime{{.threads = 4}};
+  std::optional<std::error_code> code;
+  std::exception_ptr failure;
+
+  quoll::async::co_spawn(runtime.get_executor(), unanswered_over_tcp(),
+                         quoll::test::overloaded{[&](std::error_code ended) { code = ended; },
+                                                 [&](std::exception_ptr error) { failure = std::move(error); }});
+  runtime.run();
+
+  if (failure) {
+    std::rethrow_exception(failure);
+  }
+
+  REQUIRE(code == std::errc::timed_out);
+}
 
 TEST_CASE("asio: a WebSocket client and server talk over TCP, on a runtime", "[asio][websocket]") {
   REQUIRE(quoll::test::run_task(echo_over_tcp()) == "over TCP");

@@ -1356,6 +1356,19 @@ TEST_CASE("websocket: a client's send under way ends as its peer is taken as gon
   REQUIRE(received == std::errc::timed_out);
   REQUIRE(sent == std::errc::timed_out);
   REQUIRE(time.now() == 4400ms);
+
+  // The frame it cut leaves sending cut: what is sent after it, a close included, says why all the same.
+  auto const after = [&]() -> task<std::pair<std::error_code, std::error_code>> {
+    auto const text_sent = co_await quoll::test::code_thrown_by(client.send_text("again"));
+    auto const closed = co_await quoll::test::code_thrown_by(client.close());
+
+    co_return std::pair{text_sent, closed};
+  };
+
+  auto const [again, closed] = quoll::test::run(time, after()).value();
+
+  REQUIRE(again == std::errc::timed_out);
+  REQUIRE(closed == std::errc::timed_out);
 }
 
 TEST_CASE("websocket: a client's send after its own close says so, even once its peer was taken as gone",
@@ -1375,4 +1388,41 @@ TEST_CASE("websocket: a client's send after its own close says so, even once its
   };
 
   REQUIRE(quoll::test::run(time, after()) == http::error::websocket_closed);
+}
+
+TEST_CASE("websocket: a client's receive() with no timer to watch with follows a verdict already given",
+          "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{
+      io::any_stream{reset_late{std::move(client_end), 500ms}}, websocket_role::client, {}, {.ping_interval = 1s}};
+
+  // The ping of 1 s fails at 1.5 s, after the message of 1.2 s ended its receive(): the peer is gone, with no
+  // receive() reading.
+  auto const first = [&]() -> task<websocket_message> {
+    auto const peer = [&]() -> task<> {
+      co_await quoll::async::sleep_for(1200ms);
+      co_await send_raw(server_end, http::format_websocket_frame(websocket_opcode::text, "one"));
+    };
+    auto const receiving = [&]() -> task<websocket_message> {
+      auto message = co_await client.receive();
+
+      co_await quoll::async::sleep_for(1s);
+      co_return message;
+    };
+
+    auto [sent, message] = co_await quoll::async::when_all(peer(), receiving());
+
+    co_return message;
+  };
+
+  REQUIRE(quoll::test::run(time, first()) == text("one"));
+
+  // On a run_loop, which offers no timer: the verdict holds all the same.
+  quoll::async::run_loop loop;
+  auto const later = [&]() -> task<std::error_code> {
+    co_return co_await quoll::test::code_thrown_by(client.receive());
+  };
+
+  REQUIRE(quoll::test::run(loop, later()) == std::errc::connection_reset);
 }
