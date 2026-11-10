@@ -40,6 +40,7 @@
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/runtime_options.hpp>
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
@@ -130,6 +131,11 @@ T run_on(quoll::async::Executor auto executor, task<T> work, std::stop_source so
                       },
                       [&](std::exception_ptr error) {
                         failure = std::move(error);
+                        done = true;
+                      },
+                      // Said as a failure, which the test reports.
+                      [&](quoll::async::stopped_t) {
+                        failure = std::make_exception_ptr(std::runtime_error{"quoll test: the task ended on a stop"});
                         done = true;
                       }},
            source.get_token());
@@ -749,9 +755,12 @@ task<std::string> read_rest(http::response_body const &body) {
 }
 
 // What read() throws, or a default error if it does not.
+// What a read throws, or operation_canceled for one that ended on a stop.
 task<std::system_error> read_failure(http::response_body const &body) {
   try {
-    (void)co_await body.read();
+    if (!co_await quoll::async::stopped_as_optional(body.read())) {
+      co_return std::system_error{std::make_error_code(std::errc::operation_canceled), "stopped"};
+    }
   } catch (std::system_error const &error) {
     co_return error;
   }
