@@ -45,6 +45,7 @@
 #include <quoll/io/error.hpp>
 #include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
+#include <quoll/io/pollable_stream.hpp>
 
 #include <algorithm>
 #include <coroutine>
@@ -250,12 +251,16 @@ public:
 
   [[nodiscard]] awaitable shutdown_send() const noexcept { return {{}}; }
 
+  // A peer that keeps quiet as the connection idles, so that what reuses one, a POST included, runs on the input.
+  [[nodiscard]] io::read_readiness poll_read() const noexcept { return io::read_readiness::would_wait; }
+
 private:
   std::string_view input_;
   std::size_t chunk_;
 };
 
 static_assert(io::HalfClosableStream<input_stream>);
+static_assert(io::PollableStream<input_stream>);
 
 } // namespace quoll::fuzz
 

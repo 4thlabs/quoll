@@ -73,7 +73,7 @@ namespace quoll::http {
  * A server may close an idle connection at any time. Every request whose body is whole takes an idle connection, as
  * Go's client and Boost.Burl do; one whose body comes in pieces opens its own, as its writer runs once. The idle
  * connection is checked first, as curl does (io::PollableStream): one the server closed, or that carries bytes nothing
- * asked for, as a 408 sent before closing it, is closed with the older ones, and the next is tried. A request whose
+ * asked for, as a 408 sent before closing it, is closed, and the next, older, is checked. A request whose
  * method is not idempotent (POST, PATCH...) takes only a connection its stream can check.
  *
  * The server may still close the connection as the request goes. When it turns out closed before any response (or
@@ -120,8 +120,8 @@ namespace quoll::http {
  * - What fetch refuses throws std::invalid_argument, before the task runs: a GET or a HEAD with a body or a
  *   `body_writer`, and the methods CONNECT and TRACE.
  * - `max_connections`, `max_idle_connections`, `max_redirects`, `connect_timeout` and `tls` have no effect, as the
- * browser decides. It follows redirects itself, possibly to another origin, and always
- * checks certificates. `limits` and `response_timeout` apply: past a limit, the fetch is aborted.
+ * browser decides. It follows redirects itself, possibly to another origin, and always checks certificates. `limits`
+ * and `response_timeout` apply: past a limit, the fetch is aborted.
  * - The fields fetch manages itself (Host, Content-Length, Connection and the other hop-by-hop ones) are not sent, nor
  *   are trailers. A `request.body_writer` runs to its end before the fetch, and goes out whole.
  * - fetch decodes the body, so that the fields describing the bytes on the wire (Content-Encoding, Content-Length,

@@ -93,8 +93,8 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
   for (unsigned send = 0; send < 2; ++send) {
     quoll::http::request request;
 
-    // Two bits a send: a POST takes a kept connection as one not sent twice, as the virtual clock has not moved, a HEAD
-    // reads no body. The upper bits give the pieces.
+    // Two bits a send: a POST takes a kept connection as one not sent twice, found quiet by its check, a HEAD reads no
+    // body. The upper bits give the pieces.
     request.method = methods[(data[0] >> (2U * send)) & 3U];
     request.target = "/";
 

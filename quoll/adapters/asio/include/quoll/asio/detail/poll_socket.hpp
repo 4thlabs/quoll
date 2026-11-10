@@ -39,43 +39,33 @@
 
 #include <quoll/io/pollable_stream.hpp>
 
-#include <asio/buffer.hpp>
-#include <asio/error.hpp>
 #include <asio/ip/tcp.hpp>
-#include <asio/socket_base.hpp>
 
-#include <array>
-#include <cstddef>
-#include <system_error>
+#if defined(_WIN32)
+#include <winsock2.h>
+#else
+#include <poll.h>
+#endif
 
 namespace quoll::asio::detail {
 
-// What a read on `socket` would do now, as a peek that does not wait tells, as curl checks a connection: bytes, the
-// end of the stream or an error are ready. The socket is put in its non-blocking mode for that peek only, which asio's
-// asynchronous operations do not depend on.
+// What a read on `socket` would do now, as a poll that does not wait tells, as curl checks a connection: one call,
+// which leaves the socket's mode and what it holds alone. Readable is bytes, the end of the stream or an error; a
+// socket closed here, or a poll that fails, is nothing a request can count on either.
 [[nodiscard]] inline io::read_readiness poll_socket(::asio::ip::tcp::socket &socket) noexcept {
-  std::error_code error;
-  auto const was_non_blocking = socket.non_blocking();
-
-  static_cast<void>(socket.non_blocking(true, error));
-
-  if (error) {
-    return io::read_readiness::unknown;
+  if (!socket.is_open()) {
+    return io::read_readiness::ready;
   }
 
-  std::array<std::byte, 1> peeked{};
+#if defined(_WIN32)
+  ::WSAPOLLFD polled{socket.native_handle(), POLLRDNORM, 0};
+  auto const found = ::WSAPoll(&polled, 1, 0);
+#else
+  ::pollfd polled{socket.native_handle(), POLLIN, 0};
+  auto const found = ::poll(&polled, 1, 0);
+#endif
 
-  static_cast<void>(socket.receive(::asio::buffer(peeked), ::asio::socket_base::message_peek, error));
-
-  std::error_code restored;
-
-  static_cast<void>(socket.non_blocking(was_non_blocking, restored));
-
-  if (error == ::asio::error::would_block || error == ::asio::error::try_again) {
-    return io::read_readiness::would_wait;
-  }
-
-  return io::read_readiness::ready;
+  return found == 0 ? io::read_readiness::would_wait : io::read_readiness::ready;
 }
 
 } // namespace quoll::asio::detail
