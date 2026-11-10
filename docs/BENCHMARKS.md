@@ -57,12 +57,14 @@ also writes the first table in its summary. Of the pull requests, only one touch
 | --- | --- |
 | GET, one connection | 22 |
 | GET, one connection each | 48 |
-| POST 1 MiB, echoed | 63 |
-| POST 1 MiB, read in pieces | 821 |
+| POST 1 MiB, echoed | 48 |
+| POST 1 MiB, read in pieces | 806 |
 | GET 1 MiB, written in pieces | 800 |
 | GET a file of 1 MiB | 121 |
 | REST GET, JSON | 37 |
-| REST POST, JSON | 64 |
+| REST POST, JSON | 49 |
+
+The POSTs take 15 allocations fewer since they reuse a connection idle for less than a second, as a GET does.
 
 ## A file, read away from the loop
 
