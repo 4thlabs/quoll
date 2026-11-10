@@ -95,7 +95,8 @@ struct websocket_options {
  * Sending goes on while a receive() waits, from a task beside it through when_all: messages leave whole, one at a
  * time, in the order their tasks start. Once a close has gone out, by close() or as the answer to the peer's, a
  * message throws std::system_error with `http::error::websocket_closed`, as does all that follows a frame cut short,
- * by a stop or a failure of the stream; a close() then does nothing.
+ * by a stop or a failure of the stream; a close() then does nothing, but on a client whose peer its keep-alive took as
+ * gone, where it throws why, as every send does (see below).
  *
  * Given a timer, a write that waits websocket_options::ping_interval, or 30 seconds where it is zero, with nothing
  * taken has the peer taken as gone: its frame is cut, and the send throws std::errc::timed_out. A pong, and the close
@@ -125,14 +126,13 @@ struct websocket_options {
  * it ends: the stream closes once the last of them, and of the operations, has. One receive() at a time, across copies,
  * another asked while one is pending throwing std::logic_error, in every build.
  *
- * Thread safety: that of the stream, which an asio socket does not share between threads. What a receive() and a send
- * do, and a client's keep-alive, which runs on the executor of the receive() that started it, takes turns as long as
- * they all run on one executor that runs a handler at a time, one after the other as at once, a strand where it runs
- * on several threads: the strand of
- * its own a server gives each connection, where its handler runs, or an executor of quoll::runtime, a strand on
- * several threads, where a client runs, and the tasks they await through when_all. A task on another executor, one
- * that others send through to broadcast say, would reach the stream at once: what others want sent goes to the
- * handler, which sends it itself.
+ * Thread safety: that of the stream, which an asio socket does not share between threads. The receive()s and the
+ * sends of a connection, and a client's keep-alive, which runs on the executor of the receive() that started it, take
+ * turns as long as they all run on one executor that runs a handler at a time, whether they overlap or follow one
+ * another. On several threads, that executor is a strand: the one a server gives each connection, where its handler
+ * runs, or an executor of quoll::runtime, where a client runs, with the tasks they await through when_all. A task on
+ * another executor, one that others send through to broadcast say, would reach the stream at once: what others want
+ * sent goes to the handler, which sends it itself.
  */
 class websocket {
 public:
@@ -155,16 +155,23 @@ public:
    */
   [[nodiscard]] async::task<websocket_message> receive();
 
-  /** @brief Sends `text`, copied. @throws std::invalid_argument, before the task runs, for text that is not UTF-8. */
+  /**
+   * @brief Sends `text`, copied.
+   *
+   * @throws std::invalid_argument, before the task runs, for text that is not UTF-8, and std::system_error with
+   * http::error::websocket_closed after a close or a frame cut short, the stream's error or std::errc::timed_out, or,
+   * on a client whose peer its keep-alive took as gone, why (see websocket).
+   */
   [[nodiscard]] async::task<> send_text(std::string_view text);
 
-  /** @brief Sends `data`, copied. */
+  /** @brief Sends `data`, copied. @throws std::system_error as send_text() does. */
   [[nodiscard]] async::task<> send_binary(std::string_view data);
 
   /**
    * @brief Sends a ping, with `data`, copied, which the peer's pong carries back.
    *
-   * @throws std::invalid_argument, before the task runs, for data longer than 125 bytes.
+   * @throws std::invalid_argument, before the task runs, for data longer than 125 bytes, and std::system_error as
+   * send_text() does.
    */
   [[nodiscard]] async::task<> ping(std::string_view data = {});
 
@@ -172,7 +179,8 @@ public:
    * @brief Sends a close with `code` and `reason`, copied, unless one was sent: nothing is sent after it. The peer's
    * answer comes to receive(), as the last message.
    *
-   * @throws std::invalid_argument, before the task runs, for what format_websocket_close() refuses.
+   * @throws std::invalid_argument, before the task runs, for what format_websocket_close() refuses, and
+   * std::system_error for the stream's error or a timeout, or, on a client whose peer its keep-alive took as gone, why.
    */
   [[nodiscard]] async::task<> close(std::uint16_t code = 1000, std::string_view reason = {});
 

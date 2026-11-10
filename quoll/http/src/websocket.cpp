@@ -247,26 +247,16 @@ async::task<io::io_result> write_within(std::shared_ptr<state> connection, std::
 // with nothing taken, past which the send throws std::errc::timed_out, so that no turn is held longer than the peer
 // goes on taking.
 async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, frame_kind kind) {
-  // After the connection's own close, whatever came since: nothing is sent past it.
-  if (connection->sending == detail::sending_state::closed) {
-    if (kind == frame_kind::message) {
-      throw std::system_error{make_error_code(error::websocket_closed), "quoll::http::websocket: cannot send"};
-    }
+  // The peer taken as gone by the keep-alive, a frame it cut included, but after the connection's own close: what
+  // would be sent finds it out at once, as Beast's would on its closed socket.
+  auto const gone = connection->sending != detail::sending_state::closed && connection->gone.stop_requested();
 
-    co_return;
+  if (gone && kind != frame_kind::answer) {
+    throw_gone(*connection);
   }
 
-  // The peer taken as gone by the keep-alive, a frame it cut included: what would be sent finds it out at once, as
-  // Beast's would on its closed socket.
-  if (connection->gone.stop_requested()) {
-    if (kind != frame_kind::answer) {
-      throw_gone(*connection);
-    }
-
-    co_return;
-  }
-
-  if (connection->sending != detail::sending_state::open) {
+  // After a close, or a frame cut short: a message is refused, an answer or a close dropped.
+  if (gone || connection->sending != detail::sending_state::open) {
     if (kind == frame_kind::message) {
       throw std::system_error{make_error_code(error::websocket_closed), "quoll::http::websocket: cannot send"};
     }
@@ -405,11 +395,15 @@ async::task<std::error_code> send_quietly(std::shared_ptr<state> connection, std
 }
 
 // What the parser reads next, or how the peer broke the protocol.
-[[nodiscard]] std::expected<std::optional<websocket_message>, std::error_code> parse_next(websocket_parser &parser) {
+[[nodiscard]] std::expected<std::optional<websocket_message>, std::error_code> parse_next(state &connection) {
   try {
-    return parser.next();
+    return connection.parser.next();
   } catch (std::system_error const &broken) {
     return std::unexpected{broken.code()};
+  } catch (...) {
+    // With no code, the parser left half-way through a message: receiving ends, as for feed().
+    connection.failure = std::make_error_code(std::errc::io_error);
+    throw;
   }
 }
 
@@ -482,7 +476,7 @@ async::task<websocket_message> receive_next(std::shared_ptr<state> connection, w
   std::array<char, 4096> chunk;
 
   for (;;) {
-    auto parsed = parse_next(connection->parser);
+    auto parsed = parse_next(*connection);
 
     if (!parsed) {
       // Told, if it can be: what fails sending it changes nothing to what is thrown.

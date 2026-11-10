@@ -106,8 +106,9 @@ task<std::string> echo_over_tcp() {
   co_return answer;
 }
 
-// A client whose server answers none of its pings, over TCP on a runtime of several threads: its keep-alive takes the
-// server as gone, which the receive() throws. That it takes turns with the receive() is for the TSan job to check.
+// A client whose server answers none of its pings, over TCP on a runtime of several threads, sending beside its
+// receive(): its keep-alive takes the server as gone, which the receive() and the sends throw. That the keep-alive's
+// pings take turns with the receive() and the sends is for the TSan job to check.
 task<std::error_code> unanswered_over_tcp() {
   http::router router;
 
@@ -134,13 +135,30 @@ task<std::error_code> unanswered_over_tcp() {
 
     auto [socket, handshake] = co_await http::connect_websocket(url, std::move(options));
 
-    try {
-      static_cast<void>(co_await socket.receive());
-    } catch (std::system_error const &gone) {
-      co_return gone.code();
-    }
+    // Sends beside the receive(), as its pings leave, until the keep-alive takes the server as gone.
+    auto const sending = [&socket]() -> task<> {
+      try {
+        for (;;) {
+          co_await socket.send_text("still there?");
+          co_await quoll::async::sleep_for(std::chrono::milliseconds{10});
+        }
+      } catch (std::system_error const &) {
+        // The verdict, which ends the sends too.
+      }
+    };
+    auto const receiving_one = [&socket]() -> task<std::error_code> {
+      try {
+        static_cast<void>(co_await socket.receive());
+      } catch (std::system_error const &gone) {
+        co_return gone.code();
+      }
 
-    co_return std::error_code{};
+      co_return std::error_code{};
+    };
+
+    auto [sent, code] = co_await quoll::async::when_all(sending(), receiving_one());
+
+    co_return code;
   };
 
   auto [served, code] = co_await quoll::async::when_all(serving(), receiving());
