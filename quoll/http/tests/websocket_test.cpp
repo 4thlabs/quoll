@@ -1219,15 +1219,15 @@ TEST_CASE("websocket: a client's keep-alive that counted another's ping as its o
   REQUIRE(time.now() == 3200ms);
 }
 
-TEST_CASE("websocket: a client's keep-alive with sending ended takes the peer as gone for that", "[http][websocket]") {
+TEST_CASE("websocket: a client's keep-alive with sending ended judges the peer by what it sends", "[http][websocket]") {
   quoll::test::virtual_time time;
   auto [client_end, server_end] = io::make_memory_stream_pair();
   http::websocket client{
       io::any_stream{taking_slowly{std::move(client_end), 400ms}}, websocket_role::client, {}, {.ping_interval = 1s}};
   std::stop_source stop;
 
-  // A send stopped at 0.5 s, after its first byte left at 0.4 s, cuts sending: the ping due at 1 s cannot leave, which
-  // is why the peer is taken as gone then, rather than a timeout an interval later.
+  // A send stopped at 0.5 s, after its first byte left at 0.4 s, cuts sending: the ping due at 1 s is dropped, as an
+  // answer is, and the peer, which sends nothing, is taken as gone an interval later, as a server's is.
   auto const cut = [&]() -> task<std::error_code> {
     auto const sending = [&]() -> task<std::error_code> {
       co_return co_await quoll::test::code_thrown_by([&]() -> task<> {
@@ -1245,8 +1245,8 @@ TEST_CASE("websocket: a client's keep-alive with sending ended takes the peer as
     co_return code;
   };
 
-  REQUIRE(quoll::test::run(time, cut()) == http::error::websocket_closed);
-  REQUIRE(time.now() == 1s);
+  REQUIRE(quoll::test::run(time, cut()) == std::errc::timed_out);
+  REQUIRE(time.now() == 2s);
 }
 
 TEST_CASE("websocket: a client's ping refused as its close left waits for the peer's answer", "[http][websocket]") {

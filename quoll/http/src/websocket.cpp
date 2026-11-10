@@ -166,8 +166,7 @@ using state = detail::websocket_state;
 }
 
 // What a frame is to what sends it once nothing more may be sent: a message refused, an answer or a close dropped.
-// A keep-alive's ping is refused as a message is, so that its keep-alive knows it could not leave.
-enum class frame_kind : std::uint8_t { message, answer, keep_alive, close };
+enum class frame_kind : std::uint8_t { message, answer, close };
 
 // The mask of a client's next frame, from a strong source of randomness (RFC 6455, 5.3); none for a server.
 [[nodiscard]] std::optional<websocket_mask> mask_of(state &connection) {
@@ -202,7 +201,7 @@ async::task<io::io_result> write_once(std::shared_ptr<state> connection, std::sp
 // goes on taking.
 async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, frame_kind kind) {
   if (connection->sending != detail::sending_state::open) {
-    if (kind == frame_kind::message || kind == frame_kind::keep_alive) {
+    if (kind == frame_kind::message) {
       throw std::system_error{make_error_code(error::websocket_closed), "quoll::http::websocket: cannot send"};
     }
 
@@ -536,24 +535,26 @@ void take_as_gone(state &connection, std::stop_source &gone, std::error_code why
 
 // A keep-alive's ping, marked under way until it has left, or not: why it could not, as send_quietly() says.
 async::task<std::error_code> ping_once(std::shared_ptr<state> connection, std::stop_token turn_stop) {
-  struct under_way {
-    state *connection;
-
-    explicit under_way(state &pinged) noexcept : connection(&pinged) { connection->pinging.store(true); }
+  class under_way {
+  public:
+    explicit under_way(state &pinged) noexcept : connection_(&pinged) { connection_->pinging.store(true); }
 
     under_way(under_way const &) = delete;
     under_way(under_way &&) = delete;
     under_way &operator=(under_way const &) = delete;
     under_way &operator=(under_way &&) = delete;
 
-    ~under_way() { connection->pinging.store(false); }
+    ~under_way() { connection_->pinging.store(false); }
+
+  private:
+    state *connection_;
   };
 
   under_way const marked{*connection};
   auto frame = frame_of(*connection, websocket_opcode::ping, {});
-  // `connection` given by copy rather than moved, as `marked` writes to the state through it once the send is over;
-  // refused once sending has ended, as it then could not leave rather than left.
-  auto const failed = co_await send_quietly(connection, std::move(frame), frame_kind::keep_alive, std::move(turn_stop));
+  // `connection` given by copy rather than moved, as `marked` writes to the state through it once the send is over.
+  // Dropped once sending has ended, as an answer is: the peer is then judged by what it sends, as a server's is.
+  auto const failed = co_await send_quietly(connection, std::move(frame), frame_kind::answer, std::move(turn_stop));
 
   connection->ping_failure = failed;
   co_return failed;
@@ -671,14 +672,6 @@ async::task<> watch_peer(std::weak_ptr<state> watched, std::chrono::nanoseconds 
     }
 
     auto const failed = co_await ping_once(connection, ends);
-
-    // Refused as a close left meanwhile: its answer is waited for as a pong is, as at the top of the loop.
-    if (failed == error::websocket_closed && connection->sending == detail::sending_state::closed) {
-      closing = true;
-      pinged = true;
-      seen = connection->reads_done.load();
-      continue;
-    }
 
     // As for the close above.
     if (failed && !ends.stop_requested()) {
