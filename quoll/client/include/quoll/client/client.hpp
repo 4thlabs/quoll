@@ -72,10 +72,11 @@ namespace quoll::http {
  *
  * A server may close an idle connection at any time. Every request whose body is whole takes an idle connection, as
  * Go's client and Boost.Burl do; one whose body comes in pieces opens its own, as its writer runs once. One idle for
- * longer than client_options::max_idle_time, 90 s by default, is closed instead. The idle connection is checked
+ * longer than client_options::max_idle_time, 90 s by default, is not used again but closed, as a request comes to it.
+ * The idle connection is checked
  * first, as curl does (io::PollableStream): one the server closed, or that carries bytes nothing
- * asked for, as a 408 sent before closing it, is closed, and the next, older, is checked. A request whose
- * method is not idempotent (POST, PATCH...) takes only a connection its stream can check.
+ * asked for, as a 408 sent before closing it, is closed, and the next, older, is checked. A request not sent twice
+ * (a POST or a PATCH without an `Idempotency-Key`) takes only a connection its stream can check.
  *
  * The server may still close the connection as the request goes. When it turns out closed before any response (or
  * answers 408 Request Timeout, sent before closing it), the other idle connections, older, are closed too, and a

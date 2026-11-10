@@ -124,12 +124,12 @@ or a stream error.
 A server may close an idle connection at any time. Every request whose body is whole takes an idle
 connection, as Go's client and Boost.Burl do; one whose body comes in pieces (`body_writer`) has one of its
 own, as its writer runs once. One idle for longer than `max_idle_time`, 90 s by default as with Go's
-client, is closed instead: a NAT or a load balancer may have dropped it with no word, which nothing on the
-connection shows. The idle connection is checked first, as curl does, with a poll of the socket
+client, is not used again but closed, as a request comes to it: a NAT or a load balancer may have dropped it
+with no word, which nothing on the connection shows. The idle connection is checked first, as curl does, with a poll of the socket
 that does not wait (`io::PollableStream`): one the server closed, or that carries bytes nothing asked for,
-as a 408 sent before closing it, is closed, and the next, older, is checked. A request that is
-not idempotent takes only a connection its stream can check, as `tcp_stream`, `tls_stream` and
-`memory_stream` can; through another, it opens its own.
+as a 408 sent before closing it, is closed, and the next, older, is checked. A request not sent twice,
+a POST or a PATCH without an `Idempotency-Key`, takes only a connection its stream can check, as
+`tcp_stream`, `tls_stream` and `memory_stream` can; through another, it opens its own.
 
 The server may still close the connection as the request goes, which no check can see coming:
 

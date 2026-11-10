@@ -38,6 +38,7 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/when_all.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/io.hpp>
 #include <quoll/test/allocations.hpp>
@@ -396,6 +397,28 @@ TEST_CASE("any_stream: poll_read goes to a stream that can, and is unknown on on
   client.close();
 
   REQUIRE(polled.poll_read() == quoll::io::read_readiness::ready);
+
+  // A read pending: nothing to ask either, as the stream is the read's.
+  quoll::async::run_loop loop;
+  std::array<std::byte, 4> chunk{};
+  auto [peer_side, other] = quoll::io::make_memory_stream_pair();
+  quoll::io::any_stream reading{std::move(peer_side)};
+  std::optional<quoll::io::read_readiness> during;
+
+  auto const read = [&]() -> quoll::async::task<std::size_t> {
+    co_return (co_await reading.read_some(chunk)).transferred;
+  };
+  auto const look = [&]() -> quoll::async::task<std::size_t> {
+    during = reading.poll_read();
+    co_return (co_await other.write_some(std::as_bytes(std::span{"x", 1}))).transferred;
+  };
+
+  REQUIRE(quoll::test::run(loop, [&]() -> quoll::async::task<std::size_t> {
+            auto const [got, sent] = co_await quoll::async::when_all(read(), look());
+
+            co_return got + sent;
+          }()) == 2);
+  REQUIRE(during == quoll::io::read_readiness::unknown);
 
   // Moved from: nothing to ask.
   auto const moved = std::move(polled);
