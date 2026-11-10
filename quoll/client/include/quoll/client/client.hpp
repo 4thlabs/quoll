@@ -77,9 +77,8 @@ namespace quoll::http {
  * the idle one turns out closed before any response (or answers 408 Request Timeout, sent before closing it), the
  * other idle connections, older, are closed too, and a request whose method is idempotent (GET, HEAD, PUT, DELETE,
  * OPTIONS, TRACE) is sent again, once, on a new connection. The others are sent again only if none of them was
- * written, or if the 408 closes the connection, as the server then reads none of them (RFC 9110, 15.5.9): otherwise
- * the server may have received them, so they fail with the stream's error, or the 408 is their response, for their
- * caller to decide, and their connection is not kept.
+ * written: otherwise the server may have received them, so they fail with the stream's error, or the 408 is their
+ * response, for their caller to decide, and their connection is not kept.
  *
  * Over TLS, a server closing without TLS's closing message is `std::errc::connection_reset`. It changes nothing for a
  * response whose length is known, nor for a kept connection, but it fails a response delimited by the end of the
