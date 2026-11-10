@@ -137,16 +137,18 @@ public:
   [[nodiscard]] async::task<io::io_result> shutdown_send() { return shut_down(checked_state()); }
 
   /**
-   * @brief What a read started now would do: see io::PollableStream. Ready when OpenSSL holds bytes of the session not
-   * yet read, processed or not, or when the socket has any, a record or TLS's closing message, as a poll that does not
-   * wait tells.
+   * @brief What a read started now would do: see io::PollableStream. Ready once the peer's closing message has been
+   * read, when OpenSSL holds bytes of the session not yet read, processed or not, or when the socket has any, a record
+   * or TLS's closing message, as a poll that does not wait tells.
    */
   [[nodiscard]] io::read_readiness poll_read() noexcept {
     auto &session = checked_state().stream;
     auto *const ssl = session.native_handle();
 
-    // Records asio has read from the socket and handed to OpenSSL's input, or that OpenSSL has taken in.
-    if (::SSL_has_pending(ssl) == 1 || ::BIO_ctrl_pending(::SSL_get_rbio(ssl)) > 0) {
+    // The peer's closing message already read, the socket open or not: the end of the stream, at once. Records asio
+    // has read from the socket and handed to OpenSSL's input, or that OpenSSL has taken in.
+    if ((::SSL_get_shutdown(ssl) & SSL_RECEIVED_SHUTDOWN) != 0 || ::SSL_has_pending(ssl) == 1 ||
+        ::BIO_ctrl_pending(::SSL_get_rbio(ssl)) > 0) {
       return io::read_readiness::ready;
     }
 

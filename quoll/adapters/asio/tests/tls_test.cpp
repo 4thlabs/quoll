@@ -36,6 +36,7 @@
 
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/yield.hpp>
 #include <quoll/client/client.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/verb.hpp>
@@ -78,11 +79,13 @@ http::request make_request(http::verb method, std::string target, std::string bo
 
 #if defined(QUOLL_ASIO_TLS)
 
+#include <asio/buffer.hpp>
 #include <asio/io_context.hpp>
 #include <asio/ip/address_v4.hpp>
 #include <asio/ip/tcp.hpp>
 #include <asio/ssl/context.hpp>
 #include <asio/ssl/verify_mode.hpp>
+#include <asio/write.hpp>
 #include <quoll/asio/executor.hpp>
 #include <quoll/asio/runtime.hpp>
 #include <quoll/asio/tls_acceptor.hpp>
@@ -766,6 +769,81 @@ TEST_CASE("TLS: a client closing its side gets TLS's closing message back", "[tl
   };
 
   REQUIRE(run_task(with_server<std::error_code>(server_certificate(), call)) == io::error::end_of_stream);
+}
+
+TEST_CASE("TLS: poll_read is ready once the peer's closing message is read, its socket still open", "[tls][asio]") {
+  ::asio::io_context context;
+  ::asio::ip::tcp::acceptor acceptor{context, ::asio::ip::tcp::endpoint{::asio::ip::address_v4::loopback(), 0}};
+  ::asio::ip::tcp::endpoint const endpoint{::asio::ip::address_v4::loopback(), acceptor.local_endpoint().port()};
+  auto const server_context = quoll::asio::detail::server_context(server_certificate());
+  ::asio::ssl::context client_context{::asio::ssl::context::tls_client};
+  std::optional<std::string> outcome;
+  std::exception_ptr failure;
+  auto done = false;
+
+  client_context.set_verify_mode(::asio::ssl::verify_none);
+
+  auto const work = [&]() -> task<std::string> {
+    // Connected, then waiting for the server's side of the handshake.
+    auto const calling = [&]() -> task<std::string> {
+      ::asio::ip::tcp::socket socket{context};
+
+      socket.connect(endpoint);
+
+      quoll::asio::tls_stream stream{quoll::asio::tls_stream::session_type{std::move(socket), client_context}};
+
+      if (auto const error = co_await stream.handshake(quoll::asio::tls_stream::session_type::client)) {
+        done = true;
+        co_return error.message();
+      }
+
+      std::array<char, 64> chunk{};
+      auto const ended = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+      std::string seen = ended.error == io::error::end_of_stream ? "end" : "?";
+
+      seen += stream.poll_read() == io::read_readiness::ready ? ",ready" : ",?";
+      done = true;
+      co_return seen;
+    };
+
+    // Sends TLS's closing message and keeps its socket open, as a peer waiting for the other's.
+    auto const serving = [&]() -> task<std::string> {
+      quoll::asio::tls_stream stream{quoll::asio::tls_stream::session_type{acceptor.accept(), *server_context}};
+
+      if (auto const error = co_await stream.handshake(quoll::asio::tls_stream::session_type::server)) {
+        co_return error.message();
+      }
+
+      auto const message = quoll::asio::detail::closing_message(stream.session().native_handle());
+
+      if (!message) {
+        co_return "no closing message";
+      }
+
+      ::asio::write(stream.session().next_layer(), ::asio::buffer(*message));
+
+      while (!done) {
+        co_await quoll::async::yield();
+      }
+
+      co_return "";
+    };
+
+    auto [client, server] = co_await when_all(calling(), serving());
+
+    co_return server + client;
+  };
+
+  quoll::async::co_spawn(quoll::asio::executor{context.get_executor()}, work(),
+                         quoll::test::overloaded{[&](std::string value) { outcome = std::move(value); },
+                                                 [&](std::exception_ptr error) { failure = std::move(error); }});
+  context.run();
+
+  if (failure) {
+    std::rethrow_exception(failure);
+  }
+
+  REQUIRE(outcome == "end,ready");
 }
 
 TEST_CASE("TLS: a stream moved before its handshake and its shutdown run keeps them", "[tls][asio]") {
