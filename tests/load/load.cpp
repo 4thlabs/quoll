@@ -49,9 +49,7 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
-#include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/lifetimebound.hpp>
-#include <quoll/async/report.hpp>
 #include <quoll/async/runtime_options.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
@@ -77,6 +75,7 @@
 #include <quoll/runtime.hpp>
 #include <quoll/server/serve_options.hpp>
 #include <quoll/server/server.hpp>
+#include <quoll/test/ending_the_run.hpp>
 #include <quoll/test/overloaded.hpp>
 
 #include <array>
@@ -102,18 +101,6 @@
 #include <utility>
 
 namespace {
-
-// What async::detached did before it reported rather than end the program: a failure ends the run, which then fails.
-struct ending_the_run {
-  void operator()() const noexcept {}
-
-  void operator()(std::exception_ptr failure) const noexcept {
-    if (!quoll::async::detail::is_a_stop(failure)) {
-      quoll::async::detail::report_always("a task of the run failed", failure);
-      std::terminate();
-    }
-  }
-};
 
 namespace async = quoll::async;
 namespace http = quoll::http;
@@ -320,7 +307,7 @@ private:
   void run(std::stop_token stop) {
     quoll::runtime runtime{async::runtime_options{.threads = threads_}};
 
-    co_spawn(runtime.get_executor(), serve(), ending_the_run{}, std::move(stop));
+    co_spawn(runtime.get_executor(), serve(), quoll::test::ending_the_run{}, std::move(stop));
     runtime.run();
   }
 

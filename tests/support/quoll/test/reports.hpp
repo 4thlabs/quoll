@@ -37,39 +37,22 @@
 #ifndef QUOLL_TEST_REPORTS_HPP
 #define QUOLL_TEST_REPORTS_HPP
 
-#include <quoll/async/detail/synchronized.hpp>
-
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace quoll::test {
 
-// What async::report() wrote during the test case that runs: the test binary keeps it there rather than on
-// stderr, which a test throwing on purpose would fill (see reports.cpp, which sets it so for every case).
-inline async::detail::synchronized<std::vector<std::string>> &report_store() {
-  static async::detail::synchronized<std::vector<std::string>> store;
-
-  return store;
-}
+// What async::report() wrote during the run of a test case: the test binary keeps it there rather than on stderr, which
+// a test throwing on purpose would fill (see reports.cpp, which sets it so for every run).
 
 // The sink the test binary gives async::set_report_sink().
-inline void keep_report(std::string_view line) noexcept {
-  try {
-    report_store().with([&](std::vector<std::string> &kept) { kept.emplace_back(line); });
-  } catch (...) {
-    // A test that runs out of memory reports nothing more.
-  }
-}
+void keep_report(std::string_view line) noexcept;
 
-// The lines reported in this test case so far.
-[[nodiscard]] inline std::vector<std::string> reports() {
-  return report_store().with([](std::vector<std::string> const &kept) { return kept; });
-}
+// The lines reported in this run so far.
+[[nodiscard]] std::vector<std::string> reports();
 
-inline void clear_reports() {
-  report_store().with([](std::vector<std::string> &kept) { kept.clear(); });
-}
+void clear_reports();
 
 } // namespace quoll::test
 

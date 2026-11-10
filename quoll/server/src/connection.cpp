@@ -39,6 +39,7 @@
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/code_of.hpp>
 #include <quoll/async/detail/either_stop.hpp>
 #include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
@@ -1527,13 +1528,31 @@ async::task<> end_connection(io::any_stream &stream, connection_options const &o
 }
 
 // The connection, run by what took it over, told of a drain, with what it throws reported as a handler's would be.
+// What the peer of a connection taken over causes at will, and lets out of a handler reading it: its stream gone or
+// cut, a message that breaks the protocol, a keep-alive given up on it. No bug of the handler's, which only let it
+// through.
+[[nodiscard]] bool caused_by_its_peer(std::exception_ptr const &failure) {
+  auto const code = async::detail::code_of(failure);
+
+  if (!code) {
+    return false;
+  }
+
+  return code->category() == http::http_category() || code->category() == io::io_category() ||
+         *code == std::errc::connection_reset || *code == std::errc::broken_pipe ||
+         *code == std::errc::connection_aborted || *code == std::errc::timed_out;
+}
+
 async::task<> run_taken_over(io::any_stream stream, taken_over taken, connection_options const &options) {
   auto const stop_token = co_await async::current_stop_token();
 
   try {
     co_await taken.handler(std::move(stream), std::move(taken.received), options.drain);
   } catch (...) {
-    report_failure(options, stop_token, "the handler of a connection taken over, as a WebSocket, threw");
+    // The application's callback still hears of it; written out with none, as a peer may cause it at will, it is not.
+    if (options.on_handler_error || !caused_by_its_peer(std::current_exception())) {
+      report_failure(options, stop_token, "the handler of a connection taken over, as a WebSocket, threw");
+    }
   }
 }
 

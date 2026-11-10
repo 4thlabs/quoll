@@ -37,10 +37,45 @@
 #include <quoll/async/report.hpp>
 #include <quoll/test/reports.hpp>
 
+#include <quoll/async/detail/synchronized.hpp>
+
 #include <catch2/reporters/catch_reporter_event_listener.hpp>
 #include <catch2/reporters/catch_reporter_registrars.hpp>
 
 #include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace quoll::test {
+
+namespace {
+
+[[nodiscard]] async::detail::synchronized<std::vector<std::string>> &report_store() {
+  static async::detail::synchronized<std::vector<std::string>> store;
+
+  return store;
+}
+
+} // namespace
+
+void keep_report(std::string_view line) noexcept {
+  try {
+    report_store().with([&](std::vector<std::string> &kept) { kept.emplace_back(line); });
+  } catch (...) {
+    // A test that runs out of memory reports nothing more.
+  }
+}
+
+std::vector<std::string> reports() {
+  return report_store().with([](std::vector<std::string> const &kept) { return kept; });
+}
+
+void clear_reports() {
+  report_store().with([](std::vector<std::string> &kept) { kept.clear(); });
+}
+
+} // namespace quoll::test
 
 namespace {
 

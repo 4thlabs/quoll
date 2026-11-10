@@ -44,9 +44,7 @@
 // Build it with -DCMAKE_BUILD_TYPE=Release -DQUOLL_BENCH=ON -DQUOLL_BUILD_TESTS=OFF.
 
 #include <quoll/async.hpp>
-#include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/lifetimebound.hpp>
-#include <quoll/async/report.hpp>
 #include <quoll/client.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
@@ -64,6 +62,7 @@
 #include <quoll/rest.hpp>
 #include <quoll/runtime.hpp>
 #include <quoll/server.hpp>
+#include <quoll/test/ending_the_run.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
 
@@ -97,18 +96,6 @@
 #include <vector>
 
 namespace {
-
-// What async::detached did before it reported rather than end the program: a failure ends the run, which then fails.
-struct ending_the_run {
-  void operator()() const noexcept {}
-
-  void operator()(std::exception_ptr failure) const noexcept {
-    if (!quoll::async::detail::is_a_stop(failure)) {
-      quoll::async::detail::report_always("a task of the run failed", failure);
-      std::terminate();
-    }
-  }
-};
 
 // What the client's and the server's threads allocate goes to the counter of their role. OpenSSL and the C library
 // allocate with malloc, uncounted, and so does the thread on which asio resolves a name, which has no role.
@@ -419,7 +406,7 @@ private:
 
     quoll::runtime runtime;
 
-    co_spawn(runtime.get_executor(), serve(), ending_the_run{}, std::move(stop));
+    co_spawn(runtime.get_executor(), serve(), quoll::test::ending_the_run{}, std::move(stop));
     runtime.run();
   }
 
@@ -515,7 +502,7 @@ task<> start_tasks(quoll::runtime::executor executor, measure &measured QUOLL_LI
   auto const call = make_call();
 
   for (auto index = 0; index < tasks; ++index) {
-    co_spawn(executor, send_in_turn(measured, call), ending_the_run{});
+    co_spawn(executor, send_in_turn(measured, call), quoll::test::ending_the_run{});
   }
 
   co_return;
@@ -539,7 +526,7 @@ bool run_scenario(std::string_view name, std::chrono::duration<double> seconds, 
 
     // Not kept in a variable: run() ends once no executor of the runtime is left.
     co_spawn(runtime.get_executor(), start_tasks(runtime.get_executor(), measured, tasks, std::move(make_call)),
-             ending_the_run{});
+             quoll::test::ending_the_run{});
     runtime.run();
   }
 
@@ -648,7 +635,7 @@ public:
   [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
     auto [client_end, server_end] = io::make_memory_stream_pair();
 
-    co_spawn(time_->get_executor(), server_.serve_connection(std::move(server_end)), ending_the_run{});
+    co_spawn(time_->get_executor(), server_.serve_connection(std::move(server_end)), quoll::test::ending_the_run{});
     co_return io::any_stream{std::move(client_end)};
   }
 
@@ -933,7 +920,7 @@ int run_large(std::uint64_t gibibytes) {
   {
     quoll::runtime runtime;
 
-    co_spawn(runtime.get_executor(), running(), ending_the_run{});
+    co_spawn(runtime.get_executor(), running(), quoll::test::ending_the_run{});
     runtime.run();
   }
 
@@ -958,7 +945,7 @@ task<> serve_alone(std::uint16_t port) {
 int run_serve(std::uint16_t port) {
   quoll::runtime runtime;
 
-  co_spawn(runtime.get_executor(), serve_alone(port), ending_the_run{}, runtime.get_stop_token());
+  co_spawn(runtime.get_executor(), serve_alone(port), quoll::test::ending_the_run{}, runtime.get_stop_token());
   runtime.run();
   return EXIT_SUCCESS;
 }

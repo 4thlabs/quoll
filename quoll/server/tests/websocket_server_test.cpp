@@ -503,6 +503,28 @@ TEST_CASE("serve_connection: what a WebSocket handler throws is reported, but fo
                 "quoll: the handler of a connection taken over, as a WebSocket, threw: handler failure\n"});
   }
 
+  SECTION("with no callback, what its peer causes is not written out") {
+    // Reading until the peer goes, which it does with no close: the end of the stream, which a peer causes at will.
+    auto const router = socket_at([](http::websocket socket) -> task<> {
+      for (;;) {
+        static_cast<void>(co_await socket.receive());
+      }
+    });
+    auto [client_end, server_end] = io::make_memory_stream_pair();
+    auto const leaving = [](io::memory_stream &client) -> task<int> {
+      auto const answer = co_await send_then_read(client, handshake());
+
+      REQUIRE(answer.response.status == http::status::switching_protocols);
+      client.close();
+      co_return 1;
+    };
+    auto const outcome = quoll::test::run(
+        quoll::async::when_all(http::server{router}.serve_connection(std::move(server_end)), leaving(client_end)));
+
+    REQUIRE(std::get<1>(outcome.value()) == 1);
+    REQUIRE(quoll::test::reports().empty());
+  }
+
   SECTION("a send refused after the handler's own close") {
     auto const router = socket_at([](http::websocket socket) -> task<> {
       co_await socket.close();

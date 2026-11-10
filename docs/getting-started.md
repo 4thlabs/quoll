@@ -218,7 +218,8 @@ If you are writing both sides of an API, or calling one with typed requests and 
   thrown again at its `co_await`.
 - **`runtime.run(task)`** runs the program's main task with `get_stop_token()`, until the tasks have
   ended, and returns what `main()` returns: `EXIT_SUCCESS`, or `EXIT_FAILURE` once what the task let out
-  is written to stderr, but for a stop, as a tokio `main` that returns an error.
+  is written to stderr, but for a stop asked for, as a tokio `main` that returns an error. Once it ends,
+  the tasks spawned with `get_stop_token()` are asked to stop, so that the program ends.
 - **`async::co_spawn`** runs a task from outside a coroutine, from the executor and never inline, and
   gives what comes of it to a handler. With `async::detached`, for a task beside the main one, a value
   is dropped, and an exception is written to stderr while the program goes on, as tokio does, unless it is

@@ -37,7 +37,6 @@
 #include <quoll/emscripten/runtime.hpp>
 
 #include <quoll/async/co_spawn.hpp>
-#include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/report.hpp>
 #include <quoll/async/task.hpp>
 
@@ -65,10 +64,7 @@ struct program_outcome {
   void operator()() const noexcept {}
 
   void operator()(std::exception_ptr const &failure) const noexcept {
-    if (async::detail::is_a_stop(failure)) {
-      return;
-    }
-
+    // Its token never stops: a stop is no Ctrl-C here, but what something else cancelled.
     async::detail::report_always("the program's main task ended on an exception", failure);
     detail::quoll_emscripten_set_exit_code(EXIT_FAILURE);
   }

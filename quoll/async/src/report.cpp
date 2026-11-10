@@ -64,7 +64,12 @@ struct budget {
 
 constexpr std::size_t lines_a_second = 10;
 
-detail::synchronized<budget> budget_in_use;
+// Made on first use, so that a report from another source's static initialization finds it built.
+[[nodiscard]] detail::synchronized<budget> &budget_in_use() {
+  static detail::synchronized<budget> in_use;
+
+  return in_use;
+}
 
 [[nodiscard]] std::string message_of(std::exception_ptr const &failure) {
   if (!failure) {
@@ -123,7 +128,7 @@ void report(std::string_view what, std::exception_ptr const &failure) noexcept {
   try {
     auto const at = now();
     // How many were left out in a second now over; none if this one goes over the limit.
-    auto const before = budget_in_use.with([at](budget &current) -> std::optional<std::size_t> {
+    auto const before = budget_in_use().with([at](budget &current) -> std::optional<std::size_t> {
       if (at - current.second >= std::chrono::seconds{1}) {
         auto const left_out = current.left_out;
 
@@ -152,8 +157,15 @@ void report(std::string_view what, std::exception_ptr const &failure) noexcept {
 }
 
 report_sink set_report_sink(report_sink sink) noexcept {
-  // A sink of its own counts its lines afresh.
-  budget_in_use.with([](budget &current) { current = budget{}; });
+  // A sink of its own counts its lines afresh, the one it replaces told first of those it left out.
+  auto const left_out = budget_in_use().with([](budget &current) { return std::exchange(current, budget{}).left_out; });
+
+  try {
+    write_left_out(left_out);
+  } catch (...) {
+    write_without_memory();
+  }
+
   return sink_in_use.exchange(sink, std::memory_order_acq_rel);
 }
 
@@ -161,7 +173,7 @@ namespace detail {
 
 void report_always(std::string_view what, std::exception_ptr const &failure) noexcept {
   try {
-    auto const left_out = budget_in_use.with([](budget &current) { return std::exchange(current.left_out, 0); });
+    auto const left_out = budget_in_use().with([](budget &current) { return std::exchange(current.left_out, 0); });
 
     write_left_out(left_out);
     write_report(what, failure);
