@@ -96,6 +96,8 @@ http::request make_request(http::verb method, std::string target, std::string bo
 #include <quoll/http/accept_websocket.hpp>
 #include <quoll/http/body_reader.hpp>
 #include <quoll/http/body_stream.hpp>
+#include <quoll/http/parser.hpp>
+#include <quoll/http/read.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/websocket_message.hpp>
@@ -104,6 +106,7 @@ http::request make_request(http::verb method, std::string target, std::string bo
 #include <quoll/io/connect.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/listen.hpp>
+#include <quoll/io/pollable_stream.hpp>
 #include <quoll/io/tls_options.hpp>
 #include <quoll/io/write.hpp>
 #include <quoll/test/overloaded.hpp>
@@ -602,6 +605,30 @@ TEST_CASE("TLS: a kept connection the server closed is replaced", "[tls][asio][r
   REQUIRE(accepted == 2);
 }
 
+TEST_CASE("TLS: a POST takes a kept connection, and a new one once the server has closed it",
+          "[tls][asio][runtime][timer]") {
+  int accepted = 0;
+
+  std::function<task<std::string>(std::string)> const call = [](std::string url) -> task<std::string> {
+    http::client const client{url, trusting_the_authority()};
+
+    static_cast<void>(co_await client.send(make_request(http::verb::get, "/hello")));
+
+    // On the connection kept.
+    auto const kept = co_await client.send(make_request(http::verb::post, "/echo", "kept"));
+
+    // Found closed by its check, past the server's idle time: on a new one, rather than failed.
+    co_await quoll::async::sleep_for(100ms);
+
+    auto const renewed = co_await client.send(make_request(http::verb::post, "/echo", "renewed"));
+
+    co_return kept.body + "," + renewed.body;
+  };
+
+  REQUIRE(run_task(with_server<std::string>(server_certificate(), call, idle_for(20ms), &accepted)) == "kept,renewed");
+  REQUIRE(accepted == 2);
+}
+
 TEST_CASE("TLS: a response of a known length is complete, however the connection closes", "[tls][asio][runtime]") {
   REQUIRE(run_task(closing_without_notice("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")) ==
           std::error_code{});
@@ -663,6 +690,39 @@ TEST_CASE("TLS: a connection found idle gets TLS's closing message", "[tls][asio
 
   REQUIRE(ended.received.empty());
   REQUIRE(ended.ended == io::error::end_of_stream);
+}
+
+TEST_CASE("TLS: poll_read finds TLS's closing message on a connection the server let go, reading nothing",
+          "[tls][asio][runtime]") {
+  auto const call = [](std::string url) -> task<std::string> {
+    auto const port = static_cast<std::uint16_t>(std::stoi(url.substr(url.rfind(':') + 1)));
+    auto stream = co_await io::connect_tls("127.0.0.1", port, trusting_the_authority().tls);
+    std::string const request = "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n";
+    std::string buffer;
+    http::response_parser parser;
+    std::string seen;
+
+    (void)co_await io::write(stream, std::as_bytes(std::span{request}));
+
+    if (co_await http::read(stream, buffer, parser)) {
+      co_return "no response";
+    }
+
+    // Read whole, as a client keeping it: nothing more has come.
+    seen += buffer.empty() && stream.poll_read() == io::read_readiness::would_wait ? "quiet" : "?";
+
+    // Past the server's idle time, which closes it with TLS's closing message.
+    co_await quoll::async::sleep_for(200ms);
+    seen += stream.poll_read() == io::read_readiness::ready ? ",ready" : ",?";
+
+    std::array<char, 64> chunk{};
+    auto const ended = co_await stream.read_some(std::as_writable_bytes(std::span{chunk}));
+
+    seen += ended.error == io::error::end_of_stream ? ",end" : ",?";
+    co_return seen;
+  };
+
+  REQUIRE(run_task(with_server<std::string>(server_certificate(), call, idle_for(20ms))) == "quiet,ready,end");
 }
 
 TEST_CASE("TLS: a client closing its side gets TLS's closing message back", "[tls][asio][runtime]") {

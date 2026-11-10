@@ -44,6 +44,7 @@
 #include <quoll/io/detail/erasable_stream.hpp>
 #include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
+#include <quoll/io/pollable_stream.hpp>
 
 #include <coroutine>
 #include <cstddef>
@@ -123,6 +124,7 @@ struct stream_vtable {
   void *(*read_some)(void *block, std::span<std::byte> buffer);
   void *(*write_some)(void *block, std::span<std::byte const> data);
   void *(*shutdown_send)(void *block);
+  read_readiness (*poll_read)(void *block) noexcept;
   awaitable_vtable const *read;
   awaitable_vtable const *write;
   awaitable_vtable const *shutdown;
@@ -169,6 +171,13 @@ inline constexpr stream_vtable stream_vtable_for{
         return ::new (static_cast<void *>(self.shutdown_slot)) shutdown_awaitable_t<S>(self.stream.shutdown_send());
       } else {
         return ::new (static_cast<void *>(self.shutdown_slot)) shutdown_not_supported{};
+      }
+    },
+    [](void *block) noexcept {
+      if constexpr (PollableStream<S>) {
+        return static_cast<stream_block<S> *>(block)->stream.poll_read();
+      } else {
+        return read_readiness::unknown;
       }
     },
     &awaitable_vtable_for<read_awaitable_t<S>>,

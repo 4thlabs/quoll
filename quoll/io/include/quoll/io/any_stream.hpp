@@ -47,6 +47,7 @@
 #include <quoll/io/detail/stream_vtable.hpp>
 #include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
+#include <quoll/io/pollable_stream.hpp>
 
 #include <cassert>
 #include <concepts>
@@ -214,6 +215,18 @@ public:
     return awaitable{wrapped, *vtable_->shutdown, shutting_down_};
   }
 
+  /**
+   * @brief What a read started now would do, as the wrapped stream tells: see PollableStream. A stream that is not one,
+   * one moved from, or one with an operation pending, reports read_readiness::unknown.
+   */
+  [[nodiscard]] read_readiness poll_read() noexcept {
+    if (vtable_ == nullptr || reading_ || writing_ || shutting_down_) {
+      return read_readiness::unknown;
+    }
+
+    return vtable_->poll_read(block_);
+  }
+
   /** @brief The wrapped stream if its type is exactly `S`, otherwise `nullptr`. */
   template <class S>
   [[nodiscard]] S *target() noexcept QUOLL_LIFETIMEBOUND {
@@ -275,6 +288,7 @@ private:
 static_assert(async::ContextAwaitable<any_stream::awaitable>);
 static_assert(ByteStream<any_stream>);
 static_assert(HalfClosableStream<any_stream>);
+static_assert(PollableStream<any_stream>);
 
 } // namespace quoll::io
 

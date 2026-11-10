@@ -54,6 +54,7 @@
 #include <quoll/io/network.hpp>
 #include <quoll/io/network_connector.hpp>
 #include <quoll/io/network_ref.hpp>
+#include <quoll/io/pollable_stream.hpp>
 #include <quoll/io/tls_connector.hpp>
 #include <quoll/io/tls_network.hpp>
 #include <quoll/io/tls_network_ref.hpp>

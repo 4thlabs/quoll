@@ -40,10 +40,12 @@
 #include <quoll/asio/detail/basic_stream.hpp>
 #include <quoll/asio/detail/io_error.hpp>
 #include <quoll/asio/detail/operation.hpp>
+#include <quoll/asio/detail/poll_socket.hpp>
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
+#include <quoll/io/pollable_stream.hpp>
 
 #include <asio/ip/tcp.hpp>
 
@@ -74,6 +76,10 @@ public:
    * socket. */
   [[nodiscard]] async::task<io::io_result> shutdown_send() { return shut_down(checked_state()); }
 
+  /** @brief What a read started now would do, as a peek of the socket that does not wait tells: see
+   * io::PollableStream. */
+  [[nodiscard]] io::read_readiness poll_read() noexcept { return detail::poll_socket(checked_state().stream); }
+
   /** @brief The socket, for its options, shutdown() and close(). */
   [[nodiscard]] ::asio::ip::tcp::socket &socket() noexcept { return checked_state().stream; }
 
@@ -98,6 +104,7 @@ private:
 static_assert(async::ContextAwaitable<tcp_stream::read_awaitable>);
 static_assert(async::ContextAwaitable<tcp_stream::write_awaitable>);
 static_assert(io::HalfClosableStream<tcp_stream>);
+static_assert(io::PollableStream<tcp_stream>);
 
 } // namespace quoll::asio
 

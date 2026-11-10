@@ -70,15 +70,18 @@ namespace quoll::http {
  * is idle. A connection is not reused after a request or a response that closes it (`Connection: close`, HTTP/1.0), a
  * response delimited by the end of the stream, a switch of protocol, or a stream error.
  *
- * A server may close an idle connection at any time, which shows only once a request is sent on it. Every request
- * whose body is whole takes an idle connection, as Go's client and Boost.Burl do; one whose body comes in pieces opens
- * its own, as its writer runs once. A request whose method is not idempotent (POST, PATCH...) takes only a connection
- * whose last request was sent less than client_options::max_idle_for_non_idempotent ago, one second by default. When
- * the idle one turns out closed before any response (or answers 408 Request Timeout, sent before closing it), the
- * other idle connections, older, are closed too, and a request whose method is idempotent (GET, HEAD, PUT, DELETE,
- * OPTIONS, TRACE) is sent again, once, on a new connection. The others are sent again only if none of them was
- * written: otherwise the server may have received them, so they fail with the stream's error, or the 408 is their
- * response, for their caller to decide, and their connection is not kept.
+ * A server may close an idle connection at any time. Every request whose body is whole takes an idle connection, as
+ * Go's client and Boost.Burl do; one whose body comes in pieces opens its own, as its writer runs once. The idle
+ * connection is checked first, as curl does (io::PollableStream): one the server closed, or that carries bytes nothing
+ * asked for, as a 408 sent before closing it, is closed with the older ones, and the next is tried. A request whose
+ * method is not idempotent (POST, PATCH...) takes only a connection its stream can check.
+ *
+ * The server may still close the connection as the request goes. When it turns out closed before any response (or
+ * answers 408 Request Timeout, sent before closing it), the other idle connections, older, are closed too, and a
+ * request whose method is idempotent (GET, HEAD, PUT, DELETE, OPTIONS, TRACE) is sent again, once, on a new
+ * connection. The others are sent again only if none of them was written: otherwise the server may have received
+ * them, so they fail with the stream's error, or the 408 is their response, for their caller to decide, and their
+ * connection is not kept.
  *
  * Over TLS, a server closing without TLS's closing message is `std::errc::connection_reset`. It changes nothing for a
  * response whose length is known, nor for a kept connection, but it fails a response delimited by the end of the
@@ -116,8 +119,8 @@ namespace quoll::http {
  * fetch, a request throws std::logic_error, as one without a network does natively.
  * - What fetch refuses throws std::invalid_argument, before the task runs: a GET or a HEAD with a body or a
  *   `body_writer`, and the methods CONNECT and TRACE.
- * - `max_connections`, `max_idle_connections`, `max_idle_for_non_idempotent`, `max_redirects`, `connect_timeout` and
- * `tls` have no effect, as the browser decides. It follows redirects itself, possibly to another origin, and always
+ * - `max_connections`, `max_idle_connections`, `max_redirects`, `connect_timeout` and `tls` have no effect, as the
+ * browser decides. It follows redirects itself, possibly to another origin, and always
  * checks certificates. `limits` and `response_timeout` apply: past a limit, the fetch is aborted.
  * - The fields fetch manages itself (Host, Content-Length, Connection and the other hop-by-hop ones) are not sent, nor
  *   are trailers. A `request.body_writer` runs to its end before the fetch, and goes out whole.

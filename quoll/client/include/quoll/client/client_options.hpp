@@ -62,20 +62,9 @@ struct client_options {
   http::parse_limits limits{.max_streamed_body_size = std::numeric_limits<std::uint64_t>::max()};
   /**
    * @brief Connections kept open once their response is read, for the next requests (keep-alive); 0 closes each
-   * connection after its response. Past it, the one idle for longest is closed.
+   * connection after its response.
    */
   std::size_t max_idle_connections = 8;
-  /**
-   * @brief How long an idle connection may have waited to take a request whose method is not idempotent (POST,
-   * PATCH...), which is not sent twice: past it, such a request opens a new connection, as the server may have closed
-   * the idle one meanwhile, which only shows once a request is on it. Below the idle timeouts of servers (5 s for Node,
-   * 60 s for http::server), so that the requests that follow each other quickly share their connection. Zero: such
-   * requests always open a new connection. An idempotent request takes any idle connection, and goes again on a new
-   * one when that turns out closed. Counted from when the connection's last request was sent, as the server cannot
-   * have seen it idle for longer, however slowly its response was read, on the clock of the executor's timer, or
-   * `std::chrono::steady_clock` without one, which the executors a client is used from share, as Quoll's runtimes do.
-   */
-  std::chrono::nanoseconds max_idle_for_non_idempotent = std::chrono::seconds{1};
   /**
    * @brief How many connections are open at once, in use or idle; 0: no limit. Past it, a request waits for a request
    * on a connection to end, and an idle connection is closed to make room for a new one. An http::streamed_response

@@ -38,9 +38,8 @@ not counted. Standard library assertions are off, as in an application, whereas 
 What it shows, for the performance step:
 
 - A client's POST opened a connection each time when these figures were taken, as it may not be sent twice on one found
-  closed: a REST POST cost a connection, and JSON costs little beside it (REST GET against GET). Since, a POST takes a
-  connection idle for less than a second, and fails rather than go again when that one turns out closed once some of the
-  POST was written.
+  closed: a REST POST cost a connection, and JSON costs little beside it (REST GET against GET). Since, a POST takes an
+  idle connection once a peek of its socket has found it open, as curl does.
 - A new connection has a p99 of about 1 ms against a p50 of 42 µs. Not explained yet.
 - Most allocations of a GET are on the server.
 - A body in pieces takes about 4 allocations per piece of 4 KiB, all on the side that streams it, against 16 before
@@ -64,7 +63,7 @@ also writes the first table in its summary. Of the pull requests, only one touch
 | REST GET, JSON | 37 |
 | REST POST, JSON | 49 |
 
-The POSTs take 15 allocations fewer since they reuse a connection idle for less than a second, as a GET does.
+The POSTs take 15 allocations fewer since they reuse an idle connection, as a GET does.
 
 ## A file, read away from the loop
 

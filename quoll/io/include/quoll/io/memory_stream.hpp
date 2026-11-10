@@ -45,6 +45,7 @@
 #include <quoll/io/detail/memory_channel.hpp>
 #include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
+#include <quoll/io/pollable_stream.hpp>
 
 #include <array>
 #include <cassert>
@@ -216,6 +217,11 @@ public:
     return {inbound(), buffer};
   }
 
+  /** @brief Whether bytes or the end of the stream wait to be read: see PollableStream. */
+  [[nodiscard]] read_readiness poll_read() noexcept {
+    return inbound().readable() ? read_readiness::ready : read_readiness::would_wait;
+  }
+
   /** @brief Hands all of `data` to the peer. */
   [[nodiscard]] write_awaitable
   write_some(std::span<std::byte const> data QUOLL_LIFETIMEBOUND) noexcept QUOLL_LIFETIMEBOUND {
@@ -269,6 +275,7 @@ static_assert(async::ContextAwaitable<memory_stream::read_awaitable>);
 static_assert(async::ContextAwaitable<memory_stream::shutdown_awaitable>);
 static_assert(async::ContextAwaitable<memory_stream::write_awaitable>);
 static_assert(HalfClosableStream<memory_stream>);
+static_assert(PollableStream<memory_stream>);
 
 /** @brief Two connected memory_stream ends. */
 [[nodiscard]] inline std::pair<memory_stream, memory_stream> make_memory_stream_pair() {
