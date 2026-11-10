@@ -41,6 +41,7 @@
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/async/detail/awaiting.hpp>
 #include <quoll/async/detail/chain_owner.hpp>
+#include <quoll/async/detail/context_promise.hpp>
 #include <quoll/async/detail/non_void.hpp>
 #include <quoll/async/task.hpp>
 
@@ -56,7 +57,8 @@ namespace quoll::async::detail {
 // Awaits a task as the owner of its chain, on the awaiter's executor, under the awaiter's stop token or one of its own:
 // what the task returns, rethrows what it throws, or std::nullopt once the chain ended on a stop, which it has then
 // destroyed from the top, as no coroutine of it resumes. Movable until it suspends, so that it can be co_await-ed as a
-// temporary. Thread safety: awaited on one thread; its owner's stop() comes from any.
+// temporary, and only so: awaited by name, it could be moved by another coroutine while it waits. Thread safety:
+// awaited on one thread; its owner's stop() comes from any.
 template <class T>
 class [[nodiscard]] owned_chain {
 public:
@@ -120,6 +122,9 @@ private:
   task<T> work_;
   bool started_ = false;
 };
+
+template <class T>
+inline constexpr bool awaited_as_a_temporary_v<owned_chain<T>> = true;
 
 static_assert(ContextAwaitable<owned_chain<void>>);
 static_assert(ContextAwaitable<owned_chain<int>>);

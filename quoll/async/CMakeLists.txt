@@ -35,6 +35,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/co_spawn_converts_from_stopped.cpp
     tests/compile_fail/co_spawn_converts_to_exception_ptr.cpp
     tests/compile_fail/co_spawn_handler_without_stop.cpp
+    tests/compile_fail/stopped_as_optional_awaited_by_name.cpp
     tests/compile_fail/synchronized_await.cpp
     tests/compile_fail/synchronized_free_co_await.cpp
     tests/compile_fail/synchronized_rvalue_co_await.cpp
