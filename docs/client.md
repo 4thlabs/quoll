@@ -91,7 +91,7 @@ http::client client{"https://api.example.com",
 | ---------------------- | --------- | ----------------------------------------------------------------------------------------------------- |
 | `max_idle_connections` | 8         | Connections kept open once their response is read. Zero closes each connection after its response.    |
 | `max_connections`      | 0         | How many connections are open at once, in use or idle. Zero: no limit.                                |
-| `max_idle_for_unsafe_methods` | 1 s | How long a connection may have been idle for a POST, a PATCH or another method not idempotent to take it. Zero: such a request always opens its own. |
+| `max_idle_for_non_idempotent` | 1 s | How long a connection may have been idle for a POST, a PATCH or another method not idempotent to take it. Zero: such a request always opens its own. |
 | `max_redirects`        | 0         | How many redirects a request follows. Zero: a 3xx response is a result like the others.               |
 | `connect_timeout`      | 30 s      | How long opening a connection may take, name resolution included, and waiting for `max_connections`.  |
 | `response_timeout`     | 60 s      | How long a request may take once on a connection, from sending it to reading the end of its response. |
@@ -124,7 +124,7 @@ or a stream error.
 A server may close an idle connection at any time, which shows only once a request is sent on it. Every
 request whose body is whole takes an idle connection, as Go's client and Boost.Burl do; one whose body comes
 in pieces (`body_writer`) has one of its own, as its writer runs once. A request that is not idempotent
-takes only a connection idle for less than `max_idle_for_unsafe_methods`, one second by default, well
+takes only a connection idle for less than `max_idle_for_non_idempotent`, one second by default, well
 below the servers' idle timeouts (5 s for Node, 60 s for `http::server`): Go's client finds a closed
 connection with a reader always waiting on it, which Quoll's client does not have.
 

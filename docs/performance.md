@@ -23,7 +23,7 @@ other fields that Quoll does not.
 
 - **A new connection.** A request on a connection of its own is several times slower than on a kept one.
   Every request whose body is whole takes a kept connection, a POST included if that one has been idle for less than
-  `max_idle_for_unsafe_methods` (1 s). A POST [is not sent twice](client.md#keep-alive-and-retries) when that connection
+  `max_idle_for_non_idempotent` (1 s). A POST [is not sent twice](client.md#keep-alive-and-retries) when that connection
   turns out closed once some of it was written: it fails, for its caller to decide. A body in pieces opens one of its own.
 - **JSON** costs little beside that: a REST GET stays close to a plain GET.
 - **TLS** costs its handshake: close to plain HTTP on a kept connection, and tens of times slower with a
