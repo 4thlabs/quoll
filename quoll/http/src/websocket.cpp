@@ -551,8 +551,8 @@ async::task<std::error_code> ping_once(std::shared_ptr<state> connection, std::s
 
   under_way const marked{*connection};
   auto frame = frame_of(*connection, websocket_opcode::ping, {});
-  // A copy: `marked` writes to the state as it goes, after the send.
-  // Refused once sending has ended, as it then could not leave, rather than left.
+  // `connection` given by copy rather than moved, as `marked` writes to the state through it once the send is over;
+  // refused once sending has ended, as it then could not leave rather than left.
   auto const failed = co_await send_quietly(connection, std::move(frame), frame_kind::keep_alive, std::move(turn_stop));
 
   connection->ping_failure = failed;
@@ -578,6 +578,8 @@ async::task<> watch_peer(std::weak_ptr<state> watched, std::chrono::nanoseconds 
   auto const period = pings ? interval : std::chrono::nanoseconds{std::chrono::hours{24}};
   std::uint64_t seen = 0;
   auto pinged = false;
+  // What it counts as pinged is another keep-alive's ping, under way as it looked.
+  auto borrowed = false;
   auto drained = false;
   // A close has left: the peer's answer is waited for as a pong is.
   auto closing = false;
@@ -647,23 +649,36 @@ async::task<> watch_peer(std::weak_ptr<state> watched, std::chrono::nanoseconds 
     if (now != seen) {
       seen = now;
       pinged = closing;
+      borrowed = false;
       continue;
     }
 
-    // Read nothing since it was pinged, or since a close left: gone, or half-open.
+    // Read nothing since it was pinged, or since a close left: gone, or half-open. A ping of another counted as its own
+    // says why it could not leave, if it could not.
     if (pinged) {
-      take_as_gone(*connection, gone,
-                   connection->ping_failure ? connection->ping_failure : std::make_error_code(std::errc::timed_out));
+      auto const why =
+          borrowed && connection->ping_failure ? connection->ping_failure : std::make_error_code(std::errc::timed_out);
+
+      take_as_gone(*connection, gone, why);
       co_return;
     }
 
     // The one of a keep-alive that outlived its receive() is still under way: it is this one's, as Beast sends one.
     if (connection->pinging.load()) {
       pinged = true;
+      borrowed = true;
       continue;
     }
 
     auto const failed = co_await ping_once(connection, ends);
+
+    // Refused as a close left meanwhile: its answer is waited for as a pong is, as at the top of the loop.
+    if (failed == error::websocket_closed && connection->sending == detail::sending_state::closed) {
+      closing = true;
+      pinged = true;
+      seen = connection->reads_done.load();
+      continue;
+    }
 
     // As for the close above.
     if (failed && !ends.stop_requested()) {

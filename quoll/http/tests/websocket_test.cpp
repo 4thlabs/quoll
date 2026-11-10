@@ -1248,3 +1248,26 @@ TEST_CASE("websocket: a client's keep-alive with sending ended takes the peer as
   REQUIRE(quoll::test::run(time, cut()) == http::error::websocket_closed);
   REQUIRE(time.now() == 1s);
 }
+
+TEST_CASE("websocket: a client's ping refused as its close left waits for the peer's answer", "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{
+      io::any_stream{taking_slowly{std::move(client_end), 400ms}}, websocket_role::client, {}, {.ping_interval = 1s}};
+
+  // The close takes until 3.2 s to leave, a byte every 400 ms; the ping due at 1 s waits for the turn behind it, then
+  // is refused: the peer's answer, at 3.5 s, is waited for as a pong would be, and given.
+  auto const closing = [&]() -> task<websocket_message> {
+    auto const peer = [&]() -> task<> {
+      co_await quoll::async::sleep_for(3500ms);
+      co_await send_raw(server_end, http::format_websocket_close(1000));
+    };
+
+    auto [closed, answer, answered] = co_await quoll::async::when_all(client.close(), client.receive(), peer());
+
+    co_return answer;
+  };
+
+  REQUIRE(quoll::test::run(time, closing()) == close_with(1000));
+  REQUIRE(time.now() == 3500ms);
+}
