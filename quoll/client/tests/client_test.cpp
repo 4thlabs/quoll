@@ -553,11 +553,10 @@ TEST_CASE("http::client: an idempotent request goes again when its kept connecti
 }
 
 TEST_CASE("http::client: a POST takes only a connection idle for less than its idle time", "[client][timer]") {
-  // On the clock of the executor's timer, virtual here, from when the connection was given back: past a response read
-  // through stream(), its body after its head, as through send().
+  // On the clock of the executor's timer, virtual here, from when the connection's last request was sent.
   auto const connections_after = [](std::chrono::nanoseconds idle, bool streamed) {
     virtual_time time;
-    slow_network network{.time = &time, .body_delay = streamed ? 1ms : 0ns};
+    slow_network network{.time = &time};
 
     auto const send = [&]() -> task<std::string> {
       http::client const client{slow_connector{network}, "example.com", 80, {.max_idle_for_non_idempotent = 1s}};
@@ -576,7 +575,7 @@ TEST_CASE("http::client: a POST takes only a connection idle for less than its i
         co_return body;
       };
 
-      // Given back well after the clock's origin.
+      // Sent well after the clock's origin.
       co_await async::sleep_for(5s);
 
       auto const first = co_await body_of(make_request(verb::get, "/"));
@@ -594,6 +593,42 @@ TEST_CASE("http::client: a POST takes only a connection idle for less than its i
     INFO("streamed " << streamed);
     REQUIRE(connections_after(999ms, streamed) == 1);
     REQUIRE(connections_after(1s, streamed) == 2);
+  }
+}
+
+TEST_CASE("http::client: a POST counts a connection idle from its last request, however slowly that was read",
+          "[client][timer]") {
+  // The body comes `body_delay` after the head: the server went idle once it had sent it.
+  auto const connections_after = [](std::chrono::nanoseconds body_delay, bool streamed) {
+    virtual_time time;
+    slow_network network{.time = &time, .body_delay = body_delay};
+
+    auto const send = [&]() -> task<std::string> {
+      http::client const client{slow_connector{network}, "example.com", 80, {.max_idle_for_non_idempotent = 1s}};
+      std::string body;
+
+      if (streamed) {
+        auto first = co_await client.stream(make_request(verb::get, "/"));
+
+        while (auto const piece = co_await first.body.read()) {
+          body += *piece;
+        }
+      } else {
+        body = (co_await client.send(make_request(verb::get, "/"))).body;
+      }
+
+      REQUIRE(body == "ok");
+      co_return (co_await client.send(make_request(verb::post, "/", "ping"))).body;
+    };
+
+    REQUIRE(quoll::test::run(time, send()) == "ok");
+    return network.connections;
+  };
+
+  for (auto const streamed : {false, true}) {
+    INFO("streamed " << streamed);
+    REQUIRE(connections_after(500ms, streamed) == 1);
+    REQUIRE(connections_after(2s, streamed) == 2);
   }
 }
 
@@ -732,6 +767,38 @@ task<> answer_then_time_out_open(io::memory_stream stream) {
 }
 
 } // namespace
+
+TEST_CASE("http::client: a 408 closing an idle connection sends a POST again, as the server read none of it",
+          "[client]") {
+  // RFC 9110, 15.5.9: the server reads no request after a 408 that closes the connection.
+  auto const result = roundtrip(answer_then_time_out, {make_request(verb::get, "/"), make_request(verb::post, "/")});
+
+  REQUIRE_FALSE(result.error);
+  REQUIRE(result.responses.size() == 2);
+  REQUIRE(result.responses[1].status == http::status::ok);
+  REQUIRE(result.connections == 2);
+
+  // Through stream() too.
+  async::run_loop loop;
+  memory_server server{loop.get_executor(), answer_then_time_out, 0, {}, {}};
+
+  auto const streams = [&]() -> task<http::status> {
+    http::client const client{memory_connector{server}, "example.com", 80};
+    auto const first = co_await client.send(make_request(verb::get, "/"));
+
+    REQUIRE(first.body == "ok");
+
+    auto posted = co_await client.stream(make_request(verb::post, "/"));
+
+    while (co_await posted.body.read()) {
+    }
+
+    co_return posted.status;
+  };
+
+  REQUIRE(quoll::test::run(loop, streams()) == http::status::ok);
+  REQUIRE(server.connections == 2);
+}
 
 TEST_CASE("http::client: a 408 on an idle connection is a POST's response, and the connection is not kept",
           "[client]") {
@@ -3104,7 +3171,7 @@ TEST_CASE("http::client: stream() keeps and takes an idle connection as send() d
     REQUIRE(twice(answering({whole, whole}, true), verb::post) == 1);
   }
 
-  SECTION("a POST the server closed it before it was written goes again on a new one") {
+  SECTION("a POST whose connection the server closed before it was written goes again on a new one") {
     REQUIRE(twice(answering({whole}), verb::post) == 2);
   }
 
