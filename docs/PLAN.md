@@ -363,7 +363,7 @@ changes only what the harness shows. Candidates:
   POST then takes an idle connection as Go's client does, if its stream can be checked; one found closed with none of it
   written goes again on a new one, as hyper does, and a POST written is never sent twice, even answered 408. Go and hyper
   keep a reader waiting on each idle connection instead: a task per connection, to stop before each use, which the poll
-  needs not. Chosen by the maintainer ("reprendre la bonne solution") over a first rule, a POST taking only a connection
+  needs not. Chosen by the maintainer, as the solution the reference libraries settled on, over a first rule, a POST taking only a connection
   used less than a second before, which reviews kept finding holes in: a server closing within the second, a response
   read slowly. One idle for longer than `client_options::max_idle_time`, 90 s as Go's `IdleConnTimeout`, is not
   used again, as no check sees a connection something on the way dropped with no word.

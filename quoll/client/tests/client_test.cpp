@@ -616,12 +616,13 @@ task<> answer_then_time_out_open(io::memory_stream stream) {
 
 TEST_CASE("http::client: a connection idle for longer than max_idle_time is not used again", "[client][timer]") {
   // On the clock of the executor's timer, virtual here; given back past a body read through stream() too.
-  auto const connections_after = [](std::chrono::nanoseconds idle, verb method, bool streamed) {
+  auto const connections_after = [](std::chrono::nanoseconds idle, verb method, bool streamed,
+                                    std::chrono::nanoseconds max_idle_time = 90s) {
     virtual_time time;
     slow_network network{.time = &time};
 
     auto const send = [&]() -> task<std::string> {
-      http::client const client{slow_connector{network}, "example.com", 80, {.max_idle_time = 90s}};
+      http::client const client{slow_connector{network}, "example.com", 80, {.max_idle_time = max_idle_time}};
 
       co_await async::sleep_for(5s);
 
@@ -647,6 +648,8 @@ TEST_CASE("http::client: a connection idle for longer than max_idle_time is not 
       INFO("streamed " << streamed);
       REQUIRE(connections_after(89s, method, streamed) == 1);
       REQUIRE(connections_after(90s, method, streamed) == 2);
+      // Zero: no limit.
+      REQUIRE(connections_after(1h, method, streamed, 0s) == 1);
     }
   }
 }
