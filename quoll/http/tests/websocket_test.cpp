@@ -1503,3 +1503,24 @@ TEST_CASE("websocket: a client's receive() that fails otherwise after a verdict 
   REQUIRE(failed.category() == http::http_category());
   REQUIRE(after == failed);
 }
+
+TEST_CASE("websocket: a server's connection built by hand keeps no watch of its own", "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  auto server = server_over(std::move(server_end), {.ping_interval = 1s});
+
+  // No keep-alive but the one http::accept_websocket's handler runs beside: a peer quiet for 5 s is waited for.
+  auto const patient = [&]() -> task<websocket_message> {
+    auto const peer = [&]() -> task<> {
+      co_await quoll::async::sleep_for(5s);
+      co_await send_raw(client_end, http::format_websocket_frame(websocket_opcode::text, "at last", true, mask));
+    };
+
+    auto [sent, message] = co_await quoll::async::when_all(peer(), server.receive());
+
+    co_return message;
+  };
+
+  REQUIRE(quoll::test::run(time, patient()) == text("at last"));
+  REQUIRE(time.now() == 5s);
+}

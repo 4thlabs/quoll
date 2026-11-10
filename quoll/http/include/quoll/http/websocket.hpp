@@ -63,8 +63,9 @@ struct websocket_options {
   /**
    * @brief How long the peer may send nothing before it is pinged, and then before it is taken as gone; zero, never,
    * for a peer the application watches itself, each counted at the end of an interval (see websocket). For a connection
-   * http::accept_websocket hands over, all along, a peer gone stopping the handler; for any other, a client's, while a
-   * receive() waits, which then throws why. For any connection with a timer, how long a write may wait with nothing
+   * http::accept_websocket hands over, all along, a peer gone stopping the handler; for a client's, while a receive()
+   * waits, which then throws why; for a server's built by hand, none, the application watching it. For any connection
+   * with a timer, how long a write may wait with nothing
    * taken before the peer is taken as gone: this, or 30 seconds where it is zero.
    */
   std::chrono::nanoseconds ping_interval = std::chrono::seconds{30};
@@ -102,15 +103,16 @@ struct websocket_options {
  * unsent. A receive() stopped, or failed, ends receiving: a stream such as TLS does not take a read up again once it
  * was stopped, so the next one throws the same. Without a timer, nothing here times out.
  *
- * A connection no server watches, any but one http::accept_websocket hands over, a client's say, keeps itself alive
- * while a receive() waits, as a server's does beside its handler, given a timer, with one keep-alive at a time,
+ * A client's connection, as http::connect_websocket gives one, keeps itself alive while a receive() waits, as a
+ * server's does beside its handler, given a timer, with one keep-alive at a time,
  * started by a receive() as it first reads and ending once none reads: at the end of each ping_interval, a peer that
  * sent nothing in it is pinged, and one that sent nothing since its ping left, or was dropped as sending had ended, or
  * since a close has left, is taken as gone, so that a peer silent since just after the end of one is pinged within two
  * intervals and taken as gone within three, but for the time its ping waits for the turn behind a send or takes to
  * leave, as the next interval starts once it has. The receive() then throws std::errc::timed_out, the failure of the
  * ping that could not leave, or io_error for a keep-alive that failed, and so do every one after it that has to read
- * and every send, a frame that comes at the very end of the interval included, which Beast takes as late too. The ping
+ * and every send, but one after the connection's own close, which says http::error::websocket_closed as before, a
+ * frame that comes at the very end of the interval included, which Beast takes as late too. The ping
  * goes on its own: a receive() waits for it only to send a pong or a close of its own, which take their turn behind it.
  *
  * Copied, not moved: its copies are the same connection, as http::client's are, which a task receiving and another
