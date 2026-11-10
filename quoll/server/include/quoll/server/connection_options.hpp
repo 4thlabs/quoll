@@ -116,7 +116,8 @@ struct connection_options {
    * @brief Called with what a handler, a middleware or a body_writer threw, or for a writer short of its
    * `Content-Length`, or a response that cannot be written; on the connection's executor, so concurrently with other
    * connections' calls on several threads, and must not throw. The client receives a 500 while nothing of the
-   * response has left, and otherwise a body cut short. Empty: that is all that is left of it.
+   * response has left, and otherwise a body cut short. Empty: it is written to stderr, as a handler that throws is a
+   * bug to see.
    */
   std::function<void(std::exception_ptr)> on_handler_error{};
 };

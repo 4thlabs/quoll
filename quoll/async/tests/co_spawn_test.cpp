@@ -45,6 +45,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/test/overloaded.hpp>
+#include <quoll/test/reports.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
 
@@ -386,39 +387,10 @@ TEST_CASE("detached: nothing and a value are dropped", "[async]") {
   async::detached(42);
   async::detached(std::exception_ptr{});
 
-#if defined(__EMSCRIPTEN__)
-  // No process of its own to try it in, as there is below.
-  async::detached(std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::operation_canceled)}));
-  async::detached(std::make_exception_ptr(std::system_error{ECANCELED, std::system_category()}));
-#endif
-
-  SUCCEED("the program went on");
+  REQUIRE(quoll::test::reports().empty());
 }
 
 #if !defined(__EMSCRIPTEN__)
-
-namespace {
-
-// What comes of `failure` given to detached, in a process of its own: the status it exits with.
-int exit_status_of_detached(std::exception_ptr failure) {
-  auto const child = ::fork();
-
-  REQUIRE(child >= 0);
-
-  if (child == 0) {
-    std::set_terminate([] { ::_exit(42); });
-    async::detached(std::move(failure));
-    ::_exit(0);
-  }
-
-  int status = 0;
-
-  REQUIRE(::waitpid(child, &status, 0) == child);
-  REQUIRE(WIFEXITED(status));
-  return WEXITSTATUS(status);
-}
-
-} // namespace
 
 TEST_CASE("co_spawn: a handler that throws ends the program", "[async]") {
   auto const child = ::fork();
@@ -445,17 +417,21 @@ TEST_CASE("co_spawn: a handler that throws ends the program", "[async]") {
   REQUIRE(WEXITSTATUS(status) == 42);
 }
 
-TEST_CASE("detached: only a stop lets the program go on", "[async]") {
-  REQUIRE(exit_status_of_detached(std::make_exception_ptr(std::runtime_error{"failure"})) == 42);
-  // As asio reports one.
-  REQUIRE(exit_status_of_detached(std::make_exception_ptr(std::system_error{ECANCELED, std::system_category()})) == 0);
-  REQUIRE(exit_status_of_detached(
-              std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::timed_out)})) == 42);
-  REQUIRE(exit_status_of_detached(
-              std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::operation_canceled)})) == 0);
-}
-
 #endif
+
+TEST_CASE("detached: a failure is reported and the program goes on, a stop is not reported", "[async]") {
+  async::detached(std::make_exception_ptr(std::runtime_error{"failure"}));
+  // As asio reports one.
+  async::detached(std::make_exception_ptr(std::system_error{ECANCELED, std::system_category()}));
+  async::detached(std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::timed_out)}));
+  async::detached(std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::operation_canceled)}));
+
+  auto const reported = quoll::test::reports();
+
+  REQUIRE(reported.size() == 2);
+  REQUIRE(reported.front() == "quoll: a task spawned with async::detached ended on an exception: failure\n");
+  REQUIRE(reported.back().starts_with("quoll: a task spawned with async::detached ended on an exception: "));
+}
 
 namespace {
 

@@ -42,6 +42,7 @@
 #include <quoll/async/detail/either_stop.hpp>
 #include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
+#include <quoll/async/detail/report.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/lifetimebound.hpp>
@@ -731,13 +732,15 @@ private:
 // What the handler being caught threw, told to the application, but for what a stop throws: no failure, unlike what
 // goes wrong during one. Called in a catch block.
 void report_failure(connection_options const &options, std::stop_token const &stop_token) {
-  if (!options.on_handler_error) {
-    return;
-  }
-
   auto const failure = std::current_exception();
 
   if (stop_token.stop_requested() && async::detail::is_a_stop(failure)) {
+    return;
+  }
+
+  // Given nowhere to go, it is written rather than lost: a handler that throws is a bug to see.
+  if (!options.on_handler_error) {
+    async::detail::report("a handler threw, answered 500", failure);
     return;
   }
 
