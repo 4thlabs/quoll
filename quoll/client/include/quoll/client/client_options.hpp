@@ -68,8 +68,8 @@ struct client_options {
   /**
    * @brief How long a connection may stay idle and still be used again, as Go's `IdleConnTimeout` (90 s) and curl's
    * `CURLOPT_MAXAGE_CONN` say: a NAT, a firewall or a load balancer may drop one with no word, which nothing on the
-   * connection shows, and a request on it would wait for its `response_timeout`. Zero: no limit. On the clock of the
-   * executor's timer, or `std::chrono::steady_clock` without one.
+   * connection shows, and a request on it would wait for its `response_timeout`. Zero or less: no limit. On the clock
+   * of the executor's timer, or `std::chrono::steady_clock` without one.
    */
   std::chrono::nanoseconds max_idle_time = std::chrono::seconds{90};
   /**

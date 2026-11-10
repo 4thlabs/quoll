@@ -90,7 +90,7 @@ http::client client{"https://api.example.com",
 | Option                 | Default   | What it does                                                                                          |
 | ---------------------- | --------- | ----------------------------------------------------------------------------------------------------- |
 | `max_idle_connections` | 8         | Connections kept open once their response is read. Zero closes each connection after its response.    |
-| `max_idle_time`        | 90 s      | How long a connection may stay idle and still be used again. Zero: no limit.                          |
+| `max_idle_time`        | 90 s      | How long a connection may stay idle and still be used again. Zero or less: no limit.                  |
 | `max_connections`      | 0         | How many connections are open at once, in use or idle. Zero: no limit.                                |
 | `max_redirects`        | 0         | How many redirects a request follows. Zero: a 3xx response is a result like the others.               |
 | `connect_timeout`      | 30 s      | How long opening a connection may take, name resolution included, and waiting for `max_connections`.  |

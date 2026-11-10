@@ -599,9 +599,11 @@ struct idle_attempt {
   auto const max_idle_time = shared.options.max_idle_time;
 
   while (auto idle = shared.pool.take(on == attempt::idle_once)) {
-    // Idle for too long, on this clock or another: something on the way may have dropped it with no word.
-    if (max_idle_time > std::chrono::nanoseconds::zero() &&
-        (now < idle->given_at || now - idle->given_at >= max_idle_time)) {
+    // Idle for too long: something on the way may have dropped it with no word, and the older ones with it. One given
+    // back after `now` was read, on another thread, has not been idle.
+    if (max_idle_time > std::chrono::nanoseconds::zero() && now > idle->given_at &&
+        now - idle->given_at >= max_idle_time) {
+      shared.pool.close_older_than(idle->given_back);
       continue;
     }
 
