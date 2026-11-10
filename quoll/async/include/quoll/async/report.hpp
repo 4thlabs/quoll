@@ -47,7 +47,7 @@ namespace quoll::async {
  * @brief Writes one line saying `what` happened and what `failure` says, for a failure nothing else takes: an exception
  * a task spawned with async::detached let escape, or one a server's callbacks were not given. To stderr, or to the sink
  * set_report_sink() set. At most ten lines a second, as a peer may cause them at will: those past it are counted, and
- * the next line says how many went. Never throws. Thread safety: may be called from any thread.
+ * the next line, if one comes, says how many went. Never throws. Thread safety: may be called from any thread.
  */
 void report(std::string_view what, std::exception_ptr const &failure) noexcept;
 
@@ -56,7 +56,8 @@ using report_sink = void (*)(std::string_view line) noexcept;
 
 /**
  * @brief Sends report()'s lines to `sink`, null for stderr, and returns the sink it replaces: to a log of the
- * program's own (syslog, journald), or nowhere. The lines a second count afresh from then. A report on another thread
+ * program's own (syslog, journald), or nowhere. The lines a second count afresh from then, the sink it replaces told
+ * first of those left out. A report on another thread
  * may still call the sink it replaces as it returns: keep that sink valid for as long as the program reports. Thread
  * safety: may be called from any thread.
  */

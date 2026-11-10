@@ -1505,9 +1505,10 @@ TEST_CASE("asio::runtime: run(task) is the program's exit status, and reports wh
     co_await quoll::async::yield();
     throw std::runtime_error{"no port"};
   };
-  auto const stopped = []() -> task<> {
+  // Cancelled with no stop asked for: something else cut it short, a failure.
+  auto const cancelled = []() -> task<> {
     co_await quoll::async::yield();
-    throw std::system_error{std::make_error_code(std::errc::operation_canceled), "stopped"};
+    throw std::system_error{std::make_error_code(std::errc::operation_canceled), "cut short"};
   };
 
   {
@@ -1525,12 +1526,57 @@ TEST_CASE("asio::runtime: run(task) is the program's exit status, and reports wh
   {
     quoll::asio::runtime runtime;
 
-    // What a Ctrl-C ends: no failure.
-    REQUIRE(runtime.run(stopped()) == EXIT_SUCCESS);
+    REQUIRE(runtime.run(cancelled()) == EXIT_FAILURE);
   }
 
-  REQUIRE(quoll::test::reports() ==
-          std::vector<std::string>{"quoll: the program's main task ended on an exception: no port\n"});
+  auto const reported = quoll::test::reports();
+
+  REQUIRE(reported.size() == 2);
+  REQUIRE(reported.front() == "quoll: the program's main task ended on an exception: no port\n");
+  REQUIRE(reported.back().starts_with("quoll: the program's main task ended on an exception: cut short"));
+}
+
+TEST_CASE("asio::runtime: run(task) stopped by a Ctrl-C is no failure", "[asio][runtime][timer]") {
+  if (sigint_handler() == SIG_IGN) {
+    SKIP("SIGINT is ignored by this process (started in the background): raise() would not reach the runtime");
+  }
+
+  auto const interrupted = []() -> task<> {
+    std::raise(SIGINT);
+    co_await quoll::async::sleep_for(std::chrono::hours{1});
+  };
+  quoll::asio::runtime runtime;
+
+  REQUIRE(runtime.run(interrupted()) == EXIT_SUCCESS);
+  REQUIRE(quoll::test::reports().empty());
+}
+
+TEST_CASE("asio::runtime: once run(task)'s task ends, those spawned with the runtime's stop token are asked to stop",
+          "[asio][runtime][timer]") {
+  quoll::asio::runtime runtime;
+  // Not an executor: one kept here would keep run() going.
+  auto const token = runtime.get_stop_token();
+  auto stopped = false;
+
+  // Without the stop, it would keep run() going for an hour.
+  auto const serving = [&stopped]() -> task<> {
+    try {
+      co_await quoll::async::sleep_for(std::chrono::hours{1});
+    } catch (std::system_error const &) {
+      stopped = true;
+      throw;
+    }
+  };
+  auto const main = [&]() -> task<> {
+    auto const here = co_await quoll::async::current_executor();
+
+    quoll::async::co_spawn(here, serving(), quoll::async::detached, token);
+    co_await quoll::async::yield();
+  };
+
+  REQUIRE(runtime.run(main()) == EXIT_SUCCESS);
+  REQUIRE(stopped);
+  REQUIRE(quoll::test::reports().empty());
 }
 
 TEST_CASE("asio::runtime offers its loop's network to its tasks", "[asio][runtime]") {

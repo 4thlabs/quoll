@@ -196,9 +196,10 @@ public:
   /**
    * @brief Runs `main`, the program's task, spawned with get_stop_token(), as run() does, and returns what `main()`
    * returns: EXIT_SUCCESS, or EXIT_FAILURE once what `main` let escape has been reported (async::report()), but for a
-   * stop, which a Ctrl-C causes. For `return runtime.run(program());`, as a tokio `main` that returns an error. Once it
-   * ends, the tasks spawned with get_stop_token() are asked to stop, as a Ctrl-C would, so that run() returns. A task
-   * spawned beside it with async::detached that fails is reported too, and changes nothing.
+   * stop it was asked for, as a Ctrl-C. For `return runtime.run(program());`, as a tokio `main` that returns an error.
+   * Once it ends, the tasks spawned with get_stop_token() are asked to stop, as a Ctrl-C would, so that run() returns;
+   * one spawned without it keeps the loop running until it ends. A task spawned beside it with async::detached that
+   * fails is reported too, and changes nothing.
    */
   [[nodiscard]] int run(async::task<> main);
 

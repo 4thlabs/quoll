@@ -404,12 +404,14 @@ int runtime::run(async::task<> main) {
   // would, so that the loop drains rather than run them for ever, as tokio drops its tasks once main has returned.
   struct outcome {
     std::shared_ptr<std::atomic<bool>> failed;
-    std::stop_source stop;
+    // Mutable: requesting a stop changes its shared state, not the handler.
+    mutable std::stop_source stop;
 
     void operator()() const noexcept { stop.request_stop(); }
 
+    // A stop it was asked for, as a Ctrl-C, is no failure; one nothing asked for is.
     void operator()(std::exception_ptr const &failure) const noexcept {
-      if (!async::detail::is_a_stop(failure)) {
+      if (!async::detail::is_a_stop(failure) || !stop.stop_requested()) {
         async::detail::report_always("the program's main task ended on an exception", failure);
         failed->store(true);
       }

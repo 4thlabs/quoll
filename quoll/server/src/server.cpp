@@ -288,10 +288,11 @@ async::task<> serve_accepting(io::any_listener listener, std::shared_ptr<server_
 
       // Tried again with no callback to tell: said once, until a connection is accepted again.
       if (!accept_error && !one_connection_failure(error) && !accepts_retried) {
-        async::report(out_of_resources(error)
-                          ? "cannot accept connections for want of resources, trying again every 100 ms"
-                          : "an accept failed on the network, trying again every 100 ms",
-                      failure);
+        // Once: past the limit of lines a second, which peers may fill.
+        async::detail::report_always(out_of_resources(error)
+                                         ? "cannot accept connections for want of resources, trying again every 100 ms"
+                                         : "an accept failed on the network, trying again every 100 ms",
+                                     failure);
         accepts_retried = true;
       }
 
