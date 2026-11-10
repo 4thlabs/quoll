@@ -41,6 +41,8 @@
 #if defined(QUOLL_ASIO_TLS)
 
 #include <quoll/asio/tls_stream.hpp>
+#include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/code_of.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/half_closable_stream.hpp>
@@ -51,8 +53,8 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
-#include <optional>
 #include <span>
 #include <stdexcept>
 #include <system_error>
@@ -103,12 +105,12 @@ public:
   write_some(std::span<std::byte const> data QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
     auto &current = checked_state();
 
-    if (!current.outcome) {
+    if (current.at != phase::done) {
       throw std::logic_error{"quoll::asio::accepted_tls_stream: written to before its handshake"};
     }
 
-    if (*current.outcome) {
-      throw std::system_error{*current.outcome, "quoll::asio::accepted_tls_stream: its handshake failed"};
+    if (current.failure) {
+      throw std::system_error{current.failure, "quoll::asio::accepted_tls_stream: its handshake failed"};
     }
 
     return current.stream.write_some(data);
@@ -129,7 +131,7 @@ public:
   [[nodiscard]] bool handshaken() const noexcept {
     auto const &current = checked_state();
 
-    return current.outcome && !*current.outcome;
+    return current.at == phase::done && !current.failure;
   }
 
   /**
@@ -146,6 +148,8 @@ public:
   }
 
 private:
+  enum class phase : std::uint8_t { before, pending, done };
+
   struct state {
     state(std::shared_ptr<::asio::ssl::context> made_from, tls_stream accepted) noexcept
         : context(std::move(made_from)), stream(std::move(accepted)) {}
@@ -153,41 +157,44 @@ private:
     // Before the session, which is made from it.
     std::shared_ptr<::asio::ssl::context> context;
     tls_stream stream;
-    // None before the handshake; no error once it completed, its error once it failed.
-    std::optional<std::error_code> outcome;
-    bool handshaking = false;
+    phase at = phase::before;
+    // Once done: none, or what made the session unusable.
+    std::error_code failure;
   };
 
   // On the state, bound at the call: the stream may move while they are pending.
   static async::task<std::error_code> shake_hands(state &current) {
-    if (current.outcome) {
-      co_return *current.outcome;
+    if (current.at == phase::done) {
+      co_return current.failure;
     }
 
-    if (current.handshaking) {
+    if (current.at == phase::pending) {
       throw std::logic_error{"quoll::asio::accepted_tls_stream: a handshake is already pending"};
     }
 
-    current.handshaking = true;
+    // Stopped before it starts: the session, untouched, can still take one.
+    if ((co_await async::current_stop_token()).stop_requested()) {
+      co_return std::make_error_code(std::errc::operation_canceled);
+    }
 
-    std::error_code error;
+    current.at = phase::pending;
 
     try {
-      error = co_await current.stream.handshake(tls_stream::session_type::server);
-    } catch (std::system_error const &thrown) {
-      // A stop that throws leaves the session as unusable as one returned.
-      current.handshaking = false;
-      current.outcome = thrown.code();
+      current.failure = co_await current.stream.handshake(tls_stream::session_type::server);
+    } catch (...) {
+      // Whatever it threw, the session is half-way through and goes no further.
+      current.failure =
+          async::detail::code_of(std::current_exception()).value_or(std::make_error_code(std::errc::io_error));
+      current.at = phase::done;
       throw;
     }
 
-    current.handshaking = false;
-    current.outcome = error;
-    co_return error;
+    current.at = phase::done;
+    co_return current.failure;
   }
 
   static async::task<io::io_result> read(state &current, std::span<std::byte> buffer) {
-    if (!current.outcome || *current.outcome) {
+    if (current.at != phase::done || current.failure) {
       if (auto const error = co_await shake_hands(current)) {
         co_return io::io_result{error, 0};
       }
@@ -197,8 +204,8 @@ private:
   }
 
   static async::task<io::io_result> shut_down(state &current) {
-    if (current.outcome && *current.outcome) {
-      co_return io::io_result{*current.outcome, 0};
+    if (current.at == phase::done && current.failure) {
+      co_return io::io_result{current.failure, 0};
     }
 
     co_return co_await current.stream.shutdown_send();
