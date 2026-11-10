@@ -127,8 +127,13 @@ public:
         return std::nullopt;
       }
 
-      if (recent && recent->now - pool.idle.back().at >= recent->within) {
-        return std::nullopt;
+      // Before it on the clock: given back on an executor with another clock, of which nothing can be told.
+      if (recent) {
+        auto const idle_for = recent->now - pool.idle.back().at;
+
+        if (idle_for < std::chrono::nanoseconds::zero() || idle_for >= recent->within) {
+          return std::nullopt;
+        }
       }
 
       auto kept = std::move(pool.idle.back());
@@ -138,12 +143,23 @@ public:
     });
   }
 
-  // Keeps `connection` for a next request, or closes it if the pool is full; `now` on idle_clock().
+  // Keeps `connection` for a next request, `now` on idle_clock(). A full pool closes its oldest, past the lock, rather
+  // than this one, the least likely to be closed by the server, and the only one a POST may take.
   void give_back(io::any_stream connection, std::chrono::nanoseconds now) {
-    state_.with([&](state &pool) {
-      if (pool.idle.size() < capacity_) {
-        pool.idle.push_back({std::move(connection), ++pool.given, now});
+    if (capacity_ == 0) {
+      return;
+    }
+
+    auto const oldest = state_.with([&](state &pool) {
+      std::optional<idle_connection> dropped;
+
+      if (pool.idle.size() >= capacity_) {
+        dropped.emplace(std::move(pool.idle.front()));
+        pool.idle.erase(pool.idle.begin());
       }
+
+      pool.idle.push_back({std::move(connection), ++pool.given, now});
+      return dropped;
     });
   }
 
