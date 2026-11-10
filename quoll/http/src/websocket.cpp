@@ -774,7 +774,6 @@ struct watch_count {
 // starts then; the receive() does not wait for it. It holds the connection only as it looks at it or sends: a
 // receive() that reads holds it meanwhile.
 async::task<> watch_alone(std::weak_ptr<state> watched) {
-  watching_mark const ending{watched};
   auto const timer = (co_await async::current_executor()).query<async::timer_ref>();
   std::chrono::nanoseconds interval{};
   watch_count count;
@@ -852,15 +851,16 @@ async::task<> watch_alone(std::weak_ptr<state> watched) {
 
 // watch_alone(), whatever it throws taking the peer as gone, with the code it carries, so that nothing escapes it.
 async::task<> watch_alone_quietly(std::weak_ptr<state> watched) {
+  // However it ends, watch_alone()'s frame failing to be made included.
+  watching_mark const ending{watched};
+
   try {
     co_await watch_alone(watched);
   } catch (...) {
     auto const code = async::detail::code_of(std::current_exception());
 
-    // take_as_gone() makes what says none, or a stop's, io_error. Cleared here too, for a keep-alive that failed
-    // before its watching_mark was made.
+    // take_as_gone() makes what says none, or a stop's, io_error.
     if (auto const connection = watched.lock()) {
-      connection->watching = false;
       take_as_gone(*connection, code.value_or(std::error_code{}));
     }
   }
