@@ -39,6 +39,7 @@
 
 #include <quoll/async/completion_handler.hpp>
 #include <quoll/async/detail/is_a_stop.hpp>
+#include <quoll/async/detail/report.hpp>
 
 #include <exception>
 
@@ -54,9 +55,9 @@ struct detached_t {
   void operator()(T &&) const noexcept {}
 
   /**
-   * @brief A task let an exception escape: it ends the program, as an exception escaping a std::thread does, and the
-   * standard library's terminate handler reports it. But for std::errc::operation_canceled, whatever caused it: a stop
-   * is no failure, and ends the task alone.
+   * @brief A task let an exception escape: it is written to stderr, and the program goes on, as tokio does with a
+   * spawned task that panics, so that one task does not take down a server's others. But for
+   * std::errc::operation_canceled, whatever caused it: a stop is no failure, and ends the task with no word.
    */
   void operator()(std::exception_ptr failure) const noexcept {
     if (!failure) {
@@ -64,14 +65,15 @@ struct detached_t {
     }
 
     if (!detail::is_a_stop(failure)) {
-      std::rethrow_exception(failure);
+      detail::report("a task spawned with async::detached ended on an exception", failure);
     }
   }
 };
 
 /**
  * @brief Completion handler for co_spawn() whose task is on its own, like asio::detached: its value is dropped, and an
- * exception it lets escape ends the program, unless it is std::errc::operation_canceled, what a stop request throws.
+ * exception it lets escape is written to stderr, the program going on, unless it is std::errc::operation_canceled, what
+ * a stop request throws. To do something else with it, give co_spawn() a handler of your own.
  *
  * @code
  * co_spawn(runtime.get_executor(), serve_notes(8080), quoll::async::detached, runtime.get_stop_token());

@@ -299,7 +299,7 @@ co_await server.listen(8080, {.address = "0.0.0.0"});
 | `lingering_timeout` | 5 s      | After the last response, what the peer still sends is read and dropped: how long to wait for more of it. Zero closes at once.                                                                                                             |
 | `lingering_time`    | 30 s     | How long this goes on as a whole, against a peer that keeps sending. Zero closes at once.                                                                                                                                                 |
 | `limits`            | below    | What a request may hold.                                                                                                                                                                                                                  |
-| `on_handler_error`  | none     | Called with what a handler, a middleware or a `body_writer` threw, on the connection's executor. Must not throw.                                                                                                                          |
+| `on_handler_error`  | stderr   | Called with what a handler, a middleware or a `body_writer` threw, on the connection's executor. Must not throw.                                                                                                                          |
 | `drain`             | none     | A stop request here ends the connection gently. `serve` sets it for its own shutdown, replacing what is given here.                                                                                                                       |
 
 Lingering is there because closing with the peer's bytes unread would reset the connection, and may
@@ -358,13 +358,13 @@ A body too large is refused as soon as its head announces it.
 | `connection`          |         | The `connection_options` above.                                                                                             |
 | `max_connections`     | 10,000  | How many connections the server serves at once, through all of its `listen` and `serve`. Past it, a new one is accepted and closed at once, without a word. Zero: no limit. |
 | `shutdown_timeout`    | 30 s    | How long the requests under way may take to finish once asked to stop. Past it, they are stopped. Zero stops them at once.  |
-| `on_connection_error` | none    | Called with the exception that ended a connection (a stream exception, `std::bad_alloc`...). Must not throw.                |
+| `on_connection_error` | stderr  | Called with the exception that ended a connection (a stream exception, `std::bad_alloc`...). Must not throw.                |
 | `on_accept_error`     | below   | What an accept failure does.                                                                                                |
 
 `on_accept_error` is a function from `std::error_code` to `async::task<bool>`, so that it may wait first:
 true accepts again, false ends the accept loop by rethrowing the failure. Without one, a failure of
 one connection is skipped, running out of something (file descriptors, memory) is retried after
-100 ms without a word, and any other failure is rethrown. A rethrow ends the accept loop, and
+100 ms, said once on stderr until a connection goes through, and any other failure is rethrown. A rethrow ends the accept loop, and
 `serve` throws it once its connections have ended.
 
 ## Shutdown

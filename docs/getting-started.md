@@ -220,8 +220,8 @@ If you are writing both sides of an API, or calling one with typed requests and 
   thrown again at its `co_await`.
 - **`async::co_spawn`** runs a task from outside a coroutine, from the executor and never inline, and
   gives what comes of it to a handler. With `async::detached`, a value is dropped, and an exception
-  ends the program, as one escaping a `std::thread` does, unless it is `std::errc::operation_canceled`, what a stop
-  request throws.
+  is written to stderr while the program goes on, as tokio does, unless it is `std::errc::operation_canceled`, what a
+  stop request throws, which says nothing.
 - **`runtime.run()`** returns once the tasks have ended. An executor kept in `main()` would keep it
   running, so give `get_executor()` straight to `co_spawn`.
 - **`runtime.get_stop_token()`** is stopped by the first SIGINT or SIGTERM. Given to `co_spawn`, it
@@ -265,8 +265,8 @@ coroutine: pass it `co_await async::current_stop_token()` for it to stop along w
 
 ### Failures
 
-With `async::detached`, what a task lets out ends the program, which suits a program that has nothing
-to add to it. To carry on, catch it in the coroutine:
+With `async::detached`, what a task lets out is written to stderr, and the program goes on: one task's
+failure does not take a server's others down. To do something with it, catch it in the coroutine:
 
 ```cpp
 try {

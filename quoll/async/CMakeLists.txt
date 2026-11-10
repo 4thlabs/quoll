@@ -1,4 +1,4 @@
-quoll_declare_module(NAME async SOURCES src/recycled_frame.cpp)
+quoll_declare_module(NAME async SOURCES src/recycled_frame.cpp src/report.cpp)
 
 quoll_declare_tests(
   SOURCES
@@ -8,6 +8,7 @@ quoll_declare_tests(
     tests/task_group_test.cpp
     tests/offload_test.cpp
     tests/recycled_frame_test.cpp
+    tests/report_test.cpp
     tests/executor_ref_test.cpp
     tests/run_loop_test.cpp
     tests/slots_test.cpp

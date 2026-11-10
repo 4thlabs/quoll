@@ -40,6 +40,8 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/is_a_stop.hpp>
+#include <quoll/async/detail/report.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/strands_ref.hpp>
@@ -157,6 +159,8 @@ struct connection_outcome {
   void operator()(std::exception_ptr failure) const noexcept {
     if (shared->state->options.on_connection_error) {
       shared->state->options.on_connection_error(std::move(failure));
+    } else if (!async::detail::is_a_stop(failure)) {
+      async::detail::report("a connection ended on an exception", failure);
     }
 
     ended();
@@ -238,6 +242,7 @@ async::task<> serve_accepting(io::any_listener listener, std::shared_ptr<server_
   auto const drain = [&shared] { shared->drain.request_stop(); };
   std::stop_callback const drain_on_stop{stop_token, drain};
   std::exception_ptr ending;
+  auto accepts_retried = false;
 
   while (!stop_token.stop_requested()) {
     std::optional<io::any_stream> stream;
@@ -280,8 +285,16 @@ async::task<> serve_accepting(io::any_listener listener, std::shared_ptr<server_
         break;
       }
 
+      // Tried again with no callback to tell: said once, until a connection is accepted again.
+      if (!accept_error && !one_connection_failure(error) && !accepts_retried) {
+        async::detail::report("cannot accept connections, trying again every 100 ms", failure);
+        accepts_retried = true;
+      }
+
       continue;
     }
+
+    accepts_retried = false;
 
     if (!try_open(*state)) {
       continue;

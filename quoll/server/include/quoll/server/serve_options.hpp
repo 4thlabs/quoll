@@ -69,7 +69,7 @@ struct serve_options {
   /**
    * @brief Called with the exception that ended a connection (a stream exception, `std::bad_alloc`...), on the
    * executor; must not throw. Handler failures are not among them: they answer 500 (see connection_options). Empty:
-   * the failure only ends the connection.
+   * it is written to stderr, and ends the connection.
    */
   std::function<void(std::exception_ptr)> on_connection_error{};
 
@@ -77,8 +77,8 @@ struct serve_options {
    * @brief Decides what an accept failure does, other than `operation_canceled`: true accepts again, false rethrows
    * the failure. A task, so that it may wait first (a back-off on `too_many_files_open`, with async::sleep_for).
    * Empty: a failure of one connection only (`connection_aborted`, `connection_reset`) is skipped, running out of
-   * something (file descriptors, memory) is retried after 100 ms if the executor has a timer, for as long as it lasts
-   * and without a word, and any other is rethrown. Set this to be told.
+   * something (file descriptors, memory) is retried after 100 ms if the executor has a timer, for as long as it lasts,
+   * written to stderr once until a connection is accepted again, and any other is rethrown.
    *
    * This and on_connection_error are the server's, for all of its listen() and serve(): on several threads, they may be
    * called concurrently.

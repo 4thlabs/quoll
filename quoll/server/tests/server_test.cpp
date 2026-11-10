@@ -56,12 +56,14 @@
 #include <quoll/io/memory_stream.hpp>
 #include <quoll/server/server.hpp>
 #include <quoll/test/overloaded.hpp>
+#include <quoll/test/reports.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <coroutine>
 #include <cstddef>
@@ -713,6 +715,120 @@ TEST_CASE("serve: a connection's failure goes to on_connection_error", "[server]
   loop.run();
 
   REQUIRE(reported == "broken stream");
+}
+
+TEST_CASE("serve: with no callback, a handler that throws and a connection that fails are reported", "[server]") {
+  auto router = make_router();
+  quoll::async::run_loop loop;
+  auto [client, server] = io::make_memory_stream_pair();
+  canned_listener listener;
+  std::stop_source source;
+  std::optional<std::string> body;
+  bool done = false;
+
+  router.add(verb::get, "/fault/throws", "throws", [](http::request, http::route_match) -> task<http::response> {
+    throw std::runtime_error{"a bug of the handler"};
+  });
+  listener.streams.emplace_back(broken_stream{});
+  listener.streams.emplace_back(std::move(server));
+  quoll::async::co_spawn(loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
+                         overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(loop.get_executor(), get(std::move(client), "/fault/throws", done),
+                         overloaded{[&](std::string received) {
+                                      body = std::move(received);
+                                      source.request_stop();
+                                    },
+                                    [](std::exception_ptr) {}});
+  loop.run();
+
+  REQUIRE(done);
+
+  auto const reported = quoll::test::reports();
+
+  REQUIRE(reported.size() == 2);
+  REQUIRE(std::ranges::count(reported, "quoll: a connection ended on an exception: broken stream\n") == 1);
+  REQUIRE(std::ranges::count(reported, "quoll: a handler threw, answered 500: a bug of the handler\n") == 1);
+}
+
+TEST_CASE("serve: with callbacks, nothing is reported", "[server]") {
+  auto router = make_router();
+  quoll::async::run_loop loop;
+  auto [client, server] = io::make_memory_stream_pair();
+  canned_listener listener;
+  std::stop_source source;
+  bool done = false;
+  auto told = 0;
+  quoll::http::serve_options options;
+
+  router.add(verb::get, "/fault/throws", "throws", [](http::request, http::route_match) -> task<http::response> {
+    throw std::runtime_error{"a bug of the handler"};
+  });
+  options.on_connection_error = [&](std::exception_ptr) { ++told; };
+  options.connection.on_handler_error = [&](std::exception_ptr) { ++told; };
+  listener.streams.emplace_back(broken_stream{});
+  listener.streams.emplace_back(std::move(server));
+  quoll::async::co_spawn(loop.get_executor(),
+                         quoll::http::server{router, std::move(options)}.serve(std::move(listener)),
+                         overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(loop.get_executor(), get(std::move(client), "/fault/throws", done),
+                         overloaded{[&](std::string) { source.request_stop(); }, [](std::exception_ptr) {}});
+  loop.run();
+
+  REQUIRE(done);
+  REQUIRE(told == 2);
+  REQUIRE(quoll::test::reports().empty());
+}
+
+TEST_CASE("serve: with no callback, accepts tried again are reported once, until one goes through", "[server][timer]") {
+  auto const router = make_router();
+  quoll::test::virtual_time time;
+  canned_listener listener;
+  std::stop_source source;
+  bool done = false;
+
+  // Twice out of descriptors, a connection, then out of them again: one report a streak.
+  auto [client, server] = io::make_memory_stream_pair();
+
+  listener.failures = {std::make_error_code(std::errc::too_many_files_open),
+                       std::make_error_code(std::errc::too_many_files_open)};
+  listener.streams.emplace_back(std::move(server));
+
+  struct then_failing {
+    canned_listener *inner;
+    bool failed_after = false;
+
+    task<io::any_stream> accept() {
+      if (inner->failures.empty() && inner->streams.empty() && !failed_after) {
+        failed_after = true;
+        throw std::system_error{std::make_error_code(std::errc::too_many_files_open), "then_failing"};
+      }
+
+      co_return co_await inner->accept();
+    }
+  };
+
+  quoll::async::co_spawn(time.get_executor(), quoll::http::server{router}.serve(then_failing{&listener}),
+                         overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(time.get_executor(), get(std::move(client), "/through", done),
+                         overloaded{[&](std::string) {}, [](std::exception_ptr) {}});
+  quoll::async::co_spawn(
+      time.get_executor(),
+      [](std::stop_source &stopping) -> task<> {
+        co_await quoll::async::sleep_for(std::chrono::seconds{1});
+        stopping.request_stop();
+      }(source),
+      overloaded{[] {}, [](std::exception_ptr) {}});
+  time.run();
+
+  REQUIRE(done);
+
+  auto const reported = quoll::test::reports();
+  auto const retried = std::ranges::count_if(reported, [](std::string const &line) {
+    return line.starts_with("quoll: cannot accept connections, trying again every 100 ms: ");
+  });
+
+  REQUIRE(retried == 2);
+  REQUIRE(reported.size() == 2);
 }
 
 TEST_CASE("serve: completes once its connections have ended, and rethrows an accept failure then", "[server]") {
