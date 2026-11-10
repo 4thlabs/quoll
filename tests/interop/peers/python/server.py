@@ -3,9 +3,13 @@
 from aiohttp import web, WSMsgType
 
 
+# Each connection's number, for the checks of a kept connection; held, so that no other takes its place.
+numbers = {}
+
+
 async def connection(request):
-    """The connection's identity, for the checks of a kept connection."""
-    return web.Response(text=str(id(request.transport)))
+    number = numbers.setdefault(request.protocol, len(numbers) + 1)
+    return web.Response(text=str(number))
 
 
 async def hello(request):
@@ -39,7 +43,10 @@ async def events(request):
 
 
 async def close(request):
-    return web.Response(text="bye", headers={"Connection": "close"})
+    response = web.Response(text="bye")
+    # A header alone leaves the connection open.
+    response.force_close()
+    return response
 
 
 async def ws(request):
@@ -66,4 +73,5 @@ app.add_routes([
     web.get("/ws", ws),
 ])
 
-web.run_app(app, host="0.0.0.0", port=8080)
+# Below the 6 s the client waits, so that it meets a connection the server closed for being idle.
+web.run_app(app, host="0.0.0.0", port=8080, keepalive_timeout=3)

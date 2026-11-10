@@ -11,6 +11,7 @@ on:
   pull_request:
     paths:
       - "tests/interop/**"
+      - "tests/support/quoll/test/websocket_echo.hpp"
       - ".github/workflows/interop.yml"
 
 permissions:
@@ -45,10 +46,11 @@ jobs:
         with:
           job: interop
 
-      # Plain HTTP and WebSocket: no TLS, so that the programs run in an image with no OpenSSL.
+      # Plain HTTP and WebSocket: no TLS, so that the programs run in an image with no OpenSSL. Debug keeps the library's
+      # assertions, under peers that do what Quoll's own tests do not.
       - name: Configure
         run: >-
-          cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DQUOLL_INTEROP=ON -DQUOLL_BUILD_TESTS=OFF
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug -DQUOLL_INTEROP=ON -DQUOLL_BUILD_TESTS=OFF
           -DQUOLL_BUILD_SAMPLES=OFF -DQUOLL_TLS=OFF
         env:
           CXX: g++-13

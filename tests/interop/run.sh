@@ -30,8 +30,9 @@ docker network connect --alias quoll "$network" "$container" 2>/dev/null || true
 say() { printf '\n== %s\n' "$*"; }
 fail() { failed="$failed $1"; }
 
-# A peer's run, bounded, so that one that hangs fails rather than holds the rest.
-bounded() { timeout 600 "$@"; }
+# A run, bounded, so that one that hangs fails rather than holds the rest: within the container, where the program runs.
+in_quoll() { $run timeout 600 "$@"; }
+in_peer() { timeout 660 docker run --rm --init --network "$network" "$@"; }
 
 # Waits for host:port to answer from the network, in one container that tries for two minutes.
 wait_for() {
@@ -66,7 +67,7 @@ start_peer() {
   name=$1
   shift
   docker rm -f "$name" >/dev/null 2>&1
-  docker run -d --name "$name" --network "$network" "$@" >/dev/null
+  docker run -d --init --name "$name" --network "$network" "$@" >/dev/null
 }
 
 stop_peer() { docker rm -f "$1" >/dev/null 2>&1; }
@@ -84,7 +85,9 @@ bad = []
 for agent, cases in index.items():
     for case, result in cases.items():
         counts[result['behavior']] += 1
-        if result['behavior'] not in ('OK', 'NON-STRICT', 'INFORMATIONAL', 'UNIMPLEMENTED'):
+        # The close's verdict too, which a case may fail on its own.
+        fine = ('OK', 'NON-STRICT', 'INFORMATIONAL', 'UNIMPLEMENTED')
+        if result['behavior'] not in fine or result['behaviorClose'] not in fine:
             bad.append((case, result['behavior'], result['behaviorClose']))
 print(dict(counts))
 for case, behavior, close in sorted(bad, key=lambda b: [int(x) for x in b[0].split('.')]):
@@ -98,20 +101,20 @@ for one in $what; do
     curl)
       say "curl -> Quoll's server"
       start_quoll_server || { fail curl; continue; }
-      bounded docker run --rm --network "$network" -e QUOLL_URL="http://quoll:$port" -v "$peers:/peers:ro" alpine:3 \
+      in_peer -e QUOLL_URL="http://quoll:$port" -v "$peers:/peers:ro" alpine:3 \
         sh -c 'apk add -q curl >/dev/null && sh /peers/curl/client.sh' || fail curl
       ;;
     python)
       say "Python (requests, httpx, http.client, websockets) -> Quoll's server"
       start_quoll_server || { fail python; continue; }
-      bounded docker run --rm --network "$network" -e QUOLL_URL="http://quoll:$port" -v "$peers:/peers:ro" python:3.12-slim \
+      in_peer -e QUOLL_URL="http://quoll:$port" -v "$peers:/peers:ro" python:3.12-slim \
         sh -c 'pip install -q --root-user-action=ignore -r /peers/python/requirements.txt 2>/dev/null && python3 /peers/python/client.py' \
         || fail python
       ;;
     node)
       say "Node (fetch, http, WebSocket) -> Quoll's server"
       start_quoll_server || { fail node; continue; }
-      bounded docker run --rm --network "$network" -e QUOLL_URL="http://quoll:$port" -v "$peers:/peers:ro" node:24-slim \
+      in_peer -e QUOLL_URL="http://quoll:$port" -v "$peers:/peers:ro" node:24-slim \
         node /peers/node/client.mjs || fail node
       ;;
     nginx)
@@ -119,9 +122,9 @@ for one in $what; do
       start_quoll_server || { fail nginx; continue; }
       start_peer quoll-nginx -v "$peers/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.27-alpine
       if wait_for quoll-nginx 8080; then
-        bounded $run "$bin/quoll_interop_client" http http://quoll-nginx:8080 || fail nginx-http
-        bounded $run "$bin/quoll_interop_client" sse http://quoll-nginx:8080 || fail nginx-sse
-        bounded $run "$bin/quoll_interop_client" ws ws://quoll-nginx:8080/ws || fail nginx-ws
+        in_quoll "$bin/quoll_interop_client" http http://quoll-nginx:8080 || fail nginx-http
+        in_quoll "$bin/quoll_interop_client" sse http://quoll-nginx:8080 || fail nginx-sse
+        in_quoll "$bin/quoll_interop_client" ws ws://quoll-nginx:8080/ws || fail nginx-ws
       else
         fail nginx
       fi
@@ -131,7 +134,7 @@ for one in $what; do
       say "Autobahn's fuzzing client -> Quoll's WebSocket server"
       start_quoll_server || { fail autobahn-server; continue; }
       clear_reports server
-      if bounded docker run --rm --network "$network" -v "$peers/autobahn:/config:ro" -v "$out:/reports" \
+      if in_peer -v "$peers/autobahn:/config:ro" -v "$out:/reports" \
         crossbario/autobahn-testsuite wstest -m fuzzingclient -s /config/fuzzingclient.json >"$out/autobahn-server.log" 2>&1; then
         autobahn_summary server || fail autobahn-server
       else
@@ -144,9 +147,9 @@ for one in $what; do
       start_peer quoll-node-server -v "$peers/node:/peers:ro" node:24-slim \
         sh -c 'cp -r /peers /srv/app && cd /srv/app && npm install --silent >/dev/null 2>&1 && node server.mjs'
       if wait_for quoll-node-server 8080; then
-        bounded $run "$bin/quoll_interop_client" http http://quoll-node-server:8080 || fail node-server-http
-        bounded $run "$bin/quoll_interop_client" sse http://quoll-node-server:8080 || fail node-server-sse
-        bounded $run "$bin/quoll_interop_client" ws ws://quoll-node-server:8080/ws || fail node-server-ws
+        in_quoll "$bin/quoll_interop_client" http http://quoll-node-server:8080 || fail node-server-http
+        in_quoll "$bin/quoll_interop_client" sse http://quoll-node-server:8080 || fail node-server-sse
+        in_quoll "$bin/quoll_interop_client" ws ws://quoll-node-server:8080/ws || fail node-server-ws
       else
         fail node-server
       fi
@@ -157,9 +160,9 @@ for one in $what; do
       start_peer quoll-python-server -v "$peers/python:/peers:ro" python:3.12-slim \
         sh -c 'pip install -q --root-user-action=ignore -r /peers/requirements.txt 2>/dev/null && python3 /peers/server.py'
       if wait_for quoll-python-server 8080; then
-        bounded $run "$bin/quoll_interop_client" http http://quoll-python-server:8080 || fail python-server-http
-        bounded $run "$bin/quoll_interop_client" sse http://quoll-python-server:8080 || fail python-server-sse
-        bounded $run "$bin/quoll_interop_client" ws ws://quoll-python-server:8080/ws || fail python-server-ws
+        in_quoll "$bin/quoll_interop_client" http http://quoll-python-server:8080 || fail python-server-http
+        in_quoll "$bin/quoll_interop_client" sse http://quoll-python-server:8080 || fail python-server-sse
+        in_quoll "$bin/quoll_interop_client" ws ws://quoll-python-server:8080/ws || fail python-server-ws
       else
         fail python-server
       fi
@@ -171,7 +174,7 @@ for one in $what; do
       start_peer quoll-autobahn -v "$peers/autobahn:/config:ro" -v "$out:/reports" crossbario/autobahn-testsuite \
         wstest -m fuzzingserver -s /config/fuzzingserver.json
       if wait_for quoll-autobahn 9001 &&
-        bounded $run "$bin/quoll_interop_client" autobahn ws://quoll-autobahn:9001 >"$out/autobahn-client.log" 2>&1; then
+        in_quoll "$bin/quoll_interop_client" autobahn ws://quoll-autobahn:9001 >"$out/autobahn-client.log" 2>&1; then
         autobahn_summary client || fail autobahn-client
       else
         tail -20 "$out/autobahn-client.log"

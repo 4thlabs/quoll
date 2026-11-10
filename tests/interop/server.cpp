@@ -49,6 +49,7 @@
 #include <quoll/server/server.hpp>
 #include <quoll/test/websocket_echo.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <string>

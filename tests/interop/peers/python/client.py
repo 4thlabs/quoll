@@ -76,7 +76,9 @@ def expect_continue():
         interim = b""
 
         while b"\r\n\r\n" not in interim:
-            interim += connection.recv(4096)
+            part = connection.recv(4096)
+            assert part, f"closed before the 100: {interim!r}"
+            interim += part
 
         assert interim.startswith(b"HTTP/1.1 100 "), interim
         connection.sendall(body)
@@ -136,7 +138,7 @@ def websocket_echo():
     asyncio.run(talk())
 
 
-check("requests: kept alive, POSTs, chunked, pieces, close", requests_session)
+check("requests: GETs, POSTs, chunked, pieces, close", requests_session)
 check("requests: server-sent events", requests_events)
 check("httpx: GET, POST, streamed", httpx_client)
 check("raw: Expect: 100-continue, the body after the 100", expect_continue)
