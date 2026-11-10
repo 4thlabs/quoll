@@ -39,7 +39,7 @@
 
 #include <quoll/async/completion_handler.hpp>
 #include <quoll/async/detail/is_a_stop.hpp>
-#include <quoll/async/detail/report.hpp>
+#include <quoll/async/report.hpp>
 
 #include <exception>
 
@@ -65,7 +65,7 @@ struct detached_t {
     }
 
     if (!detail::is_a_stop(failure)) {
-      detail::report("a task spawned with async::detached ended on an exception", failure);
+      report("a task spawned with async::detached ended on an exception", failure);
     }
   }
 };
@@ -76,7 +76,7 @@ struct detached_t {
  * a stop request throws. To do something else with it, give co_spawn() a handler of your own.
  *
  * @code
- * co_spawn(runtime.get_executor(), serve_notes(8080), quoll::async::detached, runtime.get_stop_token());
+ * co_spawn(runtime.get_executor(), refresh_cache(), quoll::async::detached, runtime.get_stop_token());
  * @endcode
  */
 inline constexpr detached_t detached{};

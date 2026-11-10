@@ -69,6 +69,7 @@
 #include <quoll/test/code_thrown_by.hpp>
 #include <quoll/test/next_websocket_message.hpp>
 #include <quoll/test/read_until_closed.hpp>
+#include <quoll/test/reports.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
 #include <quoll/test/websocket_echo.hpp>
@@ -482,6 +483,24 @@ TEST_CASE("serve_connection: what a WebSocket handler throws is reported, but fo
     });
 
     REQUIRE(reported == std::vector<std::string>{"handler failure"});
+  }
+
+  SECTION("with no callback, written out, naming a connection taken over rather than a 500") {
+    auto const router = socket_at([](http::websocket) -> task<> { throw std::runtime_error{"handler failure"}; });
+    auto [client_end, server_end] = io::make_memory_stream_pair();
+    auto const talking = [](io::memory_stream &client) -> task<int> {
+      auto const answer = co_await send_then_read(client, handshake());
+
+      REQUIRE(answer.response.status == http::status::switching_protocols);
+      co_return 1;
+    };
+    auto const outcome = quoll::test::run(
+        quoll::async::when_all(http::server{router}.serve_connection(std::move(server_end)), talking(client_end)));
+
+    REQUIRE(std::get<1>(outcome.value()) == 1);
+    REQUIRE(quoll::test::reports() ==
+            std::vector<std::string>{
+                "quoll: the handler of a connection taken over, as a WebSocket, threw: handler failure\n"});
   }
 
   SECTION("a send refused after the handler's own close") {

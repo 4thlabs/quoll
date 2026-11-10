@@ -44,6 +44,7 @@
 #include <quoll/async/runtime_options.hpp>
 #include <quoll/async/service.hpp>
 #include <quoll/async/strands_ref.hpp>
+#include <quoll/async/task.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/io/network_ref.hpp>
@@ -83,8 +84,7 @@ struct runtime_strands;
  * int main() {
  *   quoll::asio::runtime runtime;
  *
- *   co_spawn(runtime.get_executor(), serve_notes(8080), quoll::async::detached, runtime.get_stop_token());
- *   runtime.run();
+ *   return runtime.run(serve_notes(8080));
  * }
  * @endcode
  *
@@ -192,6 +192,14 @@ public:
    * drained.
    */
   void run();
+
+  /**
+   * @brief Runs `main`, the program's task, spawned with get_stop_token(), as run() does, and returns what `main()`
+   * returns: EXIT_SUCCESS, or EXIT_FAILURE once what `main` let escape has been reported (async::report()), but for a
+   * stop, which a Ctrl-C causes. For `return runtime.run(program());`, as a tokio `main` that returns an error. A task
+   * spawned beside it with async::detached that fails is reported too, and changes nothing.
+   */
+  [[nodiscard]] int run(async::task<> main);
 
   /**
    * @brief The io_context, to mix the runtime with asio code, which then includes asio itself: the same version as this

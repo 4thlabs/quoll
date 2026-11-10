@@ -51,6 +51,7 @@
 #include <quoll/server/server.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/test/read_until_closed.hpp>
+#include <quoll/test/reports.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
 
@@ -1494,6 +1495,14 @@ TEST_CASE("server: HTTP/1.0 kept open says so of what answers in its place, and 
 
   REQUIRE(replaced.contains(" 500 "));
   REQUIRE(replaced.contains("Connection: keep-alive"));
+
+  // With no on_handler_error, what went wrong is written out, saying which.
+  auto const reported = quoll::test::reports();
+
+  REQUIRE(reported.size() == 1);
+  REQUIRE(reported.front().starts_with(
+      target == "/throws" ? "quoll: a body_writer threw, its response answered 500 or cut short: before anything left"
+                          : "quoll: a handler's response could not be written: "));
 
   auto const both = answer_to(server, "GET /names-another HTTP/1.0\r\nConnection: keep-alive\r\n\r\n");
 

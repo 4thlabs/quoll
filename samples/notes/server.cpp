@@ -121,6 +121,5 @@ int main(int argc, char **argv) {
   quoll::runtime runtime;
 
   // Ctrl-C stops the token, which ends the server.
-  co_spawn(runtime.get_executor(), serve_notes(port), quoll::async::detached, runtime.get_stop_token());
-  runtime.run();
+  return runtime.run(serve_notes(port));
 }

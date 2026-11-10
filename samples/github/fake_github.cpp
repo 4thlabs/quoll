@@ -164,6 +164,5 @@ int main(int argc, char **argv) {
   auto const port = static_cast<std::uint16_t>(argc > 1 ? std::stoi(argv[1]) : 0);
   quoll::runtime runtime;
 
-  co_spawn(runtime.get_executor(), serve(port), async::detached, runtime.get_stop_token());
-  runtime.run();
+  return runtime.run(serve(port));
 }

@@ -36,6 +36,17 @@
 
 #include <quoll/emscripten/runtime.hpp>
 
+#include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detail/is_a_stop.hpp>
+#include <quoll/async/report.hpp>
+#include <quoll/async/task.hpp>
+
+#include <emscripten/em_asm.h>
+
+#include <cstdlib>
+#include <exception>
+#include <utility>
+
 namespace quoll::emscripten {
 
 runtime::runtime(async::runtime_options options) noexcept { static_cast<void>(options); }
@@ -46,5 +57,32 @@ std::stop_token runtime::get_stop_token() noexcept { return {}; }
 
 // Nothing to run: the browser does, once main() has returned to it. What makes main() read the same as a native one.
 void runtime::run() noexcept {}
+
+namespace {
+
+// What comes of the program's task: under Node, a failure is its exit status once the loop has drained.
+struct program_outcome {
+  void operator()() const noexcept {}
+
+  void operator()(std::exception_ptr const &failure) const noexcept {
+    if (async::detail::is_a_stop(failure)) {
+      return;
+    }
+
+    async::report("the program's main task ended on an exception", failure);
+    EM_ASM({
+      if (typeof process == = 'object' && process.versions && process.versions.node) {
+        process.exitCode = 1;
+      }
+    });
+  }
+};
+
+} // namespace
+
+int runtime::run(async::task<> main) {
+  async::co_spawn(get_executor(), std::move(main), program_outcome{}, get_stop_token());
+  return EXIT_SUCCESS;
+}
 
 } // namespace quoll::emscripten

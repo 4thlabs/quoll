@@ -42,10 +42,10 @@
 #include <quoll/async/detail/either_stop.hpp>
 #include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
-#include <quoll/async/detail/report.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/lifetimebound.hpp>
+#include <quoll/async/report.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
@@ -731,20 +731,25 @@ private:
 
 // What the handler being caught threw, told to the application, but for what a stop throws: no failure, unlike what
 // goes wrong during one. Called in a catch block.
-void report_failure(connection_options const &options, std::stop_token const &stop_token) {
+// Tells the application's callback, or, with none, writes `what` and the failure rather than lose them: what a handler
+// gets wrong is a bug to see.
+void tell_handler_error(connection_options const &options, std::string_view what, std::exception_ptr const &failure) {
+  if (options.on_handler_error) {
+    options.on_handler_error(failure);
+  } else {
+    async::report(what, failure);
+  }
+}
+
+// The exception being handled, as tell_handler_error() says, but for a stop the connection was asked for.
+void report_failure(connection_options const &options, std::stop_token const &stop_token, std::string_view what) {
   auto const failure = std::current_exception();
 
   if (stop_token.stop_requested() && async::detail::is_a_stop(failure)) {
     return;
   }
 
-  // Given nowhere to go, it is written rather than lost: a handler that throws is a bug to see.
-  if (!options.on_handler_error) {
-    async::detail::report("a handler threw, answered 500", failure);
-    return;
-  }
-
-  options.on_handler_error(failure);
+  tell_handler_error(options, what, failure);
 }
 
 // The router's response, or 500 if a handler or a middleware threw, reported to the application's callback if it gave
@@ -759,7 +764,7 @@ async::task<http::response> respond(http::router const &router, http::request re
   } catch (body_not_read const &) {
     // No failure of the handler's, which only let it through.
   } catch (...) {
-    report_failure(options, stop_token);
+    report_failure(options, stop_token, "a handler or a middleware threw, answered 500");
   }
 
   co_return http::detail::status_response(http::status::internal_server_error);
@@ -810,8 +815,8 @@ void replace_what_would_mislead(http::response &response, http::verb method, htt
     response = http::detail::status_response(http::status::internal_server_error);
   }
 
-  if (wrong != nullptr && options.on_handler_error) {
-    options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
+  if (wrong != nullptr) {
+    tell_handler_error(options, "a handler's response was replaced", std::make_exception_ptr(std::logic_error{wrong}));
   }
 }
 
@@ -865,8 +870,8 @@ async::task<std::error_code> write_response(paced_stream &stream, http::response
   try {
     sending.emplace(http::write(stream, response));
   } catch (std::invalid_argument const &) {
-    if (options != nullptr && options->on_handler_error) {
-      options->on_handler_error(std::current_exception());
+    if (options != nullptr) {
+      tell_handler_error(*options, "a handler's response could not be written", std::current_exception());
     }
 
     auto failed = http::detail::status_response(http::status::internal_server_error);
@@ -988,7 +993,7 @@ async::task<writer_end> run_writer(http::body_writer writer, http::response &res
   } catch (body_not_read const &) {
     // Nor is this, from a writer reading the request.
   } catch (...) {
-    report_failure(options, stop_token);
+    report_failure(options, stop_token, "a body_writer threw, its response answered 500 or cut short");
   }
 
   nothing_left = !sink.started();
@@ -1002,9 +1007,10 @@ async::task<writer_end> run_writer(http::body_writer writer, http::response &res
       co_return writer_end::whole;
     }
 
-    if (sink.short_of_its_length() && options.on_handler_error) {
-      options.on_handler_error(std::make_exception_ptr(
-          std::length_error{"quoll::http::server: a body_writer wrote less than its Content-Length"}));
+    if (sink.short_of_its_length()) {
+      tell_handler_error(options, "a response was cut short",
+                         std::make_exception_ptr(std::length_error{
+                             "quoll::http::server: a body_writer wrote less than its Content-Length"}));
     }
   }
 
@@ -1024,10 +1030,7 @@ async::task<bool> send_streamed(paced_stream &stream, http::response &response, 
     framing = http::detail::serialize_streamed_head(response, wire);
   } catch (std::invalid_argument const &) {
     framing.reset();
-
-    if (options.on_handler_error) {
-      options.on_handler_error(std::current_exception());
-    }
+    tell_handler_error(options, "a handler's response could not be written", std::current_exception());
   }
 
   auto answer_500 = !framing;
@@ -1304,9 +1307,8 @@ async::task<std::error_code> drop_what_comes(io::any_stream &stream, std::chrono
                                                                            http::verb method, http::version version,
                                                                            connection_options const &options) {
   if (auto const *const wrong = cannot_switch(response, asked, method, version)) {
-    if (options.on_handler_error) {
-      options.on_handler_error(std::make_exception_ptr(std::logic_error{wrong}));
-    }
+    tell_handler_error(options, "a handler's switch of protocols was refused, answered 500",
+                       std::make_exception_ptr(std::logic_error{wrong}));
 
     return std::nullopt;
   }
@@ -1314,9 +1316,7 @@ async::task<std::error_code> drop_what_comes(io::any_stream &stream, std::chrono
   try {
     return http::write(stream, response);
   } catch (std::invalid_argument const &) {
-    if (options.on_handler_error) {
-      options.on_handler_error(std::current_exception());
-    }
+    tell_handler_error(options, "a handler's switch of protocols could not be written", std::current_exception());
 
     return std::nullopt;
   }
@@ -1533,7 +1533,7 @@ async::task<> run_taken_over(io::any_stream stream, taken_over taken, connection
   try {
     co_await taken.handler(std::move(stream), std::move(taken.received), options.drain);
   } catch (...) {
-    report_failure(options, stop_token);
+    report_failure(options, stop_token, "the handler of a connection taken over, as a WebSocket, threw");
   }
 }
 

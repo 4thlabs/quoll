@@ -34,27 +34,32 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_ASYNC_DETAIL_REPORT_HPP
-#define QUOLL_ASYNC_DETAIL_REPORT_HPP
+#ifndef QUOLL_ASYNC_REPORT_HPP
+#define QUOLL_ASYNC_REPORT_HPP
 
 #include <exception>
 #include <string_view>
 
-namespace quoll::async::detail {
+namespace quoll::async {
 
 /**
  * @brief Writes one line saying `what` happened and what `failure` says, for a failure nothing else takes: an exception
- * a task spawned with async::detached let escape, or one a server's callbacks were not given. To stderr, where a sink
- * set with set_report_sink() does not take it instead. Never throws. Thread safety: may be called from any thread.
+ * a task spawned with async::detached let escape, or one a server's callbacks were not given. To stderr, or to the sink
+ * set_report_sink() set. At most ten lines a second, as a peer may cause them at will: those past it are counted, and
+ * the next line says how many went. Never throws. Thread safety: may be called from any thread.
  */
 void report(std::string_view what, std::exception_ptr const &failure) noexcept;
 
-/** @brief Where report() writes its line; null writes to stderr. */
+/** @brief Where report() writes its lines, one at a time, each ending with a newline; called from any thread. */
 using report_sink = void (*)(std::string_view line) noexcept;
 
-/** @brief Sends report()'s lines to `sink`, null for stderr, and returns the sink it replaces: for a test. */
+/**
+ * @brief Sends report()'s lines to `sink`, null for stderr, and returns the sink it replaces: to a log of the
+ * program's own (syslog, journald), or nowhere. The lines a second count afresh from then. Thread safety: may be called
+ * from any thread.
+ */
 report_sink set_report_sink(report_sink sink) noexcept;
 
-} // namespace quoll::async::detail
+} // namespace quoll::async
 
-#endif // QUOLL_ASYNC_DETAIL_REPORT_HPP
+#endif // QUOLL_ASYNC_REPORT_HPP

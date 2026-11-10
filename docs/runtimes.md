@@ -48,8 +48,7 @@ async::task<> tick() {
 int main() {
   quoll::runtime runtime;
 
-  async::co_spawn(runtime.get_executor(), tick(), async::detached, runtime.get_stop_token());
-  runtime.run();
+  return runtime.run(tick());
 }
 ```
 
@@ -164,8 +163,7 @@ async::task<> say_hello() {
 int main() {
   quoll::runtime runtime;
 
-  async::co_spawn(runtime.get_executor(), say_hello(), async::detached, runtime.get_stop_token());
-  runtime.run();
+  return runtime.run(say_hello());
 }
 ```
 

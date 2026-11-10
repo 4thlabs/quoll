@@ -38,6 +38,7 @@
 #define QUOLL_EMSCRIPTEN_RUNTIME_HPP
 
 #include <quoll/async/runtime_options.hpp>
+#include <quoll/async/task.hpp>
 #include <quoll/emscripten/executor.hpp>
 
 #include <stop_token>
@@ -52,8 +53,7 @@ namespace quoll::emscripten {
  * int main() {
  *   quoll::runtime runtime;
  *
- *   co_spawn(runtime.get_executor(), app(), quoll::async::detached, runtime.get_stop_token());
- *   runtime.run();
+ *   return runtime.run(app());
  * }
  * @endcode
  *
@@ -88,6 +88,13 @@ public:
 
   /** @brief Returns at once, for `main()` to return in turn: the loop is the browser's, and runs from then on. */
   void run() noexcept;
+
+  /**
+   * @brief Spawns `main`, the program's task, and returns EXIT_SUCCESS at once, as run() does: the loop runs it once
+   * `main()` has returned. What `main` lets escape is reported (async::report()) and, under Node, makes the process
+   * exit with a failure, as a native run(task) returns EXIT_FAILURE. For `return runtime.run(program());`.
+   */
+  [[nodiscard]] int run(async::task<> main);
 };
 
 } // namespace quoll::emscripten
