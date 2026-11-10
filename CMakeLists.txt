@@ -35,6 +35,9 @@ option(QUOLL_BENCH "Build the benchmark program, tests/bench" OFF)
 # the sanitizer's flags. With the library's assertions, which QUOLL_BENCH turns off.
 option(QUOLL_LOAD "Build the load program, tests/load" OFF)
 
+# The Quoll ends of the runs against third-party clients and servers (tests/interop, run by tests/interop/run.sh).
+option(QUOLL_INTEROP "Build the interop programs, tests/interop" OFF)
+
 # Fuzz targets (tests/fuzz), with Clang: everything is instrumented, so that libFuzzer sees Quoll's branches and its dependencies'.
 option(QUOLL_FUZZ "Build the fuzz targets, with Clang's libFuzzer under ASan and UBSan" OFF)
 
@@ -99,6 +102,10 @@ endif()
 
 if(QUOLL_LOAD)
   add_subdirectory(tests/load)
+endif()
+
+if(QUOLL_INTEROP)
+  add_subdirectory(tests/interop)
 endif()
 
 if(QUOLL_INSTALL)

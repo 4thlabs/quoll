@@ -1,0 +1,7 @@
+{
+  "outdir": "/reports/server",
+  "servers": [{ "agent": "quoll", "url": "ws://quoll:18080/ws" }],
+  "cases": ["*"],
+  "exclude-cases": ["12.*", "13.*"],
+  "exclude-agent-cases": {}
+}
