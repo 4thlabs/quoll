@@ -1464,3 +1464,42 @@ TEST_CASE("websocket: a client's messages already read are given after a verdict
   REQUIRE(second == text("two"));
   REQUIRE(after == std::errc::connection_reset);
 }
+
+TEST_CASE("websocket: a client's receive() that fails otherwise after a verdict keeps its own failure",
+          "[http][websocket]") {
+  quoll::test::virtual_time time;
+  auto [client_end, server_end] = io::make_memory_stream_pair();
+  http::websocket client{
+      io::any_stream{reset_late{std::move(client_end), 500ms}}, websocket_role::client, {}, {.ping_interval = 1s}};
+
+  // A message and a frame a server may not send, masked, in one piece at 1.2 s; the ping of 1 s fails at 1.5 s. The
+  // frame already read breaks the protocol: that, rather than the verdict, is why receiving ended.
+  auto const broken = [&]() -> task<std::pair<std::error_code, std::error_code>> {
+    auto const peer = [&]() -> task<> {
+      co_await quoll::async::sleep_for(1200ms);
+      co_await send_raw(server_end, http::format_websocket_frame(websocket_opcode::text, "one") +
+                                        http::format_websocket_frame(websocket_opcode::text, "masked", true, mask));
+    };
+    auto const receiving = [&]() -> task<std::pair<std::error_code, std::error_code>> {
+      auto const first = co_await client.receive();
+
+      REQUIRE(first == text("one"));
+      co_await quoll::async::sleep_for(1s);
+
+      auto const failed = co_await quoll::test::code_thrown_by(client.receive());
+      auto const after = co_await quoll::test::code_thrown_by(client.receive());
+
+      co_return std::pair{failed, after};
+    };
+
+    auto [sent, codes] = co_await quoll::async::when_all(peer(), receiving());
+
+    co_return codes;
+  };
+
+  auto const [failed, after] = quoll::test::run(time, broken()).value();
+
+  REQUIRE(failed != std::errc::connection_reset);
+  REQUIRE(failed.category() == http::http_category());
+  REQUIRE(after == failed);
+}
