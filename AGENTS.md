@@ -171,7 +171,8 @@ gh pr merge N -R 4thlabs/quoll --squash --delete-branch --match-head-commit <sha
 
 The PR says what that review found and why any finding was not taken. A PR merges once every required check is green on
 its last commit, Codex has finished on it, and all it found on the PR is answered, with the fixing commit or the reason a point
-is not taken, its threads then resolved.
+is not taken, its threads then resolved; and, when a kind of bug came back in its reviews, once the maintainer has
+answered, as said below.
 
 What a review finds is fixed if valid: a bug, a break of a rule or a decision, a missing test, or one that does not execute what
 it claims. A detail may be let go for a stated reason, and needs no new push: naming, layout and wording with no consequence,
@@ -179,6 +180,14 @@ in samples and the sample's Vite plugin a bug that normal use does not meet, and
 neither security nor stability (`docs/PLAN.md`, Decided), but for undefined behaviour, lifetimes and data
 races, which are always fixed. A finding that is wrong says why. When it is unclear which of these a point is, for one saying it
 is a bug in particular, the maintainer decides; such an RFC corner, even labelled a bug, needs no decision of theirs.
+
+When a round of review on a pull request, local or Codex's, finds a kind of bug an earlier round on it found, the feature is
+what to change rather than each case. Name the kind, see what the references of its layer give for it (Beast, hyper and Go's
+net/http for HTTP, Capy and C++26's `std::execution` for `quoll::async`, Leptos, Dioxus, Solid and React Query for
+`quoll::ui`), and propose the change in Quoll to the maintainer, with the code a user would write, under Open questions in
+`docs/PLAN.md` or in the issue of its category. That pull request waits for their answer. What it fixed meanwhile, in
+Quoll or using it, stays as simple as it can and says in a comment what will replace it, with that entry or issue. Code
+stays understandable: a simpler design is worth more than a guard that covers one more case.
 
 If Codex has not completed a review of the last commit 30 minutes after the push or the opening of the PR, whichever is later,
 comment `@codex review`; 30 minutes later, the maintainer decides, who alone can lift the protection.
