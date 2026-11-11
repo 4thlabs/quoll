@@ -121,16 +121,16 @@ public:
   }
 
   /**
-   * @brief Reports an event of a node: runs what the element showing it has for `name`. An event for a node that is
-   * gone by now is ignored, as it may have been sent just before, and so is one coming after stop(): nothing would wait
-   * for its task.
-   */
-  /**
    * @brief Tells on_error of a failure that comes from outside the app's tasks, as a renderer's that happens once its
    * call has returned: a widget's module failing to load in a browser.
    */
   void report_failure(std::exception_ptr failure) const noexcept { core_.report_failure(std::move(failure)); }
 
+  /**
+   * @brief Reports an event of a node: runs what the element showing it has for `name`. An event for a node that is
+   * gone by now is ignored, as it may have been sent just before, and so is one coming after stop(): nothing would wait
+   * for its task.
+   */
   void dispatch(node_id id, std::string_view name, std::string value = {}) {
     core_.dispatch(id, name, std::move(value));
   }

@@ -206,6 +206,17 @@ addToLibrary({
     });
   },
 
+  // Whether `node` is `ancestor` or within it, in the page as in the tests' DOM.
+  $quollUiWithin: (node, ancestor) => {
+    for (let current = node; current; current = current.parentNode ?? current.parent) {
+      if (current === ancestor) {
+        return true;
+      }
+    }
+
+    return false;
+  },
+
   // Takes a widget out of its module: nothing it emits reaches the app afterwards. True when its unmount threw.
   $quollUiUnmountWidget: (ui, id) => {
     const widget = ui.widgets.get(id);
@@ -247,11 +258,16 @@ addToLibrary({
   quoll_emscripten_ui_mount_widget: (instance, id, module, moduleSize, props, propsSize) => {
     const ui = quollUi.instances[instance];
     const path = UTF8ToString(module, moduleSize);
-    const load = globalThis.quollWidgets?.[path];
+    const registry = globalThis.quollWidgets;
+    // Its own keys only: a path such as "constructor" is not the registry's.
+    const load = registry && Object.hasOwn(registry, path) ? registry[path] : undefined;
 
-    if (!load) {
+    if (typeof load !== 'function') {
       return 1;
     }
+
+    // A node mounted again, by a renderer's user ahead of its view: the widget it held goes first.
+    quollUiUnmountWidget(ui, id);
 
     const widget = { props: UTF8ToString(props, propsSize), handle: null, gone: false };
 
@@ -313,7 +329,11 @@ addToLibrary({
 
         // Props given while its mount ran.
         if (widget.props !== mountedWith) {
-          widget.handle.update?.(JSON.parse(widget.props));
+          try {
+            widget.handle.update?.(JSON.parse(widget.props));
+          } catch (error) {
+            quollUiReport(ui, `quoll: the widget ${path} failed to update: ${error}`);
+          }
         }
       })
       .catch((error) => {
@@ -381,13 +401,21 @@ addToLibrary({
     delete quollUi.instances[instance];
   },
 
-  quoll_emscripten_ui_remove__deps: ['$quollUi', '$quollUiUnmountWidget'],
+  quoll_emscripten_ui_remove__deps: ['$quollUi', '$quollUiUnmountWidget', '$quollUiWithin'],
   quoll_emscripten_ui_remove: (instance, id) => {
     const ui = quollUi.instances[instance];
 
-    // Unmounted already, but by a renderer's user that did not: the module lets go of the node before it goes.
-    quollUiUnmountWidget(ui, id);
-    ui.nodes.get(id).remove();
+    // Unmounted already, but by a renderer's user that did not: the modules of the node, and of those within it, let go
+    // of them before they go.
+    const removed = ui.nodes.get(id);
+
+    for (const widget of [...ui.widgets.keys()]) {
+      if (quollUiWithin(ui.nodes.get(widget), removed)) {
+        quollUiUnmountWidget(ui, widget);
+      }
+    }
+
+    removed.remove();
     ui.nodes.delete(id);
 
     for (const key of ui.listeners.keys()) {

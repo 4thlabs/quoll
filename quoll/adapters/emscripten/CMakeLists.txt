@@ -21,6 +21,9 @@ set(quoll_emscripten_library_installed ${CMAKE_INSTALL_DATADIR}/quoll/quoll_emsc
 target_link_options(quoll_emscripten INTERFACE
   "SHELL:--js-library $<BUILD_INTERFACE:${quoll_emscripten_library}>$<INSTALL_INTERFACE:$<INSTALL_PREFIX>/${quoll_emscripten_library_installed}>"
 )
+# A change of it links its programs again, which hold it, as a change of a source would.
+set_property(TARGET quoll_emscripten APPEND PROPERTY INTERFACE_LINK_DEPENDS
+             $<BUILD_INTERFACE:${quoll_emscripten_library}>$<INSTALL_INTERFACE:$<INSTALL_PREFIX>/${quoll_emscripten_library_installed}>)
 
 if(QUOLL_INSTALL)
   install(FILES ${quoll_emscripten_library} DESTINATION ${CMAKE_INSTALL_DATADIR}/quoll)
@@ -34,6 +37,8 @@ if(QUOLL_BUILD_TESTS)
     "SHELL:--js-library ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_server.js"
     "SHELL:--js-library ${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_dom.js"
   )
+  set_property(TARGET quoll_emscripten_test_server APPEND PROPERTY INTERFACE_LINK_DEPENDS
+               ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_server.js ${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_dom.js)
 
   quoll_declare_tests(
     SOURCES

@@ -59,6 +59,7 @@ void quoll_test_widgets_install();
 void quoll_test_widgets_log(char *out, std::size_t size);
 void quoll_test_widgets_emit(char const *name, char const *value);
 void quoll_test_widgets_emit_circular();
+void quoll_test_widgets_release();
 }
 
 // Not in an unnamed namespace: Glaze, under Clang, reflects only types with linkage.
@@ -75,6 +76,14 @@ struct picked {
 };
 
 inline constexpr auto fake_chart = widget<chart_props>("./fake_chart.js", "canvas");
+
+// Charts whose modules fail: one the registry has not, one whose mount throws.
+inline constexpr auto missing_chart = widget<chart_props>("./missing.js", "canvas");
+inline constexpr auto failing_chart = widget<chart_props>("./failing_chart.js", "canvas");
+
+struct failing_charts {
+  element view() { return div({missing_chart({}), failing_chart({})}); }
+};
 
 // A chart, given more values or hidden by its buttons, and what it emits.
 struct charting {
@@ -397,7 +406,7 @@ TEST_CASE("dom_renderer: a widget's update or unmount that throws throws", "[ems
   REQUIRE_NOTHROW(shown.renderer.unmount_widget(1));
 }
 
-TEST_CASE("dom_renderer: a mount that awaits is updated and unmounted once it is done", "[emscripten][ui][widget]") {
+TEST_CASE("dom_renderer: props given while a mount awaits reach it once it is done", "[emscripten][ui][widget]") {
   quoll_test_dom_reset();
   quoll_test_widgets_install();
 
@@ -406,9 +415,47 @@ TEST_CASE("dom_renderer: a mount that awaits is updated and unmounted once it is
   shown.renderer.mount_widget(1, "./async_chart.js", R"({"values":[1]})");
   settle();
   shown.renderer.update_widget(1, R"({"values":[2]})");
-  shown.renderer.unmount_widget(1);
+  quoll_test_widgets_release();
+  settle();
 
-  REQUIRE(widget_log() == "mount canvas {\"values\":[1]}\nupdate {\"values\":[2]}\nunmount");
+  REQUIRE(widget_log() == "mount canvas {\"values\":[1]}\nupdate {\"values\":[2]}");
+}
+
+TEST_CASE("dom_renderer: one unmounted while its mount awaits has what it made unmounted", "[emscripten][ui][widget]") {
+  quoll_test_dom_reset();
+  quoll_test_widgets_install();
+
+  canvas_renderer shown;
+
+  shown.renderer.mount_widget(1, "./async_chart.js", R"({"values":[1]})");
+  settle();
+  shown.renderer.unmount_widget(1);
+  quoll_test_widgets_release();
+  settle();
+
+  REQUIRE(widget_log() == "mount canvas {\"values\":[1]}\nunmount");
+}
+
+TEST_CASE("dom_renderer: a node removed takes the widgets within it out, and one mounted again its first",
+          "[emscripten][ui][widget]") {
+  quoll_test_dom_reset();
+  quoll_test_widgets_install();
+
+  canvas_renderer shown;
+
+  shown.renderer.create_element(2, "div");
+  shown.renderer.create_element(3, "canvas");
+  shown.renderer.insert(2, 3, 0);
+  shown.renderer.insert(0, 2, 0);
+  shown.renderer.mount_widget(3, "./fake_chart.js", R"({"values":[3]})");
+  shown.renderer.mount_widget(1, "./fake_chart.js", R"({"values":[1]})");
+  settle();
+  shown.renderer.mount_widget(1, "./fake_chart.js", R"({"values":[2]})");
+  settle();
+  shown.renderer.remove(2);
+
+  REQUIRE(widget_log() == "mount canvas {\"values\":[3]}\nmount canvas {\"values\":[1]}\nunmount\n"
+                          "mount canvas {\"values\":[2]}\nunmount");
 }
 
 TEST_CASE("dom_renderer: a mount that fails is told to on_failure", "[emscripten][ui][widget]") {
@@ -438,4 +485,26 @@ TEST_CASE("dom_renderer: what JSON cannot hold, emitted, reaches nothing", "[ems
   settle();
 
   REQUIRE(shown.events == 1);
+}
+
+TEST_CASE("mount: a widget's module missing, or failing to mount, reaches on_error", "[emscripten][ui][widget]") {
+  quoll_test_dom_reset();
+  quoll_test_widgets_install();
+
+  static std::vector<std::string> failures;
+
+  quoll::ui::app_options options{.on_error = [](std::exception_ptr failure) {
+    try {
+      std::rethrow_exception(failure);
+    } catch (std::exception const &error) {
+      failures.emplace_back(error.what());
+    }
+  }};
+
+  quoll::emscripten::mount<dom_widgets::failing_charts>("#app", std::move(options));
+  settle();
+
+  REQUIRE(failures.size() == 2);
+  REQUIRE(failures[0].find("./missing.js") != std::string::npos);
+  REQUIRE(failures[1].find("no canvas here") != std::string::npos);
 }
