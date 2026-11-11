@@ -68,10 +68,7 @@ struct call_target {
   bool of_component = false;
 };
 
-// The context of the view running on this thread, empty outside one.
-[[nodiscard]] view_context const &current_view() noexcept;
-
-// What a callback made now holds.
+// What a callback made now holds, of the view running on this thread: nothing outside one.
 [[nodiscard]] call_target current_target() noexcept;
 
 // Makes `context` the current view's while it lives, then gives back the one before: views run one inside another.

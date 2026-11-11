@@ -93,7 +93,8 @@ guidelines and the C++ Core Guidelines.
 - Rule of zero. A type owning a resource (coroutine handle, thread...) explicitly defines or deletes all five
   special members, in the public section; move operations are `noexcept`.
 - `[[nodiscard]]` on observers, factories and awaitables; `noexcept` when it cannot throw; `explicit` on
-  single-argument and conversion constructors; observers are `const`.
+  single-argument and conversion constructors, but for a type standing for a function, as `ui::callback`, which a
+  lambda builds in a designated initializer as it builds a `std::function`; observers are `const`.
 - Static polymorphism (templates + concepts) by default; type erasure (see below) when runtime polymorphism is
   required. No `virtual` in value types.
 - Use the standard library: `std::optional`, `std::expected`, `std::variant`, `std::invoke`, `std::ranges`.

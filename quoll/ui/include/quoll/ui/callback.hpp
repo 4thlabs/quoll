@@ -37,6 +37,7 @@
 #ifndef QUOLL_UI_CALLBACK_HPP
 #define QUOLL_UI_CALLBACK_HPP
 
+#include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/end_stopped.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/detail/call_state.hpp>
@@ -53,6 +54,16 @@ namespace quoll::ui {
 
 template <class Signature>
 class callback;
+
+namespace detail {
+
+template <class T>
+inline constexpr bool is_callback = false;
+
+template <class Signature>
+inline constexpr bool is_callback<callback<Signature>> = true;
+
+} // namespace detail
 
 /**
  * @brief What a component gives a component of its view to call it back: a function of its own, which runs as one of
@@ -82,29 +93,34 @@ class callback;
  * stopped, or is gone, or the component is gone, a call ends on a stop and runs nothing: a callback holds its
  * component weakly, so that one kept by its own component leaves no cycle.
  *
- * Made outside a view, it runs the function as part of the caller's task. The function returns `R`, or a task of `R`;
- * the arguments are copied into the task. Every callback of one signature compares equal: it calls back a component,
- * which stays the same, so that props holding one compare by the rest.
+ * A caller already stopped starts nothing, and a work whose component is stopped before it starts does not run.
  *
- * Thread safety: none, as its app.
+ * Made outside a view, it runs the function as part of the caller's task. The function returns `R`, or a task of `R`;
+ * the arguments are copied into the task, and copies of a callback share its function. Every callback of one signature
+ * that calls something compares equal, whatever its function captures: it calls back a component, which stays the
+ * same, so that props holding one compare by the rest.
+ *
+ * Thread safety: none, as its app: called from a task on the app's executor, whose stop is asked for there, as those of
+ * the app's own tasks are.
  */
 template <class R, class... Args>
 class callback<R(Args...)> {
   using function_type = std::function<async::task<R>(Args...)>;
 
 public:
-  /** @brief A callback calling nothing: calling it throws `std::bad_function_call`. */
+  /** @brief A callback calling nothing: a call of it throws `std::bad_function_call`. */
   callback() = default;
 
   /** @brief Calls `function` back, in the task of the component whose view makes it. Implicit, as for std::function. */
   template <class F>
-    requires(!std::same_as<std::remove_cvref_t<F>, callback> && std::invocable<std::decay_t<F> &, Args...> &&
+    requires(!detail::is_callback<std::remove_cvref_t<F>> && std::invocable<std::decay_t<F> &, Args...> &&
              (std::same_as<std::invoke_result_t<std::decay_t<F> &, Args...>, async::task<R>> ||
               (std::is_void_v<R> && std::is_void_v<std::invoke_result_t<std::decay_t<F> &, Args...>>) ||
               (!std::is_void_v<R> && std::convertible_to<std::invoke_result_t<std::decay_t<F> &, Args...>, R>)) &&
              std::copy_constructible<std::decay_t<F>>)
   callback(F &&function) // NOLINT(google-explicit-constructor, hicpp-explicit-conversions)
-      : function_(adapt(std::forward<F>(function))), target_(detail::current_target()) {}
+      : function_(std::make_shared<function_type const>(adapt(std::forward<F>(function)))),
+        target_(detail::current_target()) {}
 
   /** @brief Calls it back, with copies of `args`: see the class. */
   [[nodiscard]] async::task<R> operator()(Args... args) const {
@@ -114,8 +130,10 @@ public:
   /** @brief Whether it calls something. */
   [[nodiscard]] explicit operator bool() const noexcept { return static_cast<bool>(function_); }
 
-  /** @brief Always: see the class. */
-  [[nodiscard]] friend bool operator==(callback const &, callback const &) noexcept { return true; }
+  /** @brief Whether both call something, or neither: see the class. */
+  [[nodiscard]] friend bool operator==(callback const &left, callback const &right) noexcept {
+    return static_cast<bool>(left.function_) == static_cast<bool>(right.function_);
+  }
 
 private:
   template <class F>
@@ -135,14 +153,25 @@ private:
   }
 
   // Owns what it needs: the callback may go before the task ends.
-  [[nodiscard]] static async::task<R> call(function_type function, detail::call_target target,
+  [[nodiscard]] static async::task<R> call(std::shared_ptr<function_type const> function, detail::call_target target,
                                            std::decay_t<Args>... args) {
+    if (!function) {
+      throw std::bad_function_call{};
+    }
+
+    // Stopped already: it asks for nothing.
+    auto const caller_stop = co_await async::current_stop_token();
+
+    if (caller_stop.stop_requested()) {
+      co_await async::detail::end_stopped{};
+    }
+
     if (!target.app) {
       if constexpr (std::is_void_v<R>) {
-        co_await function(std::move(args)...);
+        co_await (*function)(std::move(args)...);
         co_return;
       } else {
-        co_return co_await function(std::move(args)...);
+        co_return co_await (*function)(std::move(args)...);
       }
     }
 
@@ -159,16 +188,23 @@ private:
     }
   }
 
-  [[nodiscard]] static async::task<> work(function_type function, std::shared_ptr<detail::call_state<R>> state,
-                                          std::decay_t<Args>... args) {
+  [[nodiscard]] static async::task<> work(std::shared_ptr<function_type const> function,
+                                          std::shared_ptr<detail::call_state<R>> state, std::decay_t<Args>... args) {
     detail::call_end<R> end{std::move(state)};
+
+    // Its component stopped since the call was posted: it does not run, and the caller ends on the stop with it.
+    auto const component_stop = co_await async::current_stop_token();
+
+    if (component_stop.stop_requested()) {
+      co_return;
+    }
 
     try {
       if constexpr (std::is_void_v<R>) {
-        co_await function(std::move(args)...);
+        co_await (*function)(std::move(args)...);
         end.give({});
       } else {
-        end.give(co_await function(std::move(args)...));
+        end.give(co_await (*function)(std::move(args)...));
       }
     } catch (...) {
       if (!end.fail(std::current_exception())) {
@@ -177,7 +213,7 @@ private:
     }
   }
 
-  function_type function_;
+  std::shared_ptr<function_type const> function_;
   detail::call_target target_;
 };
 

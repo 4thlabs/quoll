@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/ui/detail/app_core.hpp>
+#include <quoll/ui/detail/instance.hpp>
 #include <quoll/ui/detail/view_context.hpp>
 
 #include <utility>
@@ -47,8 +48,6 @@ namespace {
 thread_local view_context current{}; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 } // namespace
-
-view_context const &current_view() noexcept { return current; }
 
 view_scope::view_scope(view_context context) noexcept : previous_(std::exchange(current, std::move(context))) {}
 
@@ -65,7 +64,8 @@ bool spawn_in(call_target const &target, async::task<> work) {
   auto *const core = target.app ? target.app->core : nullptr;
   auto owner = target.owner.lock();
 
-  if (core == nullptr || core->stopped() || (target.of_component && !owner)) {
+  // A component gone, or going, as its stop says: its work does not start.
+  if (core == nullptr || core->stopped() || (target.of_component && (!owner || owner->stop_token().stop_requested()))) {
     return false;
   }
 

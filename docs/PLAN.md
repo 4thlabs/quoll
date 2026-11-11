@@ -224,7 +224,10 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
 - Nested stateful components: done, `component<C>(props)` with its states kept by type and key, its props given anew,
   `mounted()` and `unmounted()`, and its tasks stopped as it goes (`docs/ui.md`). `ui::callback<Signature>` in props
   runs in the task of the component that wrote it, as decided on 2026-11-10: the child stops waiting for it as it
-  goes, the parent's work goes on. Next, a view skipped when neither props nor states changed.
+  goes, the parent's work goes on. Next, a view skipped when neither props nor states changed: a callback compares
+  equal whatever its function captures, as decided, so that a view skipped keeps the callback of the last view that
+  ran; one capturing what changes from a view to the next (`[id = item.id]` in a list without keys) would then call
+  with what it captured then, which that step decides how to meet.
 - Restoring the states after a rebuild, which the third level of hot reload still lacks.
 - How a page writes its names: `using namespace quoll::ui;` now sits in each `view()`, as the rules forbid it at
   namespace scope in a header.
