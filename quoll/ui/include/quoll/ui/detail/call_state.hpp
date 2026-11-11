@@ -41,8 +41,8 @@
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/async/detail/chain_owner.hpp>
 #include <quoll/async/detail/non_void.hpp>
+#include <quoll/async/detail/synchronized.hpp>
 #include <quoll/async/executor_ref.hpp>
-#include <quoll/async/task.hpp>
 #include <quoll/async/work_item.hpp>
 
 #include <coroutine>
@@ -55,45 +55,137 @@
 namespace quoll::ui::detail {
 
 // A call of a callback, between the task of the component that wrote it, which does the work, and the caller, which
-// waits for its end, or stops waiting.
+// waits for its end, or stops waiting. The work may end before the caller waits, and the caller's stop may come from
+// any thread: what both sides read is under one lock.
 //
-// Thread safety: none, as its app: both sides run on the app's executor.
+// Thread safety: any thread, each side once.
 template <class R>
-struct call_state {
-  bool done = false;
-  std::optional<async::detail::non_void_t<R>> value{};
-  std::exception_ptr failure{};
-  // What waits, while it does.
-  async::work_item *waiter = nullptr;
-  std::optional<async::executor_ref> executor{};
-  async::detail::chain_owner *chain = nullptr;
-
-  // The work has ended: wakes the caller, if it still waits. False when nothing waits. A post that throws ends the
-  // program, as nothing would be left to resume the caller.
-  bool end() noexcept {
-    done = true;
-
-    if (waiter == nullptr) {
-      return false;
-    }
-
-    executor->post(*std::exchange(waiter, nullptr));
-    return true;
+class call_state {
+public:
+  // The work's side. What it gave: wakes the caller, if it waits.
+  void give(async::detail::non_void_t<R> value) {
+    end([&](shared &state) { state.value.emplace(std::move(value)); });
   }
 
-  // The work will not end, stopped: the caller ends on the stop too, if it still waits.
+  // What it threw: false when the caller no longer waits, which the work then throws again, for its app to report.
+  [[nodiscard]] bool fail(std::exception_ptr failure) noexcept {
+    auto seen = false;
+
+    end([&](shared &state) noexcept {
+      state.failure = std::move(failure);
+      seen = !state.gone;
+    });
+
+    return seen;
+  }
+
+  // It ended on a stop, giving nothing: the caller ends on the stop too, now if it waits, or as it comes to.
   void abandon() noexcept {
-    if (waiter == nullptr) {
-      return;
+    auto *const chain = shared_.with([](shared &state) noexcept -> async::detail::chain_owner * {
+      state.stopped = true;
+
+      if (state.waiter == nullptr) {
+        return nullptr;
+      }
+
+      state.waiter = nullptr;
+      state.gone = true;
+      return state.chain;
+    });
+
+    if (chain != nullptr) {
+      async::detail::stop_chain(chain);
+    }
+  }
+
+  // The caller's side. Whether the work has given or thrown already.
+  [[nodiscard]] bool ready() const noexcept {
+    return shared_.with([](shared const &state) noexcept { return state.done && !state.stopped; });
+  }
+
+  // Waits on `item`, unless the work ended meanwhile: then false, and the caller goes on, or, the work stopped,
+  // stopped is set and the caller ends on the stop.
+  [[nodiscard]] bool wait(async::work_item &item, async::executor_ref executor, async::detail::chain_owner *chain,
+                          bool &stopped) {
+    return shared_.with([&](shared &state) {
+      stopped = state.stopped;
+
+      if (state.done || state.stopped) {
+        state.gone = state.stopped;
+        return false;
+      }
+
+      state.waiter = &item;
+      state.executor.emplace(executor);
+      state.chain = chain;
+      return true;
+    });
+  }
+
+  // The caller stops waiting on `item`: the chain to stop, if it still waited.
+  [[nodiscard]] async::detail::chain_owner *stop_waiting(async::work_item const &item) noexcept {
+    return shared_.with([&](shared &state) noexcept -> async::detail::chain_owner * {
+      if (state.waiter != &item) {
+        return nullptr;
+      }
+
+      state.waiter = nullptr;
+      state.gone = true;
+      return state.chain;
+    });
+  }
+
+  // What the work gave, or what it threw, thrown here.
+  [[nodiscard]] async::detail::non_void_t<R> take() {
+    auto [value, failure] =
+        shared_.with([](shared &state) { return std::pair{std::move(state.value), std::move(state.failure)}; });
+
+    if (failure) {
+      std::rethrow_exception(failure);
     }
 
-    waiter = nullptr;
-    async::detail::stop_chain(chain);
+    return std::move(*value);
   }
+
+private:
+  struct shared {
+    bool done = false;
+    bool stopped = false;
+    // The caller no longer waits: it stopped, or the work's stop ended it.
+    bool gone = false;
+    std::optional<async::detail::non_void_t<R>> value{};
+    std::exception_ptr failure{};
+    async::work_item *waiter = nullptr;
+    std::optional<async::executor_ref> executor{};
+    async::detail::chain_owner *chain = nullptr;
+  };
+
+  // Records the end under the lock, then posts the caller, if it waits, past it. A post that throws ends the program,
+  // as nothing would be left to resume the caller.
+  template <class F>
+  void end(F record) noexcept(noexcept(record(std::declval<shared &>()))) {
+    auto const woken =
+        shared_.with([&](shared &state) -> std::optional<std::pair<async::work_item *, async::executor_ref>> {
+          record(state);
+          state.done = true;
+
+          if (state.waiter == nullptr) {
+            return std::nullopt;
+          }
+
+          return std::pair{std::exchange(state.waiter, nullptr), *state.executor};
+        });
+
+    if (woken) {
+      [&]() noexcept { woken->second.post(*woken->first); }();
+    }
+  }
+
+  async::detail::synchronized<shared> shared_{};
 };
 
 // Ends the work's side of a call: what the work gave, or, destroyed without either, as the work ends on a stop, the
-// stop.
+// stop. Thread safety: none, as the work's frame it lives in.
 template <class R>
 class call_end {
 public:
@@ -105,28 +197,29 @@ public:
   call_end &operator=(call_end &&) = delete;
 
   ~call_end() {
-    if (!state_->done) {
+    if (!ended_) {
       state_->abandon();
     }
   }
 
   void give(async::detail::non_void_t<R> value) {
-    state_->value.emplace(std::move(value));
-    state_->end();
+    state_->give(std::move(value));
+    ended_ = true;
   }
 
-  // False when nothing waits for `failure`, which the work then throws again, for its app to report.
+  // False when nothing waits for `failure`: see call_state::fail.
   [[nodiscard]] bool fail(std::exception_ptr failure) noexcept {
-    state_->failure = std::move(failure);
-    return state_->end();
+    ended_ = true;
+    return state_->fail(std::move(failure));
   }
 
 private:
   std::shared_ptr<call_state<R>> state_;
+  bool ended_ = false;
 };
 
 // The caller's side: waits for the work to end, and gives what it gave. Ends on the caller's stop, which leaves the
-// work running.
+// work running. Thread safety: on the caller's executor, its stop from any thread, through call_state.
 template <class R>
 class [[nodiscard]] call_wait {
 public:
@@ -140,38 +233,44 @@ public:
   call_wait &operator=(call_wait const &) = delete;
   call_wait &operator=(call_wait &&) = delete;
 
-  // Destroyed with its frame, while it waits: the work no longer wakes it.
+  // Destroyed with its frame while it waits, the stop callback first: the work no longer wakes it.
   ~call_wait() {
-    if (state_ && state_->waiter == &item_) {
-      state_->waiter = nullptr;
+    on_stop_.reset();
+
+    if (state_) {
+      std::ignore = state_->stop_waiting(item_);
     }
   }
 
-  [[nodiscard]] bool await_ready() const noexcept { return state_->done; }
+  [[nodiscard]] bool await_ready() const noexcept { return state_->ready(); }
 
   // Touches nothing after stop_chain(), which may destroy this frame.
   [[nodiscard]] bool await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
+    auto stopped = false;
+
     if (context.stop_token.stop_requested()) {
       async::detail::stop_chain(context.owner);
       return true;
     }
 
     item_.handle = handle;
-    state_->waiter = &item_;
-    state_->executor.emplace(context.executor);
-    state_->chain = context.owner;
+
+    if (!state_->wait(item_, context.executor, context.owner, stopped)) {
+      if (stopped) {
+        async::detail::stop_chain(context.owner);
+        return true;
+      }
+
+      return false;
+    }
+
     on_stop_.emplace(context.stop_token, stopper{this});
     return true;
   }
 
   async::detail::non_void_t<R> await_resume() {
     on_stop_.reset();
-
-    if (state_->failure) {
-      std::rethrow_exception(state_->failure);
-    }
-
-    return std::move(*state_->value);
+    return state_->take();
   }
 
 private:
@@ -180,14 +279,9 @@ private:
 
     // The caller stops waiting; the work goes on. Touches nothing after stop_chain().
     void operator()() const noexcept {
-      auto &state = *self->state_;
-
-      if (state.waiter != &self->item_) {
-        return;
+      if (auto *const chain = self->state_->stop_waiting(self->item_)) {
+        async::detail::stop_chain(chain);
       }
-
-      state.waiter = nullptr;
-      async::detail::stop_chain(state.chain);
     }
   };
 
@@ -197,12 +291,6 @@ private:
 };
 
 static_assert(async::ContextAwaitable<call_wait<void>>);
-
-// A task giving `value` at once.
-template <class T>
-[[nodiscard]] async::task<T> ready(T value) {
-  co_return value;
-}
 
 } // namespace quoll::ui::detail
 

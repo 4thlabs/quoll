@@ -50,7 +50,8 @@
 
 namespace quoll::ui::detail {
 
-// What an expansion makes components with: the app's stop, which theirs follow, the link of their states, none for a
+// What an expansion makes components with: the app their callbacks call back, none for a view written once, the app's
+// stop, which theirs follow, the link of their states, none for a
 // view written once (to_html), and where what their unmounted() throws goes. Then what it found, for commit(): the
 // components it made, to mount once shown, and what changes for those it kept.
 struct expansion {
