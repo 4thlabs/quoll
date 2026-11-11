@@ -4,7 +4,7 @@
 set -euo pipefail
 
 sample="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-root="$(cd "$sample/../.." && pwd)"
+root="$(cd "$sample/../../.." && pwd)"
 
 # The cache volume of the dev container starts out owned by root.
 if [ ! -w "$HOME/.cache" ] && command -v sudo >/dev/null; then

@@ -312,6 +312,7 @@ thrown by what has no stop to end it, a closed socket or a read after a cancelle
 - [Streaming](streaming.md), for bodies that do not fit in memory, server-sent events and WebSocket.
 - [UI](ui.md), for a page in C++.
 - [Design decisions](design-decisions.md), for why Quoll works as it does.
-- [`samples/notes`](../samples/notes): a REST contract, its server and its client over TCP.
+- [`samples/notes`](../samples/notes): a REST contract, its server, its command line over TCP, and its page in a
+  browser.
 - [`samples/github`](../samples/github): a command-line program calling GitHub's API, natively and in Node: see
   [A command-line program](command-line.md).

@@ -34,47 +34,40 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// Serves the notes API over HTTP until Ctrl-C:
-//
-//   quoll_notes_server [port]      (8080 by default, 0 for any free port)
-//   curl -X POST localhost:8080/api/notes -H 'Content-Type: application/json' -d '{"text":"buy milk"}'
-//   curl 'localhost:8080/api/notes?contains=milk'
+// What the server does with each endpoint of the contract, in memory: the handlers rest::mount routes requests to.
+
+#ifndef QUOLL_SAMPLES_NOTES_SERVER_SERVICE_HPP
+#define QUOLL_SAMPLES_NOTES_SERVER_SERVICE_HPP
 
 #include "notes_api.hpp"
 
-#include <quoll/async.hpp>
-#include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
-#include <quoll/io/listen.hpp>
 #include <quoll/rest.hpp>
-#include <quoll/runtime.hpp>
-#include <quoll/server.hpp>
 
 #include <cstdint>
-#include <iostream>
 #include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
-namespace {
+namespace notes {
 
-// The notes, in memory. The runtime runs the requests on one thread: no lock.
-class notes_service {
+// The runtime runs the requests on one thread: no lock.
+class service {
 public:
-  std::vector<notes::note> operator()(notes::list, notes::note_filter filter) const {
-    std::vector<notes::note> found;
+  std::vector<note> operator()(list, note_filter filter) const {
+    std::vector<note> found;
 
-    for (auto const &[id, note] : notes_) {
-      if (!filter.contains || note.text.contains(*filter.contains)) {
-        found.push_back(note);
+    for (auto const &[id, item] : notes_) {
+      if (!filter.contains || item.text.contains(*filter.contains)) {
+        found.push_back(item);
       }
     }
 
     return found;
   }
 
-  notes::note operator()(notes::get, std::int64_t id) const {
+  note operator()(get, std::int64_t id) const {
     auto const found = notes_.find(id);
 
     if (found == notes_.end()) {
@@ -85,41 +78,20 @@ public:
     return found->second;
   }
 
-  notes::note operator()(notes::create, notes::new_note created) {
-    notes::note note{.id = next_id_++, .text = std::move(created.text)};
+  note operator()(create, new_note created) {
+    note item{.id = next_id_++, .text = std::move(created.text)};
 
-    notes_.emplace(note.id, note);
-    return note;
+    notes_.emplace(item.id, item);
+    return item;
   }
 
-  void operator()(notes::remove, std::int64_t id) { notes_.erase(id); }
+  void operator()(remove, std::int64_t id) { notes_.erase(id); }
 
 private:
-  std::map<std::int64_t, notes::note> notes_;
+  std::map<std::int64_t, note> notes_;
   std::int64_t next_id_ = 1;
 };
 
-// The program: the server lives in this coroutine, on the runtime. Listening first, then serving
-// (what quoll::http::server::listen does in one call), tells when the server is ready: once the address is printed.
-quoll::async::task<> serve_notes(std::uint16_t port) {
-  quoll::http::server server;
+} // namespace notes
 
-  quoll::rest::mount<notes::api>(server, notes_service{});
-
-  auto listener = co_await quoll::io::listen(port);
-
-  // With port 0, the system picks a free one.
-  std::cout << "notes API on http://localhost:" << listener.local_port().value_or(port) << "/api/notes" << std::endl;
-  co_await server.serve(std::move(listener));
-  std::cout << "stopped\n";
-}
-
-} // namespace
-
-int main(int argc, char **argv) {
-  auto const port = static_cast<std::uint16_t>(argc > 1 ? std::stoi(argv[1]) : 8080);
-  quoll::runtime runtime;
-
-  // Ctrl-C stops the token, which ends the server.
-  return runtime.run(serve_notes(port));
-}
+#endif // QUOLL_SAMPLES_NOTES_SERVER_SERVICE_HPP

@@ -111,10 +111,14 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   fetch and WebSocket, aiohttp's and Node's servers, nginx as a proxy, and Autobahn's WebSocket suite each way. `interop.yml`
   runs it every night, and on a PR touching it only.
 - `samples/<sample>/`: small programs using Quoll, built when `QUOLL_BUILD_SAMPLES` is ON (default when top-level).
-  `samples/notes` (native): a REST contract, its server and its client over TCP; with tests ON, the ctest
-  `notes_round_trip` runs them against each other. `samples/ui_notes` (Emscripten): the same contract in a browser.
+  `samples/notes`: a REST contract in `api/`, its server in `server/` and its command line in `cli/` (native), and its
+  page in `web/` (Emscripten); with tests ON, the ctest `notes_round_trip` runs the server and the command line against
+  each other.
   `samples/github`: a command-line program calling GitHub's API, natively and in Node through `fetch`; the ctest
   `github_against_fake` runs it against a fake GitHub served by Quoll.
+- `tools/vite-plugin/`: the Vite plugin a page's build goes through: it builds the C++ with CMake, serves and reloads it,
+  and makes the registry of its JavaScript widgets. Under Emscripten, the ctest `vite_plugin_widget_registry` runs its
+  test in Node.
 - With tests ON, every header is also compiled alone in its own translation unit (`quoll_<module>_header_check`),
   so a header that is not self-contained breaks the build (`QUOLL_HEADER_CHECKS`, ON by default).
 - `docs/`: the guides for users, one Markdown file per subject, listed in the `README.md`, beside `PLAN.md`, `CODING_RULES.md` and `BENCHMARKS.md`.

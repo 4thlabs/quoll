@@ -1,21 +1,41 @@
-add_executable(quoll_notes_server server.cpp)
-target_link_libraries(quoll_notes_server PRIVATE quoll::rest quoll::runtime quoll::server)
+# The notes: one REST contract (api/), served by server/, called by cli/ natively and by the page in web/ in a browser.
 
-add_executable(quoll_notes_client client.cpp)
-target_link_libraries(quoll_notes_client PRIVATE quoll::rest quoll::runtime)
+# The contract, which every face includes.
+add_library(quoll_notes_api INTERFACE)
+target_include_directories(quoll_notes_api INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/api)
+target_link_libraries(quoll_notes_api INTERFACE quoll::rest)
+
+# The components of the page, headers only. The test of the page runs them natively, in place of the calls of
+# web/notes_client.cpp, which go through fetch.
+add_library(quoll_notes_web_components INTERFACE)
+target_include_directories(quoll_notes_web_components INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/web)
+target_link_libraries(quoll_notes_web_components INTERFACE quoll_notes_api quoll::ui)
+
+quoll_declare_tests(SOURCES tests/notes_page_test.cpp DEPS quoll_notes_web_components)
+
+if(EMSCRIPTEN)
+  add_subdirectory(web)
+  return()
+endif()
+
+add_executable(quoll_notes_server server/main.cpp)
+target_link_libraries(quoll_notes_server PRIVATE quoll_notes_api quoll::runtime quoll::server)
+
+add_executable(quoll_notes_cli cli/main.cpp)
+target_link_libraries(quoll_notes_cli PRIVATE quoll_notes_api quoll::runtime)
 
 # What dangles is an error in a sample too.
 if(TARGET quoll_warnings)
   target_link_libraries(quoll_notes_server PRIVATE quoll_warnings)
-  target_link_libraries(quoll_notes_client PRIVATE quoll_warnings)
+  target_link_libraries(quoll_notes_cli PRIVATE quoll_warnings)
 endif()
 
-# The whole session of the client against the server, over loopback TCP.
+# The whole session of the command line against the server, over loopback TCP.
 if(QUOLL_BUILD_TESTS AND UNIX)
   add_test(
     NAME notes_round_trip
-    COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/round_trip.sh $<TARGET_FILE:quoll_notes_server>
-            $<TARGET_FILE:quoll_notes_client>
+    COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/round_trip.sh $<TARGET_FILE:quoll_notes_server>
+            $<TARGET_FILE:quoll_notes_cli>
   )
   set_tests_properties(notes_round_trip PROPERTIES RESOURCE_LOCK quoll_ports)
 endif()

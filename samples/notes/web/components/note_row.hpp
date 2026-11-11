@@ -34,34 +34,45 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The contract of the notes API, shared by the server and the client: types and endpoints, no I/O.
+// One note of the list, which asks the page to remove it.
 
-#ifndef QUOLL_SAMPLES_NOTES_API_HPP
-#define QUOLL_SAMPLES_NOTES_API_HPP
+#ifndef QUOLL_SAMPLES_NOTES_WEB_COMPONENTS_NOTE_ROW_HPP
+#define QUOLL_SAMPLES_NOTES_WEB_COMPONENTS_NOTE_ROW_HPP
 
 #include "note.hpp"
 
-#include <quoll/http/status.hpp>
-#include <quoll/http/verb.hpp>
-#include <quoll/rest.hpp>
+#include <quoll/ui.hpp>
 
 #include <cstdint>
-#include <vector>
 
-namespace notes {
+namespace notes_web {
 
-namespace http = quoll::http;
-namespace rest = quoll::rest;
+using quoll::ui::callback;
+using quoll::ui::element;
 
-using list = rest::endpoint<"notes.list", http::verb::get, "/", rest::query_params<note_filter>,
-                            rest::returns<std::vector<note>>>;
-using get = rest::endpoint<"notes.get", http::verb::get, "/{id:int64}", rest::returns<note>>;
-using create = rest::endpoint<"notes.create", http::verb::post, "/", rest::body<new_note>,
-                              rest::returns<note, http::status::created>>;
-using remove = rest::endpoint<"notes.remove", http::verb::delete_, "/{id:int64}">;
+struct note_row {
+  struct props {
+    notes::note item;
+    callback<void(std::int64_t)> on_remove;
 
-using api = rest::api<"/api/notes", list, get, create, remove>;
+    // A row whose note has not changed is not viewed again.
+    [[nodiscard]] bool operator==(props const &) const = default;
+  };
 
-} // namespace notes
+  element view(props const &given) {
+    using namespace quoll::ui;
 
-#endif // QUOLL_SAMPLES_NOTES_API_HPP
+    auto const remove = [&given] { return given.on_remove(given.item.id); };
+
+    auto const row = li({
+        span(given.item.text) | tw("flex-1"),
+        button("Delete") | tw("btn btn-ghost btn-sm") | on_click(remove),
+    });
+
+    return row | tw("flex items-center gap-2 rounded-box bg-base-100 px-4 py-2 shadow-sm");
+  }
+};
+
+} // namespace notes_web
+
+#endif // QUOLL_SAMPLES_NOTES_WEB_COMPONENTS_NOTE_ROW_HPP
