@@ -297,7 +297,34 @@ export function widgetRegistry(files) {
 const registryId = 'virtual:quoll-widgets';
 const resolvedRegistryId = `\0${registryId}`;
 
-export function quoll({ target, sources, buildDir = 'build' }) {
+// The debug information of a development build, by `debug`: file and line in a trace by default, which halves what the
+// backend writes; `full` for variables in the browser's debugger, `none` for the shortest rebuilds.
+const debugFlags = { lines: '-gline-tables-only', full: '-g', none: '-g0' };
+
+// The CMake options of a development build: hot reload, and the debug information `debug` names.
+export function developmentOptions(debug = 'lines') {
+  if (!Object.hasOwn(debugFlags, debug)) {
+    throw new Error(`quoll: debug is one of ${Object.keys(debugFlags).join(', ')}, not ${debug}`);
+  }
+
+  return [
+    '-DCMAKE_BUILD_TYPE=Debug',
+    `-DCMAKE_C_FLAGS_DEBUG=${debugFlags[debug]}`,
+    `-DCMAKE_CXX_FLAGS_DEBUG=${debugFlags[debug]}`,
+    '-DQUOLL_UI_HOT=ON',
+  ];
+}
+
+// Whether a path is in one of these directories, or one of them: compared as paths, not as globs, which a directory
+// named with brackets or parentheses would break.
+export function within(directories) {
+  return (path) => directories.some((directory) => path === directory || path.startsWith(directory + sep));
+}
+
+export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) {
+  // At once: a wrong option is told as Vite starts, not at the first build.
+  const development = developmentOptions(debug);
+
   const base = process.cwd();
   const configured = new Set();
 
@@ -321,6 +348,12 @@ export function quoll({ target, sources, buildDir = 'build' }) {
 
   return {
     name: 'quoll',
+
+    // Its build directories, which CMake fills with files that come and go, are not the page's: watching them is no use,
+    // and a file gone between being listed and being watched stops Vite.
+    config() {
+      return { server: { watch: { ignored: within([resolve(base, buildDir), resolve(base, `${buildDir}-release`)]) } } };
+    },
 
     resolveId(id) {
       return id === registryId ? resolvedRegistryId : null;
@@ -368,7 +401,7 @@ export function quoll({ target, sources, buildDir = 'build' }) {
         const started = Date.now();
         // Before the build: a save during it then differs from this, and is not taken for what was compiled.
         const sources = watched.map((file) => [file, read(file)]);
-        const built = await build(dir, ['-DCMAKE_BUILD_TYPE=Debug', '-DQUOLL_UI_HOT=ON']);
+        const built = await build(dir, development);
 
         failed = built.code !== 0;
 

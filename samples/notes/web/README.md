@@ -33,7 +33,8 @@ and Windows, where a shared folder does not always report its changes.
 Do not run `npm` on the host in this folder: `node_modules` holds the container's binaries.
 
 In the dev container, or with Emscripten, Node and a C++23 compiler at hand, `samples/notes/web/dev.sh` is enough: it
-builds and starts the notes server on port 8080, then Vite on port 5173, which sends `/api` to the server.
+builds and starts the notes server on port 8080, then Vite on port 5173, which sends `/api` to the server. It runs
+[`tools/vite-plugin/dev.sh`](../../../tools/vite-plugin/dev.sh), which the other pages share.
 
 ## Try hot reload
 
@@ -45,19 +46,22 @@ Add a note, start typing another one, and change a component in your editor:
 | `tw("btn btn-primary")` to `tw("btn btn-secondary")` | shows at once | stays |
 | `tw("text-4xl font-bold")` to `tw("text-4xl font-bold text-rose-500")`, in `notes_page.hpp`, a class not used yet | Tailwind generates it, and it shows at once | stays |
 | A comment, or spaces | nothing | stays |
-| Anything else, such as adding a `state` | a rebuild of about a second, then the page reloads | **lost** |
+| Anything else, such as adding a `state` | a rebuild of about 1.5 s, then the page reloads | **lost** |
 | `int x = oops;` | the compiler's first error, over the page | |
 
 ## Keep rebuilds short
 
-The page lives in headers, with no source of its own but `main.cpp`. Two things keep its rebuilds short:
+The page lives in headers, with no source of its own but `main.cpp`. Three things keep its rebuilds short:
 
 - **Quoll, precompiled:** `target_precompile_headers` in `CMakeLists.txt`. This only tells the compiler to parse it once.
 - **REST and JSON in a source apart:** `notes_client.cpp`, which compiles only when a call changes. It relays the contract
   by hand for now; it could be generated from it.
+- **Line tables, not full debug information:** what the plugin's `debug` option gives by default, `'lines'`: a trace
+  still names files and lines. `debug: 'full'` in `vite.config.js` gives the browser's debugger the variables too, for
+  rebuilds half as long again; `'none'` gives the shortest.
 
-Measured from a save to the end of the build, for a change in the page, on one machine with 8 cores: 3.9 s with everything
-in one source and nothing precompiled, about 0.8 s with these two.
+Measured on a 4-core i5, for a change in the page: compiling `main.cpp` takes 1.1 s, 1.65 s with full debug information,
+and linking 0.4 s.
 
 ## Build for production
 

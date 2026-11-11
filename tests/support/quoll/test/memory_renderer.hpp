@@ -204,6 +204,12 @@ public:
 
   [[nodiscard]] std::vector<std::string> events(ui::node_id id) const { return state_->nodes.at(id).events; }
 
+  /** @brief The element holding `id`: a row's button from the text of its label, through find_text(). */
+  [[nodiscard]] ui::node_id parent(ui::node_id id) const { return state_->nodes.at(id).parent; }
+
+  /** @brief What `id` holds, in order. */
+  [[nodiscard]] std::vector<ui::node_id> children(ui::node_id id) const { return state_->nodes.at(id).children; }
+
 private:
   struct node {
     std::string tag{};

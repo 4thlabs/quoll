@@ -114,11 +114,13 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   `samples/notes`: a REST contract in `api/`, its server in `server/` and its command line in `cli/` (native), and its
   page in `web/` (Emscripten); with tests ON, the ctest `notes_round_trip` runs the server and the command line against
   each other.
+  `samples/dashboard`: a screen of an application over a products contract, its server (native) and its page (Emscripten):
+  a list to filter, a detail to edit and a chart.js widget; its service and its page are tested in `quoll_tests`.
   `samples/github`: a command-line program calling GitHub's API, natively and in Node through `fetch`; the ctest
   `github_against_fake` runs it against a fake GitHub served by Quoll.
 - `tools/vite-plugin/`: the Vite plugin a page's build goes through: it builds the C++ with CMake, serves and reloads it,
-  and makes the registry of its JavaScript widgets. Under Emscripten, the ctest `vite_plugin_widget_registry` runs its
-  test in Node.
+  and makes the registry of its JavaScript widgets; and `dev.sh`, which a page's `dev.sh` runs with its server. Under
+  Emscripten, the ctest `vite_plugin` runs its tests in Node.
 - With tests ON, every header is also compiled alone in its own translation unit (`quoll_<module>_header_check`),
   so a header that is not self-contained breaks the build (`QUOLL_HEADER_CHECKS`, ON by default).
 - `docs/`: the guides for users, one Markdown file per subject, listed in the `README.md`, beside `PLAN.md`, `CODING_RULES.md` and `BENCHMARKS.md`.
