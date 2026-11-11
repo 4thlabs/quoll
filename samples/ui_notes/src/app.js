@@ -36,6 +36,10 @@
 
 
 import './style.css';
+import widgets from 'virtual:quoll-widgets';
+
+// The JavaScript widgets of the program, by the path its C++ gives each: loaded on demand, as one first shows.
+globalThis.quollWidgets = widgets;
 
 // The program compiled from C++. It shows itself in #app, from its main().
 const program = document.createElement('script');

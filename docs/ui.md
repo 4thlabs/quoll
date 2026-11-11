@@ -236,7 +236,8 @@ compile. A pointer, or a view inside another type, still points to what the call
 ## JavaScript widgets
 
 A JavaScript library, as chart.js, shows in a node of the view that the app leaves to it: a widget. It is declared
-once, with the module that mounts it, the tag of its node and its props:
+once, with the module that mounts it, as an import would name it from the C++ file declaring it, the tag of its node
+and its props:
 
 ```cpp
 struct chart_props {
@@ -248,7 +249,7 @@ struct point_selected {
   int index;
 };
 
-inline constexpr auto line_chart = widget<chart_props>("./widgets/line_chart.js", "canvas");
+inline constexpr auto line_chart = widget<chart_props>("./src/widgets/line_chart.js", "canvas");
 
 struct sales_page {
   state<std::vector<double>> sales;
@@ -266,7 +267,8 @@ struct sales_page {
 };
 ```
 
-The module exports `mount(node, props, emit)`, which returns `update(props)` and `unmount()`:
+The module, `src/widgets/line_chart.js` here, exports `mount(node, props, emit)`, which returns `update(props)` and
+`unmount()`:
 
 ```js
 import { Chart } from "chart.js/auto";
@@ -303,9 +305,20 @@ export function mount(node, props, emit) {
   leaving the fields it does not declare. A value that is not that JSON goes to `on_error`.
 - **Its node is the module's:** the element takes classes, attributes and events, no children. `to_html` writes it
   empty, for the module to mount once the page is live.
-- **The renderer shows it:** a `WidgetRenderer`. The browser's renderer shows widgets from the next step of
-  [the roadmap](PLAN.md#step-6-the-ui-dsl-complete), with the modules loaded on demand by the Vite plugin; a widget
-  placed through a renderer that shows none throws `std::logic_error`.
+- **Its module loads on demand.** The Vite plugin of the sample finds the widgets of the C++ sources it is given, and
+  makes their registry, `virtual:quoll-widgets`, which the page sets before the program starts:
+
+  ```js
+  import widgets from "virtual:quoll-widgets";
+
+  globalThis.quollWidgets = widgets;
+  ```
+
+  Each module is a chunk of the build, loaded as its first widget shows. `mount` then runs with the props the widget
+  holds by then; one unmounted while its module loads is never mounted.
+- **Failures:** a widget whose module the registry does not have, or whose `update` or `unmount` throws, goes to
+  `on_error`; a module that fails to load or to mount is written to the console, as it happens once the render has
+  gone on. A widget placed through a renderer that shows none, a `WidgetRenderer`, throws `std::logic_error`.
 
 ## HTML
 
@@ -343,7 +356,7 @@ anything else by a rebuild that reloads the page, losing its state. To try it, s
 
 From [step 6](PLAN.md#step-6-the-ui-dsl-complete) of the roadmap:
 
-- JavaScript widgets in the browser: the browser's renderer, and their modules loaded on demand by the Vite plugin.
+- A handle on a widget, for what is not a prop, as writing to a terminal.
 - Base components.
 - Making a page written by `to_html` live (hydration): a `value` on a `select` selects nothing yet.
 - Restoring the states after a rebuild.

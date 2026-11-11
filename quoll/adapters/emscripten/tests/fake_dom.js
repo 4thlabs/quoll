@@ -171,6 +171,44 @@ addToLibrary({
     target.listeners.get('click')({ target });
   },
 
+  // A registry of widgets, as the Vite plugin makes, with one module: a chart that logs what it is asked, and keeps its
+  // emit for quoll_test_widgets_emit.
+  quoll_test_widgets_install__deps: ['$quollFakeDom'],
+  quoll_test_widgets_install: () => {
+    quollFakeDom.widgetLog = [];
+    quollFakeDom.emit = null;
+    globalThis.quollWidgets = {
+      './fake_chart.js': () =>
+        Promise.resolve({
+          mount(node, props, emit) {
+            quollFakeDom.widgetLog.push(`mount ${node.tag} ${JSON.stringify(props)}`);
+            quollFakeDom.emit = emit;
+
+            return {
+              update(props) {
+                quollFakeDom.widgetLog.push(`update ${JSON.stringify(props)}`);
+              },
+              unmount() {
+                quollFakeDom.widgetLog.push('unmount');
+              },
+            };
+          },
+        }),
+    };
+  },
+
+  // What the widgets were asked, one per line, into `out`, of `size` bytes.
+  quoll_test_widgets_log__deps: ['$quollFakeDom', '$stringToUTF8'],
+  quoll_test_widgets_log: (out, size) => {
+    stringToUTF8(quollFakeDom.widgetLog.join('\n'), out, size);
+  },
+
+  // What the last widget mounted emits: `name`, and `value`, JSON.
+  quoll_test_widgets_emit__deps: ['$quollFakeDom', '$UTF8ToString'],
+  quoll_test_widgets_emit: (name, value) => {
+    quollFakeDom.emit(UTF8ToString(name), JSON.parse(UTF8ToString(value)));
+  },
+
   // Types this text in the first input.
   quoll_test_dom_type__deps: ['$quollFakeDom', '$UTF8ToString'],
   quoll_test_dom_type: (text) => {

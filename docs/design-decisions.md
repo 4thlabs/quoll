@@ -243,7 +243,7 @@ from a view to the next, as `this`, and pass the rest as props.
 **Taken.** A widget: a JavaScript module exports `mount(node, props, emit)`, which returns `update(props)` and
 `unmount()`; its props go as JSON, what it emits comes back as an event of its node, read into a C++ type. This is the
 form of Phoenix LiveView's hooks, with typed props and events. Plain DOM libraries and web components come this way.
-The C++ side is there; the browser's renderer and the modules loaded on demand come next (see [UI](ui.md#what-it-lacks)).
+Its module is named as an import from the C++ file declaring it, which lets the bundler load it on demand.
 
 **Set aside.** Porting the libraries to C++, which would never end. Libraries tied to React, which cannot come.
 

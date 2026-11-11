@@ -66,7 +66,7 @@ addToLibrary({
   },
 
   // The interfaces of the page, by instance: their nodes by id (0 is the element they are mounted in), the listeners of
-  // those nodes, and what events call.
+  // those nodes, their widgets by node, and what events call.
   $quollUi: {
     next: 1,
     instances: {},
@@ -82,7 +82,13 @@ addToLibrary({
 
     const instance = quollUi.next++;
 
-    quollUi.instances[instance] = { nodes: new Map([[0, root]]), listeners: new Map(), dispatch: 0, owner: 0 };
+    quollUi.instances[instance] = {
+      nodes: new Map([[0, root]]),
+      listeners: new Map(),
+      widgets: new Map(),
+      dispatch: 0,
+      owner: 0,
+    };
     return instance;
   },
 
@@ -177,9 +183,120 @@ addToLibrary({
     nodes.get(parent).insertBefore(nodes.get(child), before === 0 ? null : nodes.get(before));
   },
 
+  // A widget: its module, loaded from the registry the page sets in globalThis.quollWidgets (the Vite plugin makes it),
+  // mounted once loaded with the props it holds then, the last an update gave. 1 when the registry has no such module.
+  quoll_emscripten_ui_mount_widget__deps: ['$quollUi', '$UTF8ToString', '$stringToNewUTF8', '$callUserCallback', 'free'],
+  quoll_emscripten_ui_mount_widget: (instance, id, module, moduleSize, props, propsSize) => {
+    const ui = quollUi.instances[instance];
+    const path = UTF8ToString(module, moduleSize);
+    const load = globalThis.quollWidgets?.[path];
+
+    if (!load) {
+      return 1;
+    }
+
+    const widget = { props: UTF8ToString(props, propsSize), handle: null, gone: false };
+
+    // What the module emits is an event of its node, its value as JSON; nothing once it is unmounted.
+    const emit = (name, value) => {
+      if (widget.gone) {
+        return;
+      }
+
+      callUserCallback(() => {
+        const namePointer = stringToNewUTF8(String(name));
+        const valuePointer = stringToNewUTF8(JSON.stringify(value ?? null));
+
+        try {
+          {{{ makeDynCall('vpipp', 'ui.dispatch') }}}(ui.owner, id, namePointer, valuePointer);
+        } finally {
+          _free(namePointer);
+          _free(valuePointer);
+        }
+      });
+    };
+
+    ui.widgets.set(id, widget);
+    {{{ runtimeKeepalivePush() }}}
+
+    Promise.resolve()
+      .then(load)
+      .then((loaded) => {
+        // Unmounted while it loaded: nothing to mount.
+        if (!widget.gone) {
+          widget.handle = loaded.mount(ui.nodes.get(id), JSON.parse(widget.props), emit) ?? {};
+        }
+      })
+      .catch((error) => console.error(`quoll: the widget ${path} failed to load or to mount`, error))
+      .finally(() => {
+        {{{ runtimeKeepalivePop() }}}
+      });
+
+    return 0;
+  },
+
+  // Kept for its mount while it loads. 1 when its update threw, which the console shows.
+  quoll_emscripten_ui_update_widget__deps: ['$quollUi', '$UTF8ToString'],
+  quoll_emscripten_ui_update_widget: (instance, id, props, size) => {
+    const widget = quollUi.instances[instance].widgets.get(id);
+
+    if (!widget) {
+      return 0;
+    }
+
+    widget.props = UTF8ToString(props, size);
+
+    if (!widget.handle?.update) {
+      return 0;
+    }
+
+    try {
+      widget.handle.update(JSON.parse(widget.props));
+      return 0;
+    } catch (error) {
+      console.error('quoll: a widget failed to update', error);
+      return 1;
+    }
+  },
+
+  // 1 when its unmount threw, which the console shows: it is gone all the same.
+  quoll_emscripten_ui_unmount_widget__deps: ['$quollUi'],
+  quoll_emscripten_ui_unmount_widget: (instance, id) => {
+    const ui = quollUi.instances[instance];
+    const widget = ui.widgets.get(id);
+
+    if (!widget) {
+      return 0;
+    }
+
+    ui.widgets.delete(id);
+    widget.gone = true;
+
+    try {
+      widget.handle?.unmount?.();
+      return 0;
+    } catch (error) {
+      console.error('quoll: a widget failed to unmount', error);
+      return 1;
+    }
+  },
+
   quoll_emscripten_ui_close__deps: ['$quollUi'],
   quoll_emscripten_ui_close: (instance) => {
     const ui = quollUi.instances[instance];
+
+    // Its widgets first, which their nodes hold.
+    for (const widget of ui.widgets.values()) {
+      widget.gone = true;
+
+      try {
+        widget.handle?.unmount?.();
+      } catch (error) {
+        console.error('quoll: a widget failed to unmount', error);
+      }
+    }
+
+    ui.widgets.clear();
 
     for (const [key, listener] of ui.listeners) {
       const separator = key.indexOf(':');
@@ -203,6 +320,7 @@ addToLibrary({
 
     ui.nodes.get(id).remove();
     ui.nodes.delete(id);
+    ui.widgets.delete(id);
 
     for (const key of ui.listeners.keys()) {
       if (key.startsWith(`${id}:`)) {

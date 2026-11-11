@@ -35,7 +35,8 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-// A prototype of the planned `quoll/vite` plugin: builds a program of C++ with CMake, serves it, and reloads it.
+// The planned `quoll/vite` plugin, while it lives in this sample: builds a program of C++ with CMake, serves it,
+// reloads it, and makes the registry of its JavaScript widgets (virtual:quoll-widgets), each module loaded on demand.
 //
 // Three levels, from the cheapest:
 // 1. CSS: Vite and Tailwind's own plugin, which reads the C++ for class names.
@@ -245,6 +246,40 @@ export function firstError(output) {
   return first < 0 ? output : lines.slice(first).join('\n');
 }
 
+// The paths of the widgets a C++ source declares, `widget<Props>("./path.js", "tag")`, in the order they come.
+export function widgetPaths(source) {
+  return [...source.matchAll(/\bwidget\s*<[\s\S]*?>\s*\(\s*"([^"\\]+)"/g)].map((match) => match[1]);
+}
+
+// The registry the page sets as globalThis.quollWidgets: each path a source declares, resolved from that source as an
+// import would be, to a function importing its module, which a build makes a chunk loaded on demand. `files` are the
+// sources, with their text; `root` is Vite's. Throws for one path given to two modules.
+export function widgetRegistry(files, root) {
+  const modules = new Map();
+
+  for (const [file, text] of files) {
+    for (const path of widgetPaths(text)) {
+      const module = resolve(dirname(file), path);
+      const known = modules.get(path);
+
+      if (known !== undefined && known !== module) {
+        throw new Error(`quoll: the widget ${path} names ${known} and ${module}`);
+      }
+
+      modules.set(path, module);
+    }
+  }
+
+  const entries = [...modules].map(
+    ([path, module]) => `  ${JSON.stringify(path)}: () => import(${JSON.stringify(`/${relative(root, module)}`)}),`,
+  );
+
+  return `export default {\n${entries.join('\n')}\n};\n`;
+}
+
+const registryId = 'virtual:quoll-widgets';
+const resolvedRegistryId = `\0${registryId}`;
+
 export function quoll({ target, sources, buildDir = 'build' }) {
   const base = process.cwd();
   const configured = new Set();
@@ -267,8 +302,35 @@ export function quoll({ target, sources, buildDir = 'build' }) {
   const artifact = (dir, extension) =>
     join(dir, relative(root, base), `${target}${extension}`);
 
+  let viteRoot = base;
+
   return {
     name: 'quoll',
+
+    configResolved(config) {
+      viteRoot = config.root;
+    },
+
+    resolveId(id) {
+      return id === registryId ? resolvedRegistryId : null;
+    },
+
+    load(id) {
+      if (id !== resolvedRegistryId) {
+        return null;
+      }
+
+      const files = sources.map((source) => resolve(base, source));
+
+      for (const file of files) {
+        this.addWatchFile(file);
+      }
+
+      return widgetRegistry(
+        files.map((file) => [file, readFileSync(file, 'utf8')]),
+        viteRoot,
+      );
+    },
 
     async configureServer(server) {
       const dir = resolve(base, buildDir);
@@ -356,6 +418,13 @@ export function quoll({ target, sources, buildDir = 'build' }) {
       server.watcher.on('change', async (file) => {
         if (!watched.includes(file)) {
           return;
+        }
+
+        // Its widgets may have changed: the registry is made again as the page reloads.
+        const registry = server.moduleGraph.getModuleById(resolvedRegistryId);
+
+        if (registry) {
+          server.moduleGraph.invalidateModule(registry);
         }
 
         // After a failed build, whatever the source says now: the overlay goes when the page reloads.

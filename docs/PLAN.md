@@ -237,9 +237,9 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
 - Using the JavaScript libraries a page needs (charts, maps, editors, a terminal), a requirement whatever form the UI
   takes, said on 2026-11-07. The C++ side is done: `widget<Props>(module, tag)`, its node left to a JavaScript
   module's `mount`, `update` and `unmount`, its props as JSON, what it emits read by `on(name, function)` into the
-  function's parameter, and `WidgetRenderer` (2026-11-11, the form agreed with the maintainer). Next, the browser's
-  renderer and the Vite plugin's registry of modules, loaded on demand; then a handle for calls that are not props, as
-  writing to a terminal. As said then: a node the reconciler leaves alone, a lifecycle with an unmount, calls both ways, bytes passed
+  function's parameter, and `WidgetRenderer` (2026-11-11, the form agreed with the maintainer). In the browser too:
+  `dom_renderer` shows them, their modules from the registry the Vite plugin makes of the C++ sources, loaded on
+  demand. Next, a handle for calls that are not props, as writing to a terminal. As said then: a node the reconciler leaves alone, a lifecycle with an unmount, calls both ways, bytes passed
   without a copy where it counts, npm packages through the Vite build, loaded on demand. Plain DOM libraries and web
   components come this way; those tied to React cannot.
 - A trial on a real screen of an application, chosen with the maintainer at the start of this step: a dashboard
