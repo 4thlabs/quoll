@@ -73,6 +73,47 @@ struct notes_page {
 
 The full table, with Tailwind and the build, is in [the sample](../samples/ui_notes/README.md#the-api).
 
+## Components of a view
+
+A view may hold components of its own, each with states of its own, which the parent gives its props on each of its
+views. The component has a `struct props` and a `view(props const &)`; the parent places it with `component<C>(props)`:
+
+```cpp
+struct note_row {
+  struct props {
+    std::string text;
+  };
+
+  state<bool> done;
+
+  element view(props const &given) {
+    return li(given.text) | tw_if(*done, "line-through") | on_click([this] { done = !*done; });
+  }
+};
+
+struct notes_page {
+  state<std::vector<std::string>> items;
+
+  element view() {
+    return ul({list(items, [](std::string const &item) { return component<note_row>({.text = item}) | key(item); })});
+  }
+};
+```
+
+- **Its states are kept** from one view of the parent to the next, while it stays at the same place: its type and key
+  among the components of the parent's view, or its type and rank there without a key, so that one going hands its
+  states to the next of its type. `| key(...)` keeps each with its item as a list changes.
+- **Its props are given anew** on each view of the parent: what changes there shows in its view. `given` lives as
+  long as what that view made: a handler of it may keep a reference to it, until its task ends.
+- **It is decorated in its own view:** a component element takes a key and nothing else, and one decorated otherwise
+  throws `std::logic_error`.
+- **It comes and goes:** `task<> mounted()` runs once it first shows; once the parent's view no longer has it, its
+  tasks are asked to stop, `void unmounted()` runs, and it goes once they have ended, as what a stop does says
+  ([Async](async.md#stopping-a-task)). A handler of its view runs as one of its tasks, so the component outlives it.
+- A component with no props, a `view()` alone, is placed with `component<C>()`.
+- The app's own component may have a `void unmounted()` too: it runs as the app stops, after those of the components
+  of its view.
+
 ## HTML
 
 `to_html` writes the same interface as HTML, natively as under WebAssembly, for a page generated ahead
@@ -109,7 +150,6 @@ anything else by a rebuild that reloads the page, losing its state. To try it, s
 
 From [step 6](PLAN.md#step-6-the-ui-dsl-complete) of the roadmap:
 
-- Nested components with a state of their own: a component is the root of an app for now.
 - Base components.
 - Making a page written by `to_html` live (hydration): a `value` on a `select` selects nothing yet.
 - Restoring the states after a rebuild.

@@ -43,10 +43,18 @@
 #include <functional>
 #include <initializer_list>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace quoll::ui::detail {
+
+struct component_spec;
+class instance;
+
+} // namespace quoll::ui::detail
 
 namespace quoll::ui {
 
@@ -60,6 +68,10 @@ using event_handler = std::function<async::task<>(std::string value)>;
 struct event_binding {
   std::string name;
   event_handler handler;
+  // The component whose view made it, whose task its handler runs in: none for the app's own. And the props it was
+  // given for that view, which its handler may read: both kept until the handler's task ends.
+  std::shared_ptr<detail::instance> owner{};
+  std::shared_ptr<void const> props{};
 };
 
 /**
@@ -72,6 +84,8 @@ struct element {
     text,
     // Stands for its children, in its parent: what list() and when() make.
     fragment,
+    // A component of its own, with its props: component<C>() makes one, which the app replaces with its view.
+    component,
   };
 
   kind type = kind::node;
@@ -85,6 +99,8 @@ struct element {
   std::map<std::string, std::string> attributes{};
   std::vector<event_binding> events{};
   std::vector<element> children{};
+  // Of a component.
+  std::shared_ptr<detail::component_spec const> component{};
   // Given when the element is shown.
   node_id id = no_node;
 };

@@ -39,15 +39,19 @@
 
 #include <quoll/ui/app.hpp>
 #include <quoll/ui/app_options.hpp>
+#include <quoll/ui/child_component.hpp>
 #include <quoll/ui/component.hpp>
+#include <quoll/ui/component_with_props.hpp>
 #include <quoll/ui/decorators.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/event_function.hpp>
+#include <quoll/ui/mounted_component.hpp>
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/renderer.hpp>
 #include <quoll/ui/renderer_ref.hpp>
 #include <quoll/ui/state.hpp>
 #include <quoll/ui/tags.hpp>
 #include <quoll/ui/to_html.hpp>
+#include <quoll/ui/unmounted_component.hpp>
 
 #endif // QUOLL_UI_HPP

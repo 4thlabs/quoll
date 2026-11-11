@@ -36,15 +36,18 @@
 
 #include <quoll/ui/to_html.hpp>
 
+#include <quoll/ui/detail/expand.hpp>
 #include <quoll/ui/element.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <iterator>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace quoll::ui {
 
@@ -334,7 +337,18 @@ void write(element const &shown, surroundings around, std::string &out) {
 std::string to_html(element const &view) {
   std::string out;
 
-  write(view, {}, out);
+  if (!detail::has_component(view)) {
+    write(view, {}, out);
+    return out;
+  }
+
+  // Its components, with their views as they first show: made for this page only, and gone with it.
+  auto expanded = view;
+  std::vector<std::shared_ptr<detail::instance>> components;
+  detail::expansion made;
+
+  detail::expand(expanded, components, made);
+  write(expanded, {}, out);
   return out;
 }
 
