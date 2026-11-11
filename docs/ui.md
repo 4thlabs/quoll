@@ -102,9 +102,12 @@ struct notes_page {
 
 - **Its states are kept** from one view of the parent to the next, while it stays at the same place: its type and key
   among the components of the parent's view, or its type and rank there without a key, so that one going hands its
-  states to the next of its type. `| key(...)` keeps each with its item as a list changes.
+  states to the next of its type. `| key(...)` keeps each with its item as a list changes; two of one type with one
+  key in a view, even in two lists of it, throw `std::logic_error`.
 - **Its props are given anew** on each view of the parent: what changes there shows in its view. `given` lives as
-  long as what that view made: a handler of it may keep a reference to it, until its task ends.
+  long as what that view made: a handler of it may keep a reference to it, until its task ends. The component itself,
+  and those it places, may keep one until its next view that returns, as a view that throws keeps none; and
+  `mounted()` to the props of the first view, until it ends.
 - **It is decorated in its own view:** a component element takes a key and nothing else, and one decorated otherwise
   throws `std::logic_error`.
 - **It comes and goes:** `task<> mounted()` runs once it first shows; once the parent's view no longer has it, its

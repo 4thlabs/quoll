@@ -67,6 +67,8 @@ namespace quoll::ui {
  * (`class` and `value` come from their decorators), children in an element that has none (`br`, `img`, `input`,
  * `iframe`...), an element in one that holds only text (`script`, `style`, `textarea`, `title`), text in a `script` or
  * `style` that would end it early (`</`, `<!--`) or that sits inside `svg`, `math` or `select`.
+ * @throws std::logic_error for a component decorated otherwise than with a key, or two components of one type with one
+ * key in a view; and what the view of a component throws.
  */
 [[nodiscard]] std::string to_html(element const &view);
 

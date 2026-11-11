@@ -62,8 +62,10 @@ namespace quoll::ui {
  * };
  * @endcode
  *
- * `given` lives as long as what that view made: its handlers, and their tasks, may keep a reference to it. One with no
- * props, a Component, is placed with component<C>().
+ * `given` lives as long as what that view made: its handlers and their tasks may keep a reference to it. The
+ * component, and the components it places, may keep a reference to `given` until its next view that returns, as a view
+ * that throws keeps none; and mounted() to the props of the first view, until it ends. One with no props, a Component,
+ * is placed with component<C>().
  */
 template <class C>
 concept ComponentWithProps = requires { typename C::props; } && requires(C &component, typename C::props const &given) {

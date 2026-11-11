@@ -77,9 +77,12 @@ public:
 
   [[nodiscard]] void *component() const noexcept { return component_.get(); }
 
-  [[nodiscard]] void const *props() const noexcept { return props_.get(); }
+  // As the parent last gave them: a task holding them keeps them as they were when it started.
+  [[nodiscard]] std::shared_ptr<void const> const &props() const noexcept { return props_; }
 
-  void set_props(std::shared_ptr<void const> props) noexcept { props_ = std::move(props); }
+  // Given to a view that returned, shown or not: those before go, as the component may refer to `given` only until its
+  // next view that returns.
+  void set_props(std::shared_ptr<void const> props) noexcept;
 
   [[nodiscard]] std::string const &key() const noexcept { return key_; }
 
@@ -101,8 +104,9 @@ private:
   // Before what it outlives: destroyed last.
   std::shared_ptr<instance> parent_;
   component_table const *table_;
-  held_component component_;
+  // Before the component, which may keep what refers to them.
   std::shared_ptr<void const> props_;
+  held_component component_;
   std::string key_;
   // Before what stops it.
   std::stop_source stop_;

@@ -80,6 +80,9 @@ public:
   // Under the stop of `owner`, kept until it ends with `props`, or the app's for none.
   void spawn(async::task<> work, std::shared_ptr<instance> owner = nullptr,
              std::shared_ptr<void const> props = nullptr);
+  // spawn() for a mounted(), which does not start once its component, or the app, is stopped.
+  void mount(async::task<> work, std::shared_ptr<instance> owner = nullptr,
+             std::shared_ptr<void const> props = nullptr);
   void dispatch(node_id id, std::string_view name, std::string value);
   [[nodiscard]] async::task<> stop();
 

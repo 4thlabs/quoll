@@ -67,11 +67,12 @@ using event_handler = std::function<async::task<>(std::string value)>;
 /** @brief An event of an element, and what it runs. */
 struct event_binding {
   std::string name;
-  event_handler handler;
   // The component whose view made it, whose task its handler runs in: none for the app's own. And the props it was
-  // given for that view, which its handler may read: both kept until the handler's task ends.
+  // given for that view, which its handler may read: both kept until the handler's task ends, and declared before
+  // the handler, so that what it captures goes while they are still there.
   std::shared_ptr<detail::instance> owner{};
   std::shared_ptr<void const> props{};
+  event_handler handler;
 };
 
 /**
