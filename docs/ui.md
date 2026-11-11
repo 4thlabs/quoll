@@ -119,6 +119,31 @@ struct notes_page {
 - The app's own component may have a `void unmounted()` too: it runs as the app stops, after those of the components
   of its view.
 
+### A view not run again
+
+A component whose props are equal to the last ones, and none of whose states changed since, is not viewed again: its
+last view is given again, with the props it was made with, and the components inside it are viewed again only if they
+changed.
+
+```cpp
+struct note_row {
+  struct props {
+    notes::note item;
+    callback<void(std::int64_t)> on_remove;
+
+    bool operator==(props const &) const = default;
+  };
+
+  // ...
+};
+```
+
+- **Props are compared with their `==`**, when they have one. Without one, the component is viewed again each time
+  its parent is, unless its parent's view was itself given again.
+- **A callback compares equal to any other**, whatever its function captures: a component not viewed again keeps the
+  callbacks of its last view, which call what the parent's view gave then. Capture only what does not change from a
+  view to the next, as `this`, and pass the rest as props, or give each item of a list its key.
+
 ### Calling the parent back
 
 A component tells its parent what happened through a `callback<Signature>` in its props: a function the parent wrote,

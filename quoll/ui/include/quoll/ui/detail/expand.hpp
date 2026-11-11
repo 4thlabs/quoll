@@ -43,6 +43,7 @@
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/state.hpp>
 
+#include <cstdint>
 #include <memory>
 #include <stop_token>
 #include <utility>
@@ -61,7 +62,18 @@ struct expansion {
   failure_sink sink{};
   std::vector<std::shared_ptr<instance>> made{};
   std::vector<std::shared_ptr<instance>> now{};
-  std::vector<held_view> props{};
+
+  // A view that ran: for a component kept, what commit() gives it, or discard() keeps of it.
+  struct view_record {
+    std::shared_ptr<instance> owner;
+    std::shared_ptr<void const> props;
+    std::shared_ptr<void const> own;
+    std::shared_ptr<void const> placed_by;
+    element view;
+    std::uint64_t version;
+  };
+
+  std::vector<view_record> views{};
   std::vector<std::pair<std::shared_ptr<instance>, std::vector<std::shared_ptr<instance>>>> children{};
   std::vector<std::shared_ptr<instance>> leaving{};
 };
