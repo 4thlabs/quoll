@@ -70,6 +70,11 @@ guidelines and the C++ Core Guidelines.
 - What outlives a call owns what it needs: the public API keeps no reference a user has to keep alive, even at the cost of a
   copy. The exceptions are `_ref` wrappers, views, and what an operation acts on, as a stream or the object of a member
   (`http::read(stream, ...)`, `router.dispatch()`). The fast path goes behind it, in `detail`.
+- What uses Quoll correctly reads simply, in the samples and in what the guides show: the code keeps no state by hand
+  about the operations it started, as a counter that drops the answers of requests asked for before the last, or a flag
+  that says one is under way. Code that has to is the sign of something Quoll lacks, which is what to change. Until it
+  is there, such code says in a comment what will replace it, with the entry of `docs/PLAN.md` or the issue that holds
+  it. Tests count what they check, which is no such state.
 - A coroutine frame is destroyed only once it will not resume again: by a root (`co_spawn`'s, `when_all`'s) as it ends,
   or before it starts when its start cannot be posted, or by its awaiter, through `async::task`, once it has completed,
   or suspended, by the owner of its chain after a stop. An operation that ends on a stop resumes nothing: it calls

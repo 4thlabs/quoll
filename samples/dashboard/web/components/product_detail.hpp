@@ -86,8 +86,8 @@ template <class T>
 struct product_detail {
   struct props {
     products::product item;
-    // Whether a save of it is on its way, and why its last one failed until the next: the page's, which a detail chosen
-    // again shows too, as what it says is of the product, whoever sent it.
+    // Whether a save of it is on its way, and why its last one failed until the next: what the page's keyed_action
+    // holds of the product, which a detail chosen again shows too, whoever sent it.
     bool saving = false;
     std::string save_failure;
     // Whether it was saved.
@@ -114,7 +114,9 @@ struct product_detail {
 
     problem.set({});
 
-    // What was typed as it left: a field changed while the save is on its way keeps what it holds now.
+    // What was typed as it left: a field changed while the save is on its way keeps what it holds now. Kept by hand,
+    // until quoll::ui has a form draft from the props that tells what changed since it was sent (docs/PLAN.md, step 6,
+    // and issue #163).
     auto const sent_name = *name;
     auto const sent_price = *price;
     auto const sent_stock = *stock;
