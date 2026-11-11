@@ -391,6 +391,12 @@ addToLibrary({
   quoll_emscripten_ui_close: (instance) => {
     const ui = quollUi.instances[instance];
 
+    // Its owner may go once this returns: a mount still running, which holds `ui`, reaches only the console.
+    ui.dispatch = 0;
+    ui.owner = 0;
+    ui.fail = 0;
+    ui.failOwner = 0;
+
     // Its widgets first, which their nodes hold.
     for (const id of [...ui.widgets.keys()]) {
       quollUiUnmountWidget(ui, id);
