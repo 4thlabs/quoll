@@ -100,6 +100,8 @@ enum class load_status {
  * them with it. The result of the load before goes as one starts; what the loader throws, before its task too, is the
  * failure of its result, not thrown again.
  *
+ * It keeps a copy of the result: a value whose copy throws is the run's failure, given and kept.
+ *
  * Awaited from a task of its component, which the component outlives. Neither copied nor moved: a load under way
  * refers to it, and a component stays where it was made. Its key and value are values: a reference or a view would
  * outlive what it refers to.
@@ -187,7 +189,7 @@ private:
   detail::state_link link_{};
 };
 
-static_assert(detail::linked_member<resource<int, std::string>>);
+static_assert(detail::LinkedMember<resource<int, std::string>>);
 
 } // namespace quoll::ui
 

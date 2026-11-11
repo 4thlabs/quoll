@@ -183,11 +183,21 @@ async::task<std::expected<R, std::exception_ptr>> run_in(run_slot<R> &slot, stat
     co_return std::unexpected{std::make_exception_ptr(run_replaced{})};
   }
 
-  // Kept first: only the copy given back may throw, as for a lack of memory, the slot then already right.
-  slot.result = std::move(ended);
+  // Kept as a copy, its caller given the run's own: a copy that throws, as for a lack of memory, is this run's failure,
+  // which both are given, rather than thrown to its caller, and the result before is gone.
+  try {
+    slot.result.reset();
+    slot.result.emplace(*ended);
+  } catch (...) {
+    auto const failure = std::current_exception();
+
+    slot.result.emplace(std::unexpect, failure);
+    ended.emplace(std::unexpect, failure);
+  }
+
   slot.pending = false;
   tell_quietly(link);
-  co_return *slot.result;
+  co_return std::move(*ended);
 }
 
 // The result of the last run of `slot`, none for no slot: std::logic_error before one ended, which `what` says, as

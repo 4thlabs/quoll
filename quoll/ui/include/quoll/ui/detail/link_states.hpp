@@ -56,7 +56,7 @@ void link_states(C &component, state_link link) {
 
   [&]<std::size_t... Index>(std::index_sequence<Index...>) {
     [[maybe_unused]] auto const link_one = [&link](auto &member) {
-      if constexpr (linked_member<std::remove_cvref_t<decltype(member)>>) {
+      if constexpr (LinkedMember<std::remove_cvref_t<decltype(member)>>) {
         member.link(link);
       }
     };

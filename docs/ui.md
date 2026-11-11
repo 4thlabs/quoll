@@ -240,7 +240,8 @@ compile. A pointer, or a view inside another type, still points to what the call
 What a component loads for a key, and what it runs, once at a time, are members of it, which show again as they
 change, as states do: `resource<Key, T>` and `action<R(Args...)>`, or `keyed_action<Key, R(Args...)>` for runs by key.
 Each takes the function it calls, returning a task. A load or a run gives its result as its task ends, a
-`std::expected` of the value or of what the function threw, as an `std::exception_ptr`, and keeps it for the view.
+`std::expected` of the value or of what the function threw, as an `std::exception_ptr`, and keeps a copy of it for the
+view: a value whose copy throws, as for a lack of memory, is the failure of that load or run.
 
 ```cpp
 struct dashboard_page {

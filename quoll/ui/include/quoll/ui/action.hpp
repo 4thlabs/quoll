@@ -107,6 +107,8 @@ class action;
  * the run and its caller, as a stop does, and the action is under way no more, its result the one before. The result of
  * the last run that ended stays while the next is under way.
  *
+ * It keeps a copy of the result: a value whose copy throws is the run's failure, given and kept.
+ *
  * Awaited from a task of its component, which the component outlives. Neither copied nor moved: a run under way refers
  * to it. Its arguments are copied into the run, given to the function as rvalues: none can be a reference or a view,
  * which would outlive what it refers to. Thread safety: none, as a state.
@@ -176,8 +178,8 @@ private:
   detail::state_link link_{};
 };
 
-static_assert(detail::linked_member<action<int(int)>>);
-static_assert(detail::linked_member<action<void(), overlap::restart>>);
+static_assert(detail::LinkedMember<action<int(int)>>);
+static_assert(detail::LinkedMember<action<void(), overlap::restart>>);
 
 template <class Key, class Signature, overlap Policy = overlap::refuse>
 class keyed_action;
@@ -284,7 +286,7 @@ private:
   detail::state_link link_{};
 };
 
-static_assert(detail::linked_member<keyed_action<int, std::string(std::string)>>);
+static_assert(detail::LinkedMember<keyed_action<int, std::string(std::string)>>);
 
 } // namespace quoll::ui
 

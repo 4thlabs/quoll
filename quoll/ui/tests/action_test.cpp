@@ -166,6 +166,37 @@ struct restart_keyed_page {
   element view() { return div({}); }
 };
 
+// A result whose copy throws once asked to, as one that allocates may.
+bool touchy_throws = false;
+
+struct touchy {
+  int value = 0;
+
+  explicit touchy(int given) : value(given) {}
+
+  touchy(touchy const &other) : value(other.value) {
+    if (touchy_throws) {
+      throw std::runtime_error{"no room"};
+    }
+  }
+
+  touchy(touchy &&) noexcept = default;
+  touchy &operator=(touchy const &) = default;
+  touchy &operator=(touchy &&) noexcept = default;
+  ~touchy() = default;
+};
+
+task<touchy> touchy_of(int value) {
+  co_await quoll::async::sleep_for(1ms);
+  co_return touchy{value};
+}
+
+struct touchy_page {
+  action<touchy(int)> run{touchy_of};
+
+  element view() { return div({}); }
+};
+
 struct timed_page {
   action<int(int)> run{doubled};
 
@@ -482,4 +513,41 @@ TEST_CASE("action: a run its caller stops once a later one took its place leaves
   CHECK(pending_meanwhile);
   CHECK(second_gave);
   CHECK(instance.component().run.result().value() == 4);
+}
+
+TEST_CASE("action: a result that cannot be kept is this run's failure, given rather than thrown", "[ui][action]") {
+  runs = {};
+  touchy_throws = false;
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<touchy_page> instance{time.get_executor(), shown};
+  bool first = false;
+  std::string second;
+
+  auto const act = [&]() -> task<> {
+    auto &run = instance.component().run;
+
+    first = (co_await run.run(1)).has_value();
+    touchy_throws = true;
+
+    auto const given = co_await run.run(2);
+
+    touchy_throws = false;
+    second = told(given);
+
+    if (!given) {
+      CHECK_THROWS_AS(std::rethrow_exception(given.error()), std::runtime_error);
+    }
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+
+  auto const &run = instance.component().run;
+
+  CHECK(first);
+  CHECK(second == "no");
+  CHECK_FALSE(run.pending());
+  REQUIRE_FALSE(run.result().has_value());
+  CHECK_THROWS_AS(std::rethrow_exception(run.result().error()), std::runtime_error);
 }

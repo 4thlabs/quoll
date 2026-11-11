@@ -110,7 +110,7 @@ private:
   detail::state_link link_{};
 };
 
-static_assert(detail::linked_member<state<int>>);
+static_assert(detail::LinkedMember<state<int>>);
 
 } // namespace quoll::ui
 
