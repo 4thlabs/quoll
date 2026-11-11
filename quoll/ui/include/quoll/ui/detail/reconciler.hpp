@@ -42,6 +42,7 @@
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/renderer_ref.hpp>
 
+#include <exception>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -53,14 +54,20 @@ class reconciler {
 public:
   reconciler(renderer_ref renderer, node_id &last_id) noexcept : renderer_(renderer), last_id_(&last_id) {}
 
+  // What its caller does with the widgets once the render shows, as a module may emit as it mounts or updates: each on
+  // its own, so that one failing leaves the others. And what their unmounts threw, done before their nodes went.
+  struct widget_work {
+    std::vector<std::pair<node_id, std::shared_ptr<widget_spec const>>> mounts;
+    std::vector<std::pair<node_id, std::shared_ptr<widget_spec const>>> updates;
+    std::vector<std::exception_ptr> failures;
+  };
+
   // Keeps the nodes of the children that have the same key (their position, without one) and the same tag. Throws
-  // std::logic_error for a widget with children, or placed through a renderer that shows none, before making it.
+  // std::logic_error before any operation of the renderer for a widget it cannot show: one with children, one with no
+  // module, or one placed through a renderer that shows none.
   void apply(node_id parent, std::vector<element> &before, std::vector<element> &after);
 
-  // The widgets it made, which its caller mounts once the render shows, as a module may emit as it mounts.
-  [[nodiscard]] std::vector<std::pair<node_id, std::shared_ptr<widget_spec const>>> take_mounts() noexcept {
-    return std::move(to_mount_);
-  }
+  [[nodiscard]] widget_work take_widget_work() noexcept { return std::move(widgets_); }
 
 private:
   void children(node_id parent, std::vector<element> &before, std::vector<element> &after);
@@ -72,8 +79,7 @@ private:
 
   renderer_ref renderer_;
   node_id *last_id_;
-  // The widgets made, to mount once the render has placed every node.
-  std::vector<std::pair<node_id, std::shared_ptr<widget_spec const>>> to_mount_;
+  widget_work widgets_;
 };
 
 } // namespace quoll::ui::detail

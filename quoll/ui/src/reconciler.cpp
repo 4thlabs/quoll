@@ -76,9 +76,31 @@ namespace {
   return &*std::ranges::find(events, binding.name, &event_binding::name) == &binding;
 }
 
+// What a render may not show, checked before any operation of the renderer, so that a refused render changes nothing.
+void check_widgets(std::vector<element> const &elements, bool shows_widgets) {
+  for (auto const &value : elements) {
+    if (value.type == element::kind::widget) {
+      if (value.widget == nullptr) {
+        throw std::logic_error{"quoll::ui: a widget with no module: widget<Props> makes one"};
+      }
+
+      if (!value.children.empty()) {
+        throw std::logic_error{"quoll::ui: a widget's node is its module's: it takes no children"};
+      }
+
+      if (!shows_widgets) {
+        throw std::logic_error{"quoll::ui: a widget placed through a renderer that shows none"};
+      }
+    }
+
+    check_widgets(value.children, shows_widgets);
+  }
+}
+
 } // namespace
 
 void reconciler::apply(node_id parent, std::vector<element> &before, std::vector<element> &after) {
+  check_widgets(after, renderer_.shows_widgets());
   children(parent, before, after);
 }
 
@@ -128,16 +150,6 @@ void reconciler::children(node_id parent, std::vector<element> &before, std::vec
 }
 
 void reconciler::create(element &value) {
-  if (value.type == element::kind::widget) {
-    if (!value.children.empty()) {
-      throw std::logic_error{"quoll::ui: a widget's node is its module's: it takes no children"};
-    }
-
-    if (!renderer_.shows_widgets()) {
-      throw std::logic_error{"quoll::ui: a widget placed through a renderer that shows none"};
-    }
-  }
-
   value.id = ++*last_id_;
 
   if (value.type == element::kind::text) {
@@ -167,7 +179,7 @@ void reconciler::create(element &value) {
 
   // Its children are the module's.
   if (value.type == element::kind::widget) {
-    to_mount_.emplace_back(value.id, value.widget);
+    widgets_.mounts.emplace_back(value.id, value.widget);
     return;
   }
 
@@ -203,7 +215,7 @@ void reconciler::patch(element &before, element &after) {
 
   if (after.type == element::kind::widget) {
     if (before.widget->props != after.widget->props) {
-      renderer_.update_widget(after.id, after.widget->props);
+      widgets_.updates.emplace_back(after.id, after.widget);
     }
 
     return;
@@ -245,9 +257,14 @@ void reconciler::patch_events(element const &before, element const &after) {
 }
 
 void reconciler::remove(element const &value) {
-  // Taken back from its module before the node goes.
+  // Taken back from its module before the node goes; what that throws is told once the render shows, and leaves the
+  // rest of the render.
   if (value.type == element::kind::widget) {
-    renderer_.unmount_widget(value.id);
+    try {
+      renderer_.unmount_widget(value.id);
+    } catch (...) {
+      widgets_.failures.push_back(std::current_exception());
+    }
   }
 
   for (auto const &child : value.children) {

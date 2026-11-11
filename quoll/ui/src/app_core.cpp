@@ -161,9 +161,23 @@ void app_core::render() {
   shown_ = std::move(next);
   shown_once_ = true;
 
-  // In place now, as a library such as chart.js measures its node, and shown, as a module may emit as it mounts. One
-  // that fails is told as a failure, and the others mount all the same.
-  for (auto const &[id, spec] : reconciled.take_mounts()) {
+  // In place now, as a library such as chart.js measures its node, and shown, as a module may emit as it mounts or
+  // updates. One that fails is told as a failure, and the others go on all the same.
+  auto work = reconciled.take_widget_work();
+
+  for (auto const &failure : work.failures) {
+    failed(failure);
+  }
+
+  for (auto const &[id, spec] : work.updates) {
+    try {
+      renderer_.update_widget(id, spec->props);
+    } catch (...) {
+      failed(std::current_exception());
+    }
+  }
+
+  for (auto const &[id, spec] : work.mounts) {
     try {
       renderer_.mount_widget(id, spec->module, spec->props);
     } catch (...) {
