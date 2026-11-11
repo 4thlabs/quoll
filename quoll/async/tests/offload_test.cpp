@@ -46,6 +46,7 @@
 #include <quoll/test/run.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 
 #include <exception>
 #include <memory>
@@ -185,7 +186,9 @@ TEST_CASE("offload: a stop requested before it starts cancels it, on an executor
   };
 
   stop.request_stop();
-  REQUIRE_THROWS_AS(quoll::test::run(loop, working(), stop.get_token()), std::system_error);
+  // Ended on the stop: test::run says so.
+  REQUIRE_THROWS_WITH(quoll::test::run(loop, working(), stop.get_token()),
+                      "quoll::test::run: the task ended on a stop");
   REQUIRE_FALSE(ran);
 }
 

@@ -284,6 +284,23 @@ struct changing_details {
   }
 };
 
+// Says, as it is destroyed, whether what `held` points to is still what it was: a frame unwound on a stop destroys it.
+class held_until_the_end {
+public:
+  held_until_the_end(bool &kept, std::shared_ptr<int> const &held) noexcept : kept_(&kept), held_(&held) {}
+
+  held_until_the_end(held_until_the_end const &) = delete;
+  held_until_the_end(held_until_the_end &&) = delete;
+  held_until_the_end &operator=(held_until_the_end const &) = delete;
+  held_until_the_end &operator=(held_until_the_end &&) = delete;
+
+  ~held_until_the_end() { *kept_ = **held_ == 7; }
+
+private:
+  bool *kept_;
+  std::shared_ptr<int> const *held_;
+};
+
 struct slow_handler {
   state<int> done;
   bool *stopped = nullptr;
@@ -291,15 +308,31 @@ struct slow_handler {
 
   element view() {
     return button(std::to_string(*done)) | on_click([this, held = *watched]() -> task<> {
-             try {
-               co_await quoll::async::sleep_for(1h);
-             } catch (std::system_error const &) {
-               // The lambda, and what it captures, is alive until here.
-               *stopped = *held == 7;
-               throw;
-             }
+             // The lambda, and what it captures, is alive until the stop has unwound this frame.
+             held_until_the_end const told{*stopped, held};
 
+             co_await quoll::async::sleep_for(1h);
              done = 1;
+           });
+  }
+};
+
+// The trap #151 closes, bounded so as to end the test: a handler catching all around a sleep, and sleeping again.
+struct handler_catching_all {
+  int *caught = nullptr;
+  int *turns = nullptr;
+
+  element view() {
+    return button("Retry") | on_click([this]() -> task<> {
+             while (*turns < 1000) {
+               ++*turns;
+
+               try {
+                 co_await quoll::async::sleep_for(1h);
+               } catch (std::exception const &) {
+                 ++*caught;
+               }
+             }
            });
   }
 };
@@ -795,6 +828,28 @@ TEST_CASE("ui::app: a handler ending on a stop is no failure: on_error does not 
   // The app stops once its tasks have ended: the stopped one counts as ended.
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE(told == 0);
+}
+
+TEST_CASE("ui::app: a handler catching all around a sleep does not see the app's stop, which ends it",
+          "[ui][stopped]") {
+  virtual_time time;
+  memory_renderer const shown;
+  auto caught = 0;
+  auto turns = 0;
+  test_app<handler_catching_all> instance{time.get_executor(), shown};
+
+  instance.component().caught = &caught;
+  instance.component().turns = &turns;
+
+  auto const act = [&]() -> task<> {
+    instance.dispatch(shown.find("button"), "click");
+    co_await quoll::async::sleep_for(1s);
+  };
+
+  // stop() ends once the handler has: through once, its catch unseen.
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(turns == 1);
+  REQUIRE(caught == 0);
 }
 
 TEST_CASE("ui::app: an event for a node that is gone is ignored", "[ui]") {

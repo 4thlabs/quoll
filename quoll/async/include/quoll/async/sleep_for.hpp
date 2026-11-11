@@ -65,7 +65,7 @@ namespace detail {
  * @brief Suspends the task for `duration`, through the timer of the executor it runs on (as quoll::runtime provides
  * it).
  *
- * A stop request ends the sleep with std::system_error (std::errc::operation_canceled). Throws std::logic_error if the
+ * A stop request ends the sleep, and the awaiter on the stop: it does not resume. Throws std::logic_error if the
  * executor offers no timer.
  */
 template <class Rep, class Period>

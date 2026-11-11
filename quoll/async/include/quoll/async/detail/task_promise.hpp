@@ -38,7 +38,9 @@
 #define QUOLL_ASYNC_DETAIL_TASK_PROMISE_HPP
 
 #include <quoll/async/await_context.hpp>
+#include <quoll/async/detail/chain_owner.hpp>
 #include <quoll/async/detail/context_promise.hpp>
+#include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/detail/non_void.hpp>
 
 #include <cassert>
@@ -62,13 +64,21 @@ namespace quoll::async::detail {
 template <class T>
 class task_promise;
 
-// Resumes the awaiter by symmetric transfer: no executor round trip, no stack growth.
+// Resumes the awaiter by symmetric transfer: no executor round trip, no stack growth. A task that ended on a stop
+// resumes nothing: it hands the stop to the owner of its chain, which unwinds it, and touches nothing after.
 struct task_final_awaiter {
   [[nodiscard]] bool await_ready() const noexcept { return false; }
 
   template <class Promise>
   [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> handle) const noexcept {
-    return handle.promise().continuation();
+    auto &promise = handle.promise();
+
+    if (promise.stopped()) {
+      stop_chain(promise.owner());
+      return std::noop_coroutine();
+    }
+
+    return promise.continuation();
   }
 
   void await_resume() const noexcept {}
@@ -89,7 +99,18 @@ public:
     return {};
   }
 
-  void unhandled_exception() noexcept { result_.template emplace<error_index>(std::current_exception()); }
+  // What a stop it was asked for throws, std::errc::operation_canceled, ends it on a stop: no catch above sees it, as
+  // the code that still throws it, a program's or a library's, goes through a task.
+  void unhandled_exception() noexcept {
+    if (this->stop_requested() && is_a_stop(std::current_exception())) {
+      stopped_ = true;
+      return;
+    }
+
+    result_.template emplace<error_index>(std::current_exception());
+  }
+
+  [[nodiscard]] bool stopped() const noexcept { return stopped_; }
 
   void start(std::coroutine_handle<> continuation, await_context const &context) noexcept {
     continuation_ = continuation;
@@ -131,6 +152,7 @@ protected:
 private:
   std::coroutine_handle<> continuation_;
   bool finished_ = false;
+  bool stopped_ = false;
 };
 
 template <class T>

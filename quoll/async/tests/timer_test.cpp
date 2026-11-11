@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/any_executor.hpp>
+#include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/saturated.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/executor_ref.hpp>
@@ -45,12 +46,15 @@
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
+#include <quoll/test/code_thrown_by.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 
 #include <chrono>
+#include <exception>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -89,27 +93,13 @@ task<int> immediate(int value) { co_return value; }
 // The error code `work` ends with: none if it succeeds.
 template <class T>
 task<std::error_code> error_of(task<T> work) {
-  try {
-    static_cast<void>(co_await std::move(work));
-  } catch (std::system_error const &error) {
-    co_return error.code();
-  }
-
-  co_return std::error_code{};
+  co_return co_await quoll::test::code_thrown_by(std::move(work));
 }
 
 // Requests stop on `source` once `delay` has elapsed.
 task<> stop_after(std::stop_source &source, std::chrono::nanoseconds delay) {
   co_await sleep_for(delay);
   source.request_stop();
-}
-
-// The error code of `work`, stopped after `delay`.
-template <class T>
-task<std::error_code> error_when_stopped(task<T> work, std::stop_source &source, std::chrono::nanoseconds delay) {
-  auto [error, stopped] = co_await when_all(error_of(std::move(work)), stop_after(source, delay));
-
-  co_return error;
 }
 
 // Sleeps on, whatever is requested, then gives `value`.
@@ -179,14 +169,42 @@ TEST_CASE("sleep_for: tasks sleep side by side", "[async][timer]") {
   REQUIRE(time.now() == 2s);
 }
 
-TEST_CASE("sleep_for: a stop request ends the sleep with operation_canceled", "[async][timer]") {
+TEST_CASE("sleep_for: a stop request ends the sleep, and its awaiter, on a stop", "[async][timer]") {
   virtual_time time;
   std::stop_source source;
 
-  auto const error = run(time, error_when_stopped(nothing_after(1h), source, 1s), source.get_token());
-
-  REQUIRE(error == std::errc::operation_canceled);
+  // Ended on the stop, not on an exception: what awaits it ends on it too, and test::run says so.
+  REQUIRE_THROWS_WITH(run(time, when_all(nothing_after(1h), stop_after(source, 1s)), source.get_token()),
+                      "quoll::test::run: the task ended on a stop");
   REQUIRE(time.now() == 1s);
+}
+
+TEST_CASE("sleep_for: a catch around it does not see a stop, which ends the loop it is in", "[async][timer][stopped]") {
+  virtual_time time;
+  std::stop_source source;
+  auto caught = 0;
+  auto turns = 0;
+
+  // Bounded, so that the trap #151 closes, a loop catching the stop and sleeping again at once, ends the test.
+  auto const retrying = [&]() -> task<int> {
+    while (turns < 1000) {
+      ++turns;
+
+      try {
+        co_await sleep_for(1h);
+      } catch (std::exception const &) {
+        ++caught;
+      }
+    }
+
+    co_return turns;
+  };
+
+  source.request_stop();
+
+  REQUIRE_THROWS_WITH(run(time, retrying(), source.get_token()), "quoll::test::run: the task ended on a stop");
+  REQUIRE(caught == 0);
+  REQUIRE(turns == 1);
 }
 
 TEST_CASE("sleep_for: a stop requested before does not wait", "[async][timer]") {
@@ -195,7 +213,8 @@ TEST_CASE("sleep_for: a stop requested before does not wait", "[async][timer]") 
 
   source.request_stop();
 
-  REQUIRE(run(time, error_of(nothing_after(1h)), source.get_token()) == std::errc::operation_canceled);
+  REQUIRE_THROWS_WITH(run(time, when_all(nothing_after(1h)), source.get_token()),
+                      "quoll::test::run: the task ended on a stop");
   REQUIRE(time.now() == 0s);
 }
 
@@ -315,14 +334,30 @@ TEST_CASE("with_timeout: a task canceling itself before the timeout stays cancel
   REQUIRE(run(time, error_of(with_timeout(1h, cancel()))) == std::errc::operation_canceled);
 }
 
-TEST_CASE("with_timeout: a stop request of the awaiter stays operation_canceled", "[async][timer]") {
+TEST_CASE("with_timeout: a stop request of the awaiter ends it on a stop, no timeout", "[async][timer]") {
   virtual_time time;
   std::stop_source source;
 
-  auto const error =
-      run(time, error_when_stopped(with_timeout(1h, value_after(1h, 42)), source, 1s), source.get_token());
+  REQUIRE_THROWS_WITH(
+      run(time, when_all(with_timeout(1h, value_after(1h, 42)), stop_after(source, 1s)), source.get_token()),
+      "quoll::test::run: the task ended on a stop");
+  REQUIRE(time.now() == 1s);
+}
 
-  REQUIRE(error == std::errc::operation_canceled);
+TEST_CASE("with_timeout: a stop of the awaiter wins over its timeout expired meanwhile", "[async][timer][stopped]") {
+  virtual_time time;
+  std::stop_source outer;
+
+  // As its timeout stops it, the awaiter is stopped too: both stand once it has ended.
+  auto const work = [&outer]() -> task<int> {
+    std::stop_callback const also{co_await quoll::async::current_stop_token(), [&outer] { outer.request_stop(); }};
+
+    co_await sleep_for(1h);
+    co_return 1;
+  };
+
+  REQUIRE_THROWS_WITH(run(time, with_timeout(1s, work()), outer.get_token()),
+                      "quoll::test::run: the task ended on a stop");
   REQUIRE(time.now() == 1s);
 }
 
@@ -332,8 +367,8 @@ TEST_CASE("with_timeout: a stop requested before stops the task at once", "[asyn
 
   source.request_stop();
 
-  REQUIRE(run(time, error_of(with_timeout(1h, value_after(1h, 42))), source.get_token()) ==
-          std::errc::operation_canceled);
+  REQUIRE_THROWS_WITH(run(time, with_timeout(1h, value_after(1h, 42)), source.get_token()),
+                      "quoll::test::run: the task ended on a stop");
   REQUIRE(time.now() == 0s);
 }
 

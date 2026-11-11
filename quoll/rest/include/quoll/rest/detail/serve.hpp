@@ -37,6 +37,8 @@
 #ifndef QUOLL_REST_DETAIL_SERVE_HPP
 #define QUOLL_REST_DETAIL_SERVE_HPP
 
+#include <quoll/async/detail/end_stopped.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/body_stream.hpp>
 #include <quoll/http/request.hpp>
@@ -393,9 +395,11 @@ template <class Route, class Validators, class... Services>
 
   std::optional<http::response> refused;
   std::exception_ptr failure;
+  auto stopped = false;
 
+  // A stop seen here rather than ending this frame: the drain below runs whatever ended the service.
   try {
-    co_await call();
+    stopped = !co_await async::stopped_as_optional(call());
   } catch (http_error const &error) {
     if (answers_as_an_error(error.status())) {
       refused = error_response<Route>(error);
@@ -409,6 +413,10 @@ template <class Route, class Validators, class... Services>
   // Closed to operations not running yet, and those running ended: they write to the connection, which goes with
   // the stream. Then whether it has started is known for good.
   co_await event_sink_access::drain(sink);
+
+  if (stopped) {
+    co_await async::detail::end_stopped{};
+  }
 
   if (refused && !sink.started()) {
     co_await event_sink_access::answer(sink, std::move(*refused));

@@ -53,7 +53,9 @@ namespace quoll::async {
  * @brief Lazy coroutine producing a `T` (or nothing for `task<>`).
  *
  * A task starts when awaited, runs on its awaiter's await_context, and resumes the awaiter by symmetric transfer
- * when it completes. An exception escaping the task is rethrown at the `co_await`. Inside a task, `co_await` only
+ * when it completes. An exception escaping the task is rethrown at the `co_await`, but std::errc::operation_canceled
+ * while the task's stop is requested, what a stop threw: the task ends on the stop then, and its awaiter with it, which
+ * does not resume (see async::stopped_as_optional). Inside a task, `co_await` only
  * accepts ContextAwaitable operations, so every operation knows the executor its awaiter resumes on. Use co_spawn to
  * run a task from outside a coroutine.
  *

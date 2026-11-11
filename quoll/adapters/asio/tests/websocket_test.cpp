@@ -37,7 +37,6 @@
 #include <quoll/asio/runtime.hpp>
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/detail/stop_on_exit.hpp>
-#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
@@ -50,6 +49,7 @@
 #include <quoll/server/server.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/test/run_task.hpp>
+#include <quoll/test/under_stop.hpp>
 #include <quoll/test/websocket_echo.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -83,7 +83,7 @@ task<std::string> echo_over_tcp() {
   std::stop_source stop;
 
   auto const serving = [&]() -> task<> {
-    co_await quoll::async::detail::stop_scope<void>{server.serve(std::move(listener)), stop.get_token()};
+    co_await quoll::test::under_stop(server.serve(std::move(listener)), stop.get_token());
   };
   auto const talking = [&]() -> task<std::string> {
     // The server stopped however this ends, a failure included, which would leave it serving otherwise.
@@ -125,7 +125,7 @@ task<std::error_code> unanswered_over_tcp() {
   std::stop_source stop;
 
   auto const serving = [&]() -> task<> {
-    co_await quoll::async::detail::stop_scope<void>{server.serve(std::move(listener)), stop.get_token()};
+    co_await quoll::test::under_stop(server.serve(std::move(listener)), stop.get_token());
   };
   auto const receiving = [&]() -> task<std::error_code> {
     quoll::async::detail::stop_on_exit const stop_server{stop};

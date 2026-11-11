@@ -35,13 +35,14 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/detail/held_place.hpp>
+#include <quoll/async/detail/owned_chain.hpp>
 #include <quoll/async/detail/slots.hpp>
-#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/test/run.hpp>
+#include <quoll/test/under_stop.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -95,12 +96,7 @@ TEST_CASE("slots: a stop ends a wait, and leaves the place to the others", "[asy
   std::vector<int> order;
 
   auto const waits_in_vain = [&]() -> task<int> {
-    try {
-      co_await places.acquire();
-    } catch (std::system_error const &error) {
-      stopped = error.code() == std::errc::operation_canceled;
-    }
-
+    co_await places.acquire();
     co_return 0;
   };
 
@@ -113,8 +109,10 @@ TEST_CASE("slots: a stop ends a wait, and leaves the place to the others", "[asy
     co_return 0;
   };
 
+  // The wait ends on its stop: it does not resume, and its own chain gives nothing.
   auto const waits_until_stopped = [&]() -> task<int> {
-    co_return co_await quoll::async::detail::stop_scope<int>{waits_in_vain(), stopping.get_token()};
+    stopped = !co_await quoll::async::detail::owned_chain<int>{waits_in_vain(), stopping.get_token()};
+    co_return 0;
   };
 
   auto const all = [&]() -> task<int> {
@@ -140,11 +138,7 @@ TEST_CASE("slots: stopped already, a wait does not start", "[async][slots]") {
   };
 
   auto const stopped = [&]() -> task<int> {
-    try {
-      co_return co_await quoll::async::detail::stop_scope<int>{waits(), stopping.get_token()};
-    } catch (std::system_error const &) {
-      co_return 2;
-    }
+    co_return (co_await quoll::async::detail::owned_chain<int>{waits(), stopping.get_token()}).value_or(2);
   };
 
   REQUIRE(quoll::test::run(stopped()) == 2);
@@ -173,7 +167,7 @@ TEST_CASE("slots: a stop coming after a place was given leaves it to what waited
   };
 
   auto const waits_with_a_stop = [&]() -> task<int> {
-    co_return co_await quoll::async::detail::stop_scope<int>{waits(), stopping.get_token()};
+    co_return co_await quoll::test::under_stop(waits(), stopping.get_token());
   };
 
   REQUIRE(quoll::test::run(quoll::async::when_all(holds(), waits_with_a_stop())));

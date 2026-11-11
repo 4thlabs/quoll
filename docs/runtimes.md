@@ -197,8 +197,8 @@ What `fetch` does for you, and what it does not let you do:
 | Options              | [`client_options`](client.md#options)         | `limits` and `response_timeout` apply. `max_connections`, `max_idle_connections`, `max_idle_time`, `max_redirects`, `connect_timeout` and `tls` have no effect, as the browser decides, and it always checks certificates.                                                      |
 
 A failure to get a response (a network error, a refused connection, CORS) throws `std::system_error`
-with `std::errc::io_error` and `fetch`'s message. A stop request aborts the fetch, with
-`std::errc::operation_canceled`. A target not in origin form, and what `http::serialize` rejects, throw
+with `std::errc::io_error` and `fetch`'s message. A stop request aborts the fetch, and the request ends on
+the stop, as any task does. A target not in origin form, and what `http::serialize` rejects, throw
 `std::invalid_argument` before the task runs.
 
 Use a client, and request a stop, from the thread running the event loop.

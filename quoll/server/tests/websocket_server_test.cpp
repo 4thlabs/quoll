@@ -37,8 +37,10 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/detached.hpp>
+#include <quoll/async/detail/end_stopped.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
@@ -188,17 +190,48 @@ std::vector<std::string> served(http::router const &router, Client client, std::
 }
 
 // Each message until the close, recording how receiving ended.
-task<> receive_all(http::websocket socket, std::error_code &ended) {
+// `work`, saying in `ended` how it ended: its failure's code, or operation_canceled for a stop, which it ends on all
+// the same, as the handler would.
+task<> telling(task<> work, std::error_code &ended) {
   try {
-    for (;;) {
-      if ((co_await socket.receive()).opcode == websocket_opcode::close) {
-        co_return;
-      }
+    if (co_await quoll::async::stopped_as_optional(std::move(work))) {
+      co_return;
     }
   } catch (std::system_error const &thrown) {
     ended = thrown.code();
     throw;
   }
+
+  ended = std::make_error_code(std::errc::operation_canceled);
+  co_await quoll::async::detail::end_stopped{};
+}
+
+task<> receive_until_closed(http::websocket socket) {
+  for (;;) {
+    if ((co_await socket.receive()).opcode == websocket_opcode::close) {
+      co_return;
+    }
+  }
+}
+
+task<> receive_one(http::websocket socket) { static_cast<void>(co_await socket.receive()); }
+
+task<> ticking(http::websocket socket) {
+  using namespace std::chrono_literals;
+
+  for (;;) {
+    co_await socket.send_text("tick");
+    co_await quoll::async::sleep_for(500ms);
+  }
+}
+
+task<> closing_then_receiving(http::websocket socket) {
+  co_await socket.close();
+  static_cast<void>(co_await socket.receive());
+}
+
+task<> receive_all(http::websocket socket, std::error_code &ended) {
+  co_await telling(receive_until_closed(std::move(socket)), ended);
 }
 
 } // namespace
@@ -671,14 +704,8 @@ TEST_CASE("serve_connection: what a WebSocket handler throws is reported, but fo
   SECTION("a stop") {
     std::stop_source stop;
     std::error_code ended;
-    auto const router = socket_at([&ended](http::websocket socket) -> task<> {
-      try {
-        static_cast<void>(co_await socket.receive());
-      } catch (std::system_error const &thrown) {
-        ended = thrown.code();
-        throw;
-      }
-    });
+    auto const router =
+        socket_at([&ended](http::websocket socket) { return telling(receive_one(std::move(socket)), ended); });
 
     auto const reported = served(
         router,
@@ -978,19 +1005,10 @@ TEST_CASE("accept_websocket: with no ping, a close still waits 30 s at most", "[
 TEST_CASE("accept_websocket: a peer that answers nothing is gone, whatever the handler sends", "[server][websocket]") {
   std::error_code ended;
 
-  auto const [ended_at, reported] = run_paced(
-      [&ended](http::websocket socket, std::chrono::nanoseconds &) -> task<> {
-        try {
-          for (;;) {
-            co_await socket.send_text("tick");
-            co_await quoll::async::sleep_for(500ms);
-          }
-        } catch (std::system_error const &thrown) {
-          ended = thrown.code();
-          throw;
-        }
-      },
-      {.ping_interval = 1s}, read_to_the_end);
+  auto const [ended_at, reported] =
+      run_paced([&ended](http::websocket socket,
+                         std::chrono::nanoseconds &) { return telling(ticking(std::move(socket)), ended); },
+                {.ping_interval = 1s}, read_to_the_end);
 
   // Its sends tell nothing of the peer: pinged at 1 s, gone at 2 s.
   REQUIRE(ended_at == 2s);
@@ -1149,15 +1167,8 @@ TEST_CASE("accept_websocket: a peer that does not answer the handler's close has
   std::error_code ended;
 
   auto const [ended_at, reported] = run_paced(
-      [&ended](http::websocket socket, std::chrono::nanoseconds &) -> task<> {
-        co_await socket.close();
-
-        try {
-          static_cast<void>(co_await socket.receive());
-        } catch (std::system_error const &thrown) {
-          ended = thrown.code();
-          throw;
-        }
+      [&ended](http::websocket socket, std::chrono::nanoseconds &) {
+        return telling(closing_then_receiving(std::move(socket)), ended);
       },
       {.ping_interval = 1s}, read_to_the_end);
 
@@ -1189,37 +1200,28 @@ TEST_CASE("accept_websocket: a keep-alive frame stuck on its peer ends with the 
   REQUIRE(reported.empty());
 }
 
-TEST_CASE("accept_websocket: a receive() after the keep-alive stopped the handler throws the stop again",
-          "[server][websocket]") {
+TEST_CASE("accept_websocket: a receive() after one its own timeout ended throws that end, without reading",
+          "[server][websocket][stopped]") {
+  std::string first;
   std::string again;
 
   auto const [ended_at, reported] = run_paced(
-      [&again](http::websocket socket, std::chrono::nanoseconds &) -> task<> {
-        auto stopped = false;
+      [&first, &again](http::websocket socket, std::chrono::nanoseconds &) -> task<> {
+        // Stopped by its own timeout, which a stop ends here: as a stream does not take a read up again, receiving
+        // ends.
+        first = (co_await quoll::test::code_thrown_by(quoll::async::with_timeout(1s, socket.receive()))).message();
 
-        try {
-          for (;;) {
-            static_cast<void>(co_await socket.receive());
-          }
-        } catch (std::system_error const &) {
-          stopped = true;
-        }
-
-        if (!stopped) {
-          co_return;
-        }
-
-        // Thrown again as it was stored, without reading.
+        // With no stop asked of it, it throws what ended receiving, rather than read again.
         try {
           static_cast<void>(co_await socket.receive());
         } catch (std::system_error const &thrown) {
-          again = std::string{thrown.what()};
-          throw;
+          again = thrown.what();
         }
       },
-      {.ping_interval = 1s}, read_to_the_end);
+      {.ping_interval = 0s}, read_to_the_end);
 
-  REQUIRE(ended_at == 2s);
+  REQUIRE(ended_at == 1s);
+  REQUIRE(first == std::make_error_code(std::errc::timed_out).message());
   REQUIRE(again.starts_with("quoll::http::websocket: receiving has ended"));
   REQUIRE(reported.empty());
 }

@@ -46,6 +46,7 @@
 #include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/report.hpp>
 #include <quoll/async/stopped.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/strands_ref.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
@@ -255,8 +256,16 @@ async::task<> serve_accepting(io::any_listener listener, std::shared_ptr<server_
     std::exception_ptr failure;
     std::error_code error;
 
+    // A stop ends the accept, or the wait after a failed one, here rather than this frame: what follows joins the
+    // connections, which use what this frame holds.
     try {
-      stream.emplace(co_await listener.accept());
+      auto accepted = co_await async::stopped_as_optional(listener.accept());
+
+      if (!accepted) {
+        break;
+      }
+
+      stream.emplace(std::move(*accepted));
     } catch (std::system_error const &thrown) {
       failure = std::current_exception();
       error = thrown.code();
@@ -266,6 +275,7 @@ async::task<> serve_accepting(io::any_listener listener, std::shared_ptr<server_
     }
 
     if (!stream) {
+      // A listener that cancels its wait with no stop asked of it: closed, it accepts no more.
       if (error == std::errc::operation_canceled) {
         break;
       }
@@ -273,14 +283,14 @@ async::task<> serve_accepting(io::any_listener listener, std::shared_ptr<server_
       auto again = false;
 
       try {
-        again = accept_error ? co_await accept_error(error) : co_await accept_again(error);
-      } catch (std::system_error const &thrown) {
+        auto decided = co_await async::stopped_as_optional(accept_error ? accept_error(error) : accept_again(error));
+
         // A stop during the wait it suggests: as a stop at any other moment, no failure.
-        if (thrown.code() != std::errc::operation_canceled || !stop_token.stop_requested()) {
-          ending = std::current_exception();
+        if (!decided) {
+          break;
         }
 
-        break;
+        again = *decided;
       } catch (...) {
         ending = std::current_exception();
         break;

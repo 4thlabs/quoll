@@ -204,7 +204,7 @@ Whatever keeps a response from coming throws from the task:
 | A response that cannot be read                | `std::system_error`: the parser's error (`http::error::partial_message`, `http::error::body_too_large`, `http::error::bad_message`...) |
 | Too many redirects                            | `std::system_error`: `http::error::too_many_redirects`                                                                                 |
 | A timeout                                     | `std::system_error`: `std::errc::timed_out`, and the connection closes                                                                 |
-| A stop request on the task                    | `std::system_error`: `std::errc::operation_canceled`, and the connection closes                                                        |
+| A stop request on the task                    | No exception: the task ends on the stop (see [Getting started](getting-started.md#failures)), and the connection closes                |
 | A request that cannot be sent                 | `std::invalid_argument`, before the task runs: a target not in origin form, what `http::serialize` rejects                             |
 
 ```cpp

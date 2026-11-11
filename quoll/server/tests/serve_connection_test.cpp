@@ -35,8 +35,9 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/current_stop_token.hpp>
-#include <quoll/async/detail/stop_scope.hpp>
+#include <quoll/async/detail/owned_chain.hpp>
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
@@ -61,6 +62,7 @@
 #include <quoll/server/server.hpp>
 #include <quoll/test/read_until_closed.hpp>
 #include <quoll/test/run.hpp>
+#include <quoll/test/under_stop.hpp>
 #include <quoll/test/virtual_time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -1001,6 +1003,13 @@ TEST_CASE("serve_connection: a handler takes the time it needs", "[server][timer
   REQUIRE(time.now() == 1h + 1s);
 }
 
+namespace {
+
+// `work`, which a stop ends here rather than with its awaiter: whether it ended so.
+task<bool> quietly_stopped(task<> work) { co_return !co_await quoll::async::stopped_as_optional(std::move(work)); }
+
+} // namespace
+
 TEST_CASE("serve_connection: a stop request is no timeout", "[server][timer]") {
   virtual_time time;
   std::stop_source source;
@@ -1015,7 +1024,7 @@ TEST_CASE("serve_connection: a stop request is no timeout", "[server][timer]") {
   // A request under way: no 408 for it.
   auto outcome = quoll::test::run(
       time,
-      quoll::async::when_all(quoll::http::server{router}.serve_connection(std::move(server)),
+      quoll::async::when_all(quietly_stopped(quoll::http::server{router}.serve_connection(std::move(server))),
                              peer(std::move(client), "GET /hello HTTP/1.1\r\nHo", 0s, ""), stop_soon()),
       source.get_token());
 
@@ -1206,9 +1215,9 @@ TEST_CASE("serve_connection: a drain or a stop request ends the lingering", "[se
   }
 
   auto const serving = [&](io::memory_stream stream) -> task<int> {
-    co_await quoll::async::detail::stop_scope<void>{
+    static_cast<void>(co_await quoll::async::detail::owned_chain<void>{
         quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)),
-        stop_with_drain ? std::stop_token{} : stopping.get_token()};
+        stop_with_drain ? std::stop_token{} : stopping.get_token()});
     server_gone = time.now();
     co_return 1;
   };
@@ -1663,8 +1672,9 @@ TEST_CASE("serve_connection: a stop during the reading of a body is no failure o
   };
 
   auto const serving = [&](io::memory_stream stream) -> task<bool> {
-    co_await quoll::async::detail::stop_scope<void>{
-        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stopping.get_token()};
+    static_cast<void>(co_await quoll::async::detail::owned_chain<void>{
+        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)),
+        stopping.get_token()});
     co_return true;
   };
 
@@ -1848,8 +1858,9 @@ TEST_CASE("serve_connection: a stop in a writer is no failure of the writer", "[
   auto [client, server] = io::make_memory_stream_pair();
 
   auto const serving = [&](io::memory_stream stream) -> task<bool> {
-    co_await quoll::async::detail::stop_scope<void>{
-        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stopping.get_token()};
+    static_cast<void>(co_await quoll::async::detail::owned_chain<void>{
+        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)),
+        stopping.get_token()});
     co_return true;
   };
 
@@ -2083,8 +2094,9 @@ TEST_CASE("serve_connection: a writer that a stop ends early has no whole body t
   auto [client, server] = io::make_memory_stream_pair();
 
   auto const serving = [&](io::memory_stream stream) -> task<bool> {
-    co_await quoll::async::detail::stop_scope<void>{
-        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stopping.get_token()};
+    static_cast<void>(co_await quoll::async::detail::owned_chain<void>{
+        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)),
+        stopping.get_token()});
     co_return true;
   };
 
@@ -2597,8 +2609,7 @@ TEST_CASE("serve_connection: a read stopped once its patience has run out is sto
     stop.request_stop();
 
     try {
-      static_cast<void>(
-          co_await quoll::async::detail::stop_scope<std::optional<std::string_view>>{body.read(), stop.get_token()});
+      static_cast<void>(co_await quoll::test::under_stop(body.read(), stop.get_token()));
     } catch (std::system_error const &thrown) {
       response.body = thrown.code() == std::errc::operation_canceled ? "stopped" : "another failure";
     }
@@ -2857,8 +2868,8 @@ TEST_CASE("serve_connection: what a stop throws through a handler is no failure 
   };
 
   auto const serving = [&](io::memory_stream stream) -> task<> {
-    co_await quoll::async::detail::stop_scope<void>{
-        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stop.get_token()};
+    static_cast<void>(co_await quoll::async::detail::owned_chain<void>{
+        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stop.get_token()});
   };
 
   static_cast<void>(
@@ -2893,8 +2904,8 @@ TEST_CASE("serve_connection: what goes wrong during a stop is still told", "[ser
   };
 
   auto const serving = [&](io::memory_stream stream) -> task<> {
-    co_await quoll::async::detail::stop_scope<void>{
-        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stop.get_token()};
+    static_cast<void>(co_await quoll::async::detail::owned_chain<void>{
+        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stop.get_token()});
   };
 
   static_cast<void>(
@@ -2934,8 +2945,8 @@ TEST_CASE("serve_connection: what goes wrong in a body_writer during a stop is s
   };
 
   auto const serving = [&](io::memory_stream stream) -> task<> {
-    co_await quoll::async::detail::stop_scope<void>{
-        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stop.get_token()};
+    static_cast<void>(co_await quoll::async::detail::owned_chain<void>{
+        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stop.get_token()});
   };
 
   static_cast<void>(

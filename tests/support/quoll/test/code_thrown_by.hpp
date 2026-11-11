@@ -37,6 +37,7 @@
 #ifndef QUOLL_TEST_CODE_THROWN_BY_HPP
 #define QUOLL_TEST_CODE_THROWN_BY_HPP
 
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 
 #include <system_error>
@@ -44,11 +45,15 @@
 
 namespace quoll::test {
 
-// The code of the std::system_error `work` throws, none if it throws none.
+// The code of the std::system_error `work` throws, none if it throws none, and std::errc::operation_canceled if it
+// ended on a stop, what a stop threw before it ended a task without an exception (#151): a test of a stop reads the
+// same.
 template <class T>
 async::task<std::error_code> code_thrown_by(async::task<T> work) {
   try {
-    co_await std::move(work);
+    if (!co_await async::stopped_as_optional(std::move(work))) {
+      co_return std::make_error_code(std::errc::operation_canceled);
+    }
   } catch (std::system_error const &thrown) {
     co_return thrown.code();
   }

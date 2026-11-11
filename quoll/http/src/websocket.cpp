@@ -42,14 +42,17 @@
 #include <quoll/async/detached.hpp>
 #include <quoll/async/detail/code_of.hpp>
 #include <quoll/async/detail/either_stop.hpp>
+#include <quoll/async/detail/end_stopped.hpp>
 #include <quoll/async/detail/held_place.hpp>
 #include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/detail/optional_timeout.hpp>
+#include <quoll/async/detail/owned_chain.hpp>
 #include <quoll/async/detail/slots.hpp>
 #include <quoll/async/detail/stop_on_exit.hpp>
 #include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/stop_waker.hpp>
 #include <quoll/async/detail/synchronized.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/http/detail/one_at_a_time.hpp>
@@ -217,13 +220,13 @@ async::task<io::io_result> write_once(std::shared_ptr<state> connection, std::sp
   co_return co_await connection->stream.write_some(rest);
 }
 
-// One write within wait_limit and within `stop`, which replaces the caller's: see write_frame(). `rest` belongs to
-// write_frame's frame, which awaits this at once.
-async::task<io::io_result> write_within(std::shared_ptr<state> connection, std::span<std::byte const> rest,
-                                        std::stop_token stop) {
+// One write within wait_limit and within `stop`, which replaces the caller's: see write_frame(). Nothing once it ended
+// on that stop, which write_frame() tells apart. `rest` belongs to write_frame's frame, which awaits this at once.
+async::task<std::optional<io::io_result>> write_within(std::shared_ptr<state> connection,
+                                                       std::span<std::byte const> rest, std::stop_token stop) {
   auto const limit = connection->wait_limit;
 
-  co_return co_await async::detail::stop_scope<io::io_result>{
+  co_return co_await async::detail::owned_chain<io::io_result>{
       async::detail::with_optional_timeout(limit, write_once(std::move(connection), rest)), std::move(stop)};
 }
 
@@ -273,29 +276,35 @@ async::task<> write_frame(std::shared_ptr<state> connection, std::string frame, 
   auto const gone_stop = stop_with_gone(caller, connection->gone, either);
 
   while (!rest.empty()) {
-    io::io_result sent{};
+    std::optional<io::io_result> written;
 
     try {
       if (gone_stop.stop_possible()) {
-        sent = co_await write_within(connection, rest, gone_stop);
+        written = co_await write_within(connection, rest, gone_stop);
       } else {
-        sent = co_await async::detail::with_optional_timeout(connection->wait_limit, write_once(connection, rest));
+        written = co_await async::detail::with_optional_timeout(connection->wait_limit, write_once(connection, rest));
       }
     } catch (std::system_error const &thrown) {
-      // A stream that throws its stop rather than say it: the verdict's, or the limit's, which with_timeout() throws
-      // as a timeout. Either cut the frame, as said below.
-      auto const gone = connection->gone.stop_requested() && async::detail::is_a_stop(std::current_exception());
-
-      if (gone || (thrown.code() == std::errc::timed_out && !caller.stop_requested())) {
+      // The limit's, which with_timeout() throws as a timeout: it cuts the frame, as said below.
+      if (thrown.code() == std::errc::timed_out && !caller.stop_requested()) {
         connection->sending = detail::sending_state::cut;
-      }
-
-      if (gone) {
-        throw_gone(*connection);
       }
 
       throw;
     }
+
+    // A stream that ended on its stop rather than say it: the verdict's cuts the frame, as said below; the caller's
+    // ends the send on it.
+    if (!written) {
+      if (connection->gone.stop_requested()) {
+        connection->sending = detail::sending_state::cut;
+        throw_gone(*connection);
+      }
+
+      co_await async::detail::end_stopped{};
+    }
+
+    auto const sent = *written;
 
     auto const fits = sent.transferred <= rest.size();
 
@@ -372,26 +381,27 @@ async::task<std::error_code> send_quietly(std::shared_ptr<state> connection, std
   // Copied before the state is given to what it stops.
   auto connection_stop = connection->connection_stop;
 
+  std::error_code failed;
+
+  // A stop, of the connection or of the turn's wait, ends the sending here, as a failure would.
   try {
-    co_await async::detail::stop_scope<void>{sending(std::move(connection), std::move(frame), kind, turn_stop, writing),
-                                             std::move(connection_stop)};
+    if (!co_await async::detail::owned_chain<void>{
+            sending(std::move(connection), std::move(frame), kind, turn_stop, writing), std::move(connection_stop)}) {
+      failed = std::make_error_code(std::errc::operation_canceled);
+    }
   } catch (std::system_error const &thrown) {
-    if (started != nullptr) {
-      *started = writing;
-    }
-
-    if (turn_stop.stop_requested() && !(started != nullptr && writing)) {
-      co_return std::error_code{};
-    }
-
-    co_return code_or_io_error(thrown.code());
+    failed = code_or_io_error(thrown.code());
   }
 
   if (started != nullptr) {
     *started = writing;
   }
 
-  co_return std::error_code{};
+  if (!failed || (turn_stop.stop_requested() && !(started != nullptr && writing))) {
+    co_return std::error_code{};
+  }
+
+  co_return failed;
 }
 
 // What the parser reads next, or how the peer broke the protocol.
@@ -440,7 +450,9 @@ async::task<> end_sending(std::shared_ptr<state> connection) {
   try {
     auto const limit = connection->wait_limit;
 
-    co_await async::detail::with_optional_timeout(limit, shutting(std::move(connection)));
+    // A stop ends it here too.
+    static_cast<void>(co_await async::stopped_as_optional(
+        async::detail::with_optional_timeout(limit, shutting(std::move(connection)))));
   } catch (std::system_error const &) {
     // A stream gone, slow, or a stop: the connection ends anyway.
   }
@@ -572,16 +584,19 @@ async::task<websocket_message> receive_watched(std::shared_ptr<state> connection
   std::optional<async::detail::either_stop> either;
   auto const stop = stop_with_gone(caller, connection->gone, either);
 
-  try {
-    co_return co_await async::detail::stop_scope<websocket_message>{receive_next(connection, &read), stop};
-  } catch (std::system_error const &) {
-    // Stopped as the peer was taken as gone, a stop of the caller's beside it included, as what follows says so too.
-    if (gone.stop_requested() && async::detail::is_a_stop(std::current_exception())) {
-      throw_gone(*connection);
-    }
+  auto received = co_await async::detail::owned_chain<websocket_message>{receive_next(connection, &read), stop};
 
-    throw;
+  if (received) {
+    co_return std::move(*received);
   }
+
+  // Stopped as the peer was taken as gone, a stop of the caller's beside it included, as what follows says so too; by
+  // the caller alone, it ends on that stop.
+  if (gone.stop_requested()) {
+    throw_gone(*connection);
+  }
+
+  co_await async::detail::end_stopped{};
 }
 
 // `turn` until the frame goes, given back with it.
@@ -594,12 +609,23 @@ async::task<websocket_message> receive_from(std::shared_ptr<state> connection, d
   }
 
   try {
-    // `gone` says whether its receive()s watch the connection.
+    std::optional<websocket_message> received;
+
+    // `gone` says whether its receive()s watch the connection. An if, not ?:, as GCC 13 would run both co_awaits.
     if (!connection->gone.stop_possible()) {
-      co_return co_await receive_next(connection);
+      received = co_await async::stopped_as_optional(receive_next(connection));
+    } else {
+      received = co_await async::stopped_as_optional(receive_watched(connection));
     }
 
-    co_return co_await receive_watched(connection);
+    // A stop ends receiving too, as a stream does not take a read up again once it was stopped: the next receive()
+    // throws, rather than read. This one ends on the stop.
+    if (!received) {
+      connection->failure = std::make_error_code(std::errc::operation_canceled);
+      co_await async::detail::end_stopped{};
+    }
+
+    co_return std::move(*received);
   } catch (std::system_error const &thrown) {
     // A code of zero as a failure with none, so that receiving ends all the same. A stop beside a verdict was thrown as
     // the verdict already, by receive_watched().
@@ -650,7 +676,9 @@ async::task<> watch_peer(std::shared_ptr<state> connection, std::chrono::nanosec
       on_close.emplace(connection->closing.get_token(), async::detail::stop_waker{&wake});
     }
 
-    auto const quiet = co_await async::detail::stop_scope<bool>{timer->wait_for(period), wake.get_token()};
+    // A timer that ends on its stop rather than say false is woken as well.
+    auto const quiet =
+        (co_await async::detail::owned_chain<bool>{timer->wait_for(period), wake.get_token()}).value_or(false);
 
     if (ends.stop_requested() || connection->close_came.load()) {
       co_return;
@@ -796,7 +824,9 @@ async::task<> watch_alone(std::weak_ptr<state> watched) {
       co_return;
     }
 
-    auto const quiet = co_await async::detail::stop_scope<bool>{timer->wait_for(interval), wake.get_token()};
+    // A timer that ends on its stop rather than say false is woken as well.
+    auto const quiet =
+        (co_await async::detail::owned_chain<bool>{timer->wait_for(interval), wake.get_token()}).value_or(false);
     auto const connection = watched.lock();
 
     // Woken as its receive() ended, or a close left: looked at again from the top, and a new interval starts from
@@ -874,13 +904,14 @@ async::task<> start_watch(std::shared_ptr<state> connection) {
   }
 }
 
-// The handler, under `stop`, which the connection's stop and a peer gone stop. `watch` belongs to serve_websocket's
-// frame, which awaits this at once: it ends the keep-alive once the handler has ended, however it ended.
+// The handler, under `stop`, which the connection's stop and a peer gone stop: a handler ending on it is no failure,
+// and the connection still ends with its close. `watch` belongs to serve_websocket's frame, which awaits this at once:
+// it ends the keep-alive once the handler has ended, however it ended.
 async::task<> run_handler(std::function<async::task<>(websocket)> handler, websocket socket, std::stop_token stop,
                           std::stop_source &watch) {
   async::detail::stop_on_exit const ending{watch};
 
-  co_await async::detail::stop_scope<void>{handler(std::move(socket)), std::move(stop)};
+  static_cast<void>(co_await async::detail::owned_chain<void>{handler(std::move(socket)), std::move(stop)});
 }
 
 // Whether `failure` is a send refused after a close, one that left or the peer's, rather than after a frame cut short.

@@ -43,6 +43,7 @@
 #include <quoll/io/connect_tls.hpp>
 #include <quoll/io/listen_tls.hpp>
 #include <quoll/server/server.hpp>
+#include <quoll/test/code_thrown_by.hpp>
 #include <quoll/test/run_task.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -95,7 +96,6 @@ http::request make_request(http::verb method, std::string target, std::string bo
 #include <quoll/asio/tls_acceptor.hpp>
 #include <quoll/asio/tls_stream.hpp>
 #include <quoll/async/co_spawn.hpp>
-#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/detail/timeout_children.hpp>
 #include <quoll/async/runtime_options.hpp>
 #include <quoll/async/when_all.hpp>
@@ -118,6 +118,7 @@ http::request make_request(http::verb method, std::string target, std::string bo
 #include <quoll/io/tls_options.hpp>
 #include <quoll/io/write.hpp>
 #include <quoll/test/overloaded.hpp>
+#include <quoll/test/under_stop.hpp>
 #include <quoll/test/websocket_echo.hpp>
 
 #include <array>
@@ -137,7 +138,6 @@ using namespace std::chrono_literals;
 
 using quoll::async::when_all;
 using quoll::async::detail::stop_on_exit;
-using quoll::async::detail::stop_scope;
 
 std::string tls_file(std::string const &name) { return std::string{QUOLL_TEST_TLS_DIR} + "/" + name; }
 
@@ -230,7 +230,8 @@ task<T> with_server(io::tls_server_options certificate, std::function<task<T>(st
   std::stop_source stop;
 
   auto const serving = [&]() -> task<> {
-    co_await stop_scope<void>{http::server{router, std::move(options)}.serve(std::move(counted)), stop.get_token()};
+    co_await quoll::test::under_stop(http::server{router, std::move(options)}.serve(std::move(counted)),
+                                     stop.get_token());
   };
 
   auto const calling = [&]() -> task<T> {
@@ -259,13 +260,7 @@ std::function<task<std::error_code>(std::string)> get_error(http::client_options
   return [options = std::move(options), target = std::move(target)](std::string url) -> task<std::error_code> {
     http::client const client{url, options};
 
-    try {
-      static_cast<void>(co_await client.send(make_request(http::verb::get, target)));
-    } catch (std::system_error const &error) {
-      co_return error.code();
-    }
-
-    co_return std::error_code{};
+    co_return co_await quoll::test::code_thrown_by(client.send(make_request(http::verb::get, target)));
   };
 }
 
@@ -321,7 +316,7 @@ task<std::error_code> tls_client_of_plain_server() {
   std::stop_source stop;
 
   auto const serving = [&]() -> task<> {
-    co_await stop_scope<void>{http::server{router}.serve(std::move(listener)), stop.get_token()};
+    co_await quoll::test::under_stop(http::server{router}.serve(std::move(listener)), stop.get_token());
   };
 
   auto const calling = [&]() -> task<std::error_code> {
@@ -359,7 +354,8 @@ task<std::string> listen_and_get(std::uint16_t port) {
   std::stop_source stop;
 
   auto const serving = [&]() -> task<> {
-    co_await stop_scope<void>{http::server{router}.listen(port, {.tls = server_certificate()}), stop.get_token()};
+    co_await quoll::test::under_stop(http::server{router}.listen(port, {.tls = server_certificate()}),
+                                     stop.get_token());
   };
 
   auto const calling = [&]() -> task<std::string> {
@@ -387,7 +383,7 @@ task<std::string> websocket_over_tls() {
   std::stop_source stop;
 
   auto const serving = [&]() -> task<> {
-    co_await stop_scope<void>{server.serve(std::move(listener)), stop.get_token()};
+    co_await quoll::test::under_stop(server.serve(std::move(listener)), stop.get_token());
   };
   auto const talking = [&]() -> task<std::string> {
     stop_on_exit const stop_server{stop};

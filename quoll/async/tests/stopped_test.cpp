@@ -318,6 +318,32 @@ TEST_CASE("stop_scope: a stop of the work ends its awaiter too", "[async][stoppe
   CHECK(log == std::vector<std::string>{"~leaf", "~scope awaiter"});
 }
 
+namespace {
+
+// Each case taken by rvalue, as CompletionHandler checks it: the stop's too.
+struct taking_rvalues {
+  bool *stopped;
+
+  void operator()() const {}
+
+  void operator()(std::exception_ptr &&) const {}
+
+  void operator()(quoll::async::stopped_t &&) const { *stopped = true; }
+};
+
+} // namespace
+
+TEST_CASE("stopped: a handler taking its cases by rvalue gets the stop", "[async][stopped]") {
+  run_loop loop;
+  std::vector<std::string> log;
+  auto stopped = false;
+
+  co_spawn(loop.get_executor(), stops(log), taking_rvalues{&stopped});
+  loop.run();
+
+  CHECK(stopped);
+}
+
 TEST_CASE("stopped: async::detached takes a stop as no failure", "[async][stopped]") {
   run_loop loop;
   std::vector<std::string> log;

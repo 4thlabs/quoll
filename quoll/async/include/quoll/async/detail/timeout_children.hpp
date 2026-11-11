@@ -37,13 +37,15 @@
 #ifndef QUOLL_ASYNC_DETAIL_TIMEOUT_CHILDREN_HPP
 #define QUOLL_ASYNC_DETAIL_TIMEOUT_CHILDREN_HPP
 
+#include <quoll/async/detail/non_void.hpp>
+#include <quoll/async/detail/owned_chain.hpp>
 #include <quoll/async/detail/stop_on_exit.hpp>
-#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer_ref.hpp>
 
 #include <chrono>
+#include <optional>
 #include <stop_token>
 #include <utility>
 
@@ -68,18 +70,21 @@ struct timeout_stop_forwarder {
   }
 };
 
+// What `work` gives, or std::nullopt once it ended on a stop, of the timeout or of the awaiter: with_timeout() tells
+// them apart.
 template <class T>
-[[nodiscard]] task<T> timeout_work(task<T> work, timeout_state &state QUOLL_LIFETIMEBOUND) {
+[[nodiscard]] task<std::optional<non_void_t<T>>> timeout_work(task<T> work, timeout_state &state QUOLL_LIFETIMEBOUND) {
   stop_on_exit const stop_watchdog{state.watchdog};
 
-  co_return co_await stop_scope<T>{std::move(work), state.work.get_token()};
+  co_return co_await owned_chain<T>{std::move(work), state.work.get_token()};
 }
 
+// A timer that ends on its stop rather than say false is taken for one that has not expired.
 [[nodiscard]] inline task<> timeout_watchdog(timer_ref timer, std::chrono::nanoseconds timeout,
                                              timeout_state &state QUOLL_LIFETIMEBOUND) {
   stop_on_exit const stop_work{state.work};
 
-  state.expired = co_await stop_scope<bool>{timer.wait_for(timeout), state.watchdog.get_token()};
+  state.expired = (co_await owned_chain<bool>{timer.wait_for(timeout), state.watchdog.get_token()}).value_or(false);
 }
 
 } // namespace quoll::async::detail

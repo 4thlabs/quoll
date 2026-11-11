@@ -40,6 +40,7 @@
 // UBSan, the connection must end, whatever happens on the way.
 
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/fuzz/support.hpp>
 #include <quoll/fuzz/unfolding.hpp>
@@ -137,8 +138,10 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
 
   steps.stop_with(stop);
 
+  // A stop ends the connection on the stop, which is how it ends then.
   auto const serve = [&]() -> quoll::async::task<bool> {
-    co_await server.serve_connection(quoll::io::any_stream{quoll::fuzz::unfolding_stream{steps, peer}});
+    static_cast<void>(co_await quoll::async::stopped_as_optional(
+        server.serve_connection(quoll::io::any_stream{quoll::fuzz::unfolding_stream{steps, peer}})));
     co_return true;
   };
 

@@ -36,11 +36,11 @@
 
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_executor.hpp>
-#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/runtime_options.hpp>
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
@@ -70,8 +70,10 @@
 #include <quoll/rest/header.hpp>
 #include <quoll/rest/returns.hpp>
 #include <quoll/rest/text_codec.hpp>
+#include <quoll/test/code_thrown_by.hpp>
 #include <quoll/test/overloaded.hpp>
 #include <quoll/test/reports.hpp>
+#include <quoll/test/under_stop.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -129,6 +131,11 @@ T run_on(quoll::async::Executor auto executor, task<T> work, std::stop_source so
                       },
                       [&](std::exception_ptr error) {
                         failure = std::move(error);
+                        done = true;
+                      },
+                      // Said as a failure, which the test reports.
+                      [&](quoll::async::stopped_t) {
+                        failure = std::make_exception_ptr(std::runtime_error{"quoll test: the task ended on a stop"});
                         done = true;
                       }},
            source.get_token());
@@ -243,13 +250,7 @@ task<std::error_code> send_error(http::client transport, std::string target) {
 
   request.target = std::move(target);
 
-  try {
-    (void)co_await transport.send(std::move(request));
-  } catch (std::system_error const &error) {
-    co_return error.code();
-  }
-
-  co_return std::error_code{};
+  co_return co_await quoll::test::code_thrown_by(transport.send(std::move(request)));
 }
 
 task<> request_stop(std::stop_source &source) {
@@ -273,13 +274,7 @@ task<double> measure_sleep(std::chrono::nanoseconds duration) {
 }
 
 task<std::error_code> sleep_error(std::chrono::nanoseconds duration) {
-  try {
-    co_await quoll::async::sleep_for(duration);
-  } catch (std::system_error const &error) {
-    co_return error.code();
-  }
-
-  co_return std::error_code{};
+  co_return co_await quoll::test::code_thrown_by(quoll::async::sleep_for(duration));
 }
 
 // Sleeps, then requests stop: when_all starts the sleep first.
@@ -297,13 +292,8 @@ task<std::error_code> fetch_with_timeout(http::client transport, std::chrono::na
 
   request.target = "/hang";
 
-  try {
-    (void)co_await quoll::async::with_timeout(timeout, transport.send(std::move(request)));
-  } catch (std::system_error const &error) {
-    co_return error.code();
-  }
-
-  co_return std::error_code{};
+  co_return co_await quoll::test::code_thrown_by(
+      quoll::async::with_timeout(timeout, transport.send(std::move(request))));
 }
 
 } // namespace
@@ -534,8 +524,7 @@ task<std::string> read_unstopped(http::response_body const &body QUOLL_LIFETIMEB
   std::string all;
 
   for (;;) {
-    auto const piece =
-        co_await quoll::async::detail::stop_scope<std::optional<std::string_view>>{body.read(), std::stop_token{}};
+    auto const piece = co_await quoll::test::under_stop(body.read(), std::stop_token{});
 
     if (!piece) {
       co_return all;
@@ -737,13 +726,7 @@ task<http::streamed_response> stream_target(http::client transport, std::string 
 }
 
 task<std::error_code> stream_error(http::client transport, std::string target) {
-  try {
-    (void)co_await stream_target(std::move(transport), std::move(target));
-  } catch (std::system_error const &error) {
-    co_return error.code();
-  }
-
-  co_return std::error_code{};
+  co_return co_await quoll::test::code_thrown_by(stream_target(std::move(transport), std::move(target)));
 }
 
 // Requests a target the server never answers, then requests stop: when_all starts the fetch first.
@@ -772,9 +755,12 @@ task<std::string> read_rest(http::response_body const &body) {
 }
 
 // What read() throws, or a default error if it does not.
+// What a read throws, or operation_canceled for one that ended on a stop.
 task<std::system_error> read_failure(http::response_body const &body) {
   try {
-    (void)co_await body.read();
+    if (!co_await quoll::async::stopped_as_optional(body.read())) {
+      co_return std::system_error{std::make_error_code(std::errc::operation_canceled), "stopped"};
+    }
   } catch (std::system_error const &error) {
     co_return error;
   }
@@ -790,13 +776,7 @@ task<std::system_error> read_then_stop(http::response_body const &body, std::sto
 }
 
 task<std::error_code> read_with_timeout(http::response_body const &body, std::chrono::nanoseconds timeout) {
-  try {
-    (void)co_await quoll::async::with_timeout(timeout, body.read());
-  } catch (std::system_error const &error) {
-    co_return error.code();
-  }
-
-  co_return std::error_code{};
+  co_return co_await quoll::test::code_thrown_by(quoll::async::with_timeout(timeout, body.read()));
 }
 
 void server_writes(std::string_view text) { quoll_test_server_write(text.data(), text.size()); }

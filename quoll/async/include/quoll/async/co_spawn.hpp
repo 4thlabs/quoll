@@ -83,7 +83,8 @@ detached spawn_root(E executor, task<T> work, Handler handler, std::stop_token s
   if (error) {
     std::invoke(handler, std::move(error));
   } else if (!*outcome) {
-    std::invoke(handler, stopped);
+    // A prvalue, as the concept asks for: a handler taking stopped_t && fits too.
+    std::invoke(handler, stopped_t{});
   } else if constexpr (std::is_void_v<T>) {
     std::invoke(handler);
   } else {
