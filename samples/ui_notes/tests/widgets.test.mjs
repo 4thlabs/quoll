@@ -49,9 +49,17 @@ test('the paths of widgets, with parentheses or braces, nested templates, and no
     '/* widget<older>("./older.js", "canvas"); */',
     'std::vector<widget<P>> charts; auto name = static_cast<std::string>("not a widget");',
     'constexpr auto map = widget<map_props>("leaflet-widget", "div");',
+    'inline constexpr widget<chart_props> named{"./named.js", "canvas"};',
+    'constexpr ui::widget<chart_props> parenthesized("./parenthesized.js", "canvas");',
   ].join('\n');
 
-  assert.deepEqual(widgetPaths(source), ['./src/line.js', './bar.js', 'leaflet-widget']);
+  assert.deepEqual(widgetPaths(source), [
+    './src/line.js',
+    './bar.js',
+    'leaflet-widget',
+    './named.js',
+    './parenthesized.js',
+  ]);
 });
 
 test('strings holding what looks like a comment, before a widget or as its path', () => {

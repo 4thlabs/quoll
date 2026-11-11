@@ -214,6 +214,19 @@ addToLibrary({
             return logged(props);
           },
         }),
+      // Its mount waits for quoll_test_widgets_release(), and its unmount throws.
+      './async_throwing_chart.js': () =>
+        Promise.resolve({
+          async mount() {
+            await quollFakeDom.gate;
+
+            return {
+              unmount() {
+                throw new Error('no unmount');
+              },
+            };
+          },
+        }),
       // Its mount fails.
       './failing_chart.js': () =>
         Promise.resolve({
@@ -244,6 +257,12 @@ addToLibrary({
   quoll_test_widgets_log__deps: ['$quollFakeDom', '$stringToUTF8'],
   quoll_test_widgets_log: (out, size) => {
     stringToUTF8(quollFakeDom.widgetLog.join('\n'), out, size);
+  },
+
+  // What the last widget mounted emits: a function, which JSON.stringify turns into nothing.
+  quoll_test_widgets_emit_function__deps: ['$quollFakeDom'],
+  quoll_test_widgets_emit_function: () => {
+    quollFakeDom.emit('picked', () => {});
   },
 
   // Lets the mount of ./async_chart.js go on.
