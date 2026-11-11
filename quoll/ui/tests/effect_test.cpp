@@ -37,7 +37,6 @@
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
-#include <quoll/async/with_timeout.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/test/memory_renderer.hpp>
@@ -50,6 +49,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <functional>
@@ -58,7 +58,6 @@
 #include <set>
 #include <stdexcept>
 #include <string>
-#include <system_error>
 #include <vector>
 
 namespace {
@@ -140,13 +139,11 @@ task<std::string> checked_text(int key) {
 template <class Effect>
 std::string shown_of(Effect const &loaded) {
   switch (loaded.status()) {
-  case effect_status::none:
+  case run_status::none:
     return "nothing";
-  case effect_status::running:
+  case run_status::running:
     return "running";
-  case effect_status::stopped:
-    return "stopped";
-  case effect_status::done:
+  case run_status::done:
     break;
   }
 
@@ -159,7 +156,7 @@ struct loading_page {
   effect<std::string> text{next, load_text};
 
   element view() {
-    auto const again = [this]() -> task<> { static_cast<void>(co_await text.reload()); };
+    auto const again = [this] { text.reload(); };
 
     return div({button("again") | on_click(again), p(shown_of(text))});
   }
@@ -308,6 +305,44 @@ TEST_CASE("effect: a run stopped by a later one that ends anyway writes nothing"
   CHECK(shown.html().contains("<p>text 2</p>"));
 }
 
+TEST_CASE("effect: an answer of the run before, come after the change but before the next run starts, writes nothing",
+          "[ui][effect]") {
+  // The change comes after some turns of the first run's yields, so that it ends, for one of them, between the view of
+  // the change and the start of the second run.
+  for (int before = 0; before < 4; ++before) {
+    loads = {};
+    loads.stubborn = {1};
+    loads.delays = {{2, 10ms}};
+
+    virtual_time time;
+    memory_renderer const shown;
+    test_app<loading_page> instance{time.get_executor(), shown};
+    std::vector<std::string> seen;
+
+    auto const act = [&]() -> task<> {
+      auto const &text = instance.component().text;
+
+      for (int turn = 0; turn < before; ++turn) {
+        co_await quoll::async::yield();
+      }
+
+      instance.component().next = 2;
+
+      // What the effect says, turn after turn, until the second run started: never what the first gave.
+      for (int turn = 0; turn < 8; ++turn) {
+        co_await quoll::async::yield();
+        seen.push_back(text.status() == run_status::done && text.result() ? *text.result() : "-");
+      }
+
+      co_await quoll::async::sleep_for(20ms);
+    };
+
+    REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+    CHECK(std::ranges::find(seen, "text 1") == seen.end());
+    CHECK(shown.html().contains("<p>text 2</p>"));
+  }
+}
+
 TEST_CASE("effect: a run that fails keeps why, and reload runs it again", "[ui][effect]") {
   loads = {};
   loads.failing = {1};
@@ -357,67 +392,50 @@ TEST_CASE("effect: the view a change makes shows it running, not what it gave fo
   CHECK(shown.html().contains("<p>text 2</p>"));
 }
 
-TEST_CASE("effect: reload forgets a failure as it starts, and a later change replaces it", "[ui][effect]") {
-  loads = {};
-  loads.failing = {1};
-  loads.delays = {{1, 1ms}};
-
-  virtual_time time;
-  memory_renderer const shown;
-  test_app<loading_page> instance{time.get_executor(), shown};
-  std::string reloading;
-  bool replaced = false;
-
-  auto const act = [&]() -> task<> {
-    co_await quoll::async::sleep_for(5ms);
-    loads.failing.clear();
-    loads.delays = {{1, 10ms}, {2, 1ms}};
-
-    auto const reload = [&]() -> task<> {
-      auto const result = co_await instance.component().text.reload();
-
-      try {
-        std::rethrow_exception(result.error());
-      } catch (run_replaced const &) {
-        replaced = true;
-      } catch (...) {
-      }
-    };
-
-    auto const change = [&]() -> task<> {
-      co_await quoll::async::sleep_for(2ms);
-      reloading = shown.html();
-      instance.component().next = 2;
-    };
-
-    co_await quoll::async::when_all(reload(), change());
-    co_await quoll::async::sleep_for(20ms);
-  };
-
-  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(reloading.contains("<p>running</p>"));
-  CHECK(replaced);
-  CHECK(shown.html().contains("<p>text 2</p>"));
-}
-
 TEST_CASE("effect: a reload after a change runs once, the view after it running it no more", "[ui][effect]") {
   loads = {};
 
   virtual_time time;
   memory_renderer const shown;
   test_app<loading_page> instance{time.get_executor(), shown};
-  bool gave = false;
-
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
     instance.component().next = 2;
-    gave = (co_await instance.component().text.reload()).has_value();
+    instance.component().text.reload();
     co_await quoll::async::sleep_for(5ms);
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(gave);
   CHECK(loads.lines == std::vector<std::string>{"start 1", "end 1", "start 2", "end 2"});
+}
+
+TEST_CASE("effect: reload shows it running at once, and with a change in the same turn runs the latest only",
+          "[ui][effect]") {
+  loads = {};
+  loads.failing = {1};
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<loading_page> instance{time.get_executor(), shown};
+  std::string reloading;
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+    loads.failing.clear();
+
+    // A click on again, then a change before the view they ask for: one run, for the value the state holds then.
+    instance.dispatch(shown.find("button"), "click");
+    co_await quoll::async::yield();
+    instance.component().next = 2;
+    co_await quoll::async::yield();
+    reloading = shown.html();
+    co_await quoll::async::sleep_for(5ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(reloading.contains("<p>running</p>"));
+  CHECK(shown.html().contains("<p>text 2</p>"));
+  CHECK(loads.lines == std::vector<std::string>{"start 1", "start 2", "end 2"});
 }
 
 TEST_CASE("effect: a function that throws before its task fails the run", "[ui][effect]") {
@@ -438,7 +456,7 @@ TEST_CASE("effect: a function that throws before its task fails the run", "[ui][
   auto const &text = instance.component().text;
 
   CHECK(shown.html().contains("<p>failed</p>"));
-  REQUIRE(text.status() == effect_status::done);
+  REQUIRE(text.status() == run_status::done);
   CHECK_THROWS_AS(std::rethrow_exception(text.result().error()), std::invalid_argument);
 }
 
@@ -475,7 +493,7 @@ TEST_CASE("effect: on an optional state, runs only while it holds a value", "[ui
   CHECK(emptied.contains("<p>nothing</p>"));
   CHECK(loads.lines == std::vector<std::string>{"start 1", "end 1", "start 2"});
   CHECK(loads.stopped == 1);
-  CHECK_THROWS_AS(instance.component().text.reload(), std::logic_error);
+  CHECK(instance.component().text.status() == run_status::none);
 }
 
 TEST_CASE("effect: one of a component of a view shows what it gave", "[ui][effect]") {
@@ -519,35 +537,6 @@ TEST_CASE("effect: the run of a component that goes is stopped with it", "[ui][e
   CHECK(loads.stopped == 1);
 }
 
-TEST_CASE("effect: a run its caller stops, as a timeout does, leaves it stopped", "[ui][effect]") {
-  loads = {};
-  loads.delays = {{1, 50ms}};
-
-  virtual_time time;
-  memory_renderer const shown;
-  test_app<loading_page> instance{time.get_executor(), shown};
-  bool timed_out = false;
-
-  auto const act = [&]() -> task<> {
-    // Once its first run started, which the reload replaces.
-    co_await settle();
-
-    try {
-      static_cast<void>(co_await quoll::async::with_timeout(5ms, instance.component().text.reload()));
-    } catch (std::system_error const &failure) {
-      timed_out = failure.code() == std::errc::timed_out;
-    }
-
-    co_await settle();
-  };
-
-  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(timed_out);
-  CHECK(instance.component().text.status() == effect_status::stopped);
-  CHECK(shown.html().contains("<p>stopped</p>"));
-  CHECK_THROWS_AS(instance.component().text.result(), std::logic_error);
-}
-
 TEST_CASE("effect: of nothing, a change stops the run before, as a debounce", "[ui][effect]") {
   searched.clear();
 
@@ -568,7 +557,7 @@ TEST_CASE("effect: of nothing, a change stops the run before, as a debounce", "[
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(searched == std::vector<std::string>{"abc"});
-  CHECK(instance.component().search.status() == effect_status::done);
+  CHECK(instance.component().search.status() == run_status::done);
   CHECK(instance.component().search.result().has_value());
 }
 
@@ -598,7 +587,7 @@ TEST_CASE("effect: one started as its app stops at once does not run", "[ui][eff
   CHECK(loads.lines.empty());
 }
 
-TEST_CASE("effect: one that could not start runs after the next view", "[ui][effect]") {
+TEST_CASE("effect: one that could not start ends on that failure, which reload tries again", "[ui][effect]") {
   // Its run yields rather than wait on a timer, which this executor does not offer.
   loads = {};
   loads.stubborn = {1};
@@ -615,6 +604,8 @@ TEST_CASE("effect: one that could not start runs after the next view", "[ui][eff
           failures.emplace_back(error.what());
         }
       }}};
+  bool failed_kept = false;
+  std::string other;
 
   auto const act = [&]() -> task<int> {
     // Its first view shows, and its run cannot be spawned.
@@ -622,8 +613,17 @@ TEST_CASE("effect: one that could not start runs after the next view", "[ui][eff
     instance.start();
     fail = false;
 
-    // A view for something else: the effect tries again.
+    // Its failure kept: a render to show it could not be asked for either, as the executor refused that too.
+    auto const &text = instance.component().text;
+
+    failed_kept = text.status() == run_status::done && !text.result().has_value();
+
+    // A view for something else does not try it again, which would fail each time a lack lasts.
     instance.component().other = 1;
+    co_await quoll::async::sleep_for(1ms);
+    other = shown.html();
+
+    instance.component().text.reload();
     co_await quoll::async::sleep_for(5ms);
     co_await instance.stop();
     co_return 0;
@@ -631,6 +631,8 @@ TEST_CASE("effect: one that could not start runs after the next view", "[ui][eff
 
   REQUIRE(quoll::test::run(time, act()) == 0);
   CHECK(failures == std::vector<std::string>{"no more"});
+  CHECK(failed_kept);
+  CHECK(other.contains("failed 1"));
   CHECK(loads.lines == std::vector<std::string>{"start 1", "end 1"});
   CHECK(shown.html().contains("text 1 1"));
 }

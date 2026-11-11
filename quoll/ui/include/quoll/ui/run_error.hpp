@@ -51,9 +51,8 @@ public:
 };
 
 /**
- * @brief Why a run of an effect, or of an action with `overlap::restart`, gave no result of its own: a later
- * one took its place, and its answer, if it came, wrote nothing. The error of the std::expected that reload() or run()
- * gives.
+ * @brief Why a run of an action with `overlap::restart` gave no result of its own: a later
+ * one took its place, and its answer, if it came, wrote nothing. The error of the std::expected that run() gives.
  */
 class run_replaced : public std::runtime_error {
 public:

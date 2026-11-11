@@ -247,8 +247,8 @@ nothing, a stale answer writes nothing. `action` and `keyed_action` run what a h
 default, a call while one is under way refused, where TanStack Query's mutations in a `scope` queue it, and hold
 whether it is under way and the result of the last run, as Leptos's `Action` does; `overlap::restart` makes a call
 stop the one under way instead. A result is a `std::expected` of the value or of what the function threw, which the
-task of a run gives and the member keeps, as elsewhere in Quoll; a run stopped by its caller leaves an effect
-`stopped`, as Dioxus's `use_resource` does.
+task of a run gives and the member keeps, as elsewhere in Quoll. An effect runs one way, after a view: `reload()`
+asks for that view, as a change of its state does, rather than run it from its caller.
 
 **Set aside.** Effects called in the view, as React's hooks, whose identity is the order of the calls: a member is
 named, and depends on a state it is given. An effect that tracks the states its function reads: Quoll tracks no reads.
@@ -256,9 +256,9 @@ A home-made resource with a key and a loader, which the maintainer found less cl
 each page, as the trial screen of step 6 first did: three rounds of review kept finding the same bugs in counters kept
 by hand.
 
-**For you.** Set the state an effect depends on, and its run follows. Await `run()` and `reload()` from a task of the
-component, a handler or `mounted()`: a call refused, or a run a later one took the place of, gives `run_refused` or
-`run_replaced`, and its caller goes on. The view reads `status()` or `pending()` first, then `result()`.
+**For you.** Set the state an effect depends on, or call `reload()`, and its run follows. Await `run()` from a task of
+the component, a handler or `mounted()`: a call refused, or a run a later one took the place of, gives `run_refused`
+or `run_replaced`, and its caller goes on. The view reads `status()` first, then `result()`.
 
 ### JavaScript libraries as modules
 

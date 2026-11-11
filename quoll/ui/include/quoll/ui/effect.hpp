@@ -47,6 +47,7 @@
 #include <quoll/ui/detail/run_slot.hpp>
 #include <quoll/ui/detail/state_link.hpp>
 #include <quoll/ui/run_error.hpp>
+#include <quoll/ui/run_status.hpp>
 #include <quoll/ui/state.hpp>
 
 #include <cassert>
@@ -61,18 +62,6 @@
 #include <utility>
 
 namespace quoll::ui {
-
-/** @brief Where an effect is. */
-enum class effect_status {
-  /** @brief It has not run: its dependency holds none yet, as an empty optional. */
-  none,
-  /** @brief A run is under way. */
-  running,
-  /** @brief The last run ended, with a value or a failure: its result(). */
-  done,
-  /** @brief The last run was stopped by its caller, as a timeout does, before it ended. */
-  stopped,
-};
 
 namespace detail {
 
@@ -129,7 +118,7 @@ async::task<> started(async::task<T> work) {
  *       return result ? component<sales_chart>({.sales = *result}) : p("No sales");
  *     };
  *
- *     return div({when(sales.status() == effect_status::done, shown)});
+ *     return div({when(sales.status() == run_status::done, shown)});
  *   }
  * };
  * @endcode
@@ -141,7 +130,8 @@ async::task<> started(async::task<T> work) {
  * function runs, as a task of the component, with a copy of the value. A state holding a `std::optional` runs it with
  * what the optional holds, and stops it, with nothing run, once the optional is empty. The function returns a task of
  * T, or of nothing for `effect<>`; what it throws, before giving its task too, is the failure of its result. A stop of
- * the component ends a run with it, as React's cleanup. reload() runs it again for the value the state holds now.
+ * the component ends a run with it, as React's cleanup. reload() runs it again for the value the state holds now, after
+ * the view it asks for, as a change of the state would: one way to run it, as React has.
  *
  * It keeps a copy of the result: a value whose copy throws is the run's failure, given and kept.
  *
@@ -169,11 +159,12 @@ public:
                           async::task<T>> &&
              std::equality_comparable<D> && std::copyable<D> && std::copy_constructible<F>
   effect(state<D> &dependency, F function) {
-    static_assert(!detail::is_view<std::remove_cvref_t<D>>,
+    static_assert(!detail::is_view<std::remove_cvref_t<D>> &&
+                      !detail::is_view<std::remove_cvref_t<typename detail::dependency_traits<D>::value_type>>,
                   "quoll::ui::effect: its state's value is copied into the run, which a view would outlive");
 
     using traits = detail::dependency_traits<D>;
-    using value_type = typename traits::value_type;
+    using dependency_value = typename traits::value_type;
     using maker = std::function<async::task<T>()>;
 
     if constexpr (requires { function == nullptr; }) {
@@ -200,8 +191,9 @@ public:
       }
 
       // Its own copy of the value, given as an rvalue: one taking it by reference refers to the run's copy.
-      return maker{
-          [function, value = value_type{traits::value(*dependency)}]() mutable { return function(std::move(value)); }};
+      return maker{[function, value = dependency_value{traits::value(*dependency)}]() mutable {
+        return function(std::move(value));
+      }};
     };
   }
 
@@ -214,41 +206,26 @@ public:
   ~effect() { assert(slot_.frames == 0 && "quoll::ui::effect: destroyed while a run is under way"); }
 
   /**
-   * @brief Runs it again for the value its state holds now, stopping the run before: what it gave, or what it threw,
-   * as result() then holds; run_replaced once a later run took its place.
-   * @throws std::logic_error while its state holds an empty optional: there is nothing to run for.
+   * @brief Runs it again for the value its state holds now, as a change of the state would: after the view it asks
+   * for, the run before stopped, as React runs an effect again. Nothing runs while the state holds an empty optional.
+   * What asking for that view throws goes to the caller, as a state's change does.
    */
-  [[nodiscard]] async::task<result_type> reload() QUOLL_LIFETIMEBOUND {
-    auto next = current_();
-
-    if (!next) {
-      throw std::logic_error{"quoll::ui::effect: nothing to run for, its state holding none"};
-    }
-
-    // Run for the value the state holds now: the view after a change does not run it a second time.
-    watch_(watching::record);
-    return detail::run_in<T>(slot_, link_, std::move(*next), false, true);
+  void reload() {
+    watch_(watching::forget);
+    detail::tell(link_);
   }
 
   /**
-   * @brief Where it is: not run, running, done, or stopped by its caller. Its state changed since its last run, as in
-   * the view the change makes, which comes before the run, it is running, or none once the state holds none: that view
+   * @brief Where it is: not run, running, or done. Its state changed since its last run, or reload() was asked for, as
+   * in the view that makes, which comes before the run, it is running, or none once the state holds none: that view
    * shows no result of the value before.
    */
-  [[nodiscard]] effect_status status() const {
+  [[nodiscard]] run_status status() const {
     if (auto const now = watch_(watching::peek); now.differs) {
-      return now.holds ? effect_status::running : effect_status::none;
+      return now.holds ? run_status::running : run_status::none;
     }
 
-    if (slot_.pending) {
-      return effect_status::running;
-    }
-
-    if (slot_.stopped) {
-      return effect_status::stopped;
-    }
-
-    return slot_.result ? effect_status::done : effect_status::none;
+    return detail::status_of(slot_.pending, slot_.result.has_value());
   }
 
   /**
@@ -256,7 +233,7 @@ public:
    * @throws std::logic_error unless status() is done.
    */
   [[nodiscard]] result_type const &result() const QUOLL_LIFETIMEBOUND {
-    return detail::result_of(status() == effect_status::done ? &slot_ : nullptr, "quoll::ui::effect: no run is done");
+    return detail::result_of(status() == run_status::done ? &slot_ : nullptr, "quoll::ui::effect: no run is done");
   }
 
   /** @brief For the app of the component holding it, as a state's. */
@@ -268,44 +245,48 @@ public:
       return;
     }
 
-    // Recorded once it starts: one that cannot, as for a lack of memory, is tried again after the next view.
+    auto next = current_();
+
+    watch_(watching::record);
+
+    if (!next) {
+      idle();
+      return;
+    }
+
+    // Asked for now, as the view showed it running: the run before stops at once, so that an answer of its that comes
+    // before this one starts writes nothing, and what it gave is gone.
+    if (slot_.pending) {
+      slot_.last.request_stop();
+    }
+
+    ++slot_.current;
+    slot_.pending = true;
+    slot_.result.reset();
+
+    // One that cannot start, as for a lack of memory, ends on that failure, which the view shows and reload() tries
+    // again, rather than be tried after each view; it is told as the app's failures are.
     try {
-      auto next = current_();
-
-      if (!next) {
-        watch_(watching::record);
-        idle();
-        return;
-      }
-
-      auto work = detail::started(detail::run_in<T>(slot_, link_, std::move(*next), false, true));
-
-      watch_(watching::record);
-      start(std::move(work));
+      start(detail::started(detail::run_in<T>(slot_, link_, std::move(*next), false, true, false)));
     } catch (...) {
-      watch_(watching::forget);
+      slot_.pending = false;
+      slot_.result.emplace(std::unexpect, std::current_exception());
+      detail::tell_quietly(link_);
       throw;
     }
   }
 
 private:
-  // Its state holds none: the run under way, if any, is stopped and writes nothing, and nothing is left.
+  // Its state holds none: the run under way, if any, is stopped and writes nothing, and nothing is left, as the view
+  // that made it showed.
   void idle() {
-    bool const had = slot_.pending || slot_.stopped || slot_.result.has_value();
-
     if (slot_.pending) {
       slot_.last.request_stop();
     }
 
     ++slot_.current;
     slot_.pending = false;
-    slot_.stopped = false;
     slot_.result.reset();
-
-    // As it first shows, with nothing yet, it says nothing new.
-    if (had) {
-      detail::tell_quietly(link_);
-    }
   }
 
   enum class watching { peek, record, forget };

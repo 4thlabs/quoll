@@ -57,13 +57,12 @@
 
 namespace quoll::ui::detail {
 
-// The runs of an effect, an action, or an action's key: whether one is under way, whether the last one was stopped by
-// its caller, what the last one that ended gave or threw, the stop of the one under way, and its number, which a later
+// The runs of an effect, an action, or an action's key: whether one is under way, what the last one that ended gave or
+// threw, the stop of the one under way, and its number, which a later
 // one takes.
 template <class R>
 struct run_slot {
   bool pending = false;
-  bool stopped = false;
   std::optional<std::expected<R, std::exception_ptr>> result;
   // None until a run asks for one, so that a slot made costs no allocation.
   std::stop_source last{std::nostopstate};
@@ -84,8 +83,8 @@ void check_function(Function const &function, char const *message) {
   }
 }
 
-// A run that goes without ending, its frame destroyed by a stop of its caller, is under way no more, and stopped,
-// unless a later run took its place. Neither copied nor moved: it lives in the run's frame.
+// A run that goes without ending, its frame destroyed by a stop of its caller, is under way no more, unless a later
+// run took its place. Neither copied nor moved: it lives in the run's frame.
 template <class R>
 class run_guard {
 public:
@@ -104,7 +103,6 @@ public:
 
     if (slot_.current == number_ && slot_.pending) {
       slot_.pending = false;
-      slot_.stopped = true;
       tell_quietly(link_);
     }
   }
@@ -118,12 +116,13 @@ private:
 // Runs what `make` gives for `slot`, after stopping the run before, or refuses at once while one is under way if
 // `refuse`: what it gave or threw, written to the slot, what `make` throws included, unless a later run took its place,
 // which gives run_replaced and writes nothing, as for a run stopped by it. A stop of the caller, or of its component,
-// ends the caller there, as a stop does, and leaves the slot stopped. `forget` empties the result as it starts. The
+// ends the caller there, as a stop does, the slot under way no more. `forget` empties the result as it starts, and
+// `announce` tells the app it does, as an effect's view already showed it. The
 // slot and the link outlive the run: members of a component, which outlives its tasks.
 template <class R, class Make>
   requires std::same_as<std::invoke_result_t<Make &>, async::task<R>>
 async::task<std::expected<R, std::exception_ptr>> run_in(run_slot<R> &slot, state_link const &link, Make make,
-                                                         bool refuse, bool forget) {
+                                                         bool refuse, bool forget, bool announce) {
   if (refuse && slot.pending) {
     co_return std::unexpected{std::make_exception_ptr(run_refused{})};
   }
@@ -137,7 +136,6 @@ async::task<std::expected<R, std::exception_ptr>> run_in(run_slot<R> &slot, stat
   auto const number = ++slot.current;
 
   slot.pending = true;
-  slot.stopped = false;
 
   if (forget) {
     slot.result.reset();
@@ -145,7 +143,9 @@ async::task<std::expected<R, std::exception_ptr>> run_in(run_slot<R> &slot, stat
 
   run_guard<R> const guard{slot, link, number};
 
-  tell_quietly(link);
+  if (announce) {
+    tell_quietly(link);
+  }
 
   auto const mine = slot.last.get_token();
   auto const caller = co_await async::current_stop_token();
@@ -171,7 +171,6 @@ async::task<std::expected<R, std::exception_ptr>> run_in(run_slot<R> &slot, stat
   if (!ended && caller.stop_requested()) {
     if (slot.current == number) {
       slot.pending = false;
-      slot.stopped = true;
       tell_quietly(link);
     }
 

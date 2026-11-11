@@ -44,6 +44,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <ranges>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
@@ -207,13 +208,14 @@ void app_core::render() {
     }
   }
 
-  // Once shown, and their mounted() started, as React's effects run once a render is committed: those of the app's own
-  // component, then of each whose view ran, whose dependency changed. One that cannot start is told as a failure.
-  start_effects(effects_, component_, {});
-
-  for (auto const &held : viewed) {
+  // Once shown, and their mounted() started, as React's effects run once a render is committed: those of each component
+  // whose view ran, whose dependency changed, then of the app's own. One that cannot start is told as a failure.
+  // The components of a view before it, as React's children before their parent: their records come after it.
+  for (auto const &held : std::views::reverse(viewed)) {
     start_effects(held.owner->table().effects, held.owner->component(), held);
   }
+
+  start_effects(effects_, component_, {});
 
   // A state a new component changed in its first view, which its app did not hear of then, shows in another render.
   // One that cannot be scheduled is told as a failure.

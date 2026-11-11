@@ -403,8 +403,8 @@ changes only what the harness shows. Candidates:
   time by default, a call while one is under way refused, with the others as options (a call stopping the one before).
   A result is no optional "not there yet", which is a task's to say: the task of a run gives it, a
   `std::expected<T, std::exception_ptr>` (`run_refused` and `run_replaced` for a call with none of its own), and
-  `result()` throws before there is one, after `status()` (none, running, done, stopped, as Dioxus's) or `pending()` is
-  read. Decided with the maintainer: a home-made `resource<Key, T>` with a key and a loader came first and was found
+  `result()` throws before there is one, after `status()` (none, running, done) is read, the same for effects and actions. An effect runs
+  one way, after a view, as React's: `reload()` asks for that view rather than run it. Decided with the maintainer: a home-made `resource<Key, T>` with a key and a loader came first and was found
   less clear than React's model, and the maintainer asked that a good principle React already has be taken, not
   invented again. A form's
   draft from the props comes in a pull request of its own.

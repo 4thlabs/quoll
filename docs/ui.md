@@ -269,8 +269,8 @@ struct dashboard_page {
     };
 
     return div({
-        when(sales.status() == effect_status::running, loading),
-        when(sales.status() == effect_status::done, done),
+        when(sales.status() == run_status::running, loading),
+        when(sales.status() == run_status::done, done),
     });
   }
 };
@@ -282,11 +282,14 @@ struct dashboard_page {
   runs as a task of the component with a copy of the state's value;
 - the run before is stopped: its answer writes nothing, even one that came anyway, as React's cleanup would have it;
 - a state holding a `std::optional` runs it with what it holds, and stops it, with nothing run, once it is empty;
-- `status()` says where it is: `none` before a run, `running`, `done`, or `stopped` once a caller stopped it, as
-  `with_timeout` does; `result()` is the result of the last run once `status()` is `done`, and throws
-  `std::logic_error` before;
-- `reload()` runs it again for the value the state holds now, and gives its result, `run_replaced` for one a later run
-  took the place of: what a Try again button calls, as setting a state to the value it holds changes nothing;
+- `status()` says where it is: `running` from its first view, as the view a change makes already says, with no
+  result of the value before, `done` with its result, as React Query's `success` or `error`, or `none` while an
+  optional state holds none; `result()` is the
+  result of the last run once `status()` is `done`, and throws `std::logic_error` before;
+- `reload()` runs it again for the value the state holds now, after the view it asks for, as a change of the state
+  would: what a Try again button calls, as setting a state to the value it holds changes nothing. It returns nothing:
+  an effect runs one way, after a view, as React has it; a run that cannot start, as for a lack of memory, ends on
+  that failure, which `reload()` tries again;
 - `effect<>` runs a function of nothing, as a search a while after what is typed:
 
 ```cpp
@@ -300,12 +303,13 @@ effect<> search{query, [this](std::string text) -> task<> {
 
 - `co_await save.run(args...)` gives its result: `run_refused`, at once, for a call while one is under way;
 - with `overlap::restart` as its second parameter, a call stops the run under way instead, whose result is then
-  `run_replaced`, as an effect's run is;
-- `pending()` says one is under way, for a button to wait on, and a run its caller stops is under way no more;
-- `result()` is the result of the last run that ended, kept while the next is under way, once `has_result()`; a call
-  refused or replaced writes none;
+  `run_replaced`;
+- `status()` says where it is, as an effect's: `none`, `running`, for a button to wait on, or `done`; a run its
+  caller stops is under way no more;
+- `result()` is the result of the last run, once `status()` is `done`; it goes as the next starts, as with React
+  Query's mutations, and a call refused or replaced writes none;
 - a `keyed_action` keeps its runs by key, which its function takes first: one under way for a product refuses another
-  for that product, and leaves the others alone; `pending(key)`, `has_result(key)` and `result(key)`.
+  for that product, and leaves the others alone; `status(key)` and `result(key)`.
 
 ```cpp
 task<bool> save(std::int64_t id, products::product_update changes) {

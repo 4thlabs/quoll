@@ -151,7 +151,7 @@ struct running_page {
       runs.lines.push_back("gave " + std::to_string(value) + " " + told(result));
     };
 
-    auto const label = run.pending() ? "waits" : "go";
+    auto const label = run.status() == run_status::running ? "waits" : "go";
 
     return div({button(label) | on_click(go)});
   }
@@ -242,7 +242,7 @@ TEST_CASE("action: one at a time, a call while one is under way refused at once"
   CHECK(waiting.contains("<button>waits</button>"));
   CHECK(runs.lines == std::vector<std::string>{"start 1", "gave 2 refused", "end 1", "gave 1 yes"});
   CHECK(instance.component().run.result().value() == 2);
-  CHECK_FALSE(instance.component().run.pending());
+  CHECK(instance.component().run.status() == run_status::done);
   CHECK(shown.html().contains("<button>go</button>"));
 }
 
@@ -267,7 +267,7 @@ TEST_CASE("action: with overlap::restart, a call stops the run under way, which 
   CHECK(instance.component().run.result().value() == 4);
 }
 
-TEST_CASE("action: a run that fails gives why, which its result keeps while the next is under way", "[ui][action]") {
+TEST_CASE("action: a run that fails gives why, which goes as the next starts", "[ui][action]") {
   runs = {};
   runs.failing = {2};
 
@@ -275,7 +275,7 @@ TEST_CASE("action: a run that fails gives why, which its result keeps while the 
   memory_renderer const shown;
   test_app<running_page<overlap::refuse>> instance{time.get_executor(), shown};
   bool failed_after_second = false;
-  bool failure_while_third = false;
+  bool running_third = false;
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
@@ -289,13 +289,13 @@ TEST_CASE("action: a run that fails gives why, which its result keeps while the 
     instance.component().next = 3;
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
-    failure_while_third = instance.component().run.pending() && !instance.component().run.result().has_value();
+    running_third = instance.component().run.status() == run_status::running;
     co_await quoll::async::sleep_for(20ms);
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(failed_after_second);
-  CHECK(failure_while_third);
+  CHECK(running_third);
   CHECK(runs.lines == std::vector<std::string>{"start 1", "end 1", "gave 1 yes", "start 2", "gave 2 no", "start 3",
                                                "end 3", "gave 3 yes"});
   CHECK(instance.component().run.result().value() == 6);
@@ -320,8 +320,8 @@ TEST_CASE("keyed_action: each key once at a time, the others left alone", "[ui][
 
     co_await quoll::async::when_all(save("a", 1), save("a", 2), save("b", 3), [&]() -> task<> {
       co_await settle();
-      a_pending = saves.pending("a");
-      b_pending = saves.pending("b");
+      a_pending = saves.status("a") == run_status::running;
+      b_pending = saves.status("b") == run_status::running;
     }());
   };
 
@@ -334,9 +334,9 @@ TEST_CASE("keyed_action: each key once at a time, the others left alone", "[ui][
   CHECK(answers == std::vector<bool>{false, true, true});
   CHECK(saves.result("a").value() == 2);
   CHECK(saves.result("b").value() == 6);
-  CHECK_FALSE(saves.has_result("c"));
+  CHECK(saves.status("c") == run_status::none);
   CHECK_THROWS_AS(saves.result("c"), std::logic_error);
-  CHECK_FALSE(saves.pending("a"));
+  CHECK(saves.status("a") == run_status::done);
 }
 
 TEST_CASE("action: of nothing, gives whether it ended, and keeps why it failed", "[ui][action]") {
@@ -406,7 +406,7 @@ TEST_CASE("action: a run its caller stops, as a timeout does, is under way no mo
       timed_out = failure.code() == std::errc::timed_out;
     }
 
-    pending_after = run.pending();
+    pending_after = run.status() == run_status::running;
     again = (co_await run.run(2)).has_value();
   };
 
@@ -475,7 +475,17 @@ TEST_CASE("effect: destroyed while a run is under way is asserted", "[.assert]")
   std::optional<effect<std::string>> held;
 
   held.emplace(dependency, yields_text);
-  destroyed_while_under_way(held, [](auto &text) { return text.reload(); });
+
+  // Its run, as its component's app would start it after a view.
+  destroyed_while_under_way(held, [](auto &text) {
+    std::optional<task<>> started;
+
+    text.after_view({.owner = &started, .start = [](void *owner, task<> work) {
+                       static_cast<std::optional<task<>> *>(owner)->emplace(std::move(work));
+                     }});
+
+    return std::move(*started);
+  });
 }
 
 TEST_CASE("action: a run its caller stops once a later one took its place leaves the later one under way",
@@ -511,7 +521,7 @@ TEST_CASE("action: a run its caller stops once a later one took its place leaves
 
     auto const watch = [&]() -> task<> {
       co_await quoll::async::sleep_for(5ms);
-      pending_meanwhile = run.pending();
+      pending_meanwhile = run.status() == run_status::running;
     };
 
     co_await quoll::async::when_all(first(), second(), watch());
@@ -555,7 +565,7 @@ TEST_CASE("action: a result that cannot be kept is this run's failure, given rat
 
   CHECK(first);
   CHECK(second == "no");
-  CHECK_FALSE(run.pending());
+  CHECK(run.status() == run_status::done);
   REQUIRE_FALSE(run.result().has_value());
   CHECK_THROWS_AS(std::rethrow_exception(run.result().error()), std::runtime_error);
 }

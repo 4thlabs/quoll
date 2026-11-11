@@ -63,9 +63,9 @@ namespace dashboard_web {
 using quoll::async::task;
 using quoll::ui::callback;
 using quoll::ui::effect;
-using quoll::ui::effect_status;
 using quoll::ui::element;
 using quoll::ui::keyed_action;
+using quoll::ui::run_status;
 using quoll::ui::state;
 
 struct dashboard_page {
@@ -135,8 +135,8 @@ struct dashboard_page {
 
     auto const *const item_chosen = chosen();
 
-    // Its sales load again on a click, as choosing the same product changes nothing for the effect.
-    auto const retry = [this]() -> task<> { static_cast<void>(co_await sales.reload()); };
+    // Its sales load again on a click, as React runs an effect again: choosing the same product changes nothing.
+    auto const retry = [this] { sales.reload(); };
 
     // Done, with its sales, or why they did not load and a way to try again. Keyed by the product, as the detail:
     // another product chosen is another chart.
@@ -157,9 +157,10 @@ struct dashboard_page {
 
     auto const detail = [&] {
       auto const &item = *item_chosen;
-      // A failed save stays with the product until its next, which shows it waits rather than why the last failed.
-      auto const saving = saves.pending(item.id);
-      auto const save_failure = !saving && saves.has_result(item.id) && !saves.result(item.id)
+      // A failed save stays with the product until its next.
+      auto const save = saves.status(item.id);
+      auto const saving = save == run_status::running;
+      auto const save_failure = save == run_status::done && !saves.result(item.id)
                                     ? told(saves.result(item.id).error(), "the save failed")
                                     : std::string{};
 
@@ -171,8 +172,8 @@ struct dashboard_page {
               .save_failure = save_failure,
               .on_save = on_save,
           }) | key(item.id),
-          when(sales.status() == effect_status::running, loading),
-          when(sales.status() == effect_status::done, sales_done),
+          when(sales.status() == run_status::running, loading),
+          when(sales.status() == run_status::done, sales_done),
       });
 
       return shown | tw("flex flex-col gap-8");

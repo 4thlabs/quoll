@@ -44,6 +44,7 @@
 #include <quoll/ui/detail/run_slot.hpp>
 #include <quoll/ui/detail/state_link.hpp>
 #include <quoll/ui/run_error.hpp>
+#include <quoll/ui/run_status.hpp>
 
 #include <cassert>
 #include <concepts>
@@ -91,7 +92,7 @@ class action;
  *       return add.run(*draft);
  *     };
  *
- *     auto const shown = add.pending() ? button("Adding…") | attribute("disabled", "")
+ *     auto const shown = add.status() == run_status::running ? button("Adding…") | attribute("disabled", "")
  *                                      : button("Add") | on_click(send);
  *
  *     return div({input() | bind(draft), shown});
@@ -104,8 +105,8 @@ class action;
  * before giving its task too, not thrown again. A call while one is under way is refused, its result run_refused at
  * once, or, with `overlap::restart`, stops it, so that its answer writes nothing, even one that ignored the stop and
  * came anyway, and its result is run_replaced, to its caller, which goes on. A stop of the caller, as a timeout, ends
- * the run and its caller, as a stop does, and the action is under way no more, its result the one before. The result of
- * the last run that ended stays while the next is under way.
+ * the run and its caller, as a stop does, and the action is under way no more, with no result. What a run gave goes as
+ * the next starts, as with React Query's mutations.
  *
  * It keeps a copy of the result: a value whose copy throws is the run's failure, given and kept.
  *
@@ -152,18 +153,17 @@ public:
     // Called once the run before is stopped, or not at all once refused: what it throws is this run's failure.
     auto make = [this, ... args = std::move(args)]() mutable { return function_(std::move(args)...); };
 
-    return detail::run_in<R>(slot_, link_, std::move(make), Policy == overlap::refuse, false);
+    return detail::run_in<R>(slot_, link_, std::move(make), Policy == overlap::refuse, true, true);
   }
 
-  /** @brief Whether a run is under way. */
-  [[nodiscard]] bool pending() const noexcept { return slot_.pending; }
-
-  /** @brief Whether a run has ended, with a value or a failure. */
-  [[nodiscard]] bool has_result() const noexcept { return slot_.result.has_value(); }
+  /** @brief Where it is: not run, running, or done. */
+  [[nodiscard]] run_status status() const noexcept {
+    return detail::status_of(slot_.pending, slot_.result.has_value());
+  }
 
   /**
    * @brief What the last run that ended gave, or what it threw.
-   * @throws std::logic_error unless has_result().
+   * @throws std::logic_error unless status() is done.
    */
   [[nodiscard]] result_type const &result() const QUOLL_LIFETIMEBOUND {
     return detail::result_of(&slot_, "quoll::ui::action: no run has ended");
@@ -191,7 +191,7 @@ class keyed_action;
  * @code
  * keyed_action<std::int64_t, products::product(products::product_update)> saves{products_client::update};
  *
- * // In a handler: co_await saves.run(id, changes); then saves.pending(id), saves.has_result(id), saves.result(id).
+ * // In a handler: co_await saves.run(id, changes); then saves.status(id), saves.result(id).
  * @endcode
  *
  * As an action, but for the key, which the function takes first, and its runs, kept by key: one under way for a key
@@ -249,26 +249,20 @@ public:
       return function_(std::move(key), std::move(args)...);
     };
 
-    return detail::run_in<R>(slot, link_, std::move(make), Policy == overlap::refuse, false);
+    return detail::run_in<R>(slot, link_, std::move(make), Policy == overlap::refuse, true, true);
   }
 
-  /** @brief Whether a run for `key` is under way. */
-  [[nodiscard]] bool pending(Key const &key) const {
+  /** @brief Where its runs for `key` are: not run, running, or done. */
+  [[nodiscard]] run_status status(Key const &key) const {
     auto const found = slots_.find(key);
 
-    return found != slots_.end() && found->second.pending;
-  }
-
-  /** @brief Whether a run for `key` has ended, with a value or a failure. */
-  [[nodiscard]] bool has_result(Key const &key) const {
-    auto const found = slots_.find(key);
-
-    return found != slots_.end() && found->second.result.has_value();
+    return found == slots_.end() ? run_status::none
+                                 : detail::status_of(found->second.pending, found->second.result.has_value());
   }
 
   /**
    * @brief What the last run for `key` that ended gave, or what it threw.
-   * @throws std::logic_error unless has_result(key).
+   * @throws std::logic_error unless status(key) is done.
    */
   [[nodiscard]] result_type const &result(Key const &key) const QUOLL_LIFETIMEBOUND {
     auto const found = slots_.find(key);

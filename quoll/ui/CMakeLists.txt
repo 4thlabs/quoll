@@ -56,6 +56,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/component_not_aggregate.cpp
     tests/compile_fail/event_function_signature.cpp
     tests/compile_fail/keyed_action_view_key.cpp
+    tests/compile_fail/effect_optional_view_dependency.cpp
     tests/compile_fail/effect_view_value.cpp
   DEPS
     quoll::ui

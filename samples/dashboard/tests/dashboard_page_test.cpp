@@ -619,7 +619,7 @@ TEST_CASE("dashboard web: a product saves once at a time, its detail chosen agai
   CHECK(again.contains("Saving…"));
   CHECK(server.updates == 2);
   CHECK(server.items[2].price == 46);
-  CHECK_FALSE(instance.component().saves.pending(3));
+  CHECK(instance.component().saves.status(3) == quoll::ui::run_status::done);
   // The last save of the product ended with it: no failure left.
   CHECK(instance.component().saves.result(3).has_value());
 }
