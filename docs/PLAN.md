@@ -221,7 +221,10 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
 
 ### Step 6: the UI DSL, complete
 
-- Nested stateful components: a component is the root of an app for now.
+- Nested stateful components: done, `component<C>(props)` with its states kept by type and key, its props given anew,
+  `mounted()` and `unmounted()`, and its tasks stopped as it goes (`docs/ui.md`). Next, a callback given in props runs
+  in the task of the parent that wrote it, as decided on 2026-11-10: the child stops waiting for it as it goes, the
+  parent's work goes on; and a view skipped when neither props nor states changed.
 - Restoring the states after a rebuild, which the third level of hot reload still lacks.
 - How a page writes its names: `using namespace quoll::ui;` now sits in each `view()`, as the rules forbid it at
   namespace scope in a header.
@@ -234,7 +237,8 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
   takes, said on 2026-11-07: a node the reconciler leaves alone, a lifecycle with an unmount, calls both ways, bytes passed
   without a copy where it counts, npm packages through the Vite build, loaded on demand. Plain DOM libraries and web
   components come this way; those tied to React cannot.
-- A trial on a real screen of an application, chosen with the maintainer at the start of this step.
+- A trial on a real screen of an application, chosen with the maintainer at the start of this step: a dashboard
+  (2026-11-11), a list to filter, a detail to edit, and a chart.js chart fed by the REST API.
 - WebSocket in the browser and in the REST DSL, left from step 5, if that screen needs them; if it does not, the maintainer
   says where they go once the step ends, and step 5 is done.
 

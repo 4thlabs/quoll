@@ -41,11 +41,13 @@
 #include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/app_options.hpp>
+#include <quoll/ui/detail/instance.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/renderer_ref.hpp>
 
 #include <exception>
+#include <memory>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -59,9 +61,11 @@ namespace quoll::ui::detail {
 class app_core {
 public:
   using view_function = element (*)(void *component);
+  using unmounted_function = void (*)(void *component);
 
-  app_core(async::any_executor executor, renderer_ref renderer, view_function view, void *component,
-           app_options options);
+  // `unmounted`, none for a component without it, runs as the app stops, once its view showed.
+  app_core(async::any_executor executor, renderer_ref renderer, view_function view, unmounted_function unmounted,
+           void *component, app_options options);
 
   app_core(app_core const &) = delete;
   app_core(app_core &&) = delete;
@@ -73,7 +77,9 @@ public:
   [[nodiscard]] bool stopped() const noexcept { return stopped_; }
 
   void render();
-  void spawn(async::task<> work);
+  // Under the stop of `owner`, kept until it ends with `props`, or the app's for none.
+  void spawn(async::task<> work, std::shared_ptr<instance> owner = nullptr,
+             std::shared_ptr<void const> props = nullptr);
   void dispatch(node_id id, std::string_view name, std::string value);
   [[nodiscard]] async::task<> stop();
 
@@ -91,18 +97,26 @@ private:
 
   [[nodiscard]] async::task<> render_later();
   void failed(std::exception_ptr failure) const noexcept;
+  static void failed_in(void *self, std::exception_ptr failure) noexcept;
 
   async::any_executor executor_;
   renderer_ref renderer_;
   view_function view_;
+  unmounted_function unmounted_;
   void *component_;
   app_options options_;
   std::stop_source stop_;
   async::detail::task_group tasks_;
   std::vector<element> shown_;
+  // The components of the view, kept from one render to the next.
+  std::vector<std::shared_ptr<instance>> components_;
+  // Every component made, for as long as something holds it: stop() refuses to be awaited from their tasks too.
+  std::vector<std::weak_ptr<instance>> instances_;
   node_id last_id_ = no_node;
   bool render_pending_ = false;
   bool stopped_ = false;
+  // Its view showed, and its unmounted() has not run yet.
+  bool shown_once_ = false;
 };
 
 } // namespace quoll::ui::detail

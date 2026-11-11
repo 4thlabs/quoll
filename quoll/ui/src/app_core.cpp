@@ -39,8 +39,10 @@
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/stopped.hpp>
+#include <quoll/ui/detail/expand.hpp>
 #include <quoll/ui/detail/reconciler.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <stdexcept>
 #include <system_error>
@@ -80,29 +82,75 @@ namespace {
 
 struct app_core::outcome {
   app_core *self;
+  // Kept until its task ends: the component it runs on goes then, once unmounted, and before the task counts as ended,
+  // which stop() waits for, as the app may go right after.
+  mutable std::shared_ptr<instance> owner;
+  mutable std::shared_ptr<void const> props;
 
-  void operator()() const noexcept { self->tasks_.ended(); }
+  void ended() const noexcept {
+    props.reset();
+    owner.reset();
+    self->tasks_.ended();
+  }
+
+  void operator()() const noexcept { ended(); }
 
   // A stop is no failure: on_error does not hear of it.
-  void operator()(async::stopped_t) const noexcept { self->tasks_.ended(); }
+  void operator()(async::stopped_t) const noexcept { ended(); }
 
   void operator()(std::exception_ptr failure) const noexcept {
     self->failed(std::move(failure));
-    self->tasks_.ended();
+    ended();
   }
 };
 
-app_core::app_core(async::any_executor executor, renderer_ref renderer, view_function view, void *component,
-                   app_options options)
-    : executor_(std::move(executor)), renderer_(renderer), view_(view), component_(component),
+app_core::app_core(async::any_executor executor, renderer_ref renderer, view_function view,
+                   unmounted_function unmounted, void *component, app_options options)
+    : executor_(std::move(executor)), renderer_(renderer), view_(view), unmounted_(unmounted), component_(component),
       options_(std::move(options)) {}
 
 void app_core::render() {
   std::vector<element> next;
+  auto view = view_(component_);
+  expansion made{
+      .app_stop = stop_.get_token(), .link = {this, &app_core::state_changed}, .sink = {this, &app_core::failed_in}};
 
-  append_child(next, view_(component_));
-  reconciler{renderer_, last_id_}.children(no_node, shown_, next);
+  if (!components_.empty() || has_component(view)) {
+    expand(view, components_, made);
+  }
+
+  try {
+    // For stop() to know a task of theirs, as long as one lives.
+    std::erase_if(instances_, [](auto const &held) { return held.expired(); });
+
+    for (auto const &component : made.made) {
+      instances_.push_back(component);
+    }
+
+    append_child(next, std::move(view));
+    reconciler{renderer_, last_id_}.children(no_node, shown_, next);
+  } catch (...) {
+    discard(made);
+    throw;
+  }
+
+  // Shown: the components follow, and nothing throws until they have.
+  commit(made, components_);
   shown_ = std::move(next);
+  shown_once_ = true;
+
+  // Once shown, as the app's own. One that cannot start is told as a failure, and the others start all the same.
+  for (auto const &component : made.made) {
+    if (component->table().mounted == nullptr) {
+      continue;
+    }
+
+    try {
+      spawn(component->table().mounted(component->component()), component);
+    } catch (...) {
+      failed(std::current_exception());
+    }
+  }
 }
 
 void app_core::dispatch(node_id id, std::string_view name, std::string value) {
@@ -114,13 +162,20 @@ void app_core::dispatch(node_id id, std::string_view name, std::string value) {
 
   for (auto const &binding : target->events) {
     if (binding.name == name) {
-      spawn(run_handler(binding.handler, value));
+      spawn(run_handler(binding.handler, value), binding.owner, binding.props);
     }
   }
 }
 
 async::task<> app_core::stop() {
-  if (co_await async::current_stop_token() == stop_.get_token()) {
+  auto const awaiter = co_await async::current_stop_token();
+  auto const own = awaiter == stop_.get_token() || std::ranges::any_of(instances_, [&awaiter](auto const &held) {
+                     auto const component = held.lock();
+
+                     return component && component->stop_token() == awaiter;
+                   });
+
+  if (own) {
     throw std::logic_error{"quoll::ui::app: stop() awaited from one of its own tasks"};
   }
 
@@ -131,9 +186,42 @@ async::task<> app_core::stop() {
 void app_core::abandon() noexcept {
   stopped_ = true;
   stop_.request_stop();
+
+  // The components go as the app stops, their unmounted() with them; what one throws goes where a handler's does.
+  for (auto const &component : components_) {
+    component->unmount({this, &app_core::failed_in});
+  }
+
+  components_.clear();
+
+  // Last, as a component goes after those of its view.
+  if (!shown_once_ || unmounted_ == nullptr) {
+    return;
+  }
+
+  shown_once_ = false;
+
+  try {
+    unmounted_(component_);
+  } catch (...) {
+    failed(std::current_exception());
+  }
 }
 
-void app_core::forget_view() noexcept { shown_.clear(); }
+void app_core::forget_view() noexcept {
+  shown_.clear();
+
+  // Empty once the app stopped, as it must before it goes: what one destroyed without its stop has left holds no cycle.
+  for (auto const &component : components_) {
+    component->detach();
+  }
+
+  components_.clear();
+}
+
+void app_core::failed_in(void *self, std::exception_ptr failure) noexcept {
+  static_cast<app_core const *>(self)->failed(std::move(failure));
+}
 
 async::task<> app_core::render_later() {
   render_pending_ = false;
@@ -187,11 +275,13 @@ void app_core::failed(std::exception_ptr failure) const noexcept {
   }
 }
 
-void app_core::spawn(async::task<> work) {
+void app_core::spawn(async::task<> work, std::shared_ptr<instance> owner, std::shared_ptr<void const> props) {
+  auto const stop_token = owner ? owner->stop_token() : stop_.get_token();
+
   tasks_.started();
 
   try {
-    async::co_spawn(executor_, std::move(work), outcome{this}, stop_.get_token());
+    async::co_spawn(executor_, std::move(work), outcome{this, std::move(owner), std::move(props)}, stop_token);
   } catch (...) {
     tasks_.ended();
     throw;

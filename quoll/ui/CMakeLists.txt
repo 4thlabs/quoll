@@ -3,7 +3,9 @@ quoll_declare_module(
   SOURCES
     src/app_core.cpp
     src/element.cpp
+    src/expand.cpp
     src/hot.cpp
+    src/instance.cpp
     src/reconciler.cpp
     src/to_html.cpp
   DEPS
@@ -22,6 +24,7 @@ endif()
 quoll_declare_tests(
   SOURCES
     tests/app_test.cpp
+    tests/nested_test.cpp
     tests/element_test.cpp
     tests/to_html_test.cpp
   DEPS
@@ -31,6 +34,7 @@ quoll_declare_tests(
 # What a component must be, with the message the user gets.
 quoll_declare_compile_fail_tests(
   SOURCES
+    tests/compile_fail/child_component_not_aggregate.cpp
     tests/compile_fail/component_not_aggregate.cpp
     tests/compile_fail/event_function_signature.cpp
   DEPS

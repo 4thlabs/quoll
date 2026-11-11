@@ -43,49 +43,22 @@
 #include <quoll/ui/app_options.hpp>
 #include <quoll/ui/component.hpp>
 #include <quoll/ui/detail/app_core.hpp>
+#include <quoll/ui/detail/component_table.hpp>
 #include <quoll/ui/detail/hot.hpp>
+#include <quoll/ui/detail/link_states.hpp>
 #include <quoll/ui/element.hpp>
+#include <quoll/ui/mounted_component.hpp>
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/renderer.hpp>
 #include <quoll/ui/renderer_ref.hpp>
 #include <quoll/ui/state.hpp>
 
-#include <glaze/reflection/to_tuple.hpp>
-
-#include <cstddef>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
 
 namespace quoll::ui {
-
-namespace detail {
-
-template <class T>
-inline constexpr bool is_state = false;
-
-template <class T>
-inline constexpr bool is_state<state<T>> = true;
-
-// Only the members, not their names: a component may have internal linkage, and this part of Glaze compiles much faster
-// than what also reflects names, which every rebuild of an interface pays for.
-template <class C>
-void link_states(C &component, state_link link) {
-  auto members = glz::to_tie(component);
-
-  [&]<std::size_t... Index>(std::index_sequence<Index...>) {
-    [[maybe_unused]] auto const link_one = [&link](auto &member) {
-      if constexpr (is_state<std::remove_cvref_t<decltype(member)>>) {
-        member.link(link);
-      }
-    };
-
-    (link_one(glz::get<Index>(members)), ...);
-  }(std::make_index_sequence<glz::tuple_size_v<decltype(members)>>{});
-}
-
-} // namespace detail
 
 /**
  * @brief Shows a component through a renderer, and keeps it up to date.
@@ -106,8 +79,8 @@ class app {
 public:
   template <async::Executor E>
   app(E executor, R renderer, app_options options = {})
-      : renderer_(std::move(renderer)),
-        core_(async::any_executor{executor}, renderer_ref{renderer_}, &view_of, &component_, std::move(options)) {
+      : renderer_(std::move(renderer)), core_(async::any_executor{executor}, renderer_ref{renderer_}, &view_of,
+                                              detail::unmounted_of<C>(), &component_, std::move(options)) {
     detail::link_states(component_, {&core_, &detail::app_core::state_changed});
 
 #if defined(QUOLL_UI_HOT)
@@ -156,8 +129,10 @@ public:
   }
 
   /**
-   * @brief Asks the running handlers to stop, and completes once they have ended. Nothing shows afterwards. One at a
-   * time. Throws `std::logic_error` from one of the app's own tasks, which would wait for itself.
+   * @brief Asks the running handlers to stop, and completes once they have ended. Nothing shows afterwards. The
+   * components of the view go first, each after those of its own view, then the component's unmounted() runs, if it has
+   * one and its view showed. One at a time. Throws `std::logic_error` from one of the app's own tasks, which would wait
+   * for itself.
    */
   [[nodiscard]] async::task<> stop() { return core_.stop(); }
 

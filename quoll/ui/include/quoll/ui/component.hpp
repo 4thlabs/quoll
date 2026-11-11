@@ -37,7 +37,6 @@
 #ifndef QUOLL_UI_COMPONENT_HPP
 #define QUOLL_UI_COMPONENT_HPP
 
-#include <quoll/async/task.hpp>
 #include <quoll/ui/element.hpp>
 
 #include <concepts>
@@ -59,17 +58,12 @@ namespace quoll::ui {
  * @endcode
  *
  * It lives at a stable address, owned by its app, so that handlers capture `this`. An aggregate: its states are found
- * by reflection, which lets them be plain members. It may also have `task<> mounted()`, run once it first shows.
+ * by reflection, which lets them be plain members. It may also have `task<> mounted()`, run once it first shows, and
+ * `void unmounted()`, as it goes (see MountedComponent and UnmountedComponent).
  */
 template <class C>
 concept Component = requires(C &component) {
   { component.view() } -> std::same_as<element>;
-};
-
-/** @brief A Component with `task<> mounted()`. */
-template <class C>
-concept MountedComponent = Component<C> && requires(C &component) {
-  { component.mounted() } -> std::same_as<async::task<>>;
 };
 
 } // namespace quoll::ui
