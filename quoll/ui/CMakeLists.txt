@@ -38,6 +38,9 @@ quoll_declare_tests(
 quoll_declare_compile_fail_tests(
   SOURCES
     tests/compile_fail/callback_reference_argument.cpp
+    tests/compile_fail/callback_reference_result.cpp
+    tests/compile_fail/callback_reference_wrapper_argument.cpp
+    tests/compile_fail/callback_transform_view_argument.cpp
     tests/compile_fail/callback_view_argument.cpp
     tests/compile_fail/callback_view_result.cpp
     tests/compile_fail/child_component_not_aggregate.cpp

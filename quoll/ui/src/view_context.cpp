@@ -38,6 +38,7 @@
 #include <quoll/ui/detail/instance.hpp>
 #include <quoll/ui/detail/view_context.hpp>
 
+#include <stdexcept>
 #include <utility>
 
 namespace quoll::ui::detail {
@@ -67,9 +68,13 @@ bool spawn_in(call_target const &target, async::task<> work) {
   auto props = target.props.lock();
 
   // A component gone, or going, as its stop says: its work does not start.
-  if (core == nullptr || core->stopped() || (target.of_component && (!owner || owner->stop_token().stop_requested())) ||
-      (target.of_props && !props)) {
+  if (core == nullptr || core->stopped() || (target.of_component && (!owner || owner->stop_token().stop_requested()))) {
     return false;
+  }
+
+  // Kept past the view that made it: what its function refers to of that view may be gone, and each view makes another.
+  if (target.of_props && !props) {
+    throw std::logic_error{"quoll::ui: a callback called once the view that made it has been replaced"};
   }
 
   // The props of the view that made it, if that component has not viewed again since: a reference it keeps to them

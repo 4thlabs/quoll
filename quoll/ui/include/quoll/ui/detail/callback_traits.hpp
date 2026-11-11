@@ -39,6 +39,7 @@
 
 #include <functional>
 #include <initializer_list>
+#include <optional>
 #include <ranges>
 #include <type_traits>
 
@@ -57,11 +58,30 @@ inline constexpr bool is_callback = false;
 template <class Signature>
 inline constexpr bool is_callback<callback<Signature>> = true;
 
-// What refers to an object it does not hold, which a copy does not make the task's own: a borrowed view of
-// std::ranges, as std::string_view and std::span, but not one owning its elements; a std::reference_wrapper; a
-// std::initializer_list.
+// A view of std::ranges that owns what it gives, or gives what it computes, which a copy makes the task's own.
 template <class T>
-inline constexpr bool is_view = std::ranges::view<T> && std::ranges::borrowed_range<T>;
+inline constexpr bool owns_its_elements = false;
+
+template <class T>
+inline constexpr bool owns_its_elements<std::optional<T>> = true;
+
+template <class T>
+inline constexpr bool owns_its_elements<std::ranges::single_view<T>> = true;
+
+template <class R>
+inline constexpr bool owns_its_elements<std::ranges::owning_view<R>> = true;
+
+template <class T>
+inline constexpr bool owns_its_elements<std::ranges::empty_view<T>> = true;
+
+template <class W, class Bound>
+inline constexpr bool owns_its_elements<std::ranges::iota_view<W, Bound>> = true;
+
+// What may refer to an object it does not hold, which a copy does not make the task's own: a view of std::ranges, as
+// std::string_view, std::span, or a transform_view over a container, but for those owning their elements; a
+// std::reference_wrapper; a std::initializer_list.
+template <class T>
+inline constexpr bool is_view = std::ranges::view<T> && !owns_its_elements<T>;
 
 template <class T>
 inline constexpr bool is_view<std::reference_wrapper<T>> = true;

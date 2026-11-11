@@ -657,14 +657,13 @@ TEST_CASE("callback: one kept by the component that made it does not keep that c
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
 }
 
-TEST_CASE("callback: a call once its component has viewed again ends on a stop, as its given may be gone",
+TEST_CASE("callback: a call once the view that made it has been replaced throws, as its given may be gone",
           "[ui][callback]") {
   virtual_time time;
   memory_renderer const shown;
   test_app<stale_page> instance{time.get_executor(), shown};
   callback<void()> exposed;
   std::optional<std::monostate> first;
-  std::optional<std::monostate> later{std::monostate{}};
 
   instance.component().out = &exposed;
 
@@ -674,12 +673,20 @@ TEST_CASE("callback: a call once its component has viewed again ends on a stop, 
 
     instance.component().label = std::string{"the second label, too long for a short string"};
     co_await settle();
-    later = co_await quoll::async::stopped_as_optional(exposed());
+
+    auto thrown = false;
+
+    try {
+      co_await exposed();
+    } catch (std::logic_error const &) {
+      thrown = true;
+    }
+
+    REQUIRE(thrown);
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE(first);
-  REQUIRE_FALSE(later);
   REQUIRE(instance.component().read == std::vector<std::string>{"the first label, too long for a short string"});
 }
 

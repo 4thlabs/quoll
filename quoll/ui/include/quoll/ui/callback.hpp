@@ -39,6 +39,7 @@
 
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/end_stopped.hpp>
+#include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/detail/call_state.hpp>
 #include <quoll/ui/detail/callback_traits.hpp>
@@ -48,9 +49,7 @@
 #include <concepts>
 #include <exception>
 #include <functional>
-#include <initializer_list>
 #include <memory>
-#include <ranges>
 #include <type_traits>
 #include <utility>
 
@@ -82,10 +81,10 @@ namespace quoll::ui {
  * waiting, and the work goes on, as it belongs to the component that wrote it; what it throws then goes to the app's
  * on_error. A work that ends on a stop, as its own component goes, ends the caller on the stop too. Once the app has
  * stopped, or is gone, or the component is gone, a call ends on a stop and runs nothing: a callback holds its
- * component weakly, so that one kept by its own component leaves no cycle. So does a call once nothing holds the props
- * of the view that made it any more, as that view has been replaced and what the function refers to of it, its
- * `given`, may be gone; while something holds them, a handler's task of that view or of a component below, the call
- * runs, with that `given`.
+ * component weakly, so that one kept by its own component leaves no cycle. A call once nothing holds the props of the
+ * view that made it any more, that view replaced, throws `std::logic_error`, as what the function refers to of it, its
+ * `given`, may be gone: a callback is good for the view that made it, which each view makes anew; while something
+ * holds those props, a handler's task of that view or of a component below, the call runs, with that `given`.
  *
  * A caller already stopped starts nothing, and a work whose component is stopped before it starts does not run.
  *
@@ -236,6 +235,11 @@ private:
         end.give(co_await (*function)(std::move(args)...));
       }
     } catch (...) {
+      // A stop a function throws while its component stops is a stop: the caller ends on it, as no catch sees one.
+      if (component_stop.stop_requested() && async::detail::is_a_stop(std::current_exception())) {
+        co_return;
+      }
+
       if (!end.fail(std::current_exception())) {
         throw;
       }
