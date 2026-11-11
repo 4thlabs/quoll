@@ -37,6 +37,7 @@
 #ifndef QUOLL_UI_DETAIL_EXPAND_HPP
 #define QUOLL_UI_DETAIL_EXPAND_HPP
 
+#include <quoll/ui/detail/held_view.hpp>
 #include <quoll/ui/detail/instance.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/state.hpp>
@@ -57,7 +58,7 @@ struct expansion {
   failure_sink sink{};
   std::vector<std::shared_ptr<instance>> made{};
   std::vector<std::shared_ptr<instance>> now{};
-  std::vector<std::pair<std::shared_ptr<instance>, std::shared_ptr<void const>>> props{};
+  std::vector<held_view> props{};
   std::vector<std::pair<std::shared_ptr<instance>, std::vector<std::shared_ptr<instance>>>> children{};
   std::vector<std::shared_ptr<instance>> leaving{};
 };

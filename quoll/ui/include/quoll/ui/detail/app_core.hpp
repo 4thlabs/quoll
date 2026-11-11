@@ -41,6 +41,7 @@
 #include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/app_options.hpp>
+#include <quoll/ui/detail/held_view.hpp>
 #include <quoll/ui/detail/instance.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/node_id.hpp>
@@ -77,12 +78,10 @@ public:
   [[nodiscard]] bool stopped() const noexcept { return stopped_; }
 
   void render();
-  // Under the stop of `owner`, kept until it ends with `props`, or the app's for none.
-  void spawn(async::task<> work, std::shared_ptr<instance> owner = nullptr,
-             std::shared_ptr<void const> props = nullptr);
+  // Under the stop of the component `held` names, kept with its props until it ends, or the app's for none.
+  void spawn(async::task<> work, held_view held = {});
   // spawn() for a mounted(), which does not start once its component, or the app, is stopped.
-  void mount(async::task<> work, std::shared_ptr<instance> owner = nullptr,
-             std::shared_ptr<void const> props = nullptr);
+  void mount(async::task<> work, held_view held = {});
   void dispatch(node_id id, std::string_view name, std::string value);
   [[nodiscard]] async::task<> stop();
 
