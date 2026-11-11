@@ -118,7 +118,9 @@ class action;
  *
  * Awaited from a task of its component, which the component outlives: a component that goes stops its runs. Neither
  * copied nor moved: a run under way refers to it. Its arguments are copied into the run, given to the function as
- * rvalues: none can be a reference or a view, which would outlive what it refers to. Thread safety: none, as a state.
+ * rvalues: none can be a reference or a view, nor hold one in an optional, a pair, a tuple, a variant or an expected,
+ * which would outlive what it refers to; a view in a container or a struct of the program's is not seen. Thread safety:
+ * none, as a state.
  */
 template <class R, class... Args, overlap Policy>
 class action<R(Args...), Policy> {

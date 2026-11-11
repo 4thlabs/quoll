@@ -45,6 +45,7 @@
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/async/yield.hpp>
+#include <quoll/test/allocations.hpp>
 #include <quoll/test/memory_renderer.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/ui_session.hpp>
@@ -603,4 +604,48 @@ TEST_CASE("action: a component that goes stops its runs", "[ui][action]") {
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(runs.lines == std::vector<std::string>{"start 1"});
+}
+
+TEST_CASE("action: a lack of memory at any step of a run is its failure, given to its caller and its target",
+          "[ui][action]") {
+  // Each allocation the run makes, in turn, fails: whichever it is, the run's await gives a std::expected, and a run
+  // that failed leaves its target not loading.
+  for (long before = 0; before < 40; ++before) {
+    runs = {};
+
+    virtual_time time;
+    memory_renderer const shown;
+    test_app<running_page<overlap::refuse>> instance{time.get_executor(), shown};
+    bool escaped = false;
+    // Whether an allocation failed: one does once, the count back below zero.
+    bool injected = false;
+
+    auto const act = [&]() -> task<> {
+      co_await settle();
+
+      auto &run = instance.component().run;
+      auto running = run.run(1);
+
+      quoll::test::allocations_before_failing = before;
+
+      try {
+        static_cast<void>(co_await std::move(running));
+      } catch (...) {
+        escaped = true;
+      }
+
+      injected = quoll::test::allocations_before_failing < 0;
+      quoll::test::allocations_before_failing = -1;
+      co_await settle();
+    };
+
+    REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+    INFO("allocations before failing: " << before);
+    CHECK_FALSE(escaped);
+    CHECK_FALSE(std::get<0>(*instance.component().running));
+
+    if (!injected) {
+      break;
+    }
+  }
 }

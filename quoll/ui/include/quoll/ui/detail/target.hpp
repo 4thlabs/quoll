@@ -91,7 +91,7 @@ struct values_of<std::tuple<V...>> {
 // Whether what a run giving R gives is kept as values: a reference or a view would refer to what the run held.
 template <class R>
 inline constexpr bool kept_as_values = []<class... E>(std::type_identity<std::tuple<E...>>) {
-  return ((!std::is_reference_v<E> && !is_view<std::remove_cvref_t<E>>) && ...);
+  return (!holds_view<E> && ...);
 }(std::type_identity<typename values_of<R>::type>{});
 
 template <class Tuple>

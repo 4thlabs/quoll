@@ -124,7 +124,9 @@ async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::s
  * error, which the target would not tell apart from its flags.
  *
  * Neither copied nor moved: a run under way refers to it, and a component stays where it was made. The values of its
- * states are values: a reference or a view would outlive what it refers to. Thread safety: none, as a state.
+ * states are values: a reference or a view would outlive what it refers to, also inside an optional, a pair, a tuple,
+ * a variant or an expected; a view in a container or a struct of the program's is not seen. Thread safety: none, as a
+ * state.
  */
 class effect {
 public:
@@ -205,9 +207,7 @@ public:
 private:
   template <class V, class... D, class F>
   void init(std::tuple<state<D> &...> dependencies, F function, detail::target_ref<V> target, bool takes_errors) {
-    static_assert(((!detail::is_view<std::remove_cvref_t<D>> &&
-                    !detail::is_view<std::remove_cvref_t<typename detail::dependency_traits<D>::value_type>>) &&
-                   ...),
+    static_assert((!detail::holds_view<D> && ...),
                   "quoll::ui::effect: its states' values are copied into the run, which a view would outlive");
     static_assert((... && (std::equality_comparable<D> && std::copyable<D>)),
                   "quoll::ui::effect: its states' values are compared with ==, and copied");
@@ -223,6 +223,12 @@ private:
     target_ = target.hooks();
 
     watch_ = [dependencies, last = std::optional<std::tuple<D...>>{}](watching asked) mutable {
+      // Forgotten before any comparison, which may be what failed: reload() runs it whatever its states compare.
+      if (asked == watching::forget) {
+        last.reset();
+        return std::optional<watched>{};
+      }
+
       auto const now = std::apply([](auto &...held) { return std::tie(*held...); }, dependencies);
       bool const differs = !last || !(*last == now);
       bool const holds = std::apply(
@@ -232,13 +238,11 @@ private:
           },
           dependencies);
 
-      if (asked == watching::forget) {
-        last.reset();
-      } else if (differs) {
+      if (differs) {
         last.emplace(now);
       }
 
-      return watched{.differs = differs, .holds = holds};
+      return std::optional<watched>{watched{.differs = differs, .holds = holds}};
     };
 
     run_ = [this, dependencies, function = std::move(function), target, takes_errors](std::stop_token mine) {
@@ -271,7 +275,8 @@ private:
   // Its states, compared with their values at the last run, which `record` takes as they differ and `forget` drops,
   // and the run, made
   // for their values now: erased, as their types are not the effect's.
-  std::function<watched(watching)> watch_;
+  // What `record` saw, none for `forget`.
+  std::function<std::optional<watched>(watching)> watch_;
   std::function<async::task<>(std::stop_token)> run_;
   detail::run_slot slot_;
   detail::target_hooks target_;

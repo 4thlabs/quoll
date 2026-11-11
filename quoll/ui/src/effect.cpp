@@ -59,7 +59,7 @@ void effect::after_view(detail::effect_starter const &start) {
   // One way out for what fails, whatever it is, comparing or copying its states, or starting: a view in which they
   // changed, or may have, stops the run before, which would give what the values before ask for.
   try {
-    auto const now = watch_(watching::record);
+    auto const now = *watch_(watching::record);
 
     if (!now.differs) {
       return;

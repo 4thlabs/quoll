@@ -1017,3 +1017,31 @@ TEST_CASE("effect: of a function giving nothing, its target holds its flags alon
   CHECK(touched.contains("<p>touched</p>"));
   CHECK(shown.html().contains("<p>failed</p>"));
 }
+
+TEST_CASE("effect: reload runs it again after a comparison that keeps failing", "[ui][effect]") {
+  loads = {};
+
+  touchy_key_page page;
+  kept_starts starts;
+  virtual_time time;
+
+  page.load.after_view(starts.starter());
+  REQUIRE(quoll::test::run(time, starts.run_all()) == 0);
+
+  // Its states cannot be compared any more: the view fails, and reload() forgets them before any comparison.
+  page.key = touchy_key{2};
+
+  {
+    throwing_keys const compares{key_compare_throws};
+
+    page.load.after_view(starts.starter());
+    CHECK(std::get<2>(*page.text) != nullptr);
+
+    page.load.reload();
+    page.load.after_view(starts.starter());
+  }
+
+  REQUIRE(quoll::test::run(time, starts.run_all()) == 0);
+  CHECK(std::get<0>(*page.text) == "text 2");
+  CHECK(std::get<2>(*page.text) == nullptr);
+}

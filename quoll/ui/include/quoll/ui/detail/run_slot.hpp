@@ -134,10 +134,11 @@ async::task<std::expected<R, std::exception_ptr>> run_in(run_slot &slot, target_
   target.hooks().begin();
 
   auto const caller = co_await async::current_stop_token();
-  async::detail::either_stop const stops{caller, mine};
   std::optional<std::expected<R, std::exception_ptr>> ended;
 
+  // One way out for what fails once it began, the stop it runs under included, made here as it may lack memory.
   try {
+    async::detail::either_stop const stops{caller, mine};
     auto value = co_await async::detail::owned_chain<R>{make(), stops.token()};
 
     if (value) {

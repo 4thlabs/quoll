@@ -230,7 +230,9 @@ made it is replaced, a call throws `std::logic_error`, as what its function refe
 
 **Its arguments are copied into the task.** The function returns its value, or a task of it. A view (`std::string_view`,
 `std::span`, a range view), a reference to write to, or a result that would refer to what the work held does not
-compile. A pointer, or a view inside another type, still points to what the caller gave.
+compile, as does one inside an optional, a pair, a tuple, a variant or an expected. A pointer, or a view in a
+container, as a `std::vector<std::string_view>`, or inside a type of the program's, as a member of a struct, still
+points to what the caller gave.
 
 **Made outside a view**, in a handler or `mounted()`, a callback knows no component: it runs in the caller's task, as a
 `std::function` would, and what its function captures is the caller's to keep alive.

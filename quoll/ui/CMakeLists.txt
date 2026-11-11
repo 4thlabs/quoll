@@ -45,8 +45,11 @@ quoll_declare_tests(
 # What a component must be, with the message the user gets.
 quoll_declare_compile_fail_tests(
   SOURCES
+    tests/compile_fail/action_optional_view_argument.cpp
     tests/compile_fail/action_reference_argument.cpp
     tests/compile_fail/action_throwing_move.cpp
+    tests/compile_fail/callback_optional_view_argument.cpp
+    tests/compile_fail/callback_optional_view_result.cpp
     tests/compile_fail/callback_reference_argument.cpp
     tests/compile_fail/callback_reference_result.cpp
     tests/compile_fail/callback_reference_wrapper_argument.cpp
@@ -58,6 +61,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/component_not_aggregate.cpp
     tests/compile_fail/event_function_signature.cpp
     tests/compile_fail/effect_optional_view_dependency.cpp
+    tests/compile_fail/effect_pair_span_value.cpp
     tests/compile_fail/effect_values_without_target.cpp
     tests/compile_fail/effect_view_value.cpp
     tests/compile_fail/target_bool_value.cpp

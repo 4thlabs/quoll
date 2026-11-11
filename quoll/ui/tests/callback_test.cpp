@@ -47,20 +47,36 @@
 #include <quoll/test/virtual_time.hpp>
 #include <quoll/ui.hpp>
 
+#include <quoll/ui/detail/callback_traits.hpp>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
 #include <concepts>
 #include <exception>
+#include <expected>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <tuple>
+#include <utility>
 #include <variant>
 #include <vector>
+
+// What a callback, an action or an effect refuses to copy: views, also inside the standard types that hold others.
+static_assert(quoll::ui::detail::holds_view<std::optional<std::string_view>>);
+static_assert(quoll::ui::detail::holds_view<std::pair<std::string_view const, int>>);
+static_assert(quoll::ui::detail::holds_view<std::variant<int, std::tuple<std::span<int const>>>>);
+static_assert(quoll::ui::detail::holds_view<std::expected<int, std::string_view>>);
+static_assert(quoll::ui::detail::holds_view<std::optional<int> const &>);
+static_assert(!quoll::ui::detail::holds_view<std::map<std::string, std::vector<std::string>>>);
+static_assert(!quoll::ui::detail::holds_view<std::optional<int>> && !quoll::ui::detail::holds_view<void>);
 
 namespace {
 
