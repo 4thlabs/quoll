@@ -39,6 +39,7 @@
 
 #include <quoll/ui/app.hpp>
 #include <quoll/ui/app_options.hpp>
+#include <quoll/ui/callback.hpp>
 #include <quoll/ui/child_component.hpp>
 #include <quoll/ui/component.hpp>
 #include <quoll/ui/component_with_props.hpp>

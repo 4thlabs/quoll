@@ -117,14 +117,23 @@ struct app_core::outcome {
 
 app_core::app_core(async::any_executor executor, renderer_ref renderer, view_function view,
                    unmounted_function unmounted, void *component, app_options options)
-    : executor_(std::move(executor)), renderer_(renderer), view_(view), unmounted_(unmounted), component_(component),
-      options_(std::move(options)) {}
+    : executor_(std::move(executor)), renderer_(renderer), link_(std::make_shared<app_link>(app_link{this})),
+      view_(view), unmounted_(unmounted), component_(component), options_(std::move(options)) {}
+
+app_core::~app_core() { link_->core = nullptr; }
 
 void app_core::render() {
   std::vector<element> next;
-  auto view = view_(component_);
-  expansion made{
-      .app_stop = stop_.get_token(), .link = {this, &app_core::state_changed}, .sink = {this, &app_core::failed_in}};
+  auto view = [this] {
+    // Its callbacks call the app's own component back.
+    view_scope const scope{{.app = link_}};
+
+    return view_(component_);
+  }();
+  expansion made{.app = link_,
+                 .app_stop = stop_.get_token(),
+                 .link = {this, &app_core::state_changed},
+                 .sink = {this, &app_core::failed_in}};
 
   if (!components_.empty() || has_component(view)) {
     expand(view, components_, made);

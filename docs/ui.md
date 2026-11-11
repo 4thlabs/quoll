@@ -119,6 +119,42 @@ struct notes_page {
 - The app's own component may have a `void unmounted()` too: it runs as the app stops, after those of the components
   of its view.
 
+### Calling the parent back
+
+A component tells its parent what happened through a `callback<Signature>` in its props: a function the parent wrote,
+which runs as one of the parent's tasks, not the child's.
+
+```cpp
+struct note_row {
+  struct props {
+    notes::note item;
+    callback<void(std::int64_t)> on_remove;
+  };
+
+  element view(props const &given) {
+    return li({
+        span(given.item.text),
+        button("Delete") | on_click([&given] { return given.on_remove(given.item.id); }),
+    });
+  }
+};
+
+// In the page's view:
+component<note_row>({.item = item, .on_remove = [this](std::int64_t id) { return remove(id); }}) | key(item.id)
+```
+
+- **It belongs to the component that wrote it:** made in a view, it holds that component, or the app for the app's own
+  view. A call starts the function as a task of that component, under its stop.
+- **The caller waits for its end**, and gets what it gives (`callback<int(int)>`), or what it throws. The function
+  returns its value, or a task of it; the arguments are copied into the task.
+- **A caller that goes stops waiting, and the work goes on:** a row removed while the page deletes its note leaves the
+  delete to finish. What the work throws then goes to `on_error`. A work stopped, as its own component goes, stops its
+  caller too.
+- Once the app has stopped, or is gone, or the component is gone, a call ends on a stop and runs nothing: a callback
+  holds its component weakly, so that one kept by its own component leaves no cycle. Made outside a view, a callback
+  runs in the caller's task.
+- Every callback of a signature compares equal: it calls back a component, which stays the same.
+
 ## HTML
 
 `to_html` writes the same interface as HTML, natively as under WebAssembly, for a page generated ahead

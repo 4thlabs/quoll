@@ -39,6 +39,7 @@
 
 #include <quoll/ui/detail/held_view.hpp>
 #include <quoll/ui/detail/instance.hpp>
+#include <quoll/ui/detail/view_context.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/state.hpp>
 
@@ -53,6 +54,7 @@ namespace quoll::ui::detail {
 // view written once (to_html), and where what their unmounted() throws goes. Then what it found, for commit(): the
 // components it made, to mount once shown, and what changes for those it kept.
 struct expansion {
+  std::shared_ptr<app_link> app{};
   std::stop_token app_stop;
   state_link link{};
   failure_sink sink{};
