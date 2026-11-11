@@ -52,7 +52,9 @@ namespace quoll::ui {
  *   state<int> count;
  *
  *   element view() {
- *     return button("Add") | tw("btn") | on_click([this] { count = *count + 1; });
+ *     auto const add = [this] { count = *count + 1; };
+ *
+ *     return button("Add") | tw("btn") | on_click(add);
  *   }
  * };
  * @endcode

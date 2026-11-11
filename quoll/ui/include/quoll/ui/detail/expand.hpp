@@ -57,6 +57,8 @@ namespace quoll::ui::detail {
 // components it made, to mount once shown, and what changes for those it kept.
 struct expansion {
   std::shared_ptr<app_link> app{};
+  // Of the app's hot reloads: a last view from another is not given again.
+  std::uint64_t epoch = 0;
   std::stop_token app_stop;
   state_link link{};
   failure_sink sink{};
@@ -71,6 +73,7 @@ struct expansion {
     std::shared_ptr<void const> placed_by;
     element view;
     std::uint64_t version;
+    std::uint64_t epoch;
   };
 
   std::vector<view_record> views{};

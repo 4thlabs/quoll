@@ -131,6 +131,7 @@ void app_core::render() {
     return view_(component_);
   }();
   expansion made{.app = link_,
+                 .epoch = epoch_,
                  .app_stop = stop_.get_token(),
                  .link = {this, &app_core::state_changed},
                  .sink = {this, &app_core::failed_in}};
@@ -251,6 +252,11 @@ async::task<> app_core::render_later() {
   }
 
   co_return;
+}
+
+void app_core::reloaded(void *self) {
+  ++static_cast<app_core *>(self)->epoch_;
+  state_changed(self);
 }
 
 void app_core::state_changed(void *self) {

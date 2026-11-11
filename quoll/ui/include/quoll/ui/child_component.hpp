@@ -50,12 +50,15 @@ namespace quoll::ui {
 
 /**
  * @brief A component of the view, given `given` as its props: the app keeps its instance, its states with it, from one
- * view of the parent to the next, while it stays at the same place, and gives it the props anew each time.
+ * view of the parent to the next, while it stays at the same place, and gives it these props, unless they compare equal
+ * to the last ones and none of its states changed: then its last view is given again, with the last props.
  *
  * @code
- * ul({list(items, [this](notes::note const &item) {
+ * auto const row = [](notes::note const &item) {
  *   return component<note_row>({.item = item}) | key(item.id);
- * })})
+ * };
+ *
+ * return ul({list(items, row)});
  * @endcode
  *
  * Its place is its type and key among the components of the parent's view, or its type and rank there without a key:

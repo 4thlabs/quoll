@@ -53,7 +53,8 @@ void instance::tried(std::shared_ptr<void const> props) noexcept {
 }
 
 void instance::viewed(std::shared_ptr<void const> props, std::shared_ptr<void const> own,
-                      std::shared_ptr<void const> placed_by, element view, std::uint64_t version) noexcept {
+                      std::shared_ptr<void const> placed_by, element view, std::uint64_t version,
+                      std::uint64_t epoch) noexcept {
   // The view first, whose handlers may refer to the props it replaces.
   last_view_.reset();
   props_ = std::move(props);
@@ -61,14 +62,15 @@ void instance::viewed(std::shared_ptr<void const> props, std::shared_ptr<void co
   placed_by_ = std::move(placed_by);
   last_view_.emplace(std::move(view));
   viewed_ = version;
+  viewed_epoch_ = epoch;
 }
 
 bool instance::made_of(void const *own, void const *placed_by) const noexcept {
   return last_view_ && own == own_.get() && placed_by == placed_by_.get();
 }
 
-element const *instance::unchanged_view() const noexcept {
-  return last_view_ && version_ == viewed_ ? &*last_view_ : nullptr;
+element const *instance::unchanged_view(std::uint64_t epoch) const noexcept {
+  return last_view_ && version_ == viewed_ && epoch == viewed_epoch_ ? &*last_view_ : nullptr;
 }
 
 void instance::link(state_link app) noexcept {
@@ -113,6 +115,9 @@ void instance::unlink() noexcept {
   // Gone from the view: what its tasks, or its destructor, still change shows nowhere.
   table_->link(component_.get(), {});
   app_link_ = {};
+  last_view_.reset();
+  own_.reset();
+  placed_by_.reset();
 }
 
 void instance::detach() noexcept {

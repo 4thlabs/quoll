@@ -63,6 +63,17 @@ struct page {
   element view() { return button("Add") | tw("btn"); }
 };
 
+// The line of the literal of a component of a view, which a hot reload changes while nothing else does.
+unsigned const child_line = std::source_location::current().line() + 3;
+
+struct child {
+  element view() { return p("Child"); }
+};
+
+struct nested_page {
+  element view() { return div({component<child>()}); }
+};
+
 int failures = 0;
 
 void check(std::string const &actual, std::string const &expected) {
@@ -114,5 +125,28 @@ int main() {
 
   auto const done = quoll::test::run(time, session());
 
-  return done.has_value() && failures == 0 ? 0 : 1;
+  // A component of a view, its props unchanged and its states too: a hot reload views it again all the same.
+  quoll::test::virtual_time nested_time;
+  quoll::test::memory_renderer const nested_shown;
+  app<nested_page, quoll::test::memory_renderer> nested{nested_time.get_executor(), nested_shown};
+
+  auto const nested_session = [&]() -> task<int> {
+    nested.start();
+    check(nested_shown.html(), "<div><p>Child</p></div>");
+
+#if defined(__clang__)
+    detail::hot_replace(file, child_line, 29, "Enfant");
+#else
+    detail::hot_replace(file, child_line, 28, "Enfant");
+#endif
+    co_await quoll::async::sleep_for(1ms);
+    check(nested_shown.html(), "<div><p>Enfant</p></div>");
+
+    co_await nested.stop();
+    co_return 0;
+  };
+
+  auto const nested_done = quoll::test::run(nested_time, nested_session());
+
+  return done.has_value() && nested_done.has_value() && failures == 0 ? 0 : 1;
 }

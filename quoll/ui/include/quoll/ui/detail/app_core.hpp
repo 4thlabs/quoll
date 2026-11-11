@@ -48,6 +48,7 @@
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/renderer_ref.hpp>
 
+#include <cstdint>
 #include <exception>
 #include <memory>
 #include <stop_token>
@@ -96,6 +97,9 @@ public:
 
   static void state_changed(void *self);
 
+  // A hot reload changed the literals of the views: none is given again from before it, as no state says so.
+  static void reloaded(void *self);
+
 private:
   struct outcome;
 
@@ -120,6 +124,8 @@ private:
   std::vector<std::weak_ptr<instance>> instances_;
   node_id last_id_ = no_node;
   bool render_pending_ = false;
+  // Counts the hot reloads: a component's last view, from an epoch before, is not given again.
+  std::uint64_t epoch_ = 0;
   bool stopped_ = false;
   // Its view showed, and its unmounted() has not run yet.
   bool shown_once_ = false;

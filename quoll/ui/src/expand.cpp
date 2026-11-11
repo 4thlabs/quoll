@@ -262,14 +262,15 @@ void scope_keys(element &view, std::string const &scope) {
 
     return spec.table->view(kept->component(), props.get());
   }();
-  auto given = view;
-
+  // Recorded at once, which cannot fail: then the view it keeps, copied, which may.
   context.views.push_back({.owner = kept,
                            .props = props,
                            .own = spec.props,
                            .placed_by = by.props,
-                           .view = std::move(given),
-                           .version = version});
+                           .view = {},
+                           .version = version,
+                           .epoch = context.epoch});
+  context.views.back().view = view;
   return view;
 }
 
@@ -285,7 +286,7 @@ void walk_component(element &value, matching &shown, std::vector<std::shared_ptr
   // Kept, its props made of the same as before, or giving the same view, and none of its states changed since: its
   // last view is given again, with the props it was made with, which its handlers may refer to.
   auto const same_sources = !fresh && kept->made_of(spec.props.get(), by.props.get());
-  auto const *const unchanged = fresh ? nullptr : kept->unchanged_view();
+  auto const *const unchanged = fresh ? nullptr : kept->unchanged_view(context.epoch);
   auto const given_again =
       unchanged != nullptr && (same_sources || (spec.table->same_props != nullptr &&
                                                 spec.table->same_props(kept->own().get(), spec.props.get())));
@@ -382,7 +383,7 @@ void commit(expansion &context, std::vector<std::shared_ptr<instance>> &shown) n
 
   for (auto &record : context.views) {
     record.owner->viewed(std::move(record.props), std::move(record.own), std::move(record.placed_by),
-                         std::move(record.view), record.version);
+                         std::move(record.view), record.version, record.epoch);
   }
 
   for (auto &[parent, children] : context.children) {
