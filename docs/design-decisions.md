@@ -262,7 +262,8 @@ hand.
 **For you.** Declare the target state, then the effect or the action that writes into it. Set the states an effect
 depends on, or call `reload()`, and its run follows. Await `run()` from a task of the component, a handler or
 `mounted()`: a call refused, or a run a later one took the place of, gives `run_refused` or `run_replaced`, and its
-caller goes on. A component that goes stops its runs.
+caller goes on. A component that goes stops its runs; a save that must go on runs a callback of the component that
+owns what it changes, whose work goes on.
 
 ### JavaScript libraries as modules
 

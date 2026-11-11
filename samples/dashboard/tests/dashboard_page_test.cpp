@@ -619,7 +619,7 @@ TEST_CASE("dashboard web: a product saves once at a time, a click while it is on
   CHECK_FALSE(shown.html().contains("Not saved"));
 }
 
-TEST_CASE("dashboard web: a detail left stops its save, which the list does not show", "[samples][dashboard]") {
+TEST_CASE("dashboard web: a save goes on once its detail is left, and the list shows it", "[samples][dashboard]") {
   server = three_products();
   server.update_delay = 10ms;
 
@@ -636,15 +636,15 @@ TEST_CASE("dashboard web: a detail left stops its save, which the list does not 
     user.save();
     co_await settle();
 
-    // Another product chosen while the save is on its way: the detail goes, and its save with it.
+    // Another product chosen while the save is on its way: the detail goes, and the page's save goes on.
     user.choose("Green tea");
     co_await quoll::async::sleep_for(20ms);
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(server.updates == 1);
-  CHECK(server.items[2].price == 49);
-  CHECK(std::get<0>(*instance.component().items).at(2).price == 49);
+  CHECK(server.items[2].price == 45.5);
+  CHECK(std::get<0>(*instance.component().items).at(2).price == 45.5);
 }
 
 TEST_CASE("dashboard web: a save ending on what is no std::exception is over, and says it failed",

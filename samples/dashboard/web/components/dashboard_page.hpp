@@ -89,13 +89,18 @@ struct dashboard_page {
   // Its sales follow.
   void select(std::int64_t id) { selected = std::optional<std::int64_t>{id}; }
 
-  // A product its detail saved: the list shows it.
-  void saved(products::product given) {
-    auto const replace = [&given](std::tuple<std::vector<products::product>, std::exception_ptr> &held) {
-      std::ranges::replace_if(std::get<0>(held), [&given](auto const &item) { return item.id == given.id; }, given);
+  // Saves a product, and the list shows it: a task of the page, which goes on if the detail that asked for it goes.
+  // Here until a context holds the products (docs/PLAN.md, step 6, Contexts), which would also save a product once at
+  // a time across its details, and keep the failure of a save whose detail went.
+  task<products::product> save(std::int64_t id, products::product_update changes) {
+    auto saved = co_await products_client::update(id, std::move(changes));
+
+    auto const replace = [&saved](std::tuple<std::vector<products::product>, std::exception_ptr> &held) {
+      std::ranges::replace_if(std::get<0>(held), [&saved](auto const &item) { return item.id == saved.id; }, saved);
     };
 
     items.update(replace);
+    co_return saved;
   }
 
   // The product chosen, while the list holds it.
@@ -118,8 +123,8 @@ struct dashboard_page {
     // One callback of each, which every row and detail shares.
     callback<void(std::int64_t)> const on_select = [this](std::int64_t id) { return select(id); };
 
-    callback<void(products::product)> const on_saved = [this](products::product given) {
-      return saved(std::move(given));
+    save_callback const on_save = [this](std::int64_t id, products::product_update changes) {
+      return save(id, std::move(changes));
     };
 
     auto const alert = [&problem] {
@@ -162,8 +167,9 @@ struct dashboard_page {
       auto const &item = *item_chosen;
 
       auto const shown = div({
-          // Keyed by the product: another product chosen is another detail, with nothing typed, its save stopped.
-          component<product_detail>({.item = item, .on_saved = on_saved}) | key(item.id),
+          // Keyed by the product: another product chosen is another detail, with nothing typed; a save on its way goes
+          // on in the page.
+          component<product_detail>({.item = item, .on_save = on_save}) | key(item.id),
           sales_shown(),
       });
 

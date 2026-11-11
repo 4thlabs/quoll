@@ -233,6 +233,26 @@ struct timed_restart_page {
   element view() { return div({}); }
 };
 
+// Runs its action as it first shows, and goes as its page asks.
+struct running_panel {
+  state<bool> busy;
+  action<int(int)> run{doubled, busy};
+
+  task<> mounted() { static_cast<void>(co_await run.run(1)); }
+
+  element view() { return div({}); }
+};
+
+struct panel_page {
+  state<bool> shows{true};
+
+  element view() {
+    auto const panel = [] { return component<running_panel>(); };
+
+    return div({when(*shows, panel)});
+  }
+};
+
 struct void_page {
   action<void(int)> touch{nothing_much};
 
@@ -566,4 +586,21 @@ TEST_CASE("action: a run whose second value cannot be made writes none of them",
   CHECK(number == 1);
   CHECK(kept.value == 1);
   CHECK(error != nullptr);
+}
+
+TEST_CASE("action: a component that goes stops its runs", "[ui][action]") {
+  runs = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<panel_page> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.component().shows = false;
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(runs.lines == std::vector<std::string>{"start 1"});
 }

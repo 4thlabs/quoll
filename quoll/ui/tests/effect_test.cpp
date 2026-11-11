@@ -292,6 +292,23 @@ struct searching_page {
   element view() { return input() | bind(query); }
 };
 
+// A function of nothing, its target the flags alone.
+struct flags_page {
+  state<int> next{1};
+  state<std::tuple<bool, std::exception_ptr>> touched;
+  effect touch{next,
+               [](int key) -> task<> {
+                 co_await quoll::async::sleep_for(1ms);
+
+                 if (key == 2) {
+                   throw std::runtime_error{"no touch"};
+                 }
+               },
+               touched};
+
+  element view() { return p(std::get<0>(*touched) ? "touching" : std::get<1>(*touched) ? "failed" : "touched"); }
+};
+
 // Keeps what an effect starts, as its app would after a view, for the test to run when it chooses.
 struct kept_starts {
   std::vector<task<>> started;
@@ -976,4 +993,27 @@ TEST_CASE("effect: a run under way whose next view cannot compare its states is 
   CHECK(loads.stopped == 1);
   CHECK(std::get<0>(*page.text).empty());
   CHECK_FALSE(std::get<1>(*page.text));
+}
+
+TEST_CASE("effect: of a function giving nothing, its target holds its flags alone", "[ui][effect]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<flags_page> instance{time.get_executor(), shown};
+  std::string touching;
+  std::string touched;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    touching = shown.html();
+    co_await quoll::async::sleep_for(5ms);
+    touched = shown.html();
+
+    instance.component().next = 2;
+    co_await quoll::async::sleep_for(5ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(touching.contains("<p>touching</p>"));
+  CHECK(touched.contains("<p>touched</p>"));
+  CHECK(shown.html().contains("<p>failed</p>"));
 }

@@ -336,7 +336,8 @@ effect search{query, [this](std::string text) -> task<> {
 - a target holding no value, as `state<std::tuple<bool, std::exception_ptr>>`, leaves the value to the handler alone;
   an action with no target tells only its caller;
 - its runs are its component's tasks: a component that goes, as a detail keyed by its product once another is chosen,
-  stops them.
+  stops them. A save that must go on, as one the list of the page shows, is the page's: the action runs the page's
+  callback, whose work belongs to the page and goes on as the detail stops waiting.
 
 ```cpp
 struct rename_form {

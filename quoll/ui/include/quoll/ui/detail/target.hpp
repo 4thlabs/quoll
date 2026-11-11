@@ -190,6 +190,9 @@ consteval void check_target() {
                 "quoll::ui: a target state holds one bool at most, its loading flag");
   static_assert(roles_in<elements>::count(role::error) <= 1,
                 "quoll::ui: a target state holds one std::exception_ptr at most, its error");
+  static_assert(std::is_void_v<R> || std::is_nothrow_move_constructible_v<R>,
+                "quoll::ui: what a run gives moves without throwing, once its target holds it, so that the run ends "
+                "on what its target holds");
 
   if constexpr (!Copied || target_roles<T>::values > 0) {
     static_assert(roles_in<typename values_of<R>::type>::count(role::value) ==

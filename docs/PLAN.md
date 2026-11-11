@@ -249,6 +249,33 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
   overlap: three rounds of review found stale answers and saves out of order, handled by hand. The screen needed no
   handle on the widget, and no WebSocket. What takes the place of that bookkeeping was decided on 2026-11-11 (see
   [Decided](#decided)): `ui::effect` and `ui::action`, then a form's draft from the props.
+- **Contexts**, data the components of an app share, as React's contexts, Leptos's `provide_context` or Solid's stores,
+  one or several, agreed with the maintainer on 2026-11-11: a page cannot do the save of each of its components and pass
+  callbacks down. A context is a component without a view, its states showing again what reads them, found by its type,
+  and what a component runs on it is the context's task, which goes on as the component goes, as a callback's work
+  does: a save sent ends, and what it changed shows wherever it is read. In its own pull request, after #167. To
+  settle there: whether one is made at its first use or given to `mount`, one per app or nested as React's providers,
+  and what a context keeps per item, as a save of a product once at a time and its failure, for a detail chosen again.
+  Proposed:
+
+  ```cpp
+  struct catalog {
+    state<std::tuple<std::vector<products::product>, bool, std::exception_ptr>> items;
+    effect load{std::tie(), products_client::list, items};
+
+    task<products::product> save(std::int64_t id, products::product_update changes);
+  };
+
+  struct product_detail {
+    shared<catalog> products;
+    state<std::tuple<bool, std::exception_ptr>> saving;
+    action<products::product(std::int64_t, products::product_update)> save{
+        [this](std::int64_t id, products::product_update changes) { return products.run(&catalog::save, id, changes); },
+        saving};
+  };
+  ```
+
+  Until then, the dashboard's page saves for its detail, through a callback.
 - WebSocket in the browser and in the REST DSL, left from step 5, if that screen needs them; if it does not, the maintainer
   says where they go once the step ends, and step 5 is done.
 
@@ -411,7 +438,8 @@ changes only what the harness shows. Candidates:
   was found less clear than React's model, and the maintainer asked that a good principle React already has be taken,
   not invented again; then an effect and an action holding their status and result, two ways for a view to read data,
   and named queries tied to the REST DSL, which a component need not use, were set aside, as was `keyed_action`: a
-  component per item has its own action, and stops its save as it goes. The debounce is to refine. A form's draft from
+  component per item has its own action, which runs a callback of the component owning what the save changes, so
+  that the save goes on as the item goes. The debounce is to refine. A form's draft from
   the props comes in a pull request of its own.
 - **The interop tests close the protocol layer, and step 6 comes next** (2026-11-10), as the maintainer asked, tired of
   reimplementing HTTP, server-sent events and WebSocket: once Quoll's ends hold against third-party clients and servers
