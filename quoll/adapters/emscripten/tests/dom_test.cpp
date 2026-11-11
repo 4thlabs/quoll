@@ -528,3 +528,26 @@ TEST_CASE("dom_renderer: an unmount failing once a mount it waited for is done i
   REQUIRE(shown.failures.size() == 1);
   REQUIRE(shown.failures.front().find("no unmount") != std::string::npos);
 }
+
+TEST_CASE("dom_renderer: once closed, a mount still running calls its owner no more", "[emscripten][ui][widget]") {
+  quoll_test_dom_reset();
+  quoll_test_widgets_install();
+
+  std::vector<std::string> failures;
+  quoll::emscripten::dom_renderer renderer{"#app"};
+
+  renderer.on_failure(
+      [](void *owner, char const *message) { static_cast<std::vector<std::string> *>(owner)->emplace_back(message); },
+      &failures);
+  renderer.create_element(1, "canvas");
+  renderer.insert(0, 1, 0);
+  renderer.mount_widget(1, "./async_throwing_chart.js", "{}");
+  settle();
+
+  // Its owner may go now: the deferred unmount fails to the console only.
+  renderer.close();
+  quoll_test_widgets_release();
+  settle();
+
+  REQUIRE(failures.empty());
+}
