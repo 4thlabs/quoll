@@ -51,7 +51,7 @@ async::co_spawn(runtime.get_executor(), refresh_cache(), refreshed{}, runtime.ge
   `async::stopped_t`; an overload set of lambdas fits too. One without a case for a stop does not compile: a task that ends on one would have nothing to
   tell.
 - **`async::detached`** drops a value, says nothing of a stop, and writes an exception to stderr while the program goes
-  on, as tokio does. `async::set_report_sink` sends those lines elsewhere.
+  on. `async::set_report_sink` sends those lines elsewhere.
 - **In a coroutine**, `co_await async::co_spawn(work(), async::detached)` runs it on the coroutine's own executor,
   without waiting for it. It does not take the coroutine's stop token: pass `co_await async::current_stop_token()` for
   it to stop along with it.
@@ -115,8 +115,7 @@ for (;;) {
 }
 ```
 
-C++26's `std::execution` has the same rule, its `set_stopped`, and Rust has it by nature: cancelling a future is
-dropping it. Quoll's chains are unwound by their owner, as in Capy.
+Why a stop works this way, and what it was weighed against: [Design decisions](design-decisions.md#a-stop-is-no-exception).
 
 ### Seeing a stop
 

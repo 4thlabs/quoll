@@ -118,7 +118,7 @@ find_package(quoll REQUIRED COMPONENTS rest runtime server)
 | `quoll::server`                                      | `http::server`, `http::static_files`, `http::connection_options`                      |
 | `quoll::client`                                      | `http::client`                                                                        |
 | `quoll::rest`                                        | Contracts, `rest::mount`, `rest::client`, codecs                                      |
-| `quoll::ui`                                          | The [UI prototype](ui.md)                                                             |
+| `quoll::ui`                                          | Components, states, callbacks, widgets, `to_html`: see [UI](ui.md)                   |
 | `quoll::runtime`                                     | `quoll::runtime`, the loop a program runs on: see [Runtimes](runtimes.md)      |
 | `quoll::asio`, `quoll::emscripten`                  | The adapters, which a program rarely names: see [Runtimes](runtimes.md)               |
 
@@ -218,13 +218,13 @@ If you are writing both sides of an API, or calling one with typed requests and 
   thrown again at its `co_await`.
 - **`runtime.run(task)`** runs the program's main task with `get_stop_token()`, until the tasks have
   ended, and returns what `main()` returns: `EXIT_SUCCESS`, or `EXIT_FAILURE` once what the task let out
-  is written to stderr, but for a stop asked for, as a tokio `main` that returns an error. Once it ends,
+  is written to stderr, but for a stop asked for. Once it ends,
   the tasks spawned with `get_stop_token()` are asked to stop, so that the program ends.
 - **`async::co_spawn`** runs a task from outside a coroutine, from the executor and never inline, and
   gives what comes of it to a handler: its value, the exception it threw, or `async::stopped` if it ended
   on a stop, a case every handler has. With `async::detached`, for a task beside the main one, a value
-  is dropped, a stop says nothing, and an exception is written to stderr while the program goes on, as tokio
-  does, unless it is `std::errc::operation_canceled`, which says nothing either.
+  is dropped, a stop says nothing, and an exception is written to stderr while the program goes on, unless it
+  is `std::errc::operation_canceled`, which says nothing either.
   `async::set_report_sink` sends those lines elsewhere.
 - **`runtime.run()`** returns once the tasks have ended. An executor kept in `main()` would keep it
   running, so give `get_executor()` straight to `co_spawn`.
@@ -305,10 +305,13 @@ thrown by what has no stop to end it, a closed socket or a read after a cancelle
 
 ## Where to go next
 
+- [Concepts](concepts.md), for how Quoll works: sans-IO, runtimes, tasks and stops, threads, WebAssembly.
 - [Async](async.md), for tasks, timeouts and what a stop does.
 - [Server](server.md) and [Client](client.md), for HTTP by hand.
 - [REST](rest.md), for an API described once.
-- [Streaming](streaming.md), for bodies that do not fit in memory.
+- [Streaming](streaming.md), for bodies that do not fit in memory, server-sent events and WebSocket.
+- [UI](ui.md), for a page in C++.
+- [Design decisions](design-decisions.md), for why Quoll works as it does.
 - [`samples/notes`](../samples/notes): a REST contract, its server and its client over TCP.
 - [`samples/github`](../samples/github): a command-line program calling GitHub's API, natively and in Node: see
   [A command-line program](command-line.md).

@@ -1,12 +1,9 @@
 # UI
 
-> [!WARNING]
-> `quoll::ui` is a **prototype**. It works in [`samples/ui_notes`](../samples/ui_notes), and what it
-> lacks is below. Do not build on its API yet.
-
-An interface written in C++ and compiled to WebAssembly, in the same language as the rest of an
-application. The DOM gives text, IME, selection and accessibility, and Tailwind the styles. Link
-`quoll::emscripten`, which brings `quoll::ui`.
+An interface written in C++ and compiled to WebAssembly, in the same language as the rest of an application. The
+DOM gives text, input methods, selection and accessibility, and Tailwind the styles. Link `quoll::emscripten`, which
+brings `quoll::ui`. [`samples/ui_notes`](../samples/ui_notes) is a whole page, with its build; what is still to come is
+[at the end](#what-it-lacks).
 
 ## A component
 
@@ -346,6 +343,7 @@ anything else by a rebuild that reloads the page, losing its state. To try it, s
 
 From [step 6](PLAN.md#step-6-the-ui-dsl-complete) of the roadmap:
 
+- JavaScript widgets in the browser: the browser's renderer, and their modules loaded on demand by the Vite plugin.
 - Base components.
 - Making a page written by `to_html` live (hydration): a `value` on a `select` selects nothing yet.
 - Restoring the states after a rebuild.
