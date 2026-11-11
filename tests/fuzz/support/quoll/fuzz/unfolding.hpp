@@ -38,7 +38,7 @@
 #define QUOLL_FUZZ_UNFOLDING_HPP
 
 #include <quoll/async/await_context.hpp>
-#include <quoll/async/executor_ref.hpp>
+#include <quoll/async/detail/chain_owner.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/fuzz/support.hpp>
 #include <quoll/io/error.hpp>
@@ -122,9 +122,10 @@ public:
       item_.handle = handle;
 
       if (how_ == unfolding::hanging) {
-        // Only a stop ends it, invoked at once if one was already requested, and it never resumes inline, as it posts.
-        // A hang no stop reaches leaves the run unfinished: that is a finding.
-        stop_callback_.emplace(context.stop_token, canceller{this, context.executor});
+        // Only a stop ends it, on the stop, as a socket's operation does: invoked at once if one was already requested,
+        // it posts the owner of the chain, and never unwinds inline. A hang no stop reaches leaves the run unfinished:
+        // that is a finding.
+        stop_callback_.emplace(context.stop_token, canceller{context.owner});
         return;
       }
 
@@ -138,13 +139,9 @@ public:
 
   private:
     struct canceller {
-      awaitable *self;
-      async::executor_ref executor;
+      async::detail::chain_owner *owner;
 
-      void operator()() const {
-        self->result_ = {std::make_error_code(std::errc::operation_canceled), 0};
-        executor.post(self->item_);
-      }
+      void operator()() const noexcept { async::detail::stop_chain(owner); }
     };
 
     io::io_result result_;

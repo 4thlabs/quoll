@@ -39,6 +39,8 @@
 
 #include <quoll/asio/detail/cancellation.hpp>
 #include <quoll/asio/detail/operation.hpp>
+#include <quoll/async/lifetimebound.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 
 #include <asio/any_io_executor.hpp>
@@ -52,13 +54,27 @@
 
 namespace quoll::asio::detail {
 
-// True once `duration` has elapsed, false on a stop request (see async::Timer). asio saturates a duration too long for
-// its clock.
+// The timer's wait, which a stop ends on the stop. `timer` belongs to wait()'s frame, which awaits this at once.
+[[nodiscard]] inline async::task<std::error_code> wait_on(::asio::steady_timer &timer QUOLL_LIFETIMEBOUND,
+                                                          ::asio::any_io_executor executor) {
+  auto const [error] = co_await make_operation<>(std::make_shared<cancellation>(std::move(executor)),
+                                                 [&timer](auto handler) { timer.async_wait(std::move(handler)); });
+
+  co_return error;
+}
+
+// True once `duration` has elapsed, false on a stop request (see async::Timer): a stop is no failure of a timer, but
+// what it says. asio saturates a duration too long for its clock.
 [[nodiscard]] inline async::task<bool> wait(::asio::any_io_executor executor, std::chrono::nanoseconds duration) {
   ::asio::steady_timer timer{executor, std::chrono::duration_cast<::asio::steady_timer::duration>(duration)};
 
-  auto const [error] = co_await make_operation<>(std::make_shared<cancellation>(std::move(executor)),
-                                                 [&timer](auto handler) { timer.async_wait(std::move(handler)); });
+  auto const waited = co_await async::stopped_as_optional(wait_on(timer, std::move(executor)));
+
+  if (!waited) {
+    co_return false;
+  }
+
+  auto const error = *waited;
 
   if (error == ::asio::error::operation_aborted) {
     co_return false;

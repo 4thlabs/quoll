@@ -49,7 +49,7 @@ namespace quoll::io {
  *
  * `accept()` returns a task producing the next connection, type-erased so that a server does not depend on the
  * transport. A failure to accept throws std::system_error from the task, and a stop request on the awaiter's context
- * abandons the wait, with `std::errc::operation_canceled`. One accept at a time.
+ * abandons the wait, which ends the awaiter on the stop. One accept at a time.
  */
 template <class L>
 concept Listener = requires(L &listener) {

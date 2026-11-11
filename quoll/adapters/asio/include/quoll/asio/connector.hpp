@@ -58,7 +58,7 @@ namespace quoll::asio {
  *
  * The connection is a tcp_stream on `executor`, handed over as an io::any_stream. Resolution and connection failures
  * throw std::system_error from the task, with asio's error code (`asio::error::connection_refused`...). A stop
- * request, from any thread, abandons the attempt, with `std::errc::operation_canceled`. `executor` runs one handler
+ * request, from any thread, abandons the attempt, which ends the awaiter on the stop. `executor` runs one handler
  * at a time (an io_context run by one thread, or a strand).
  *
  * The task copies what it needs: the connector does not have to outlive it.

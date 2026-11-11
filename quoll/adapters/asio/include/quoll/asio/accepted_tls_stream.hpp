@@ -43,7 +43,9 @@
 #include <quoll/asio/tls_stream.hpp>
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/code_of.hpp>
+#include <quoll/async/detail/end_stopped.hpp>
 #include <quoll/async/lifetimebound.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/half_closable_stream.hpp>
 #include <quoll/io/io_result.hpp>
@@ -172,15 +174,24 @@ private:
       throw std::logic_error{"quoll::asio::accepted_tls_stream: a handshake is already pending"};
     }
 
-    // Stopped before it starts: the session, untouched, can still take one.
+    // Stopped before it starts: the session, untouched, can still take one; the operation ends on the stop.
     if ((co_await async::current_stop_token()).stop_requested()) {
-      co_return std::make_error_code(std::errc::operation_canceled);
+      co_await async::detail::end_stopped{};
     }
 
     current.at = phase::pending;
 
     try {
-      current.failure = co_await current.stream.handshake(tls_stream::session_type::server);
+      auto shaken = co_await async::stopped_as_optional(current.stream.handshake(tls_stream::session_type::server));
+
+      // Stopped half-way through: the session goes no further, as for a failure, and the operation ends on the stop.
+      if (!shaken) {
+        current.failure = std::make_error_code(std::errc::operation_canceled);
+        current.at = phase::done;
+        co_await async::detail::end_stopped{};
+      }
+
+      current.failure = *shaken;
     } catch (...) {
       // Whatever it threw, the session is half-way through and goes no further.
       current.failure =

@@ -37,6 +37,7 @@
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/service.hpp>
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/when_all.hpp>
@@ -138,11 +139,8 @@ public:
   [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
 
   [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
-    try {
-      co_await quoll::async::sleep_for(1ms);
-    } catch (std::system_error const &stopped) {
-      co_return io::io_result{stopped.code(), 0};
-    }
+    // Stopped, it ends on the stop, as a stream's does.
+    co_await quoll::async::sleep_for(1ms);
 
     co_return co_await inner_.write_some(data.first(std::min<std::size_t>(data.size(), 1)));
   }
@@ -210,24 +208,28 @@ private:
   int waits_ = 0;
 };
 
-// A stream whose read throws once stopped, rather than say so, as a stream that breaks would.
+// A stream whose read throws once stopped, rather than end on the stop, as a stream that breaks would.
 class breaking_read {
 public:
   explicit breaking_read(io::memory_stream inner) noexcept : inner_(std::move(inner)) {}
 
   [[nodiscard]] task<io::io_result> read_some(std::span<std::byte> buffer) {
-    auto const read = co_await inner_.read_some(buffer);
+    auto read = co_await quoll::async::stopped_as_optional(read_inner(buffer));
 
-    if (read.error == std::errc::operation_canceled) {
+    if (!read) {
       throw std::runtime_error{"the read broke as it was stopped"};
     }
 
-    co_return read;
+    co_return *read;
   }
 
   [[nodiscard]] auto write_some(std::span<std::byte const> data) { return inner_.write_some(data); }
 
 private:
+  [[nodiscard]] task<io::io_result> read_inner(std::span<std::byte> buffer) {
+    co_return co_await inner_.read_some(buffer);
+  }
+
   io::memory_stream inner_;
 };
 
@@ -237,14 +239,9 @@ public:
   taking_slowly(io::memory_stream inner, std::chrono::nanoseconds delay) noexcept
       : inner_(std::move(inner)), delay_(delay) {}
 
+  // A stopped write ends on the stop, as a stream's does.
   [[nodiscard]] task<io::io_result> write_some(std::span<std::byte const> data) {
-    // A stopped write says so, as a stream does.
-    try {
-      co_await quoll::async::sleep_for(delay_);
-    } catch (std::system_error const &stopped) {
-      co_return io::io_result{stopped.code(), 0};
-    }
-
+    co_await quoll::async::sleep_for(delay_);
     co_return co_await inner_.write_some(data.first(std::min<std::size_t>(data.size(), 1)));
   }
 

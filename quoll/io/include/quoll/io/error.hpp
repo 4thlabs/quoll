@@ -44,7 +44,8 @@ namespace quoll::io {
 
 /**
  * @brief Stream outcomes specific to Quoll. Other failures use the standard codes: `std::errc::broken_pipe` when
- * the peer is gone, `std::errc::operation_canceled` when a stop request ended an operation.
+ * the peer is gone, `std::errc::operation_canceled` when something else than a stop cancelled an operation. A stop
+ * request ends an operation, and its awaiter, on the stop: no result says it (see async::stopped_as_optional).
  */
 enum class error {
   /** @brief The peer closed its side cleanly: no more bytes will come. */

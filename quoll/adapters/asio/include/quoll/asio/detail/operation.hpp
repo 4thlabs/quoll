@@ -39,6 +39,7 @@
 
 #include <quoll/asio/detail/cancellation.hpp>
 #include <quoll/async/await_context.hpp>
+#include <quoll/async/detail/chain_owner.hpp>
 #include <quoll/async/work_item.hpp>
 
 #include <asio/bind_cancellation_slot.hpp>
@@ -65,8 +66,9 @@ namespace quoll::asio::detail {
 //
 // The operation always starts on the I/O object's executor, like everything touching an asio I/O object. When the
 // awaiter's stop token can stop, it is bound to the cancellation slot of `cancellation` (see there), and a stop
-// request, from any thread, cancels it there. A stop requested before the operation starts completes it with
-// `operation_aborted` without starting it: at once if requested before await_suspend, else when it would start.
+// request, from any thread, cancels it there. An operation that a stop aborted ends on the stop: it does not resume its
+// awaiter, and the owner of the chain unwinds it (see async::detail::chain_owner). A stop requested before the
+// operation starts ends it so without starting it: at once if requested before await_suspend, else when it would start.
 //
 // The handler points to the operation, in the frame of the suspended coroutine: that frame is destroyed only after it
 // resumes, so the handler always finds it. A suspended chain of tasks is never destroyed from outside; destroying the
@@ -97,11 +99,11 @@ public:
 
   [[nodiscard]] bool await_ready() const noexcept { return false; }
 
-  // Returns false, resuming the awaiter at once, when stop is already requested.
+  // Stopped already, it ends on the stop at once, and touches nothing after.
   [[nodiscard]] bool await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
     if (context.stop_token.stop_requested()) {
-      result_.emplace(std::error_code{::asio::error::operation_aborted}, Values{}...);
-      return false;
+      async::detail::stop_chain(context.owner);
+      return true;
     }
 
     item_.handle = handle;
@@ -138,6 +140,12 @@ private:
     void operator()(std::error_code error, Values... values) const noexcept {
       if (bound != nullptr) {
         bound->finish();
+      }
+
+      // Aborted by the stop, or with it requested: it ends on the stop, and nothing of it is touched after.
+      if (error == ::asio::error::operation_aborted && self->context_->stop_token.stop_requested()) {
+        async::detail::stop_chain(self->context_->owner);
+        return;
       }
 
       self->result_.emplace(error, std::move(values)...);

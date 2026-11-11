@@ -49,6 +49,7 @@
 #include <quoll/async/offload.hpp>
 #include <quoll/async/runtime_options.hpp>
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/strands_ref.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer_ref.hpp>
@@ -265,14 +266,20 @@ task<> request_stop(std::stop_source &source) {
   co_return;
 }
 
+// Whether a read ended on the stop, with no result, rather than resume its awaiter.
+task<bool> read_ending_on_a_stop(io::any_stream &stream, std::span<std::byte> buffer) {
+  co_return !co_await quoll::async::stopped_as_optional(read_once(stream, buffer));
+}
+
 // Connects, then reads from a peer that never writes and requests stop: when_all starts the read first, so the stop
-// request reaches a pending read.
-task<io::io_result> read_until_stopped(quoll::asio::connector connector, std::uint16_t port, std::stop_source &source) {
+// request reaches a pending read. Whether that read ended on the stop.
+task<bool> read_until_stopped(quoll::asio::connector connector, std::uint16_t port, std::stop_source &source) {
   auto stream = co_await connector.connect("127.0.0.1", port);
   std::array<std::byte, 16> buffer{};
-  auto const [read, stopped] = co_await quoll::async::when_all(read_once(stream, buffer), request_stop(source));
+  auto const [ended, stopped] =
+      co_await quoll::async::when_all(read_ending_on_a_stop(stream, buffer), request_stop(source));
 
-  co_return read;
+  co_return ended;
 }
 
 // Starts connecting, then requests stop while the attempt is pending.
@@ -694,11 +701,11 @@ TEST_CASE("asio: a stop request cancels a pending read", "[asio]") {
   ::asio::io_context context;
   auto acceptor = listen(context);
   std::optional<tcp::socket> silent_peer;
-  std::optional<io::io_result> read;
+  std::optional<bool> read;
   std::exception_ptr failure;
   std::stop_source source;
 
-  // The peer stays connected and never writes: only the stop request ends the read.
+  // The peer stays connected and never writes: only the stop request ends the read, on the stop.
   acceptor.async_accept([&](std::error_code error, tcp::socket socket) {
     check(error);
     silent_peer.emplace(std::move(socket));
@@ -708,7 +715,7 @@ TEST_CASE("asio: a stop request cancels a pending read", "[asio]") {
   run(context, failure);
 
   REQUIRE(read);
-  REQUIRE(read->error == std::errc::operation_canceled);
+  REQUIRE(*read);
 }
 
 TEST_CASE("asio: a stop request abandons a connection attempt", "[asio]") {
@@ -831,7 +838,7 @@ TEST_CASE("asio: a stop request from a pool thread cancels a read pending on the
   auto work = ::asio::make_work_guard(context);
   ::asio::thread_pool pool{2};
   std::optional<tcp::socket> silent_peer;
-  std::promise<io::io_result> read;
+  std::promise<bool> read;
   std::stop_source source;
 
   acceptor.async_accept([&](std::error_code error, tcp::socket socket) {
@@ -841,7 +848,7 @@ TEST_CASE("asio: a stop request from a pool thread cancels a read pending on the
   // when_all runs on the pool: its second child requests stop there, while the read waits on the I/O thread.
   co_spawn(quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own},
            read_until_stopped(quoll::asio::connector{context.get_executor()}, port_of(acceptor), source),
-           overloaded{[&](io::io_result value) {
+           overloaded{[&](bool value) {
                         read.set_value(value);
                         work.reset();
                       },
@@ -852,7 +859,8 @@ TEST_CASE("asio: a stop request from a pool thread cancels a read pending on the
            source.get_token());
   context.run();
 
-  REQUIRE(read.get_future().get().error == std::errc::operation_canceled);
+  // Ended on the stop, with no result.
+  REQUIRE(read.get_future().get());
 }
 
 TEST_CASE("asio: an operation starts on its I/O executor, even awaited from a pool without a stop token", "[asio]") {

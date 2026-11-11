@@ -818,22 +818,16 @@ public:
       co_return co_await inner_.write_some(data);
     }
 
-    try {
-      co_await quoll::async::sleep_for(*per_byte_);
-    } catch (std::system_error const &stopped) {
-      co_return io::io_result{stopped.code(), 0};
-    }
+    // Stopped, it ends on the stop, as a stream's does.
+    co_await quoll::async::sleep_for(*per_byte_);
 
     co_return co_await inner_.write_some(data.first(1));
   }
 
   [[nodiscard]] task<io::io_result> shutdown_send() {
     if (*per_byte_ == stalled_shutdown) {
-      try {
-        co_await quoll::async::sleep_for(24h);
-      } catch (std::system_error const &stopped) {
-        co_return io::io_result{stopped.code(), 0};
-      }
+      // Stopped, it ends on the stop, as a stream's does.
+      co_await quoll::async::sleep_for(24h);
     }
 
     co_return co_await inner_.shutdown_send();

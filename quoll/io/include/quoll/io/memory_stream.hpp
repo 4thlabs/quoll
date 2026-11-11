@@ -39,6 +39,7 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/context_awaitable.hpp>
+#include <quoll/async/detail/chain_owner.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/io/byte_stream.hpp>
@@ -56,7 +57,6 @@
 #include <optional>
 #include <span>
 #include <stop_token>
-#include <system_error>
 #include <utility>
 
 namespace quoll::io {
@@ -66,8 +66,8 @@ namespace quoll::io {
  * reads. For tests, and for connecting two components of the same process.
  *
  * Writes never wait (the pipe is unbounded) and a read waits until the peer writes or closes; the reader resumes
- * on its own executor. A stop request on the reader's await_context ends a waiting read with
- * `std::errc::operation_canceled`. Destroying an end closes it, and the peer's writes then fail with
+ * on its own executor. A stop request on the reader's await_context ends a waiting read, and its awaiter, on the stop:
+ * it does not resume. Destroying an end closes it, and the peer's writes then fail with
  * `std::errc::broken_pipe`. An end must not be destroyed or moved while one of its reads is pending.
  *
  * Move-only. Thread safety: none; both ends, and the stop requests reaching their reads, are used from one thread.
@@ -105,12 +105,20 @@ public:
 
     [[nodiscard]] bool await_ready() const noexcept { return buffer_.empty() || channel_->readable(); }
 
+    // Stopped already, it ends on the stop before it waits, and touches nothing after: the owner may unwind its frame
+    // at once on another thread.
     void await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
+      if (context.stop_token.stop_requested()) {
+        async::detail::stop_chain(context.owner);
+        return;
+      }
+
       item_.handle = handle;
+      chain_ = context.owner;
       channel_->wait(item_, context.executor);
       suspended_ = true;
 
-      // Invoked at once if stop was already requested.
+      // Invoked at once if stop was requested since.
       if (context.stop_token.stop_possible()) {
         stop_callback_.emplace(context.stop_token, canceller{this});
       }
@@ -120,23 +128,22 @@ public:
       stop_callback_.reset();
       channel_->end_wait();
       suspended_ = false;
-
-      if (canceled_) {
-        return {std::make_error_code(std::errc::operation_canceled), 0};
-      }
-
       return channel_->read(buffer_);
     }
 
   private:
     friend class memory_stream;
 
+    // Ends the read on the stop: it does not resume, and the owner of its chain unwinds it. Nothing of it is touched
+    // after.
     struct canceller {
       read_awaitable *self;
 
-      void operator()() const {
-        if (self->channel_->cancel()) {
-          self->canceled_ = true;
+      // Its wait over: the unwinding then leaves the channel alone, which a read started since may wait on.
+      void operator()() const noexcept {
+        if (self->channel_->give_up()) {
+          self->suspended_ = false;
+          async::detail::stop_chain(self->chain_);
         }
       }
     };
@@ -147,7 +154,7 @@ public:
     detail::memory_channel *channel_;
     std::span<std::byte> buffer_;
     async::work_item item_;
-    bool canceled_ = false;
+    async::detail::chain_owner *chain_ = nullptr;
     bool suspended_ = false;
     std::optional<std::stop_callback<canceller>> stop_callback_;
   };

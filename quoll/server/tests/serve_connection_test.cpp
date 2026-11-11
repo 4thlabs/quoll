@@ -1008,6 +1008,11 @@ namespace {
 // `work`, which a stop ends here rather than with its awaiter: whether it ended so.
 task<bool> quietly_stopped(task<> work) { co_return !co_await quoll::async::stopped_as_optional(std::move(work)); }
 
+// What a peer read, nothing if a stop ended its read.
+task<std::string> what_came(task<std::string> work) {
+  co_return (co_await quoll::async::stopped_as_optional(std::move(work))).value_or(std::string{});
+}
+
 } // namespace
 
 TEST_CASE("serve_connection: a stop request is no timeout", "[server][timer]") {
@@ -1025,7 +1030,7 @@ TEST_CASE("serve_connection: a stop request is no timeout", "[server][timer]") {
   auto outcome = quoll::test::run(
       time,
       quoll::async::when_all(quietly_stopped(quoll::http::server{router}.serve_connection(std::move(server))),
-                             peer(std::move(client), "GET /hello HTTP/1.1\r\nHo", 0s, ""), stop_soon()),
+                             what_came(peer(std::move(client), "GET /hello HTTP/1.1\r\nHo", 0s, "")), stop_soon()),
       source.get_token());
 
   REQUIRE(std::get<1>(outcome.value()).empty());

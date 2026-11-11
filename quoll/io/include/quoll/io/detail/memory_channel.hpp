@@ -146,13 +146,14 @@ public:
     reading_ = false;
   }
 
-  // Resumes the suspended read without bytes. False when there is none, or when it was already woken.
-  [[nodiscard]] bool cancel() {
+  // Forgets the suspended read without waking it: it ends on a stop, which unwinds it. False when there is none, or
+  // when it was already woken.
+  [[nodiscard]] bool give_up() noexcept {
     if (reader_ == nullptr) {
       return false;
     }
 
-    wake();
+    end_wait();
     return true;
   }
 
