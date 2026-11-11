@@ -147,13 +147,14 @@ component<note_row>({.item = item, .on_remove = [this](std::int64_t id) { return
   view. A call starts the function as a task of that component, under its stop.
 - **The caller waits for its end**, and gets what it gives (`callback<int(int)>`), or what it throws. The function
   returns its value, or a task of it; the arguments are copied into the task, so that a view (`std::string_view`,
-  `std::span`) or a reference to write to does not compile as one; a pointer still points to what the caller gave.
+  `std::span`) or a reference to write to does not compile as one, nor a result that would refer to what the work
+  held; a pointer, or a view inside another type, still points to what the caller gave.
 - **A caller that goes stops waiting, and the work goes on:** a row removed while the page deletes its note leaves the
   delete to finish. What the work throws then goes to `on_error`. A work stopped, as its own component goes, stops its
   caller too.
 - Once the app has stopped, or is gone, or the component is gone, a call ends on a stop and runs nothing: a callback
-  holds its component weakly, so that one kept by its own component leaves no cycle; so does a call once the
-  component has viewed again, as what the function refers to of that view may be gone. Made outside a view, in a
+  holds its component weakly, so that one kept by its own component leaves no cycle; so does a call once nothing
+  holds the props of the view that made it, that view replaced, as what the function refers to of it may be gone. Made outside a view, in a
   handler or `mounted()` included, a callback knows no component: it runs in the caller's task, as a `std::function`
   would, and what its function captures is the caller's to keep alive.
 - Every callback of a signature that calls something compares equal, whatever its function captures: it calls back a
