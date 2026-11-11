@@ -230,6 +230,26 @@ struct reordered_page {
   }
 };
 
+// Changes a state of its own in its first view, before its app links it.
+struct readying {
+  state<bool> ready;
+
+  element view() {
+    auto const was = *ready;
+
+    // Shows only in another view.
+    if (!was) {
+      ready = true;
+    }
+
+    return p(was ? "ready" : "not yet");
+  }
+};
+
+struct readying_page {
+  element view() { return div({component<readying>()}); }
+};
+
 // A renderer failing its next insert once told to.
 struct failing_renderer {
   memory_renderer shown;
@@ -462,4 +482,13 @@ TEST_CASE("skip: keyed components not viewed again move with their items, their 
   REQUIRE(instance.component().views == 3);
   REQUIRE(before == after);
   REQUIRE(shown.html() == "<ul><button>b:1</button><button>a:0</button></ul>");
+}
+
+TEST_CASE("skip: a state a component changes in its first view views it again", "[ui][skip]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<readying_page> instance{time.get_executor(), shown};
+
+  REQUIRE(quoll::test::run(time, session(instance, [] { return settle(); })) == 0);
+  REQUIRE(shown.html() == "<div><p>ready</p></div>");
 }

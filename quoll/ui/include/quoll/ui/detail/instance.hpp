@@ -108,7 +108,7 @@ public:
   // How many times its states changed: a view records what it saw.
   [[nodiscard]] std::uint64_t version() const noexcept { return version_; }
 
-  // Links its states to it, and it to its app, which a change tells after counting it.
+  // Links it to its app, which a change of its states tells once counted: its states count from its making.
   void link(state_link app) noexcept;
 
   [[nodiscard]] std::string const &key() const noexcept { return key_; }

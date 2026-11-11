@@ -132,7 +132,7 @@ struct notes_page {
 - the component, and the components it places, may keep one until its next view that returns;
 - `mounted()` may keep one to the props of the first view, until it ends;
 - the props it gives a component of its own view may refer to it, its `this` or its `given`: they stay as long as
-  those props.
+  those props. They may not refer into the value of one of its states, which a change replaces: pass the value.
 
 **It is decorated in its own view:** a component element takes a key and nothing else, and one decorated otherwise
 throws `std::logic_error`.
