@@ -104,7 +104,7 @@ struct saving_page {
   element view() {
     return div({when(*shows, [this] {
       return component<saving_row>({.label = "a",
-                                    .on_save = [this](std::string label) -> task<> {
+                                    .on_save = [this](std::string const &label) -> task<> {
                                       co_await quoll::async::sleep_for(1min);
                                       log.lines.push_back("saved " + label);
                                     },
@@ -326,6 +326,22 @@ struct stale_page {
   std::vector<std::string> read;
 
   element view() { return div({component<stale_exposing>({.label = *label, .out = out, .read = &read})}); }
+};
+
+// Makes a callback in its mounted(), not its view: it knows no component, and runs in its caller's task.
+struct mounting {
+  callback<void()> *out = nullptr;
+  bool ran = false;
+
+  element view() { return p("mounting"); }
+
+  task<> mounted() {
+    *out = [this]() -> task<> {
+      co_await quoll::async::sleep_for(1min);
+      ran = true;
+    };
+    co_return;
+  }
 };
 
 static_assert(std::equality_comparable<callback<void(int)>>);
@@ -681,4 +697,35 @@ TEST_CASE("callback: a function taking its argument by reference refers to the t
 
   REQUIRE(quoll::test::run(call()) == 0);
   REQUIRE(seen == std::vector<std::string>{"held by the task, too long for a short string"});
+}
+
+TEST_CASE("callback: one made in mounted() runs in its caller's task, and stops with it", "[ui][callback]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<mounting> instance{time.get_executor(), shown};
+  callback<void()> made;
+  std::stop_source caller;
+
+  instance.component().out = &made;
+
+  auto const call = [&]() -> task<> { co_await made(); };
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    co_await quoll::async::co_spawn(call(), quoll::async::detached, caller.get_token());
+    co_await settle();
+    caller.request_stop();
+    co_await quoll::async::sleep_for(2min);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE_FALSE(instance.component().ran);
+}
+
+TEST_CASE("callback: an argument that can only move moves into the function", "[ui][callback]") {
+  callback<int(std::unique_ptr<int>)> const opened = [](std::unique_ptr<int> held) { return *held; };
+
+  auto const call = [&]() -> task<int> { co_return co_await opened(std::make_unique<int>(7)); };
+
+  REQUIRE(quoll::test::run(call()) == 7);
 }

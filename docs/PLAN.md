@@ -379,6 +379,12 @@ changes only what the harness shows. Candidates:
 
 ## Decided
 
+- **A callback given in props runs in the task of the component that wrote it, implicitly** (2026-11-10), the design
+  doc's choice 3a, against a task of the caller's or an explicit `spawn` of the parent's: the child that calls it
+  stops waiting as it goes, and the parent's work goes on. The user writes neither `spawn` nor an annotation: the
+  component is the one whose view makes the callback, so that one made elsewhere, in a handler or `mounted()`, runs in
+  its caller's task. A callback compares equal to any other that calls something, whatever its function captures, so
+  that props holding one compare by the rest, for the skipped views of step 6.
 - **The interop tests close the protocol layer, and step 6 comes next** (2026-11-10), as the maintainer asked, tired of
   reimplementing HTTP, server-sent events and WebSocket: once Quoll's ends hold against third-party clients and servers
   (#150), the protocol code takes the fixes of its bugs, those the interop tests and reviews find included, of what touches

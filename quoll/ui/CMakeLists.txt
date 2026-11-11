@@ -39,6 +39,7 @@ quoll_declare_compile_fail_tests(
   SOURCES
     tests/compile_fail/callback_reference_argument.cpp
     tests/compile_fail/callback_view_argument.cpp
+    tests/compile_fail/callback_view_result.cpp
     tests/compile_fail/child_component_not_aggregate.cpp
     tests/compile_fail/child_component_without_props_not_aggregate.cpp
     tests/compile_fail/component_not_aggregate.cpp
