@@ -37,6 +37,7 @@
 #ifndef QUOLL_UI_EFFECT_HPP
 #define QUOLL_UI_EFFECT_HPP
 
+#include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/detail/callback_traits.hpp>
@@ -94,9 +95,16 @@ struct dependency_traits<std::optional<X>> {
   [[nodiscard]] static X const &value(std::optional<X> const &dependency) noexcept { return *dependency; }
 };
 
-// Starts nothing more than `work`, its result kept by the slot it runs for.
+// Runs `work` as its component's task, its result kept by the slot it runs for, unless the component stopped since it
+// was started, as one that went with the app before its executor ran: an effect does nothing once unmounted() ran.
 template <class T>
-async::task<> ignored(async::task<T> work) {
+async::task<> started(async::task<T> work) {
+  auto const stop = co_await async::current_stop_token();
+
+  if (stop.stop_requested()) {
+    co_return;
+  }
+
   static_cast<void>(co_await std::move(work));
 }
 
@@ -270,7 +278,7 @@ public:
         return;
       }
 
-      auto work = detail::ignored(detail::run_in<T>(slot_, link_, std::move(*next), false, true));
+      auto work = detail::started(detail::run_in<T>(slot_, link_, std::move(*next), false, true));
 
       watch_(watching::record);
       start(std::move(work));

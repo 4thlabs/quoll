@@ -38,6 +38,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
+#include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
 #include <quoll/test/memory_renderer.hpp>
 #include <quoll/test/run.hpp>
@@ -196,6 +197,31 @@ struct panel_page {
 
     return div({when(*shows, panel)});
   }
+};
+
+// Loads as `next` changes; `other` changes nothing it depends on, but views it again.
+struct other_page {
+  state<int> next{1};
+  state<int> other;
+  effect<std::string> text{next, load_text};
+
+  element view() { return p(shown_of(text) + " " + std::to_string(*other)); }
+};
+
+// An executor that can be made to fail.
+struct failing_executor {
+  virtual_time::executor inner;
+  bool *fail;
+
+  void post(quoll::async::work_item &item) const {
+    if (*fail) {
+      throw std::runtime_error{"no more"};
+    }
+
+    inner.post(item);
+  }
+
+  [[nodiscard]] bool operator==(failing_executor const &) const noexcept = default;
 };
 
 // Searches for what is typed, a while after the last change: a debounce.
@@ -552,4 +578,59 @@ TEST_CASE("effect: no function is refused as it is made", "[ui][effect]") {
   state<int> dependency;
 
   CHECK_THROWS_AS((effect<std::string>{dependency, loader{}}), std::invalid_argument);
+}
+
+TEST_CASE("effect: one started as its app stops at once does not run", "[ui][effect]") {
+  loads = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<loading_page> instance{time.get_executor(), shown};
+
+  // Before the executor runs what the first view started: unmounted() has run, and the effect does nothing.
+  auto const start_then_stop = [&]() -> task<int> {
+    instance.start();
+    co_await instance.stop();
+    co_return 0;
+  };
+
+  REQUIRE(quoll::test::run(time, start_then_stop()) == 0);
+  CHECK(loads.lines.empty());
+}
+
+TEST_CASE("effect: one that could not start runs after the next view", "[ui][effect]") {
+  // Its run yields rather than wait on a timer, which this executor does not offer.
+  loads = {};
+  loads.stubborn = {1};
+
+  virtual_time time;
+  memory_renderer const shown;
+  bool fail = false;
+  std::vector<std::string> failures;
+  test_app<other_page> instance{
+      failing_executor{time.get_executor(), &fail}, shown, {.on_error = [&failures](std::exception_ptr failure) {
+        try {
+          std::rethrow_exception(failure);
+        } catch (std::exception const &error) {
+          failures.emplace_back(error.what());
+        }
+      }}};
+
+  auto const act = [&]() -> task<int> {
+    // Its first view shows, and its run cannot be spawned.
+    fail = true;
+    instance.start();
+    fail = false;
+
+    // A view for something else: the effect tries again.
+    instance.component().other = 1;
+    co_await quoll::async::sleep_for(5ms);
+    co_await instance.stop();
+    co_return 0;
+  };
+
+  REQUIRE(quoll::test::run(time, act()) == 0);
+  CHECK(failures == std::vector<std::string>{"no more"});
+  CHECK(loads.lines == std::vector<std::string>{"start 1", "end 1"});
+  CHECK(shown.html().contains("text 1 1"));
 }

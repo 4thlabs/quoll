@@ -242,14 +242,11 @@ void app_core::start_effects(effects_function effects, void *component, held_vie
     held_view const *held;
   } context{this, &held};
 
+  // What spawning throws goes back to the effect, which runs again after the next view, and is told below.
   auto const start = [](void *owner, async::task<> work) {
     auto const &[app, given] = *static_cast<starting *>(owner);
 
-    try {
-      app->spawn(std::move(work), *given);
-    } catch (...) {
-      app->failed(std::current_exception());
-    }
+    app->spawn(std::move(work), *given);
   };
 
   try {
