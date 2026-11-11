@@ -289,6 +289,12 @@ addToLibrary({
         return;
       }
 
+      // A function, a symbol, or what toJSON() turns into nothing: JSON.stringify gives no string for it, and no throw.
+      if (typeof text !== 'string') {
+        console.error(`quoll: the widget ${path} emitted what JSON cannot hold`);
+        return;
+      }
+
       callUserCallback(() => {
         const namePointer = stringToNewUTF8(eventName);
         const valuePointer = stringToNewUTF8(text);
@@ -320,8 +326,13 @@ addToLibrary({
       })
       .then((handle) => {
         if (widget.gone) {
-          // Unmounted while its mount ran: what it made goes.
-          handle?.unmount?.();
+          // Unmounted while its mount ran: what it made goes, and a failure of that is told as any unmount's.
+          try {
+            handle?.unmount?.();
+          } catch (error) {
+            quollUiReport(ui, `quoll: the widget ${path} failed to unmount: ${error}`);
+          }
+
           return;
         }
 

@@ -60,6 +60,7 @@ void quoll_test_widgets_log(char *out, std::size_t size);
 void quoll_test_widgets_emit(char const *name, char const *value);
 void quoll_test_widgets_emit_circular();
 void quoll_test_widgets_release();
+void quoll_test_widgets_emit_function();
 }
 
 // Not in an unnamed namespace: Glaze, under Clang, reflects only types with linkage.
@@ -481,6 +482,8 @@ TEST_CASE("dom_renderer: what JSON cannot hold, emitted, reaches nothing", "[ems
   settle();
   quoll_test_widgets_emit_circular();
   settle();
+  quoll_test_widgets_emit_function();
+  settle();
   quoll_test_widgets_emit("picked", R"({"index":1})");
   settle();
 
@@ -507,4 +510,21 @@ TEST_CASE("mount: a widget's module missing, or failing to mount, reaches on_err
   REQUIRE(failures.size() == 2);
   REQUIRE(failures[0].find("./missing.js") != std::string::npos);
   REQUIRE(failures[1].find("no canvas here") != std::string::npos);
+}
+
+TEST_CASE("dom_renderer: an unmount failing once a mount it waited for is done is told to on_failure",
+          "[emscripten][ui][widget]") {
+  quoll_test_dom_reset();
+  quoll_test_widgets_install();
+
+  canvas_renderer shown;
+
+  shown.renderer.mount_widget(1, "./async_throwing_chart.js", "{}");
+  settle();
+  shown.renderer.unmount_widget(1);
+  quoll_test_widgets_release();
+  settle();
+
+  REQUIRE(shown.failures.size() == 1);
+  REQUIRE(shown.failures.front().find("no unmount") != std::string::npos);
 }

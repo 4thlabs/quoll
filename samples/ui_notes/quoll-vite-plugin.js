@@ -246,13 +246,13 @@ export function firstError(output) {
   return first < 0 ? output : lines.slice(first).join('\n');
 }
 
-// The paths of the widgets a C++ source declares, `widget<Props>("./path.js", "tag")` or with braces, in the order they
-// come: found in the code scan() leaves, comments gone and each string blanked, then read from the string at that rank.
+// The paths of the widgets a C++ source declares, `widget<Props>("./path.js", "tag")`, with braces, or named as a variable
+// (`widget<Props> chart{"./path.js", "tag"}`), in the order they come: found in the code scan() leaves, comments gone and each string blanked, then read from the string at that rank.
 export function widgetPaths(source) {
   const { code, literals } = scan(source);
   const paths = [];
 
-  for (const match of code.matchAll(/\bwidget\s*<[^;{}()"]*>\s*[({]\s*""/g)) {
+  for (const match of code.matchAll(/\bwidget\s*<[^;{}()"]*>\s*(?:[A-Za-z_]\w*\s*)?[({]\s*""/g)) {
     // The strings before it, but for raw ones, which scan() keeps apart.
     const rank = [...code.slice(0, match.index + match[0].length - 2).matchAll(/(?<!R)""/g)].length;
     const path = decoded(literals[rank].raw);
