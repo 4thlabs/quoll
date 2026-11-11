@@ -57,14 +57,16 @@ struct failure_sink {
 // A component of a view, kept from one view to the next while its parent's view has it at the same place: its own
 // states, its props as the parent last gave them, the components of its own view, and a stop of its own, which the
 // app's stops too. Shared: the app holds it while it shows, and each of its tasks until it ends, so that a component
-// that goes outlives what runs on it; and it holds its parent, whose props its tasks may call into, so that a parent
-// outlives what runs on its children.
+// that goes outlives what runs on it. Its props hold the component that placed it, which they may refer to, so that a
+// parent outlives what runs on its children with props: wherever the props of its children are, a task or a binding,
+// they hold it, and its children hold it so, which is the cycle detach() breaks. A child without props refers to
+// nothing of it.
 //
 // Thread safety: none, as its app.
 class instance {
 public:
   instance(component_table const &table, std::shared_ptr<void const> props, std::string key,
-           std::stop_token const &app_stop, std::shared_ptr<instance> parent);
+           std::stop_token const &app_stop);
 
   instance(instance const &) = delete;
   instance(instance &&) = delete;
@@ -95,14 +97,12 @@ public:
   void unmount(failure_sink sink) noexcept;
 
   // Lets go of the components of its view, and they of theirs, without running anything of them: for an app that is
-  // gone, whose components have been unmounted, so that a child holding its parent leaves no cycle.
+  // gone, whose components have been unmounted, so that a child, whose props hold its parent, leaves no cycle.
   void detach() noexcept;
 
 private:
   void unlink() noexcept;
 
-  // Before what it outlives: destroyed last.
-  std::shared_ptr<instance> parent_;
   component_table const *table_;
   // Before the component, which may keep what refers to them.
   std::shared_ptr<void const> props_;

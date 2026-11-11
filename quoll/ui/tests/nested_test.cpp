@@ -51,6 +51,7 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -723,6 +724,140 @@ struct mounted_page {
   }
 };
 
+// Writes `said` as it is destroyed, unless moved from: tells when what holds it goes.
+class parting {
+public:
+  parting(std::vector<std::string> *into, std::string what) : to_(into), said_(std::move(what)) {}
+
+  parting(parting const &) = delete;
+
+  parting(parting &&other) noexcept : to_(std::exchange(other.to_, nullptr)), said_(std::move(other.said_)) {}
+
+  parting &operator=(parting const &) = delete;
+  parting &operator=(parting &&) = delete;
+
+  ~parting() {
+    if (to_ != nullptr) {
+      to_->push_back(said_);
+    }
+  }
+
+private:
+  std::vector<std::string> *to_;
+  std::string said_;
+};
+
+// Given, in its props, what reads the props of its parent as it goes.
+struct guarded_child {
+  struct props {
+    std::shared_ptr<void> guard;
+  };
+
+  element view(props const & /*given*/) { return p("guarded"); }
+};
+
+struct guarding {
+  struct props {
+    std::string text;
+    std::vector<std::string> *read = nullptr;
+    parting gone;
+  };
+
+  element view(props const &given) {
+    return component<guarded_child>(
+        {.guard = std::shared_ptr<void>{nullptr, [&given](void * /*nothing*/) { given.read->push_back(given.text); }}});
+  }
+};
+
+struct guarded {
+  state<std::string> text{std::string{"the first text, too long for a short string"}};
+  std::vector<std::string> read;
+
+  element view() {
+    return div({component<guarding>({.text = *text, .read = &read, .gone = parting{&read, "props gone"}})});
+  }
+};
+
+// A slow row given, in its props, what reads its parent as it goes.
+struct watched_row {
+  struct props {
+    std::shared_ptr<void> guard;
+  };
+
+  element view(props const & /*given*/) {
+    return button("slow") | on_click([]() -> task<> { co_await quoll::async::sleep_for(1h); });
+  }
+};
+
+struct watching {
+  struct props {
+    journal *log = nullptr;
+  };
+
+  journal *log = nullptr;
+  std::string name{"the watching panel, too long for a short string"};
+  // Says when the panel goes: a member, destroyed with it.
+  std::shared_ptr<void> gone;
+  bool armed = false;
+
+  element view(props const &given) {
+    log = given.log;
+
+    if (!armed) {
+      armed = true;
+      gone = std::shared_ptr<void>{
+          nullptr, [lines = &given.log->lines](void * /*nothing*/) { lines->emplace_back("panel gone"); }};
+    }
+
+    return component<watched_row>(
+        {.guard = std::shared_ptr<void>{nullptr, [this](void * /*nothing*/) { log->lines.push_back(name); }}});
+  }
+};
+
+struct maybe_watching {
+  state<bool> shows{true};
+  journal log;
+
+  element view() {
+    return div({when(*shows, [this] { return component<watching>({.log = &log}); })});
+  }
+};
+
+// A slow row with no props, under a panel that says when it goes: nothing of the panel waits for the row's task.
+struct bare_slow_row {
+  element view() {
+    return button("slow") | on_click([]() -> task<> { co_await quoll::async::sleep_for(1h); });
+  }
+};
+
+struct bare_panel {
+  struct props {
+    journal *log = nullptr;
+  };
+
+  std::shared_ptr<void> gone;
+  bool armed = false;
+
+  element view(props const &given) {
+    if (!armed) {
+      armed = true;
+      gone = std::shared_ptr<void>{
+          nullptr, [lines = &given.log->lines](void * /*nothing*/) { lines->emplace_back("panel gone"); }};
+    }
+
+    return component<bare_slow_row>();
+  }
+};
+
+struct maybe_bare_panel {
+  state<bool> shows{true};
+  journal log;
+
+  element view() {
+    return div({when(*shows, [this] { return component<bare_panel>({.log = &log}); })});
+  }
+};
+
 static_assert(ComponentWithProps<row>);
 static_assert(MountedComponent<row>);
 static_assert(UnmountedComponent<row>);
@@ -1321,4 +1456,64 @@ TEST_CASE("component: the app's own mounted() does not start once the app stoppe
 
   REQUIRE(quoll::test::run(time, start_then_stop()) == 0);
   REQUIRE(log == std::vector<std::string>{"unmounted inner"});
+}
+
+TEST_CASE("component: its props go before those of the view that placed it, which they may refer to",
+          "[ui][components]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<guarded> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.component().text = std::string{"the second text, too long for a short string"};
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(instance.component().read ==
+          std::vector<std::string>{"the first text, too long for a short string", "props gone",
+                                   "the second text, too long for a short string", "props gone"});
+}
+
+TEST_CASE("component: the props of a component keep the one that placed it, which they may refer to",
+          "[ui][components]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<maybe_watching> instance{time.get_executor(), shown};
+  auto const &log = instance.component().log.lines;
+
+  auto const act = [&]() -> task<> {
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+
+    // The panel goes: the row's task, stopped, holds the last of the row's props, which hold the panel.
+    instance.component().shows = false;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(log == std::vector<std::string>{"the watching panel, too long for a short string", "panel gone"});
+}
+
+TEST_CASE("component: one without props keeps nothing of its parent, which goes before its tasks end",
+          "[ui][components]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<maybe_bare_panel> instance{time.get_executor(), shown};
+  auto const &log = instance.component().log.lines;
+
+  auto const act = [&]() -> task<> {
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+
+    // The panel goes as its view no longer shows it, while the row's task, stopped, has yet to end.
+    instance.component().shows = false;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(log == std::vector<std::string>{"panel gone"});
+  REQUIRE(time.now() < 1h);
+  REQUIRE(shown.html() == "<div></div>");
 }

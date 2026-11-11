@@ -38,6 +38,7 @@
 #define QUOLL_UI_ELEMENT_HPP
 
 #include <quoll/async/task.hpp>
+#include <quoll/ui/detail/held_view.hpp>
 #include <quoll/ui/node_id.hpp>
 
 #include <functional>
@@ -52,7 +53,6 @@
 namespace quoll::ui::detail {
 
 struct component_spec;
-class instance;
 
 } // namespace quoll::ui::detail
 
@@ -67,11 +67,11 @@ using event_handler = std::function<async::task<>(std::string value)>;
 /** @brief An event of an element, and what it runs. */
 struct event_binding {
   std::string name;
-  // The component whose view made it, whose task its handler runs in: none for the app's own. And the props it was
-  // given for that view, which its handler may read: both kept until the handler's task ends, and declared before
-  // the handler, so that what it captures goes while they are still there.
-  std::shared_ptr<detail::instance> owner{};
-  std::shared_ptr<void const> props{};
+  // The component whose view made it, whose task its handler runs in, none for the app's own, and the props of that
+  // view, which its handler may read: kept until the handler's task ends, and declared before the handler, so that what
+  // it captures goes while they are still there. Quoll sets it once, on a binding fresh from a view, and never assigns
+  // a binding over another, which would release them first: it replaces whole lists of elements.
+  detail::held_view held{};
   event_handler handler;
 };
 

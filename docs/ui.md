@@ -107,7 +107,9 @@ struct notes_page {
 - **Its props are given anew** on each view of the parent: what changes there shows in its view. `given` lives as
   long as what that view made: a handler of it may keep a reference to it, until its task ends. The component itself,
   and those it places, may keep one until its next view that returns, as a view that throws keeps none; and
-  `mounted()` to the props of the first view, until it ends.
+  `mounted()` to the props of the first view, until it ends. The props it gives a component of its view may refer to
+  it, its `this` or its `given`: they stay as long as those props, and a component without props keeps nothing of
+  its parent.
 - **It is decorated in its own view:** a component element takes a key and nothing else, and one decorated otherwise
   throws `std::logic_error`.
 - **It comes and goes:** `task<> mounted()` runs once it first shows; once the parent's view no longer has it, its

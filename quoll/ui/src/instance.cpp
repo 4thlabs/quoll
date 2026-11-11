@@ -41,9 +41,9 @@
 namespace quoll::ui::detail {
 
 instance::instance(component_table const &table, std::shared_ptr<void const> props, std::string key,
-                   std::stop_token const &app_stop, std::shared_ptr<instance> parent)
-    : parent_(std::move(parent)), table_(&table), props_(std::move(props)), component_(table.make()),
-      key_(std::move(key)), follow_app_(app_stop, async::detail::stop_waker{&stop_}) {}
+                   std::stop_token const &app_stop)
+    : table_(&table), props_(std::move(props)), component_(table.make()), key_(std::move(key)),
+      follow_app_(app_stop, async::detail::stop_waker{&stop_}) {}
 
 void instance::set_props(std::shared_ptr<void const> props) noexcept { props_ = std::move(props); }
 

@@ -174,10 +174,14 @@ struct made_by {
   std::shared_ptr<void const> const &props;
 };
 
-// The props of a component, holding those of the view that placed it: a pointer into them stays good as its own do.
+// The props of a component, holding the component that placed it and the props of that view: a pointer into either
+// stays good as long as its own props.
 struct chained_props {
-  std::shared_ptr<void const> own;
+  // Before its own, which may refer to them: destroyed after them. The component that placed it, its parent, and the
+  // props of that view: they live as long as the props do, whatever holds those, and in whatever order it lets go.
+  std::shared_ptr<instance> placed_in;
   std::shared_ptr<void const> placed_by;
+  std::shared_ptr<void const> own;
 };
 
 void walk(element &value, matching &shown, std::vector<std::shared_ptr<instance>> &now, made_by by, expansion &context);
@@ -250,15 +254,16 @@ void walk_component(element &value, matching &shown, std::vector<std::shared_ptr
   auto const type = spec.table->type;
   auto const scope = scope_of(type, value.key, shown);
   auto const props =
-      by.props && spec.props
-          ? std::shared_ptr<void const>{std::make_shared<chained_props const>(chained_props{spec.props, by.props}),
+      by.owner && spec.props
+          ? std::shared_ptr<void const>{std::make_shared<chained_props const>(chained_props{
+                                            .placed_in = by.owner, .placed_by = by.props, .own = spec.props}),
                                         spec.props.get()}
           : spec.props;
   auto kept = shown.take(type, value.key);
   auto const fresh = !kept;
 
   if (fresh) {
-    kept = std::make_shared<instance>(*spec.table, props, value.key, context.app_stop, by.owner);
+    kept = std::make_shared<instance>(*spec.table, props, value.key, context.app_stop);
   } else {
     // Room for its props, recorded once its view has returned: recording them then cannot fail.
     if (context.props.size() == context.props.capacity()) {
@@ -277,7 +282,7 @@ void walk_component(element &value, matching &shown, std::vector<std::shared_ptr
 
   // What its view may now refer to: a view that threw keeps nothing of its props.
   if (!fresh) {
-    context.props.emplace_back(kept, props);
+    context.props.push_back({.owner = kept, .props = props});
   }
 
   std::vector<std::shared_ptr<instance>> inner;
@@ -305,8 +310,7 @@ void walk(element &value, matching &shown, std::vector<std::shared_ptr<instance>
   }
 
   for (auto &binding : value.events) {
-    binding.owner = by.owner;
-    binding.props = by.props;
+    binding.held = {.owner = by.owner, .props = by.props};
   }
 
   walk_children(value.children, shown, now, by, context);
@@ -351,8 +355,8 @@ void commit(expansion &context, std::vector<std::shared_ptr<instance>> &shown) n
     }
   }
 
-  for (auto &[kept, props] : context.props) {
-    kept->set_props(std::move(props));
+  for (auto &kept : context.props) {
+    kept.owner->set_props(std::move(kept.props));
   }
 
   for (auto &[parent, children] : context.children) {
@@ -371,8 +375,8 @@ void commit(expansion &context, std::vector<std::shared_ptr<instance>> &shown) n
 
 void discard(expansion &context) noexcept {
   // Their views returned with these, and may refer to them until they view again: shown or not, they are the last.
-  for (auto &[kept, props] : context.props) {
-    kept->set_props(std::move(props));
+  for (auto &kept : context.props) {
+    kept.owner->set_props(std::move(kept.props));
   }
 
   // Made, never shown nor linked: gone with these, as no parent holds its children before commit().
