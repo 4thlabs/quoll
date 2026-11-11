@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui::effect: its state's value is copied into the run, which a view would outlive
+// expect: quoll::ui::effect: its states' values are copied into the run, which a view would outlive
 //
 // An effect on an optional view: the run would get the view, which outlives what it refers to once the state changes.
 
@@ -49,7 +49,8 @@ quoll::async::task<int> length_of(std::string_view text);
 
 struct page {
   quoll::ui::state<std::optional<std::string_view>> text;
-  quoll::ui::effect<int> length{text, length_of};
+  quoll::ui::state<int> length;
+  quoll::ui::effect measure{text, length_of, length};
 };
 
 page const shown{};

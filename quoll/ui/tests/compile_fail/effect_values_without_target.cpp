@@ -34,37 +34,21 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_UI_RUN_STATUS_HPP
-#define QUOLL_UI_RUN_STATUS_HPP
+// expect: quoll::ui::effect: the values its function gives go into a target state
+//
+// An effect whose values go nowhere: what it loads would never show.
 
-namespace quoll::ui {
+#include <quoll/async/task.hpp>
+#include <quoll/ui/effect.hpp>
+#include <quoll/ui/state.hpp>
 
-/** @brief Where an effect or an action is, as React Query's status. */
-enum class run_status {
-  /**
-   * @brief No run is asked for: an action not run yet, or whose run its caller stopped, or an effect whose state holds
-   * none, as an empty optional. An effect whose state holds a value is running from its first view.
-   */
-  none,
-  /** @brief A run is under way: what the last one gave is gone. */
-  running,
-  /** @brief The last run ended, with a value or a failure: its result(). */
-  done,
+#include <string>
+
+quoll::async::task<std::string> name_of(int id);
+
+struct page {
+  quoll::ui::state<int> id;
+  quoll::ui::effect load{id, name_of};
 };
 
-namespace detail {
-
-// What the slot of an effect or an action says.
-[[nodiscard]] constexpr run_status status_of(bool pending, bool has_result) noexcept {
-  if (pending) {
-    return run_status::running;
-  }
-
-  return has_result ? run_status::done : run_status::none;
-}
-
-} // namespace detail
-
-} // namespace quoll::ui
-
-#endif // QUOLL_UI_RUN_STATUS_HPP
+page const shown{};

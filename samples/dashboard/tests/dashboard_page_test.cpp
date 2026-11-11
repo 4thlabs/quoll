@@ -60,6 +60,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -328,8 +329,8 @@ TEST_CASE("dashboard web: the detail saves what is typed, and refuses a price th
   CHECK(infinite.contains("The price and the stock are numbers"));
   CHECK(server.items[2] ==
         products::product{.id = 3, .name = "Grinder", .category = "Gear", .price = 45.5, .stock = 7});
-  CHECK(instance.component().items->at(2) == server.items[2]);
-  CHECK(instance.component().problem->empty());
+  CHECK(std::get<0>(*instance.component().items).at(2) == server.items[2]);
+  CHECK(std::get<1>(*instance.component().items) == nullptr);
 }
 
 TEST_CASE("dashboard web: a change the server refuses shows why, and stays typed for the next save",
@@ -363,7 +364,7 @@ TEST_CASE("dashboard web: a change the server refuses shows why, and stays typed
   CHECK(refused.contains("role=\"alert\""));
   CHECK(refused.contains("the server is gone"));
   CHECK(server.items[1].name == "Sencha");
-  CHECK(instance.component().problem->empty());
+  CHECK(std::get<1>(*instance.component().items) == nullptr);
 }
 
 TEST_CASE("dashboard web: the sales of a product chosen before are not shown once another is", "[samples][dashboard]") {
@@ -386,7 +387,7 @@ TEST_CASE("dashboard web: the sales of a product chosen before are not shown onc
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(chart_props(shown) == R"(mount ../widgets/line_chart.js {"months":["Jan","Feb","Mar"],"units":[40,50,60]})");
-  CHECK(instance.component().sales.result().value() == server.sales.at(2));
+  CHECK(std::get<1>(*instance.component().sales) == server.sales.at(2));
 }
 
 TEST_CASE("dashboard web: the sales of the product chosen that fail show why, those of one left say nothing",
@@ -521,7 +522,7 @@ TEST_CASE("dashboard web: sales that failed load again on Try again, a product c
   CHECK(failed.contains("Try again"));
   CHECK_FALSE(shown.html().contains("no sales for now"));
   CHECK(chart_props(shown) == R"(mount ../widgets/line_chart.js {"months":["Jan","Feb"],"units":[10,20]})");
-  CHECK(instance.component().sales.result().value() == server.sales.at(1));
+  CHECK(std::get<1>(*instance.component().sales) == server.sales.at(1));
 }
 
 TEST_CASE("dashboard web: a failure of the sales and one of a save each stay, and a product chosen clears the first",
@@ -577,7 +578,8 @@ TEST_CASE("dashboard web: a failure of the sales and one of a save each stay, an
   CHECK(loaded.contains("<canvas"));
 }
 
-TEST_CASE("dashboard web: a product saves once at a time, its detail chosen again showing it", "[samples][dashboard]") {
+TEST_CASE("dashboard web: a product saves once at a time, a click while it is on its way refused",
+          "[samples][dashboard]") {
   server = three_products();
   server.update_delay = 10ms;
 
@@ -586,7 +588,7 @@ TEST_CASE("dashboard web: a product saves once at a time, its detail chosen agai
   dashboard_app instance{time.get_executor(), shown};
   page_driver const user{instance, shown};
   std::string waiting;
-  std::string again;
+  int sent_meanwhile = 0;
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -599,16 +601,10 @@ TEST_CASE("dashboard web: a product saves once at a time, its detail chosen agai
     user.save();
     co_await settle();
     waiting = shown.html();
-
-    // Another detail of the same product, while the save is on its way: it waits too, and keeps what is typed.
-    user.choose("Green tea");
-    co_await settle();
-    user.choose("Grinder");
-    co_await settle();
-    co_await user.type_and_settle("Price", "46");
-    again = shown.html();
+    sent_meanwhile = server.updates;
 
     co_await quoll::async::sleep_for(20ms);
+    co_await user.type_and_settle("Price", "46");
     user.save();
     co_await quoll::async::sleep_for(20ms);
   };
@@ -616,26 +612,21 @@ TEST_CASE("dashboard web: a product saves once at a time, its detail chosen agai
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(waiting.contains("Saving…"));
   CHECK(waiting.contains("disabled=\"\""));
-  CHECK(again.contains("Saving…"));
+  CHECK(sent_meanwhile == 1);
   CHECK(server.updates == 2);
   CHECK(server.items[2].price == 46);
-  CHECK(instance.component().saves.status(3) == quoll::ui::run_status::done);
-  // The last save of the product ended with it: no failure left.
-  CHECK(instance.component().saves.result(3).has_value());
+  CHECK(std::get<0>(*instance.component().items).at(2).price == 46);
+  CHECK_FALSE(shown.html().contains("Not saved"));
 }
 
-TEST_CASE("dashboard web: the failure of a product's save stays in its detail as another's succeeds",
-          "[samples][dashboard]") {
+TEST_CASE("dashboard web: a detail left stops its save, which the list does not show", "[samples][dashboard]") {
   server = three_products();
-  // Grinder's save is answered after Green tea's, which the server refuses.
-  server.update_delays = {10ms, 1ms};
+  server.update_delay = 10ms;
 
   virtual_time time;
   memory_renderer const shown;
   dashboard_app instance{time.get_executor(), shown};
   page_driver const user{instance, shown};
-  std::string refused;
-  std::string answered;
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -645,26 +636,15 @@ TEST_CASE("dashboard web: the failure of a product's save stays in its detail as
     user.save();
     co_await settle();
 
+    // Another product chosen while the save is on its way: the detail goes, and its save with it.
     user.choose("Green tea");
-    co_await settle();
-    server.refuses = true;
-    co_await user.type_and_settle("Price", "9");
-    user.save();
-    // Once the save has gone, as the click runs as a task: its answer comes in 1 ms, before Grinder's.
-    co_await settle();
-    server.refuses = false;
-    co_await quoll::async::sleep_for(3ms);
-    refused = shown.html();
-
     co_await quoll::async::sleep_for(20ms);
-    answered = shown.html();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(refused.contains("the server is gone"));
-  CHECK(answered.contains("the server is gone"));
-  CHECK(server.items[2].price == 45.5);
-  CHECK(instance.component().items->at(2).price == 45.5);
+  CHECK(server.updates == 1);
+  CHECK(server.items[2].price == 49);
+  CHECK(std::get<0>(*instance.component().items).at(2).price == 49);
 }
 
 TEST_CASE("dashboard web: a save ending on what is no std::exception is over, and says it failed",
@@ -692,7 +672,7 @@ TEST_CASE("dashboard web: a save ending on what is no std::exception is over, an
   CHECK(server.items[2].price == 49);
 }
 
-TEST_CASE("dashboard web: a save tried again shows it waits, and a detail chosen again the last one's failure",
+TEST_CASE("dashboard web: a save tried again shows it waits, and a detail chosen again starts with no failure",
           "[samples][dashboard]") {
   server = three_products();
   server.refuses = true;
@@ -720,7 +700,7 @@ TEST_CASE("dashboard web: a save tried again shows it waits, and a detail chosen
     retrying = shown.html();
     co_await quoll::async::sleep_for(20ms);
 
-    // Refused once more, then chosen again: the new detail tells the product's last save failed.
+    // Refused once more, then chosen again: the new detail has tried no save.
     server.refuses = true;
     server.update_delay = {};
     co_await user.type_and_settle("Price", "9");
@@ -737,7 +717,7 @@ TEST_CASE("dashboard web: a save tried again shows it waits, and a detail chosen
   CHECK(retrying.contains("Saving…"));
   CHECK_FALSE(retrying.contains("the server is gone"));
   CHECK(server.items[2].price == 45.5);
-  CHECK(reopened.contains("Not saved: the server is gone"));
+  CHECK_FALSE(reopened.contains("Not saved"));
 }
 
 TEST_CASE("dashboard web: sales ending on what is no std::exception say they did not load", "[samples][dashboard]") {

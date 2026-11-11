@@ -42,6 +42,7 @@
 #include "error_text.hpp"
 #include "field.hpp"
 #include "product.hpp"
+#include "products_client.hpp"
 
 #include <quoll/async/task.hpp>
 #include <quoll/ui.hpp>
@@ -50,15 +51,18 @@
 #include <cmath>
 #include <concepts>
 #include <cstdint>
+#include <exception>
 #include <format>
 #include <optional>
 #include <string>
 #include <system_error>
+#include <tuple>
 #include <utility>
 
 namespace dashboard_web {
 
 using quoll::async::task;
+using quoll::ui::action;
 using quoll::ui::callback;
 using quoll::ui::element;
 using quoll::ui::state;
@@ -86,12 +90,8 @@ template <class T>
 struct product_detail {
   struct props {
     products::product item;
-    // Whether a save of it is on its way, and why its last one failed until the next: what the page's keyed_action
-    // holds of the product, which a detail chosen again shows too, whoever sent it.
-    bool saving = false;
-    std::string save_failure;
-    // Whether it was saved.
-    callback<bool(std::int64_t, products::product_update)> on_save;
+    // Told of the product saved, which the page's list then shows.
+    callback<void(products::product)> on_saved;
 
     [[nodiscard]] bool operator==(props const &) const = default;
   };
@@ -102,8 +102,12 @@ struct product_detail {
   state<std::optional<std::string>> stock;
   // What is wrong with what is typed.
   state<std::string> problem;
+  // Whether a save is on its way, and why the last one failed: once at a time, a click while one is on its way
+  // refused. A detail left stops its save, as its product is no longer shown.
+  state<std::tuple<bool, std::exception_ptr>> saving;
+  action<products::product(std::int64_t, products::product_update)> save_product{products_client::update, saving};
 
-  task<> save(products::product item, callback<bool(std::int64_t, products::product_update)> on_save) {
+  task<> save(products::product item, callback<void(products::product)> on_saved) {
     auto const new_price = number_in<double>(price->value_or(std::format("{}", item.price)));
     auto const new_stock = number_in<int>(stock->value_or(std::to_string(item.stock)));
 
@@ -123,11 +127,13 @@ struct product_detail {
 
     products::product_update changes{.name = name->value_or(item.name), .price = *new_price, .stock = *new_stock};
 
-    bool const saved = co_await on_save(item.id, std::move(changes));
+    auto const saved = co_await save_product.run(item.id, std::move(changes));
 
     if (!saved) {
       co_return;
     }
+
+    co_await on_saved(*saved);
 
     // Saved, the product given next holds what was sent: the fields that still hold it show it again.
     auto const forget = [](state<std::optional<std::string>> &typed, std::optional<std::string> const &sent) {
@@ -148,13 +154,17 @@ struct product_detail {
       return [&typed](std::string value) { typed = std::optional<std::string>{std::move(value)}; };
     };
 
-    auto const send = [this, &given] { return save(given.item, given.on_save); };
+    auto const &[busy, save_failure] = *saving;
 
-    auto const save_failed = [&given] { return error_text("Not saved: " + given.save_failure); };
+    auto const send = [this, &given] { return save(given.item, given.on_saved); };
+
+    auto const save_failed = [&save_failure] {
+      return error_text("Not saved: " + told(save_failure, "the save failed"));
+    };
 
     // The fields stay open while a save is on its way: what is typed meanwhile is kept for the next.
-    auto const button_shown = button(given.saving ? "Saving…" : "Save") | tw("btn btn-primary self-start");
-    auto const save_button = given.saving ? button_shown | attribute("disabled", "") : button_shown | on_click(send);
+    auto const button_shown = button(busy ? "Saving…" : "Save") | tw("btn btn-primary self-start");
+    auto const save_button = busy ? button_shown | attribute("disabled", "") : button_shown | on_click(send);
 
     auto const typed_wrong = [this] { return error_text(*problem); };
 
@@ -173,7 +183,7 @@ struct product_detail {
         }),
         when(!problem->empty(), typed_wrong),
         // What is typed wrong first: the last save's failure is of what was sent then.
-        when(problem->empty() && !given.save_failure.empty(), save_failed),
+        when(problem->empty() && save_failure != nullptr, save_failed),
         save_button,
     });
 

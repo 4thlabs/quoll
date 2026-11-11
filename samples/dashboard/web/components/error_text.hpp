@@ -54,7 +54,7 @@ namespace dashboard_web {
   return std::string{said == nullptr || *said == '\0' ? otherwise : std::string_view{said}};
 }
 
-// What a failure kept by a resource or an action says: `otherwise` for one that says nothing, or is no std::exception.
+// What a failure a target state holds says: `otherwise` for one that says nothing, or is no std::exception.
 [[nodiscard]] inline std::string told(std::exception_ptr const &failure, std::string_view otherwise) {
   if (!failure) {
     return std::string{otherwise};

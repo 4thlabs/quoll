@@ -34,16 +34,23 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui::keyed_action: its key and arguments are copied into the run, and its result kept: none can be a
-// reference or a view
+// expect: quoll::ui: a function's values cannot be a bool or a std::exception_ptr, which a target state reads as its
+// loading flag or its error
 //
-// Runs by a key that is a view: the runs, kept by key, would hold what the caller held.
+// A function giving a bool: its target would take it for the loading flag.
 
 #include <quoll/async/task.hpp>
-#include <quoll/ui/action.hpp>
+#include <quoll/ui/effect.hpp>
+#include <quoll/ui/state.hpp>
 
-#include <string_view>
+#include <tuple>
 
-quoll::async::task<int> saved(std::string_view key);
+quoll::async::task<bool> exists(int id);
 
-quoll::ui::keyed_action<std::string_view, int()> const saves{saved};
+struct page {
+  quoll::ui::state<int> id;
+  quoll::ui::state<std::tuple<bool, bool>> found;
+  quoll::ui::effect check{id, exists, found};
+};
+
+page const shown{};

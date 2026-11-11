@@ -55,9 +55,12 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/child_component_without_props_not_aggregate.cpp
     tests/compile_fail/component_not_aggregate.cpp
     tests/compile_fail/event_function_signature.cpp
-    tests/compile_fail/keyed_action_view_key.cpp
     tests/compile_fail/effect_optional_view_dependency.cpp
+    tests/compile_fail/effect_values_without_target.cpp
     tests/compile_fail/effect_view_value.cpp
+    tests/compile_fail/target_bool_value.cpp
+    tests/compile_fail/target_two_flags.cpp
+    tests/compile_fail/target_value_count.cpp
   DEPS
     quoll::ui
 )
@@ -68,11 +71,6 @@ quoll_declare_assert_tests(
   NAME action_destroyed_under_way
   CASE "action: destroyed while a run is under way is asserted"
   EXPECT "quoll::ui::action: destroyed while a run is under way"
-)
-quoll_declare_assert_tests(
-  NAME keyed_action_destroyed_under_way
-  CASE "keyed_action: destroyed while a run is under way is asserted"
-  EXPECT "quoll::ui::keyed_action: destroyed while a run is under way"
 )
 quoll_declare_assert_tests(
   NAME effect_destroyed_under_way

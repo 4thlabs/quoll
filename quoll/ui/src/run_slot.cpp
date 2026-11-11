@@ -36,15 +36,31 @@
 
 #include <quoll/ui/detail/run_slot.hpp>
 
+#include <stop_token>
 #include <utility>
 
 namespace quoll::ui::detail {
 
-void tell_quietly(state_link const &link) noexcept {
-  try {
-    tell(link);
-  } catch (...) {
-    // The app asks for a render as the next change comes: this one is shown with it.
+std::stop_token ask(run_slot &slot) {
+  // Made first: one that cannot be made, as for a lack of memory, leaves the run before as it was.
+  std::stop_source next;
+
+  slot.last.request_stop();
+  slot.last = std::move(next);
+  return slot.last.get_token();
+}
+
+run_guard::run_guard(run_slot &slot, std::stop_token mine, target_hooks target) noexcept
+    : slot_(slot), mine_(std::move(mine)), target_(target) {
+  ++slot_.frames;
+}
+
+run_guard::~run_guard() {
+  --slot_.frames;
+
+  if (!mine_.stop_requested() && slot_.pending) {
+    slot_.pending = false;
+    target_.abandon();
   }
 }
 

@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui::effect: its value is kept, as a value
+// expect: quoll::ui::effect: the values its function gives are kept, as values
 //
 // An effect keeping a view: what it gave would refer to what the run held, gone with it.
 
@@ -48,7 +48,8 @@ quoll::async::task<std::string_view const> name_of(int id);
 
 struct page {
   quoll::ui::state<int> id;
-  quoll::ui::effect<std::string_view const> name{id, name_of};
+  quoll::ui::state<std::string_view> name;
+  quoll::ui::effect load{id, name_of, name};
 };
 
 page const shown{};

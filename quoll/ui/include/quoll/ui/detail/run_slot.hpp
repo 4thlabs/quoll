@@ -42,7 +42,7 @@
 #include <quoll/async/detail/end_stopped.hpp>
 #include <quoll/async/detail/owned_chain.hpp>
 #include <quoll/async/task.hpp>
-#include <quoll/ui/detail/state_link.hpp>
+#include <quoll/ui/detail/target.hpp>
 #include <quoll/ui/run_error.hpp>
 
 #include <concepts>
@@ -57,23 +57,18 @@
 
 namespace quoll::ui::detail {
 
-// The runs of an effect, an action, or an action's key: whether one is under way, what the last one that ended gave or
-// threw, the stop of the one under way, and its number, which a later
-// one takes.
-template <class R>
+// The runs of an effect or an action: whether one is under way, the stop of the last one asked
+// for, and how many frames of its runs are alive, ended or not: what its holder must outlive.
 struct run_slot {
   bool pending = false;
-  std::optional<std::expected<R, std::exception_ptr>> result;
-  // None until a run asks for one, so that a slot made costs no allocation.
+  // None until a run is asked for, so that a slot made costs no allocation.
   std::stop_source last{std::nostopstate};
-  std::uint64_t current = 0;
-  // The frames of its runs still alive, ended or not: what its holder must outlive.
   std::uint32_t frames = 0;
 };
 
-// Tells the app of a run's change: a render that cannot be asked for now is asked by the next change, so that what the
-// run gives still reaches its caller, and a frame going still says it ended.
-void tell_quietly(state_link const &link) noexcept;
+// Asks for a run: the run asked for before, under way or still queued, stops at once, so that it writes nothing, and
+// this one gets a stop of its own, as React's cleanup sets the ignore flag of the effect before.
+[[nodiscard]] std::stop_token ask(run_slot &slot);
 
 // A function to run, refused empty rather than at each run.
 template <class Function>
@@ -83,71 +78,61 @@ void check_function(Function const &function, char const *message) {
   }
 }
 
-// A run that goes without ending, its frame destroyed by a stop of its caller, is under way no more, unless a later
-// run took its place. Neither copied nor moved: it lives in the run's frame.
-template <class R>
+// A run that goes without ending, its frame destroyed from above, is under way no more and loading no more, unless a
+// later run took its place. Neither copied nor moved: it lives in the run's frame.
 class run_guard {
 public:
-  run_guard(run_slot<R> &slot, state_link const &link, std::uint64_t number) noexcept
-      : slot_(slot), link_(link), number_(number) {
-    ++slot_.frames;
-  }
+  run_guard(run_slot &slot, std::stop_token mine, target_hooks target) noexcept;
 
   run_guard(run_guard const &) = delete;
   run_guard(run_guard &&) = delete;
   run_guard &operator=(run_guard const &) = delete;
   run_guard &operator=(run_guard &&) = delete;
 
-  ~run_guard() {
-    --slot_.frames;
-
-    if (slot_.current == number_ && slot_.pending) {
-      slot_.pending = false;
-      tell_quietly(link_);
-    }
-  }
+  ~run_guard();
 
 private:
-  run_slot<R> &slot_;
-  state_link const &link_;
-  std::uint64_t number_;
+  run_slot &slot_;
+  std::stop_token mine_;
+  target_hooks target_;
 };
 
-// Runs what `make` gives for `slot`, after stopping the run before, or refuses at once while one is under way if
-// `refuse`: what it gave or threw, written to the slot, what `make` throws included, unless a later run took its place,
-// which gives run_replaced and writes nothing, as for a run stopped by it. A stop of the caller, or of its component,
-// ends the caller there, as a stop does, the slot under way no more. `forget` empties the result as it starts, and
-// `announce` tells the app it does, as an effect's view already showed it. The
-// slot and the link outlive the run: members of a component, which outlives its tasks.
-template <class R, class Make>
-  requires std::same_as<std::invoke_result_t<Make &>, async::task<R>>
-async::task<std::expected<R, std::exception_ptr>> run_in(run_slot<R> &slot, state_link const &link, Make make,
-                                                         bool refuse, bool forget, bool announce) {
-  if (refuse && slot.pending) {
+// Runs what `make` gives for `slot`, and writes what it gives into `target`. `ask` gives the run's stop, or none to
+// refuse it, run_refused at once; what it throws, as for a lack of memory, is the run's failure. A run whose stop was
+// asked for, by a later one, before it starts or as it runs, gives run_replaced and writes nothing, even one whose work
+// ignored the stop and came anyway. Otherwise the target says it is loading as the run starts, then holds what it
+// gave, or what it threw, what `make` throws included. A stop of the caller, or of its component, ends the caller
+// there, as a stop does, the target loading no more. The slot and the target outlive the run: members of a component,
+// which outlives its tasks.
+template <class R, class Make, class Ask>
+  requires std::same_as<std::invoke_result_t<Make &>, async::task<R>> &&
+           std::same_as<std::invoke_result_t<Ask &>, std::optional<std::stop_token>>
+async::task<std::expected<R, std::exception_ptr>> run_in(run_slot &slot, target_ref<R> target, Make make, Ask ask) {
+  std::optional<std::stop_token> asked;
+
+  try {
+    asked = ask();
+  } catch (...) {
+    co_return std::unexpected{std::current_exception()};
+  }
+
+  if (!asked) {
     co_return std::unexpected{std::make_exception_ptr(run_refused{})};
   }
 
-  if (slot.pending) {
-    slot.last.request_stop();
+  auto const mine = *asked;
+
+  // Asked for, then replaced before it started.
+  if (mine.stop_requested()) {
+    co_return std::unexpected{std::make_exception_ptr(run_replaced{})};
   }
-
-  slot.last = std::stop_source{};
-
-  auto const number = ++slot.current;
 
   slot.pending = true;
 
-  if (forget) {
-    slot.result.reset();
-  }
+  run_guard const guard{slot, mine, target.hooks()};
 
-  run_guard<R> const guard{slot, link, number};
+  target.hooks().begin();
 
-  if (announce) {
-    tell_quietly(link);
-  }
-
-  auto const mine = slot.last.get_token();
   auto const caller = co_await async::current_stop_token();
   async::detail::either_stop const stops{caller, mine};
   std::optional<std::expected<R, std::exception_ptr>> ended;
@@ -167,47 +152,30 @@ async::task<std::expected<R, std::exception_ptr>> run_in(run_slot<R> &slot, stat
   }
 
   // Stopped by its caller: it ends there, as a stop does, and as the frame never resumes, it says so now rather than
-  // as its owner destroys it.
+  // as its owner destroys it, which tasks queued meanwhile, a click or a render, would come before.
   if (!ended && caller.stop_requested()) {
-    if (slot.current == number) {
+    if (!mine.stop_requested()) {
       slot.pending = false;
-      tell_quietly(link);
+      target.hooks().abandon();
     }
 
     co_await async::detail::end_stopped{};
   }
 
   // Stopped by a later run, or ended after a later run asked it to stop: what it gave is not the last answer.
-  if (!ended || slot.current != number) {
+  if (!ended || mine.stop_requested()) {
     co_return std::unexpected{std::make_exception_ptr(run_replaced{})};
   }
 
-  // Kept as a copy, its caller given the run's own: a copy that throws, as for a lack of memory, is this run's failure,
-  // which both are given, rather than thrown to its caller, and the result before is gone.
-  try {
-    slot.result.reset();
-    slot.result.emplace(*ended);
-  } catch (...) {
-    auto const failure = std::current_exception();
-
-    slot.result.emplace(std::unexpect, failure);
-    ended.emplace(std::unexpect, failure);
-  }
-
   slot.pending = false;
-  tell_quietly(link);
-  co_return std::move(*ended);
-}
 
-// The result of the last run of `slot`, none for no slot: std::logic_error before one ended, which `what` says, as
-// asking for a value that is not there is a mistake of the caller's.
-template <class R>
-[[nodiscard]] std::expected<R, std::exception_ptr> const &result_of(run_slot<R> const *slot, char const *what) {
-  if (slot == nullptr || !slot->result) {
-    throw std::logic_error{what};
+  if (*ended) {
+    target.finish(*ended);
+  } else {
+    static_cast<void>(target.hooks().fail(ended->error()));
   }
 
-  return *slot->result;
+  co_return std::move(*ended);
 }
 
 } // namespace quoll::ui::detail

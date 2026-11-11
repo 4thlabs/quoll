@@ -248,7 +248,7 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
   value it is given, labelled and number fields, states that start from the props, and above all requests that
   overlap: three rounds of review found stale answers and saves out of order, handled by hand. The screen needed no
   handle on the widget, and no WebSocket. What takes the place of that bookkeeping was decided on 2026-11-11 (see
-  [Decided](#decided)): `ui::effect`, `ui::action` and `ui::keyed_action`, then a form's draft from the props.
+  [Decided](#decided)): `ui::effect` and `ui::action`, then a form's draft from the props.
 - WebSocket in the browser and in the REST DSL, left from step 5, if that screen needs them; if it does not, the maintainer
   says where they go once the step ends, and step 5 is done.
 
@@ -397,17 +397,22 @@ changes only what the harness shows. Candidates:
   callbacks refreshed in a view not run again, or never equal).
 - **What a component runs as a state changes, and on a click, are Quoll's to keep, as React's useEffect**
   (2026-11-11), as the dashboard's reviews kept finding stale answers and saves out of order, handled by hand.
-  `ui::effect<T>` is `useEffect` with a state of the component as its dependency, compared with `==` after each view;
-  the run before is stopped as its cleanup, and as a stop resumes nothing (#151), its answer writes nothing; an
-  optional state runs it only while it holds a value. `ui::action` and `ui::keyed_action` run a function once at a
-  time by default, a call while one is under way refused, with the others as options (a call stopping the one before).
-  A result is no optional "not there yet", which is a task's to say: the task of a run gives it, a
-  `std::expected<T, std::exception_ptr>` (`run_refused` and `run_replaced` for a call with none of its own), and
-  `result()` throws before there is one, after `status()` (none, running, done) is read, the same for effects and actions. An effect runs
-  one way, after a view, as React's: `reload()` asks for that view rather than run it. Decided with the maintainer: a home-made `resource<Key, T>` with a key and a loader came first and was found
-  less clear than React's model, and the maintainer asked that a good principle React already has be taken, not
-  invented again. A form's
-  draft from the props comes in a pull request of its own.
+  `ui::effect` is `useEffect` with states of the component as its dependencies, one, several through `std::tie`, or
+  none, compared with `==` after each view; the run before is stopped as its cleanup, and as a stop resumes nothing
+  (#151), its answer writes nothing; an optional state runs it only while it holds a value. `ui::action` runs a function
+  once at a time by default, a call while one is under way refused, with the others as options (a call stopping the one
+  before). Both write into a state of the component, their target, and the view reads states only, as a React effect
+  calls its setters: the target's elements receive by their type, a `bool` whether a run is under way, a
+  `std::exception_ptr` why the last failed, and the others the values, in order, a function giving a `std::tuple` for
+  several loads; an ambiguous target does not compile. A target with no error leaves an effect's failure to `on_error`.
+  An action's caller is given what it gave, a `std::expected<T, std::exception_ptr>` (`run_refused` and `run_replaced`
+  for a call with none of its own). An effect runs one way, after a view, as React's: `reload()` asks for that view
+  rather than run it. Decided with the maintainer: a home-made `resource<Key, T>` with a key and a loader came first and
+  was found less clear than React's model, and the maintainer asked that a good principle React already has be taken,
+  not invented again; then an effect and an action holding their status and result, two ways for a view to read data,
+  and named queries tied to the REST DSL, which a component need not use, were set aside, as was `keyed_action`: a
+  component per item has its own action, and stops its save as it goes. The debounce is to refine. A form's draft from
+  the props comes in a pull request of its own.
 - **The interop tests close the protocol layer, and step 6 comes next** (2026-11-10), as the maintainer asked, tired of
   reimplementing HTTP, server-sent events and WebSocket: once Quoll's ends hold against third-party clients and servers
   (#150), the protocol code takes the fixes of its bugs, those the interop tests and reviews find included, of what touches

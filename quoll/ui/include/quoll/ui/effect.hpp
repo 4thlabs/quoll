@@ -38,26 +38,25 @@
 #define QUOLL_UI_EFFECT_HPP
 
 #include <quoll/async/current_stop_token.hpp>
-#include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/detail/callback_traits.hpp>
+#include <quoll/ui/detail/effect_function.hpp>
 #include <quoll/ui/detail/effect_member.hpp>
 #include <quoll/ui/detail/effect_starter.hpp>
 #include <quoll/ui/detail/linked_member.hpp>
 #include <quoll/ui/detail/run_slot.hpp>
 #include <quoll/ui/detail/state_link.hpp>
-#include <quoll/ui/run_error.hpp>
-#include <quoll/ui/run_status.hpp>
+#include <quoll/ui/detail/target.hpp>
 #include <quoll/ui/state.hpp>
 
 #include <cassert>
 #include <concepts>
 #include <exception>
-#include <expected>
 #include <functional>
 #include <optional>
 #include <stdexcept>
-#include <string>
+#include <stop_token>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -65,136 +64,118 @@ namespace quoll::ui {
 
 namespace detail {
 
-template <class D>
-struct dependency_traits {
-  using value_type = D;
-
-  [[nodiscard]] static bool holds(D const &) noexcept { return true; }
-
-  [[nodiscard]] static D const &value(D const &dependency) noexcept { return dependency; }
-};
-
-// An optional dependency runs the effect with what it holds, and not at all while it holds none.
-template <class X>
-struct dependency_traits<std::optional<X>> {
-  using value_type = X;
-
-  [[nodiscard]] static bool holds(std::optional<X> const &dependency) noexcept { return dependency.has_value(); }
-
-  [[nodiscard]] static X const &value(std::optional<X> const &dependency) noexcept { return *dependency; }
-};
-
-// Runs `work` as its component's task, its result kept by the slot it runs for, unless the component stopped since it
-// was started, as one that went with the app before its executor ran: an effect does nothing once unmounted() ran.
-template <class T>
-async::task<> started(async::task<T> work) {
+// Runs an effect as a task of its component, unless the component stopped since it was started, as one that went with
+// its app before its executor ran: an effect does nothing once unmounted() ran. A failure its target has no place for,
+// as one without an error, goes where a handler's does. A coroutine of its own, so that what it needs is in its frame.
+template <class V, class Make>
+async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::stop_token mine, bool takes_errors) {
   auto const stop = co_await async::current_stop_token();
 
   if (stop.stop_requested()) {
     co_return;
   }
 
-  static_cast<void>(co_await std::move(work));
+  auto const asked = [mine] { return std::optional<std::stop_token>{mine}; };
+  auto const ended = co_await run_in<V>(slot, target, std::move(make), asked);
+
+  // Replaced exactly when its stop was asked for: that run says what is shown.
+  if (!ended && !takes_errors && !mine.stop_requested()) {
+    std::rethrow_exception(ended.error());
+  }
 }
 
 } // namespace detail
 
 /**
- * @brief What a component runs as a state of its changes, as React's useEffect with that state as its dependency: after
- * each of its views in which the state changed, the run before stopped, and its result, a value or a failure, kept.
+ * @brief What a component runs as states of its change, as React's useEffect with them as its dependencies: after each
+ * of its views in which one changed, the run before stopped, what the function gives written into a target state.
  *
  * @code
- * struct dashboard_page {
- *   state<std::optional<std::int64_t>> selected;
+ * struct sales_panel {
+ *   state<std::int64_t> id;
+ *   // The sales, whether they are loading, and why they did not load: loading from the start, as the first view comes
+ *   // before the first run.
+ *   state<std::tuple<products::monthly_sales, bool, std::exception_ptr>> sales{{{}, true, nullptr}};
  *
- *   effect<products::monthly_sales> sales{selected, [](std::int64_t id) {
- *     return products_client::sales(id);
- *   }};
+ *   effect load{id, products_client::sales, sales};
  *
  *   element view() {
- *     auto const shown = [this] {
- *       auto const &result = sales.result();
+ *     auto const &[monthly, loading, error] = *sales;
  *
- *       return result ? component<sales_chart>({.sales = *result}) : p("No sales");
- *     };
- *
- *     return div({when(sales.status() == run_status::done, shown)});
+ *     return loading ? p("Loading") : component<sales_chart>({.sales = monthly});
  *   }
  * };
  * @endcode
  *
- * A member of a component, which shows again as it changes, as a state does, and which depends on a state of the same
- * component, declared before it. After a view of the component, once it is shown, as React runs its effects once a
- * render is committed, the effect compares the state with its value at the last run, with `==`: changed, the run
- * before is stopped, so that its answer writes nothing, even one that ignored the stop and came anyway, and the
- * function runs, as a task of the component, with a copy of the value. A state holding a `std::optional` runs it with
- * what the optional holds, and stops it, with nothing run, once the optional is empty. The function returns a task of
- * T, or of nothing for `effect<>`; what it throws, before giving its task too, is the failure of its result. A stop of
- * the component ends a run with it, as React's cleanup. reload() runs it again for the value the state holds now, after
- * the view it asks for, as a change of the state would: one way to run it, as React has.
+ * A member of a component, after the states it depends on: one, or several as `std::tie(filter, page)`, or none as
+ * `std::tie()`, which runs it once. After a view of the component, once it is shown, as React runs its effects once a
+ * render is committed, the effect compares those states with their values at its last run, with `==`: one changed,
+ * the run before is stopped, so that it writes nothing, even one that ignored the stop and came anyway, and the
+ * function runs, as a task of the component, with a copy of each value, as rvalues. A state holding a `std::optional`
+ * gives what it holds, and while one holds none, nothing runs, the run before stopped. reload() runs it again, after
+ * the view it asks for, as a change would: one way to run it, as React has.
  *
- * It keeps a copy of the result: a value whose copy throws is the run's failure, given and kept.
+ * The function returns a task of nothing, of a value, or of a `std::tuple` of values, as `when_all` gives several
+ * loads, which go into the target, a state of the same component, declared before it: what each of its elements
+ * receives goes by its type. A `bool` is whether a run is under way, a `std::exception_ptr` why the last failed, and
+ * the others the values, in order. A target holding no tuple holds one of these. As a run starts, its target is loading
+ * and has no error, the values before kept; as it ends, the target holds all it gave at once, or its failure, the
+ * values before kept. A target with no error leaves a failure to the app's on_error, as a handler's, and an effect
+ * with no target runs a function that gives nothing, such as a debounced search. The values cannot be a bool or an
+ * error, which the target would not tell apart from its flags.
  *
- * Neither copied nor moved: a run under way refers to it, and a component stays where it was made. Its value and the
- * state's are values: a reference or a view would outlive what it refers to. Thread safety: none, as a state.
+ * Neither copied nor moved: a run under way refers to it, and a component stays where it was made. The values of its
+ * states are values: a reference or a view would outlive what it refers to. Thread safety: none, as a state.
  */
-template <class T = void>
 class effect {
-  static_assert(!std::is_reference_v<T> && !detail::is_view<std::remove_cvref_t<T>>,
-                "quoll::ui::effect: its value is kept, as a value");
-  static_assert(std::is_void_v<T> || std::copyable<T>,
-                "quoll::ui::effect: its value is copied, into what it holds and what it gives");
-
 public:
-  using value_type = T;
-  using result_type = std::expected<T, std::exception_ptr>;
-
   /**
-   * @brief Runs `function` with what `dependency`, a state of the same component, holds, as it changes.
+   * @brief Runs `function` with what `dependency` holds as it changes, for a function that gives nothing.
    * @throws std::invalid_argument for no function, as a null pointer, rather than at each run.
    */
   template <class D, class F>
-    requires std::invocable<F &, typename detail::dependency_traits<D>::value_type &&> &&
-             std::same_as<std::invoke_result_t<F &, typename detail::dependency_traits<D>::value_type &&>,
-                          async::task<T>> &&
-             std::equality_comparable<D> && std::copyable<D> && std::copy_constructible<F>
-  effect(state<D> &dependency, F function) {
-    static_assert(!detail::is_view<std::remove_cvref_t<D>> &&
-                      !detail::is_view<std::remove_cvref_t<typename detail::dependency_traits<D>::value_type>>,
-                  "quoll::ui::effect: its state's value is copied into the run, which a view would outlive");
+    requires detail::EffectFunction<F, D>
+  effect(state<D> &dependency, F function) : effect(std::tie(dependency), std::move(function)) {}
 
-    using traits = detail::dependency_traits<D>;
-    using dependency_value = typename traits::value_type;
-    using maker = std::function<async::task<T>()>;
+  /**
+   * @brief Runs `function` with what `dependency` holds as it changes, what it gives written into `target`.
+   * @throws std::invalid_argument for no function, as a null pointer, rather than at each run.
+   */
+  template <class D, class F, class T>
+    requires detail::EffectFunction<F, D>
+  effect(state<D> &dependency, F function, state<T> &target)
+      : effect(std::tie(dependency), std::move(function), target) {}
 
-    if constexpr (requires { function == nullptr; }) {
-      if (function == nullptr) {
-        throw std::invalid_argument{"quoll::ui::effect: no function"};
-      }
-    }
+  /**
+   * @brief Runs `function` with what `dependencies`, from std::tie, hold as one changes, for a function that gives
+   * nothing.
+   * @throws std::invalid_argument for no function, as a null pointer, rather than at each run.
+   */
+  template <class... D, class F>
+    requires detail::EffectFunction<F, D...>
+  effect(std::tuple<state<D> &...> dependencies, F function) {
+    using value = detail::effect_value_t<F, D...>;
 
-    watch_ = [&dependency, last = std::optional<D>{}](watching asked) mutable {
-      bool const differs = !last || !(*last == *dependency);
+    static_assert(std::is_void_v<value>, "quoll::ui::effect: the values its function gives go into a target state");
 
-      if (asked == watching::record) {
-        last = *dependency;
-      } else if (asked == watching::forget) {
-        last.reset();
-      }
+    init(dependencies, std::move(function), detail::target_ref<value>{}, false);
+  }
 
-      return watched{.differs = differs, .holds = traits::holds(*dependency)};
-    };
+  /**
+   * @brief Runs `function` with what `dependencies`, from std::tie, hold as one changes, what it gives written into
+   * `target`.
+   * @throws std::invalid_argument for no function, as a null pointer, rather than at each run.
+   */
+  template <class... D, class F, class T>
+    requires detail::EffectFunction<F, D...>
+  effect(std::tuple<state<D> &...> dependencies, F function, state<T> &target) {
+    using value = detail::effect_value_t<F, D...>;
 
-    current_ = [&dependency, function = std::move(function)]() -> std::optional<maker> {
-      if (!traits::holds(*dependency)) {
-        return std::nullopt;
-      }
-
-      // Its own copy of the value, given as an rvalue: one taking it by reference refers to the run's copy.
-      return maker{[function, value = dependency_value{traits::value(*dependency)}]() mutable {
-        return function(std::move(value));
-      }};
-    };
+    static_assert(detail::kept_as_values<value>,
+                  "quoll::ui::effect: the values its function gives are kept, as values");
+    detail::check_target<T, value, false>();
+    init(dependencies, std::move(function), detail::target_ref<value>{target, std::false_type{}},
+         detail::target_roles<T>::error);
   }
 
   effect(effect const &) = delete;
@@ -206,108 +187,126 @@ public:
   ~effect() { assert(slot_.frames == 0 && "quoll::ui::effect: destroyed while a run is under way"); }
 
   /**
-   * @brief Runs it again for the value its state holds now, as a change of the state would: after the view it asks
-   * for, the run before stopped, as React runs an effect again. Nothing runs while the state holds an empty optional.
-   * What asking for that view throws goes to the caller, as a state's change does.
+   * @brief Runs it again for the values its states hold now, as a change would: after the view it asks for, the run
+   * before stopped, as React runs an effect again. What asking for that view throws goes to the caller, as a state's
+   * change does.
    */
   void reload() {
     watch_(watching::forget);
     detail::tell(link_);
   }
 
-  /**
-   * @brief Where it is: not run, running, or done. Its state changed since its last run, or reload() was asked for, as
-   * in the view that makes, which comes before the run, it is running, or none once the state holds none: that view
-   * shows no result of the value before.
-   */
-  [[nodiscard]] run_status status() const {
-    if (auto const now = watch_(watching::peek); now.differs) {
-      return now.holds ? run_status::running : run_status::none;
-    }
-
-    return detail::status_of(slot_.pending, slot_.result.has_value());
-  }
-
-  /**
-   * @brief What the last run gave, or what it threw.
-   * @throws std::logic_error unless status() is done.
-   */
-  [[nodiscard]] result_type const &result() const QUOLL_LIFETIMEBOUND {
-    return detail::result_of(status() == run_status::done ? &slot_ : nullptr, "quoll::ui::effect: no run is done");
-  }
-
   /** @brief For the app of the component holding it, as a state's. */
   void link(detail::state_link to) noexcept { link_ = to; }
 
-  /** @brief For the app of the component holding it, after each of its views: runs it if its state changed. */
+  /** @brief For the app of the component holding it, after each of its views: runs it if one of its states changed. */
   void after_view(detail::effect_starter const &start) {
-    if (!watch_(watching::peek).differs) {
+    auto const now = watch_(watching::record);
+
+    if (!now.differs) {
       return;
     }
 
-    auto next = current_();
-
-    watch_(watching::record);
-
-    if (!next) {
-      idle();
-      return;
-    }
-
-    // Asked for now, as the view showed it running: the run before stops at once, so that an answer of its that comes
-    // before this one starts writes nothing, and what it gave is gone.
-    if (slot_.pending) {
+    // None held: the run before, under way or queued, stops at once and writes nothing, and the target is loading no
+    // more.
+    if (!now.holds) {
       slot_.last.request_stop();
+      slot_.pending = false;
+      target_.abandon();
+      return;
     }
 
-    ++slot_.current;
-    slot_.pending = true;
-    slot_.result.reset();
-
-    // One that cannot start, as for a lack of memory, ends on that failure, which the view shows and reload() tries
-    // again, rather than be tried after each view; it is told as the app's failures are.
+    // Asked for now, as the view is shown: the run before stops at once, so that an answer of its that comes before
+    // this one starts writes nothing. One that cannot start, as for a lack of memory, ends on that failure, the run
+    // before stopped, which its target shows and reload() tries again, rather than be tried after each view; a target
+    // with no place for it leaves it to the app's on_error.
     try {
-      start(detail::started(detail::run_in<T>(slot_, link_, std::move(*next), false, true, false)));
+      start(run_(detail::ask(slot_)));
     } catch (...) {
+      slot_.last.request_stop();
       slot_.pending = false;
-      slot_.result.emplace(std::unexpect, std::current_exception());
-      detail::tell_quietly(link_);
-      throw;
+
+      if (!target_.fail(std::current_exception())) {
+        throw;
+      }
     }
   }
 
 private:
-  // Its state holds none: the run under way, if any, is stopped and writes nothing, and nothing is left, as the view
-  // that made it showed.
-  void idle() {
-    if (slot_.pending) {
-      slot_.last.request_stop();
+  template <class V, class... D, class F>
+  void init(std::tuple<state<D> &...> dependencies, F function, detail::target_ref<V> target, bool takes_errors) {
+    static_assert(((!detail::is_view<std::remove_cvref_t<D>> &&
+                    !detail::is_view<std::remove_cvref_t<typename detail::dependency_traits<D>::value_type>>) &&
+                   ...),
+                  "quoll::ui::effect: its states' values are copied into the run, which a view would outlive");
+    static_assert((... && (std::equality_comparable<D> && std::copyable<D>)),
+                  "quoll::ui::effect: its states' values are compared with ==, and copied");
+
+    using values = std::tuple<typename detail::dependency_traits<D>::value_type...>;
+
+    if constexpr (requires { function == nullptr; }) {
+      if (function == nullptr) {
+        throw std::invalid_argument{"quoll::ui::effect: no function"};
+      }
     }
 
-    ++slot_.current;
-    slot_.pending = false;
-    slot_.result.reset();
+    target_ = target.hooks();
+
+    watch_ = [dependencies, last = std::optional<std::tuple<D...>>{}](watching asked) mutable {
+      auto const now = std::apply([](auto &...held) { return std::tie(*held...); }, dependencies);
+      bool const differs = !last || !(*last == now);
+      bool const holds = std::apply(
+          [](auto &...held) {
+            return (detail::dependency_traits<typename std::remove_cvref_t<decltype(held)>::value_type>::holds(*held) &&
+                    ...);
+          },
+          dependencies);
+
+      if (asked == watching::forget) {
+        last.reset();
+      } else if (differs) {
+        last.emplace(now);
+      }
+
+      return watched{.differs = differs, .holds = holds};
+    };
+
+    run_ = [this, dependencies, function = std::move(function), target, takes_errors](std::stop_token mine) {
+      // Its own copy of each value, given as rvalues: a function taking them by reference refers to the run's copy.
+      auto copied = std::apply(
+          [](auto &...held) {
+            return values{
+                detail::dependency_traits<typename std::remove_cvref_t<decltype(held)>::value_type>::value(*held)...};
+          },
+          dependencies);
+
+      auto make = [function, copied = std::move(copied)]() mutable {
+        return std::apply([&function](auto &...value) { return function(std::move(value)...); }, copied);
+      };
+
+      return detail::run_effect<V>(slot_, target, std::move(make), std::move(mine), takes_errors);
+    };
   }
 
-  enum class watching { peek, record, forget };
+  enum class watching { record, forget };
 
   struct watched {
     bool differs;
     bool holds;
   };
 
-  // The state, compared with its value at the last run, which `record` takes and `forget` drops, and the function, made
-  // for its value now: erased, as their types are not the effect's. Mutable, as a peek changes nothing.
-  mutable std::function<watched(watching)> watch_;
-  std::function<std::optional<std::function<async::task<T>()>>()> current_;
-  detail::run_slot<T> slot_;
+  // Its states, compared with their values at the last run, which `record` takes as they differ and `forget` drops,
+  // and the run, made
+  // for their values now: erased, as their types are not the effect's.
+  std::function<watched(watching)> watch_;
+  std::function<async::task<>(std::stop_token)> run_;
+  detail::run_slot slot_;
+  detail::target_hooks target_;
   detail::state_link link_{};
 };
 
-static_assert(detail::LinkedMember<effect<std::string>>);
-static_assert(detail::EffectMember<effect<std::string>>);
-static_assert(detail::LinkedMember<effect<>>);
-static_assert(detail::EffectMember<effect<>>);
+static_assert(detail::LinkedMember<effect>);
+static_assert(detail::EffectMember<effect>);
 
 } // namespace quoll::ui
 
