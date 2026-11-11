@@ -17,14 +17,16 @@ flowchart TB
   runtime["quoll::runtime<br/>asio natively, the browser's loop under Emscripten"]
 
   ui --> async
-  rest --> server & client
+  rest --> client
+  rest -. "rest::mount, with quoll::server" .-> server
   server & client --> http
   http --> io --> async
   runtime -. "brings the network, the timer, TLS" .-> async
 ```
 
 Each module is a library, `quoll::<module>` in CMake, with an umbrella header (`<quoll/http.hpp>`) and one header per
-component (`<quoll/http/router.hpp>`). Linking one brings those it depends on. `quoll::server` and `quoll::client` are
+component (`<quoll/http/router.hpp>`). Linking one brings those it depends on: `quoll::rest` brings `quoll::client`,
+and a program serving a contract links `quoll::server` too, as [Getting started](getting-started.md) does. `quoll::server` and `quoll::client` are
 libraries of their own, so that a program links only what it uses, and their names are in `quoll::http`:
 `http::server`, `http::client`.
 
@@ -35,8 +37,8 @@ messages and messages into bytes. What reads and writes is a byte stream:
 
 - **A connection is served over any `io::ByteStream`**: TCP, TLS, or the in-memory stream of a test, by the same code.
   A server and a client can talk over memory in a test, with no socket and no port.
-- **A client goes through a `http::HttpTransport`**: natively, connections it opens through a connector; in a browser,
-  `fetch`. The code calling it is the same.
+- **A client goes through the platform**: natively, connections it opens through a connector; in a browser, `fetch`,
+  which the executor offers. The code calling it is the same `http::client`.
 - **A UI's view goes to a `ui::Renderer`**: the DOM in a browser, a tree in memory in a test, HTML with `to_html`.
 
 | Concept                          | What it does                                                  | Given by                                         |
@@ -44,8 +46,9 @@ messages and messages into bytes. What reads and writes is a byte stream:
 | `async::Executor`                | Where and when a coroutine resumes                            | asio, the browser's event loop, `async::run_loop` |
 | `io::ByteStream`                 | Reads and writes bytes                                        | TCP and TLS sockets, the memory stream           |
 | `io::Connector`, `io::Listener`  | Opens a stream to a host, accepts streams on a port           | asio                                             |
-| `http::HttpTransport`            | Sends a request, gives its response                           | `http::client`, `fetch`, `http::local_transport` |
-| `ui::Renderer`, `ui::WidgetRenderer` | Shows what a view changes, and its JavaScript widgets     | the DOM, memory in tests                         |
+| `http::HttpTransport`            | Sends a request, gives its response, to a `rest::client`      | `http::client`, `http::local_transport`          |
+| `ui::Renderer`                   | Shows what a view changes                                     | the DOM, memory in tests                         |
+| `ui::WidgetRenderer`             | A renderer that shows JavaScript widgets too                  | memory in tests; the DOM comes next              |
 
 ## What a program runs on
 
