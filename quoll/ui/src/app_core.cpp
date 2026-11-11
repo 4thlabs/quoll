@@ -130,6 +130,7 @@ void app_core::render() {
 
     return view_(component_);
   }();
+  reconciler reconciled{renderer_, last_id_};
   expansion made{.app = link_,
                  .epoch = epoch_,
                  .app_stop = stop_.get_token(),
@@ -149,7 +150,7 @@ void app_core::render() {
     }
 
     append_child(next, std::move(view));
-    reconciler{renderer_, last_id_}.apply(no_node, shown_, next);
+    reconciled.apply(no_node, shown_, next);
   } catch (...) {
     discard(made);
     throw;
@@ -159,6 +160,16 @@ void app_core::render() {
   commit(made, components_);
   shown_ = std::move(next);
   shown_once_ = true;
+
+  // In place now, as a library such as chart.js measures its node, and shown, as a module may emit as it mounts. One
+  // that fails is told as a failure, and the others mount all the same.
+  for (auto const &[id, spec] : reconciled.take_mounts()) {
+    try {
+      renderer_.mount_widget(id, spec->module, spec->props);
+    } catch (...) {
+      failed(std::current_exception());
+    }
+  }
 
   // Once shown, as the app's own. One that cannot start is told as a failure, and the others start all the same.
   for (auto const &component : made.made) {
@@ -216,11 +227,6 @@ async::task<> app_core::stop() {
     throw std::logic_error{"quoll::ui::app: stop() awaited from one of its own tasks"};
   }
 
-  // Its nodes stay, but what the widgets run in them goes, as the app no longer drives them.
-  if (!stopped_) {
-    unmount_widgets(shown_);
-  }
-
   abandon();
   co_await tasks_.join();
 }
@@ -241,6 +247,11 @@ void app_core::unmount_widgets(std::vector<element> const &shown) const noexcept
 }
 
 void app_core::abandon() noexcept {
+  // Its nodes stay, but what the widgets run in them goes, as the app no longer drives them: once.
+  if (!stopped_) {
+    unmount_widgets(shown_);
+  }
+
   stopped_ = true;
   stop_.request_stop();
 

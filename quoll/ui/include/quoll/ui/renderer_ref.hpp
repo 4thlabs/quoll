@@ -95,6 +95,9 @@ public:
 
   void remove(node_id id) const { vtable_->remove(renderer_, id); }
 
+  /** @brief Whether the referenced renderer is a WidgetRenderer. */
+  [[nodiscard]] bool shows_widgets() const noexcept { return vtable_->widgets != nullptr; }
+
   /** @brief Those of a WidgetRenderer: throw `std::logic_error` for one without them, which shows no widget. */
   void mount_widget(node_id id, std::string_view module, std::string_view props) const {
     widgets()->mount_widget(renderer_, id, module, props);

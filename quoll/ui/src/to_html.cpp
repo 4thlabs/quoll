@@ -310,6 +310,11 @@ void write(element const &shown, surroundings around, std::string &out) {
 
   check_tag(shown.tag);
 
+  // Its node is its module's, mounted once the page is live.
+  if (shown.type == element::kind::widget && !shown.children.empty()) {
+    throw std::logic_error{"quoll::ui: a widget's node is its module's: it takes no children"};
+  }
+
   out += '<';
   out += shown.tag;
   write_attributes(shown, !same_name(shown.tag, "textarea") && !holds_a_secret(shown), out);

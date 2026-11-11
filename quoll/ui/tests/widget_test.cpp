@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/task.hpp>
+#include <quoll/async/work_item.hpp>
 #include <quoll/test/memory_renderer.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/ui_session.hpp>
@@ -44,6 +45,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <exception>
+#include <functional>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -128,6 +131,139 @@ static_assert(JsonEventFunction<void (*)(point_selected)>);
 static_assert(JsonEventFunction<task<> (*)(point_selected const &)>);
 static_assert(!JsonEventFunction<void (*)(std::string)>);
 static_assert(!JsonEventFunction<void (*)()>);
+
+// A component of the page, with a chart of its own.
+struct chart_card {
+  struct props {
+    std::vector<int> values;
+
+    [[nodiscard]] bool operator==(props const &) const = default;
+  };
+
+  element view(props const &given) { return div({line_chart({.labels = {"a"}, .values = given.values})}); }
+};
+
+struct card_page {
+  state<bool> shows{true};
+
+  element view() {
+    auto const card = [] { return component<chart_card>({.values = {1}}); };
+
+    return div({when(*shows, card)});
+  }
+};
+
+// Keyed charts, reordered.
+struct keyed_charts {
+  state<std::vector<std::string>> names{std::vector<std::string>{"a", "b"}};
+
+  element view() {
+    auto const chart = [](std::string const &name) { return line_chart({.labels = {name}, .values = {}}) | key(name); };
+
+    return div({list(names, chart)});
+  }
+};
+
+// A chart, and what it emits as it mounts.
+struct ready_page {
+  std::vector<int> seen;
+
+  element view() {
+    auto const ready = [this](point_selected event) { seen.push_back(event.index); };
+
+    return div({line_chart({.labels = {}, .values = {}}) | on("point_selected", ready)});
+  }
+};
+
+// Two charts, the first of which fails to mount.
+struct two_charts {
+  element view() { return div({bar_chart({.labels = {}, .values = {}}), line_chart({.labels = {}, .values = {}})}); }
+};
+
+// A chart given children, which are its module's.
+struct crowded_chart {
+  element view() {
+    auto chart = line_chart({.labels = {}, .values = {}});
+
+    chart.children.push_back(p("mine"));
+    return chart;
+  }
+};
+
+// A chart, and a mounted() of its own, which a refusing executor cannot start.
+struct starting_page {
+  task<> mounted() { co_return; }
+
+  element view() { return div({line_chart({.labels = {}, .values = {}})}); }
+};
+
+// Shows widgets in memory, failing to mount the bar chart, and calling back as one mounts.
+struct hooked_renderer {
+  memory_renderer shown;
+  std::function<void(node_id)> *mounting = nullptr;
+
+  void create_element(node_id id, std::string_view tag) { shown.create_element(id, tag); }
+
+  void create_text(node_id id, std::string_view content) { shown.create_text(id, content); }
+
+  void set_text(node_id id, std::string_view content) { shown.set_text(id, content); }
+
+  void set_class(node_id id, std::string_view classes) { shown.set_class(id, classes); }
+
+  void set_attribute(node_id id, std::string_view name, std::string_view value) {
+    shown.set_attribute(id, name, value);
+  }
+
+  void remove_attribute(node_id id, std::string_view name) { shown.remove_attribute(id, name); }
+
+  void set_value(node_id id, std::string_view value) { shown.set_value(id, value); }
+
+  void listen(node_id id, std::string_view name) { shown.listen(id, name); }
+
+  void unlisten(node_id id, std::string_view name) { shown.unlisten(id, name); }
+
+  void insert(node_id parent, node_id child, node_id before) { shown.insert(parent, child, before); }
+
+  void remove(node_id id) { shown.remove(id); }
+
+  void mount_widget(node_id id, std::string_view module, std::string_view props) {
+    if (module == bar_chart.module()) {
+      throw std::runtime_error{"no bars here"};
+    }
+
+    shown.mount_widget(id, module, props);
+
+    if (mounting != nullptr && *mounting) {
+      (*mounting)(id);
+    }
+  }
+
+  void update_widget(node_id id, std::string_view props) { shown.update_widget(id, props); }
+
+  void unmount_widget(node_id id) { shown.unmount_widget(id); }
+};
+
+static_assert(WidgetRenderer<hooked_renderer>);
+
+struct refusing_executor {
+  virtual_time::executor inner;
+  bool *fail;
+
+  void post(quoll::async::work_item &item) const {
+    if (*fail) {
+      throw std::runtime_error{"no more"};
+    }
+
+    inner.post(item);
+  }
+
+  [[nodiscard]] bool operator==(refusing_executor const &) const noexcept = default;
+};
+
+// A string, or what one converts to, is the value as it is; a noexcept function is one like the others.
+static_assert(EventFunction<void (*)(std::optional<std::string>)>);
+static_assert(!JsonEventFunction<void (*)(std::optional<std::string>)>);
+static_assert(JsonEventFunction<void (*)(point_selected) noexcept>);
 
 inline std::string const mounted_line = R"(mount ./widgets/line_chart.js {"labels":["a","b"],"values":[1,2]})";
 
@@ -221,4 +357,102 @@ TEST_CASE("widget: to_html writes its node, empty, for the module to mount", "[u
   chart_page page;
 
   REQUIRE(to_html(page.view()) == R"(<div><p>0</p><canvas class="h-64"></canvas></div>)");
+}
+
+TEST_CASE("widget: one of a component goes with it, and moves with its key", "[ui][widget]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<card_page> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> {
+    instance.component().shows = false;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(shown.widget_log() ==
+          std::vector<std::string>{R"(mount ./widgets/line_chart.js {"labels":["a"],"values":[1]})",
+                                   "unmount ./widgets/line_chart.js"});
+
+  virtual_time keyed_time;
+  memory_renderer const keyed_shown;
+  test_app<keyed_charts> keyed{keyed_time.get_executor(), keyed_shown};
+  node_id before{};
+  node_id after{};
+
+  auto const reorder = [&]() -> task<> {
+    before = keyed_shown.find("canvas");
+    keyed.component().names = std::vector<std::string>{"b", "a"};
+    co_await settle();
+    after = keyed_shown.find("canvas");
+  };
+
+  REQUIRE(quoll::test::run(keyed_time, session(keyed, reorder)) == 0);
+  // Moved, neither mounted again nor unmounted until the app stops.
+  REQUIRE(keyed_shown.widget_log().size() == 4);
+  REQUIRE(keyed_shown.widget_log()[2].starts_with("unmount"));
+  REQUIRE(before == after);
+}
+
+TEST_CASE("widget: one that fails to mount is told to on_error, and the others mount", "[ui][widget]") {
+  virtual_time time;
+  hooked_renderer const shown;
+  int failures = 0;
+  app<two_charts, hooked_renderer> instance{
+      time.get_executor(), shown, {.on_error = [&](std::exception_ptr) { ++failures; }}};
+
+  REQUIRE(quoll::test::run(time, session(instance, [] { return settle(); })) == 0);
+  REQUIRE(failures == 1);
+  REQUIRE(shown.shown.widget_log() ==
+          std::vector<std::string>{R"(mount ./widgets/line_chart.js {"labels":[],"values":[]})",
+                                   "unmount ./widgets/line_chart.js"});
+}
+
+TEST_CASE("widget: what it emits as it mounts reaches its function", "[ui][widget]") {
+  virtual_time time;
+  std::function<void(node_id)> mounting;
+  hooked_renderer const shown{.mounting = &mounting};
+  app<ready_page, hooked_renderer> instance{time.get_executor(), shown};
+
+  mounting = [&](node_id id) { instance.dispatch(id, "point_selected", R"({"index":3,"datasetIndex":0})"); };
+
+  REQUIRE(quoll::test::run(time, session(instance, [] { return settle(); })) == 0);
+  // The field it does not declare is left.
+  REQUIRE(instance.component().seen == std::vector<int>{3});
+}
+
+TEST_CASE("widget: given children, it is refused", "[ui][widget]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<crowded_chart> instance{time.get_executor(), shown};
+
+  auto const start_then_stop = [&]() -> task<int> {
+    REQUIRE_THROWS_AS(instance.start(), std::logic_error);
+    co_await instance.stop();
+    co_return 0;
+  };
+
+  REQUIRE(quoll::test::run(time, start_then_stop()) == 0);
+  REQUIRE_THROWS_AS(to_html(crowded_chart{}.view()), std::logic_error);
+}
+
+TEST_CASE("widget: unmounted as a start that fails stops the app", "[ui][widget]") {
+  virtual_time time;
+  memory_renderer const shown;
+  bool fail = true;
+  app<starting_page, memory_renderer> instance{refusing_executor{time.get_executor(), &fail}, shown};
+
+  REQUIRE_THROWS_AS(instance.start(), std::runtime_error);
+  REQUIRE(shown.widget_log() == std::vector<std::string>{R"(mount ./widgets/line_chart.js {"labels":[],"values":[]})",
+                                                         "unmount ./widgets/line_chart.js"});
+
+  fail = false;
+
+  auto const stop = [&]() -> task<int> {
+    co_await instance.stop();
+    co_return 0;
+  };
+
+  REQUIRE(quoll::test::run(time, stop()) == 0);
+  REQUIRE(shown.widget_log().size() == 2);
 }
