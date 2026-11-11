@@ -53,18 +53,19 @@ struct app_link {
 };
 
 // The view running now: the app it belongs to, none for a view written once (to_html), and the component whose view it
-// is with the props of that view, none for the app's own.
+// is with the props of that view, none for the app's own. Thread safety: a value, the current one per thread.
 struct view_context {
   std::shared_ptr<app_link> app{};
   held_view held{};
 };
 
-// What a callback holds of the view that made it: its component weakly, so that one its own component keeps leaves no
-// cycle, and the props of that view, which hold only what placed the component. Thread safety: a value.
+// What a callback holds of the view that made it, weakly: its component, and the props of that view, which hold what
+// placed the component, so that a callback kept by its component, or by any of those above, leaves no cycle and keeps
+// nothing of them once they go. Thread safety: a value.
 struct call_target {
   std::shared_ptr<app_link> app{};
   std::weak_ptr<instance> owner{};
-  std::shared_ptr<void const> props{};
+  std::weak_ptr<void const> props{};
   bool of_component = false;
 };
 

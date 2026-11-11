@@ -36,7 +36,6 @@
 
 #include <quoll/ui/detail/app_core.hpp>
 #include <quoll/ui/detail/instance.hpp>
-#include <quoll/ui/detail/ready.hpp>
 #include <quoll/ui/detail/view_context.hpp>
 
 #include <utility>
@@ -70,10 +69,10 @@ bool spawn_in(call_target const &target, async::task<> work) {
     return false;
   }
 
-  core->spawn(std::move(work), {.owner = std::move(owner), .props = target.props});
+  // The props of the view that made it, if that component has not viewed again since: a reference it keeps to them
+  // holds until then.
+  core->spawn(std::move(work), {.owner = std::move(owner), .props = target.props.lock()});
   return true;
 }
-
-async::task<> done() { co_return; }
 
 } // namespace quoll::ui::detail

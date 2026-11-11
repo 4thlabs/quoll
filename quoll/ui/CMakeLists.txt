@@ -6,6 +6,7 @@ quoll_declare_module(
     src/expand.cpp
     src/hot.cpp
     src/instance.cpp
+    src/ready.cpp
     src/reconciler.cpp
     src/to_html.cpp
     src/view_context.cpp
