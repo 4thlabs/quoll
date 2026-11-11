@@ -43,6 +43,7 @@
 #include <quoll/ui/app_options.hpp>
 #include <quoll/ui/detail/held_view.hpp>
 #include <quoll/ui/detail/instance.hpp>
+#include <quoll/ui/detail/view_context.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/renderer_ref.hpp>
@@ -73,7 +74,8 @@ public:
   app_core &operator=(app_core const &) = delete;
   app_core &operator=(app_core &&) = delete;
 
-  ~app_core() = default;
+  // Callbacks kept past it find it gone.
+  ~app_core();
 
   [[nodiscard]] bool stopped() const noexcept { return stopped_; }
 
@@ -103,6 +105,8 @@ private:
 
   async::any_executor executor_;
   renderer_ref renderer_;
+  // What callbacks hold of it, to start their work here, as long as it lives.
+  std::shared_ptr<app_link> link_;
   view_function view_;
   unmounted_function unmounted_;
   void *component_;

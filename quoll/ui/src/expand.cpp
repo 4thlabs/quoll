@@ -278,7 +278,12 @@ void walk_component(element &value, matching &shown, std::vector<std::shared_ptr
     shown.placed(type, kept->key());
   }
 
-  auto view = spec.table->view(kept->component(), props.get());
+  auto view = [&] {
+    // Its callbacks call this component back, in its tasks, with these props.
+    view_scope const scope{{.app = context.app, .held = {.owner = kept, .props = props}}};
+
+    return spec.table->view(kept->component(), props.get());
+  }();
 
   // What its view may now refer to: a view that threw keeps nothing of its props.
   if (!fresh) {
