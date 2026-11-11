@@ -92,7 +92,8 @@ private:
 };
 
 // Runs `work` as a task of the component `target` names, or of its app for none, as one of its handlers would: false if
-// that component or that app is gone, or the app stopped, which runs nothing more.
+// that component or that app is gone, or the app stopped, which runs nothing more. Throws std::logic_error once the
+// view that made the callback has been replaced, its props gone.
 [[nodiscard]] bool spawn_in(call_target const &target, async::task<> work);
 
 } // namespace quoll::ui::detail
