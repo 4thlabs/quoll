@@ -9,6 +9,8 @@ quoll_declare_module(
     src/ready.cpp
     src/reconciler.cpp
     src/renderer_ref.cpp
+    src/run_error.cpp
+    src/run_slot.cpp
     src/to_html.cpp
     src/view_context.cpp
   DEPS
@@ -26,9 +28,11 @@ endif()
 
 quoll_declare_tests(
   SOURCES
+    tests/action_test.cpp
     tests/app_test.cpp
     tests/callback_test.cpp
     tests/nested_test.cpp
+    tests/resource_test.cpp
     tests/skip_test.cpp
     tests/element_test.cpp
     tests/to_html_test.cpp
@@ -40,6 +44,7 @@ quoll_declare_tests(
 # What a component must be, with the message the user gets.
 quoll_declare_compile_fail_tests(
   SOURCES
+    tests/compile_fail/action_reference_argument.cpp
     tests/compile_fail/callback_reference_argument.cpp
     tests/compile_fail/callback_reference_result.cpp
     tests/compile_fail/callback_reference_wrapper_argument.cpp
@@ -50,8 +55,28 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/child_component_without_props_not_aggregate.cpp
     tests/compile_fail/component_not_aggregate.cpp
     tests/compile_fail/event_function_signature.cpp
+    tests/compile_fail/keyed_action_view_key.cpp
+    tests/compile_fail/resource_view_value.cpp
   DEPS
     quoll::ui
+)
+
+# What a debug build asserts of a resource or an action: destroyed while a run refers to it, which its component, going
+# once its tasks have ended, never is.
+quoll_declare_assert_tests(
+  NAME action_destroyed_under_way
+  CASE "action: destroyed while a run is under way is asserted"
+  EXPECT "quoll::ui::action: destroyed while a run is under way"
+)
+quoll_declare_assert_tests(
+  NAME keyed_action_destroyed_under_way
+  CASE "keyed_action: destroyed while a run is under way is asserted"
+  EXPECT "quoll::ui::keyed_action: destroyed while a run is under way"
+)
+quoll_declare_assert_tests(
+  NAME resource_destroyed_under_way
+  CASE "resource: destroyed while a load is under way is asserted"
+  EXPECT "quoll::ui::resource: destroyed while a load is under way"
 )
 
 # The hot reload switch changes signatures: a program of its own, native only, rather than one more test source.

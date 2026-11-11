@@ -247,9 +247,8 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
   has in `samples/dashboard`, whose README lists what it lacked, for the base components to give: an input showing a
   value it is given, labelled and number fields, states that start from the props, and above all requests that
   overlap: three rounds of review found stale answers and saves out of order, handled by hand. The screen needed no
-  handle on the widget, and no WebSocket. Next, a design note for what would take the place of that bookkeeping in
-  `quoll::ui` (a task a new one stops, an action once at a time, a state loading a value or a failure, a draft from the
-  props), from Leptos, Dioxus, Solid and React Query, shown to the maintainer first.
+  handle on the widget, and no WebSocket. What takes the place of that bookkeeping was decided on 2026-11-11 (see
+  [Decided](#decided)): `ui::resource`, `ui::action` and `ui::keyed_action`, then a form's draft from the props.
 - WebSocket in the browser and in the REST DSL, left from step 5, if that screen needs them; if it does not, the maintainer
   says where they go once the step ends, and step 5 is done.
 
@@ -396,6 +395,19 @@ changes only what the harness shows. Candidates:
   callbacks of its last one, so that one capturing what changes from a view to the next calls with what it captured
   then: the guide says to capture only what does not change, and to pass the rest as props (2026-11-11, against
   callbacks refreshed in a view not run again, or never equal).
+- **What a component loads and what it runs, under way or failed, are Quoll's to keep** (2026-11-11), as the dashboard's
+  reviews kept finding stale answers and saves out of order, handled by hand. `ui::resource<Key, T>` holds what a
+  component loads for a key it is given explicitly, rather than reloading as the states its loader reads change, as
+  Dioxus's `use_resource` does: Quoll tracks no reads. Loading again stops the load before, whose answer then writes
+  nothing, as a stop resumes nothing (#151); its states are none, loading, done and stopped by its caller, as
+  Dioxus's. `ui::action` and `ui::keyed_action` run a function once at a time by default, a call while it is under way
+  refused, with the others as options (a call stopping the one before), and hold whether it is under way and the result
+  of the last run, for a button to wait on and a detail to show. A result is no optional "not there yet", which is a
+  task's to say: the task of a load or a run gives it, a `std::expected<T, std::exception_ptr>` (`run_refused` and
+  `run_replaced` for a call with none of its own), and `result()` throws before there is one, after `status()` or
+  `pending()` is read (decided with the maintainer, 2026-11-11). Taken from Dioxus (the stop of the load before, its stopped state), Leptos (`Action`'s pending and
+  value), Solid (`createResource`'s states) and TanStack Query (`useMutation`'s pending; unlike its `scope`, which queues a
+  call, an action refuses one). A form's draft from the props comes in a pull request of its own.
 - **The interop tests close the protocol layer, and step 6 comes next** (2026-11-10), as the maintainer asked, tired of
   reimplementing HTTP, server-sent events and WebSocket: once Quoll's ends hold against third-party clients and servers
   (#150), the protocol code takes the fixes of its bugs, those the interop tests and reviews find included, of what touches

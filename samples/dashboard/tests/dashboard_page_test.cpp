@@ -380,7 +380,7 @@ TEST_CASE("dashboard web: the sales of a product chosen before are not shown onc
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(chart_props(shown) == R"(mount ../widgets/line_chart.js {"months":["Jan","Feb","Mar"],"units":[40,50,60]})");
-  CHECK(instance.component().sales->value() == server.sales.at(2));
+  CHECK(instance.component().sales.result().value() == server.sales.at(2));
 }
 
 TEST_CASE("dashboard web: the sales of the product chosen that fail show why, those of one left say nothing",
@@ -501,7 +501,7 @@ TEST_CASE("dashboard web: a product chosen again shows the answer of its last re
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK_FALSE(shown.html().contains("no sales for now"));
   CHECK(chart_props(shown) == R"(mount ../widgets/line_chart.js {"months":["Jan","Feb"],"units":[10,20]})");
-  CHECK(instance.component().sales->value() == server.sales.at(1));
+  CHECK(instance.component().sales.result().value() == server.sales.at(1));
 }
 
 TEST_CASE("dashboard web: a failure of the sales and one of a save each stay, and a product chosen clears the first",
@@ -599,7 +599,9 @@ TEST_CASE("dashboard web: a product saves once at a time, its detail chosen agai
   CHECK(again.contains("Saving…"));
   CHECK(server.updates == 2);
   CHECK(server.items[2].price == 46);
-  CHECK(instance.component().saves->empty());
+  CHECK_FALSE(instance.component().saves.pending(3));
+  // The last save of the product ended with it: no failure left.
+  CHECK(instance.component().saves.result(3).has_value());
 }
 
 TEST_CASE("dashboard web: the failure of a product's save stays in its detail as another's succeeds",

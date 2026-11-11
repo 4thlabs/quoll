@@ -22,7 +22,7 @@ dashboard/
 | File | What it holds |
 |---|---|
 | `web/main.cpp` | `mount<dashboard_page>()`, in `#app` |
-| `web/components/dashboard_page.hpp` | the products, the one chosen, its sales or why they did not load, how each product's saves go, and the calls that change them |
+| `web/components/dashboard_page.hpp` | the products, the sales of the one chosen in a `resource`, the saves of each product in a `keyed_action`, and the calls that change them |
 | `web/components/product_list.hpp` | the filter, a state of its own, and the rows of the products it matches |
 | `web/components/product_row.hpp` | one product, with its `on_select` callback |
 | `web/components/product_detail.hpp` | the fields of the product chosen, what is typed kept until saved, and kept when typed while a save is on its way; its save waiting or why it failed, from the page; the `on_save` callback |
@@ -69,15 +69,11 @@ the widget and no WebSocket. What took code of its own, for base components to g
   `state<std::optional<std::string>>`, nothing until a field changes, and is keyed by the product so that another
   starts empty.
 - **Requests that overlap.** The sales of a product chosen before the last may answer, or fail, after it; two saves of
-  a product may be answered out of order, or sent by a double click; one request's success may clear another's failure.
-  The page counts the sales it asks for and shows only the last one's answer, keeps how each product's saves go, one at
-  a time, and the detail compares what each field holds with what it sent before forgetting it. What would take the
-  place of this bookkeeping, for `quoll::ui` to give:
-  - a task that a new one of its kind stops, for the last request only: stopped, it never resumes, so that a stale
-    answer writes nothing;
-  - an action that runs once at a time, and says whether it is under way, for a button to wait on;
-  - a state that is loading, a value or a failure, loaded again as what it depends on changes;
-  - a draft of a form, from the props, that tells what changed since it was sent.
+  a product may be answered out of order, or sent by a double click. The page first kept counters for these by hand,
+  in which reviews kept finding bugs; `quoll::ui` now gives `resource`, whose load stops the one before, and
+  `keyed_action`, which saves each product once at a time and holds whether a save is under way and why the last one
+  failed. What is left: the detail compares what each field holds with what it sent before forgetting it, for a draft
+  of a form from the props to replace.
 - **What a child tells, one task later.** A callback runs as a task of the component that wrote it: a field's change
   reaches the detail after the event that made it, so that a save dispatched in the same turn, as a test does, reads the
   value before it.

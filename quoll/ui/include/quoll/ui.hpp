@@ -37,6 +37,7 @@
 #ifndef QUOLL_UI_HPP
 #define QUOLL_UI_HPP
 
+#include <quoll/ui/action.hpp>
 #include <quoll/ui/app.hpp>
 #include <quoll/ui/app_options.hpp>
 #include <quoll/ui/callback.hpp>
@@ -52,6 +53,8 @@
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/renderer.hpp>
 #include <quoll/ui/renderer_ref.hpp>
+#include <quoll/ui/resource.hpp>
+#include <quoll/ui/run_error.hpp>
 #include <quoll/ui/state.hpp>
 #include <quoll/ui/tags.hpp>
 #include <quoll/ui/to_html.hpp>

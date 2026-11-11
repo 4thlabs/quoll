@@ -235,6 +235,79 @@ compile. A pointer, or a view inside another type, still points to what the call
 **Made outside a view**, in a handler or `mounted()`, a callback knows no component: it runs in the caller's task, as a
 `std::function` would, and what its function captures is the caller's to keep alive.
 
+## Loading and running
+
+What a component loads for a key, and what it runs, once at a time, are members of it, which show again as they
+change, as states do: `resource<Key, T>` and `action<R(Args...)>`, or `keyed_action<Key, R(Args...)>` for runs by key.
+Each takes the function it calls, returning a task. A load or a run gives its result as its task ends, a
+`std::expected` of the value or of what the function threw, as an `std::exception_ptr`, and keeps it for the view.
+
+```cpp
+struct dashboard_page {
+  resource<std::int64_t, products::monthly_sales> sales{products_client::sales};
+  keyed_action<std::int64_t, products::product(products::product_update)> saves{products_client::update};
+
+  task<> select(std::int64_t id) {
+    static_cast<void>(co_await sales.load(id));
+  }
+
+  element view() {
+    auto const loading = [] {
+      return p("Loading its sales");
+    };
+
+    auto const done = [this] {
+      auto const &result = sales.result();
+
+      return result ? component<sales_chart>({.sales = *result}) : p("No sales for now");
+    };
+
+    return div({
+        when(sales.status() == load_status::loading, loading),
+        when(sales.status() == load_status::done, done),
+    });
+  }
+};
+```
+
+**A resource holds the last load only**:
+
+- `co_await sales.load(key)` runs the loader in the task awaiting it, a handler's or `mounted()`, which the component
+  outlives, and gives its result;
+- loading again stops the load before: its answer writes nothing, even one that came anyway, and its result is
+  `run_replaced`, to its caller, which goes on;
+- `status()` says where it is: `none` before a load, `loading`, `done`, or `stopped` once its caller stopped it, as
+  `with_timeout` does, before it ended, which leaves its `key()` only;
+- `result()` is the result of the last load, once `status()` is `done`, and throws `std::logic_error` before;
+- a stop of the component ends the load with it, as [a stop](async.md#stopping-a-task) does.
+
+**An action runs once at a time**:
+
+- `co_await save.run(args...)` gives its result: `run_refused`, at once, for a call while one is under way;
+- with `overlap::restart` as its second parameter, a call stops the run under way instead, whose result is then
+  `run_replaced`, as a resource's load does;
+- `pending()` says one is under way, for a button to wait on, and a run its caller stops is under way no more;
+- `result()` is the result of the last run that ended, kept while the next is under way, once `has_result()`; a call
+  refused or replaced writes none;
+- a `keyed_action` keeps its runs by key, which its function takes first: one under way for a product refuses another
+  for that product, and leaves the others alone; `pending(key)`, `has_result(key)` and `result(key)`.
+
+```cpp
+task<bool> save(std::int64_t id, products::product_update changes) {
+  auto const saved = co_await saves.run(id, std::move(changes));
+
+  if (saved) {
+    show(*saved);
+  }
+
+  co_return saved.has_value();
+}
+```
+
+Neither is copied nor moved: a load or a run under way refers to it, as a component stays where it was made. Their
+keys and arguments are copied into the load or the run, so that none can be a reference or a view, which does not
+compile. A function given empty, as a null pointer, throws `std::invalid_argument` as the member is made.
+
 ## JavaScript widgets
 
 A JavaScript library, as chart.js, shows in a node of the view that the app leaves to it: a widget. It is declared

@@ -38,21 +38,13 @@
 #define QUOLL_UI_STATE_HPP
 
 #include <quoll/async/lifetimebound.hpp>
+#include <quoll/ui/detail/linked_member.hpp>
+#include <quoll/ui/detail/state_link.hpp>
 
 #include <concepts>
 #include <utility>
 
 namespace quoll::ui {
-
-namespace detail {
-
-// Whom a state tells of its changes: the app of its component.
-struct state_link {
-  void *owner = nullptr;
-  void (*changed)(void *owner) = nullptr;
-};
-
-} // namespace detail
 
 /**
  * @brief A value of a component that the interface depends on: changing it shows again, once, what the component views.
@@ -112,15 +104,13 @@ public:
   void link(detail::state_link to) noexcept { link_ = to; }
 
 private:
-  void notify() {
-    if (link_.changed != nullptr) {
-      link_.changed(link_.owner);
-    }
-  }
+  void notify() { detail::tell(link_); }
 
   T value_{};
   detail::state_link link_{};
 };
+
+static_assert(detail::linked_member<state<int>>);
 
 } // namespace quoll::ui
 

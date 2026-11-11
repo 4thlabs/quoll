@@ -53,10 +53,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <exception>
-#include <map>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -65,26 +63,19 @@ namespace dashboard_web {
 using quoll::async::task;
 using quoll::ui::callback;
 using quoll::ui::element;
+using quoll::ui::keyed_action;
+using quoll::ui::load_status;
+using quoll::ui::resource;
 using quoll::ui::state;
-
-// How the saves of a product go: none is shown when it is not under way and the last one did not fail.
-struct save_status {
-  bool under_way = false;
-  std::string failure;
-};
 
 struct dashboard_page {
   state<std::vector<products::product>> items;
-  state<std::optional<std::int64_t>> selected;
-  state<std::optional<products::monthly_sales>> sales;
   // Why the products could not be loaded, in the alert.
   state<std::string> problem;
-  // Why the sales of the product chosen could not be loaded, in its detail.
-  state<std::string> sales_problem;
-  // The saves of each product, which its detail shows: under way, or why the last one failed.
-  state<std::map<std::int64_t, save_status>> saves;
-  // The sales asked for: a plain member, as no view shows it.
-  std::uint64_t sales_asked = 0;
+  // The sales of the product chosen, its key: loading another stops the load before.
+  resource<std::int64_t, products::monthly_sales> sales{products_client::sales};
+  // The saves of each product, once at a time, which its detail shows: under way, or why the last one failed.
+  keyed_action<std::int64_t, products::product(products::product_update)> saves{products_client::update};
 
   task<> mounted() {
     try {
@@ -96,95 +87,32 @@ struct dashboard_page {
     }
   }
 
-  task<> select(std::int64_t id) {
-    auto const asked = ++sales_asked;
+  // What the load gives, its result() too, which the view reads.
+  task<> select(std::int64_t id) { static_cast<void>(co_await sales.load(id)); }
 
-    selected = std::optional<std::int64_t>{id};
-    sales.set({});
-    sales_problem.set({});
-
-    std::optional<products::monthly_sales> found;
-    std::string failure;
-
-    try {
-      found = co_await products_client::sales(id);
-    } catch (std::exception const &error) {
-      failure = told(error, "the sales did not load");
-    } catch (...) {
-      failure = "the sales did not load";
-    }
-
-    // A product chosen meanwhile, or this one chosen again, has its own sales on the way, and says how they went.
-    if (asked != sales_asked) {
-      co_return;
-    }
-
-    if (found) {
-      sales = std::move(found);
-    } else {
-      sales_problem = failure;
-    }
-  }
-
-  // Whether it was saved. One save of a product at a time, so that two are never answered out of order: its detail
-  // shows it is on its way, and one clicked twice in a turn sends once.
+  // Whether it was saved: a save of that product under way refuses this one, and its failure stays with the saves.
   task<bool> save(std::int64_t id, products::product_update changes) {
-    if (status_of(id).under_way) {
-      co_return false;
-    }
-
-    // Under way, the failure of the last one gone.
-    saves.update([id](auto &all) { all[id] = {.under_way = true, .failure = {}}; });
-
-    constexpr std::string_view not_saved = "the save failed";
-
-    // However it ends but for a stop, which takes the page with it, the save is over for its detail, whichever product
-    // shows by then.
-    std::optional<products::product> saved;
-    std::string failure;
-
-    try {
-      saved = co_await products_client::update(id, std::move(changes));
-    } catch (std::exception const &error) {
-      failure = told(error, not_saved);
-    } catch (...) {
-      failure = not_saved;
-    }
-
-    saves.update([id, &saved, &failure](auto &all) {
-      if (saved) {
-        all.erase(id);
-      } else {
-        all[id] = {.under_way = false, .failure = failure};
-      }
-    });
+    auto const saved = co_await saves.run(id, std::move(changes));
 
     if (!saved) {
       co_return false;
     }
 
-    auto const replace = [&saved](std::vector<products::product> &all) {
-      std::ranges::replace_if(all, [&saved](auto const &item) { return item.id == saved->id; }, *saved);
+    auto const replace = [given = *saved](std::vector<products::product> &all) {
+      std::ranges::replace_if(all, [&given](auto const &item) { return item.id == given.id; }, given);
     };
 
     items.update(replace);
     co_return true;
   }
 
-  // How the saves of a product go: none under way and no failure when it has none.
-  [[nodiscard]] save_status status_of(std::int64_t id) const {
-    auto const found = saves->find(id);
-
-    return found == saves->end() ? save_status{} : found->second;
-  }
-
   // The product chosen, while the list holds it.
   [[nodiscard]] products::product const *chosen() const {
-    if (!selected->has_value()) {
+    if (!sales.key().has_value()) {
       return nullptr;
     }
 
-    auto const found = std::ranges::find(*items, **selected, &products::product::id);
+    auto const found = std::ranges::find(*items, *sales.key(), &products::product::id);
 
     return found == items->end() ? nullptr : &*found;
   }
@@ -204,28 +132,38 @@ struct dashboard_page {
 
     auto const loading = [] { return p("Loading its sales") | tw("opacity-70"); };
 
-    // Choosing the product again tries anew.
-    auto const sales_failed = [this] { return error_text(*sales_problem); };
-
     auto const *const item_chosen = chosen();
+
+    // Done, with its sales or why they did not load, which choosing the product again tries anew. Keyed by the product,
+    // as the detail: another product chosen is another chart.
+    auto const sales_done = [this, &item_chosen] {
+      auto const &result = sales.result();
+
+      if (!result) {
+        return error_text(told(result.error(), "the sales did not load"));
+      }
+
+      return component<sales_chart>({.sales = *result}) | key(item_chosen->id);
+    };
 
     auto const detail = [&] {
       auto const &item = *item_chosen;
-      auto const status = status_of(item.id);
-
-      // Keyed by the product: another product chosen is another detail, with nothing typed, and another chart.
-      auto const chart = [this, &item] { return component<sales_chart>({.sales = **sales}) | key(item.id); };
+      // A failed save stays with the product until its next, which shows it waits rather than why the last failed.
+      auto const saving = saves.pending(item.id);
+      auto const save_failure = !saving && saves.has_result(item.id) && !saves.result(item.id)
+                                    ? told(saves.result(item.id).error(), "the save failed")
+                                    : std::string{};
 
       auto const shown = div({
+          // Keyed by the product: another product chosen is another detail, with nothing typed.
           component<product_detail>({
               .item = item,
-              .saving = status.under_way,
-              .save_failure = status.failure,
+              .saving = saving,
+              .save_failure = save_failure,
               .on_save = on_save,
           }) | key(item.id),
-          when(!sales->has_value() && sales_problem->empty(), loading),
-          when(!sales_problem->empty(), sales_failed),
-          when(sales->has_value(), chart),
+          when(sales.status() == load_status::loading, loading),
+          when(sales.status() == load_status::done, sales_done),
       });
 
       return shown | tw("flex flex-col gap-8");
@@ -235,7 +173,7 @@ struct dashboard_page {
         h1("Products") | tw("text-4xl font-bold"),
         when(!problem->empty(), alert),
         div({
-            component<product_list>({.items = *items, .selected = *selected, .on_select = on_select}),
+            component<product_list>({.items = *items, .selected = sales.key(), .on_select = on_select}),
             when(item_chosen == nullptr, none),
             when(item_chosen != nullptr, detail),
         }) | tw("grid gap-8 md:grid-cols-2"),
