@@ -48,6 +48,7 @@ export default defineConfig({
       sources: [
         'main.cpp',
         'components/dashboard_page.hpp',
+        'components/error_text.hpp',
         'components/field.hpp',
         'components/product_detail.hpp',
         'components/product_list.hpp',

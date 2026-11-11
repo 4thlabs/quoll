@@ -54,6 +54,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -74,6 +75,12 @@ using quoll::test::virtual_time;
 
 using dashboard_app = quoll::ui::app<dashboard_web::dashboard_page, memory_renderer>;
 
+// One call for sales: how long it takes, and whether it fails then.
+struct sales_call {
+  std::chrono::milliseconds delay{0};
+  bool fails = false;
+};
+
 // What the server holds, for the test running.
 struct fake_server {
   std::vector<products::product> items;
@@ -82,7 +89,18 @@ struct fake_server {
   std::map<std::int64_t, std::chrono::milliseconds> delays;
   // The products whose sales fail, once their delay has passed.
   std::set<std::int64_t> failing;
+  // What the next calls for a product's sales do, in turn, before the delays and failures above.
+  std::map<std::int64_t, std::deque<sales_call>> calls;
+  // How long a save takes to be answered, the next ones in turn, then all.
+  std::deque<std::chrono::milliseconds> update_delays;
+  std::chrono::milliseconds update_delay{0};
   bool refuses = false;
+  // A save throws what is no std::exception.
+  bool throws_other = false;
+  // The list fails with a message that says nothing.
+  bool list_fails = false;
+  // The saves the server received.
+  int updates = 0;
 };
 
 fake_server server;
@@ -103,7 +121,13 @@ fake_server server;
           },
       .delays = {},
       .failing = {},
+      .calls = {},
+      .update_delays = {},
+      .update_delay = {},
       .refuses = false,
+      .throws_other = false,
+      .list_fails = false,
+      .updates = 0,
   };
 }
 
@@ -152,10 +176,36 @@ struct page_driver {
 
 namespace products_client {
 
-task<std::vector<products::product>> list() { co_return server.items; }
+task<std::vector<products::product>> list() {
+  if (server.list_fails) {
+    throw std::runtime_error{""};
+  }
+
+  co_return server.items;
+}
 
 task<products::product> update(std::int64_t id, products::product_update changes) {
-  if (server.refuses) {
+  ++server.updates;
+
+  // As the server is when the save is sent.
+  bool const refused = server.refuses;
+
+  if (server.throws_other) {
+    throw 42;
+  }
+
+  auto delay = server.update_delay;
+
+  if (!server.update_delays.empty()) {
+    delay = server.update_delays.front();
+    server.update_delays.pop_front();
+  }
+
+  if (delay > std::chrono::milliseconds{0}) {
+    co_await quoll::async::sleep_for(delay);
+  }
+
+  if (refused) {
     throw std::runtime_error{"the server is gone"};
   }
 
@@ -168,12 +218,25 @@ task<products::product> update(std::int64_t id, products::product_update changes
 }
 
 task<products::monthly_sales> sales(std::int64_t id) {
-  if (auto const delay = server.delays.find(id); delay != server.delays.end()) {
-    co_await quoll::async::sleep_for(delay->second);
+  auto const delay = server.delays.find(id);
+  sales_call call{.delay = delay == server.delays.end() ? std::chrono::milliseconds{0} : delay->second,
+                  .fails = server.failing.contains(id)};
+
+  if (auto const planned = server.calls.find(id); planned != server.calls.end() && !planned->second.empty()) {
+    call = planned->second.front();
+    planned->second.pop_front();
   }
 
-  if (server.failing.contains(id)) {
+  if (call.delay > std::chrono::milliseconds{0}) {
+    co_await quoll::async::sleep_for(call.delay);
+  }
+
+  if (call.fails) {
     throw std::runtime_error{"no sales for now"};
+  }
+
+  if (server.throws_other) {
+    throw 42;
   }
 
   co_return server.sales.at(id);
@@ -385,4 +448,308 @@ TEST_CASE("dashboard web: a month without units, from sales that do not match, s
   // The click on a month with no units is no point: the figure of the last one stays.
   CHECK(third.contains("Jan: 40 units"));
   CHECK_FALSE(third.contains("Mar"));
+}
+
+TEST_CASE("dashboard web: a field changed while a save is on its way keeps what it holds", "[samples][dashboard]") {
+  server = three_products();
+  server.update_delay = 10ms;
+
+  virtual_time time;
+  memory_renderer const shown;
+  dashboard_app instance{time.get_executor(), shown};
+  page_driver const user{instance, shown};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    user.choose("Grinder");
+    co_await settle();
+
+    co_await user.type_and_settle("Price", "45.5");
+    user.save();
+    co_await settle();
+
+    // Typed before the answer comes, in a field sent and in one not: not sent, and kept once it has come.
+    co_await user.type_and_settle("Price", "46");
+    co_await user.type_and_settle("Stock", "7");
+    co_await quoll::async::sleep_for(20ms);
+
+    user.save();
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(server.items[2] == products::product{.id = 3, .name = "Grinder", .category = "Gear", .price = 46, .stock = 7});
+}
+
+TEST_CASE("dashboard web: a product chosen again shows the answer of its last request only", "[samples][dashboard]") {
+  server = three_products();
+  // The first request for its sales fails after the second has come.
+  server.calls[1] = {{.delay = 10ms, .fails = true}, {.delay = 1ms, .fails = false}};
+
+  virtual_time time;
+  memory_renderer const shown;
+  dashboard_app instance{time.get_executor(), shown};
+  page_driver const user{instance, shown};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    user.choose("Espresso beans");
+    user.choose("Espresso beans");
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK_FALSE(shown.html().contains("no sales for now"));
+  CHECK(chart_props(shown) == R"(mount ../widgets/line_chart.js {"months":["Jan","Feb"],"units":[10,20]})");
+  CHECK(instance.component().sales->value() == server.sales.at(1));
+}
+
+TEST_CASE("dashboard web: a failure of the sales and one of a save each stay, and a product chosen clears the first",
+          "[samples][dashboard]") {
+  server = three_products();
+  server.failing = {3};
+  server.delays = {{2, 10ms}};
+
+  virtual_time time;
+  memory_renderer const shown;
+  dashboard_app instance{time.get_executor(), shown};
+  page_driver const user{instance, shown};
+  std::string saved;
+  std::string chosen;
+  std::string refused;
+  std::string loaded;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+
+    // The sales fail, then a save succeeds: the failure stays where the sales would be.
+    user.choose("Grinder");
+    co_await settle();
+    co_await user.type_and_settle("Price", "45.5");
+    user.save();
+    co_await settle();
+    saved = shown.html();
+
+    // Another product chosen: its sales load, the last one's failure gone.
+    user.choose("Green tea");
+    co_await settle();
+    chosen = shown.html();
+
+    // A save refused while the sales load: their coming leaves its failure.
+    server.refuses = true;
+    co_await user.type_and_settle("Price", "9");
+    user.save();
+    co_await settle();
+    refused = shown.html();
+    co_await quoll::async::sleep_for(20ms);
+    loaded = shown.html();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(saved.contains("no sales for now"));
+  CHECK_FALSE(saved.contains("Loading its sales"));
+  // The page's own alert, for the products, has nothing to say.
+  CHECK_FALSE(saved.contains("alert alert-error"));
+  CHECK_FALSE(chosen.contains("no sales for now"));
+  CHECK(chosen.contains("Loading its sales"));
+  CHECK(refused.contains("the server is gone"));
+  CHECK(loaded.contains("the server is gone"));
+  CHECK(loaded.contains("<canvas"));
+}
+
+TEST_CASE("dashboard web: a product saves once at a time, its detail chosen again showing it", "[samples][dashboard]") {
+  server = three_products();
+  server.update_delay = 10ms;
+
+  virtual_time time;
+  memory_renderer const shown;
+  dashboard_app instance{time.get_executor(), shown};
+  page_driver const user{instance, shown};
+  std::string waiting;
+  std::string again;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    user.choose("Grinder");
+    co_await settle();
+
+    // Two clicks in one turn, before the button waits: one save.
+    co_await user.type_and_settle("Price", "45.5");
+    user.save();
+    user.save();
+    co_await settle();
+    waiting = shown.html();
+
+    // Another detail of the same product, while the save is on its way: it waits too, and keeps what is typed.
+    user.choose("Green tea");
+    co_await settle();
+    user.choose("Grinder");
+    co_await settle();
+    co_await user.type_and_settle("Price", "46");
+    again = shown.html();
+
+    co_await quoll::async::sleep_for(20ms);
+    user.save();
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(waiting.contains("Saving…"));
+  CHECK(waiting.contains("disabled=\"\""));
+  CHECK(again.contains("Saving…"));
+  CHECK(server.updates == 2);
+  CHECK(server.items[2].price == 46);
+  CHECK(instance.component().saves->empty());
+}
+
+TEST_CASE("dashboard web: the failure of a product's save stays in its detail as another's succeeds",
+          "[samples][dashboard]") {
+  server = three_products();
+  // Grinder's save is answered after Green tea's, which the server refuses.
+  server.update_delays = {10ms, 1ms};
+
+  virtual_time time;
+  memory_renderer const shown;
+  dashboard_app instance{time.get_executor(), shown};
+  page_driver const user{instance, shown};
+  std::string refused;
+  std::string answered;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    user.choose("Grinder");
+    co_await settle();
+    co_await user.type_and_settle("Price", "45.5");
+    user.save();
+    co_await settle();
+
+    user.choose("Green tea");
+    co_await settle();
+    server.refuses = true;
+    co_await user.type_and_settle("Price", "9");
+    user.save();
+    // Once the save has gone, as the click runs as a task: its answer comes in 1 ms, before Grinder's.
+    co_await settle();
+    server.refuses = false;
+    co_await quoll::async::sleep_for(3ms);
+    refused = shown.html();
+
+    co_await quoll::async::sleep_for(20ms);
+    answered = shown.html();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(refused.contains("the server is gone"));
+  CHECK(answered.contains("the server is gone"));
+  CHECK(server.items[2].price == 45.5);
+  CHECK(instance.component().items->at(2).price == 45.5);
+}
+
+TEST_CASE("dashboard web: a save ending on what is no std::exception is over, and says it failed",
+          "[samples][dashboard]") {
+  server = three_products();
+  server.throws_other = true;
+
+  virtual_time time;
+  memory_renderer const shown;
+  dashboard_app instance{time.get_executor(), shown};
+  page_driver const user{instance, shown};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    user.choose("Grinder");
+    co_await settle();
+    co_await user.type_and_settle("Price", "45.5");
+    user.save();
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html().contains("the save failed"));
+  CHECK_FALSE(shown.html().contains("Saving…"));
+  CHECK(server.items[2].price == 49);
+}
+
+TEST_CASE("dashboard web: a save tried again shows it waits, and a detail chosen again the last one's failure",
+          "[samples][dashboard]") {
+  server = three_products();
+  server.refuses = true;
+
+  virtual_time time;
+  memory_renderer const shown;
+  dashboard_app instance{time.get_executor(), shown};
+  page_driver const user{instance, shown};
+  std::string retrying;
+  std::string reopened;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    user.choose("Grinder");
+    co_await settle();
+    co_await user.type_and_settle("Price", "45.5");
+    user.save();
+    co_await settle();
+
+    // Tried again, slowly: what shows is that it waits, not why the last one failed.
+    server.refuses = false;
+    server.update_delay = 10ms;
+    user.save();
+    co_await settle();
+    retrying = shown.html();
+    co_await quoll::async::sleep_for(20ms);
+
+    // Refused once more, then chosen again: the new detail tells the product's last save failed.
+    server.refuses = true;
+    server.update_delay = {};
+    co_await user.type_and_settle("Price", "9");
+    user.save();
+    co_await settle();
+    user.choose("Green tea");
+    co_await settle();
+    user.choose("Grinder");
+    co_await settle();
+    reopened = shown.html();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(retrying.contains("Saving…"));
+  CHECK_FALSE(retrying.contains("the server is gone"));
+  CHECK(server.items[2].price == 45.5);
+  CHECK(reopened.contains("Not saved: the server is gone"));
+}
+
+TEST_CASE("dashboard web: sales ending on what is no std::exception say they did not load", "[samples][dashboard]") {
+  server = three_products();
+
+  virtual_time time;
+  memory_renderer const shown;
+  dashboard_app instance{time.get_executor(), shown};
+  page_driver const user{instance, shown};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    server.throws_other = true;
+    user.choose("Grinder");
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html().contains("the sales did not load"));
+  CHECK_FALSE(shown.html().contains("Loading its sales"));
+}
+
+TEST_CASE("dashboard web: products that fail to load with nothing said still say they did not load",
+          "[samples][dashboard]") {
+  server = three_products();
+  server.list_fails = true;
+
+  virtual_time time;
+  memory_renderer const shown;
+  dashboard_app instance{time.get_executor(), shown};
+
+  auto const act = []() -> task<> { co_await settle(); };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html().contains("the products did not load"));
+  CHECK(shown.html().contains("role=\"alert\""));
 }

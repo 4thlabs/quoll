@@ -245,8 +245,11 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
 - A trial on a real screen of an application, chosen with the maintainer at the start of this step: a dashboard
   (2026-11-11), a list to filter, a detail to edit, and a chart.js chart fed by the REST API. Written with what Quoll
   has in `samples/dashboard`, whose README lists what it lacked, for the base components to give: an input showing a
-  value it is given, labelled and number fields, states that start from the props, the answer of the last request
-  only. It needed no handle on the widget, and no WebSocket.
+  value it is given, labelled and number fields, states that start from the props, and above all requests that
+  overlap: three rounds of review found stale answers and saves out of order, handled by hand. The screen needed no
+  handle on the widget, and no WebSocket. Next, a design note for what would take the place of that bookkeeping in
+  `quoll::ui` (a task a new one stops, an action once at a time, a state loading a value or a failure, a draft from the
+  props), from Leptos, Dioxus, Solid and React Query, shown to the maintainer first.
 - WebSocket in the browser and in the REST DSL, left from step 5, if that screen needs them; if it does not, the maintainer
   says where they go once the step ends, and step 5 is done.
 
