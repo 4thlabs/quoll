@@ -1,8 +1,9 @@
 <div align="center">
   <h1>Quoll</h1>
 
-  <p><strong>A C++23 web framework built for performance and ease of use.</strong><br />
-  A sans-IO async runtime, an HTTP server and client, and a typed REST contract shared by both, with the same code natively and in WebAssembly.</p>
+  <p><strong>A C++23 web framework: an async runtime, an HTTP server and client, a typed REST contract, and a UI
+  compiled to WebAssembly.</strong><br />
+  The same code runs natively and in a browser.</p>
 
   <p>
     <a href="https://github.com/4thlabs/quoll/actions/workflows/ci.yml"><img src="https://github.com/4thlabs/quoll/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
@@ -12,50 +13,34 @@
 
   <p>
     <a href="docs/getting-started.md">Getting started</a> ·
+    <a href="docs/concepts.md">Concepts</a> ·
     <a href="docs/async.md">Async</a> ·
     <a href="docs/server.md">Server</a> ·
     <a href="docs/client.md">Client</a> ·
     <a href="docs/streaming.md">Streaming</a> ·
     <a href="docs/rest.md">REST</a> ·
-    <a href="docs/command-line.md">Command line</a> ·
-    <a href="docs/runtimes.md">Runtimes</a> ·
     <a href="docs/ui.md">UI</a> ·
-    <a href="docs/performance.md">Performance</a> ·
-    <a href="docs/development.md">Development</a>
+    <a href="docs/runtimes.md">Runtimes</a> ·
+    <a href="docs/design-decisions.md">Design decisions</a>
   </p>
 </div>
 
 > [!WARNING]
-> **Status: exploration.** The APIs are still moving and nothing is released yet. The target and
-> the order of the work are in [`docs/PLAN.md`](docs/PLAN.md).
+> **Status: exploration.** The APIs still move and nothing is released yet. What comes next, and in which order, is
+> in [`docs/PLAN.md`](docs/PLAN.md).
 
-## Why Quoll
+## What it holds
 
-Writing a web service in C++ tends to mean choosing between what is fast and what is pleasant to
-use, and writing the same API twice, once to serve it and once to call it. Quoll aims at both, with
-one description of an API:
-
-- **Fast, and measured.** One thread answers about 148,000 small requests a second over 16
-  connections, on the machine they were measured on. A benchmark runs every night and holds the
-  allocations per request to a budget: see [Performance](docs/performance.md).
-- **Easy to use.** A program is a coroutine. `co_await server.listen(8080)` is a
-  server, and `rest::client<api> client{"http://127.0.0.1:8080"}` is a client. Neither asks for an
-  executor, a connector or an acceptor.
-- **Sans-IO.** The HTTP parser, the serializer and the router do no I/O, and a connection is served
-  over any byte stream. TCP, TLS and the memory stream of a test are the same code to a server,
-  and an adapter brings the network, the timer and TLS: see [Runtimes](docs/runtimes.md).
-- **The same code natively and in WebAssembly.** The core needs no threads and no blocking waits.
-  A REST client goes over TCP natively and over `fetch` in a browser, from the same contract.
-- **One typed contract.** An API is a set of C++ types, shared by the server and the client. A call
-  with the wrong arguments or a service missing an endpoint does not compile, and a contract for
-  someone else's API needs no Quoll server: see [REST](docs/rest.md).
-- **Safe defaults.** Timeouts and size limits are on by default, a stop request shuts down
-  gracefully, and `https://` checks the server's certificate unless told otherwise. See
-  [Server](docs/server.md) and [Client](docs/client.md).
-- **Bodies larger than memory.** Requests and responses can be read and written in pieces, on both
-  sides: see [Streaming](docs/streaming.md).
-
-A UI written in C++ and compiled to WebAssembly is there too, as a prototype: see [UI](docs/ui.md).
+| Module           | What it gives                                                                                              |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- |
+| `quoll::async`   | Tasks (`async::task<T>`), `co_spawn`, `when_all`, timeouts, and a stop that ends a task without exception |
+| `quoll::io`      | Byte streams, listeners and connectors, TLS, an in-memory stream for tests                               |
+| `quoll::http`    | Messages, the parser and serializer, the router, server-sent events and WebSocket frames, all without I/O |
+| `quoll::server`  | `http::server`: routes, middlewares, static files, timeouts and limits, a graceful shutdown              |
+| `quoll::client`  | `http::client`: kept connections, retries, redirects, TLS, WebSocket                                     |
+| `quoll::rest`    | A typed API contract, served with `rest::mount` and called with `rest::client`                           |
+| `quoll::ui`      | Components with states and props, callbacks, JavaScript widgets, Tailwind, `to_html`                    |
+| `quoll::runtime` | The loop a program runs on: asio natively, the browser's event loop under Emscripten                    |
 
 ## Quick start
 
@@ -139,19 +124,56 @@ kill %1
 A larger example, with its own tests, is in [`samples/notes`](samples/notes). The whole walkthrough
 is in [Getting started](docs/getting-started.md).
 
+## How it is tested
+
+Every pull request and push to `main` goes through:
+
+- **Builds and tests** on GCC 13, Clang 19, Apple Clang (macOS) and Emscripten, whose tests run under Node.
+- **Sanitizers:** the whole test suite under ThreadSanitizer, and under AddressSanitizer with UndefinedBehaviorSanitizer.
+- **What must not compile:** `compile_fail` cases, one per check of an API, each passing only when the compiler
+  refuses it with the expected message.
+- **What a debug build asserts:** `assert` cases, which break an invariant out of a program's reach and pass only when
+  the program ends on the assertion.
+- **Self-contained headers:** each one compiled alone, in its own translation unit.
+- **clang-tidy**, on what it finds real bugs with (use after move, dangling handles, the analyzer's move and
+  new/delete checks), as errors; `clang-format`.
+- **Reviews:** a review of the whole diff before each push, and another by Codex on the pull request, every point of
+  which is answered before it merges; C++ that borrows is checked by hand for lifetimes, as Rust's borrow checker
+  would.
+
+Every night, and on a pull request touching their targets:
+
+- **Fuzzing**, with libFuzzer under AddressSanitizer and UndefinedBehaviorSanitizer: the request, response,
+  server-sent event and WebSocket parsers, the router, a connection served from arbitrary bytes, the client and the
+  REST server and client, including streams that deliver their bytes one at a time. An input that crashed a target
+  joins its seeds, with a test of the fix.
+- **Load**, under ThreadSanitizer, then under AddressSanitizer with UndefinedBehaviorSanitizer: a server and its
+  clients on runtimes of several threads, with well-formed requests, stops, peers gone in mid-request, requests past
+  the limits and stalling peers. A sanitizer's report or a wrong answer fails it.
+- **Interoperability**, against third-party peers in containers: curl, Python's requests, httpx, http.client and
+  websockets, Node's fetch and WebSocket as clients; aiohttp's and Node's servers; nginx as a proxy; and Autobahn's
+  WebSocket suite, each way.
+- **Benchmarks**, which also check the allocations per request against fixed budgets: see
+  [Performance](docs/performance.md).
+- **clang-tidy with its static analyzer** over the tests too.
+
 ## Documentation
 
-| Guide                                      | What it covers                                                                  |
-| ------------------------------------------ | ------------------------------------------------------------------------------- |
-| [Getting started](docs/getting-started.md) | Adding Quoll with CMake, a first server and client, how a program runs          |
-| [Server](docs/server.md)                   | Routes, handlers, middlewares, `listen` and `serve`, timeouts, shutdown, errors, on the Internet |
-| [Client](docs/client.md)                   | `http::client`, URLs, keep-alive and retries, redirects, TLS, failures          |
-| [Streaming](docs/streaming.md)             | Reading and writing bodies in pieces, on both sides, and what ends them         |
-| [REST](docs/rest.md)                       | The contract, `mount`, `rest::client`, codecs, third-party APIs                 |
-| [Runtimes](docs/runtimes.md)               | `quoll::runtime`, the adapters, `http::client` in a browser, what WebAssembly asks of you    |
-| [UI](docs/ui.md)                           | The `quoll::ui` prototype                                                       |
-| [Performance](docs/performance.md)         | What Quoll costs, and how it is measured                                        |
-| [Development](docs/development.md)         | Building from source, tests, the checks of CI, how to contribute                |
+| Guide                                          | What it covers                                                                                    |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| [Getting started](docs/getting-started.md)     | Adding Quoll with CMake, a first server and client, how a program runs                            |
+| [Concepts](docs/concepts.md)                   | How Quoll works: sans-IO, runtimes and adapters, tasks and stops, what WebAssembly asks           |
+| [Async](docs/async.md)                         | Tasks, running and combining them, timeouts, stopping a task                                      |
+| [Server](docs/server.md)                       | Routes, handlers, middlewares, `listen` and `serve`, timeouts, shutdown, errors, on the Internet |
+| [Client](docs/client.md)                       | `http::client`, URLs, kept connections and retries, redirects, TLS, failures                      |
+| [Streaming](docs/streaming.md)                 | Bodies in pieces on both sides, server-sent events, WebSocket                                     |
+| [REST](docs/rest.md)                           | The contract, `mount`, `rest::client`, codecs, third-party APIs                                  |
+| [Command line](docs/command-line.md)           | A command-line program calling an API, natively and in Node                                       |
+| [UI](docs/ui.md)                               | Components, props, callbacks, views not run again, JavaScript widgets, `to_html`, the build      |
+| [Runtimes](docs/runtimes.md)                   | `quoll::runtime`, the adapters, `http::client` in a browser, what WebAssembly asks of you         |
+| [Performance](docs/performance.md)             | What Quoll costs, and how it is measured                                                          |
+| [Design decisions](docs/design-decisions.md)   | The choices Quoll made where they matter to a user, the options set aside, and what follows       |
+| [Development](docs/development.md)             | Building from source, the tests, the checks of CI, how to contribute                              |
 
 ## Requirements
 

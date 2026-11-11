@@ -122,10 +122,10 @@ it (`Connection: close`, HTTP/1.0), a response delimited by the end of the strea
 or a stream error.
 
 A server may close an idle connection at any time. Every request whose body is whole takes an idle
-connection, as Go's client and Boost.Burl do; one whose body comes in pieces (`body_writer`) has one of its
-own, as its writer runs once. One idle for longer than `max_idle_time`, 90 s by default as with Go's
-client, is not used again but closed, as a request comes to it: a NAT or a load balancer may have dropped it
-with no word, which nothing on the connection shows. The idle connection is checked first, as curl does, with a poll of the socket
+connection; one whose body comes in pieces (`body_writer`) has one of its own, as its writer runs once. One
+idle for longer than `max_idle_time`, 90 s by default, is not used again but closed, as a request comes to
+it: a NAT or a load balancer may have dropped it with no word, which nothing on the connection shows. The
+idle connection is checked first, with a poll of the socket
 that does not wait (`io::PollableStream`): one the server closed, or that carries bytes nothing asked for,
 as a 408 sent before closing it, is closed, and the next, older, is checked. A request not sent twice,
 a POST or a PATCH without an `Idempotency-Key`, takes only a connection its stream can check, as
@@ -136,11 +136,11 @@ The server may still close the connection as the request goes, which no check ca
 | Method                                 | When its idle connection turns out closed before any response, or answers 408                            |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | GET, HEAD, PUT, DELETE, OPTIONS, TRACE | The request is sent again, once, on a new connection, and the other idle connections, older, are closed |
-| POST, PATCH and the others             | With an `Idempotency-Key` or an `X-Idempotency-Key` field, as Go's client takes it, as an idempotent request. Otherwise sent again on a new connection only if none of it was written; otherwise it fails, or the 408 is its response, and the older idle connections are closed |
+| POST, PATCH and the others             | With an `Idempotency-Key` or an `X-Idempotency-Key` field, as an idempotent request. Otherwise sent again on a new connection only if none of it was written; otherwise it fails, or the 408 is its response, and the older idle connections are closed |
 
 A POST of which anything was written is not sent twice: the server may have received it, and even a
 408 closing the connection may come once it has done its work, so the caller decides; a connection that
-answered a 408 is not kept, as the server may answer the POST on it after.
+answered a 408 is not kept, as the server may answer the POST on it after. Why it works this way: [Design decisions](design-decisions.md#a-kept-connection-is-checked-before-it-is-used-again).
 
 A request that times out is not sent again, as the server may be working on it, and its connection is
 closed. Nothing else is retried: a connection that fails otherwise is a failure of the request.

@@ -168,8 +168,7 @@ It only answers what the router itself answers 404 to, once the middlewares adde
 - A path the router refuses (`..`, `%00`) has had its 400.
 - A later middleware answering a 404 of its own rather than awaiting `next`, to hide something, has answered: only the
   router's own counts, which one that awaits `next` and then changes has not replaced.
-- Of several on one path, the last added looks first, and a file that is not there leaves the 404 to the one before. That
-  is the other way round from Express.
+- Of several on one path, the last added looks first, and a file that is not there leaves the 404 to the one before.
 
 | Option          | Default      | What it does                                                                                                              |
 | --------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------- |

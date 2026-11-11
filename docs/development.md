@@ -112,7 +112,7 @@ quoll/
 ├── server/     # http::server, static_files
 ├── client/     # http::client
 ├── rest/       # contracts, mount, client, codecs
-├── ui/         # the UI prototype
+├── ui/         # components, states, the diff, widgets, to_html
 └── adapters/   # asio, emscripten, runtime
 samples/        # notes (native), ui_notes (Emscripten), github (both)
 tests/          # the test program, its helpers, fuzz/, bench/, load/, interop/

@@ -29,8 +29,8 @@ takes over a `Listener` or listens on a port, `static_files`, a middleware),
 `quoll::client` (in `quoll::http`: `client`, an `HttpTransport` over a `Connector` with keep-alive connections, built from an
 `http[s]://` URL, and `connect_websocket` from a `ws[s]://` one), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `http::client` by default, and the
 contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates, and `events<T>` with its `event_sink` and the client's `subscribe`; and the codecs: `json_codec` on
-Glaze, `text_codec`, `param_traits`), `quoll::ui` (a prototype: elements, decorators, `state`, `to_html`, `app` and the `Renderer`
-concept), the adapters `quoll::asio` (asio executor offering the network, a timer, threads for blocking work and TLS, `tcp_stream`, `tls_stream`, connector and acceptors, `accepted_tls_stream`,
+Glaze, `text_codec`, `param_traits`), `quoll::ui` (elements, decorators, `state`, `to_html`, `app` and the `Renderer` concept, components of a view with
+their props and lifecycle, `callback`, views not run again, and `widget<Props>` with `WidgetRenderer`), the adapters `quoll::asio` (asio executor offering the network, a timer, threads for blocking work and TLS, `tcp_stream`, `tls_stream`, connector and acceptors, `accepted_tls_stream`,
 `runtime`; native only, its runtime hides asio from a program, its streams and acceptors need standalone asio, TLS needs OpenSSL) and `quoll::emscripten` (JavaScript event loop executor offering
 a timer, the browser's `fetch` as the `http::platform_ref` a client from a URL goes through, `dom_renderer` and `mount`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`),
 and
