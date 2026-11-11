@@ -45,7 +45,7 @@
 
 import { spawn } from 'node:child_process';
 import { createReadStream, readFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -246,20 +246,24 @@ export function firstError(output) {
   return first < 0 ? output : lines.slice(first).join('\n');
 }
 
-// The paths of the widgets a C++ source declares, `widget<Props>("./path.js", "tag")`, in the order they come.
+// The paths of the widgets a C++ source declares, `widget<Props>("./path.js", "tag")` or with braces, in the order they
+// come, comments left out.
 export function widgetPaths(source) {
-  return [...source.matchAll(/\bwidget\s*<[\s\S]*?>\s*\(\s*"([^"\\]+)"/g)].map((match) => match[1]);
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+
+  return [...code.matchAll(/\bwidget\s*<[^;{}()"]*>\s*[({]\s*"([^"\\]+)"/g)].map((match) => match[1]);
 }
 
 // The registry the page sets as globalThis.quollWidgets: each path a source declares, resolved from that source as an
 // import would be, to a function importing its module, which a build makes a chunk loaded on demand. `files` are the
-// sources, with their text; `root` is Vite's. Throws for one path given to two modules.
-export function widgetRegistry(files, root) {
+// sources, with their text. Throws for one path given to two modules.
+export function widgetRegistry(files) {
   const modules = new Map();
 
   for (const [file, text] of files) {
     for (const path of widgetPaths(text)) {
-      const module = resolve(dirname(file), path);
+      // As an import names it: relative to its source, or a package, or a URL, as it is.
+      const module = path.startsWith('./') || path.startsWith('../') ? resolve(dirname(file), path) : path;
       const known = modules.get(path);
 
       if (known !== undefined && known !== module) {
@@ -270,8 +274,10 @@ export function widgetRegistry(files, root) {
     }
   }
 
+  // A file by its absolute path, which Vite and the build both read, inside its root or not.
+  const specifier = (module) => (isAbsolute(module) ? module.split(sep).join('/') : module);
   const entries = [...modules].map(
-    ([path, module]) => `  ${JSON.stringify(path)}: () => import(${JSON.stringify(`/${relative(root, module)}`)}),`,
+    ([path, module]) => `  ${JSON.stringify(path)}: () => import(${JSON.stringify(specifier(module))}),`,
   );
 
   return `export default {\n${entries.join('\n')}\n};\n`;
@@ -302,14 +308,8 @@ export function quoll({ target, sources, buildDir = 'build' }) {
   const artifact = (dir, extension) =>
     join(dir, relative(root, base), `${target}${extension}`);
 
-  let viteRoot = base;
-
   return {
     name: 'quoll',
-
-    configResolved(config) {
-      viteRoot = config.root;
-    },
 
     resolveId(id) {
       return id === registryId ? resolvedRegistryId : null;
@@ -326,10 +326,16 @@ export function quoll({ target, sources, buildDir = 'build' }) {
         this.addWatchFile(file);
       }
 
-      return widgetRegistry(
-        files.map((file) => [file, readFileSync(file, 'utf8')]),
-        viteRoot,
-      );
+      // A source gone for a moment, during a save, has no widget until it is back: the build says what is wrong.
+      const readable = files.flatMap((file) => {
+        try {
+          return [[file, readFileSync(file, 'utf8')]];
+        } catch {
+          return [];
+        }
+      });
+
+      return widgetRegistry(readable);
     },
 
     async configureServer(server) {

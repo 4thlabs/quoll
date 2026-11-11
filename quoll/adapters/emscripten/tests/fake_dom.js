@@ -177,7 +177,47 @@ addToLibrary({
   quoll_test_widgets_install: () => {
     quollFakeDom.widgetLog = [];
     quollFakeDom.emit = null;
+    const logged = (props) => ({
+      update(next) {
+        quollFakeDom.widgetLog.push(`update ${JSON.stringify(next)}`);
+      },
+      unmount() {
+        quollFakeDom.widgetLog.push('unmount');
+      },
+    });
+
     globalThis.quollWidgets = {
+      // Its update and its unmount throw.
+      './throwing_chart.js': () =>
+        Promise.resolve({
+          mount() {
+            return {
+              update() {
+                throw new Error('no update');
+              },
+              unmount() {
+                throw new Error('no unmount');
+              },
+            };
+          },
+        }),
+      // Its mount awaits something first.
+      './async_chart.js': () =>
+        Promise.resolve({
+          async mount(node, props, emit) {
+            await Promise.resolve();
+            quollFakeDom.widgetLog.push(`mount ${node.tag} ${JSON.stringify(props)}`);
+            quollFakeDom.emit = emit;
+            return logged(props);
+          },
+        }),
+      // Its mount fails.
+      './failing_chart.js': () =>
+        Promise.resolve({
+          mount() {
+            throw new Error('no canvas here');
+          },
+        }),
       './fake_chart.js': () =>
         Promise.resolve({
           mount(node, props, emit) {
@@ -201,6 +241,15 @@ addToLibrary({
   quoll_test_widgets_log__deps: ['$quollFakeDom', '$stringToUTF8'],
   quoll_test_widgets_log: (out, size) => {
     stringToUTF8(quollFakeDom.widgetLog.join('\n'), out, size);
+  },
+
+  // What the last widget mounted emits: an object that refers to itself, which JSON cannot hold.
+  quoll_test_widgets_emit_circular__deps: ['$quollFakeDom'],
+  quoll_test_widgets_emit_circular: () => {
+    const value = {};
+
+    value.self = value;
+    quollFakeDom.emit('picked', value);
   },
 
   // What the last widget mounted emits: `name`, and `value`, JSON.

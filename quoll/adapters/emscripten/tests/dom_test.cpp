@@ -58,6 +58,7 @@ void quoll_test_dom_type(char const *text);
 void quoll_test_widgets_install();
 void quoll_test_widgets_log(char *out, std::size_t size);
 void quoll_test_widgets_emit(char const *name, char const *value);
+void quoll_test_widgets_emit_circular();
 }
 
 // Not in an unnamed namespace: Glaze, under Clang, reflects only types with linkage.
@@ -349,4 +350,92 @@ TEST_CASE("dom_renderer: props given while its module loads are those it mounts 
   REQUIRE(widget_log() == R"(mount canvas {"values":[2]})");
   renderer.close();
   REQUIRE(widget_log() == "mount canvas {\"values\":[2]}\nunmount");
+}
+
+namespace {
+
+// A renderer on #app with one canvas, node 1, and what reaches its owner.
+struct canvas_renderer {
+  quoll::emscripten::dom_renderer renderer{"#app"};
+  int events = 0;
+  std::vector<std::string> failures;
+
+  canvas_renderer() {
+    renderer.create_element(1, "canvas");
+    renderer.insert(0, 1, 0);
+
+    renderer.on_event([](void *owner, quoll::ui::node_id, char const *,
+                         char const *) { ++static_cast<canvas_renderer *>(owner)->events; },
+                      this);
+    renderer.on_failure(
+        [](void *owner, char const *message) { static_cast<canvas_renderer *>(owner)->failures.emplace_back(message); },
+        this);
+  }
+
+  canvas_renderer(canvas_renderer const &) = delete;
+  canvas_renderer(canvas_renderer &&) = delete;
+  canvas_renderer &operator=(canvas_renderer const &) = delete;
+  canvas_renderer &operator=(canvas_renderer &&) = delete;
+
+  ~canvas_renderer() { renderer.close(); }
+};
+
+} // namespace
+
+TEST_CASE("dom_renderer: a widget's update or unmount that throws throws", "[emscripten][ui][widget]") {
+  quoll_test_dom_reset();
+  quoll_test_widgets_install();
+
+  canvas_renderer shown;
+
+  shown.renderer.mount_widget(1, "./throwing_chart.js", "{}");
+  settle();
+
+  REQUIRE_THROWS_AS(shown.renderer.update_widget(1, "{}"), std::runtime_error);
+  REQUIRE_THROWS_AS(shown.renderer.unmount_widget(1), std::runtime_error);
+  // Gone all the same.
+  REQUIRE_NOTHROW(shown.renderer.unmount_widget(1));
+}
+
+TEST_CASE("dom_renderer: a mount that awaits is updated and unmounted once it is done", "[emscripten][ui][widget]") {
+  quoll_test_dom_reset();
+  quoll_test_widgets_install();
+
+  canvas_renderer shown;
+
+  shown.renderer.mount_widget(1, "./async_chart.js", R"({"values":[1]})");
+  settle();
+  shown.renderer.update_widget(1, R"({"values":[2]})");
+  shown.renderer.unmount_widget(1);
+
+  REQUIRE(widget_log() == "mount canvas {\"values\":[1]}\nupdate {\"values\":[2]}\nunmount");
+}
+
+TEST_CASE("dom_renderer: a mount that fails is told to on_failure", "[emscripten][ui][widget]") {
+  quoll_test_dom_reset();
+  quoll_test_widgets_install();
+
+  canvas_renderer shown;
+
+  shown.renderer.mount_widget(1, "./failing_chart.js", "{}");
+  settle();
+
+  REQUIRE(shown.failures.size() == 1);
+  REQUIRE(shown.failures.front().find("no canvas here") != std::string::npos);
+}
+
+TEST_CASE("dom_renderer: what JSON cannot hold, emitted, reaches nothing", "[emscripten][ui][widget]") {
+  quoll_test_dom_reset();
+  quoll_test_widgets_install();
+
+  canvas_renderer shown;
+
+  shown.renderer.mount_widget(1, "./fake_chart.js", "{}");
+  settle();
+  quoll_test_widgets_emit_circular();
+  settle();
+  quoll_test_widgets_emit("picked", R"({"index":1})");
+  settle();
+
+  REQUIRE(shown.events == 1);
 }

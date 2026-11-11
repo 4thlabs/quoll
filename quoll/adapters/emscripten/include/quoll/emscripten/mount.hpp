@@ -97,6 +97,13 @@ C &mount(std::string_view selector = "#app", ui::app_options options = {}) {
 
   instance->renderer().on_event(dispatch, instance.get());
 
+  // A widget's module failing to load or to mount, once its render has gone on: the app's on_error hears of it.
+  auto const failed = [](void *owner, char const *message) {
+    static_cast<app_type *>(owner)->report_failure(std::make_exception_ptr(std::runtime_error{message}));
+  };
+
+  instance->renderer().on_failure(failed, instance.get());
+
 #if defined(QUOLL_UI_HOT)
   detail::quoll_emscripten_ui_hot_install([](char const *file, unsigned line, unsigned column, char const *value) {
     ui::detail::hot_replace(file, line, column, value);

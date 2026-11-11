@@ -17,3 +17,9 @@ endif()
 
 # Quoll, precompiled, as parsing it takes most of the rest: it stays a header, and this is the build's own business.
 target_precompile_headers(quoll_ui_notes PRIVATE <quoll/emscripten/mount.hpp> <quoll/ui.hpp> <string> <vector>)
+
+# The registry of widgets the Vite plugin makes, tested by Node, which the build for Emscripten runs.
+if(QUOLL_BUILD_TESTS)
+  add_test(NAME ui_notes_widget_registry COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} --test
+                                                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/widgets.test.mjs)
+endif()

@@ -73,6 +73,14 @@ public:
     detail::quoll_emscripten_ui_on_event(instance_, function, owner);
   }
 
+  /** @brief What a widget's failure calls once its call has returned: the owner given here, and a message. */
+  using failure_function = void (*)(void *owner, char const *message);
+
+  /** @brief Calls `function` as a widget's module fails to load or to mount, which happens after mount_widget(). */
+  void on_failure(failure_function function, void *owner) noexcept {
+    detail::quoll_emscripten_ui_on_failure(instance_, function, owner);
+  }
+
   void create_element(ui::node_id id, std::string_view tag) {
     detail::quoll_emscripten_ui_create_element(instance_, id, tag.data(), tag.size());
   }
@@ -117,8 +125,8 @@ public:
 
   /**
    * @brief Loads the widget's module from the page's registry, `globalThis.quollWidgets`, which the Vite plugin makes
-   * from the sources it is given, then mounts it with the props it holds then. A module failing to load or to mount is
-   * written to the console, as it fails later.
+   * from the sources it is given, then mounts it with the props it holds then. A module failing to load or to mount
+   * calls what on_failure() was given, as it fails later, and writes it to the console.
    * @throws std::invalid_argument when the registry has no module of that path.
    */
   void mount_widget(ui::node_id id, std::string_view module, std::string_view props) {

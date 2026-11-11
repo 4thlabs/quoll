@@ -86,6 +86,10 @@ public:
   // spawn() for a mounted(), which does not start once its component, or the app, is stopped.
   void mount(async::task<> work, held_view held = {});
   void dispatch(node_id id, std::string_view name, std::string value);
+
+  // As a handler's failure: to on_error.
+  void report_failure(std::exception_ptr failure) const noexcept { failed(std::move(failure)); }
+
   [[nodiscard]] async::task<> stop();
 
   // A start that failed: what the view left pending, or the mounted() it spawned, must show nothing more. stop() still
