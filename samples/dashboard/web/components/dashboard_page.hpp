@@ -67,7 +67,9 @@ using quoll::ui::callback;
 using quoll::ui::element;
 using quoll::ui::state;
 
-// How the saves of a product go: none is shown when it is not under way and the last one did not fail.
+// How the saves of a product go: none is shown when it is not under way and the last one did not fail. Kept by hand,
+// until quoll::ui has an action that runs once at a time and holds whether it is under way and how its last run ended
+// (docs/PLAN.md, step 6, and issue #163).
 struct save_status {
   bool under_way = false;
   std::string failure;
@@ -83,7 +85,8 @@ struct dashboard_page {
   state<std::string> sales_problem;
   // The saves of each product, which its detail shows: under way, or why the last one failed.
   state<std::map<std::int64_t, save_status>> saves;
-  // The sales asked for: a plain member, as no view shows it.
+  // The sales asked for: a plain member, as no view shows it. Kept by hand, until quoll::ui has a task that a new one
+  // stops, whose stale answer then writes nothing (docs/PLAN.md, step 6, and issue #163).
   std::uint64_t sales_asked = 0;
 
   task<> mounted() {
