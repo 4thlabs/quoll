@@ -8,6 +8,7 @@ quoll_declare_module(
     src/instance.cpp
     src/ready.cpp
     src/reconciler.cpp
+    src/renderer_ref.cpp
     src/to_html.cpp
     src/view_context.cpp
   DEPS
@@ -31,6 +32,7 @@ quoll_declare_tests(
     tests/skip_test.cpp
     tests/element_test.cpp
     tests/to_html_test.cpp
+    tests/widget_test.cpp
   DEPS
     quoll::ui
 )

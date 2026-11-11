@@ -104,6 +104,8 @@ private:
   struct outcome;
 
   [[nodiscard]] async::task<> render_later();
+  // As the app stops: what a renderer throws goes to on_error, and the others are unmounted all the same.
+  void unmount_widgets(std::vector<element> const &shown) const noexcept;
   void failed(std::exception_ptr failure) const noexcept;
   static void failed_in(void *self, std::exception_ptr failure) noexcept;
 

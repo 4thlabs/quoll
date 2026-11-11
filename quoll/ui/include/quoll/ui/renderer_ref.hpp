@@ -40,6 +40,7 @@
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/renderer.hpp>
+#include <quoll/ui/widget_renderer.hpp>
 
 #include <concepts>
 #include <string_view>
@@ -94,7 +95,22 @@ public:
 
   void remove(node_id id) const { vtable_->remove(renderer_, id); }
 
+  /** @brief Those of a WidgetRenderer: throw `std::logic_error` for one without them, which shows no widget. */
+  void mount_widget(node_id id, std::string_view module, std::string_view props) const {
+    widgets()->mount_widget(renderer_, id, module, props);
+  }
+
+  void update_widget(node_id id, std::string_view props) const { widgets()->update_widget(renderer_, id, props); }
+
+  void unmount_widget(node_id id) const { widgets()->unmount_widget(renderer_, id); }
+
 private:
+  struct widget_table {
+    void (*mount_widget)(void *, node_id, std::string_view, std::string_view);
+    void (*update_widget)(void *, node_id, std::string_view);
+    void (*unmount_widget)(void *, node_id);
+  };
+
   struct vtable {
     async::detail::type_id type;
     void (*create_element)(void *, node_id, std::string_view);
@@ -108,7 +124,29 @@ private:
     void (*unlisten)(void *, node_id, std::string_view);
     void (*insert)(void *, node_id, node_id, node_id);
     void (*remove)(void *, node_id);
+    // None for a renderer that shows no widget.
+    widget_table const *widgets;
   };
+
+  template <class R>
+  static constexpr widget_table widgets_for{
+      [](void *r, node_id id, std::string_view module, std::string_view props) {
+        static_cast<R *>(r)->mount_widget(id, module, props);
+      },
+      [](void *r, node_id id, std::string_view props) { static_cast<R *>(r)->update_widget(id, props); },
+      [](void *r, node_id id) { static_cast<R *>(r)->unmount_widget(id); },
+  };
+
+  template <class R>
+  [[nodiscard]] static consteval widget_table const *widgets_of() noexcept {
+    if constexpr (WidgetRenderer<R>) {
+      return &widgets_for<R>;
+    } else {
+      return nullptr;
+    }
+  }
+
+  [[nodiscard]] widget_table const *widgets() const;
 
   template <class R>
   static constexpr vtable vtable_for{
@@ -128,6 +166,7 @@ private:
         static_cast<R *>(r)->insert(parent, child, before);
       },
       [](void *r, node_id id) { static_cast<R *>(r)->remove(id); },
+      widgets_of<R>(),
   };
 
   void *renderer_;
@@ -135,6 +174,7 @@ private:
 };
 
 static_assert(Renderer<renderer_ref>);
+static_assert(WidgetRenderer<renderer_ref>);
 
 } // namespace quoll::ui
 

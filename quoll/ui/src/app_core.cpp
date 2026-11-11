@@ -149,7 +149,7 @@ void app_core::render() {
     }
 
     append_child(next, std::move(view));
-    reconciler{renderer_, last_id_}.children(no_node, shown_, next);
+    reconciler{renderer_, last_id_}.apply(no_node, shown_, next);
   } catch (...) {
     discard(made);
     throw;
@@ -216,8 +216,28 @@ async::task<> app_core::stop() {
     throw std::logic_error{"quoll::ui::app: stop() awaited from one of its own tasks"};
   }
 
+  // Its nodes stay, but what the widgets run in them goes, as the app no longer drives them.
+  if (!stopped_) {
+    unmount_widgets(shown_);
+  }
+
   abandon();
   co_await tasks_.join();
+}
+
+void app_core::unmount_widgets(std::vector<element> const &shown) const noexcept {
+  for (auto const &value : shown) {
+    if (value.type != element::kind::widget) {
+      unmount_widgets(value.children);
+      continue;
+    }
+
+    try {
+      renderer_.unmount_widget(value.id);
+    } catch (...) {
+      failed(std::current_exception());
+    }
+  }
 }
 
 void app_core::abandon() noexcept {
