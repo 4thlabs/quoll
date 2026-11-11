@@ -54,6 +54,17 @@ test('the paths of widgets, with parentheses or braces, nested templates, and no
   assert.deepEqual(widgetPaths(source), ['./src/line.js', './bar.js', 'leaflet-widget']);
 });
 
+test('strings holding what looks like a comment, before a widget or as its path', () => {
+  const source = [
+    'auto route = "/api/*";',
+    'constexpr auto map = widget<map_props>("https://cdn.example/map.js", "div");',
+    'constexpr auto c = widget<P>("./c.js", "canvas"); /* note */',
+    'auto raw = R"(widget<X>("./not.js", "div"))";',
+  ].join('\n');
+
+  assert.deepEqual(widgetPaths(source), ['https://cdn.example/map.js', './c.js']);
+});
+
 test('a path is resolved from its source, a package left as it is', () => {
   const registry = widgetRegistry([
     ['/project/src/page.hpp', 'widget<P>("./widgets/line.js", "canvas") widget<Q>("leaflet-widget", "div")'],

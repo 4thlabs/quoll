@@ -247,11 +247,22 @@ export function firstError(output) {
 }
 
 // The paths of the widgets a C++ source declares, `widget<Props>("./path.js", "tag")` or with braces, in the order they
-// come, comments left out.
+// come: found in the code scan() leaves, comments gone and each string blanked, then read from the string at that rank.
 export function widgetPaths(source) {
-  const code = source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+  const { code, literals } = scan(source);
+  const paths = [];
 
-  return [...code.matchAll(/\bwidget\s*<[^;{}()"]*>\s*[({]\s*"([^"\\]+)"/g)].map((match) => match[1]);
+  for (const match of code.matchAll(/\bwidget\s*<[^;{}()"]*>\s*[({]\s*""/g)) {
+    // The strings before it, but for raw ones, which scan() keeps apart.
+    const rank = [...code.slice(0, match.index + match[0].length - 2).matchAll(/(?<!R)""/g)].length;
+    const path = decoded(literals[rank].raw);
+
+    if (typeof path === 'string') {
+      paths.push(path);
+    }
+  }
+
+  return paths;
 }
 
 // The registry the page sets as globalThis.quollWidgets: each path a source declares, resolved from that source as an
@@ -320,11 +331,9 @@ export function quoll({ target, sources, buildDir = 'build' }) {
         return null;
       }
 
+      // Not watched through the module graph, which would send a change of a source up to the page and reload it: the
+      // server's watcher makes the registry again as a source changes.
       const files = sources.map((source) => resolve(base, source));
-
-      for (const file of files) {
-        this.addWatchFile(file);
-      }
 
       // A source gone for a moment, during a save, has no widget until it is back: the build says what is wrong.
       const readable = files.flatMap((file) => {

@@ -177,6 +177,9 @@ addToLibrary({
   quoll_test_widgets_install: () => {
     quollFakeDom.widgetLog = [];
     quollFakeDom.emit = null;
+    quollFakeDom.gate = new Promise((release) => {
+      quollFakeDom.release = release;
+    });
     const logged = (props) => ({
       update(next) {
         quollFakeDom.widgetLog.push(`update ${JSON.stringify(next)}`);
@@ -201,11 +204,11 @@ addToLibrary({
             };
           },
         }),
-      // Its mount awaits something first.
+      // Its mount waits for quoll_test_widgets_release().
       './async_chart.js': () =>
         Promise.resolve({
           async mount(node, props, emit) {
-            await Promise.resolve();
+            await quollFakeDom.gate;
             quollFakeDom.widgetLog.push(`mount ${node.tag} ${JSON.stringify(props)}`);
             quollFakeDom.emit = emit;
             return logged(props);
@@ -241,6 +244,12 @@ addToLibrary({
   quoll_test_widgets_log__deps: ['$quollFakeDom', '$stringToUTF8'],
   quoll_test_widgets_log: (out, size) => {
     stringToUTF8(quollFakeDom.widgetLog.join('\n'), out, size);
+  },
+
+  // Lets the mount of ./async_chart.js go on.
+  quoll_test_widgets_release__deps: ['$quollFakeDom'],
+  quoll_test_widgets_release: () => {
+    quollFakeDom.release();
   },
 
   // What the last widget mounted emits: an object that refers to itself, which JSON cannot hold.
