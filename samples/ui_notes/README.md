@@ -1,7 +1,7 @@
 # Notes in a browser
 
 The notes of [`samples/notes`](../notes) as an interface in C++: compiled to WASM, styled with Tailwind and daisyUI, on the
-same contract as the server. A prototype: see the UI DSL in [`docs/PLAN.md`](../../docs/PLAN.md).
+same contract as the server. The UI is described in [`docs/ui.md`](../../docs/ui.md).
 
 ## Run it
 

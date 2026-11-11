@@ -39,7 +39,7 @@
 | `quoll::server`  | `http::server`: routes, middlewares, static files, timeouts and limits, a graceful shutdown              |
 | `quoll::client`  | `http::client`: kept connections, retries, redirects, TLS, WebSocket                                     |
 | `quoll::rest`    | A typed API contract, served with `rest::mount` and called with `rest::client`                           |
-| `quoll::ui`      | Components with states and props, callbacks, JavaScript widgets, Tailwind, `to_html`                    |
+| `quoll::ui`      | Components with states and props, callbacks, Tailwind, `to_html`; JavaScript widgets, in the browser next |
 | `quoll::runtime` | The loop a program runs on: asio natively, the browser's event loop under Emscripten                    |
 
 ## Quick start

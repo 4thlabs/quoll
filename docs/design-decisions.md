@@ -1,8 +1,9 @@
 # Design decisions
 
 The choices Quoll made where they matter to a program written with it: the question, what was taken, what was set
-aside, and what follows for you. The guides say how things behave; this page says why they behave that way. The
-roadmap and the decisions still to make are in [`PLAN.md`](PLAN.md).
+aside, and what follows for you. The guides say how things behave; this page says why they behave that way. It is
+written from the Decided section of [`PLAN.md`](PLAN.md#decided), which also holds the roadmap and the decisions still
+to make.
 
 ## Async
 
@@ -57,7 +58,8 @@ a `static_assert` asks.
 ### A task that fails beside the others is reported, and the program goes on
 
 **Taken.** `async::detached` writes the exception of a task spawned beside the main one to stderr, and the program goes
-on, as tokio does; `async::set_report_sink` sends those lines elsewhere. A stop says nothing.
+on, as tokio does; `async::set_report_sink` sends those lines elsewhere. A stop says nothing, nor does a
+`std::system_error` with `std::errc::operation_canceled`, which code outside Quoll may still throw for one.
 
 **Set aside.** Ending the program: one connection's failure would take a server down.
 
@@ -69,15 +71,19 @@ turns on a strand; `async::offload` runs blocking work; `async::run_loop` is a r
 **Set aside.** A thread pool of `quoll::async`'s own, and `serve(executor, listener)` on it, which had no timer for
 the timeouts of its connections.
 
-**For you.** A handler needs no lock for what belongs to its connection, and code written for one thread runs on
-several.
+**For you.** A handler needs no lock for what belongs to its connection. What handlers of several connections share,
+a counter or a map, needs an atomic or a mutex once the runtime runs several threads: see
+[Several threads](runtimes.md#several-threads).
 
 ### Coroutine frames are recycled
 
-**Taken.** Each thread keeps the frames of tasks that ended, to give to the next of the same size.
+**Taken.** Each thread keeps the frames of tasks that ended, by classes of size from 64 bytes to 8 KiB, up to 64 a
+class, to give to the next task of that class. A larger frame is allocated, and nothing is recycled under
+ThreadSanitizer, HWASan or MemorySanitizer, which must see each allocation.
 
 **For you.** A body read or written in pieces allocates nothing per piece in steady state; the benchmark holds the
-allocations per request to a budget: see [Performance](performance.md).
+allocations per request to a budget: see [Performance](performance.md). Measure allocations in a build without those
+sanitizers.
 
 ## HTTP
 
@@ -116,8 +122,9 @@ serves the connection.
 **Set aside.** Returning a function that writes the body once the handler has ended: what it captures by reference
 would dangle.
 
-**For you.** A middleware does not see the status of a response whose body is written that way, as its head leaves
-with the first write.
+**For you.** The handler runs once the middlewares have returned, awaited by what serves the connection: a middleware
+neither sees the status of a response whose body is written that way, nor catches what its writer throws, nor bounds
+its time. See [Streaming](streaming.md).
 
 ### A kept connection is checked before it is used again
 
@@ -126,7 +133,8 @@ with the first write.
 **Taken.** The idle connection is checked first, as curl does, by a poll of its socket that does not wait: one the
 server closed, or that carries bytes nothing asked for, is closed. Every request whose body is whole then takes an idle
 connection, as Go's client does; one found closed before any of it was written goes again on a new connection, as
-hyper does; a POST of which anything was written is never sent twice. An idle connection older than
+hyper does; a POST of which anything was written is not sent twice, unless it carries an `Idempotency-Key` or an
+`X-Idempotency-Key` field, which makes it idempotent to the client, as to Go's. An idle connection older than
 `client_options::max_idle_time`, 90 s as Go's `IdleConnTimeout`, is not used again, as nothing on it shows that
 something on the way dropped it.
 
@@ -235,6 +243,7 @@ from a view to the next, as `this`, and pass the rest as props.
 **Taken.** A widget: a JavaScript module exports `mount(node, props, emit)`, which returns `update(props)` and
 `unmount()`; its props go as JSON, what it emits comes back as an event of its node, read into a C++ type. This is the
 form of Phoenix LiveView's hooks, with typed props and events. Plain DOM libraries and web components come this way.
+The C++ side is there; the browser's renderer and the modules loaded on demand come next (see [UI](ui.md#what-it-lacks)).
 
 **Set aside.** Porting the libraries to C++, which would never end. Libraries tied to React, which cannot come.
 

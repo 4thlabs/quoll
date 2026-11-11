@@ -118,6 +118,8 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 - With tests ON, every header is also compiled alone in its own translation unit (`quoll_<module>_header_check`),
   so a header that is not self-contained breaks the build (`QUOLL_HEADER_CHECKS`, ON by default).
 - `docs/`: the guides for users, one Markdown file per subject, listed in the `README.md`, beside `PLAN.md`, `CODING_RULES.md` and `BENCHMARKS.md`.
+  The guides say how things behave, without arguing for them; `design-decisions.md` says why, for users, from the Decided
+  section of `PLAN.md`: a change to a decision there updates it, and the guide it touches, in the same pull request.
 - Dependencies come from CPM (`cmake/CPM.cmake`, always included: modules need it, not only tests). Under
   Emscripten the root sets `-fwasm-exceptions` and `-mtail-call` before any dependency is added, and each module passes them on to the program: coroutines resuming each other otherwise grow the stack.
 - Under Emscripten the test executable is linked with JSPI and run by `node --experimental-wasm-jspi`: a test waits
