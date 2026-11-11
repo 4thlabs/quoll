@@ -246,6 +246,33 @@ void scope_keys(element &view, std::string const &scope) {
   }
 }
 
+// Runs the view of `kept` with `props`, and records it for commit(): a view that threw records nothing.
+[[nodiscard]] element run_view(component_spec const &spec, std::shared_ptr<instance> const &kept,
+                               std::shared_ptr<void const> const &props, made_by by, expansion &context) {
+  auto const version = kept->version();
+
+  // Room for its record, made once its view has returned: recording it then cannot fail.
+  if (context.views.size() == context.views.capacity()) {
+    context.views.reserve(std::max<std::size_t>(4, context.views.capacity() * 2));
+  }
+
+  auto view = [&] {
+    // Its callbacks call this component back, in its tasks, with these props.
+    view_scope const scope{{.app = context.app, .held = {.owner = kept, .props = props}}};
+
+    return spec.table->view(kept->component(), props.get());
+  }();
+  auto given = view;
+
+  context.views.push_back({.owner = kept,
+                           .props = props,
+                           .own = spec.props,
+                           .placed_by = by.props,
+                           .view = std::move(given),
+                           .version = version});
+  return view;
+}
+
 void walk_component(element &value, matching &shown, std::vector<std::shared_ptr<instance>> &now, made_by by,
                     expansion &context) {
   check_undecorated(value);
@@ -253,22 +280,25 @@ void walk_component(element &value, matching &shown, std::vector<std::shared_ptr
   auto const &spec = *value.component;
   auto const type = spec.table->type;
   auto const scope = scope_of(type, value.key, shown);
+  auto kept = shown.take(type, value.key);
+  auto const fresh = !kept;
+  // Kept, its props made of the same as before, or giving the same view, and none of its states changed since: its
+  // last view is given again, with the props it was made with, which its handlers may refer to.
+  auto const same_sources = !fresh && kept->made_of(spec.props.get(), by.props.get());
+  auto const *const unchanged = fresh ? nullptr : kept->unchanged_view();
+  auto const given_again =
+      unchanged != nullptr && (same_sources || (spec.table->same_props != nullptr &&
+                                                spec.table->same_props(kept->own().get(), spec.props.get())));
   auto const props =
-      by.owner && spec.props
+      given_again || same_sources ? kept->props()
+      : by.owner && spec.props
           ? std::shared_ptr<void const>{std::make_shared<chained_props const>(chained_props{
                                             .placed_in = by.owner, .placed_by = by.props, .own = spec.props}),
                                         spec.props.get()}
           : spec.props;
-  auto kept = shown.take(type, value.key);
-  auto const fresh = !kept;
 
   if (fresh) {
     kept = std::make_shared<instance>(*spec.table, props, value.key, context.app_stop);
-  } else {
-    // Room for its props, recorded once its view has returned: recording them then cannot fail.
-    if (context.props.size() == context.props.capacity()) {
-      context.props.reserve(std::max<std::size_t>(4, context.props.capacity() * 2));
-    }
   }
 
   now.push_back(kept);
@@ -278,17 +308,7 @@ void walk_component(element &value, matching &shown, std::vector<std::shared_ptr
     shown.placed(type, kept->key());
   }
 
-  auto view = [&] {
-    // Its callbacks call this component back, in its tasks, with these props.
-    view_scope const scope{{.app = context.app, .held = {.owner = kept, .props = props}}};
-
-    return spec.table->view(kept->component(), props.get());
-  }();
-
-  // What its view may now refer to: a view that threw keeps nothing of its props.
-  if (!fresh) {
-    context.props.push_back({.owner = kept, .props = props});
-  }
+  auto view = given_again ? *unchanged : run_view(spec, kept, props, by, context);
 
   std::vector<std::shared_ptr<instance>> inner;
   matching inner_shown{kept->children()};
@@ -356,12 +376,13 @@ void commit(expansion &context, std::vector<std::shared_ptr<instance>> &shown) n
   // Shown now: what changes in them shows too.
   if (context.link.changed != nullptr) {
     for (auto const &made : context.made) {
-      made->table().link(made->component(), context.link);
+      made->link(context.link);
     }
   }
 
-  for (auto &kept : context.props) {
-    kept.owner->set_props(std::move(kept.props));
+  for (auto &record : context.views) {
+    record.owner->viewed(std::move(record.props), std::move(record.own), std::move(record.placed_by),
+                         std::move(record.view), record.version);
   }
 
   for (auto &[parent, children] : context.children) {
@@ -373,21 +394,22 @@ void commit(expansion &context, std::vector<std::shared_ptr<instance>> &shown) n
   }
 
   shown = std::move(context.now);
-  context.props.clear();
+  context.views.clear();
   context.children.clear();
   context.leaving.clear();
 }
 
 void discard(expansion &context) noexcept {
-  // Their views returned with these, and may refer to them until they view again: shown or not, they are the last.
-  for (auto &kept : context.props) {
-    kept.owner->set_props(std::move(kept.props));
+  // Their views returned with these, and may refer to them until they view again; their last view goes, made with
+  // those before, so that the next render runs them again.
+  for (auto &record : context.views) {
+    record.owner->tried(std::move(record.props));
   }
 
   // Made, never shown nor linked: gone with these, as no parent holds its children before commit().
   context.made.clear();
   context.now.clear();
-  context.props.clear();
+  context.views.clear();
   context.children.clear();
   context.leaving.clear();
 }

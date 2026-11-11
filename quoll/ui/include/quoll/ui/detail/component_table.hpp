@@ -46,6 +46,7 @@
 #include <quoll/ui/state.hpp>
 #include <quoll/ui/unmounted_component.hpp>
 
+#include <concepts>
 #include <memory>
 
 namespace quoll::ui::detail {
@@ -64,6 +65,9 @@ struct component_table {
   // None for a component that has none.
   async::task<> (*mounted)(void *component);
   void (*unmounted)(void *component);
+  // Whether two props give the same view, for one with props comparable with ==, and always for one without props:
+  // none for props that are not comparable, so that its view runs again on each of its parent's.
+  bool (*same_props)(void const *left, void const *right);
 };
 
 // What a parent's view gives a component of its own: which, and its props, shared as an element is copied.
@@ -91,6 +95,19 @@ template <class C>
 }
 
 template <class C>
+[[nodiscard]] consteval auto same_props_of() -> bool (*)(void const *, void const *) {
+  if constexpr (!ComponentWithProps<C>) {
+    return [](void const *, void const *) { return true; };
+  } else if constexpr (std::equality_comparable<typename C::props>) {
+    return [](void const *left, void const *right) {
+      return *static_cast<typename C::props const *>(left) == *static_cast<typename C::props const *>(right);
+    };
+  } else {
+    return nullptr;
+  }
+}
+
+template <class C>
 inline constexpr component_table table_of{
     .type = async::detail::type_id_of<C>(),
     .make =
@@ -108,6 +125,7 @@ inline constexpr component_table table_of{
     },
     .mounted = mounted_of<C>(),
     .unmounted = unmounted_of<C>(),
+    .same_props = same_props_of<C>(),
 };
 
 } // namespace quoll::ui::detail

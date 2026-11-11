@@ -45,7 +45,46 @@ instance::instance(component_table const &table, std::shared_ptr<void const> pro
     : table_(&table), props_(std::move(props)), component_(table.make()), key_(std::move(key)),
       follow_app_(app_stop, async::detail::stop_waker{&stop_}) {}
 
-void instance::set_props(std::shared_ptr<void const> props) noexcept { props_ = std::move(props); }
+void instance::tried(std::shared_ptr<void const> props) noexcept {
+  last_view_.reset();
+  props_ = std::move(props);
+  own_.reset();
+  placed_by_.reset();
+}
+
+void instance::viewed(std::shared_ptr<void const> props, std::shared_ptr<void const> own,
+                      std::shared_ptr<void const> placed_by, element view, std::uint64_t version) noexcept {
+  // The view first, whose handlers may refer to the props it replaces.
+  last_view_.reset();
+  props_ = std::move(props);
+  own_ = std::move(own);
+  placed_by_ = std::move(placed_by);
+  last_view_.emplace(std::move(view));
+  viewed_ = version;
+}
+
+bool instance::made_of(void const *own, void const *placed_by) const noexcept {
+  return last_view_ && own == own_.get() && placed_by == placed_by_.get();
+}
+
+element const *instance::unchanged_view() const noexcept {
+  return last_view_ && version_ == viewed_ ? &*last_view_ : nullptr;
+}
+
+void instance::link(state_link app) noexcept {
+  app_link_ = app;
+  table_->link(component_.get(), {this, &instance::changed_in});
+}
+
+void instance::changed_in(void *self) {
+  auto &changed = *static_cast<instance *>(self);
+
+  ++changed.version_;
+
+  if (changed.app_link_.changed != nullptr) {
+    changed.app_link_.changed(changed.app_link_.owner);
+  }
+}
 
 void instance::unmount(failure_sink sink) noexcept {
   // First, so that nothing of it runs on past a failure below.
@@ -73,6 +112,7 @@ void instance::unmount(failure_sink sink) noexcept {
 void instance::unlink() noexcept {
   // Gone from the view: what its tasks, or its destructor, still change shows nowhere.
   table_->link(component_.get(), {});
+  app_link_ = {};
 }
 
 void instance::detach() noexcept {

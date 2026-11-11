@@ -28,6 +28,7 @@ quoll_declare_tests(
     tests/app_test.cpp
     tests/callback_test.cpp
     tests/nested_test.cpp
+    tests/skip_test.cpp
     tests/element_test.cpp
     tests/to_html_test.cpp
   DEPS

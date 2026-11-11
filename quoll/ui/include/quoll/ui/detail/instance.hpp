@@ -40,8 +40,10 @@
 #include <quoll/async/detail/stop_waker.hpp>
 #include <quoll/ui/detail/component_table.hpp>
 
+#include <cstdint>
 #include <exception>
 #include <memory>
+#include <optional>
 #include <stop_token>
 #include <string>
 #include <vector>
@@ -82,9 +84,29 @@ public:
   // As the parent last gave them: a task holding them keeps them as they were when it started.
   [[nodiscard]] std::shared_ptr<void const> const &props() const noexcept { return props_; }
 
-  // Given to a view that returned, shown or not: those before go, as the component may refer to `given` only until its
-  // next view that returns.
-  void set_props(std::shared_ptr<void const> props) noexcept;
+  // Given to a view that returned but did not show, as the render failed past it: those before go, as the component may
+  // refer to `given` only until its next view that returns, and so does its last view, made with them.
+  void tried(std::shared_ptr<void const> props) noexcept;
+
+  // Its view showed: made with `props`, from `own`, what its parent gave, and `placed_by`, the props of its parent's
+  // view, seeing its states at `version`. Kept, so that the next render may give it again, as long as nothing changed.
+  void viewed(std::shared_ptr<void const> props, std::shared_ptr<void const> own, std::shared_ptr<void const> placed_by,
+              element view, std::uint64_t version) noexcept;
+
+  // Whether its props were made of these: then they are kept as they are, so that what refers to them stays good.
+  [[nodiscard]] bool made_of(void const *own, void const *placed_by) const noexcept;
+
+  // What its parent gave it, last.
+  [[nodiscard]] std::shared_ptr<void const> const &own() const noexcept { return own_; }
+
+  // Its last view that showed, while none of its states changed since and it may be given again: none otherwise.
+  [[nodiscard]] element const *unchanged_view() const noexcept;
+
+  // How many times its states changed: a view records what it saw.
+  [[nodiscard]] std::uint64_t version() const noexcept { return version_; }
+
+  // Links its states to it, and it to its app, which a change tells after counting it.
+  void link(state_link app) noexcept;
 
   [[nodiscard]] std::string const &key() const noexcept { return key_; }
 
@@ -101,12 +123,21 @@ public:
   void detach() noexcept;
 
 private:
+  static void changed_in(void *self);
+
   void unlink() noexcept;
 
   component_table const *table_;
   // Before the component, which may keep what refers to them.
   std::shared_ptr<void const> props_;
+  std::shared_ptr<void const> own_;
+  std::shared_ptr<void const> placed_by_;
   held_component component_;
+  // After the component, whose `this` and props its handlers may hold: destroyed before them.
+  std::optional<element> last_view_;
+  std::uint64_t version_ = 0;
+  std::uint64_t viewed_ = 0;
+  state_link app_link_{};
   std::string key_;
   // Before what stops it.
   std::stop_source stop_;

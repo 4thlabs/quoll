@@ -224,10 +224,8 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
 - Nested stateful components: done, `component<C>(props)` with its states kept by type and key, its props given anew,
   `mounted()` and `unmounted()`, and its tasks stopped as it goes (`docs/ui.md`). `ui::callback<Signature>` in props
   runs in the task of the component that wrote it, as decided on 2026-11-10: the child stops waiting for it as it
-  goes, the parent's work goes on. Next, a view skipped when neither props nor states changed: a callback compares
-  equal whatever its function captures, as decided, so that a view skipped keeps the callback of the last view that
-  ran; one capturing what changes from a view to the next (`[id = item.id]` in a list without keys) would then call
-  with what it captured then, which that step decides how to meet.
+  goes, the parent's work goes on. A view is not run again when its props compare equal and none of its states
+  changed (`docs/ui.md`), its callbacks those of its last view, as decided on 2026-11-11.
 - Restoring the states after a rebuild, which the third level of hot reload still lacks.
 - How a page writes its names: `using namespace quoll::ui;` now sits in each `view()`, as the rules forbid it at
   namespace scope in a header.
@@ -384,7 +382,10 @@ changes only what the harness shows. Candidates:
   stops waiting as it goes, and the parent's work goes on. The user writes neither `spawn` nor an annotation: the
   component is the one whose view makes the callback, so that one made elsewhere, in a handler or `mounted()`, runs in
   its caller's task. A callback compares equal to any other that calls something, whatever its function captures, so
-  that props holding one compare by the rest, for the skipped views of step 6.
+  that props holding one compare by the rest, for the skipped views of step 6. A view not run again keeps the
+  callbacks of its last one, so that one capturing what changes from a view to the next calls with what it captured
+  then: the guide says to capture only what does not change, and to pass the rest as props (2026-11-11, against
+  callbacks refreshed in a view not run again, or never equal).
 - **The interop tests close the protocol layer, and step 6 comes next** (2026-11-10), as the maintainer asked, tired of
   reimplementing HTTP, server-sent events and WebSocket: once Quoll's ends hold against third-party clients and servers
   (#150), the protocol code takes the fixes of its bugs, those the interop tests and reviews find included, of what touches
