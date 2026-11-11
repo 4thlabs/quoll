@@ -129,7 +129,8 @@ public:
   }
 
   /**
-   * @brief Asks the running handlers to stop, and completes once they have ended. Nothing shows afterwards. The
+   * @brief Asks the running handlers to stop, and completes once they have ended. Nothing shows afterwards: its widgets
+   * are unmounted, their nodes left as they are. The
    * components of the view go first, each after those of its own view, then the component's unmounted() runs, if it has
    * one and its view showed. One at a time. Throws `std::logic_error` from one of the app's own tasks, which would wait
    * for itself.

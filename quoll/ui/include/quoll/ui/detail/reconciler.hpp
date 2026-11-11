@@ -37,10 +37,13 @@
 #ifndef QUOLL_UI_DETAIL_RECONCILER_HPP
 #define QUOLL_UI_DETAIL_RECONCILER_HPP
 
+#include <quoll/ui/detail/widget_spec.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/renderer_ref.hpp>
 
+#include <memory>
+#include <utility>
 #include <vector>
 
 namespace quoll::ui::detail {
@@ -50,10 +53,12 @@ class reconciler {
 public:
   reconciler(renderer_ref renderer, node_id &last_id) noexcept : renderer_(renderer), last_id_(&last_id) {}
 
-  // Keeps the nodes of the children that have the same key (their position, without one) and the same tag.
-  void children(node_id parent, std::vector<element> &before, std::vector<element> &after);
+  // Keeps the nodes of the children that have the same key (their position, without one) and the same tag, then mounts
+  // the widgets it made, once everything is in place.
+  void apply(node_id parent, std::vector<element> &before, std::vector<element> &after);
 
 private:
+  void children(node_id parent, std::vector<element> &before, std::vector<element> &after);
   void create(element &value);
   void patch(element &before, element &after);
   void patch_attributes(element const &before, element const &after);
@@ -62,6 +67,8 @@ private:
 
   renderer_ref renderer_;
   node_id *last_id_;
+  // The widgets made, to mount once the render has placed every node.
+  std::vector<std::pair<node_id, std::shared_ptr<widget_spec const>>> to_mount_;
 };
 
 } // namespace quoll::ui::detail

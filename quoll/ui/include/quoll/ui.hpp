@@ -46,6 +46,8 @@
 #include <quoll/ui/decorators.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/event_function.hpp>
+#include <quoll/ui/json_event.hpp>
+#include <quoll/ui/json_event_function.hpp>
 #include <quoll/ui/mounted_component.hpp>
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/renderer.hpp>
@@ -54,5 +56,7 @@
 #include <quoll/ui/tags.hpp>
 #include <quoll/ui/to_html.hpp>
 #include <quoll/ui/unmounted_component.hpp>
+#include <quoll/ui/widget.hpp>
+#include <quoll/ui/widget_renderer.hpp>
 
 #endif // QUOLL_UI_HPP

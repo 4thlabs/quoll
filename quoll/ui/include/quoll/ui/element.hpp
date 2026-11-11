@@ -53,6 +53,7 @@
 namespace quoll::ui::detail {
 
 struct component_spec;
+struct widget_spec;
 
 } // namespace quoll::ui::detail
 
@@ -87,6 +88,8 @@ struct element {
     fragment,
     // A component of its own, with its props: component<C>() makes one, which the app replaces with its view.
     component,
+    // A node a JavaScript module shows, its children its own: widget<Props> makes one.
+    widget,
   };
 
   kind type = kind::node;
@@ -102,6 +105,8 @@ struct element {
   std::vector<element> children{};
   // Of a component.
   std::shared_ptr<detail::component_spec const> component{};
+  // Of a widget: its module and its props.
+  std::shared_ptr<detail::widget_spec const> widget{};
   // Given when the element is shown.
   node_id id = no_node;
 };

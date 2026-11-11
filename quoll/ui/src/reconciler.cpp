@@ -66,7 +66,8 @@ namespace {
 }
 
 [[nodiscard]] bool same_node(element const &before, element const &after) noexcept {
-  return before.type == after.type && before.tag == after.tag;
+  return before.type == after.type && before.tag == after.tag &&
+         (before.type != element::kind::widget || before.widget->module == after.widget->module);
 }
 
 // An element may run several functions on one event: a renderer listens to it once, or each would run several times.
@@ -75,6 +76,17 @@ namespace {
 }
 
 } // namespace
+
+void reconciler::apply(node_id parent, std::vector<element> &before, std::vector<element> &after) {
+  children(parent, before, after);
+
+  // In place now, as a library such as chart.js measures its node.
+  for (auto const &[id, spec] : to_mount_) {
+    renderer_.mount_widget(id, spec->module, spec->props);
+  }
+
+  to_mount_.clear();
+}
 
 void reconciler::children(node_id parent, std::vector<element> &before, std::vector<element> &after) {
   auto const by_key = index_by_key(before);
@@ -149,6 +161,12 @@ void reconciler::create(element &value) {
     }
   }
 
+  // Its children are the module's.
+  if (value.type == element::kind::widget) {
+    to_mount_.emplace_back(value.id, value.widget);
+    return;
+  }
+
   for (auto &child : value.children) {
     create(child);
     renderer_.insert(value.id, child.id, no_node);
@@ -178,6 +196,15 @@ void reconciler::patch(element &before, element &after) {
   }
 
   patch_events(before, after);
+
+  if (after.type == element::kind::widget) {
+    if (before.widget->props != after.widget->props) {
+      renderer_.update_widget(after.id, after.widget->props);
+    }
+
+    return;
+  }
+
   children(after.id, before.children, after.children);
 }
 
@@ -214,6 +241,11 @@ void reconciler::patch_events(element const &before, element const &after) {
 }
 
 void reconciler::remove(element const &value) {
+  // Taken back from its module before the node goes.
+  if (value.type == element::kind::widget) {
+    renderer_.unmount_widget(value.id);
+  }
+
   for (auto const &child : value.children) {
     remove(child);
   }
