@@ -2,7 +2,8 @@
 
 An interface written in C++ and compiled to WebAssembly, in the same language as the rest of an application. The
 DOM gives text, input methods, selection and accessibility, and Tailwind the styles. Link `quoll::emscripten`, which
-brings `quoll::ui`. [`samples/notes/web`](../samples/notes/web) is a whole page, with its build; what is still to come is
+brings `quoll::ui`. [`samples/notes/web`](../samples/notes/web) is a whole page, with its build, and
+[`samples/dashboard`](../samples/dashboard) a screen with a chart.js widget; what is still to come is
 [at the end](#what-it-lacks).
 
 ## A component
@@ -356,6 +357,18 @@ For now this is a plugin of Vite, in `tools/vite-plugin`, in three levels: CSS t
 of `tw()`, `text()` or a tag sent to the running program with no compilation, keeping its state, and
 anything else by a rebuild that reloads the page, losing its state. To try it, see
 [the sample](../samples/notes/web/README.md#try-hot-reload).
+
+A rebuild compiles with line tables only, so that a trace still names files and lines: the plugin's
+`debug` option, `'lines'` by default, takes `'full'` for the variables in the browser's debugger and `'none'` for the
+shortest rebuilds:
+
+```js
+quoll({
+  target: "my_page",
+  sources: ["main.cpp", "components/page.hpp"],
+  debug: "full",
+});
+```
 
 ## What it lacks
 

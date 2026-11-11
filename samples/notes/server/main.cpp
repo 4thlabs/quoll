@@ -44,7 +44,6 @@
 #include "service.hpp"
 
 #include <quoll/async.hpp>
-#include <quoll/http/router.hpp>
 #include <quoll/io/listen.hpp>
 #include <quoll/rest.hpp>
 #include <quoll/runtime.hpp>

@@ -243,7 +243,10 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
   without a copy where it counts, npm packages through the Vite build, loaded on demand. Plain DOM libraries and web
   components come this way; those tied to React cannot.
 - A trial on a real screen of an application, chosen with the maintainer at the start of this step: a dashboard
-  (2026-11-11), a list to filter, a detail to edit, and a chart.js chart fed by the REST API.
+  (2026-11-11), a list to filter, a detail to edit, and a chart.js chart fed by the REST API. Written with what Quoll
+  has in `samples/dashboard`, whose README lists what it lacked, for the base components to give: an input showing a
+  value it is given, labelled and number fields, states that start from the props, the answer of the last request
+  only. It needed no handle on the widget, and no WebSocket.
 - WebSocket in the browser and in the REST DSL, left from step 5, if that screen needs them; if it does not, the maintainer
   says where they go once the step ends, and step 5 is done.
 

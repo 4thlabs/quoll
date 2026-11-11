@@ -314,5 +314,7 @@ thrown by what has no stop to end it, a closed socket or a read after a cancelle
 - [Design decisions](design-decisions.md), for why Quoll works as it does.
 - [`samples/notes`](../samples/notes): a REST contract, its server, its command line over TCP, and its page in a
   browser.
+- [`samples/dashboard`](../samples/dashboard): a screen of an application, a list to filter, a detail to edit and a
+  chart.js chart, over its own contract.
 - [`samples/github`](../samples/github): a command-line program calling GitHub's API, natively and in Node: see
   [A command-line program](command-line.md).
