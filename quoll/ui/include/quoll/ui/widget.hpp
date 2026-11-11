@@ -60,7 +60,7 @@ namespace quoll::ui {
  *   std::vector<double> values;
  * };
  *
- * inline constexpr auto line_chart = widget<chart_props>("./widgets/line_chart.js", "canvas");
+ * inline constexpr auto line_chart = widget<chart_props>("./src/widgets/line_chart.js", "canvas");
  *
  * // In a view:
  * auto const select = [this](point_selected event) {
@@ -82,8 +82,8 @@ template <class Props>
 class widget {
 public:
   /**
-   * @brief The widget of `module`, the path its bundler imports, shown in a node of `tag`: literals, which it refers
-   * to, and which the bundler reads in the source to load the module on demand.
+   * @brief The widget of `module`, as an import would name it from the C++ file declaring it, shown in a node of
+   * `tag`: literals, which it refers to, and which the bundler reads in the source to load the module on demand.
    */
   consteval widget(std::string_view module, std::string_view tag) noexcept : module_(module), tag_(tag) {}
 

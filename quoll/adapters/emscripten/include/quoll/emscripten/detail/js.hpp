@@ -70,6 +70,12 @@ void quoll_emscripten_ui_unlisten(int instance, std::uint32_t id, char const *na
 void quoll_emscripten_ui_insert(int instance, std::uint32_t parent, std::uint32_t child, std::uint32_t before);
 void quoll_emscripten_ui_remove(int instance, std::uint32_t id);
 void quoll_emscripten_ui_close(int instance);
+// A widget of `module` in the node `id`, with its props as JSON: 1 when no module of the page's registry has that path.
+int quoll_emscripten_ui_mount_widget(int instance, std::uint32_t id, char const *module, std::size_t module_size,
+                                     char const *props, std::size_t props_size);
+// 1 when the module's update, or its unmount, threw, which the console shows.
+int quoll_emscripten_ui_update_widget(int instance, std::uint32_t id, char const *props, std::size_t size);
+int quoll_emscripten_ui_unmount_widget(int instance, std::uint32_t id);
 // For hot reload: makes `replace` what the development server's messages call.
 void quoll_emscripten_ui_hot_install(void (*replace)(char const *file, unsigned line, unsigned column,
                                                      char const *value));

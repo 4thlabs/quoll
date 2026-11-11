@@ -48,7 +48,7 @@ messages and messages into bytes. What reads and writes is a byte stream:
 | `io::Connector`, `io::Listener`  | Opens a stream to a host, accepts streams on a port           | asio                                             |
 | `http::HttpTransport`            | Sends a request, gives its response, to a `rest::client`      | `http::client`, `http::local_transport`          |
 | `ui::Renderer`                   | Shows what a view changes                                     | the DOM, memory in tests                         |
-| `ui::WidgetRenderer`             | A renderer that shows JavaScript widgets too                  | memory in tests; the DOM comes next              |
+| `ui::WidgetRenderer`             | A renderer that shows JavaScript widgets too                  | the DOM, memory in tests                         |
 
 ## What a program runs on
 

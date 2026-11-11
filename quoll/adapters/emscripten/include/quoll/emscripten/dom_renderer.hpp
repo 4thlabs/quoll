@@ -40,6 +40,7 @@
 #include <quoll/emscripten/detail/js.hpp>
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/renderer.hpp>
+#include <quoll/ui/widget_renderer.hpp>
 
 #include <stdexcept>
 #include <string>
@@ -114,6 +115,34 @@ public:
 
   void remove(ui::node_id id) { detail::quoll_emscripten_ui_remove(instance_, id); }
 
+  /**
+   * @brief Loads the widget's module from the page's registry, `globalThis.quollWidgets`, which the Vite plugin makes
+   * from the sources it is given, then mounts it with the props it holds then. A module failing to load or to mount is
+   * written to the console, as it fails later.
+   * @throws std::invalid_argument when the registry has no module of that path.
+   */
+  void mount_widget(ui::node_id id, std::string_view module, std::string_view props) {
+    if (detail::quoll_emscripten_ui_mount_widget(instance_, id, module.data(), module.size(), props.data(),
+                                                 props.size()) != 0) {
+      throw std::invalid_argument{"quoll::emscripten: no widget module " + std::string{module} +
+                                  " in the page's registry, which the Vite plugin makes from its sources"};
+    }
+  }
+
+  /** @throws std::runtime_error when the module's update throws, which the console shows. */
+  void update_widget(ui::node_id id, std::string_view props) {
+    if (detail::quoll_emscripten_ui_update_widget(instance_, id, props.data(), props.size()) != 0) {
+      throw std::runtime_error{"quoll::emscripten: a widget's update threw: see the console"};
+    }
+  }
+
+  /** @throws std::runtime_error when the module's unmount throws, which the console shows: it is gone all the same. */
+  void unmount_widget(ui::node_id id) {
+    if (detail::quoll_emscripten_ui_unmount_widget(instance_, id) != 0) {
+      throw std::runtime_error{"quoll::emscripten: a widget's unmount threw: see the console"};
+    }
+  }
+
   /** @brief Takes everything it showed out of the page, and its listeners. Nothing can be called afterwards. */
   void close() { detail::quoll_emscripten_ui_close(instance_); }
 
@@ -122,6 +151,7 @@ private:
 };
 
 static_assert(ui::Renderer<dom_renderer>);
+static_assert(ui::WidgetRenderer<dom_renderer>);
 
 } // namespace quoll::emscripten
 

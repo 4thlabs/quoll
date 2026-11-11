@@ -55,11 +55,58 @@ void quoll_test_dom_reset();
 void quoll_test_dom_html(char *out, std::size_t size);
 void quoll_test_dom_click(char const *text);
 void quoll_test_dom_type(char const *text);
+void quoll_test_widgets_install();
+void quoll_test_widgets_log(char *out, std::size_t size);
+void quoll_test_widgets_emit(char const *name, char const *value);
 }
+
+// Not in an unnamed namespace: Glaze, under Clang, reflects only types with linkage.
+namespace dom_widgets {
+
+using namespace quoll::ui;
+
+struct chart_props {
+  std::vector<int> values;
+};
+
+struct picked {
+  int index = 0;
+};
+
+inline constexpr auto fake_chart = widget<chart_props>("./fake_chart.js", "canvas");
+
+// A chart, given more values or hidden by its buttons, and what it emits.
+struct charting {
+  static inline std::vector<int> picks{};
+
+  state<std::vector<int>> values{std::vector<int>{1}};
+  state<bool> shows{true};
+
+  element view() {
+    auto const pick = [](picked event) { picks.push_back(event.index); };
+
+    auto const more = [this] { values.update([](auto &all) { all.push_back(2); }); };
+
+    auto const hide = [this] { shows = false; };
+
+    auto const chart = [&] { return fake_chart({.values = *values}) | on("picked", pick); };
+
+    return div({button("more") | on_click(more), button("hide") | on_click(hide), when(*shows, chart)});
+  }
+};
+
+} // namespace dom_widgets
 
 namespace {
 
 using namespace quoll::ui;
+
+std::string widget_log() {
+  std::array<char, 4096> buffer{};
+
+  quoll_test_widgets_log(buffer.data(), buffer.size());
+  return buffer.data();
+}
 
 std::string page() {
   std::array<char, 4096> buffer{};
@@ -227,4 +274,79 @@ TEST_CASE("mount: a failed first view can be tried again, a second mount cannot"
 
   REQUIRE(page() == "<p>shown</p>");
   REQUIRE_THROWS_AS(quoll::emscripten::mount<failing_at_first>(), std::logic_error);
+}
+
+TEST_CASE("mount: a widget's module, from the page's registry, is mounted, updated and unmounted",
+          "[emscripten][ui][widget]") {
+  quoll_test_dom_reset();
+  quoll_test_widgets_install();
+  quoll::emscripten::mount<dom_widgets::charting>();
+  settle();
+
+  REQUIRE(widget_log() == R"(mount canvas {"values":[1]})");
+
+  // What it emits reaches its function, read from JSON, with a field it does not declare.
+  quoll_test_widgets_emit("picked", R"({"index":2,"dataset":0})");
+  settle();
+  REQUIRE(dom_widgets::charting::picks == std::vector<int>{2});
+
+  quoll_test_dom_click("more");
+  settle();
+  REQUIRE(widget_log() == "mount canvas {\"values\":[1]}\nupdate {\"values\":[1,2]}");
+
+  // Unmounted, it emits to nothing.
+  quoll_test_dom_click("hide");
+  settle();
+  quoll_test_widgets_emit("picked", R"({"index":3})");
+  settle();
+
+  REQUIRE(widget_log() == "mount canvas {\"values\":[1]}\nupdate {\"values\":[1,2]}\nunmount");
+  REQUIRE(dom_widgets::charting::picks == std::vector<int>{2});
+  REQUIRE(page() == "<div><button>more</button><button>hide</button></div>");
+}
+
+TEST_CASE("dom_renderer: a widget unmounted while its module loads is never mounted", "[emscripten][ui][widget]") {
+  quoll_test_dom_reset();
+  quoll_test_widgets_install();
+
+  quoll::emscripten::dom_renderer renderer{"#app"};
+
+  renderer.create_element(1, "canvas");
+  renderer.insert(0, 1, 0);
+  renderer.mount_widget(1, "./fake_chart.js", R"({"values":[]})");
+  renderer.unmount_widget(1);
+  settle();
+
+  REQUIRE(widget_log().empty());
+  renderer.close();
+}
+
+TEST_CASE("dom_renderer: a widget whose module the registry has not is refused", "[emscripten][ui][widget]") {
+  quoll_test_dom_reset();
+  quoll_test_widgets_install();
+
+  quoll::emscripten::dom_renderer renderer{"#app"};
+
+  renderer.create_element(1, "canvas");
+  renderer.insert(0, 1, 0);
+
+  REQUIRE_THROWS_AS(renderer.mount_widget(1, "./missing.js", "{}"), std::invalid_argument);
+  renderer.close();
+}
+
+TEST_CASE("dom_renderer: props given while its module loads are those it mounts with", "[emscripten][ui][widget]") {
+  quoll_test_dom_reset();
+  quoll_test_widgets_install();
+
+  quoll::emscripten::dom_renderer renderer{"#app"};
+
+  renderer.create_element(1, "canvas");
+  renderer.insert(0, 1, 0);
+  renderer.mount_widget(1, "./fake_chart.js", R"({"values":[1]})");
+  renderer.update_widget(1, R"({"values":[2]})");
+  settle();
+
+  REQUIRE(widget_log() == R"(mount canvas {"values":[2]})");
+  renderer.close();
+  REQUIRE(widget_log() == "mount canvas {\"values\":[2]}\nunmount");
 }
