@@ -153,7 +153,8 @@ component<note_row>({.item = item, .on_remove = [this](std::int64_t id) { return
 - Once the app has stopped, or is gone, or the component is gone, a call ends on a stop and runs nothing: a callback
   holds its component weakly, so that one kept by its own component leaves no cycle. Made outside a view, a callback
   runs in the caller's task.
-- Every callback of a signature compares equal: it calls back a component, which stays the same.
+- Every callback of a signature that calls something compares equal, whatever its function captures: it calls back a
+  component, which stays the same.
 
 ## HTML
 

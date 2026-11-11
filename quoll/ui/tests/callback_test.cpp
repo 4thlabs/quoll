@@ -34,10 +34,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/async/co_spawn.hpp>
+#include <quoll/async/detached.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
+#include <quoll/async/yield.hpp>
 #include <quoll/test/memory_renderer.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/ui_session.hpp>
@@ -52,6 +55,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -164,14 +168,18 @@ struct failing_page {
   }
 };
 
-// Hands out a callback of its own, made in its view, that waits for an hour.
+// Hands out a callback of its own, made in its view, that says it ran, then waits for an hour.
 struct exposing {
   struct props {
     callback<void()> *out = nullptr;
+    bool *ran = nullptr;
   };
 
   element view(props const &given) {
-    *given.out = []() -> task<> { co_await quoll::async::sleep_for(1h); };
+    *given.out = [ran = given.ran]() -> task<> {
+      *ran = true;
+      co_await quoll::async::sleep_for(1h);
+    };
     return p("exposing");
   }
 };
@@ -179,9 +187,10 @@ struct exposing {
 struct exposing_page {
   state<bool> shows{true};
   callback<void()> *out = nullptr;
+  bool ran = false;
 
   element view() {
-    return div({when(*shows, [this] { return component<exposing>({.out = out}); })});
+    return div({when(*shows, [this] { return component<exposing>({.out = out, .ran = &ran}); })});
   }
 };
 
@@ -229,6 +238,8 @@ struct self_keeping_page {
 };
 
 static_assert(std::equality_comparable<callback<void(int)>>);
+// Another signature's callback would be called back here, in the view that converts it: refused.
+static_assert(!std::convertible_to<callback<void(long)>, callback<void(int)>>);
 
 } // namespace
 
@@ -330,6 +341,76 @@ TEST_CASE("callback: a call stopped as its component goes ends its caller on the
   REQUIRE(time.now() < 1h);
 }
 
+TEST_CASE("callback: a call once its component is gone, or going, ends on a stop and runs nothing", "[ui][callback]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<exposing_page> instance{time.get_executor(), shown};
+  callback<void()> exposed;
+  std::optional<std::monostate> ended{std::monostate{}};
+
+  instance.component().out = &exposed;
+
+  std::optional<std::monostate> ended_later{std::monostate{}};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+
+    // Going: the render that unmounts it is posted before the call's work, which then finds it stopped.
+    instance.component().shows = false;
+    ended = co_await quoll::async::stopped_as_optional(exposed());
+
+    // Gone.
+    co_await settle();
+    ended_later = co_await quoll::async::stopped_as_optional(exposed());
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE_FALSE(ended);
+  REQUIRE_FALSE(ended_later);
+  REQUIRE_FALSE(instance.component().ran);
+}
+
+TEST_CASE("callback: a caller stopped already starts nothing", "[ui][callback]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<exposing_page> instance{time.get_executor(), shown};
+  callback<void()> exposed;
+  std::stop_source stopped;
+
+  instance.component().out = &exposed;
+  stopped.request_stop();
+
+  auto const call = [&]() -> task<> { co_await exposed(); };
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    co_await quoll::async::co_spawn(call(), quoll::async::detached, stopped.get_token());
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE_FALSE(instance.component().ran);
+}
+
+TEST_CASE("callback: one of the app's own view runs as a task of the app", "[ui][callback]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<own_page> instance{time.get_executor(), shown};
+  callback<void()> exposed;
+  bool ran = false;
+
+  instance.component().out = &exposed;
+  instance.component().ran = &ran;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    co_await exposed();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(ran);
+}
+
 TEST_CASE("callback: once the app has stopped, or is gone, a call ends on a stop and runs nothing", "[ui][callback]") {
   virtual_time time;
   memory_renderer const shown;
@@ -356,18 +437,37 @@ TEST_CASE("callback: once the app has stopped, or is gone, a call ends on a stop
   REQUIRE_FALSE(ran);
 }
 
-TEST_CASE("callback: one made outside a view runs in the caller's task", "[ui][callback]") {
+TEST_CASE("callback: one made outside a view runs in the caller's task, with copies of its arguments",
+          "[ui][callback]") {
+  std::vector<std::string> seen;
   callback<int(int)> const next = [](int value) { return value + 1; };
-  callback<void(std::string const &)> const kept = [](std::string const &) -> task<> { co_return; };
+  callback<void(std::string const &)> const kept = [&seen](std::string const &text) -> task<> {
+    co_await quoll::async::yield();
+    seen.push_back(text);
+  };
 
   auto const call = [&]() -> task<int> {
-    co_await kept("copied into the task");
+    // The temporary is gone once the call suspends: the task holds a copy.
+    auto pending = kept(std::string{"copied into the task, too long for a short string"});
+
+    co_await std::move(pending);
     co_return co_await next(1);
   };
 
   REQUIRE(quoll::test::run(call()) == 2);
-  REQUIRE(next == callback<int(int)>{});
-  REQUIRE_FALSE(callback<void()>{});
+  REQUIRE(seen == std::vector<std::string>{"copied into the task, too long for a short string"});
+}
+
+TEST_CASE("callback: those calling something compare equal, and an empty one throws", "[ui][callback]") {
+  callback<int(int)> const next = [](int value) { return value + 1; };
+  callback<int(int)> const other = [](int value) { return value - 1; };
+  callback<int(int)> const empty;
+
+  REQUIRE(next == other);
+  REQUIRE_FALSE(next == empty);
+  REQUIRE(empty == callback<int(int)>{});
+  REQUIRE_FALSE(empty);
+  REQUIRE_THROWS_AS(quoll::test::run(empty(1)), std::bad_function_call);
 }
 
 TEST_CASE("callback: one kept by the component that made it does not keep that component", "[ui][callback]") {
