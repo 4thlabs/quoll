@@ -262,6 +262,7 @@ void scope_keys(element &view, std::string const &scope) {
 
     return spec.table->view(kept->component(), props.get());
   }();
+
   // Recorded at once, which cannot fail: then the view it keeps, copied, which may.
   context.views.push_back({.owner = kept,
                            .props = props,

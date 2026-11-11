@@ -172,6 +172,22 @@ void app_core::render() {
       failed(std::current_exception());
     }
   }
+
+  // A state a new component changed in its first view, which its app did not hear of then, shows in another render.
+  // One that cannot be scheduled is told as a failure.
+  for (auto const &component : made.made) {
+    if (component->unchanged_view(epoch_) != nullptr) {
+      continue;
+    }
+
+    try {
+      state_changed(this);
+    } catch (...) {
+      failed(std::current_exception());
+    }
+
+    break;
+  }
 }
 
 void app_core::dispatch(node_id id, std::string_view name, std::string value) {

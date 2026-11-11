@@ -43,7 +43,11 @@ namespace quoll::ui::detail {
 instance::instance(component_table const &table, std::shared_ptr<void const> props, std::string key,
                    std::stop_token const &app_stop)
     : table_(&table), props_(std::move(props)), component_(table.make()), key_(std::move(key)),
-      follow_app_(app_stop, async::detail::stop_waker{&stop_}) {}
+      follow_app_(app_stop, async::detail::stop_waker{&stop_}) {
+  // Counted from the start, its first view and what made it included, so that a change there views it again; its
+  // app hears of changes once it shows.
+  table_->link(component_.get(), {this, &instance::changed_in});
+}
 
 void instance::tried(std::shared_ptr<void const> props) noexcept {
   last_view_.reset();
@@ -73,10 +77,7 @@ element const *instance::unchanged_view(std::uint64_t epoch) const noexcept {
   return last_view_ && version_ == viewed_ && epoch == viewed_epoch_ ? &*last_view_ : nullptr;
 }
 
-void instance::link(state_link app) noexcept {
-  app_link_ = app;
-  table_->link(component_.get(), {this, &instance::changed_in});
-}
+void instance::link(state_link app) noexcept { app_link_ = app; }
 
 void instance::changed_in(void *self) {
   auto &changed = *static_cast<instance *>(self);
