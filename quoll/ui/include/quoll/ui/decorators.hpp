@@ -179,7 +179,7 @@ template <EventFunction F>
 template <EventFunction F>
 [[nodiscard]] auto on(std::string_view name, F function) {
   return decorator([name = std::string{name}, handler = detail::to_handler(std::move(function))](element &target) {
-    target.events.push_back({name, handler});
+    target.events.push_back({.name = name, .handler = handler});
   });
 }
 
@@ -199,7 +199,8 @@ template <EventFunction F>
 [[nodiscard]] inline auto bind(state<std::string> &to) {
   return decorator([&to](element &target) {
     target.value = *to;
-    target.events.push_back({"input", detail::to_handler([&to](std::string typed) { to.set(std::move(typed)); })});
+    target.events.push_back(
+        {.name = "input", .handler = detail::to_handler([&to](std::string typed) { to.set(std::move(typed)); })});
   });
 }
 

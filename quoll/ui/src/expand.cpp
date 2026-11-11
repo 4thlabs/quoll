@@ -51,7 +51,7 @@ namespace {
 using async::detail::type_id;
 
 // The components of a view, matched against those it has now: by type and key, those without a key in their order, as
-// their rank among those of their type. Sorted once, so that a view costs no allocation per component.
+// their rank among those of their type. Sorted once: a few allocations for a view, rather than some for each place.
 class matching {
 public:
   explicit matching(std::vector<std::shared_ptr<instance>> const &shown) : shown_(&shown) {
@@ -89,6 +89,27 @@ public:
     return (*shown_)[places_[at].index];
   }
 
+  // A keyed component placed by this view: two of one type may not share a key there.
+  void placed(type_id type, std::string const &key) { keyed_.emplace_back(type, &key); }
+
+  void check_keys() {
+    if (keyed_.size() < 2) {
+      return;
+    }
+
+    std::ranges::sort(keyed_, [](auto const &left, auto const &right) {
+      return less(left.first, *left.second, right.first, *right.second);
+    });
+
+    auto const same = [](auto const &left, auto const &right) {
+      return left.first == right.first && *left.second == *right.second;
+    };
+
+    if (std::ranges::adjacent_find(keyed_, same) != keyed_.end()) {
+      throw std::logic_error{"quoll::ui: two components of one type have the same key in one view"};
+    }
+  }
+
   // The rank of the next component of `type` without a key, among those of this view.
   [[nodiscard]] std::size_t rank(type_id type) {
     for (auto &[seen, count] : ranks_) {
@@ -120,13 +141,19 @@ private:
     }
   };
 
-  [[nodiscard]] static bool before(place const &left, place const &right) noexcept {
-    if (left.type != right.type) {
-      return std::less<>{}(left.type, right.type);
+  // By type, then by key.
+  [[nodiscard]] static bool less(type_id left_type, std::string const &left_key, type_id right_type,
+                                 std::string const &right_key) noexcept {
+    if (left_type != right_type) {
+      return std::less<>{}(left_type, right_type);
     }
 
-    if (*left.key != *right.key) {
-      return *left.key < *right.key;
+    return left_key < right_key;
+  }
+
+  [[nodiscard]] static bool before(place const &left, place const &right) noexcept {
+    if (!left.is(right.type, *right.key)) {
+      return less(left.type, *left.key, right.type, *right.key);
     }
 
     return left.index < right.index;
@@ -138,6 +165,7 @@ private:
   std::vector<std::size_t> cursors_;
   std::vector<bool> taken_;
   std::vector<std::pair<type_id, std::size_t>> ranks_;
+  std::vector<std::pair<type_id, std::string const *>> keyed_;
 };
 
 // The component whose view is walked, none for the app's own, and the props it was given for it.
@@ -179,35 +207,38 @@ void walk_children(std::vector<element> &children, matching &shown, std::vector<
 }
 
 void check_undecorated(element const &value) {
-  if (!value.classes.empty() || !value.attributes.empty() || !value.events.empty() || value.value ||
-      !value.children.empty()) {
+  if (!value.tag.empty() || !value.content.empty() || !value.classes.empty() || !value.attributes.empty() ||
+      !value.events.empty() || value.value || !value.children.empty()) {
     throw std::logic_error{"quoll::ui: a component is decorated in its own view, but for its key"};
   }
 }
 
-// Where the nodes of a component's view go among its parent's: its key, or, without one, its type and its rank among
-// those of its type, which no key starts with. Positions start with a 0 alone, as the reconciler's own.
-[[nodiscard]] std::string scope_of(type_id type, std::string const &key, matching &shown) {
-  if (!key.empty()) {
-    return key;
-  }
+// A key as a part of a longer one: its length first.
+[[nodiscard]] std::string segment(std::string const &key) { return std::to_string(key.size()) + ':' + key; }
 
-  return std::string{'\0', 'c'} + std::to_string(reinterpret_cast<std::uintptr_t>(type)) + ':' +
-         std::to_string(shown.rank(type));
+// Where the nodes of a component's view go among its parent's: its type, and its key, or its rank among those of its
+// type without one, starting with a 0 character, which no key starts with. Positions start with a 0 alone, as the
+// reconciler's own.
+[[nodiscard]] std::string scope_of(type_id type, std::string const &key, matching &shown) {
+  auto scope =
+      std::string{'\0', key.empty() ? 'r' : 'k'} + std::to_string(reinterpret_cast<std::uintptr_t>(type)) + ':';
+
+  scope += key.empty() ? std::to_string(shown.rank(type)) + ':' : segment(key);
+  return scope;
 }
 
 // Each node of a component's view gets its scope, ahead of its own key or of its position in a fragment, so that the
-// nodes move with the component, and keys of different components never meet.
+// nodes move with the component. Each part says where it ends, a key by its length, so that two never read the same.
 void scope_keys(element &view, std::string const &scope) {
   if (view.type != element::kind::fragment) {
-    view.key = view.key.empty() ? scope : scope + '\x1f' + view.key;
+    view.key = view.key.empty() ? scope : scope + segment(view.key);
     return;
   }
 
   for (std::size_t index = 0; index < view.children.size(); ++index) {
     auto &child = view.children[index];
 
-    scope_keys(child, child.key.empty() ? scope + '\x1f' + '\0' + std::to_string(index) : scope);
+    scope_keys(child, child.key.empty() ? scope + '\0' + std::to_string(index) + ':' : scope);
   }
 }
 
@@ -224,23 +255,44 @@ void walk_component(element &value, matching &shown, std::vector<std::shared_ptr
                                         spec.props.get()}
           : spec.props;
   auto kept = shown.take(type, value.key);
+  auto const fresh = !kept;
 
-  if (!kept) {
+  if (fresh) {
     kept = std::make_shared<instance>(*spec.table, props, value.key, context.app_stop, by.owner);
-    context.made.push_back(kept);
   } else {
-    context.props.emplace_back(kept, props);
+    // Room for its props, recorded once its view has returned: recording them then cannot fail.
+    if (context.props.size() == context.props.capacity()) {
+      context.props.reserve(std::max<std::size_t>(4, context.props.capacity() * 2));
+    }
   }
 
   now.push_back(kept);
 
+  // Its own copy of the key, which outlives the element.
+  if (!value.key.empty()) {
+    shown.placed(type, kept->key());
+  }
+
   auto view = spec.table->view(kept->component(), props.get());
+
+  // What its view may now refer to: a view that threw keeps nothing of its props.
+  if (!fresh) {
+    context.props.emplace_back(kept, props);
+  }
+
   std::vector<std::shared_ptr<instance>> inner;
   matching inner_shown{kept->children()};
 
   walk(view, inner_shown, inner, {kept, props}, context);
+  inner_shown.check_keys();
   inner_shown.leave_the_rest(context);
   context.children.emplace_back(kept, std::move(inner));
+
+  // After those of its view, so that their mounted() run first, as the app's own runs after its components'.
+  if (fresh) {
+    context.made.push_back(kept);
+  }
+
   scope_keys(view, scope);
   value = std::move(view);
 }
@@ -283,6 +335,7 @@ void expand(element &view, std::vector<std::shared_ptr<instance>> const &shown, 
 
   try {
     walk(view, matched, context.now, {app_own, no_props}, context);
+    matched.check_keys();
     matched.leave_the_rest(context);
   } catch (...) {
     discard(context);
@@ -317,6 +370,11 @@ void commit(expansion &context, std::vector<std::shared_ptr<instance>> &shown) n
 }
 
 void discard(expansion &context) noexcept {
+  // Their views returned with these, and may refer to them until they view again: shown or not, they are the last.
+  for (auto &[kept, props] : context.props) {
+    kept->set_props(std::move(props));
+  }
+
   // Made, never shown nor linked: gone with these, as no parent holds its children before commit().
   context.made.clear();
   context.now.clear();

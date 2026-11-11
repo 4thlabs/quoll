@@ -59,9 +59,10 @@ namespace quoll::ui {
  * @endcode
  *
  * Its place is its type and key among the components of the parent's view, or its type and rank there without a key:
- * `| key(...)` keeps a component of a list with its own item as the list changes. Decorated only with a key: what it
- * shows is decorated in its own view. Once its parent's view no longer has it, it is unmounted: its tasks are asked to
- * stop, its unmounted() runs, and it goes once they have ended. Its mounted() runs once it first shows.
+ * `| key(...)` keeps a component of a list with its own item as the list changes, and is unique among the components of
+ * its type in that view. Decorated only with a key: what it shows is decorated in its own view. Once its parent's view
+ * no longer has it, it is unmounted: its tasks are asked to stop, its unmounted() runs, and it goes once they have
+ * ended. Its mounted() runs once it first shows.
  */
 template <ComponentWithProps C>
 [[nodiscard]] element component(typename C::props given) {

@@ -64,6 +64,18 @@ namespace {
   co_await handler(std::move(value));
 }
 
+// What a component does once it first shows, unless it went before this starts: a stop asked for since it was posted,
+// with its unmounted() run already.
+[[nodiscard]] async::task<> run_mounted(async::task<> work) {
+  auto const stop = co_await async::current_stop_token();
+
+  if (stop.stop_requested()) {
+    co_return;
+  }
+
+  co_await std::move(work);
+}
+
 [[nodiscard]] element const *find_shown(std::vector<element> const &elements, node_id id) noexcept {
   for (auto const &value : elements) {
     if (value.id == id) {
@@ -84,12 +96,14 @@ struct app_core::outcome {
   app_core *self;
   // Kept until its task ends: the component it runs on goes then, once unmounted, and before the task counts as ended,
   // which stop() waits for, as the app may go right after.
-  mutable std::shared_ptr<instance> owner;
+  // The props before the component, which may refer to them: destroyed after it, as ended() releases them.
   mutable std::shared_ptr<void const> props;
+  mutable std::shared_ptr<instance> owner;
 
+  // The component first, which may refer to the props, if this holds the last of it.
   void ended() const noexcept {
-    props.reset();
     owner.reset();
+    props.reset();
     self->tasks_.ended();
   }
 
@@ -146,7 +160,7 @@ void app_core::render() {
     }
 
     try {
-      spawn(component->table().mounted(component->component()), component);
+      mount(component->table().mounted(component->component()), component, component->props());
     } catch (...) {
       failed(std::current_exception());
     }
@@ -275,13 +289,18 @@ void app_core::failed(std::exception_ptr failure) const noexcept {
   }
 }
 
+void app_core::mount(async::task<> work, std::shared_ptr<instance> owner, std::shared_ptr<void const> props) {
+  spawn(run_mounted(std::move(work)), std::move(owner), std::move(props));
+}
+
 void app_core::spawn(async::task<> work, std::shared_ptr<instance> owner, std::shared_ptr<void const> props) {
   auto const stop_token = owner ? owner->stop_token() : stop_.get_token();
 
   tasks_.started();
 
   try {
-    async::co_spawn(executor_, std::move(work), outcome{this, std::move(owner), std::move(props)}, stop_token);
+    async::co_spawn(executor_, std::move(work),
+                    outcome{.self = this, .props = std::move(props), .owner = std::move(owner)}, stop_token);
   } catch (...) {
     tasks_.ended();
     throw;

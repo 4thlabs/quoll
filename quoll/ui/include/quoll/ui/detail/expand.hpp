@@ -74,7 +74,8 @@ struct expansion {
 // nothing to expand: has_component() tells.
 //
 // Throws std::logic_error for a component element decorated otherwise than with a key: what a component shows is its
-// view's, decorated there.
+// view's, decorated there; and for two components of one type with one key in a view, even in two lists of it, which
+// could not tell them apart.
 void expand(element &view, std::vector<std::shared_ptr<instance>> const &shown, expansion &context);
 
 // Applies what expand() found: `shown` becomes the components of the view, the states of those made are linked, the
@@ -82,7 +83,8 @@ void expand(element &view, std::vector<std::shared_ptr<instance>> const &shown, 
 // going to the sink.
 void commit(expansion &context, std::vector<std::shared_ptr<instance>> &shown) noexcept;
 
-// Drops what expand() found: the components it made go, never mounted.
+// Drops what expand() found: the components it made go, never mounted, and those kept whose view returned hold the
+// props it was given, which it may refer to.
 void discard(expansion &context) noexcept;
 
 // Whether `value` holds a component, which expand() replaces.

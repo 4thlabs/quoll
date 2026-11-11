@@ -40,6 +40,7 @@
 #include <quoll/async/work_item.hpp>
 #include <quoll/test/memory_renderer.hpp>
 #include <quoll/test/run.hpp>
+#include <quoll/test/ui_session.hpp>
 #include <quoll/test/virtual_time.hpp>
 #include <quoll/ui.hpp>
 
@@ -63,6 +64,8 @@ using namespace std::chrono_literals;
 
 using quoll::async::task;
 using quoll::test::memory_renderer;
+using quoll::test::session;
+using quoll::test::settle;
 using quoll::test::virtual_time;
 
 struct counter {
@@ -128,12 +131,13 @@ struct direct_handlers {
 
   element view() {
     return button(std::to_string(*renders)) | decorator([this](element &target) {
-             target.events.push_back({"click", [this, held = value](std::string) -> task<> {
+             target.events.push_back({.name = "click", .handler = [this, held = value](std::string) -> task<> {
                                         co_await quoll::async::sleep_for(1h);
                                         seen = *held;
                                       }});
-             target.events.push_back(
-                 {"focus", [](std::string) -> task<> { throw std::runtime_error{"before any task"}; }});
+             target.events.push_back({.name = "focus", .handler = [](std::string) -> task<> {
+                                        throw std::runtime_error{"before any task"};
+                                      }});
            });
   }
 };
@@ -371,20 +375,8 @@ struct failing_executor {
   [[nodiscard]] bool operator==(failing_executor const &) const noexcept = default;
 };
 
-// Starts `the_app`, runs `act`, then stops it: all of it within one run of the clock.
-template <class App, class F>
-task<int> session(App &the_app, F act) {
-  the_app.start();
-  co_await act();
-  co_await the_app.stop();
-  co_return 0;
-}
-
 template <class C>
 using test_app = app<C, memory_renderer>;
-
-// Lets what is pending run.
-task<> settle() { co_await quoll::async::sleep_for(1ms); }
 
 } // namespace
 

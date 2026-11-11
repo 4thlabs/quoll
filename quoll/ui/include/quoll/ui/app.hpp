@@ -111,7 +111,7 @@ public:
       core_.render();
 
       if constexpr (MountedComponent<C>) {
-        core_.spawn(component_.mounted());
+        core_.mount(component_.mounted());
       }
     } catch (...) {
       core_.abandon();
