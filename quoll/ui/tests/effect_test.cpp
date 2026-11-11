@@ -59,6 +59,7 @@
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -301,8 +302,11 @@ struct kept_starts {
             }};
   }
 
+  // Runs what was started since the last call.
   task<int> run_all() {
-    for (auto &work : started) {
+    auto taken = std::exchange(started, {});
+
+    for (auto &work : taken) {
       co_await std::move(work);
     }
 
@@ -315,6 +319,66 @@ struct bare_page {
   state<std::optional<int>> chosen{std::optional<int>{1}};
   state<text_target> text;
   effect load{chosen, load_text, text};
+};
+
+// A key whose copy, or comparison, throws once asked to, as one that allocates may.
+bool key_copy_throws = false;
+bool key_compare_throws = false;
+
+// Asks a key to throw for as long as it lives, whatever the test does meanwhile.
+struct throwing_keys {
+  bool &flag;
+
+  explicit throwing_keys(bool &asked) : flag(asked) { flag = true; }
+
+  throwing_keys(throwing_keys const &) = delete;
+  throwing_keys(throwing_keys &&) = delete;
+  throwing_keys &operator=(throwing_keys const &) = delete;
+  throwing_keys &operator=(throwing_keys &&) = delete;
+
+  ~throwing_keys() { flag = false; }
+};
+
+struct touchy_key {
+  int value = 0;
+
+  touchy_key() = default;
+
+  explicit touchy_key(int given) : value(given) {}
+
+  touchy_key(touchy_key const &other) : value(other.value) {
+    if (key_copy_throws) {
+      throw std::runtime_error{"no copy"};
+    }
+  }
+
+  touchy_key(touchy_key &&) noexcept = default;
+  touchy_key &operator=(touchy_key const &) = default;
+  touchy_key &operator=(touchy_key &&) noexcept = default;
+  ~touchy_key() = default;
+
+  [[nodiscard]] bool operator==(touchy_key const &other) const {
+    if (key_compare_throws) {
+      throw std::runtime_error{"no compare"};
+    }
+
+    return value == other.value;
+  }
+};
+
+task<std::string> load_key(touchy_key given) { return load_text(given.value); }
+
+struct touchy_key_page {
+  state<touchy_key> key{touchy_key{1}};
+  state<text_target> text;
+  effect load{key, load_key, text};
+};
+
+// Its target has no place for an error: a failure to start is thrown.
+struct touchy_key_loading_page {
+  state<touchy_key> key{touchy_key{1}};
+  state<std::tuple<std::string, bool>> text;
+  effect load{key, load_key, text};
 };
 
 } // namespace
@@ -829,4 +893,87 @@ TEST_CASE("effect: one that could not start ends on that failure, which reload t
   CHECK(other.contains("failed 1"));
   CHECK(loads.lines == std::vector<std::string>{"start 1", "end 1"});
   CHECK(shown.html().contains("text 1 1"));
+}
+
+TEST_CASE("effect: a view whose change cannot be recorded stops the run before, and waits for reload", "[ui][effect]") {
+  loads = {};
+
+  touchy_key_page page;
+  kept_starts starts;
+
+  // The run for 1 queued; the view of 2 fails as it copies the key: the run for 1 writes nothing.
+  page.load.after_view(starts.starter());
+  page.key = touchy_key{2};
+
+  {
+    throwing_keys const copies{key_copy_throws};
+
+    page.load.after_view(starts.starter());
+  }
+
+  virtual_time time;
+
+  REQUIRE(quoll::test::run(time, starts.run_all()) == 0);
+  CHECK(loads.lines.empty());
+
+  auto const &[value, loading, error] = *page.text;
+
+  CHECK(value.empty());
+  CHECK_FALSE(loading);
+  REQUIRE(error != nullptr);
+  CHECK(what_of(error) == "no copy");
+
+  // A view after it runs nothing, as a failure to start waits for reload().
+  page.load.after_view(starts.starter());
+  CHECK(starts.started.empty());
+
+  page.load.reload();
+  page.load.after_view(starts.starter());
+
+  REQUIRE(quoll::test::run(time, starts.run_all()) == 0);
+  CHECK(std::get<0>(*page.text) == "text 2");
+  CHECK(std::get<2>(*page.text) == nullptr);
+}
+
+TEST_CASE("effect: a run under way whose next view cannot compare its states is stopped, its failure thrown with no "
+          "place for it",
+          "[ui][effect]") {
+  loads = {};
+  loads.delays = {{1, 10ms}};
+
+  touchy_key_loading_page page;
+  kept_starts starts;
+  bool loading_meanwhile = false;
+  bool thrown = false;
+
+  page.load.after_view(starts.starter());
+
+  // The run for 1 begun, its target loading; a view whose comparison throws stops it.
+  auto const view_fails = [&]() -> task<> {
+    co_await quoll::async::yield();
+    loading_meanwhile = std::get<1>(*page.text);
+
+    throwing_keys const compares{key_compare_throws};
+
+    try {
+      page.load.after_view(starts.starter());
+    } catch (std::runtime_error const &) {
+      thrown = true;
+    }
+  };
+
+  auto const act = [&]() -> task<int> {
+    co_await quoll::async::when_all(std::move(starts.started.front()), view_fails());
+    co_return 0;
+  };
+
+  virtual_time time;
+
+  REQUIRE(quoll::test::run(time, act()) == 0);
+  CHECK(loading_meanwhile);
+  CHECK(thrown);
+  CHECK(loads.lines == std::vector<std::string>{"start 1"});
+  CHECK(loads.stopped == 1);
+  CHECK(std::get<0>(*page.text).empty());
+  CHECK_FALSE(std::get<1>(*page.text));
 }

@@ -49,7 +49,6 @@
 #include <quoll/ui/detail/target.hpp>
 #include <quoll/ui/state.hpp>
 
-#include <cassert>
 #include <concepts>
 #include <exception>
 #include <functional>
@@ -184,53 +183,24 @@ public:
   effect &operator=(effect &&) = delete;
 
   // No run's frame is left: one refers to it until it goes, and its component goes once its tasks have ended.
-  ~effect() { assert(slot_.frames == 0 && "quoll::ui::effect: destroyed while a run is under way"); }
+  ~effect();
 
   /**
    * @brief Runs it again for the values its states hold now, as a change would: after the view it asks for, the run
    * before stopped, as React runs an effect again. What asking for that view throws goes to the caller, as a state's
    * change does.
    */
-  void reload() {
-    watch_(watching::forget);
-    detail::tell(link_);
-  }
+  void reload();
 
   /** @brief For the app of the component holding it, as a state's. */
   void link(detail::state_link to) noexcept { link_ = to; }
 
-  /** @brief For the app of the component holding it, after each of its views: runs it if one of its states changed. */
-  void after_view(detail::effect_starter const &start) {
-    auto const now = watch_(watching::record);
-
-    if (!now.differs) {
-      return;
-    }
-
-    // None held: the run before, under way or queued, stops at once and writes nothing, and the target is loading no
-    // more.
-    if (!now.holds) {
-      slot_.last.request_stop();
-      slot_.pending = false;
-      target_.abandon();
-      return;
-    }
-
-    // Asked for now, as the view is shown: the run before stops at once, so that an answer of its that comes before
-    // this one starts writes nothing. One that cannot start, as for a lack of memory, ends on that failure, the run
-    // before stopped, which its target shows and reload() tries again, rather than be tried after each view; a target
-    // with no place for it leaves it to the app's on_error.
-    try {
-      start(run_(detail::ask(slot_)));
-    } catch (...) {
-      slot_.last.request_stop();
-      slot_.pending = false;
-
-      if (!target_.fail(std::current_exception())) {
-        throw;
-      }
-    }
-  }
+  /**
+   * @brief For the app of the component holding it, after each of its views: runs it if one of its states changed. What
+   * fails on the way, as a copy or a start lacking memory, stops the run before all the same, and is its target's
+   * failure, or thrown for a target with no place for it; the effect then waits for reload().
+   */
+  void after_view(detail::effect_starter const &start);
 
 private:
   template <class V, class... D, class F>
@@ -288,6 +258,9 @@ private:
     };
   }
 
+  // The run under way or queued stops, and writes nothing.
+  void stop_before() noexcept;
+
   enum class watching { record, forget };
 
   struct watched {
@@ -303,6 +276,8 @@ private:
   detail::run_slot slot_;
   detail::target_hooks target_;
   detail::state_link link_{};
+  // Failed to start, until reload().
+  bool failed_ = false;
 };
 
 static_assert(detail::LinkedMember<effect>);

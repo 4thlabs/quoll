@@ -277,7 +277,9 @@ of several elements:
 As a run starts, its target is loading and has no error, the values before kept, as a state keeps its value until it
 is set. As it ends, the target holds all it gave at once, in one render, or why it failed, the values before kept. A
 target holds one `bool` and one `std::exception_ptr` at most, and a function giving a `bool` or an error as a value
-does not compile: the target could not tell it from its flags. A target needs neither flag:
+does not compile: the target could not tell it from its flags. Each value is of the type the function gives, with no
+conversion, which could make a view of what the run held, and moves without throwing, so that a run writes all it
+gave or nothing. A target needs neither flag:
 
 ```cpp
 state<products::monthly_sales> sales;                          // the value alone
@@ -298,8 +300,8 @@ state<std::tuple<products::monthly_sales, bool>> sales;        // and whether it
 - a state holding a `std::optional` gives what it holds; while one holds none, nothing runs, the run before stopped
   and the target loading no more;
 - `reload()` runs it again after the view it asks for, as a change would: what a Try again button calls. An effect runs
-  one way, after a view, as React has it; a run that cannot start, as for a lack of memory, ends on that failure, which
-  `reload()` tries again;
+  one way, after a view, as React has it. One that cannot start, comparing or copying its states, or starting its run,
+  as for a lack of memory, stops the run before all the same and ends on that failure, which `reload()` tries again;
 - a target with no `std::exception_ptr` leaves a failure to the app's `on_error`, as a handler's.
 
 Several loads go in one function, which gives a `std::tuple`, and fail together:

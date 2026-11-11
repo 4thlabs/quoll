@@ -2,6 +2,7 @@ quoll_declare_module(
   NAME ui
   SOURCES
     src/app_core.cpp
+    src/effect.cpp
     src/element.cpp
     src/expand.cpp
     src/hot.cpp
@@ -61,6 +62,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/target_bool_value.cpp
     tests/compile_fail/target_two_flags.cpp
     tests/compile_fail/target_value_count.cpp
+    tests/compile_fail/target_view_value.cpp
   DEPS
     quoll::ui
 )

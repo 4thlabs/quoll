@@ -157,9 +157,9 @@ struct target_roles {
   }
 };
 
-// Whether each value of a target state holding T can be made from the one a run giving R gives, in order, copied when
-// `Copied`, as a run whose caller is given them too, or moved, then moved in without throwing: what a run gave is
-// written whole, or not at all.
+// Whether each value of a target state holding T is of the type of the one a run giving R gives, in order, copied
+// when `Copied`, as a run whose caller is given them too, or moved, then moved in without throwing: what a run gave is
+// written whole, or not at all. Of its type, so that no conversion makes a view of what the run held.
 template <class T, class R, bool Copied>
 inline constexpr bool values_writable = [] {
   using roles = target_roles<T>;
@@ -169,9 +169,9 @@ inline constexpr bool values_writable = [] {
     return false;
   } else {
     return []<std::size_t... Index>(std::index_sequence<Index...>) {
-      return ((std::constructible_from<std::tuple_element_t<Index, typename roles::values_type>,
-                                       std::conditional_t<Copied, std::tuple_element_t<Index, given> const &,
-                                                          std::tuple_element_t<Index, given> &&>> &&
+      return ((std::same_as<std::remove_cv_t<std::tuple_element_t<Index, typename roles::values_type>>,
+                            std::remove_cv_t<std::tuple_element_t<Index, given>>> &&
+               (!Copied || std::copy_constructible<std::tuple_element_t<Index, given>>) &&
                std::is_nothrow_move_assignable_v<std::tuple_element_t<Index, typename roles::values_type>>) &&
               ...);
     }(std::make_index_sequence<roles::values>{});
@@ -179,8 +179,8 @@ inline constexpr bool values_writable = [] {
 }();
 
 // A target state holding T, for a run giving R, said one rule at a time: one loading flag and one error at most, and
-// as many values as R gives, each made from one of R's, in order, none a bool or an error, which a target would not
-// tell apart from its flags. A run whose caller is given what it gave, `Copied`, as an action's, may also write its
+// as many values as R gives, each of the type of one of R's, in order, none a bool or an error, which a target would
+// not tell apart from its flags. A run whose caller is given what it gave, `Copied`, as an action's, may also write its
 // flags alone.
 template <class T, class R, bool Copied>
 consteval void check_target() {
@@ -199,8 +199,8 @@ consteval void check_target() {
     static_assert(target_roles<T>::values == std::tuple_size_v<typename values_of<R>::type>,
                   "quoll::ui: a target state holds as many values as its function gives, in order");
     static_assert(values_writable<T, R, Copied>,
-                  "quoll::ui: each value of a target state is made from the one its function gives, in order, and "
-                  "moved in without throwing");
+                  "quoll::ui: each value of a target state is of the type its function gives, in order, and moved "
+                  "in without throwing");
   }
 }
 

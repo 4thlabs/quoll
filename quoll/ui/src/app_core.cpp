@@ -244,7 +244,8 @@ void app_core::start_effects(effects_function effects, void *component, held_vie
     held_view const *held;
   } context{this, &held};
 
-  // What spawning throws goes back to the effect, which runs again after the next view, and is told below.
+  // What spawning throws goes back to the effect, which ends on it and waits for reload(), and is told below when its
+  // target has no place for it.
   auto const start = [](void *owner, async::task<> work) {
     auto const &[app, given] = *static_cast<starting *>(owner);
 
