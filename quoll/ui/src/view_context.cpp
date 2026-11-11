@@ -57,21 +57,24 @@ call_target current_target() noexcept {
   return {.app = current.app,
           .owner = current.held.owner,
           .props = current.held.props,
-          .of_component = current.held.owner != nullptr};
+          .of_component = current.held.owner != nullptr,
+          .of_props = current.held.props != nullptr};
 }
 
 bool spawn_in(call_target const &target, async::task<> work) {
   auto *const core = target.app ? target.app->core : nullptr;
   auto owner = target.owner.lock();
+  auto props = target.props.lock();
 
   // A component gone, or going, as its stop says: its work does not start.
-  if (core == nullptr || core->stopped() || (target.of_component && (!owner || owner->stop_token().stop_requested()))) {
+  if (core == nullptr || core->stopped() || (target.of_component && (!owner || owner->stop_token().stop_requested())) ||
+      (target.of_props && !props)) {
     return false;
   }
 
   // The props of the view that made it, if that component has not viewed again since: a reference it keeps to them
   // holds until then.
-  core->spawn(std::move(work), {.owner = std::move(owner), .props = target.props.lock()});
+  core->spawn(std::move(work), {.owner = std::move(owner), .props = std::move(props)});
   return true;
 }
 

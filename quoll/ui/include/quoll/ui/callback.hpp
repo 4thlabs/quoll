@@ -47,9 +47,9 @@
 #include <concepts>
 #include <exception>
 #include <functional>
+#include <initializer_list>
 #include <memory>
-#include <span>
-#include <string_view>
+#include <ranges>
 #include <type_traits>
 #include <utility>
 
@@ -66,15 +66,16 @@ inline constexpr bool is_callback = false;
 template <class Signature>
 inline constexpr bool is_callback<callback<Signature>> = true;
 
-// What refers to an object it does not hold, which a copy does not make the task's own.
+// What refers to an object it does not hold, which a copy does not make the task's own: a view of std::ranges, as
+// std::string_view and std::span, a std::reference_wrapper, a std::initializer_list.
 template <class T>
-inline constexpr bool is_view = false;
+inline constexpr bool is_view = std::ranges::view<T>;
 
-template <class CharT, class Traits>
-inline constexpr bool is_view<std::basic_string_view<CharT, Traits>> = true;
+template <class T>
+inline constexpr bool is_view<std::reference_wrapper<T>> = true;
 
-template <class T, std::size_t Extent>
-inline constexpr bool is_view<std::span<T, Extent>> = true;
+template <class T>
+inline constexpr bool is_view<std::initializer_list<T>> = true;
 
 // What may hold no function, which a callback made of it holds none either.
 template <class T>
@@ -111,12 +112,14 @@ inline constexpr bool may_be_empty<std::function<Signature>> = true;
  * waiting, and the work goes on, as it belongs to the component that wrote it; what it throws then goes to the app's
  * on_error. A work that ends on a stop, as its own component goes, ends the caller on the stop too. Once the app has
  * stopped, or is gone, or the component is gone, a call ends on a stop and runs nothing: a callback holds its
- * component weakly, so that one kept by its own component leaves no cycle.
+ * component weakly, so that one kept by its own component leaves no cycle. So does a call once that component has
+ * viewed again, as what the function refers to of the view that made it, its `given`, may be gone.
  *
  * A caller already stopped starts nothing, and a work whose component is stopped before it starts does not run.
  *
- * Made outside a view, in a handler or a mounted() included, it runs the function as part of the caller's task: what
- * marks the component is its view running. The function returns `R`, or a task of `R`;
+ * Made outside a view, in a handler or a mounted() included, it knows no component: it runs the function as part of
+ * the caller's task, as a std::function would, and what the function captures is the caller's to keep alive. What marks
+ * the component is its view running. The function returns `R`, or a task of `R`;
  * the arguments are copied into the task, so that none can be a reference to write to or a view, refused at compile
  * time; a pointer still points to what the caller gave, which must outlive the work. Copies of a callback share its
  * function. Every callback of one signature
@@ -134,7 +137,9 @@ class callback<R(Args...)> {
                 "quoll::ui: a callback's arguments are copied into its task: a view would still refer to the caller's "
                 "object, which may go first");
 
-  using function_type = std::function<async::task<R>(Args...)>;
+  // Given the task's own copies, by reference: a function taking one by reference refers to the task's copy, which
+  // lives as long as the task.
+  using function_type = std::function<async::task<R>(std::decay_t<Args> &...)>;
 
 public:
   /** @brief A callback calling nothing: a call of it throws `std::bad_function_call`. */
@@ -142,10 +147,12 @@ public:
 
   /** @brief Calls `function` back, in the task of the component whose view makes it. Implicit, as for std::function. */
   template <class F>
-    requires(!detail::is_callback<std::remove_cvref_t<F>> && std::invocable<std::decay_t<F> &, Args...> &&
-             (std::same_as<std::invoke_result_t<std::decay_t<F> &, Args...>, async::task<R>> ||
-              (std::is_void_v<R> && std::is_void_v<std::invoke_result_t<std::decay_t<F> &, Args...>>) ||
-              (!std::is_void_v<R> && std::convertible_to<std::invoke_result_t<std::decay_t<F> &, Args...>, R>)) &&
+    requires(!detail::is_callback<std::remove_cvref_t<F>> &&
+             std::invocable<std::decay_t<F> &, std::decay_t<Args> &...> &&
+             (std::same_as<std::invoke_result_t<std::decay_t<F> &, std::decay_t<Args> &...>, async::task<R>> ||
+              (std::is_void_v<R> && std::is_void_v<std::invoke_result_t<std::decay_t<F> &, std::decay_t<Args> &...>>) ||
+              (!std::is_void_v<R> &&
+               std::convertible_to<std::invoke_result_t<std::decay_t<F> &, std::decay_t<Args> &...>, R>)) &&
              std::copy_constructible<std::decay_t<F>>)
   callback(F &&function) // NOLINT(google-explicit-constructor, hicpp-explicit-conversions)
       : function_(made_of(std::forward<F>(function))), target_(detail::current_target()) {}
@@ -178,16 +185,16 @@ private:
 
   template <class F>
   [[nodiscard]] static function_type adapt(F &&function) {
-    return [held = std::decay_t<F>(std::forward<F>(function))](Args... args) mutable -> async::task<R> {
-      using result = std::invoke_result_t<std::decay_t<F> &, Args...>;
+    return [held = std::decay_t<F>(std::forward<F>(function))](std::decay_t<Args> &...args) mutable -> async::task<R> {
+      using result = std::invoke_result_t<std::decay_t<F> &, std::decay_t<Args> &...>;
 
       if constexpr (std::same_as<result, async::task<R>>) {
-        return std::invoke(held, std::forward<Args>(args)...);
+        return std::invoke(held, args...);
       } else if constexpr (std::is_void_v<R>) {
-        std::invoke(held, std::forward<Args>(args)...);
+        std::invoke(held, args...);
         return detail::done();
       } else {
-        return detail::ready<R>(std::invoke(held, std::forward<Args>(args)...));
+        return detail::ready<R>(std::invoke(held, args...));
       }
     };
   }
@@ -207,16 +214,16 @@ private:
     }
 
     if (!target.app) {
-      // Made outside an app, as for to_html: its component, if it had one, is gone with the page.
-      if (target.of_component && target.owner.expired()) {
+      // Made in a component's view for to_html: the component is gone with the page.
+      if (target.of_component) {
         co_await async::detail::end_stopped{};
       }
 
       if constexpr (std::is_void_v<R>) {
-        co_await (*function)(std::move(args)...);
+        co_await (*function)(args...);
         co_return;
       } else {
-        co_return co_await (*function)(std::move(args)...);
+        co_return co_await (*function)(args...);
       }
     }
 
@@ -246,10 +253,10 @@ private:
 
     try {
       if constexpr (std::is_void_v<R>) {
-        co_await (*function)(std::move(args)...);
+        co_await (*function)(args...);
         end.give({});
       } else {
-        end.give(co_await (*function)(std::move(args)...));
+        end.give(co_await (*function)(args...));
       }
     } catch (...) {
       if (!end.fail(std::current_exception())) {
