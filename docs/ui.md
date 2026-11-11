@@ -314,11 +314,15 @@ export function mount(node, props, emit) {
   globalThis.quollWidgets = widgets;
   ```
 
+  A path starting with `./` or `../` is resolved from the C++ file declaring it, inside the Vite root or not; any other,
+  a package's name, is imported as it is.
+
   Each module is a chunk of the build, loaded as its first widget shows. `mount` then runs with the props the widget
   holds by then; one unmounted while its module loads is never mounted.
-- **Failures:** a widget whose module the registry does not have, or whose `update` or `unmount` throws, goes to
-  `on_error`; a module that fails to load or to mount is written to the console, as it happens once the render has
-  gone on. A widget placed through a renderer that shows none, a `WidgetRenderer`, throws `std::logic_error`.
+- **Failures go to `on_error`**, with the details in the console: a widget whose module the registry does not have,
+  whose `update` or `unmount` throws, or whose module fails to load or to mount, which happens once the render has
+  gone on. A `mount` may return a promise, which is awaited. What it emits that JSON cannot hold reaches nothing. A
+  widget placed through a renderer that shows none, a `WidgetRenderer`, throws `std::logic_error`.
 
 ## HTML
 

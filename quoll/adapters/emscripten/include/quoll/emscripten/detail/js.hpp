@@ -70,6 +70,8 @@ void quoll_emscripten_ui_unlisten(int instance, std::uint32_t id, char const *na
 void quoll_emscripten_ui_insert(int instance, std::uint32_t parent, std::uint32_t child, std::uint32_t before);
 void quoll_emscripten_ui_remove(int instance, std::uint32_t id);
 void quoll_emscripten_ui_close(int instance);
+// What a widget's failure after its call calls: a module failing to load or to mount, with a message.
+void quoll_emscripten_ui_on_failure(int instance, void (*function)(void *owner, char const *message), void *owner);
 // A widget of `module` in the node `id`, with its props as JSON: 1 when no module of the page's registry has that path.
 int quoll_emscripten_ui_mount_widget(int instance, std::uint32_t id, char const *module, std::size_t module_size,
                                      char const *props, std::size_t props_size);
