@@ -67,12 +67,20 @@ namespace quoll::ui {
  *   };
  *
  *   element view(props const &given) {
- *     return button("Delete") | on_click([&given] { return given.on_remove(given.item.id); });
+ *     auto const remove = [&given] {
+ *       return given.on_remove(given.item.id);
+ *     };
+ *
+ *     return button("Delete") | on_click(remove);
  *   }
  * };
  *
  * // In the page's view:
- * component<note_row>({.item = item, .on_remove = [this](std::int64_t id) { return remove(id); }})
+ * auto const on_remove = [this](std::int64_t id) {
+ *   return remove(id);
+ * };
+ *
+ * return component<note_row>({.item = item, .on_remove = on_remove});
  * @endcode
  *
  * Made from a function in a view, it holds the component whose view that is, or the app for its own view. Calling it

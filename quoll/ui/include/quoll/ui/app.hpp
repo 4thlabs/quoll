@@ -84,7 +84,7 @@ public:
     detail::link_states(component_, {&core_, &detail::app_core::state_changed});
 
 #if defined(QUOLL_UI_HOT)
-    detail::hot_subscribe(&core_, &detail::app_core::state_changed);
+    detail::hot_subscribe(&core_, &detail::app_core::reloaded);
 #endif
   }
 

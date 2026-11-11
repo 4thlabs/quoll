@@ -26,11 +26,14 @@ struct counter {
   state<int> count;
 
   element view() {
-    return div({
-               text("Count: " + std::to_string(*count)) | tw("text-lg"),
-               button("Add") | tw("btn btn-primary") | on_click([this] { count = *count + 1; }),
-           }) |
-           tw("flex items-center gap-2");
+    auto const add = [this] { count = *count + 1; };
+
+    auto const shown = div({
+        text("Count: " + std::to_string(*count)) | tw("text-lg"),
+        button("Add") | tw("btn btn-primary") | on_click(add),
+    });
+
+    return shown | tw("flex items-center gap-2");
   }
 };
 
@@ -50,11 +53,21 @@ struct notes_page {
   async::task<> mounted() { items = co_await load_notes(); }
 
   element view() {
+    auto const add = [this] {
+      items.update([this](auto &all) { all.push_back(*draft); });
+    };
+
+    auto const nothing = [] { return p("Nothing yet"); };
+
+    auto const row = [](std::string const &item) {
+      return li(item) | key(item);
+    };
+
     return main_({
         input() | bind(draft) | attribute("placeholder", "A new note"),
-        button("Add") | on_click([this] { items.update([this](auto &all) { all.push_back(*draft); }); }),
-        when(items->empty(), [] { return p("Nothing yet"); }),
-        ul({list(items, [](std::string const &item) { return li(item) | key(item); })}),
+        button("Add") | on_click(add),
+        when(items->empty(), nothing),
+        ul({list(items, row)}),
     });
   }
 };
@@ -75,8 +88,8 @@ The full table, with Tailwind and the build, is in [the sample](../samples/ui_no
 
 ## Components of a view
 
-A view may hold components of its own, each with states of its own, which the parent gives its props on each of its
-views. The component has a `struct props` and a `view(props const &)`; the parent places it with `component<C>(props)`:
+A view may hold components of its own, each with states of its own. A component of a view has a `struct props`,
+which its parent gives it, and a `view(props const &)`; the parent places it with `component<C>(props)`:
 
 ```cpp
 struct note_row {
@@ -87,7 +100,9 @@ struct note_row {
   state<bool> done;
 
   element view(props const &given) {
-    return li(given.text) | tw_if(*done, "line-through") | on_click([this] { done = !*done; });
+    auto const toggle = [this] { done = !*done; };
+
+    return li(given.text) | tw_if(*done, "line-through") | on_click(toggle);
   }
 };
 
@@ -95,34 +110,47 @@ struct notes_page {
   state<std::vector<std::string>> items;
 
   element view() {
-    return ul({list(items, [](std::string const &item) { return component<note_row>({.text = item}) | key(item); })});
+    auto const row = [](std::string const &item) {
+      return component<note_row>({.text = item}) | key(item);
+    };
+
+    return ul({list(items, row)});
   }
 };
 ```
 
-- **Its states are kept** from one view of the parent to the next, while it stays at the same place: its type and key
-  among the components of the parent's view, or its type and rank there without a key, so that one going hands its
-  states to the next of its type. `| key(...)` keeps each with its item as a list changes; two of one type with one
-  key in a view, even in two lists of it, throw `std::logic_error`.
-- **Its props are given anew** on each view of the parent: what changes there shows in its view. `given` lives as
-  long as what that view made: a handler of it may keep a reference to it, until its task ends. The component itself,
-  and those it places, may keep one until its next view that returns, as a view that throws keeps none; and
-  `mounted()` to the props of the first view, until it ends. The props it gives a component of its view may refer to
-  it, its `this` or its `given`: they stay as long as those props, and a component without props keeps nothing of
-  its parent.
-- **It is decorated in its own view:** a component element takes a key and nothing else, and one decorated otherwise
-  throws `std::logic_error`.
-- **It comes and goes:** `task<> mounted()` runs once it first shows; once the parent's view no longer has it, its
-  tasks are asked to stop, `void unmounted()` runs, and it goes once they have ended, as what a stop does says
-  ([Async](async.md#stopping-a-task)). A handler of its view runs as one of its tasks, so the component outlives it.
-- A component with no props, a `view()` alone, is placed with `component<C>()`.
-- The app's own component may have a `void unmounted()` too: it runs as the app stops, after those of the components
-  of its view.
+**Its states are kept** from one view of the parent to the next, while it stays at the same place:
+
+- with a key, its type and key among the components of the parent's view: `| key(item)` keeps each row with its item
+  as the list changes;
+- without one, its type and rank there, so that one going hands its states to the next of its type;
+- two of one type with one key in a view, even in two lists of it, throw `std::logic_error`.
+
+**Its props come from the parent's view**, which shows in its own view what changes there:
+
+- `given` stays valid for what that view made: a handler of the view may keep a reference to it until its task ends;
+- the component, and the components it places, may keep one until its next view that returns;
+- `mounted()` may keep one to the props of the first view, until it ends;
+- the props it gives a component of its own view may refer to it, its `this` or its `given`: they stay as long as
+  those props.
+
+**It is decorated in its own view:** a component element takes a key and nothing else, and one decorated otherwise
+throws `std::logic_error`.
+
+**It comes and goes:**
+
+- `task<> mounted()` runs once it first shows, after those of the components of its view;
+- once the parent's view no longer has it, its tasks are asked to stop, `void unmounted()` runs, and it goes once they
+  have ended, as [what a stop does](async.md#stopping-a-task) says;
+- a handler of its view runs as one of its tasks, so the component outlives it.
+
+A component without props, a `view()` alone, is placed with `component<C>()`. The app's own component may have a
+`void unmounted()` too: it runs as the app stops, after those of the components of its view.
 
 ### A view not run again
 
-A component whose props are equal to the last ones, and none of whose states changed since, is not viewed again: its
-last view is given again, with the props it was made with, and the components inside it are viewed again only if they
+A component whose props compare equal to the last ones, and none of whose states changed since, is not viewed again:
+its last view is given again, with the props it was made with. The components inside it are viewed again only if they
 changed.
 
 ```cpp
@@ -138,11 +166,13 @@ struct note_row {
 };
 ```
 
-- **Props are compared with their `==`**, when they have one. Without one, the component is viewed again each time
-  its parent is, unless its parent's view was itself given again.
-- **A callback compares equal to any other**, whatever its function captures: a component not viewed again keeps the
-  callbacks of its last view, which call what the parent's view gave then. Capture only what does not change from a
-  view to the next, as `this`, and pass the rest as props, or give each item of a list its key.
+- **Props are compared with their `==`**, when they have one. Without one, the component is viewed again each time its
+  parent is, unless the parent's view was itself given again.
+- **Only its states and its props by value view it again.** A prop that points to data the parent changes, or a plain
+  member a component changes, does not: make it a state, or pass the value itself.
+- **A callback compares equal to any other**, whatever its function captures. A component not viewed again keeps the
+  callbacks of its last view, which call with what the parent captured then: capture only what does not change from a
+  view to the next, as `this`, and pass the rest as props.
 
 ### Calling the parent back
 
@@ -157,34 +187,54 @@ struct note_row {
   };
 
   element view(props const &given) {
+    auto const remove = [&given] {
+      return given.on_remove(given.item.id);
+    };
+
     return li({
         span(given.item.text),
-        button("Delete") | on_click([&given] { return given.on_remove(given.item.id); }),
+        button("Delete") | on_click(remove),
     });
   }
 };
 
-// In the page's view:
-component<note_row>({.item = item, .on_remove = [this](std::int64_t id) { return remove(id); }}) | key(item.id)
+struct notes_page {
+  state<std::vector<notes::note>> notes;
+
+  task<> remove(std::int64_t id);
+
+  element view() {
+    auto const on_remove = [this](std::int64_t id) {
+      return remove(id);
+    };
+
+    auto const row = [&](notes::note const &item) {
+      return component<note_row>({.item = item, .on_remove = on_remove}) | key(item.id);
+    };
+
+    return ul({list(notes, row)});
+  }
+};
 ```
 
-- **It belongs to the component that wrote it:** made in a view, it holds that component, or the app for the app's own
-  view. A call starts the function as a task of that component, under its stop.
-- **The caller waits for its end**, and gets what it gives (`callback<int(int)>`), or what it throws. The function
-  returns its value, or a task of it; the arguments are copied into the task, so that a view (`std::string_view`,
-  `std::span`) or a reference to write to does not compile as one, nor a result that would refer to what the work
-  held; a pointer, or a view inside another type, still points to what the caller gave.
-- **A caller that goes stops waiting, and the work goes on:** a row removed while the page deletes its note leaves the
-  delete to finish. What the work throws then goes to `on_error`. A work stopped, as its own component goes, stops its
-  caller too.
-- Once the app has stopped, or is gone, or the component is gone, a call ends on a stop and runs nothing: a callback
-  holds its component weakly, so that one kept by its own component leaves no cycle. A callback is good for the view
-  that made it, which each view makes anew: kept once that view is replaced, a call throws `std::logic_error`, as what
-  its function refers to of that view may be gone. Made outside a view, in a
-  handler or `mounted()` included, a callback knows no component: it runs in the caller's task, as a `std::function`
-  would, and what its function captures is the caller's to keep alive.
-- Every callback of a signature that calls something compares equal, whatever its function captures: it calls back a
-  component, which stays the same.
+**It belongs to the component whose view made it**, or to the app for the app's own view:
+
+- a call starts the function as a task of that component, under its stop;
+- the caller waits for its end, and gets what it gives (`callback<int(int)>`) or what it throws;
+- a caller that goes stops waiting, and the work goes on: a row removed while the page deletes its note leaves the
+  delete to finish, and what the work throws then goes to `on_error`;
+- a work stopped, as its own component goes, stops its caller too.
+
+**A call runs nothing**, ending on a stop, once the app has stopped or is gone, or once the component is gone: a
+callback holds its component weakly, so that one kept by its own component leaves no cycle. Kept once the view that
+made it is replaced, a call throws `std::logic_error`, as what its function refers to of that view may be gone.
+
+**Its arguments are copied into the task.** The function returns its value, or a task of it. A view (`std::string_view`,
+`std::span`, a range view), a reference to write to, or a result that would refer to what the work held does not
+compile. A pointer, or a view inside another type, still points to what the caller gave.
+
+**Made outside a view**, in a handler or `mounted()`, a callback knows no component: it runs in the caller's task, as a
+`std::function` would, and what its function captures is the caller's to keep alive.
 
 ## HTML
 

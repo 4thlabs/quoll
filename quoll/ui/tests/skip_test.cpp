@@ -199,6 +199,37 @@ struct holding_page {
   element view() { return div({p(std::to_string(*unrelated)), component<holding_panel>({.views = &views})}); }
 };
 
+// A component without props, with a state of its own, placed by a page that views again.
+struct bare_counter {
+  state<int> count;
+
+  element view() {
+    auto const add = [this] { count = *count + 1; };
+
+    return button("count:" + std::to_string(*count)) | on_click(add);
+  }
+};
+
+struct bare_page {
+  state<int> unrelated;
+
+  element view() { return div({p(std::to_string(*unrelated)), component<bare_counter>()}); }
+};
+
+// Keyed rows, their props equal, reordered as their page views again.
+struct reordered_page {
+  state<std::vector<std::string>> labels{std::vector<std::string>{"a", "b"}};
+  int views = 0;
+
+  element view() {
+    auto const row = [this](std::string const &label) {
+      return component<counted_row>({.label = label, .views = &views}) | key(label);
+    };
+
+    return ul({list(labels, row)});
+  }
+};
+
 // A renderer failing its next insert once told to.
 struct failing_renderer {
   memory_renderer shown;
@@ -389,4 +420,46 @@ TEST_CASE("skip: a component of a view given again is not viewed again, even wit
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE(instance.component().views == 1);
+}
+
+TEST_CASE("skip: a component without props is viewed again only as its states change", "[ui][skip]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<bare_page> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> {
+    instance.component().unrelated = 1;
+    co_await settle();
+    REQUIRE(shown.html() == "<div><p>1</p><button>count:0</button></div>");
+
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(shown.html() == "<div><p>1</p><button>count:1</button></div>");
+}
+
+TEST_CASE("skip: keyed components not viewed again move with their items, their handlers with them", "[ui][skip]") {
+  virtual_time time;
+  memory_renderer shown;
+  test_app<reordered_page> instance{time.get_executor(), shown};
+  quoll::ui::node_id before{};
+  quoll::ui::node_id after{};
+
+  auto const act = [&]() -> task<> {
+    before = shown.find_text("b:0");
+    instance.component().labels = std::vector<std::string>{"b", "a"};
+    co_await settle();
+    after = shown.find_text("b:0");
+
+    // The handler of b, given again, still counts b's clicks.
+    instance.dispatch(after, "click");
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(instance.component().views == 3);
+  REQUIRE(before == after);
+  REQUIRE(shown.html() == "<ul><button>b:1</button><button>a:0</button></ul>");
 }

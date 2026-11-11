@@ -57,7 +57,9 @@ namespace quoll::ui {
  *   state<bool> editing;
  *
  *   element view(props const &given) {
- *     return li(given.item.text) | on_click([this] { editing = true; });
+ *     auto const edit = [this] { editing = true; };
+ *
+ *     return li(given.item.text) | on_click(edit);
  *   }
  * };
  * @endcode
