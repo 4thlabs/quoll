@@ -76,6 +76,13 @@ inline constexpr bool is_view<std::basic_string_view<CharT, Traits>> = true;
 template <class T, std::size_t Extent>
 inline constexpr bool is_view<std::span<T, Extent>> = true;
 
+// What may hold no function, which a callback made of it holds none either.
+template <class T>
+inline constexpr bool may_be_empty = std::is_pointer_v<T> || std::is_member_pointer_v<T>;
+
+template <class Signature>
+inline constexpr bool may_be_empty<std::function<Signature>> = true;
+
 } // namespace detail
 
 /**
@@ -111,7 +118,8 @@ inline constexpr bool is_view<std::span<T, Extent>> = true;
  * Made outside a view, in a handler or a mounted() included, it runs the function as part of the caller's task: what
  * marks the component is its view running. The function returns `R`, or a task of `R`;
  * the arguments are copied into the task, so that none can be a reference to write to or a view, refused at compile
- * time, and copies of a callback share its function. Every callback of one signature
+ * time; a pointer still points to what the caller gave, which must outlive the work. Copies of a callback share its
+ * function. Every callback of one signature
  * that calls something compares equal, whatever its function captures: it calls back a component, which stays the
  * same, so that props holding one compare by the rest.
  *
@@ -140,8 +148,7 @@ public:
               (!std::is_void_v<R> && std::convertible_to<std::invoke_result_t<std::decay_t<F> &, Args...>, R>)) &&
              std::copy_constructible<std::decay_t<F>>)
   callback(F &&function) // NOLINT(google-explicit-constructor, hicpp-explicit-conversions)
-      : function_(std::make_shared<function_type const>(adapt(std::forward<F>(function)))),
-        target_(detail::current_target()) {}
+      : function_(made_of(std::forward<F>(function))), target_(detail::current_target()) {}
 
   /** @brief Calls it back, with copies of `args`: see the class. */
   [[nodiscard]] async::task<R> operator()(Args... args) const {
@@ -157,6 +164,18 @@ public:
   }
 
 private:
+  // None for a function that is none, a null pointer or an empty std::function, as std::function does.
+  template <class F>
+  [[nodiscard]] static std::shared_ptr<function_type const> made_of(F &&function) {
+    if constexpr (detail::may_be_empty<std::decay_t<F>>) {
+      if (!function) {
+        return nullptr;
+      }
+    }
+
+    return std::make_shared<function_type const>(adapt(std::forward<F>(function)));
+  }
+
   template <class F>
   [[nodiscard]] static function_type adapt(F &&function) {
     return [held = std::decay_t<F>(std::forward<F>(function))](Args... args) mutable -> async::task<R> {

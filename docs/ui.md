@@ -147,7 +147,7 @@ component<note_row>({.item = item, .on_remove = [this](std::int64_t id) { return
   view. A call starts the function as a task of that component, under its stop.
 - **The caller waits for its end**, and gets what it gives (`callback<int(int)>`), or what it throws. The function
   returns its value, or a task of it; the arguments are copied into the task, so that a view (`std::string_view`,
-  `std::span`) or a reference to write to does not compile as one.
+  `std::span`) or a reference to write to does not compile as one; a pointer still points to what the caller gave.
 - **A caller that goes stops waiting, and the work goes on:** a row removed while the page deletes its note leaves the
   delete to finish. What the work throws then goes to `on_error`. A work stopped, as its own component goes, stops its
   caller too.

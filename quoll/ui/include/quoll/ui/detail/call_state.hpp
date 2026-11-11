@@ -50,6 +50,7 @@
 #include <memory>
 #include <optional>
 #include <stop_token>
+#include <tuple>
 #include <utility>
 
 namespace quoll::ui::detail {
@@ -103,15 +104,17 @@ public:
     return shared_.with([](shared const &state) noexcept { return state.done && !state.stopped; });
   }
 
-  // Waits on `item`, unless the work ended meanwhile: then false, and the caller goes on, or, the work stopped,
-  // stopped is set and the caller ends on the stop.
+  // Waits on `item`, unless the work ended meanwhile, or the caller's stop came: then false, and the caller goes on,
+  // or, the work or the caller stopped, `stopped` is set and the caller ends on the stop. Checked under the lock, after
+  // the stop callback is registered, so that a stop coming at any time is seen here or by it.
   [[nodiscard]] bool wait(async::work_item &item, async::executor_ref executor, async::detail::chain_owner *chain,
-                          bool &stopped) {
+                          std::stop_token const &caller_stop, bool &stopped) {
     return shared_.with([&](shared &state) {
-      stopped = state.stopped;
+      // What the work gave or threw comes first: a failure the caller takes is not lost.
+      stopped = state.stopped || (!state.done && caller_stop.stop_requested());
 
-      if (state.done || state.stopped) {
-        state.gone = state.stopped;
+      if (state.done || stopped) {
+        state.gone = stopped;
         return false;
       }
 
@@ -248,14 +251,14 @@ public:
   [[nodiscard]] bool await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
     auto stopped = false;
 
-    if (context.stop_token.stop_requested()) {
-      async::detail::stop_chain(context.owner);
-      return true;
-    }
-
+    // The stop callback before the wait, as slots does: once the wait is published, the work may resume this frame on
+    // another thread, and a stop may unwind it, so nothing of it is written after.
     item_.handle = handle;
+    on_stop_.emplace(context.stop_token, stopper{this});
 
-    if (!state_->wait(item_, context.executor, context.owner, stopped)) {
+    if (!state_->wait(item_, context.executor, context.owner, context.stop_token, stopped)) {
+      on_stop_.reset();
+
       if (stopped) {
         async::detail::stop_chain(context.owner);
         return true;
@@ -264,7 +267,6 @@ public:
       return false;
     }
 
-    on_stop_.emplace(context.stop_token, stopper{this});
     return true;
   }
 
