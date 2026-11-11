@@ -62,12 +62,27 @@ struct one_parameter<R (C::*)(A) const> {
 };
 
 template <class C, class R, class A>
+struct one_parameter<R (C::*)(A) const noexcept> {
+  using type = std::remove_cvref_t<A>;
+};
+
+template <class C, class R, class A>
 struct one_parameter<R (C::*)(A)> {
+  using type = std::remove_cvref_t<A>;
+};
+
+template <class C, class R, class A>
+struct one_parameter<R (C::*)(A) noexcept> {
   using type = std::remove_cvref_t<A>;
 };
 
 template <class R, class A>
 struct one_parameter<R (*)(A)> {
+  using type = std::remove_cvref_t<A>;
+};
+
+template <class R, class A>
+struct one_parameter<R (*)(A) noexcept> {
   using type = std::remove_cvref_t<A>;
 };
 
@@ -79,11 +94,11 @@ using one_parameter_t = typename one_parameter<std::remove_cvref_t<F>>::type;
 /**
  * @brief What can run on an event whose value is JSON, as one a widget emits: a function of one parameter, neither a
  * string nor a view of one, which the JSON is read into, copied for each event, and returning nothing or something to
- * await.
+ * await. One that takes a string, or what a string converts to, is an EventFunction, given the value as it is.
  */
 template <class F>
 concept JsonEventFunction =
-    std::copy_constructible<F> && requires { typename detail::one_parameter_t<F>; } &&
+    std::copy_constructible<F> && !EventFunction<F> && requires { typename detail::one_parameter_t<F>; } &&
     !std::same_as<detail::one_parameter_t<F>, std::string> &&
     !std::same_as<detail::one_parameter_t<F>, std::string_view> &&
     std::default_initializable<detail::one_parameter_t<F>> && detail::EventCallable<F, detail::one_parameter_t<F> &>;

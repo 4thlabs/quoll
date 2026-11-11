@@ -59,7 +59,8 @@ template <JsonEventFunction F>
   return [function = std::move(function)](std::string value) mutable -> async::task<> {
     one_parameter_t<F> event{};
 
-    if (auto const failed = glz::read_json(event, value)) {
+    // Fields it does not declare are left: a library's events carry more than one wants.
+    if (auto const failed = glz::read<glz::opts{.error_on_unknown_keys = false}>(event, value)) {
       throw std::invalid_argument{"quoll::ui: the value of an event is not the JSON its function takes"};
     }
 
@@ -91,7 +92,8 @@ template <JsonEventFunction F>
  * return line_chart({.labels = months, .values = *sales}) | on("point_selected", select);
  * @endcode
  *
- * A value that is not that JSON throws `std::invalid_argument` in the event's task, which goes to the app's on_error.
+ * Fields the parameter does not declare are left. A value that is not that JSON throws `std::invalid_argument` in the
+ * event's task, which goes to the app's on_error.
  * Otherwise as the other on().
  */
 template <JsonEventFunction F>

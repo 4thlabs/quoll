@@ -236,6 +236,80 @@ compile. A pointer, or a view inside another type, still points to what the call
 **Made outside a view**, in a handler or `mounted()`, a callback knows no component: it runs in the caller's task, as a
 `std::function` would, and what its function captures is the caller's to keep alive.
 
+## JavaScript widgets
+
+A JavaScript library, as chart.js, shows in a node of the view that the app leaves to it: a widget. It is declared
+once, with the module that mounts it, the tag of its node and its props:
+
+```cpp
+struct chart_props {
+  std::vector<std::string> labels;
+  std::vector<double> values;
+};
+
+struct point_selected {
+  int index;
+};
+
+inline constexpr auto line_chart = widget<chart_props>("./widgets/line_chart.js", "canvas");
+
+struct sales_page {
+  state<std::vector<double>> sales;
+  state<int> selected;
+
+  element view() {
+    auto const select = [this](point_selected event) {
+      selected = event.index;
+    };
+
+    auto const chart = line_chart({.labels = months(), .values = *sales});
+
+    return chart | tw("h-64") | on("point_selected", select);
+  }
+};
+```
+
+The module exports `mount(node, props, emit)`, which returns `update(props)` and `unmount()`:
+
+```js
+import { Chart } from "chart.js/auto";
+
+export function mount(node, props, emit) {
+  const select = (_, points) => {
+    if (points.length > 0) {
+      emit("point_selected", { index: points[0].index });
+    }
+  };
+
+  const chart = new Chart(node, {
+    type: "line",
+    data: { labels: props.labels, datasets: [{ data: props.values }] },
+    options: { onClick: select },
+  });
+
+  return {
+    update(props) {
+      chart.data.labels = props.labels;
+      chart.data.datasets[0].data = props.values;
+      chart.update();
+    },
+    unmount() {
+      chart.destroy();
+    },
+  };
+}
+```
+
+- **Its props go as JSON**, written by Glaze: `mount` once the render has placed its node, `update` when the JSON
+  changes, `unmount` before the node goes, and as the app stops. Another module at its place is another node.
+- **What it emits is an event of its node:** `on(name, function)` reads its JSON into the function's parameter,
+  leaving the fields it does not declare. A value that is not that JSON goes to `on_error`.
+- **Its node is the module's:** the element takes classes, attributes and events, no children. `to_html` writes it
+  empty, for the module to mount once the page is live.
+- **The renderer shows it:** a `WidgetRenderer`. The browser's renderer shows widgets from the next step of
+  [the roadmap](PLAN.md#step-6-the-ui-dsl-complete), with the modules loaded on demand by the Vite plugin; a widget
+  placed through a renderer that shows none throws `std::logic_error`.
+
 ## HTML
 
 `to_html` writes the same interface as HTML, natively as under WebAssembly, for a page generated ahead

@@ -41,6 +41,7 @@
 #include <cstddef>
 #include <limits>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 
@@ -79,13 +80,6 @@ namespace {
 
 void reconciler::apply(node_id parent, std::vector<element> &before, std::vector<element> &after) {
   children(parent, before, after);
-
-  // In place now, as a library such as chart.js measures its node.
-  for (auto const &[id, spec] : to_mount_) {
-    renderer_.mount_widget(id, spec->module, spec->props);
-  }
-
-  to_mount_.clear();
 }
 
 void reconciler::children(node_id parent, std::vector<element> &before, std::vector<element> &after) {
@@ -134,6 +128,16 @@ void reconciler::children(node_id parent, std::vector<element> &before, std::vec
 }
 
 void reconciler::create(element &value) {
+  if (value.type == element::kind::widget) {
+    if (!value.children.empty()) {
+      throw std::logic_error{"quoll::ui: a widget's node is its module's: it takes no children"};
+    }
+
+    if (!renderer_.shows_widgets()) {
+      throw std::logic_error{"quoll::ui: a widget placed through a renderer that shows none"};
+    }
+  }
+
   value.id = ++*last_id_;
 
   if (value.type == element::kind::text) {

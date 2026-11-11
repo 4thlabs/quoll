@@ -48,6 +48,8 @@ namespace quoll::ui {
  * @brief A Renderer that shows JavaScript widgets too: `mount_widget(id, module, props)` hands the node `id`, once in
  * place, to the module, with its props as JSON; `update_widget(id, props)` gives it others; `unmount_widget(id)` takes
  * it back, before the node is removed. What the widget emits is reported to app::dispatch(), as an event of its node.
+ * `update_widget` and `unmount_widget` of a node not mounted, as its mount failed, or no longer there, do nothing: a
+ * render that fails half-way leaves the app's view behind the renderer's.
  *
  * A renderer without these shows no widget: an app placing one through it throws `std::logic_error`.
  */

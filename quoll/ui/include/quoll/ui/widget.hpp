@@ -73,7 +73,8 @@ namespace quoll::ui {
  * The module exports `mount(node, props, emit)`, which returns `update(props)` and `unmount()`. The app leaves the
  * node's children to it: it calls `mount` once the node is in place, `update` when the props, written as JSON, change,
  * and `unmount` before the node goes. What it emits is an event of the node, its value as JSON (see on() of
- * json_event.hpp). The element takes classes, attributes and events, and no children.
+ * json_event.hpp). The element takes classes, attributes and events, and no children, which the app refuses with
+ * `std::logic_error`.
  *
  * Thread safety: a value; the element it makes is shown on its app's executor.
  */
@@ -98,7 +99,7 @@ public:
 
     made.type = element::kind::widget;
     made.widget = std::make_shared<detail::widget_spec const>(
-        detail::widget_spec{.module = std::string{module_}, .props = std::move(written)});
+        detail::widget_spec{.module = module_, .props = std::move(written)});
     return made;
   }
 

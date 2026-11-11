@@ -53,9 +53,14 @@ class reconciler {
 public:
   reconciler(renderer_ref renderer, node_id &last_id) noexcept : renderer_(renderer), last_id_(&last_id) {}
 
-  // Keeps the nodes of the children that have the same key (their position, without one) and the same tag, then mounts
-  // the widgets it made, once everything is in place.
+  // Keeps the nodes of the children that have the same key (their position, without one) and the same tag. Throws
+  // std::logic_error for a widget with children, or placed through a renderer that shows none, before making it.
   void apply(node_id parent, std::vector<element> &before, std::vector<element> &after);
+
+  // The widgets it made, which its caller mounts once the render shows, as a module may emit as it mounts.
+  [[nodiscard]] std::vector<std::pair<node_id, std::shared_ptr<widget_spec const>>> take_mounts() noexcept {
+    return std::move(to_mount_);
+  }
 
 private:
   void children(node_id parent, std::vector<element> &before, std::vector<element> &after);

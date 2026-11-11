@@ -139,19 +139,27 @@ public:
   void update_widget(ui::node_id id, std::string_view props) {
     ++state_->operations;
 
-    auto &value = state_->nodes.at(id);
+    auto const found = state_->nodes.find(id);
 
-    value.props = props;
-    state_->widget_log.push_back("update " + value.props);
+    if (found == state_->nodes.end() || !found->second.mounted) {
+      return;
+    }
+
+    found->second.props = props;
+    state_->widget_log.push_back("update " + found->second.props);
   }
 
   void unmount_widget(ui::node_id id) {
     ++state_->operations;
 
-    auto &value = state_->nodes.at(id);
+    auto const found = state_->nodes.find(id);
 
-    value.mounted = false;
-    state_->widget_log.push_back("unmount " + value.module);
+    if (found == state_->nodes.end() || !found->second.mounted) {
+      return;
+    }
+
+    found->second.mounted = false;
+    state_->widget_log.push_back("unmount " + found->second.module);
   }
 
   /** @brief What was asked of the widgets, in order: `mount <module> <props>`, `update <props>`, `unmount <module>`. */

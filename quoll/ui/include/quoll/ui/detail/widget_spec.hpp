@@ -38,13 +38,14 @@
 #define QUOLL_UI_DETAIL_WIDGET_SPEC_HPP
 
 #include <string>
+#include <string_view>
 
 namespace quoll::ui::detail {
 
-// What a widget element shows: the JavaScript module that mounts it, and its props, as JSON, which the reconciler
-// compares to tell it of a change. Shared, as an element is copied.
+// What a widget element shows: the JavaScript module that mounts it, a literal of the program, and its props, as JSON,
+// which the reconciler compares to tell it of a change. Shared, as an element is copied.
 struct widget_spec {
-  std::string module;
+  std::string_view module;
   std::string props;
 };
 
