@@ -114,7 +114,8 @@ quoll/
 ├── rest/       # contracts, mount, client, codecs
 ├── ui/         # components, states, the diff, widgets, to_html
 └── adapters/   # asio, emscripten, runtime
-samples/        # notes (native), ui_notes (Emscripten), github (both)
+samples/        # notes (a contract, its server, command line and page), github (both)
+tools/          # the Vite plugin
 tests/          # the test program, its helpers, fuzz/, bench/, load/, interop/
 docs/           # these guides, the plan, the rules
 ```

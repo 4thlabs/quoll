@@ -34,31 +34,58 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The types of the notes API, without the API: what can be used without compiling REST and JSON.
+// Calls the notes API served by quoll_notes_server:
+//
+//   quoll_notes_cli [url]       (http://127.0.0.1:8080 by default)
 
-#ifndef QUOLL_SAMPLES_NOTE_HPP
-#define QUOLL_SAMPLES_NOTE_HPP
+#include "notes_api.hpp"
 
-#include <cstdint>
-#include <optional>
+#include <quoll/async.hpp>
+#include <quoll/rest.hpp>
+#include <quoll/runtime.hpp>
+
+#include <iostream>
 #include <string>
+#include <utility>
+#include <vector>
 
-namespace notes {
+namespace {
 
-struct note {
-  std::int64_t id = 0;
-  std::string text;
-};
+void print(std::vector<notes::note> const &found) {
+  for (auto const &note : found) {
+    std::cout << "  #" << note.id << ' ' << note.text << '\n';
+  }
+}
 
-struct new_note {
-  std::string text;
-};
+// The program: the client and its connection live in this coroutine, on the runtime.
+quoll::async::task<> use_notes(std::string url) {
+  // One connection, kept alive, carries the calls.
+  quoll::rest::client<notes::api> client{std::move(url)};
+  auto const milk = co_await client.call<notes::create>({.text = "buy milk"});
 
-struct note_filter {
-  /** @brief Only the notes whose text contains this. */
-  std::optional<std::string> contains;
-};
+  co_await client.call<notes::create>({.text = "write the OpenAPI generator"});
+  co_await client.call<notes::create>({.text = "buy coffee"});
+  std::cout << "created #" << milk.id << ", all the notes:\n";
+  print(co_await client.call<notes::list>({}));
 
-} // namespace notes
+  std::cout << "the notes about buying:\n";
+  print(co_await client.call<notes::list>({.contains = "buy"}));
 
-#endif // QUOLL_SAMPLES_NOTE_HPP
+  co_await client.call<notes::remove>(milk.id);
+  std::cout << "removed #" << milk.id << '\n';
+
+  try {
+    co_await client.call<notes::get>(milk.id);
+  } catch (quoll::rest::call_error const &error) {
+    // The detail of the server's problem.
+    std::cout << "get #" << milk.id << ": " << static_cast<int>(error.status()) << ' ' << error.what() << '\n';
+  }
+}
+
+} // namespace
+
+int main(int argc, char **argv) {
+  quoll::runtime runtime;
+
+  return runtime.run(use_notes(argc > 1 ? argv[1] : "http://127.0.0.1:8080"));
+}

@@ -34,30 +34,35 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The page of the notes: what it shows and what it does, in a header. The source that changes all the time.
+// The page of the notes: the list, the form, and what the server answered last. Its calls to the server are in
+// notes_client.cpp, so that a change here does not compile REST and JSON again.
 
-#ifndef QUOLL_SAMPLES_UI_NOTES_PAGE_HPP
-#define QUOLL_SAMPLES_UI_NOTES_PAGE_HPP
+#ifndef QUOLL_SAMPLES_NOTES_WEB_COMPONENTS_NOTES_PAGE_HPP
+#define QUOLL_SAMPLES_NOTES_WEB_COMPONENTS_NOTES_PAGE_HPP
 
 #include "note.hpp"
+#include "note_form.hpp"
+#include "note_row.hpp"
 #include "notes_client.hpp"
 
+#include <quoll/async/task.hpp>
 #include <quoll/ui.hpp>
 
 #include <cstdint>
 #include <exception>
 #include <string>
+#include <utility>
 #include <vector>
 
-namespace notes_ui {
+namespace notes_web {
 
 using quoll::async::task;
+using quoll::ui::callback;
 using quoll::ui::element;
 using quoll::ui::state;
 
 struct notes_page {
   state<std::vector<notes::note>> items;
-  state<std::string> draft;
   state<std::string> problem;
 
   task<> mounted() {
@@ -68,70 +73,57 @@ struct notes_page {
     }
   }
 
-  task<> add() {
-    if (draft->empty()) {
-      co_return;
-    }
-
-    // Out of the input as it leaves: what is typed meanwhile is the next note, and a second click sends nothing.
-    auto const sent = *draft;
-
-    draft.set({});
-
+  task<bool> add(std::string text) {
     try {
-      auto const created = co_await notes_client::create(sent);
+      auto const created = co_await notes_client::create(std::move(text));
 
       items.update([&created](auto &all) { all.push_back(created); });
       problem.set({});
+      co_return true;
     } catch (std::exception const &failure) {
       problem = std::string{failure.what()};
-
-      if (draft->empty()) {
-        draft = sent;
-      }
+      co_return false;
     }
   }
 
   task<> remove(std::int64_t id) {
     try {
       co_await notes_client::remove(id);
-      items.update([id](auto &all) { std::erase_if(all, [id](auto const &item) { return item.id == id; }); });
+
+      auto const removed = [id](notes::note const &item) { return item.id == id; };
+
+      items.update([&removed](auto &all) { std::erase_if(all, removed); });
       problem.set({});
     } catch (std::exception const &failure) {
       problem = std::string{failure.what()};
     }
   }
 
-  element note_row(notes::note const &item) {
-    using namespace quoll::ui;
-
-    return li({
-               span(item.text) | tw("flex-1"),
-               button("Delete") | tw("btn btn-ghost btn-sm") |
-                   on_click([this, id = item.id]() -> task<> { co_await remove(id); }),
-           }) |
-           tw("flex items-center gap-2 rounded-box bg-base-100 px-4 py-2 shadow-sm") | key(item.id);
-  }
-
   element view() {
     using namespace quoll::ui;
 
-    return main_({
-               h1("Notes") | tw("text-4xl font-bold"),
-               div({
-                   input() | bind(draft) | tw("input input-bordered flex-1") | attribute("placeholder", "A new note"),
-                   button("Add") | tw("btn btn-primary") | attribute("id", "add") |
-                       on_click([this]() -> task<> { co_await add(); }),
-               }) | tw("flex gap-2"),
-               when(!problem->empty(),
-                    [this] { return p(*problem) | tw("alert alert-error") | attribute("role", "alert"); }),
-               ul({list(items, [this](notes::note const &item) { return note_row(item); })}) |
-                   tw("flex flex-col gap-2"),
-           }) |
-           tw("mx-auto flex max-w-xl flex-col gap-6 p-8");
+    auto const on_add = [this](std::string text) { return add(std::move(text)); };
+
+    // One callback, which every row shares.
+    callback<void(std::int64_t)> const on_remove = [this](std::int64_t id) { return remove(id); };
+
+    auto const row = [&on_remove](notes::note const &item) {
+      return component<note_row>({.item = item, .on_remove = on_remove}) | key(item.id);
+    };
+
+    auto const alert = [this] { return p(*problem) | tw("alert alert-error") | attribute("role", "alert"); };
+
+    auto const page = main_({
+        h1("Notes") | tw("text-4xl font-bold"),
+        component<note_form>({.on_add = on_add}),
+        when(!problem->empty(), alert),
+        ul({list(items, row)}) | tw("flex flex-col gap-2"),
+    });
+
+    return page | tw("mx-auto flex max-w-xl flex-col gap-6 p-8");
   }
 };
 
-} // namespace notes_ui
+} // namespace notes_web
 
-#endif // QUOLL_SAMPLES_UI_NOTES_PAGE_HPP
+#endif // QUOLL_SAMPLES_NOTES_WEB_COMPONENTS_NOTES_PAGE_HPP

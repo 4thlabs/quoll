@@ -34,11 +34,34 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The notes of samples/notes in a browser. What it shows is in notes_page.hpp, and its calls to the server in
-// notes_client.cpp, so that a change in the page does not compile REST and JSON again.
+// The contract of the notes API, shared by the server and the client: types and endpoints, no I/O.
 
-#include "notes_page.hpp"
+#ifndef QUOLL_SAMPLES_NOTES_API_NOTES_API_HPP
+#define QUOLL_SAMPLES_NOTES_API_NOTES_API_HPP
 
-#include <quoll/emscripten/mount.hpp>
+#include "note.hpp"
 
-int main() { quoll::emscripten::mount<notes_ui::notes_page>(); }
+#include <quoll/http/status.hpp>
+#include <quoll/http/verb.hpp>
+#include <quoll/rest.hpp>
+
+#include <cstdint>
+#include <vector>
+
+namespace notes {
+
+namespace http = quoll::http;
+namespace rest = quoll::rest;
+
+using list = rest::endpoint<"notes.list", http::verb::get, "/", rest::query_params<note_filter>,
+                            rest::returns<std::vector<note>>>;
+using get = rest::endpoint<"notes.get", http::verb::get, "/{id:int64}", rest::returns<note>>;
+using create = rest::endpoint<"notes.create", http::verb::post, "/", rest::body<new_note>,
+                              rest::returns<note, http::status::created>>;
+using remove = rest::endpoint<"notes.remove", http::verb::delete_, "/{id:int64}">;
+
+using api = rest::api<"/api/notes", list, get, create, remove>;
+
+} // namespace notes
+
+#endif // QUOLL_SAMPLES_NOTES_API_NOTES_API_HPP

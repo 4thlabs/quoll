@@ -38,20 +38,22 @@
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
-import { quoll } from './quoll-vite-plugin.js';
+import { quoll } from '../../../tools/vite-plugin/quoll-vite-plugin.js';
 
 export default defineConfig({
   plugins: [
     tailwindcss(),
     quoll({
-      target: 'quoll_ui_notes',
+      target: 'quoll_notes_web',
       sources: [
         'main.cpp',
-        'notes_page.hpp',
+        'components/note_form.hpp',
+        'components/note_row.hpp',
+        'components/notes_page.hpp',
         'notes_client.cpp',
         'notes_client.hpp',
-        '../notes/note.hpp',
-        '../notes/notes_api.hpp',
+        '../api/note.hpp',
+        '../api/notes_api.hpp',
       ],
     }),
   ],

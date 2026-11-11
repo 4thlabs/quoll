@@ -56,7 +56,7 @@ a page that needs them.
 
 `async`, `io`, `http`, `client`, `server` and `rest`, with timeouts by default and TLS (a client GET and a REST client
 over TCP, over `fetch`, and through OpenSSL). A first `quoll::ui` with its DOM renderer, Tailwind through Vite, and two
-levels of hot reload, in the sample `ui_notes`. In CI: `clang-tidy`, the standard library's checks, Apple Clang on macOS, Codex's review and a protected `main`.
+levels of hot reload, in the sample `samples/notes/web`. In CI: `clang-tidy`, the standard library's checks, Apple Clang on macOS, Codex's review and a protected `main`.
 
 SSE and WebSocket (step 5, but for WebSocket in the browser and in the REST DSL): typed events in the REST DSL, natively
 and through `fetch`, WebSocket natively, their parsers fuzzed, and every night against third-party clients and servers and
@@ -292,7 +292,7 @@ quoll build    # dist/, with the pages that can be written ahead of time as HTML
   - The errors of the `quoll` command, and the `static_assert` messages of the DSLs, say what to change, as that is what an
     agent acts on. They stay tested by `compile_fail`.
 
-*Done when:* a new project reaches a running page with hot reload through these commands, and `samples/ui_notes` uses
+*Done when:* a new project reaches a running page with hot reload through these commands, and `samples/notes/web` uses
 them; that project installs as a PWA, opens offline and takes an update; an agent given only what `quoll new` wrote adds a screen
 and an endpoint to it; and an existing program with its own main loop serves its interface from one binary, stops cleanly with
 it, and has its test and its guide.
@@ -822,7 +822,7 @@ Hot reload has three levels, from the cheapest:
 3. Anything else: a rebuild, then the page reloads. A compilation error shows in Vite's overlay. Restoring the states is
    [step 6](#step-6-the-ui-dsl-complete).
 
-For now this is a plugin of the sample `samples/ui_notes`, driven by Vite; [step
+For now this is a plugin of Vite in `tools/vite-plugin`, which `samples/notes/web` uses; [step
 7](#step-7-the-quoll-command-driving-vite-maintainer-merges-the-first-pull-request) turns it around.
 
 ## WASM constraints

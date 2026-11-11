@@ -34,26 +34,10 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The calls of the interface to the notes API. In a source of their own: REST and JSON take most of the time a source
-// takes to compile, and the interface changes more often than its calls.
+// The notes in a browser: the page, from components/, shown in #app.
 
-#ifndef QUOLL_SAMPLES_UI_NOTES_CLIENT_HPP
-#define QUOLL_SAMPLES_UI_NOTES_CLIENT_HPP
+#include "components/notes_page.hpp"
 
-#include "note.hpp"
+#include <quoll/emscripten/mount.hpp>
 
-#include <quoll/async/task.hpp>
-
-#include <cstdint>
-#include <string>
-#include <vector>
-
-namespace notes_client {
-
-[[nodiscard]] quoll::async::task<std::vector<notes::note>> list();
-[[nodiscard]] quoll::async::task<notes::note> create(std::string text);
-[[nodiscard]] quoll::async::task<> remove(std::int64_t id);
-
-} // namespace notes_client
-
-#endif // QUOLL_SAMPLES_UI_NOTES_CLIENT_HPP
+int main() { quoll::emscripten::mount<notes_web::notes_page>(); }

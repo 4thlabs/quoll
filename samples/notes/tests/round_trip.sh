@@ -3,7 +3,7 @@
 # with SIGTERM, as a service manager would (a job started in the background of a script ignores SIGINT, and so does the
 # runtime then).
 #
-#   round_trip.sh <quoll_notes_server> <quoll_notes_client>
+#   round_trip.sh <quoll_notes_server> <quoll_notes_cli>
 set -eu
 
 server=$1

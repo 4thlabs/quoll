@@ -588,6 +588,6 @@ or header parameter. An enumerator the `glz::meta` has no name for (a cast, or `
 `known()`, and writing it fails, as for the enum. Only that field is open: the enum itself stays strict, a key of a map included, and a
 contract of Quoll's own server that takes the enum refuses a name it does not know with 400.
 
-A larger example, a contract with its server and client over TCP, is in
+A larger example, a contract with its server, its command line over TCP and its page in a browser, is in
 [`samples/notes`](../samples/notes). A command-line program calling GitHub's API, natively and through `fetch` in
 Node, with a scope, interceptors and a token, is in [`samples/github`](../samples/github).

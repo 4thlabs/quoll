@@ -88,6 +88,11 @@ if(QUOLL_BUILD_SAMPLES)
   add_subdirectory(samples)
 endif()
 
+# The Vite plugin's own test, under Emscripten, whose build runs Node.
+if(QUOLL_BUILD_TESTS AND EMSCRIPTEN)
+  add_subdirectory(tools/vite-plugin)
+endif()
+
 if(QUOLL_BUILD_TESTS)
   add_subdirectory(tests)
 endif()

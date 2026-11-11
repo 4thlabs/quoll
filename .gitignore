@@ -6,4 +6,4 @@
 .DS_Store
 node_modules/
 dist/
-/samples/ui_notes/build*/
+/samples/notes/web/build*/

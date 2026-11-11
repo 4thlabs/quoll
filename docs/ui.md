@@ -2,7 +2,7 @@
 
 An interface written in C++ and compiled to WebAssembly, in the same language as the rest of an application. The
 DOM gives text, input methods, selection and accessibility, and Tailwind the styles. Link `quoll::emscripten`, which
-brings `quoll::ui`. [`samples/ui_notes`](../samples/ui_notes) is a whole page, with its build; what is still to come is
+brings `quoll::ui`. [`samples/notes/web`](../samples/notes/web) is a whole page, with its build; what is still to come is
 [at the end](#what-it-lacks).
 
 ## A component
@@ -73,15 +73,16 @@ struct notes_page {
 | To                     | Write                                                                                                                |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Show an element        | `div({...})`, `button("Add")`, `node("video", {...})`; `main_` for `<main>`                                          |
+| Show a text            | `text("Hello")`, or `p("Hello")` for a tag holding it                                                             |
 | Style it               | `\| tw("flex gap-2")`, `\| tw_if(done, "line-through")`, classes written whole, as Tailwind reads them in the source |
 | Set an attribute       | `\| attribute("placeholder", "A note")`                                                                              |
 | Handle an event        | `\| on_click(...)`, `\| on_input(...)`, `\| on("submit", ...)`                                                       |
 | Edit a value           | `input() \| bind(draft)`, for a `state<std::string>`                                                                 |
 | Repeat, or show or not | `list(items, ...)` with a `key()` on each, `when(condition, ...)`                                                    |
+| Read a state           | `*count`, `items->size()`                                                                                            |
 | Change a state         | `count = 1;`, `count.set(1);`, `items.update(...)`                                                                   |
 | Call an API            | A `rest::client`, over [`fetch`](runtimes.md#httpclient-in-a-browser)                                                     |
-
-The full table, with Tailwind and the build, is in [the sample](../samples/ui_notes/README.md#the-api).
+| Make a decorator       | `decorator([](element &target) { target.classes += " card"; })`                                                    |
 
 ## Components of a view
 
@@ -156,7 +157,7 @@ struct note_row {
     notes::note item;
     callback<void(std::int64_t)> on_remove;
 
-    bool operator==(props const &) const = default;
+    [[nodiscard]] bool operator==(props const &) const = default;
   };
 
   // ...
@@ -305,7 +306,7 @@ export function mount(node, props, emit) {
   leaving the fields it does not declare. A value that is not that JSON goes to `on_error`.
 - **Its node is the module's:** the element takes classes, attributes and events, no children. `to_html` writes it
   empty, for the module to mount once the page is live.
-- **Its module loads on demand.** The Vite plugin of the sample finds the widgets of the C++ sources it is given, and
+- **Its module loads on demand.** The Vite plugin, in `tools/vite-plugin`, finds the widgets of the C++ sources it is given, and
   makes their registry, `virtual:quoll-widgets`, which the page sets before the program starts:
 
   ```js
@@ -351,10 +352,10 @@ default, and keeps the app for as long as the page: one app per component type.
 
 ## Hot reload
 
-For now this is a plugin of the sample, driven by Vite, in three levels: CSS through Tailwind, a literal
+For now this is a plugin of Vite, in `tools/vite-plugin`, in three levels: CSS through Tailwind, a literal
 of `tw()`, `text()` or a tag sent to the running program with no compilation, keeping its state, and
 anything else by a rebuild that reloads the page, losing its state. To try it, see
-[the sample](../samples/ui_notes/README.md#try-hot-reload).
+[the sample](../samples/notes/web/README.md#try-hot-reload).
 
 ## What it lacks
 

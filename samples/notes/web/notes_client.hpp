@@ -34,58 +34,26 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// Calls the notes API served by quoll_notes_server:
-//
-//   quoll_notes_client [url]       (http://127.0.0.1:8080 by default)
+// The calls of the page to the notes API. In a source of their own: REST and JSON take most of the time a source
+// takes to compile, and the page changes more often than its calls.
 
-#include "notes_api.hpp"
+#ifndef QUOLL_SAMPLES_NOTES_WEB_NOTES_CLIENT_HPP
+#define QUOLL_SAMPLES_NOTES_WEB_NOTES_CLIENT_HPP
 
-#include <quoll/async.hpp>
-#include <quoll/rest.hpp>
-#include <quoll/runtime.hpp>
+#include "note.hpp"
 
-#include <iostream>
+#include <quoll/async/task.hpp>
+
+#include <cstdint>
 #include <string>
-#include <utility>
 #include <vector>
 
-namespace {
+namespace notes_client {
 
-void print(std::vector<notes::note> const &found) {
-  for (auto const &note : found) {
-    std::cout << "  #" << note.id << ' ' << note.text << '\n';
-  }
-}
+[[nodiscard]] quoll::async::task<std::vector<notes::note>> list();
+[[nodiscard]] quoll::async::task<notes::note> create(std::string text);
+[[nodiscard]] quoll::async::task<> remove(std::int64_t id);
 
-// The program: the client and its connection live in this coroutine, on the runtime.
-quoll::async::task<> use_notes(std::string url) {
-  // One connection, kept alive, carries the calls.
-  quoll::rest::client<notes::api> client{std::move(url)};
-  auto const milk = co_await client.call<notes::create>({.text = "buy milk"});
+} // namespace notes_client
 
-  co_await client.call<notes::create>({.text = "write the OpenAPI generator"});
-  co_await client.call<notes::create>({.text = "buy coffee"});
-  std::cout << "created #" << milk.id << ", all the notes:\n";
-  print(co_await client.call<notes::list>({}));
-
-  std::cout << "the notes about buying:\n";
-  print(co_await client.call<notes::list>({.contains = "buy"}));
-
-  co_await client.call<notes::remove>(milk.id);
-  std::cout << "removed #" << milk.id << '\n';
-
-  try {
-    co_await client.call<notes::get>(milk.id);
-  } catch (quoll::rest::call_error const &error) {
-    // The detail of the server's problem.
-    std::cout << "get #" << milk.id << ": " << static_cast<int>(error.status()) << ' ' << error.what() << '\n';
-  }
-}
-
-} // namespace
-
-int main(int argc, char **argv) {
-  quoll::runtime runtime;
-
-  return runtime.run(use_notes(argc > 1 ? argv[1] : "http://127.0.0.1:8080"));
-}
+#endif // QUOLL_SAMPLES_NOTES_WEB_NOTES_CLIENT_HPP

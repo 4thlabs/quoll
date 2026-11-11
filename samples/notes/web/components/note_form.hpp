@@ -34,22 +34,63 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+// The input of a new note, which asks the page to add it.
 
-import './style.css';
-import widgets from 'virtual:quoll-widgets';
+#ifndef QUOLL_SAMPLES_NOTES_WEB_COMPONENTS_NOTE_FORM_HPP
+#define QUOLL_SAMPLES_NOTES_WEB_COMPONENTS_NOTE_FORM_HPP
 
-// The JavaScript widgets of the program, by the path its C++ gives each: loaded on demand, as one first shows.
-globalThis.quollWidgets = widgets;
+#include <quoll/async/task.hpp>
+#include <quoll/ui.hpp>
 
-// The program compiled from C++. It shows itself in #app, from its main().
-const program = document.createElement('script');
+#include <string>
 
-program.src = '/quoll_ui_notes.js';
-document.body.append(program);
+namespace notes_web {
 
-if (import.meta.hot) {
-  globalThis.quollHotReady = () => import.meta.hot.send('quoll:ready');
-  import.meta.hot.on('quoll:literal', ({ file, line, column, value }) => {
-    globalThis.quollHotReplace?.(file, line, column, value);
-  });
-}
+using quoll::ui::callback;
+using quoll::ui::element;
+using quoll::ui::state;
+
+struct note_form {
+  struct props {
+    // Whether the note was added: one that was not comes back in the input.
+    callback<bool(std::string)> on_add;
+
+    [[nodiscard]] bool operator==(props const &) const = default;
+  };
+
+  state<std::string> draft;
+
+  quoll::async::task<> add(callback<bool(std::string)> on_add) {
+    if (draft->empty()) {
+      co_return;
+    }
+
+    // Out of the input as it leaves: what is typed meanwhile is the next note, and a second click sends nothing.
+    auto const sent = *draft;
+
+    draft.set({});
+
+    bool const added = co_await on_add(sent);
+
+    if (!added && draft->empty()) {
+      draft = sent;
+    }
+  }
+
+  element view(props const &given) {
+    using namespace quoll::ui;
+
+    auto const send = [this, &given] { return add(given.on_add); };
+
+    auto const form = div({
+        input() | bind(draft) | tw("input input-bordered flex-1") | attribute("placeholder", "A new note"),
+        button("Add") | tw("btn btn-primary") | on_click(send),
+    });
+
+    return form | tw("flex gap-2");
+  }
+};
+
+} // namespace notes_web
+
+#endif // QUOLL_SAMPLES_NOTES_WEB_COMPONENTS_NOTE_FORM_HPP

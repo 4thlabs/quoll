@@ -35,7 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-// The planned `quoll/vite` plugin, while it lives in this sample: builds a program of C++ with CMake, serves it,
+// The planned `quoll/vite` plugin, until it is a package of its own: builds a program of C++ with CMake, serves it,
 // reloads it, and makes the registry of its JavaScript widgets (virtual:quoll-widgets), each module loaded on demand.
 //
 // Three levels, from the cheapest:
