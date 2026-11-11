@@ -22,24 +22,28 @@ dashboard/
 | File | What it holds |
 |---|---|
 | `web/main.cpp` | `mount<dashboard_page>()`, in `#app` |
-| `web/components/dashboard_page.hpp` | the products, the one chosen, its sales, the last problem, and the calls that change them |
+| `web/components/dashboard_page.hpp` | the products, the one chosen, its sales or why they did not load, how each product's saves go, and the calls that change them |
 | `web/components/product_list.hpp` | the filter, a state of its own, and the rows of the products it matches |
 | `web/components/product_row.hpp` | one product, with its `on_select` callback |
-| `web/components/product_detail.hpp` | the fields of the product chosen, what is typed kept until saved, and the `on_save` callback |
+| `web/components/product_detail.hpp` | the fields of the product chosen, what is typed kept until saved, and kept when typed while a save is on its way; its save waiting or why it failed, from the page; the `on_save` callback |
 | `web/components/field.hpp` | a labelled input showing a value it is given, with an `on_change` callback |
 | `web/components/sales_chart.hpp`, `.cpp` | the `line_chart` widget, and the month of the point clicked; its view in a source of its own, as the widget's JSON goes through Glaze |
 | `web/widgets/line_chart.js` | the widget's module: `mount`, `update` and `unmount` over chart.js, a click emitting `point_selected` |
 | `web/products_client.hpp`, `.cpp` | the calls to the server, through a `rest::client` of the contract, in a source of their own |
 
 The detail and the chart are keyed by the product: another product chosen is another detail, with nothing typed, and
-another chart. A product chosen while the sales of the last are on their way does not show them.
+another chart. Only the sales asked for last show, or their failure: a product chosen again, or another, while some are
+on their way; their failure shows where they would. A product saves once at a time: the page keeps which saves are on
+their way and why a product's last one failed until the next, and gives each detail its own, so that one chosen again
+shows its save waiting, or that it was not saved. A field changed while the save is on its way keeps what it holds once
+it is answered.
 
 ## Run it
 
 As [the notes page](../notes/web/README.md#run-it), with `samples/dashboard/web/dev.sh`: it builds and starts the
 products server on port 8080, then Vite on port 5173. A change of a literal shows in some milliseconds; anything else
-takes a rebuild of about 2.9 s on a 4-core i5, from a save to the page shown again. The chart's view is in a source of its
-own, so that the widget's JSON does not compile again with the rest of the page.
+takes a rebuild of about 2.9 s on a 4-core i5, from a save to the page shown again. The chart's view is in a source of
+its own, so that the widget's JSON does not compile again with the rest of the page.
 
 ```bash
 cmake -B build && cmake --build build -j
@@ -64,8 +68,16 @@ the widget and no WebSocket. What took code of its own, for base components to g
 - **States that start from the props.** `mounted()` has no props, so the detail keeps what is typed as
   `state<std::optional<std::string>>`, nothing until a field changes, and is keyed by the product so that another
   starts empty.
-- **The answer of the last request only.** `select()` checks that the product it loads the sales of is still the one
-  chosen when they come.
+- **Requests that overlap.** The sales of a product chosen before the last may answer, or fail, after it; two saves of
+  a product may be answered out of order, or sent by a double click; one request's success may clear another's failure.
+  The page counts the sales it asks for and shows only the last one's answer, keeps how each product's saves go, one at
+  a time, and the detail compares what each field holds with what it sent before forgetting it. What would take the
+  place of this bookkeeping, for `quoll::ui` to give:
+  - a task that a new one of its kind stops, for the last request only: stopped, it never resumes, so that a stale
+    answer writes nothing;
+  - an action that runs once at a time, and says whether it is under way, for a button to wait on;
+  - a state that is loading, a value or a failure, loaded again as what it depends on changes;
+  - a draft of a form, from the props, that tells what changed since it was sent.
 - **What a child tells, one task later.** A callback runs as a task of the component that wrote it: a field's change
   reaches the detail after the event that made it, so that a save dispatched in the same turn, as a test does, reads the
   value before it.

@@ -39,6 +39,7 @@
 #ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_DETAIL_HPP
 #define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_DETAIL_HPP
 
+#include "error_text.hpp"
 #include "field.hpp"
 #include "product.hpp"
 
@@ -85,7 +86,11 @@ template <class T>
 struct product_detail {
   struct props {
     products::product item;
-    // Whether it was saved: the page says why not.
+    // Whether a save of it is on its way, and why its last one failed until the next: the page's, which a detail chosen
+    // again shows too, as what it says is of the product, whoever sent it.
+    bool saving = false;
+    std::string save_failure;
+    // Whether it was saved.
     callback<bool(std::int64_t, products::product_update)> on_save;
 
     [[nodiscard]] bool operator==(props const &) const = default;
@@ -95,6 +100,7 @@ struct product_detail {
   state<std::optional<std::string>> name;
   state<std::optional<std::string>> price;
   state<std::optional<std::string>> stock;
+  // What is wrong with what is typed.
   state<std::string> problem;
 
   task<> save(products::product item, callback<bool(std::int64_t, products::product_update)> on_save) {
@@ -108,15 +114,29 @@ struct product_detail {
 
     problem.set({});
 
+    // What was typed as it left: a field changed while the save is on its way keeps what it holds now.
+    auto const sent_name = *name;
+    auto const sent_price = *price;
+    auto const sent_stock = *stock;
+
     products::product_update changes{.name = name->value_or(item.name), .price = *new_price, .stock = *new_stock};
+
     bool const saved = co_await on_save(item.id, std::move(changes));
 
-    // Saved, the product given next holds what was typed.
-    if (saved) {
-      name.set({});
-      price.set({});
-      stock.set({});
+    if (!saved) {
+      co_return;
     }
+
+    // Saved, the product given next holds what was sent: the fields that still hold it show it again.
+    auto const forget = [](state<std::optional<std::string>> &typed, std::optional<std::string> const &sent) {
+      if (typed->has_value() && *typed == sent) {
+        typed.set({});
+      }
+    };
+
+    forget(name, sent_name);
+    forget(price, sent_price);
+    forget(stock, sent_stock);
   }
 
   element view(props const &given) {
@@ -128,7 +148,13 @@ struct product_detail {
 
     auto const send = [this, &given] { return save(given.item, given.on_save); };
 
-    auto const fail = [this] { return p(*problem) | tw("text-sm text-error"); };
+    auto const save_failed = [&given] { return error_text("Not saved: " + given.save_failure); };
+
+    // The fields stay open while a save is on its way: what is typed meanwhile is kept for the next.
+    auto const button_shown = button(given.saving ? "Saving…" : "Save") | tw("btn btn-primary self-start");
+    auto const save_button = given.saving ? button_shown | attribute("disabled", "") : button_shown | on_click(send);
+
+    auto const typed_wrong = [this] { return error_text(*problem); };
 
     auto const form = section({
         h2(given.item.name) | tw("text-2xl font-semibold"),
@@ -143,8 +169,10 @@ struct product_detail {
             .value = stock->value_or(std::to_string(given.item.stock)),
             .on_change = edit(stock),
         }),
-        when(!problem->empty(), fail),
-        button("Save") | tw("btn btn-primary self-start") | on_click(send),
+        when(!problem->empty(), typed_wrong),
+        // What is typed wrong first: the last save's failure is of what was sent then.
+        when(problem->empty() && !given.save_failure.empty(), save_failed),
+        save_button,
     });
 
     return form | tw("flex flex-col gap-3");
