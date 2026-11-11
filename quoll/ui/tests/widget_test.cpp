@@ -44,6 +44,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <exception>
 #include <functional>
 #include <optional>
@@ -158,26 +159,60 @@ struct keyed_charts {
   state<std::vector<std::string>> names{std::vector<std::string>{"a", "b"}};
 
   element view() {
-    auto const chart = [](std::string const &name) { return line_chart({.labels = {name}, .values = {}}) | key(name); };
+    auto const chart = [](std::string const &name) {
+      return line_chart({.labels = {name}, .values = {}}) | attribute("data-name", name) | key(name);
+    };
 
     return div({list(names, chart)});
   }
 };
 
-// A chart, and what it emits as it mounts.
+// A chart, and what it emits as it mounts or updates, seen by the function of the view that gave its props.
 struct ready_page {
+  state<int> view_count;
   std::vector<int> seen;
 
   element view() {
-    auto const ready = [this](point_selected event) { seen.push_back(event.index); };
+    auto const ready = [this, made_by = *view_count](point_selected event) {
+      seen.push_back(made_by * 10 + event.index);
+    };
 
-    return div({line_chart({.labels = {}, .values = {}}) | on("point_selected", ready)});
+    auto const chart = line_chart({.labels = {}, .values = {*view_count}});
+
+    return div({chart | on("point_selected", ready)});
   }
 };
 
 // Two charts, the first of which fails to mount.
 struct two_charts {
   element view() { return div({bar_chart({.labels = {}, .values = {}}), line_chart({.labels = {}, .values = {}})}); }
+};
+
+// A chart that is given children in a later view.
+struct crowding_later {
+  state<bool> crowded{false};
+
+  element view() {
+    auto chart = line_chart({.labels = {}, .values = {}});
+
+    if (*crowded) {
+      chart.children.push_back(p("mine"));
+    }
+
+    return div({chart});
+  }
+};
+
+// Two charts whose props change together.
+struct changing_charts {
+  state<int> value;
+  state<bool> shows{true};
+
+  element view() {
+    auto const second = [this] { return line_chart({.labels = {"second"}, .values = {*value}}); };
+
+    return div({line_chart({.labels = {"first"}, .values = {*value}}), when(*shows, second)});
+  }
 };
 
 // A chart given children, which are its module's.
@@ -201,6 +236,9 @@ struct starting_page {
 struct hooked_renderer {
   memory_renderer shown;
   std::function<void(node_id)> *mounting = nullptr;
+  std::function<void(node_id)> *updating = nullptr;
+  bool *fails_updates = nullptr;
+  bool *fails_unmounts = nullptr;
 
   void create_element(node_id id, std::string_view tag) { shown.create_element(id, tag); }
 
@@ -238,9 +276,27 @@ struct hooked_renderer {
     }
   }
 
-  void update_widget(node_id id, std::string_view props) { shown.update_widget(id, props); }
+  void update_widget(node_id id, std::string_view props) {
+    if (fails_updates != nullptr && *fails_updates) {
+      *fails_updates = false;
+      throw std::runtime_error{"no update"};
+    }
 
-  void unmount_widget(node_id id) { shown.unmount_widget(id); }
+    shown.update_widget(id, props);
+
+    if (updating != nullptr && *updating) {
+      (*updating)(id);
+    }
+  }
+
+  void unmount_widget(node_id id) {
+    if (fails_unmounts != nullptr && *fails_unmounts) {
+      *fails_unmounts = false;
+      throw std::runtime_error{"no unmount"};
+    }
+
+    shown.unmount_widget(id);
+  }
 };
 
 static_assert(WidgetRenderer<hooked_renderer>);
@@ -380,14 +436,18 @@ TEST_CASE("widget: one of a component goes with it, and moves with its key", "[u
   node_id before{};
   node_id after{};
 
+  std::string reordered;
+
   auto const reorder = [&]() -> task<> {
     before = keyed_shown.find("canvas");
     keyed.component().names = std::vector<std::string>{"b", "a"};
     co_await settle();
     after = keyed_shown.find("canvas");
+    reordered = keyed_shown.html();
   };
 
   REQUIRE(quoll::test::run(keyed_time, session(keyed, reorder)) == 0);
+  REQUIRE(reordered == R"(<div><canvas data-name="b"></canvas><canvas data-name="a"></canvas></div>)");
   // Moved, neither mounted again nor unmounted until the app stops.
   REQUIRE(keyed_shown.widget_log().size() == 4);
   REQUIRE(keyed_shown.widget_log()[2].starts_with("unmount"));
@@ -455,4 +515,70 @@ TEST_CASE("widget: unmounted as a start that fails stops the app", "[ui][widget]
 
   REQUIRE(quoll::test::run(time, stop()) == 0);
   REQUIRE(shown.widget_log().size() == 2);
+}
+
+TEST_CASE("widget: given children in a later view, the render is refused, and nothing changes", "[ui][widget]") {
+  virtual_time time;
+  memory_renderer const shown;
+  std::exception_ptr failure;
+  test_app<crowding_later> instance{
+      time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }}};
+
+  auto const act = [&]() -> task<> {
+    instance.component().crowded = true;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::logic_error);
+  REQUIRE(shown.html() == "<div><canvas></canvas></div>");
+  REQUIRE(shown.widget_log() == std::vector<std::string>{R"(mount ./widgets/line_chart.js {"labels":[],"values":[]})",
+                                                         "unmount ./widgets/line_chart.js"});
+}
+
+TEST_CASE("widget: an update or an unmount that fails is told to on_error, and the render goes on", "[ui][widget]") {
+  virtual_time time;
+  bool fails_updates = false;
+  bool fails_unmounts = false;
+  hooked_renderer const shown{.fails_updates = &fails_updates, .fails_unmounts = &fails_unmounts};
+  int failures = 0;
+  app<changing_charts, hooked_renderer> instance{
+      time.get_executor(), shown, {.on_error = [&](std::exception_ptr) { ++failures; }}};
+
+  auto const act = [&]() -> task<> {
+    // The first update asked fails; the other chart is updated all the same.
+    fails_updates = true;
+    instance.component().value = 1;
+    co_await settle();
+
+    // The unmount of the second fails; it goes all the same.
+    fails_unmounts = true;
+    instance.component().shows = false;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(failures == 2);
+  REQUIRE(shown.shown.html() == "<div><canvas></canvas></div>");
+  auto const log = shown.shown.widget_log();
+  auto const updated = std::ranges::count_if(log, [](std::string const &line) { return line.starts_with("update"); });
+
+  REQUIRE(updated == 1);
+}
+
+TEST_CASE("widget: what it emits as it updates reaches the function of the view that gave its props", "[ui][widget]") {
+  virtual_time time;
+  std::function<void(node_id)> updating;
+  hooked_renderer const shown{.updating = &updating};
+  app<ready_page, hooked_renderer> instance{time.get_executor(), shown};
+
+  updating = [&](node_id id) { instance.dispatch(id, "point_selected", R"({"index":0})"); };
+
+  auto const act = [&]() -> task<> {
+    instance.component().view_count = 1;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(instance.component().seen == std::vector<int>{10});
 }
