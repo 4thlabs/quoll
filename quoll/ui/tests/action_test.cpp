@@ -36,9 +36,11 @@
 
 #include <quoll/async/await_context.hpp>
 #include <quoll/async/detail/awaiting.hpp>
+#include <quoll/async/detail/stop_scope.hpp>
 #include <quoll/async/executor_ref.hpp>
 #include <quoll/async/run_loop.hpp>
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/with_timeout.hpp>
@@ -49,7 +51,7 @@
 #include <quoll/test/virtual_time.hpp>
 #include <quoll/ui.hpp>
 #include <quoll/ui/action.hpp>
-#include <quoll/ui/resource.hpp>
+#include <quoll/ui/effect.hpp>
 #include <quoll/ui/run_error.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -61,6 +63,7 @@
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -467,11 +470,12 @@ TEST_CASE("keyed_action: destroyed while a run is under way is asserted", "[.ass
   destroyed_while_under_way(held, [](auto &saves) { return saves.run(1); });
 }
 
-TEST_CASE("resource: destroyed while a load is under way is asserted", "[.assert]") {
-  std::optional<resource<int, std::string>> held;
+TEST_CASE("effect: destroyed while a run is under way is asserted", "[.assert]") {
+  state<int> dependency{1};
+  std::optional<effect<std::string>> held;
 
-  held.emplace(yields_text);
-  destroyed_while_under_way(held, [](auto &text) { return text.load(1); });
+  held.emplace(dependency, yields_text);
+  destroyed_while_under_way(held, [](auto &text) { return text.reload(); });
 }
 
 TEST_CASE("action: a run its caller stops once a later one took its place leaves the later one under way",
@@ -481,28 +485,32 @@ TEST_CASE("action: a run its caller stops once a later one took its place leaves
   virtual_time time;
   memory_renderer const shown;
   test_app<timed_restart_page> instance{time.get_executor(), shown};
+  std::stop_source caller;
   bool pending_meanwhile = false;
   bool second_gave = false;
 
   auto const act = [&]() -> task<> {
     auto &run = instance.component().run;
 
-    // The first run, its caller stopping it at 5 ms; the second, from 5 ms too, replaces it at the same instant:
-    // whichever stop comes first, the second is under way until it ends, at 15 ms.
-    auto const first = [&]() -> task<> {
-      try {
-        static_cast<void>(co_await quoll::async::with_timeout(5ms, run.run(1)));
-      } catch (std::system_error const &) {
-      }
+    // The first run, under a stop of its caller's that the test asks for.
+    auto const stoppable = [&]() -> task<> {
+      using result = action<int(int), overlap::restart>::result_type;
+
+      static_cast<void>(co_await quoll::async::detail::stop_scope<result>(run.run(1), caller.get_token()));
     };
 
+    auto const first = [&]() -> task<> { static_cast<void>(co_await quoll::async::stopped_as_optional(stoppable())); };
+
+    // In one turn, before the first resumes: its caller stops it, and the second takes its place, so that the first
+    // resumes stopped by both, a later run under way.
     auto const second = [&]() -> task<> {
-      co_await quoll::async::sleep_for(5ms);
+      co_await quoll::async::sleep_for(1ms);
+      caller.request_stop();
       second_gave = (co_await run.run(2)).has_value();
     };
 
     auto const watch = [&]() -> task<> {
-      co_await quoll::async::sleep_for(7ms);
+      co_await quoll::async::sleep_for(5ms);
       pending_meanwhile = run.pending();
     };
 

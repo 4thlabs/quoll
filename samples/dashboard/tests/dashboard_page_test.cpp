@@ -99,8 +99,9 @@ struct fake_server {
   bool throws_other = false;
   // The list fails with a message that says nothing.
   bool list_fails = false;
-  // The saves the server received.
+  // The saves the server received, and the sales it was asked for.
   int updates = 0;
+  int sales_asked = 0;
 };
 
 fake_server server;
@@ -128,6 +129,7 @@ fake_server server;
       .throws_other = false,
       .list_fails = false,
       .updates = 0,
+      .sales_asked = 0,
   };
 }
 
@@ -156,6 +158,8 @@ struct page_driver {
   }
 
   void save() const { instance.dispatch(shown.find_text("Save"), "click"); }
+
+  void try_again() const { instance.dispatch(shown.find_text("Try again"), "click"); }
 
   void select_point(int index) const {
     instance.dispatch(shown.find("canvas"), "point_selected", "{\"index\":" + std::to_string(index) + "}");
@@ -218,6 +222,8 @@ task<products::product> update(std::int64_t id, products::product_update changes
 }
 
 task<products::monthly_sales> sales(std::int64_t id) {
+  ++server.sales_asked;
+
   auto const delay = server.delays.find(id);
   sales_call call{.delay = delay == server.delays.end() ? std::chrono::milliseconds{0} : delay->second,
                   .fails = server.failing.contains(id)};
@@ -481,24 +487,38 @@ TEST_CASE("dashboard web: a field changed while a save is on its way keeps what 
   CHECK(server.items[2] == products::product{.id = 3, .name = "Grinder", .category = "Gear", .price = 46, .stock = 7});
 }
 
-TEST_CASE("dashboard web: a product chosen again shows the answer of its last request only", "[samples][dashboard]") {
+TEST_CASE("dashboard web: sales that failed load again on Try again, a product chosen again loading nothing",
+          "[samples][dashboard]") {
   server = three_products();
-  // The first request for its sales fails after the second has come.
-  server.calls[1] = {{.delay = 10ms, .fails = true}, {.delay = 1ms, .fails = false}};
+  // The first request for its sales fails, the next succeeds.
+  server.calls[1] = {{.delay = 1ms, .fails = true}, {.delay = 1ms, .fails = false}};
 
   virtual_time time;
   memory_renderer const shown;
   dashboard_app instance{time.get_executor(), shown};
   page_driver const user{instance, shown};
+  std::string failed;
+  int asked_before = 0;
 
   auto const act = [&]() -> task<> {
     co_await settle();
     user.choose("Espresso beans");
+    co_await quoll::async::sleep_for(5ms);
+    failed = shown.html();
+
+    // The same product chosen again: what the effect depends on did not change.
+    asked_before = server.sales_asked;
     user.choose("Espresso beans");
-    co_await quoll::async::sleep_for(20ms);
+    co_await quoll::async::sleep_for(5ms);
+    CHECK(server.sales_asked == asked_before);
+
+    user.try_again();
+    co_await quoll::async::sleep_for(5ms);
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(failed.contains("no sales for now"));
+  CHECK(failed.contains("Try again"));
   CHECK_FALSE(shown.html().contains("no sales for now"));
   CHECK(chart_props(shown) == R"(mount ../widgets/line_chart.js {"months":["Jan","Feb"],"units":[10,20]})");
   CHECK(instance.component().sales.result().value() == server.sales.at(1));

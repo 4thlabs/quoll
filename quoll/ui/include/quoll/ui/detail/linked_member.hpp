@@ -41,7 +41,7 @@
 
 namespace quoll::ui::detail {
 
-// What tells the app of its changes, as a state, a resource or an action does: linked as its component is mounted.
+// What tells the app of its changes, as a state, an effect or an action does: linked as its component is mounted.
 template <class T>
 concept LinkedMember = requires(T &member, state_link link) {
   { member.link(link) } noexcept;

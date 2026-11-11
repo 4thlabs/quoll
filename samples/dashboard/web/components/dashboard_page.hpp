@@ -62,18 +62,19 @@ namespace dashboard_web {
 
 using quoll::async::task;
 using quoll::ui::callback;
+using quoll::ui::effect;
+using quoll::ui::effect_status;
 using quoll::ui::element;
 using quoll::ui::keyed_action;
-using quoll::ui::load_status;
-using quoll::ui::resource;
 using quoll::ui::state;
 
 struct dashboard_page {
   state<std::vector<products::product>> items;
   // Why the products could not be loaded, in the alert.
   state<std::string> problem;
-  // The sales of the product chosen, its key: loading another stops the load before.
-  resource<std::int64_t, products::monthly_sales> sales{products_client::sales};
+  // The product chosen, and its sales, loaded again as it changes, the load before stopped, as React's useEffect.
+  state<std::optional<std::int64_t>> selected;
+  effect<products::monthly_sales> sales{selected, products_client::sales};
   // The saves of each product, once at a time, which its detail shows: under way, or why the last one failed.
   keyed_action<std::int64_t, products::product(products::product_update)> saves{products_client::update};
 
@@ -87,8 +88,8 @@ struct dashboard_page {
     }
   }
 
-  // What the load gives, its result() too, which the view reads.
-  task<> select(std::int64_t id) { static_cast<void>(co_await sales.load(id)); }
+  // Its sales follow.
+  void select(std::int64_t id) { selected = std::optional<std::int64_t>{id}; }
 
   // Whether it was saved: a save of that product under way refuses this one, and its failure stays with the saves.
   task<bool> save(std::int64_t id, products::product_update changes) {
@@ -108,11 +109,11 @@ struct dashboard_page {
 
   // The product chosen, while the list holds it.
   [[nodiscard]] products::product const *chosen() const {
-    if (!sales.key().has_value()) {
+    if (!selected->has_value()) {
       return nullptr;
     }
 
-    auto const found = std::ranges::find(*items, *sales.key(), &products::product::id);
+    auto const found = std::ranges::find(*items, **selected, &products::product::id);
 
     return found == items->end() ? nullptr : &*found;
   }
@@ -134,13 +135,21 @@ struct dashboard_page {
 
     auto const *const item_chosen = chosen();
 
-    // Done, with its sales or why they did not load, which choosing the product again tries anew. Keyed by the product,
-    // as the detail: another product chosen is another chart.
-    auto const sales_done = [this, &item_chosen] {
+    // Its sales load again on a click, as choosing the same product changes nothing for the effect.
+    auto const retry = [this]() -> task<> { static_cast<void>(co_await sales.reload()); };
+
+    // Done, with its sales, or why they did not load and a way to try again. Keyed by the product, as the detail:
+    // another product chosen is another chart.
+    auto const sales_done = [this, &item_chosen, &retry] {
       auto const &result = sales.result();
 
       if (!result) {
-        return error_text(told(result.error(), "the sales did not load"));
+        auto const failed = div({
+            error_text(told(result.error(), "the sales did not load")),
+            button("Try again") | tw("btn btn-sm self-start") | on_click(retry),
+        });
+
+        return failed | tw("flex flex-col gap-2");
       }
 
       return component<sales_chart>({.sales = *result}) | key(item_chosen->id);
@@ -162,8 +171,8 @@ struct dashboard_page {
               .save_failure = save_failure,
               .on_save = on_save,
           }) | key(item.id),
-          when(sales.status() == load_status::loading, loading),
-          when(sales.status() == load_status::done, sales_done),
+          when(sales.status() == effect_status::running, loading),
+          when(sales.status() == effect_status::done, sales_done),
       });
 
       return shown | tw("flex flex-col gap-8");
@@ -173,7 +182,7 @@ struct dashboard_page {
         h1("Products") | tw("text-4xl font-bold"),
         when(!problem->empty(), alert),
         div({
-            component<product_list>({.items = *items, .selected = sales.key(), .on_select = on_select}),
+            component<product_list>({.items = *items, .selected = *selected, .on_select = on_select}),
             when(item_chosen == nullptr, none),
             when(item_chosen != nullptr, detail),
         }) | tw("grid gap-8 md:grid-cols-2"),

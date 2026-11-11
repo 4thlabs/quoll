@@ -236,26 +236,29 @@ refreshed in a view not run again, one more mechanism to keep right.
 **For you.** A component not viewed again keeps the callbacks of its last view: capture only what does not change
 from a view to the next, as `this`, and pass the rest as props.
 
-### What a component loads and runs is Quoll's to keep
+### Effects as React's useEffect, and actions once at a time
 
 **The question.** A screen loads what a choice asks for and saves what is typed: answers that come after a later
 choice, saves answered out of order, a double click. Who keeps that right?
 
-**Taken.** Quoll: `resource<Key, T>` holds what a component loads for a key it is given, and loading again stops the
-load before, as Dioxus's `use_resource` does; its answer writes nothing. `action` and `keyed_action` run a function
-once at a time by default, a call while one is under way refused, where TanStack Query's mutations in a `scope` queue
-it, and hold whether it is under way and the result of the last run, as Leptos's `Action` does. `overlap::restart` makes a
-call stop the one under way instead. A result comes as the task of the load or the run ends, a `std::expected` of the
-value or of what the function threw, as elsewhere in Quoll; a load stopped by its caller leaves the resource
-`stopped`, as Dioxus's does.
+**Taken.** Quoll, with React's model: `effect<T>` is `useEffect` with a state of the component as its dependency. After
+a view in which the state changed, once shown, it runs, the run before stopped as its cleanup; as a stop resumes
+nothing, a stale answer writes nothing. `action` and `keyed_action` run what a handler asks for once at a time by
+default, a call while one is under way refused, where TanStack Query's mutations in a `scope` queue it, and hold
+whether it is under way and the result of the last run, as Leptos's `Action` does; `overlap::restart` makes a call
+stop the one under way instead. A result is a `std::expected` of the value or of what the function threw, which the
+task of a run gives and the member keeps, as elsewhere in Quoll; a run stopped by its caller leaves an effect
+`stopped`, as Dioxus's `use_resource` does.
 
-**Set aside.** A resource that reloads as the states its loader reads change: Quoll tracks no reads, and a key is
-plain to see. Leaving it to each page, as the trial screen of step 6 first did: three rounds of review kept finding the
-same bugs in counters kept by hand.
+**Set aside.** Effects called in the view, as React's hooks, whose identity is the order of the calls: a member is
+named, and depends on a state it is given. An effect that tracks the states its function reads: Quoll tracks no reads.
+A home-made resource with a key and a loader, which the maintainer found less clear than React's model. Leaving it to
+each page, as the trial screen of step 6 first did: three rounds of review kept finding the same bugs in counters kept
+by hand.
 
-**For you.** Await `load()` and `run()` from a task of the component, a handler or `mounted()`. Each gives its
-result: a call refused, or a load or a run a later one took the place of, gives `run_refused` or `run_replaced`, and
-its caller goes on. The view reads `status()` or `pending()` first, then `result()`.
+**For you.** Set the state an effect depends on, and its run follows. Await `run()` and `reload()` from a task of the
+component, a handler or `mounted()`: a call refused, or a run a later one took the place of, gives `run_refused` or
+`run_replaced`, and its caller goes on. The view reads `status()` or `pending()` first, then `result()`.
 
 ### JavaScript libraries as modules
 

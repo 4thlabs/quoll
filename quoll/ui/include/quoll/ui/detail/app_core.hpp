@@ -41,6 +41,7 @@
 #include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/app_options.hpp>
+#include <quoll/ui/detail/effect_starter.hpp>
 #include <quoll/ui/detail/held_view.hpp>
 #include <quoll/ui/detail/instance.hpp>
 #include <quoll/ui/detail/view_context.hpp>
@@ -66,10 +67,12 @@ class app_core {
 public:
   using view_function = element (*)(void *component);
   using unmounted_function = void (*)(void *component);
+  using effects_function = void (*)(void *component, effect_starter const &start);
 
   // `unmounted`, none for a component without it, runs as the app stops, once its view showed.
+  // `effects` start those of the component whose dependency changed, after each of its views.
   app_core(async::any_executor executor, renderer_ref renderer, view_function view, unmounted_function unmounted,
-           void *component, app_options options);
+           effects_function effects, void *component, app_options options);
 
   app_core(app_core const &) = delete;
   app_core(app_core &&) = delete;
@@ -109,6 +112,8 @@ private:
   struct outcome;
 
   [[nodiscard]] async::task<> render_later();
+  // Starts the effects of `component` whose dependency changed, as tasks of the component `held` names, or the app's.
+  void start_effects(effects_function effects, void *component, held_view const &held);
   // As the app stops: what a renderer throws goes to on_error, and the others are unmounted all the same.
   void unmount_widgets(std::vector<element> const &shown) const noexcept;
   void failed(std::exception_ptr failure) const noexcept;
@@ -120,6 +125,7 @@ private:
   std::shared_ptr<app_link> link_;
   view_function view_;
   unmounted_function unmounted_;
+  effects_function effects_;
   void *component_;
   app_options options_;
   std::stop_source stop_;

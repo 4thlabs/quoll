@@ -57,7 +57,7 @@
 
 namespace quoll::ui::detail {
 
-// The runs of a resource, an action, or an action's key: whether one is under way, whether the last one was stopped by
+// The runs of an effect, an action, or an action's key: whether one is under way, whether the last one was stopped by
 // its caller, what the last one that ended gave or threw, the stop of the one under way, and its number, which a later
 // one takes.
 template <class R>

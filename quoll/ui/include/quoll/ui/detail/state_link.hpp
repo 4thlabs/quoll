@@ -39,7 +39,7 @@
 
 namespace quoll::ui::detail {
 
-// Whom a state, a resource or an action tells of its changes: the app of its component.
+// Whom a state, an effect or an action tells of its changes: the app of its component.
 struct state_link {
   void *owner = nullptr;
   void (*changed)(void *owner) = nullptr;

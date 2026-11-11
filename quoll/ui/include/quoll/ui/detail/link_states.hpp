@@ -37,32 +37,21 @@
 #ifndef QUOLL_UI_DETAIL_LINK_STATES_HPP
 #define QUOLL_UI_DETAIL_LINK_STATES_HPP
 
+#include <quoll/ui/detail/for_each_member.hpp>
 #include <quoll/ui/detail/linked_member.hpp>
 #include <quoll/ui/detail/state_link.hpp>
 
-#include <glaze/reflection/to_tuple.hpp>
-
-#include <cstddef>
 #include <type_traits>
-#include <utility>
 
 namespace quoll::ui::detail {
 
-// Only the members, not their names: a component may have internal linkage, and this part of Glaze compiles much faster
-// than what also reflects names, which every rebuild of an interface pays for.
 template <class C>
 void link_states(C &component, state_link link) {
-  auto members = glz::to_tie(component);
-
-  [&]<std::size_t... Index>(std::index_sequence<Index...>) {
-    [[maybe_unused]] auto const link_one = [&link](auto &member) {
-      if constexpr (LinkedMember<std::remove_cvref_t<decltype(member)>>) {
-        member.link(link);
-      }
-    };
-
-    (link_one(glz::get<Index>(members)), ...);
-  }(std::make_index_sequence<glz::tuple_size_v<decltype(members)>>{});
+  for_each_member(component, [&link](auto &member) {
+    if constexpr (LinkedMember<std::remove_cvref_t<decltype(member)>>) {
+      member.link(link);
+    }
+  });
 }
 
 } // namespace quoll::ui::detail

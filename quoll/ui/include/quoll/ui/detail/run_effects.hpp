@@ -34,15 +34,51 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui::resource: its key and its value are kept, as values
-//
-// A resource keeping a view: what it loaded would refer to what the load held, gone with it.
+#ifndef QUOLL_UI_DETAIL_RUN_EFFECTS_HPP
+#define QUOLL_UI_DETAIL_RUN_EFFECTS_HPP
 
-#include <quoll/async/task.hpp>
-#include <quoll/ui/resource.hpp>
+#include <quoll/ui/detail/effect_member.hpp>
+#include <quoll/ui/detail/effect_starter.hpp>
+#include <quoll/ui/detail/for_each_member.hpp>
 
-#include <string_view>
+#include <exception>
+#include <type_traits>
 
-quoll::async::task<std::string_view const> name_of(int id);
+namespace quoll::ui::detail {
 
-quoll::ui::resource<int, std::string_view const> const names{name_of};
+// After a view of `component`: each of its effects whose dependency changed starts, through `start`. One that cannot
+// start leaves the others to start all the same, and what it threw is thrown once they have.
+template <class C>
+void run_effects(C &component, effect_starter const &start) {
+  std::exception_ptr first;
+
+  for_each_member(component, [&](auto &member) {
+    if constexpr (EffectMember<std::remove_cvref_t<decltype(member)>>) {
+      try {
+        member.after_view(start);
+      } catch (...) {
+        if (!first) {
+          first = std::current_exception();
+        }
+      }
+    }
+  });
+
+  if (first) {
+    std::rethrow_exception(first);
+  }
+}
+
+// What a table holds to start the effects of `C`: none for a component that has none.
+template <class C>
+[[nodiscard]] constexpr auto effects_of() noexcept -> void (*)(void *, effect_starter const &) {
+  if constexpr (any_member<C, is_effect_member>) {
+    return [](void *component, effect_starter const &start) { run_effects(*static_cast<C *>(component), start); };
+  } else {
+    return nullptr;
+  }
+}
+
+} // namespace quoll::ui::detail
+
+#endif // QUOLL_UI_DETAIL_RUN_EFFECTS_HPP

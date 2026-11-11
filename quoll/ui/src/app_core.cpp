@@ -116,9 +116,9 @@ struct app_core::outcome {
 };
 
 app_core::app_core(async::any_executor executor, renderer_ref renderer, view_function view,
-                   unmounted_function unmounted, void *component, app_options options)
+                   unmounted_function unmounted, effects_function effects, void *component, app_options options)
     : executor_(std::move(executor)), renderer_(renderer), link_(std::make_shared<app_link>(app_link{this})),
-      view_(view), unmounted_(unmounted), component_(component), options_(std::move(options)) {}
+      view_(view), unmounted_(unmounted), effects_(effects), component_(component), options_(std::move(options)) {}
 
 app_core::~app_core() { link_->core = nullptr; }
 
@@ -141,7 +141,16 @@ void app_core::render() {
     expand(view, components_, made);
   }
 
+  // The components whose view ran and that have effects, to start once shown: commit() takes their records.
+  std::vector<held_view> viewed;
+
   try {
+    for (auto const &record : made.views) {
+      if (record.owner->table().effects != nullptr) {
+        viewed.push_back({.owner = record.owner, .props = record.props});
+      }
+    }
+
     // For stop() to know a task of theirs, as long as one lives.
     std::erase_if(instances_, [](auto const &held) { return held.expired(); });
 
@@ -198,6 +207,14 @@ void app_core::render() {
     }
   }
 
+  // Once shown, and their mounted() started, as React's effects run once a render is committed: those of the app's own
+  // component, then of each whose view ran, whose dependency changed. One that cannot start is told as a failure.
+  start_effects(effects_, component_, {});
+
+  for (auto const &held : viewed) {
+    start_effects(held.owner->table().effects, held.owner->component(), held);
+  }
+
   // A state a new component changed in its first view, which its app did not hear of then, shows in another render.
   // One that cannot be scheduled is told as a failure.
   for (auto const &component : made.made) {
@@ -212,6 +229,33 @@ void app_core::render() {
     }
 
     break;
+  }
+}
+
+void app_core::start_effects(effects_function effects, void *component, held_view const &held) {
+  if (effects == nullptr) {
+    return;
+  }
+
+  struct starting {
+    app_core *app;
+    held_view const *held;
+  } context{this, &held};
+
+  auto const start = [](void *owner, async::task<> work) {
+    auto const &[app, given] = *static_cast<starting *>(owner);
+
+    try {
+      app->spawn(std::move(work), *given);
+    } catch (...) {
+      app->failed(std::current_exception());
+    }
+  };
+
+  try {
+    effects(component, {.owner = &context, .start = start});
+  } catch (...) {
+    failed(std::current_exception());
   }
 }
 

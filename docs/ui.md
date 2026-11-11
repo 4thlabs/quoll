@@ -235,21 +235,26 @@ compile. A pointer, or a view inside another type, still points to what the call
 **Made outside a view**, in a handler or `mounted()`, a callback knows no component: it runs in the caller's task, as a
 `std::function` would, and what its function captures is the caller's to keep alive.
 
-## Loading and running
+## Effects and actions
 
-What a component loads for a key, and what it runs, once at a time, are members of it, which show again as they
-change, as states do: `resource<Key, T>` and `action<R(Args...)>`, or `keyed_action<Key, R(Args...)>` for runs by key.
-Each takes the function it calls, returning a task. A load or a run gives its result as its task ends, a
-`std::expected` of the value or of what the function threw, as an `std::exception_ptr`, and keeps a copy of it for the
-view: a value whose copy throws, as for a lack of memory, is the failure of that load or run.
+What a component runs as a state changes, and what it runs on a click, once at a time, are members of it, which show
+again as they change, as states do. `effect<T>` is React's `useEffect` with a state of the component as its
+dependency; `action<R(Args...)>`, or `keyed_action<Key, R(Args...)>` for runs by key, is what a handler runs. Each
+gives its result as a `std::expected` of the value or of what the function threw, as an `std::exception_ptr`, and
+keeps a copy of it for the view: a value whose copy throws, as for a lack of memory, is the failure of that run.
 
 ```cpp
 struct dashboard_page {
-  resource<std::int64_t, products::monthly_sales> sales{products_client::sales};
+  state<std::optional<std::int64_t>> selected;
+
+  effect<products::monthly_sales> sales{selected, [](std::int64_t id) {
+    return products_client::sales(id);
+  }};
+
   keyed_action<std::int64_t, products::product(products::product_update)> saves{products_client::update};
 
-  task<> select(std::int64_t id) {
-    static_cast<void>(co_await sales.load(id));
+  void select(std::int64_t id) {
+    selected = std::optional<std::int64_t>{id};
   }
 
   element view() {
@@ -264,29 +269,38 @@ struct dashboard_page {
     };
 
     return div({
-        when(sales.status() == load_status::loading, loading),
-        when(sales.status() == load_status::done, done),
+        when(sales.status() == effect_status::running, loading),
+        when(sales.status() == effect_status::done, done),
     });
   }
 };
 ```
 
-**A resource holds the last load only**:
+**An effect runs as its state changes**, as React's `useEffect(…, [state])`:
 
-- `co_await sales.load(key)` runs the loader in the task awaiting it, a handler's or `mounted()`, which the component
-  outlives, and gives its result;
-- loading again stops the load before: its answer writes nothing, even one that came anyway, and its result is
-  `run_replaced`, to its caller, which goes on;
-- `status()` says where it is: `none` before a load, `loading`, `done`, or `stopped` once its caller stopped it, as
-  `with_timeout` does, before it ended, which leaves its `key()` only;
-- `result()` is the result of the last load, once `status()` is `done`, and throws `std::logic_error` before;
-- a stop of the component ends the load with it, as [a stop](async.md#stopping-a-task) does.
+- after a view of its component in which the state changed, compared with `==`, once the view is shown, the function
+  runs as a task of the component with a copy of the state's value;
+- the run before is stopped: its answer writes nothing, even one that came anyway, as React's cleanup would have it;
+- a state holding a `std::optional` runs it with what it holds, and stops it, with nothing run, once it is empty;
+- `status()` says where it is: `none` before a run, `running`, `done`, or `stopped` once a caller stopped it, as
+  `with_timeout` does; `result()` is the result of the last run once `status()` is `done`, and throws
+  `std::logic_error` before;
+- `reload()` runs it again for the value the state holds now, and gives its result, `run_replaced` for one a later run
+  took the place of: what a Try again button calls, as setting a state to the value it holds changes nothing;
+- `effect<>` runs a function of nothing, as a search a while after what is typed:
+
+```cpp
+effect<> search{query, [this](std::string text) -> task<> {
+  co_await quoll::async::sleep_for(300ms);
+  co_await find(std::move(text));
+}};
+```
 
 **An action runs once at a time**:
 
 - `co_await save.run(args...)` gives its result: `run_refused`, at once, for a call while one is under way;
 - with `overlap::restart` as its second parameter, a call stops the run under way instead, whose result is then
-  `run_replaced`, as a resource's load does;
+  `run_replaced`, as an effect's run is;
 - `pending()` says one is under way, for a button to wait on, and a run its caller stops is under way no more;
 - `result()` is the result of the last run that ended, kept while the next is under way, once `has_result()`; a call
   refused or replaced writes none;
@@ -305,9 +319,10 @@ task<bool> save(std::int64_t id, products::product_update changes) {
 }
 ```
 
-Neither is copied nor moved: a load or a run under way refers to it, as a component stays where it was made. Their
-keys and arguments are copied into the load or the run, so that none can be a reference or a view, which does not
-compile. A function given empty, as a null pointer, throws `std::invalid_argument` as the member is made.
+None is copied nor moved: a run under way refers to it, as a component stays where it was made. An effect depends on
+a state of the same component, declared before it. Keys, arguments and values are copied into the run, so that none
+can be a reference or a view, which does not compile. A function given empty, as a null pointer, throws
+`std::invalid_argument` as the member is made.
 
 ## JavaScript widgets
 
