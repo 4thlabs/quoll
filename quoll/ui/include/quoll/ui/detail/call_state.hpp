@@ -254,7 +254,10 @@ public:
     // The stop callback before the wait, as slots does: once the wait is published, the work may resume this frame on
     // another thread, and a stop may unwind it, so nothing of it is written after.
     item_.handle = handle;
-    on_stop_.emplace(context.stop_token, stopper{this});
+
+    if (context.stop_token.stop_possible()) {
+      on_stop_.emplace(context.stop_token, stopper{this});
+    }
 
     if (!state_->wait(item_, context.executor, context.owner, context.stop_token, stopped)) {
       on_stop_.reset();

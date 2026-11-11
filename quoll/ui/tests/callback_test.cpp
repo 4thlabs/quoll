@@ -300,6 +300,34 @@ struct self_keeping_page {
   }
 };
 
+// Hands out, on its first view only, a callback reading its props by reference, then views again with others.
+struct stale_exposing {
+  struct props {
+    std::string label;
+    callback<void()> *out = nullptr;
+    std::vector<std::string> *read = nullptr;
+  };
+
+  bool armed = false;
+
+  element view(props const &given) {
+    if (!armed) {
+      armed = true;
+      *given.out = [&given] { given.read->push_back(given.label); };
+    }
+
+    return p(given.label);
+  }
+};
+
+struct stale_page {
+  state<std::string> label{std::string{"the first label, too long for a short string"}};
+  callback<void()> *out = nullptr;
+  std::vector<std::string> read;
+
+  element view() { return div({component<stale_exposing>({.label = *label, .out = out, .read = &read})}); }
+};
+
 static_assert(std::equality_comparable<callback<void(int)>>);
 // Another signature's callback would be called back here, in the view that converts it: refused.
 static_assert(!std::convertible_to<callback<void(long)>, callback<void(int)>>);
@@ -611,4 +639,46 @@ TEST_CASE("callback: one kept by the component that made it does not keep that c
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+}
+
+TEST_CASE("callback: a call once its component has viewed again ends on a stop, as its given may be gone",
+          "[ui][callback]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<stale_page> instance{time.get_executor(), shown};
+  callback<void()> exposed;
+  std::optional<std::monostate> first;
+  std::optional<std::monostate> later{std::monostate{}};
+
+  instance.component().out = &exposed;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    first = co_await quoll::async::stopped_as_optional(exposed());
+
+    instance.component().label = std::string{"the second label, too long for a short string"};
+    co_await settle();
+    later = co_await quoll::async::stopped_as_optional(exposed());
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(first);
+  REQUIRE_FALSE(later);
+  REQUIRE(instance.component().read == std::vector<std::string>{"the first label, too long for a short string"});
+}
+
+TEST_CASE("callback: a function taking its argument by reference refers to the task's own copy", "[ui][callback]") {
+  std::vector<std::string> seen;
+  callback<void(std::string)> const kept = [&seen](std::string const &text) -> task<> {
+    co_await quoll::async::yield();
+    seen.push_back(text);
+  };
+
+  auto const call = [&]() -> task<int> {
+    co_await kept(std::string{"held by the task, too long for a short string"});
+    co_return 0;
+  };
+
+  REQUIRE(quoll::test::run(call()) == 0);
+  REQUIRE(seen == std::vector<std::string>{"held by the task, too long for a short string"});
 }

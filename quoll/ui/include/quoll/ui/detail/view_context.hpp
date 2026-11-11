@@ -67,6 +67,8 @@ struct call_target {
   std::weak_ptr<instance> owner{};
   std::weak_ptr<void const> props{};
   bool of_component = false;
+  // It had props: once they are gone, the view that made it has viewed again, and what it refers to may be gone.
+  bool of_props = false;
 };
 
 // What a callback made now holds, of the view running on this thread: nothing outside one.

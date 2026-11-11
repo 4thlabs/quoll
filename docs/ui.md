@@ -152,8 +152,10 @@ component<note_row>({.item = item, .on_remove = [this](std::int64_t id) { return
   delete to finish. What the work throws then goes to `on_error`. A work stopped, as its own component goes, stops its
   caller too.
 - Once the app has stopped, or is gone, or the component is gone, a call ends on a stop and runs nothing: a callback
-  holds its component weakly, so that one kept by its own component leaves no cycle. Made outside a view, in a handler
-  or `mounted()` included, a callback runs in the caller's task: what marks the component is its view running.
+  holds its component weakly, so that one kept by its own component leaves no cycle; so does a call once the
+  component has viewed again, as what the function refers to of that view may be gone. Made outside a view, in a
+  handler or `mounted()` included, a callback knows no component: it runs in the caller's task, as a `std::function`
+  would, and what its function captures is the caller's to keep alive.
 - Every callback of a signature that calls something compares equal, whatever its function captures: it calls back a
   component, which stays the same.
 
