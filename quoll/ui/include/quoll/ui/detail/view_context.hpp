@@ -60,7 +60,7 @@ struct view_context {
 };
 
 // What a callback holds of the view that made it: its component weakly, so that one its own component keeps leaves no
-// cycle, and the props of that view, which hold only what placed the component.
+// cycle, and the props of that view, which hold only what placed the component. Thread safety: a value.
 struct call_target {
   std::shared_ptr<app_link> app{};
   std::weak_ptr<instance> owner{};
@@ -72,6 +72,7 @@ struct call_target {
 [[nodiscard]] call_target current_target() noexcept;
 
 // Makes `context` the current view's while it lives, then gives back the one before: views run one inside another.
+// Thread safety: on the thread of the view it sets, as the view it wraps.
 class view_scope {
 public:
   explicit view_scope(view_context context) noexcept;
@@ -90,9 +91,6 @@ private:
 // Runs `work` as a task of the component `target` names, or of its app for none, as one of its handlers would: false if
 // that component or that app is gone, or the app stopped, which runs nothing more.
 [[nodiscard]] bool spawn_in(call_target const &target, async::task<> work);
-
-// A task that is done at once.
-[[nodiscard]] async::task<> done();
 
 } // namespace quoll::ui::detail
 

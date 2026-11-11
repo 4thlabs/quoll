@@ -41,12 +41,15 @@
 #include <quoll/async/detail/end_stopped.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/detail/call_state.hpp>
+#include <quoll/ui/detail/ready.hpp>
 #include <quoll/ui/detail/view_context.hpp>
 
 #include <concepts>
 #include <exception>
 #include <functional>
 #include <memory>
+#include <span>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -62,6 +65,16 @@ inline constexpr bool is_callback = false;
 
 template <class Signature>
 inline constexpr bool is_callback<callback<Signature>> = true;
+
+// What refers to an object it does not hold, which a copy does not make the task's own.
+template <class T>
+inline constexpr bool is_view = false;
+
+template <class CharT, class Traits>
+inline constexpr bool is_view<std::basic_string_view<CharT, Traits>> = true;
+
+template <class T, std::size_t Extent>
+inline constexpr bool is_view<std::span<T, Extent>> = true;
 
 } // namespace detail
 
@@ -95,8 +108,10 @@ inline constexpr bool is_callback<callback<Signature>> = true;
  *
  * A caller already stopped starts nothing, and a work whose component is stopped before it starts does not run.
  *
- * Made outside a view, it runs the function as part of the caller's task. The function returns `R`, or a task of `R`;
- * the arguments are copied into the task, and copies of a callback share its function. Every callback of one signature
+ * Made outside a view, in a handler or a mounted() included, it runs the function as part of the caller's task: what
+ * marks the component is its view running. The function returns `R`, or a task of `R`;
+ * the arguments are copied into the task, so that none can be a reference to write to or a view, refused at compile
+ * time, and copies of a callback share its function. Every callback of one signature
  * that calls something compares equal, whatever its function captures: it calls back a component, which stays the
  * same, so that props holding one compare by the rest.
  *
@@ -105,6 +120,12 @@ inline constexpr bool is_callback<callback<Signature>> = true;
  */
 template <class R, class... Args>
 class callback<R(Args...)> {
+  static_assert(((!std::is_lvalue_reference_v<Args> || std::is_const_v<std::remove_reference_t<Args>>) && ...),
+                "quoll::ui: a callback's arguments are copied into its task: none can be a reference to write to");
+  static_assert((!detail::is_view<std::remove_cvref_t<Args>> && ...),
+                "quoll::ui: a callback's arguments are copied into its task: a view would still refer to the caller's "
+                "object, which may go first");
+
   using function_type = std::function<async::task<R>(Args...)>;
 
 public:
@@ -167,6 +188,11 @@ private:
     }
 
     if (!target.app) {
+      // Made outside an app, as for to_html: its component, if it had one, is gone with the page.
+      if (target.of_component && target.owner.expired()) {
+        co_await async::detail::end_stopped{};
+      }
+
       if constexpr (std::is_void_v<R>) {
         co_await (*function)(std::move(args)...);
         co_return;

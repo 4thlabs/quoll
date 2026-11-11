@@ -58,6 +58,7 @@
 #include <stop_token>
 #include <string>
 #include <tuple>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -107,6 +108,33 @@ struct saving_page {
                                       log.lines.push_back("saved " + label);
                                     },
                                     .log = &log});
+    })});
+  }
+};
+
+// Passes the callback it is given on to a row of its own, as it is.
+struct relay {
+  struct props {
+    callback<void(std::string)> on_save;
+    journal *log = nullptr;
+  };
+
+  element view(props const &given) {
+    return component<saving_row>({.label = "relayed", .on_save = given.on_save, .log = given.log});
+  }
+};
+
+struct relaying_page {
+  state<bool> shows{true};
+  journal log;
+
+  element view() {
+    return div({when(*shows, [this] {
+      return component<relay>({.on_save = [this](std::string label) -> task<> {
+                                 co_await quoll::async::sleep_for(1min);
+                                 log.lines.push_back("saved " + label);
+                               },
+                               .log = &log});
     })});
   }
 };
@@ -262,6 +290,42 @@ TEST_CASE("callback: a call runs in the task of the component that wrote it, whi
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE(log == std::vector<std::string>{"saved a"});
+}
+
+TEST_CASE("callback: passed on as it is, it still calls back the component that wrote it", "[ui][callback]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<relaying_page> instance{time.get_executor(), shown};
+  auto const &log = instance.component().log.lines;
+
+  auto const act = [&]() -> task<> {
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+
+    // The relay and its row go: the page's save goes on.
+    instance.component().shows = false;
+    co_await settle();
+    co_await quoll::async::sleep_for(2min);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(log == std::vector<std::string>{"saved relayed"});
+}
+
+TEST_CASE("callback: one made for to_html calls nothing once the page is written", "[ui][callback]") {
+  callback<void()> exposed;
+  bool ran = false;
+
+  std::ignore = to_html(div({component<exposing>({.out = &exposed, .ran = &ran})}));
+
+  auto const call = [&]() -> task<bool> {
+    auto const ended = co_await quoll::async::stopped_as_optional(exposed());
+
+    co_return ended.has_value();
+  };
+
+  REQUIRE(quoll::test::run(call()) == false);
+  REQUIRE_FALSE(ran);
 }
 
 TEST_CASE("callback: the caller waits for the end of the call", "[ui][callback]") {
@@ -441,6 +505,7 @@ TEST_CASE("callback: one made outside a view runs in the caller's task, with cop
           "[ui][callback]") {
   std::vector<std::string> seen;
   callback<int(int)> const next = [](int value) { return value + 1; };
+  callback<long(int)> const widened = [](int value) { return value * 2; };
   callback<void(std::string const &)> const kept = [&seen](std::string const &text) -> task<> {
     co_await quoll::async::yield();
     seen.push_back(text);
@@ -451,10 +516,10 @@ TEST_CASE("callback: one made outside a view runs in the caller's task, with cop
     auto pending = kept(std::string{"copied into the task, too long for a short string"});
 
     co_await std::move(pending);
-    co_return co_await next(1);
+    co_return static_cast<int>(co_await widened(co_await next(1)));
   };
 
-  REQUIRE(quoll::test::run(call()) == 2);
+  REQUIRE(quoll::test::run(call()) == 4);
   REQUIRE(seen == std::vector<std::string>{"copied into the task, too long for a short string"});
 }
 

@@ -36,6 +36,7 @@
 
 #include <quoll/ui/detail/app_core.hpp>
 #include <quoll/ui/detail/instance.hpp>
+#include <quoll/ui/detail/ready.hpp>
 #include <quoll/ui/detail/view_context.hpp>
 
 #include <utility>
