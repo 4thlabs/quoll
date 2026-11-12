@@ -72,7 +72,9 @@ struct context_table {
   void (*link)(void *context, state_link to);
   // None for a context without effects.
   void (*effects)(void *context, effect_starter const &start);
-  // None for a context using none: finds those it uses, then counts their changes.
+  // None for a context using none: whether those it uses are there, before it is made, then finds them, then counts
+  // their changes.
+  bool (*finds)(context_finder const &finder);
   void (*bind)(void *context, context_finder const &finder);
   std::uint64_t (*contexts_version)(void *context);
 };

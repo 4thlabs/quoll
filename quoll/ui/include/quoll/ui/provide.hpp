@@ -60,6 +60,7 @@ inline constexpr context_table context_table_of{
     .make = &make_held<T>,
     .link = [](void *context, state_link to) { link_states(*static_cast<T *>(context), to); },
     .effects = effects_of<T>(),
+    .finds = finds_of<T>(),
     .bind = binds_of<T>(),
     .contexts_version = contexts_version_of<T>(),
 };

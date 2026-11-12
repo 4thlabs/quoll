@@ -86,7 +86,7 @@ public:
   app(E executor, R renderer, app_options options = {})
       : renderer_(std::move(renderer)),
         core_(async::any_executor{executor}, renderer_ref{renderer_}, &view_of, detail::unmounted_of<C>(),
-              detail::effects_of<C>(), &component_, std::move(options)) {
+              detail::effects_of<C>(), detail::finds_of<C>(), &component_, std::move(options)) {
     if constexpr (detail::binds_of<C>() != nullptr) {
       detail::binds_of<C>()(&component_, core_.contexts());
     }

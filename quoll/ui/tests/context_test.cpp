@@ -622,7 +622,7 @@ TEST_CASE("context: run() once its app stopped runs nothing, and ends its caller
   CHECK(std::get<0>(*std::as_const(instance).context<names>().all).empty());
 }
 
-TEST_CASE("context: one that cannot find those it uses fails the app's making, telling it of nothing as it goes",
+TEST_CASE("context: one that cannot find those it uses fails the app's making, never made, and tells it of nothing",
           "[ui][context]") {
   lines.clear();
 
@@ -635,12 +635,12 @@ TEST_CASE("context: one that cannot find those it uses fails the app's making, t
                                            {.contexts = {provide<first_gone>(), provide<broken_user>()}}}),
                   std::logic_error);
 
-  // What the broken one wrote as it went asked the app, half made, for no render.
+  // The broken one never made, the app, half made, was asked for no render.
   CHECK(posts == 0);
-  CHECK(lines == std::vector<std::string>{"broken gone", "first gone"});
+  CHECK(lines == std::vector<std::string>{"first gone"});
 }
 
-TEST_CASE("context: the app's own component missing one fails its making, telling it of nothing as it goes",
+TEST_CASE("context: the app's own component missing one fails its making, never made, and tells it of nothing",
           "[ui][context]") {
   lines.clear();
 
@@ -648,12 +648,12 @@ TEST_CASE("context: the app's own component missing one fails its making, tellin
   memory_renderer const shown;
   int posts = 0;
 
-  // Made, then its context not found: what its destructor writes reaches no app, half made.
+  // Its context not found: it is never made, and the app, half made, hears of nothing.
   CHECK_THROWS_AS((test_app<broken_component>{
                       counting_executor{time.get_executor(), &posts}, shown, {.contexts = {provide<first_gone>()}}}),
                   std::logic_error);
   CHECK(posts == 0);
-  CHECK(lines == std::vector<std::string>{"component gone", "first gone"});
+  CHECK(lines == std::vector<std::string>{"first gone"});
 }
 
 TEST_CASE("context: a component of a view missing one is refused before it is made", "[ui][context]") {
@@ -768,4 +768,18 @@ TEST_CASE("context: a component whose view threw after its context changed views
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(failures == std::vector<std::string>{"no view"});
   CHECK(shown.html().contains("<p>count 5</p>"));
+}
+
+TEST_CASE("context: the app's own component, or a context, missing one is never made, as its destructor may read it",
+          "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+
+  // Their destructors read what they would have found: a throw there would end the program.
+  CHECK_THROWS_AS((test_app<broken_component>{time.get_executor(), shown}), std::logic_error);
+  CHECK_THROWS_AS((test_app<counting_page>{time.get_executor(), shown, {.contexts = {provide<broken_user>()}}}),
+                  std::logic_error);
+  CHECK(lines.empty());
 }

@@ -420,7 +420,8 @@ int main() {
   changes reach the app once it is made, and they go the last given first, telling the app of nothing as they go, so
   that one may still read those it uses as it goes;
 - a `shared<T>` finds the app's context as the app makes its component: an app given none of that type throws
-  `std::logic_error` there, before making the component, whose destructor then never runs;
+  `std::logic_error` there, before making the component, the app's own or a context included, whose destructor then
+  never runs;
 - `*shared` and `shared->` give the context; once a component read it so, a change of its states, or of a context it
   uses, shows that component again, whose view runs again even if its own states did not change. A component that
   only runs on it does not show again as it changes. A view that changes a context it reads shows again, as one

@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/ui/detail/app_core.hpp>
+#include <quoll/ui/detail/bind_contexts.hpp>
 
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_stop_token.hpp>
@@ -117,7 +118,8 @@ struct app_core::outcome {
 };
 
 app_core::app_core(async::any_executor executor, renderer_ref renderer, view_function view,
-                   unmounted_function unmounted, effects_function effects, void *component, app_options options)
+                   unmounted_function unmounted, effects_function effects, finds_function finds, void *component,
+                   app_options options)
     : executor_(std::move(executor)), renderer_(renderer), link_(std::make_shared<app_link>(app_link{this})),
       view_(view), unmounted_(unmounted), effects_(effects), component_(component), options_(std::move(options)) {
   for (auto const &spec : options_.contexts) {
@@ -125,6 +127,10 @@ app_core::app_core(async::any_executor executor, renderer_ref renderer, view_fun
 
     if (context(table.type) != nullptr) {
       throw std::logic_error{"quoll::ui::app: two contexts of one type"};
+    }
+
+    if (table.finds != nullptr && !table.finds(contexts())) {
+      throw std::logic_error{missing_context};
     }
 
     auto entry = std::make_unique<context_entry>(table, state_link{this, &app_core::state_changed});
@@ -135,6 +141,10 @@ app_core::app_core(async::any_executor executor, renderer_ref renderer, view_fun
     }
 
     contexts_.push_back(std::move(entry));
+  }
+
+  if (finds != nullptr && !finds(contexts())) {
+    throw std::logic_error{missing_context};
   }
 }
 

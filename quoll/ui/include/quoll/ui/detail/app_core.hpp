@@ -69,13 +69,17 @@ public:
   using view_function = element (*)(void *component);
   using unmounted_function = void (*)(void *component);
   using effects_function = void (*)(void *component, effect_starter const &start);
+  using finds_function = bool (*)(context_finder const &finder);
 
   // `unmounted`, none for a component without it, runs as the app stops, once its view showed.
   // `effects` start those of the component whose dependency changed, after each of its views. The contexts of `options`
   // are made here, in their order, each finding those it uses among those given before it.
   // Throws std::logic_error for two contexts of one type, or one using a context not given before it.
+  // `finds`, none for a component using no context, tells whether the contexts the app's own component uses are there,
+  // which is checked here, before the app makes it, as for each context before it is made: one refused is never made,
+  // so that its destructor, which may read what it found, does not run.
   app_core(async::any_executor executor, renderer_ref renderer, view_function view, unmounted_function unmounted,
-           effects_function effects, void *component, app_options options);
+           effects_function effects, finds_function finds, void *component, app_options options);
 
   app_core(app_core const &) = delete;
   app_core(app_core &&) = delete;
