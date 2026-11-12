@@ -320,7 +320,8 @@ state<std::tuple<products::monthly_sales, bool>> sales;        // and whether it
 - `reload()` runs it again after the view it asks for, as a change would: what a Try again button calls. An effect runs
   one way, after a view, as React has it. One that cannot start, comparing or copying its states, or starting its run,
   as for a lack of memory, stops the run before all the same and ends on that failure, which `reload()` tries again;
-- a target with no `std::exception_ptr` leaves a failure to the app's `on_error`, as a handler's.
+- every failure reaches the app's `on_error`, as a handler's, shown in its target or not: `on_error` hears of all, as
+  React Query's global `onError`, and the target says what the view shows.
 
 Several loads go in one function, which gives a `std::tuple`, and fail together:
 
@@ -378,10 +379,11 @@ struct rename_form {
 ```
 
 - `save.with(args...)` gives a handler that runs it with copies of the arguments, for `on_click`: what it gave and why
-  it failed are what it holds, as React Query's `mutate()`, for the view to show; a handler going on with them awaits
-  `run()`;
+  it failed are what it holds, for the view to show, and a failure reaches the app's `on_error` too, as every failure
+  of an effect or a handler;
 - `co_await save.run(args...)` gives what the function gave, or what it threw, as a `std::expected`, for a handler
-  that goes on with it, after what follows a success, which throws to it what it throws;
+  that goes on with it, after what follows a success, which throws to it what it throws: its caller alone is given
+  a failure, not `on_error`;
 - both take the function's parameters, so that a braced argument builds one, as `save.with(id, {.name = "tea"})`;
 - every failure of a run is its `error`, a lack of memory before it began too; one making the run throws from the call;
 - a call while one is under way is refused, `run_refused` at once, the action left as it is;

@@ -413,7 +413,7 @@ changes only what the harness shows. Candidates:
   before). Both write into a state of the component, their target, and the view reads states only, as a React effect
   calls its setters: the target's elements receive by their type, a `bool` whether a run is under way, a
   `std::exception_ptr` why the last failed, and the others the values, in order, a function giving a `std::tuple` for
-  several loads; an ambiguous target does not compile. A target with no error leaves an effect's failure to `on_error`.
+  several loads; an ambiguous target does not compile. A failure reaches `on_error` too (see below).
   An action's caller is given what it gave, a `std::expected<T, std::exception_ptr>` (`run_refused` and `run_replaced`
   for a call with none of its own). An effect runs one way, after a view, as React's: `reload()` asks for that view
   rather than run it. Decided with the maintainer: a home-made `resource<Key, T>` with a key and a loader came first and
@@ -439,6 +439,10 @@ changes only what the harness shows. Candidates:
   (`saving`, which said one of its three fields), the state of a save being the action's own. It changes #167's "no
   status on the members" only in form: the action is read as a state, so the view still reads states only. An effect
   keeps its target, which is the data it loads.
+- **Every failure of a run reaches the app's `on_error`** (2026-11-12), shown or not, as React Query's global
+  `onError`: an effect's, `with()`'s, a handler's alike; the target or the action says what the view shows. The
+  maintainer found it a pity that `on_error` heard of a failure or not by what the target could hold. `run()`'s caller
+  alone is given its failure, in the `std::expected`. A call refused or replaced is no failure.
 - **Routing: routes checked at compile time, their parameters a page's props** (2026-11-12), as the maintainer asked
   for several pages. After React Router, TanStack Router and Dioxus: a route's path is a template, as the REST DSL's,
   whose parameters are fields of its page's props, which give their types, as Dioxus's routes are an enum of typed
