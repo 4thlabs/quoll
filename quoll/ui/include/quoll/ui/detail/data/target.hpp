@@ -267,8 +267,8 @@ struct target_table {
   void (*begin)(void *target) noexcept;
   // Ended with nothing to write, as a stop of its caller: loading no more.
   void (*abandon)(void *target) noexcept;
-  // Failed: loading no more, and the error, which false says it had no place for.
-  bool (*fail)(void *target, std::exception_ptr failure) noexcept;
+  // Failed: loading no more, and the error, where it has a place for it.
+  void (*fail)(void *target, std::exception_ptr failure) noexcept;
 };
 
 // What a run giving R does to a target state as it ends well.
@@ -342,7 +342,7 @@ void abandon_target(void *target) noexcept {
 }
 
 template <class T>
-bool fail_target(void *target, std::exception_ptr failure) noexcept {
+void fail_target(void *target, std::exception_ptr failure) noexcept {
   using roles = target_roles<T>;
 
   if constexpr (roles::loading || roles::error) {
@@ -356,8 +356,6 @@ bool fail_target(void *target, std::exception_ptr failure) noexcept {
       }
     });
   }
-
-  return roles::error;
 }
 
 // The value of `given` at `Index`: of a tuple, or the value itself.
@@ -445,9 +443,10 @@ public:
     }
   }
 
-  // Whether the target took the failure, as its error.
-  [[nodiscard]] bool fail(std::exception_ptr failure) const noexcept {
-    return table_ != nullptr && table_->fail(target_, std::move(failure));
+  void fail(std::exception_ptr failure) const noexcept {
+    if (table_ != nullptr) {
+      table_->fail(target_, std::move(failure));
+    }
   }
 
 private:

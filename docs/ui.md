@@ -353,7 +353,7 @@ effect search{query, [this](std::string text) -> task<> {
   member `send`, declared before the action.
 
 It is read as an `async_state` is: `save->loading` while a run is under way, `save->error` why the last failed, and
-`save->value` what it gave, a copy, none for a value it cannot copy or make empty, as a move-only one, which only
+`save->value` what the last that succeeded gave, a copy, none for a value it cannot copy or make empty, as a move-only one, which only
 `run()`'s caller is given; a change of them shows its component again. What follows a success is given last,
 as React Query's `onSuccess`:
 

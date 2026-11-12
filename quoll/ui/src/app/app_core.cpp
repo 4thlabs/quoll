@@ -309,8 +309,7 @@ void app_core::start_effects(effects_function effects, void *component, held_vie
     held_view const *held;
   } context{this, &held};
 
-  // What spawning throws goes back to the effect, which ends on it and waits for reload(), and is told below when its
-  // target has no place for it.
+  // What spawning throws goes back to the effect, which ends on it and waits for reload(), and is told below.
   auto const start = [](void *owner, async::task<> work) {
     auto const &[app, given] = *static_cast<starting *>(owner);
 
@@ -465,9 +464,9 @@ void app_core::failed(std::exception_ptr failure) const noexcept {
   try {
     std::rethrow_exception(failure);
   } catch (std::exception const &error) {
-    std::fprintf(stderr, "quoll::ui: a handler failed: %s\n", error.what());
+    std::fprintf(stderr, "quoll::ui: a handler, an effect or an action failed: %s\n", error.what());
   } catch (...) {
-    std::fputs("quoll::ui: a handler failed\n", stderr);
+    std::fputs("quoll::ui: a handler, an effect or an action failed\n", stderr);
   }
 }
 

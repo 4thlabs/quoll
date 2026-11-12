@@ -410,7 +410,8 @@ changes only what the harness shows. Candidates:
   none, compared with `==` after each view; the run before is stopped as its cleanup, and as a stop resumes nothing
   (#151), its answer writes nothing; an optional state runs it only while it holds a value. `ui::action` runs a function
   once at a time by default, a call while one is under way refused, with the others as options (a call stopping the one
-  before). Both write into a state of the component, their target, and the view reads states only, as a React effect
+  before). An effect writes into a state of the component, its target, an action into its own (see below), and the
+  view reads states only, as a React effect
   calls its setters: the target's elements receive by their type, a `bool` whether a run is under way, a
   `std::exception_ptr` why the last failed, and the others the values, in order, a function giving a `std::tuple` for
   several loads; an ambiguous target does not compile. A failure reaches `on_error` too (see below).

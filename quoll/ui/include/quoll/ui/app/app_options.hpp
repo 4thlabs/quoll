@@ -48,9 +48,10 @@ namespace quoll::ui {
 /** @brief What an app does with what its handlers throw, and the contexts it holds for its components. */
 struct app_options {
   /**
-   * @brief Called with what a handler threw, other than `operation_canceled`, on the executor; a handler that ended on
-   * a stop is no failure, and is not told; must not throw. Empty: its message goes to the standard error, which is the
-   * console in a browser.
+   * @brief Called with what a handler threw, other than `operation_canceled`, on the executor, and with every failure
+   * of an effect or of an action's with(), shown in its target or not, as React Query's global onError; a handler that
+   * ended on a stop is no failure, and is not told; must not throw. Empty: its message goes to the standard error,
+   * which is the console in a browser.
    */
   std::function<void(std::exception_ptr)> on_error{};
 

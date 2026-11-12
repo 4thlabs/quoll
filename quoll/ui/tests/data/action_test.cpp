@@ -290,7 +290,7 @@ struct self_page {
   }
 };
 
-// An action from a click: its failure is its error, not the app's on_error's, nor a click refused.
+// An action from a click: its failure is its error and the app's on_error's; a click refused is no failure.
 struct untold_page {
   action<&doubled> run;
 
@@ -875,7 +875,7 @@ TEST_CASE("action: with() under a lack of memory at any step holds why, and thro
 
 TEST_CASE("action: with() under a lack of memory, as the word it gave is copied, has it as its error", "[ui][action]") {
   // The copy of the word into where its runs are allocates too: a failure there is the run's error, its word left as
-  // it was; only the making of the run throws from the handler's call.
+  // it was, thrown from the handler too, for the app's on_error.
   bool clean = false;
 
   for (long before = 0; before < 60; ++before) {
