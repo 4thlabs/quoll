@@ -35,7 +35,7 @@ user const found = co_await client.call<users::get>(42);
 
 Two things make a contract heavy:
 
-- **Error responses repeated on every endpoint.** The GitHub sample declares two or three `returns<error, status>` per
+- **Error responses repeated on every endpoint.** The GitHub sample declares two `returns<error, status>` on each
   endpoint.
 - **The name to write**, `"users.get"`. It is what tells apart two endpoints with the same parts, and the route's name in
   the router.
@@ -119,10 +119,9 @@ Left to the issue:
 
 - how `call_error`, `reply<>` and `try_call` give the decoded body and its status;
 - how a service answers with an `errors<T>` body, which must say its status;
-- Quoll's own answers, which `errors<T>` must leave out: a Quoll server answers 400, 401 and 415 with a
-  `rest::problem`; its router 404 and 405, its connection 408, 413, 431 and 503, and a 500 from an unknown exception,
-  with no body. For instance, `errors<T>` decodes only a body of its codec's media type, and leaves the others to
-  `call_error` with their status;
+- Quoll's own answers, which `errors<T>` must leave out: what the server, its router and its connections answer by
+  themselves, a `rest::problem` or no body at all, for many 4xx and 5xx statuses. For instance, `errors<T>` decodes only
+  a body of its codec's media type, and leaves the others to `call_error` with their status;
 - `codec<C>` needs `returns<>` and `body<>` to tell an inherited codec from a chosen one: their default, `json_codec`,
   would become a placeholder resolved by the group, which changes their types and what reads their codec; or request
   bodies keep their own codec, which the issue must say.
@@ -185,16 +184,15 @@ using api = rest::api<"/users", list, find, create, remove>;
 - **Parts become values:** `|` composes expressions, so `query_params<user_filter>`, `body<new_user>` and
   `returns<user>` become variable templates. They cannot share a namespace with today's class templates of the same
   names, so both forms cannot live side by side during a migration without other names.
-- **The internals change little:** `routes`, `mount` and the client read the endpoint's static members, which a derived
-  struct inherits; only `detail::endpoint_traits`, a partial specialization on `endpoint<Name, Method, Path, Parts...>`
-  that gives `routes_of` its path, reads it through the base instead.
+- **The internals:** they read the endpoint's static members, which a derived struct inherits, but its name goes: the
+  route's name, made from the full path, and the check that names are unique move from the endpoint to the route.
 - **Without operators**, `struct find : endpoint<verb::get, "/{id:int64}", returns<user>> {};` works too, but under
   another template name: one class template cannot take both a chain and a method with a path.
 
 ### C: operators on variables
 
 Each endpoint is a value composed with `|`. The identity is the variable: an `auto const &` template parameter binds to
-the variable itself, so `users::remove` and `cards::remove` differ even with the same type. Two spellings, one mechanism.
+the variable itself, so a `users::remove` and a `cards::remove` differ even with the same type. Two spellings, one mechanism.
 
 In a namespace:
 
@@ -214,7 +212,8 @@ using api = rest::api<"/users", list, find, create, remove>; // api<fixed_string
 In a struct, as one block:
 
 ```cpp
-using namespace quoll::rest; // in the contract's namespace: a struct cannot hold it
+namespace contract {
+using namespace quoll::rest; // a struct cannot hold it: in the contract's own namespace, never at global scope
 
 struct users {
   static constexpr auto list = get("/") | query_params<user_filter> | returns<std::vector<user>>;
@@ -224,6 +223,7 @@ struct users {
 
   using api = rest::api<"/users", list, find, create, remove>;
 };
+} // namespace contract
 ```
 
 Use:
@@ -242,8 +242,8 @@ struct users_service {
   service writes `rest::op<users::find>`. No name in C++23: from the method and the path, or `| named(...)`. The
   endpoints are listed again in `api`. Parts become values, as in B.
 - **Groups:** a template parameter pack holds types or values, not both, so `api<"/users", list, find>` cannot also hold
-  a nested `api<>` or a `with<>`. Groups become values too, as `rest::api("/api/v1", with(security<bearer_auth>,
-  users::api))`, whose identity is again a variable: everything that groups is rewritten.
+  a nested `api<>` or a `with<>`. Every `api` and `with` then becomes a value, a variable rather than the `using api`
+  above, whose shape this sketch does not settle: C rewrites all that groups.
 - **To avoid:** `constexpr` without `inline` at namespace scope, which gives each translation unit its own copy (ODR).
   The endpoints need external linkage.
 
@@ -263,7 +263,8 @@ struct users {
   delete_<"/{id:int64}"> remove;
 };
 
-using v1 = rest::api<"/api/v1", with<security<bearer_auth>, rest::api<"/users", users>, rest::api<"/cards", cards>>>;
+using v1 = rest::api<"/api/v1", with<security<bearer_auth>, rest::api<"/users", users>,
+                                               rest::api<"/users/{user_id:int64}/cards", cards>>>;
 } // namespace contract
 ```
 
@@ -277,7 +278,7 @@ struct users_service {
 };
 ```
 
-- **Identity:** the member pointer. `&users::remove` and `&cards::remove` differ, and its type is enough to find the
+- **Identity:** the member pointer. `&users::list` and `&cards::list` differ, and its type is enough to find the
   member: `api<>` already refuses two endpoints with one method and path, so each member of a resource has its own
   type, and `decltype(&users::find)` names it.
 - **Finding the members:** `api<>` counts and ties the members of the aggregate, in one of two ways, to decide:
@@ -290,8 +291,8 @@ struct users_service {
       and of route names from the method and the path.
 - **For:** a resource in one block, read as an interface. No `static constexpr auto`.
 - **Against:** commas instead of `|`, as a non-static member cannot be `auto`. The client writes `&users::find` and the
-  service `rest::op<&users::find>`. Everything that takes an endpoint as a type takes a member pointer instead:
-  `mount`, the client and its `scope<>`, `reply<>`, `respond`, `try_call` and `subscribe`.
+  service `rest::op<&users::find>`. Every template of `quoll::rest` keyed on an endpoint type is keyed on a member
+  pointer instead: the client's calls, `reply<>`, `result<>`, the routes.
   A response other than the first reads `rest::reply<&users::find>`.
 - **To check:** the enumeration on GCC 13, Clang 19, Apple Clang 21 and Emscripten. One struct mounted under two
   prefixes would be ambiguous, so refused at compile time.
@@ -323,6 +324,9 @@ struct [[=prefix("/users")]] api {
 rest::mount<users::api>(server, users_service{}); // matched by name
 user const found = co_await client.call<^^users::api::find>(42);
 ```
+
+Its annotations meet the clashes of Context, and one more: a `rest::status(...)` annotation would hide `http::status`
+in the contract's namespace, so it needs another name.
 
 The most readable form, but no compiler Quoll targets has it, but for GCC:
 
@@ -390,9 +394,9 @@ D is the shortest form that holds in C++23. B and C keep `|`, their parts becomi
 | --- | --- | --- | --- | --- | --- |
 | Today | `using find = endpoint<"users.get", verb::get, "/{id:int64}", returns<user>>;` | yes | `call<users::find>` | `operator()(users::find, ...)` | nothing |
 | A, lighter | `using find = get<"users.get", "/{id:int64}", returns<user>>;` | yes | `call<users::find>` | `operator()(users::find, ...)` | aliases |
-| B, struct per endpoint | `struct find : endpoint<get("/{id:int64}") \| returns<user>> {};` | no | `call<users::find>` | `operator()(users::find, ...)` | `endpoint<>`, and how `routes_of` reads the path |
-| C, operators | `static constexpr auto find = get("/{id:int64}") \| returns<user>;` | no | `call<users::find>` | `operator()(rest::op<users::find>, ...)` | `api` and groups become values, and all that takes an endpoint type |
-| D, members | `get<"/{id:int64}", returns<user>> find;` | no | `call<&users::find>` | `operator()(rest::op<&users::find>, ...)` | all that takes an endpoint type: `mount`, the client and its `scope<>`, `reply<>`, `respond`, `try_call`, `subscribe` |
+| B, struct per endpoint | `struct find : endpoint<get("/{id:int64}") \| returns<user>> {};` | no | `call<users::find>` | `operator()(users::find, ...)` | `endpoint<>`, the name moves to the route |
+| C, operators | `static constexpr auto find = get("/{id:int64}") \| returns<user>;` | no | `call<users::find>` | `operator()(rest::op<users::find>, ...)` | every `api` and `with` becomes a value, and every template keyed on an endpoint type |
+| D, members | `get<"/{id:int64}", returns<user>> find;` | no | `call<&users::find>` | `operator()(rest::op<&users::find>, ...)` | every template keyed on an endpoint type |
 | E, C++26 | `[[=get("/{id:int64}")]] user find(std::int64_t id);` | no | `call<^^users::api::find>` | a function of the same name | everything, and reflection everywhere |
 
 ## Decision
