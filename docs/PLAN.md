@@ -433,6 +433,12 @@ changes only what the harness shows. Candidates:
   made, as React Query's `onSuccess`, rather than a coroutine awaiting `run()` in each component. Kept: `state`, which
   the maintainer wanted kept, rather than new names such as `loaded<T>`; `run()` for a handler going on with the
   result.
+- **An action holds where its runs are** (2026-11-12), as React Query's `useMutation`: `save->loading`, `save->error`
+  and `save->value` are read as an `async_state`'s, which the action holds, and a change of them shows its component
+  again; it takes no target. The maintainer found a state declared beside each action hard to name and to read
+  (`saving`, which said one of its three fields), the state of a save being the action's own. It changes #167's "no
+  status on the members" only in form: the action is read as a state, so the view still reads states only. An effect
+  keeps its target, which is the data it loads.
 - **Routing: routes checked at compile time, their parameters a page's props** (2026-11-12), as the maintainer asked
   for several pages. After React Router, TanStack Router and Dioxus: a route's path is a template, as the REST DSL's,
   whose parameters are fields of its page's props, which give their types, as Dioxus's routes are an enum of typed

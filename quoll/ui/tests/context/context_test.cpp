@@ -341,12 +341,11 @@ struct runner_page {
 // Renames through an action of its context, on a click, what it gave in a state of its own.
 struct action_renamer {
   shared<names> data;
-  async_state<std::string> renaming;
-  action<&names::rename> rename{data, renaming};
-  // With no target, made but not run: only its caller would hear of it.
+  action<&names::rename> rename{data};
+  // Made but not run, from its context alone.
   action<&names::rename> plain{data};
 
-  element view() { return div({button("rename") | on_click(rename.with(1, "mate")), p("renamed " + renaming->value)}); }
+  element view() { return div({button("rename") | on_click(rename.with(1, "mate")), p("renamed " + rename->value)}); }
 };
 
 struct action_page {

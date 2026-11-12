@@ -39,9 +39,10 @@
 
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/ui/data/async_state.hpp>
 #include <quoll/ui/data/run_error.hpp>
-#include <quoll/ui/data/state.hpp>
 #include <quoll/ui/detail/data/run_slot.hpp>
+#include <quoll/ui/detail/data/state_link.hpp>
 #include <quoll/ui/detail/data/target.hpp>
 
 #include <cassert>
@@ -112,6 +113,19 @@ struct action_function<async::task<R> (C::*)(Args...) const noexcept>
     : action_function<async::task<R> (C::*)(Args...)> {};
 
 // What is told of a run that gave R: the value, or nothing for void.
+// What an action holds of what its runs give: a copy, for a value it can make empty and copy, and move without
+// throwing; nothing for another, as a move-only one, which only run()'s caller is given.
+template <class V>
+struct held_by_action {
+  using type = std::conditional_t<
+      std::copy_constructible<V> && std::default_initializable<V> && std::is_nothrow_move_assignable_v<V>, V, void>;
+};
+
+template <>
+struct held_by_action<void> {
+  using type = void;
+};
+
 template <class R>
 struct success_of {
   using type = std::function<void(R const &)>;
@@ -131,7 +145,7 @@ template <class Action, class... Ts>
 class action_calls<Action, std::tuple<Ts...>> {
 public:
   /**
-   * @brief Runs it, as its overlap says: what it gave, or what it threw, as its target then holds; run_refused or
+   * @brief Runs it, as its overlap says: what it gave, or what it threw, as it then holds them; run_refused or
    * run_replaced for a call that gave no result of its own.
    */
   [[nodiscard]] auto run(Ts... args) QUOLL_LIFETIMEBOUND {
@@ -139,17 +153,16 @@ public:
   }
 
   /**
-   * @brief A handler running it with copies of `args`, for on_click: what it gave goes to its target and to what
-   * follows a success, and a failure its target has no place for to the app's on_error.
+   * @brief A handler running it with copies of `args`, for on_click: what it gave and why it failed are what it holds,
+   * as React Query's mutate(), and what it gave goes to what follows a success. A handler going on with them awaits
+   * run().
    */
   [[nodiscard]] auto with(Ts... args) QUOLL_LIFETIMEBOUND {
     static_assert((std::copy_constructible<Ts> && ...),
                   "quoll::ui::action: with() copies its arguments for each click: they are copyable");
 
     // Not a coroutine: each call copies the arguments into the frame of its own run, which outlives this lambda.
-    return [action = &self(), given = std::tuple<Ts...>{std::move(args)...}] {
-      return action->run_with(given, detail::untold::thrown);
-    };
+    return [action = &self(), given = std::tuple<Ts...>{std::move(args)...}] { return action->run_with(given); };
   }
 
 private:
@@ -159,39 +172,37 @@ private:
 } // namespace detail
 
 /**
- * @brief A function a handler of a component runs, once at a time by default, what it gives written into a target
- * state, as an effect's: whether it is under way, and why it failed, for a button to wait on and a view to show.
+ * @brief A function a handler of a component runs, once at a time by default, holding where its runs are as an
+ * async_state does: whether one is under way, why the last failed, and what it gave, for a button to wait on and a view
+ * to show, as React Query's useMutation.
  *
  * @code
  * struct product_detail {
- *   state<std::optional<std::string>> name;
- *   async_state<> saving;
- *
- *   // After a success, as React Query's onSuccess: what is typed is forgotten.
- *   action<&products_client::update> save{saving, [this](products::product const &) { name = std::nullopt; }};
+ *   shared<catalog> products;
+ *   action<&catalog::save> save{products};
  *
  *   element view(props const &given) {
- *     return button(saving->loading ? "Saving…" : "Save") | disabled(saving->loading) |
- *            on_click(save.with(given.item.id, changes()));
+ *     return button(save->loading ? "Saving…" : "Save") | disabled(save->loading) |
+ *            on_click(save.with(given.item.id, changes(given.item)));
  *   }
  * };
  * @endcode
  *
  * `Function` gives its signature: a free function returning a task, as `&products_client::update`, or a member
  * function of a context, given its `shared<C>`, whose work then goes on as the component goes, or of the component
- * itself, given `this`. The target, a state of the same component declared before it, receives what an effect's does:
- * whether a run is under way, why the last failed, and the values it gave, copied; with none, only its caller hears of
- * it. What follows a success, given as it is made, is told what the run gave, before its caller.
+ * itself, given `this`, declared before it. It is read as a state: `save->loading`, `save->error` and `save->value`,
+ * what the last run gave, copied, none for a value it cannot copy or make empty, as a move-only one, which only run()'s
+ * caller is given; a change of them shows its component again. What follows a success, given as it is
+ * made, as React Query's onSuccess, is told what the run gave, before its caller.
  *
  * run() runs it in the task awaiting it, a handler's or mounted()'s, and gives what it gave or what it threw, as a
  * std::expected, not thrown again; what follows a success throws to it, as code of the handler after the run would.
- * with() gives a handler that runs it, for on_click, whose failure, when its target has no place for it, goes to the
- * app's on_error, as a handler's. Every failure of a run, a lack of memory before it began included, goes to its
- * target when it has an error; a lack of memory making the run itself throws from the call, as any call's. Both take
- * the function's parameters, so that a braced argument builds one. A call while one is under way is refused,
- * run_refused at once, the target left as it is, or, with `overlap::restart`, stops it, so that it writes nothing, even
- * one that ignored the stop and came anyway, and gives run_replaced to its caller. A stop of the caller, as a timeout,
- * ends the run and its caller, as a stop does, the target loading no more.
+ * with() gives a handler that runs it, for on_click. Every failure of a run, a lack of memory before it began included,
+ * is its error; a lack of memory making the run itself throws from the call, as any call's. Both take the function's
+ * parameters, so that a braced argument builds one. A call while one is under way is refused, run_refused at once,
+ * where its runs are left as they are, or, with `overlap::restart`, stops it, so that it writes nothing, even one that
+ * ignored the stop and came anyway, and gives run_replaced to its caller. A stop of the caller, as a timeout, ends the
+ * run and its caller, as a stop does, loading no more.
  *
  * Neither copied nor moved: a run under way refers to it. Its arguments are copied into the run, given to the function
  * as rvalues: none can be a view, which would outlive what it refers to. Thread safety: none, as a state.
@@ -210,6 +221,8 @@ public:
   using owner_type = typename traits::owner;
   using result_type = std::expected<value_type, std::exception_ptr>;
   using success_function = typename detail::success_of<value_type>::type;
+  // What it holds of what its runs give, as `->value`: none for a value it cannot copy or make empty.
+  using held_type = typename detail::held_by_action<value_type>::type;
 
 private:
   static_assert(detail::kept_as_values<value_type> && detail::kept_as_values<arguments>,
@@ -220,47 +233,37 @@ private:
 
   static constexpr bool free = std::is_void_v<owner_type>;
 
+  // What it holds, checked once: a result that moves without throwing, so that a run ends on what it holds.
+  static constexpr bool holds_checked = (detail::check_target<async_value<held_type>, value_type, true>(), true);
+  static_assert(holds_checked);
+
   using call_type = std::function<async::task<value_type>(arguments &&)>;
 
 public:
-  /** @brief Of a free function: its caller alone hears of it. */
+  /** @brief Of a free function. */
   action()
     requires free
       : call_(free_call()) {}
 
-  /** @brief Of a free function, writing into `target`, then telling `on_success`, if any, what it gave. */
-  template <class T>
+  /** @brief Of a free function, telling `on_success` what it gave, before its caller. */
+  explicit action(success_function on_success)
     requires free
-  explicit action(state<T> &target, success_function on_success = {})
-      : call_(free_call()), target_(target, std::true_type{}), on_success_(std::move(on_success)) {
-    detail::check_target<T, value_type, true>();
-  }
+      : call_(free_call()), on_success_(std::move(on_success)) {}
 
-  /** @brief Of a member function of the context `context`, a shared<C> of the same component. */
+  /**
+   * @brief Of a member function of the context `context`, a shared<C> of the same component, its work going on as the
+   * component goes; then telling `on_success`, if any, what it gave.
+   */
   template <class C>
     requires(!free && std::same_as<C, owner_type>)
-  explicit action(shared<C> &context) : call_(context_call(context)) {}
+  explicit action(shared<C> &context, success_function on_success = {})
+      : call_(context_call(context)), on_success_(std::move(on_success)) {}
 
-  /** @brief See above, writing into `target`, then telling `on_success`, if any, what it gave. */
-  template <class C, class T>
-    requires(!free && std::same_as<C, owner_type>)
-  action(shared<C> &context, state<T> &target, success_function on_success = {})
-      : call_(context_call(context)), target_(target, std::true_type{}), on_success_(std::move(on_success)) {
-    detail::check_target<T, value_type, true>();
-  }
-
-  /** @brief Of a member function of the component itself, `self`. */
+  /** @brief Of a member function of the component itself, `self`, declared before it; then telling `on_success`. */
   template <class C>
     requires(!free && std::same_as<C, owner_type>)
-  explicit action(C *self) : call_(self_call(self)) {}
-
-  /** @brief See above, writing into `target`, then telling `on_success`, if any, what it gave. */
-  template <class C, class T>
-    requires(!free && std::same_as<C, owner_type>)
-  action(C *self, state<T> &target, success_function on_success = {})
-      : call_(self_call(self)), target_(target, std::true_type{}), on_success_(std::move(on_success)) {
-    detail::check_target<T, value_type, true>();
-  }
+  explicit action(C *self, success_function on_success = {})
+      : call_(self_call(self)), on_success_(std::move(on_success)) {}
 
   action(action const &) = delete;
   action(action &&) = delete;
@@ -269,6 +272,17 @@ public:
 
   // No run's frame is left: one refers to it until it goes, and its component goes once its tasks have ended.
   ~action() { assert(slot_.frames == 0 && "quoll::ui::action: destroyed while a run is under way"); }
+
+  /** @brief Where its runs are, as an async_state holds it: under way, why the last failed, and what it gave. */
+  [[nodiscard]] async_value<held_type> const &operator*() const noexcept QUOLL_LIFETIMEBOUND { return *state_; }
+
+  /** @brief See operator*(): `save->loading`, `save->error`, `save->value`. */
+  [[nodiscard]] async_value<held_type> const *operator->() const noexcept QUOLL_LIFETIMEBOUND {
+    return state_.operator->();
+  }
+
+  /** @brief For the app of the component holding it, as a state's: a change of where its runs are shows it again. */
+  void link(detail::state_link to) noexcept { state_.link(to); }
 
 private:
   friend class detail::action_calls<action, arguments>;
@@ -296,9 +310,8 @@ private:
   }
 
   // Not a coroutine: run_in's frame, made by this call, holds the arguments, and every failure of the run goes through
-  // tell_failure(), a lack of memory making it thrown from the call, as any call's. A failure its target does not show
-  // goes where `failures` says, thrown for a run from an event, which drops what it gives.
-  [[nodiscard]] async::task<result_type> run_with(arguments given, detail::untold failures = detail::untold::given) {
+  // tell_failure(), into what it holds; a lack of memory making it throws from the call, as any call's.
+  [[nodiscard]] async::task<result_type> run_with(arguments given) {
     // Called once the run before is stopped, or not at all once refused: what it throws is this run's failure.
     auto make = [this, given = std::move(given)]() mutable { return call_(std::move(given)); };
 
@@ -318,11 +331,14 @@ private:
       }
     };
 
-    return detail::run_in<value_type>(slot_, target_, std::move(make), std::move(ask), failures, follow_up);
+    return detail::run_in<value_type>(slot_, target_, std::move(make), std::move(ask), detail::untold::given,
+                                      follow_up);
   }
 
+  // Where its runs are, before what writes into it.
+  async_state<held_type> state_;
   call_type call_;
-  detail::target_ref<value_type> target_{};
+  detail::target_ref<value_type> target_{state_, std::true_type{}};
   success_function on_success_{};
   detail::run_slot slot_;
 };

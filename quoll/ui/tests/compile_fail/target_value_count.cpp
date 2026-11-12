@@ -39,7 +39,7 @@
 // A target holding two values for a function giving one: the second would never be written.
 
 #include <quoll/async/task.hpp>
-#include <quoll/ui/data/action.hpp>
+#include <quoll/ui/data/effect.hpp>
 #include <quoll/ui/data/state.hpp>
 
 #include <string>
@@ -48,8 +48,9 @@
 quoll::async::task<std::string> new_name(int id);
 
 struct page {
+  quoll::ui::state<int> id;
   quoll::ui::state<std::tuple<std::string, std::string, bool>> renamed;
-  quoll::ui::action<&new_name> run{renamed};
+  quoll::ui::effect load{id, new_name, renamed};
 };
 
 page const shown{};
