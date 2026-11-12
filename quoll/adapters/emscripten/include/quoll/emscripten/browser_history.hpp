@@ -37,7 +37,7 @@
 #ifndef QUOLL_EMSCRIPTEN_BROWSER_HISTORY_HPP
 #define QUOLL_EMSCRIPTEN_BROWSER_HISTORY_HPP
 
-#include <quoll/ui/history.hpp>
+#include <quoll/ui/routing/history.hpp>
 
 namespace quoll::emscripten {
 

@@ -42,10 +42,10 @@
 #include <quoll/async/task.hpp>
 #include <quoll/emscripten/dom_renderer.hpp>
 #include <quoll/emscripten/executor.hpp>
-#include <quoll/ui/app.hpp>
-#include <quoll/ui/component.hpp>
-#include <quoll/ui/detail/hot.hpp>
-#include <quoll/ui/node_id.hpp>
+#include <quoll/ui/app/app.hpp>
+#include <quoll/ui/component/component.hpp>
+#include <quoll/ui/detail/view/hot.hpp>
+#include <quoll/ui/view/node_id.hpp>
 
 #include <memory>
 #include <stdexcept>

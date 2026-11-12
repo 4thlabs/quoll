@@ -40,8 +40,8 @@
 // An action whose result may throw as it moves: its target could hold what its caller never gets.
 
 #include <quoll/async/task.hpp>
-#include <quoll/ui/action.hpp>
-#include <quoll/ui/state.hpp>
+#include <quoll/ui/data/action.hpp>
+#include <quoll/ui/data/state.hpp>
 
 #include <tuple>
 

@@ -38,7 +38,7 @@
 //
 // A callback taking a view: the work, which may outlive its caller, would read what the caller held.
 
-#include <quoll/ui/callback.hpp>
+#include <quoll/ui/component/callback.hpp>
 
 #include <string_view>
 

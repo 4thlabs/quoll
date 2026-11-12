@@ -38,6 +38,6 @@
 //
 // A redirect from a path ending with '/': no address would match it.
 
-#include <quoll/ui/route.hpp>
+#include <quoll/ui/routing/route.hpp>
 
 constexpr auto shop = quoll::ui::routes(quoll::ui::redirect<"/old/", "/products">());

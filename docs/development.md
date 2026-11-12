@@ -128,6 +128,11 @@ quoll_declare_module(NAME http SOURCES src/parser.cpp DEPS quoll::async)
 quoll_declare_tests(SOURCES tests/parser_test.cpp DEPS quoll::http)
 ```
 
+`quoll::ui` has its headers in folders by subject, `view`, `component`, `data`, `context`, `routing`, `widget` and
+`app`, as `<quoll/ui/data/state.hpp>`, its details in the same folders under `detail/`, but for helpers they all use,
+at its root, and its `src/` and `tests/` alike; `tests/compile_fail/` stays flat. A new header goes in the folder of
+its subject.
+
 This creates the target `quoll_<module>`, a static library, or `INTERFACE` without `SOURCES`, alias
 `quoll::<module>`, exported by `find_package(quoll)`. Modules are added in dependency order in the root
 `CMakeLists.txt`. Adapters are modules like the others, grouped under `quoll/adapters/`.

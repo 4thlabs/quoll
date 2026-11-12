@@ -1,22 +1,22 @@
 quoll_declare_module(
   NAME ui
   SOURCES
-    src/app_core.cpp
-    src/context_entry.cpp
-    src/effect.cpp
-    src/element.cpp
-    src/expand.cpp
-    src/history.cpp
-    src/hot.cpp
-    src/instance.cpp
-    src/ready.cpp
-    src/reconciler.cpp
-    src/router.cpp
-    src/renderer_ref.cpp
-    src/run_error.cpp
-    src/run_slot.cpp
-    src/to_html.cpp
-    src/view_context.cpp
+    src/app/app_core.cpp
+    src/component/instance.cpp
+    src/component/ready.cpp
+    src/context/context_entry.cpp
+    src/data/effect.cpp
+    src/data/run_error.cpp
+    src/data/run_slot.cpp
+    src/routing/history.cpp
+    src/routing/router.cpp
+    src/view/element.cpp
+    src/view/expand.cpp
+    src/view/hot.cpp
+    src/view/reconciler.cpp
+    src/view/renderer_ref.cpp
+    src/view/to_html.cpp
+    src/view/view_context.cpp
   DEPS
     quoll::async
     quoll::http
@@ -33,17 +33,17 @@ endif()
 
 quoll_declare_tests(
   SOURCES
-    tests/action_test.cpp
-    tests/app_test.cpp
-    tests/callback_test.cpp
-    tests/context_test.cpp
-    tests/nested_test.cpp
-    tests/router_test.cpp
-    tests/skip_test.cpp
-    tests/effect_test.cpp
-    tests/element_test.cpp
-    tests/to_html_test.cpp
-    tests/widget_test.cpp
+    tests/app/app_test.cpp
+    tests/component/callback_test.cpp
+    tests/component/nested_test.cpp
+    tests/component/skip_test.cpp
+    tests/context/context_test.cpp
+    tests/data/action_test.cpp
+    tests/data/effect_test.cpp
+    tests/routing/router_test.cpp
+    tests/view/element_test.cpp
+    tests/view/to_html_test.cpp
+    tests/widget/widget_test.cpp
   DEPS
     quoll::ui
 )
@@ -69,6 +69,10 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/component_not_aggregate.cpp
     tests/compile_fail/context_with_mounted.cpp
     tests/compile_fail/context_with_view.cpp
+    tests/compile_fail/effect_optional_view_dependency.cpp
+    tests/compile_fail/effect_pair_span_value.cpp
+    tests/compile_fail/effect_values_without_target.cpp
+    tests/compile_fail/effect_view_value.cpp
     tests/compile_fail/event_function_signature.cpp
     tests/compile_fail/redirect_trailing_slash.cpp
     tests/compile_fail/redirect_unknown_param.cpp
@@ -79,10 +83,6 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/route_typed_param.cpp
     tests/compile_fail/router_provided.cpp
     tests/compile_fail/shared_const_context.cpp
-    tests/compile_fail/effect_optional_view_dependency.cpp
-    tests/compile_fail/effect_pair_span_value.cpp
-    tests/compile_fail/effect_values_without_target.cpp
-    tests/compile_fail/effect_view_value.cpp
     tests/compile_fail/target_bool_value.cpp
     tests/compile_fail/target_two_flags.cpp
     tests/compile_fail/target_value_count.cpp
@@ -106,7 +106,7 @@ quoll_declare_assert_tests(
 
 # The hot reload switch changes signatures: a program of its own, native only, rather than one more test source.
 if(QUOLL_BUILD_TESTS AND NOT EMSCRIPTEN AND NOT QUOLL_UI_HOT)
-  add_executable(quoll_ui_hot_test tests/hot_test.cpp)
+  add_executable(quoll_ui_hot_test tests/app/hot_test.cpp)
   target_compile_definitions(quoll_ui_hot_test PRIVATE QUOLL_UI_HOT)
   target_include_directories(quoll_ui_hot_test PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
   target_link_libraries(quoll_ui_hot_test PRIVATE quoll::ui quoll_warnings)

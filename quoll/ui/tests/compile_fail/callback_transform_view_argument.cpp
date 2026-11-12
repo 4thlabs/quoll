@@ -38,7 +38,7 @@
 //
 // A callback taking a transform over a container: the work would read the caller's container, which may go first.
 
-#include <quoll/ui/callback.hpp>
+#include <quoll/ui/component/callback.hpp>
 
 #include <ranges>
 #include <utility>

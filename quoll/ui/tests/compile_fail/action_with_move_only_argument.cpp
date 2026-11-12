@@ -39,7 +39,7 @@
 // An argument that only moves: run() takes it, a handler run at each click cannot.
 
 #include <quoll/async/task.hpp>
-#include <quoll/ui/action.hpp>
+#include <quoll/ui/data/action.hpp>
 
 #include <memory>
 

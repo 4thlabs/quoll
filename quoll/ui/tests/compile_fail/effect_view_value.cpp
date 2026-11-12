@@ -39,8 +39,8 @@
 // An effect keeping a view: what it gave would refer to what the run held, gone with it.
 
 #include <quoll/async/task.hpp>
-#include <quoll/ui/effect.hpp>
-#include <quoll/ui/state.hpp>
+#include <quoll/ui/data/effect.hpp>
+#include <quoll/ui/data/state.hpp>
 
 #include <string_view>
 

@@ -39,7 +39,7 @@
 //
 // A callback giving a reference: the caller would read it once the work, and what it referred to, may be gone.
 
-#include <quoll/ui/callback.hpp>
+#include <quoll/ui/component/callback.hpp>
 
 int kept = 0;
 

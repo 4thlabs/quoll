@@ -38,8 +38,8 @@
 //
 // A route typing its parameter: its page's props already do, and the two could differ.
 
-#include <quoll/ui/element.hpp>
-#include <quoll/ui/route.hpp>
+#include <quoll/ui/routing/route.hpp>
+#include <quoll/ui/view/element.hpp>
 
 #include <cstdint>
 

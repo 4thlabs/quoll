@@ -38,8 +38,8 @@
 //
 // A route under another written as a whole path: it adds its own segments to its parent's.
 
-#include <quoll/ui/element.hpp>
-#include <quoll/ui/route.hpp>
+#include <quoll/ui/routing/route.hpp>
+#include <quoll/ui/view/element.hpp>
 
 struct products_layout {
   quoll::ui::element view();

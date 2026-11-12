@@ -39,8 +39,8 @@
 // An effect whose values go nowhere: what it loads would never show.
 
 #include <quoll/async/task.hpp>
-#include <quoll/ui/effect.hpp>
-#include <quoll/ui/state.hpp>
+#include <quoll/ui/data/effect.hpp>
+#include <quoll/ui/data/state.hpp>
 
 #include <string>
 

@@ -38,8 +38,8 @@
 //
 // A route ending with '/': no address would match it, as the last '/' of an address goes before it is matched.
 
-#include <quoll/ui/element.hpp>
-#include <quoll/ui/route.hpp>
+#include <quoll/ui/routing/route.hpp>
+#include <quoll/ui/view/element.hpp>
 
 struct product_list {
   quoll::ui::element view();

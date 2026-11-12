@@ -38,7 +38,7 @@
 //
 // A callback taking a reference_wrapper: the work would write to what the caller held, which may go first.
 
-#include <quoll/ui/callback.hpp>
+#include <quoll/ui/component/callback.hpp>
 
 #include <functional>
 #include <string>

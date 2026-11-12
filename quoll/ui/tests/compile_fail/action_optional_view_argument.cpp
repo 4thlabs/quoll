@@ -39,7 +39,7 @@
 // An action taking an optional view: the run, which outlives the call that made it, would read what the caller held.
 
 #include <quoll/async/task.hpp>
-#include <quoll/ui/action.hpp>
+#include <quoll/ui/data/action.hpp>
 
 #include <optional>
 #include <string_view>

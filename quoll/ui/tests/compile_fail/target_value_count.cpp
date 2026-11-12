@@ -39,8 +39,8 @@
 // A target holding two values for a function giving one: the second would never be written.
 
 #include <quoll/async/task.hpp>
-#include <quoll/ui/action.hpp>
-#include <quoll/ui/state.hpp>
+#include <quoll/ui/data/action.hpp>
+#include <quoll/ui/data/state.hpp>
 
 #include <string>
 #include <tuple>

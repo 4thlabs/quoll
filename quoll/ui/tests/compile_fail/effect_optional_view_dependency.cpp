@@ -39,8 +39,8 @@
 // An effect on an optional view: the run would get the view, which outlives what it refers to once the state changes.
 
 #include <quoll/async/task.hpp>
-#include <quoll/ui/effect.hpp>
-#include <quoll/ui/state.hpp>
+#include <quoll/ui/data/effect.hpp>
+#include <quoll/ui/data/state.hpp>
 
 #include <optional>
 #include <string_view>

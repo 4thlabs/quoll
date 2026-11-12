@@ -38,7 +38,7 @@
 // reference to what is not const
 
 #include <quoll/async/task.hpp>
-#include <quoll/ui/action.hpp>
+#include <quoll/ui/data/action.hpp>
 
 #include <string>
 

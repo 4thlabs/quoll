@@ -43,8 +43,8 @@
 
 #include "product.hpp"
 
-#include <quoll/ui/element.hpp>
-#include <quoll/ui/state.hpp>
+#include <quoll/ui/data/state.hpp>
+#include <quoll/ui/view/element.hpp>
 
 #include <cstddef>
 #include <optional>

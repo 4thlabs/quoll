@@ -38,6 +38,6 @@
 //
 // A redirect whose target needs a value its path does not give.
 
-#include <quoll/ui/route.hpp>
+#include <quoll/ui/routing/route.hpp>
 
 constexpr auto shop = quoll::ui::routes(quoll::ui::redirect<"/old", "/products/{id}">());
