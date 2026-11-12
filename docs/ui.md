@@ -271,18 +271,21 @@ struct sales_panel {
 `value`, for a run that gives nothing, as a save whose answer only the handler wants. It is a state like any other,
 set and updated as one: `items.update([](auto &held) { held.value.push_back(...); })`.
 
-**What a target receives goes by the type of its elements.** A target is an `async_state`, a `state<T>`, or a
-`state<std::tuple<...>>` of several elements:
+**What a target receives.** An `async_state<T>` receives by its fields: `value` is what the function gives, whole, a
+`bool` or a `std::tuple` too. A `state<T>`, or a `state<std::tuple<...>>` of several elements, receives by the type
+of its elements:
 
 - a `bool` is whether a run is under way;
 - a `std::exception_ptr` is why the last run failed;
-- every other element is one of the values the function gives, in order; the `value` of an `async_state`.
+- every other element is one of the values the function gives, in order, a function giving a `std::tuple` for
+  several.
 
 An effect's target is loading from the start, as React's `useState(true)`: the first view of its component comes
-before its first run. As a run starts, its target is loading and has no error, the values before kept, as a state keeps its value until it
-is set. As it ends, the target holds all it gave at once, in one render, or why it failed, the values before kept. A
-target holds one `bool` and one `std::exception_ptr` at most, and a function giving a `bool` or an error as a value
-does not compile: the target could not tell it from its flags. Each value is of the type the function gives, with no
+before its first run, and a view written once, with `to_html`, which runs no effect, shows it loading. As a run
+starts, its target is loading and has no error, the values before kept, as a state keeps its value until it is set.
+As it ends, the target holds all it gave at once, in one render, or why it failed, the values before kept. Such a
+`state` holds one `bool` and one `std::exception_ptr` at most, and a function giving a `bool` or an error as a value
+into it does not compile: it could not tell it from its flags, which an `async_state` names. Each value is of the type the function gives, with no
 conversion, which could make a view of what the run held, and moves without throwing, so that a run writes all it
 gave or nothing. A target needs neither flag:
 

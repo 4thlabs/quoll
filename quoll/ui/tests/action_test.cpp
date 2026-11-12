@@ -308,6 +308,19 @@ struct untold_page {
   element view() { return button("go") | on_click(run.with(4)); }
 };
 
+// Its action gives a word long enough that its copy into the target allocates, into a target with no error.
+task<std::string> spelled(int times) {
+  co_await quoll::async::sleep_for(1ms);
+  co_return std::string(static_cast<std::size_t>(times), 'a');
+}
+
+struct word_page {
+  state<std::string> word;
+  action<&spelled> run{word};
+
+  element view() { return p(*word); }
+};
+
 // What follows a success throws.
 struct throwing_success_page {
   async_state<int> doubled_value;
@@ -663,6 +676,8 @@ TEST_CASE("action: a lack of memory at any step of a run is its failure, given t
           "[ui][action]") {
   // Each allocation the run makes, in turn, fails: whichever it is, the run's await gives a std::expected, and a run
   // that failed leaves its target not loading.
+  bool clean = false;
+
   for (long before = 0; before < 40; ++before) {
     runs = {};
 
@@ -692,15 +707,19 @@ TEST_CASE("action: a lack of memory at any step of a run is its failure, given t
       co_await settle();
     };
 
-    REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
     INFO("allocations before failing: " << before);
+    REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
     CHECK_FALSE(escaped);
     CHECK_FALSE(std::get<0>(*instance.component().running));
 
     if (!injected) {
+      clean = true;
       break;
     }
   }
+
+  // Ended on a run that made fewer allocations than asked to fail: every one of them failed in turn.
+  CHECK(clean);
 }
 
 TEST_CASE("action: with() runs it from a click, what it gave in a named state, then on_success", "[ui][action]") {
@@ -807,4 +826,108 @@ TEST_CASE("action: what follows a success throws to run()'s caller, its target h
   CHECK(thrown == "after");
   CHECK(instance.component().doubled_value->value == 10);
   CHECK(instance.component().doubled_value->error == nullptr);
+}
+
+TEST_CASE("action: with() under a lack of memory at any step tells its target, or throws from its handler, once",
+          "[ui][action]") {
+  // Each allocation the handler's run makes, in turn, fails: the run succeeds, or its target says why not, or the
+  // handler throws, which the event gives to the app's on_error.
+  bool clean = false;
+
+  for (long before = 0; before < 60; ++before) {
+    runs = {};
+
+    virtual_time time;
+    memory_renderer const shown;
+    test_app<with_page> instance{time.get_executor(), shown};
+    bool thrown = false;
+    bool injected = false;
+
+    auto const act = [&]() -> task<> {
+      co_await settle();
+
+      auto handler = instance.component().run.with(3);
+
+      // From the making of its run, which throws from the handler's call.
+      quoll::test::allocations_before_failing = before;
+
+      try {
+        static_cast<void>(co_await handler());
+      } catch (...) {
+        thrown = true;
+      }
+
+      injected = quoll::test::allocations_before_failing < 0;
+      quoll::test::allocations_before_failing = -1;
+      co_await settle();
+    };
+
+    INFO("allocations before failing: " << before);
+    REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+
+    auto const &result = *instance.component().doubled_value;
+
+    CHECK((result.value == 6 || result.error != nullptr || thrown));
+    // Told once: a failure its target shows is not thrown as well.
+    CHECK_FALSE((thrown && result.error != nullptr));
+    CHECK_FALSE(result.loading);
+
+    if (!injected) {
+      clean = true;
+      break;
+    }
+  }
+
+  // Ended on a run that made fewer allocations than asked to fail: every one of them failed in turn.
+  CHECK(clean);
+}
+
+TEST_CASE("action: with() under a lack of memory, its target without an error, throws from its handler what fails",
+          "[ui][action]") {
+  // The copy of the word into the target allocates too: a failure there is the run's, thrown, as its target has no
+  // place for it.
+  bool clean = false;
+
+  for (long before = 0; before < 60; ++before) {
+    virtual_time time;
+    memory_renderer const shown;
+    test_app<word_page> instance{time.get_executor(), shown};
+    bool thrown = false;
+    bool injected = false;
+
+    auto const act = [&]() -> task<> {
+      co_await settle();
+
+      auto handler = instance.component().run.with(64);
+
+      // From the making of its run, which throws from the handler's call.
+      quoll::test::allocations_before_failing = before;
+
+      try {
+        static_cast<void>(co_await handler());
+      } catch (...) {
+        thrown = true;
+      }
+
+      injected = quoll::test::allocations_before_failing < 0;
+      quoll::test::allocations_before_failing = -1;
+      co_await settle();
+    };
+
+    INFO("allocations before failing: " << before);
+    REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+    CHECK((*instance.component().word == std::string(64, 'a') || thrown));
+
+    // A run that failed wrote nothing: the target holds the word whole, or what it held.
+    if (thrown) {
+      CHECK(instance.component().word->empty());
+    }
+
+    if (!injected) {
+      clean = true;
+      break;
+    }
+  }
+
+  CHECK(clean);
 }

@@ -62,7 +62,7 @@ namespace quoll::ui {
  *
  * @code
  * struct catalog {
- *   state<std::tuple<std::vector<products::product>, bool, std::exception_ptr>> items;
+ *   async_state<std::vector<products::product>> items;
  *   effect load{std::tie(), products_client::list, items};
  *
  *   task<products::product> save(std::int64_t id, products::product_update changes);
@@ -72,7 +72,9 @@ namespace quoll::ui {
  *   shared<catalog> products;
  *
  *   element view() {
- *     auto const &[all, loading, error] = *products->items;
+ *     if (products->items->loading) {
+ *       return p("Loading the products");
+ *     }
  *     // ...
  *   }
  * };

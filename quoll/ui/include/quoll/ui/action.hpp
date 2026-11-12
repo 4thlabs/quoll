@@ -42,7 +42,6 @@
 #include <quoll/ui/detail/run_slot.hpp>
 #include <quoll/ui/detail/target.hpp>
 #include <quoll/ui/run_error.hpp>
-#include <quoll/ui/shared.hpp>
 #include <quoll/ui/state.hpp>
 
 #include <cassert>
@@ -58,6 +57,9 @@
 
 namespace quoll::ui {
 
+template <class T>
+class shared;
+
 /** @brief What a call of an action does while another is under way. */
 enum class overlap {
   /** @brief It is refused: it runs nothing, its result run_refused, as a second click on a button that waits. */
@@ -68,7 +70,6 @@ enum class overlap {
 
 namespace detail {
 
-// What an action runs: a function returning a task, free or a member, its arguments, its result, and whose it is.
 // What an action's function gives, the arguments it takes, and whose member it is: a task-returning free function or
 // member function, or none, which the action refuses with a message of its own.
 template <class F>
@@ -146,7 +147,9 @@ public:
    */
   [[nodiscard]] auto with(Ts... args) QUOLL_LIFETIMEBOUND {
     // Not a coroutine: each call copies the arguments into the frame of its own run, which outlives this lambda.
-    return [action = &self(), given = std::tuple<Ts...>{std::move(args)...}] { return action->run_from_event(given); };
+    return [action = &self(), given = std::tuple<Ts...>{std::move(args)...}] {
+      return action->run_with(given, detail::untold::thrown);
+    };
   }
 
 private:
@@ -186,10 +189,12 @@ private:
  * run() runs it in the task awaiting it, a handler's or mounted()'s, and gives what it gave or what it threw, as a
  * std::expected, not thrown again; what follows a success throws to it, as code of the handler after the run would.
  * with() gives a handler that runs it, for on_click, whose failure, when its target has no place for it, goes to the
- * app's on_error, as a handler's. Both take the function's parameters, so that a braced argument builds one. A call
- * while one is under way is refused, run_refused at once, the target left as it is, or, with `overlap::restart`, stops
- * it, so that it writes nothing, even one that ignored the stop and came anyway, and gives run_replaced to its caller.
- * A stop of the caller, as a timeout, ends the run and its caller, as a stop does, the target loading no more.
+ * app's on_error, as a handler's. Every failure of a run, a lack of memory before it began included, goes to its
+ * target when it has an error; a lack of memory making the run itself throws from the call, as any call's. Both take
+ * the function's parameters, so that a braced argument builds one. A call while one is under way is refused,
+ * run_refused at once, the target left as it is, or, with `overlap::restart`, stops it, so that it writes nothing, even
+ * one that ignored the stop and came anyway, and gives run_replaced to its caller. A stop of the caller, as a timeout,
+ * ends the run and its caller, as a stop does, the target loading no more.
  *
  * Neither copied nor moved: a run under way refers to it. Its arguments are copied into the run, given to the function
  * as rvalues: none can be a view, which would outlive what it refers to. Thread safety: none, as a state.
@@ -230,8 +235,7 @@ public:
   template <class T>
     requires free
   explicit action(state<T> &target, success_function on_success = {})
-      : call_(free_call()), target_(target, std::true_type{}), on_success_(std::move(on_success)),
-        tells_error_(detail::target_roles<T>::error) {
+      : call_(free_call()), target_(target, std::true_type{}), on_success_(std::move(on_success)) {
     detail::check_target<T, value_type, true>();
   }
 
@@ -244,8 +248,7 @@ public:
   template <class C, class T>
     requires(!free && std::same_as<C, owner_type>)
   action(shared<C> &context, state<T> &target, success_function on_success = {})
-      : call_(context_call(context)), target_(target, std::true_type{}), on_success_(std::move(on_success)),
-        tells_error_(detail::target_roles<T>::error) {
+      : call_(context_call(context)), target_(target, std::true_type{}), on_success_(std::move(on_success)) {
     detail::check_target<T, value_type, true>();
   }
 
@@ -258,8 +261,7 @@ public:
   template <class C, class T>
     requires(!free && std::same_as<C, owner_type>)
   action(C *self, state<T> &target, success_function on_success = {})
-      : call_(self_call(self)), target_(target, std::true_type{}), on_success_(std::move(on_success)),
-        tells_error_(detail::target_roles<T>::error) {
+      : call_(self_call(self)), target_(target, std::true_type{}), on_success_(std::move(on_success)) {
     detail::check_target<T, value_type, true>();
   }
 
@@ -296,8 +298,10 @@ private:
     };
   }
 
-  // A coroutine of its own, its arguments in its frame.
-  [[nodiscard]] async::task<result_type> run_with(arguments given) {
+  // Not a coroutine: run_in's frame, made by this call, holds the arguments, and every failure of the run goes through
+  // tell_failure(), a lack of memory making it thrown from the call, as any call's. A failure its target does not show
+  // goes where `failures` says, thrown for a run from an event, which drops what it gives.
+  [[nodiscard]] async::task<result_type> run_with(arguments given, detail::untold failures = detail::untold::given) {
     // Called once the run before is stopped, or not at all once refused: what it throws is this run's failure.
     auto make = [this, given = std::move(given)]() mutable { return call_(std::move(given)); };
 
@@ -309,35 +313,20 @@ private:
       return detail::ask(slot_);
     };
 
-    auto ended = co_await detail::run_in<value_type>(slot_, target_, std::move(make), std::move(ask));
-
     // What follows a success, before its caller: what it throws is thrown to the caller, as what a handler runs after
     // the run would be.
-    if (ended && on_success_) {
-      if constexpr (std::is_void_v<value_type>) {
-        on_success_();
-      } else {
-        on_success_(*ended);
+    auto follow_up = [this](auto const &...value) {
+      if (on_success_) {
+        on_success_(value...);
       }
-    }
+    };
 
-    co_return ended;
-  }
-
-  // A run from an event, which drops its result: a failure its target has no place for goes to the app's on_error, as
-  // a handler's, but for a call refused or replaced, which is no failure of the run.
-  [[nodiscard]] async::task<> run_from_event(arguments given) {
-    auto const ended = co_await run_with(std::move(given));
-
-    if (!ended && !tells_error_ && !detail::gave_no_result(ended.error())) {
-      std::rethrow_exception(ended.error());
-    }
+    return detail::run_in<value_type>(slot_, target_, std::move(make), std::move(ask), failures, follow_up);
   }
 
   call_type call_;
   detail::target_ref<value_type> target_{};
   success_function on_success_{};
-  bool tells_error_ = false;
   detail::run_slot slot_;
 };
 

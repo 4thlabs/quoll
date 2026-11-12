@@ -89,10 +89,7 @@ void effect::after_view(detail::effect_starter const &start) {
     // Its failure, which its target shows; a target with no place for it leaves it to the app's on_error.
     stop_before();
     failed_ = true;
-
-    if (!target_.fail(std::current_exception())) {
-      throw;
-    }
+    detail::tell_failure(target_, detail::untold::thrown, std::current_exception());
   }
 }
 

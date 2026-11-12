@@ -66,9 +66,10 @@ namespace detail {
 
 // Runs an effect as a task of its component, unless the component stopped since it was started, as one that went with
 // its app before its executor ran: an effect does nothing once unmounted() ran. A failure its target has no place for,
-// as one without an error, goes where a handler's does. A coroutine of its own, so that what it needs is in its frame.
+// as one without an error, goes where a handler's does, through tell_failure(), as a lack of memory making the run
+// does. A coroutine of its own, so that what it needs is in its frame.
 template <class V, class Make>
-async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::stop_token mine, bool takes_errors) {
+async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::stop_token mine) {
   auto const stop = co_await async::current_stop_token();
 
   if (stop.stop_requested()) {
@@ -76,12 +77,20 @@ async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::s
   }
 
   auto const asked = [mine] { return std::optional<std::stop_token>{mine}; };
-  auto const ended = co_await run_in<V>(slot, target, std::move(make), asked);
+  std::optional<async::task<std::expected<V, std::exception_ptr>>> running;
 
-  // Replaced exactly when its stop was asked for: that run says what is shown.
-  if (!ended && !takes_errors && !mine.stop_requested()) {
-    std::rethrow_exception(ended.error());
+  try {
+    running.emplace(run_in<V>(slot, target, std::move(make), asked, untold::thrown));
+  } catch (...) {
+    // As run_in would: a run a later one replaced is no failure.
+    if (!mine.stop_requested()) {
+      tell_failure(target.hooks(), untold::thrown, std::current_exception());
+    }
+
+    co_return;
   }
+
+  static_cast<void>(co_await std::move(*running));
 }
 
 } // namespace detail
@@ -118,8 +127,9 @@ async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::s
  * component comes before the first run. As a run starts, its target is loading and has no error, the values before
  * kept; as it ends, the target holds all it gave at once, or its failure, the
  * values before kept. A target with no error leaves a failure to the app's on_error, as a handler's, and an effect
- * with no target runs a function that gives nothing, such as a debounced search. The values cannot be a bool or an
- * error, which the target would not tell apart from its flags.
+ * with no target runs a function that gives nothing, such as a debounced search. The values of a target read by type
+ * cannot be a bool or an error, which it would not tell apart from its flags; an async_state's value is what the
+ * function gives, whole, whatever it is.
  *
  * Neither copied nor moved: a run under way refers to it, and a component stays where it was made. The values of its
  * states are values: a reference or a view would outlive what it refers to, also inside an optional, a pair, a tuple,
@@ -157,7 +167,7 @@ public:
 
     static_assert(std::is_void_v<value>, "quoll::ui::effect: the values its function gives go into a target state");
 
-    init<value, D...>(states_reader(dependencies), std::move(function), detail::target_ref<value>{}, false, nullptr);
+    init<value, D...>(states_reader(dependencies), std::move(function), detail::target_ref<value>{}, nullptr);
   }
 
   /**
@@ -174,7 +184,7 @@ public:
                   "quoll::ui::effect: the values its function gives are kept, as values");
     detail::check_target<T, value, false>();
     init<value, D...>(states_reader(dependencies), std::move(function),
-                      detail::target_ref<value>{target, std::false_type{}}, detail::target_roles<T>::error, nullptr);
+                      detail::target_ref<value>{target, std::false_type{}}, nullptr);
     // Loading from the start: its first view runs it.
     target_.begin();
   }
@@ -191,7 +201,7 @@ public:
 
     static_assert(std::is_void_v<value>, "quoll::ui::effect: the values its function gives go into a target state");
 
-    init<value, D>(props_reader(member), std::move(function), detail::target_ref<value>{}, false,
+    init<value, D>(props_reader(member), std::move(function), detail::target_ref<value>{},
                    async::detail::type_id_of<P>());
   }
 
@@ -209,7 +219,7 @@ public:
                   "quoll::ui::effect: the values its function gives are kept, as values");
     detail::check_target<T, value, false>();
     init<value, D>(props_reader(member), std::move(function), detail::target_ref<value>{target, std::false_type{}},
-                   detail::target_roles<T>::error, async::detail::type_id_of<P>());
+                   async::detail::type_id_of<P>());
     // Loading from the start: its first view runs it.
     target_.begin();
   }
@@ -257,7 +267,7 @@ private:
   // `read` gives what it depends on, from the props of its component, as a tuple of references to D...; `props_type`,
   // none for an effect on states, is the type of the props it reads.
   template <class V, class... D, class Read, class F>
-  void init(Read read, F function, detail::target_ref<V> target, bool takes_errors, async::detail::type_id props_type) {
+  void init(Read read, F function, detail::target_ref<V> target, async::detail::type_id props_type) {
     static_assert((!detail::holds_view<D> && ...),
                   "quoll::ui::effect: its states' values are copied into the run, which a view would outlive");
     static_assert((... && (std::equality_comparable<D> && std::copyable<D>)),
@@ -296,7 +306,7 @@ private:
       return std::optional<watched>{watched{.differs = differs, .holds = holds}};
     };
 
-    run_ = [this, read, function = std::move(function), target, takes_errors](std::stop_token mine, void const *props) {
+    run_ = [this, read, function = std::move(function), target](std::stop_token mine, void const *props) {
       // Its own copy of each value, given as rvalues: a function taking them by reference refers to the run's copy.
       auto copied = std::apply(
           [](auto const &...held) {
@@ -308,7 +318,7 @@ private:
         return std::apply([&function](auto &...value) { return function(std::move(value)...); }, copied);
       };
 
-      return detail::run_effect<V>(slot_, target, std::move(make), std::move(mine), takes_errors);
+      return detail::run_effect<V>(slot_, target, std::move(make), std::move(mine));
     };
   }
 
