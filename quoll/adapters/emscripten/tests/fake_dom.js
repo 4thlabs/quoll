@@ -111,20 +111,25 @@ addToLibrary({
         return this.attributes.has(name) ? this.attributes.get(name) : null;
       }
 
-      // A second listener of a name, as a form's own on submit, runs after the first.
+      // The listeners of a name, in the order added, as a form's own on submit and the app's: called as one.
       addEventListener(name, listener) {
-        const first = this.listeners.get(name);
-
-        this.listeners.set(name, first === undefined ? listener : (event) => {
-          first(event);
-          listener(event);
-        });
+        this.keepListeners(name, [...(this.listeners.get(name)?.parts ?? []), listener]);
       }
 
       removeEventListener(name, listener) {
-        if (this.listeners.get(name) === listener) {
+        this.keepListeners(name, (this.listeners.get(name)?.parts ?? []).filter((part) => part !== listener));
+      }
+
+      keepListeners(name, parts) {
+        if (parts.length === 0) {
           this.listeners.delete(name);
+          return;
         }
+
+        const all = (event) => parts.forEach((part) => part(event));
+
+        all.parts = parts;
+        this.listeners.set(name, all);
       }
 
       text() {
@@ -394,6 +399,7 @@ addToLibrary({
     const form = quollFakeDom.root.findTag('form');
     const event = {
       target: form,
+      currentTarget: form,
       defaultPrevented: false,
       preventDefault() {
         this.defaultPrevented = true;
@@ -404,12 +410,21 @@ addToLibrary({
     return event.defaultPrevented ? 1 : 0;
   },
 
+  // Presses `key` in the first input, Shift held if `shift`, composing if `composing`, as a browser does.
+  quoll_test_dom_key__deps: ['$quollFakeDom', '$UTF8ToString'],
+  quoll_test_dom_key: (key, shift, composing) => {
+    const target = quollFakeDom.root.findTag('input');
+
+    target.listeners.get('keydown')({ target, key: UTF8ToString(key), shiftKey: shift !== 0, isComposing: composing !== 0 });
+  },
+
   // Submits the first form, as a button in it does: whether the page kept the browser from leaving it.
   quoll_test_dom_submit__deps: ['$quollFakeDom'],
   quoll_test_dom_submit: () => {
     const form = quollFakeDom.root.findTag('form');
     const event = {
       target: form,
+      currentTarget: form,
       defaultPrevented: false,
       preventDefault() {
         this.defaultPrevented = true;

@@ -232,9 +232,16 @@ void reconciler::patch(element &before, element &after) {
 }
 
 void reconciler::patch_properties(element const &before, element const &after) {
-  // An input no longer bound holds nothing rather than what it was last given. A select is given its value again, as
-  // its options may have changed: the renderer leaves alone one that holds it already.
-  if (before.value != after.value || (after.value && after.tag == "select")) {
+  // A select whose options changed is given its value again, as the one it named may be there now; otherwise what
+  // the user chose stays while the value given does.
+  auto const options_changed = [&] {
+    return before.children.size() != after.children.size() ||
+           !std::ranges::equal(before.children, after.children,
+                               [](element const &one, element const &other) { return one.key == other.key; });
+  };
+
+  // An input no longer bound holds nothing rather than what it was last given.
+  if (before.value != after.value || (after.value && after.tag == "select" && options_changed())) {
     renderer_.set_value(after.id, after.value.value_or(std::string{}));
   }
 

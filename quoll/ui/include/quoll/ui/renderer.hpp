@@ -51,7 +51,8 @@ namespace quoll::ui {
  * forgets a node: its descendants are removed first. `set_value` and `set_checked` set the properties of an input,
  * what it holds and whether it is checked, as the browser shows them. `listen(id, name)` asks for the events `name` of
  * a node, reported to app::dispatch() with a value: for a key event the key, after the modifiers held, as
- * "Shift+Enter"; for a checkbox "true" or "false"; for any other what the node holds. A form never leaves the page.
+ * "Shift+Enter"; for a checkbox "true" or "false"; for any other what the node holds. A form leaves the page only for
+ * the `action` it names.
  */
 template <class R>
 concept Renderer = requires(R &renderer, node_id id, std::string_view text, bool flag) {

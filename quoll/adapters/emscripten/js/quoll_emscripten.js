@@ -104,9 +104,13 @@ addToLibrary({
   quoll_emscripten_ui_create_element: (instance, id, tag, size) => {
     const node = document.createElement(UTF8ToString(tag, size));
 
-    // A form never leaves the page, with on_submit or not: a button in it sends it as a click does.
+    // A form leaves the page only for the action it names: one without, sent by a button in it, is the app's.
     if (node.tagName === 'FORM') {
-      node.addEventListener('submit', (event) => event.preventDefault());
+      node.addEventListener('submit', (event) => {
+        if (!event.currentTarget?.hasAttribute?.('action')) {
+          event.preventDefault();
+        }
+      });
     }
 
     quollUi.instances[instance].nodes.set(id, node);
@@ -154,15 +158,42 @@ addToLibrary({
     quollUi.instances[instance].nodes.get(id).checked = checked !== 0;
   },
 
-  quoll_emscripten_ui_listen__deps: ['$quollUi', '$UTF8ToString', '$stringToNewUTF8', '$callUserCallback', 'free'],
+  // A key after the modifiers held, as "Shift+Enter" or "Ctrl+s": none that makes the character itself, Shift for a
+  // character ("?"), AltGr for one of a layout ("@"), nor the modifier pressed itself.
+  $quollKeyName: (event) => {
+    const key = event.key;
+    const character = key.length === 1;
+    const altGraph = event.getModifierState?.('AltGraph') ?? false;
+    const held = [
+      ['Ctrl', 'Control', event.ctrlKey && !altGraph],
+      ['Alt', 'Alt', event.altKey && !altGraph],
+      ['Shift', 'Shift', event.shiftKey && !character],
+      ['Meta', 'Meta', event.metaKey],
+    ];
+
+    return held
+      .filter(([, name, down]) => down && name !== key)
+      .map(([prefix]) => `${prefix}+`)
+      .join('') + key;
+  },
+
+  quoll_emscripten_ui_listen__deps: ['$quollUi', '$UTF8ToString', '$stringToNewUTF8', '$callUserCallback', 'free', '$quollKeyName'],
   quoll_emscripten_ui_listen: (instance, id, name, size) => {
     const ui = quollUi.instances[instance];
     const eventName = UTF8ToString(name, size);
 
     const listener = (event) => {
-      // A key that confirms what an input method composes is no key of the page's.
-      if ((eventName === 'keydown' || eventName === 'keyup') && event.isComposing) {
+      const keyed = eventName === 'keydown' || eventName === 'keyup';
+
+      // A key that confirms what an input method composes is no key of the page's, nor one with no name, as an
+      // autofill sends.
+      if (keyed && (event.isComposing || typeof event.key !== 'string')) {
         return;
+      }
+
+      // An on_submit is the app's: its form does not leave the page.
+      if (eventName === 'submit') {
+        event.preventDefault();
       }
 
       // A link of the app's routing goes there without leaving the page, but for a click that opens elsewhere, with a
@@ -184,14 +215,7 @@ addToLibrary({
         // A key event gives the key, as the browser names it, after the modifiers held, as "Shift+Enter"; a checkbox
         // whether it is checked; any other what its element holds, a radio its value.
         const target = event.target;
-        const keyed = eventName === 'keydown' || eventName === 'keyup';
-        const modifiers = ['Control', 'Alt', 'Shift', 'Meta'];
-        const held = (event) =>
-          [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Meta']
-            .filter((name) => name && !modifiers.includes(event.key))
-            .map((name) => `${name}+`)
-            .join('');
-        const given = keyed ? `${held(event)}${event.key}` : target?.type === 'checkbox' ? target.checked : target?.value;
+        const given = keyed ? quollKeyName(event) : target?.type === 'checkbox' ? target.checked : target?.value;
         const valuePointer = stringToNewUTF8(String(given ?? ''));
 
         try {
