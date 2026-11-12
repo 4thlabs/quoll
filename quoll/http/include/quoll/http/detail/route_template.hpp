@@ -79,7 +79,7 @@ struct parsed_template {
 };
 
 // string_view::find, by index: GCC 13 cannot evaluate the null check of char_traits::find at compile time on a
-// template parameter object (a rest::fixed_string) when UBSan instruments the code, and this grammar runs at compile
+// template parameter object (an http::fixed_string) when UBSan instruments the code, and this grammar runs at compile
 // time for the rest DSL.
 [[nodiscard]] constexpr std::size_t find_char(std::string_view text, char character, std::size_t from = 0) noexcept {
   for (auto index = from; index < text.size(); ++index) {

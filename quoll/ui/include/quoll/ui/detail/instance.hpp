@@ -69,7 +69,8 @@ struct failure_sink {
 // Thread safety: none, as its app.
 class instance {
 public:
-  // Finds its contexts with `contexts`: throws std::logic_error for one its app was not given.
+  // Finds its contexts with `contexts`, whose `from` is the component placing it, its parent: throws std::logic_error
+  // for one neither those above it provide nor its app was given.
   instance(component_table const &table, std::shared_ptr<void const> props, std::string key,
            std::stop_token const &app_stop, context_finder const &contexts);
 
@@ -123,6 +124,10 @@ public:
 
   [[nodiscard]] std::vector<std::shared_ptr<instance>> &children() noexcept { return children_; }
 
+  // The context of `type` that `from`, an instance, or one above it provides, nearest first, with what holds it.
+  [[nodiscard]] static found_context provided_above(std::shared_ptr<void const> const &from,
+                                                    async::detail::type_id type) noexcept;
+
   // It goes: its tasks are asked to stop, then the components of its view go, then its unmounted() runs; what one
   // throws goes to `sink`, and the rest go all the same. Its tasks end on their own; what holds it then is them.
   void unmount(failure_sink sink) noexcept;
@@ -153,6 +158,8 @@ private:
   std::stop_source stop_;
   std::stop_callback<async::detail::stop_waker> follow_app_;
   std::vector<std::shared_ptr<instance>> children_;
+  // The component that placed it, whose contexts, and those above, it may use.
+  std::weak_ptr<instance const> parent_;
 };
 
 } // namespace quoll::ui::detail

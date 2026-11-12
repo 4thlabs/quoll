@@ -38,6 +38,7 @@
 
 #include <cassert>
 #include <exception>
+#include <stdexcept>
 
 namespace quoll::ui {
 
@@ -45,7 +46,7 @@ effect::~effect() { assert(slot_.frames == 0 && "quoll::ui::effect: destroyed wh
 
 void effect::reload() {
   failed_ = false;
-  watch_(watching::forget);
+  watch_(watching::forget, nullptr);
   detail::tell(link_);
 }
 
@@ -56,10 +57,19 @@ void effect::after_view(detail::effect_starter const &start) {
     return;
   }
 
+  auto const *const props = start.props;
+
+  // On the props of another component, or a field of a base of them: refused at its first view, then waiting for
+  // reload(), as its type tells no more.
+  if (props_type_ != async::detail::type_id{} && props_type_ != start.props_type) {
+    failed_ = true;
+    throw std::logic_error{"quoll::ui::effect: it depends on a field of props its component does not have"};
+  }
+
   // One way out for what fails, whatever it is, comparing or copying its states, or starting: a view in which they
   // changed, or may have, stops the run before, which would give what the values before ask for.
   try {
-    auto const now = *watch_(watching::record);
+    auto const now = *watch_(watching::record, props);
 
     if (!now.differs) {
       return;
@@ -74,7 +84,7 @@ void effect::after_view(detail::effect_starter const &start) {
 
     // Asked for now, as the view is shown: the run before stops at once, so that an answer of its that comes before
     // this one starts writes nothing.
-    start(run_(detail::ask(slot_)));
+    start(run_(detail::ask(slot_), props));
   } catch (...) {
     // Its failure, which its target shows; a target with no place for it leaves it to the app's on_error.
     stop_before();

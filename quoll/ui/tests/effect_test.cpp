@@ -309,6 +309,47 @@ struct flags_page {
   element view() { return p(std::get<0>(*touched) ? "touching" : std::get<1>(*touched) ? "failed" : "touched"); }
 };
 
+// Loads the text of the key its page gives it, as a prop: an effect on a field of its props.
+struct keyed_panel {
+  struct props {
+    int key = 0;
+
+    [[nodiscard]] bool operator==(props const &) const = default;
+  };
+
+  state<text_target> text;
+  effect load{&props::key, load_text, text};
+
+  element view(props const &) { return p(shown_of(*text)); }
+};
+
+struct keyed_page {
+  state<int> key{1};
+  state<int> other;
+
+  element view() { return div({p(std::to_string(*other)), component<keyed_panel>({.key = *key})}); }
+};
+
+// An effect on the props of another component: refused at its first view.
+struct stray_panel {
+  struct props {
+    int other = 0;
+
+    [[nodiscard]] bool operator==(props const &) const = default;
+  };
+
+  state<text_target> text;
+  effect load{&keyed_panel::props::key, load_text, text};
+
+  element view(props const &) { return p("stray"); }
+};
+
+struct stray_page {
+  state<int> other{1};
+
+  element view() { return div({component<stray_panel>({.other = *other})}); }
+};
+
 // Keeps what an effect starts, as its app would after a view, for the test to run when it chooses.
 struct kept_starts {
   std::vector<task<>> started;
@@ -1044,4 +1085,53 @@ TEST_CASE("effect: reload runs it again after a comparison that keeps failing", 
   REQUIRE(quoll::test::run(time, starts.run_all()) == 0);
   CHECK(std::get<0>(*page.text) == "text 2");
   CHECK(std::get<2>(*page.text) == nullptr);
+}
+
+TEST_CASE("effect: on a field of its props, runs as that field changes, as useEffect on a prop", "[ui][effect]") {
+  loads = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<keyed_page> instance{time.get_executor(), shown};
+  std::string first;
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+    first = shown.html();
+
+    // Another field of the page: its props are the same, and nothing runs.
+    instance.component().other = 1;
+    co_await quoll::async::sleep_for(5ms);
+
+    instance.component().key = 2;
+    co_await quoll::async::sleep_for(5ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(first.contains("<p>text 1</p>"));
+  CHECK(shown.html().contains("<p>text 2</p>"));
+  CHECK(loads.lines == std::vector<std::string>{"start 1", "end 1", "start 2", "end 2"});
+}
+
+TEST_CASE("effect: on a field of the props of another component is refused once, at its first view", "[ui][effect]") {
+  loads = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  std::vector<std::string> failures;
+  test_app<stray_page> instance{time.get_executor(), shown, {.on_error = [&failures](std::exception_ptr failure) {
+                                  failures.push_back(what_of(failure));
+                                }}};
+
+  // Viewed again, with other props: refused once, then waiting for reload().
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+    instance.component().other = 2;
+    co_await quoll::async::sleep_for(5ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(failures ==
+        std::vector<std::string>{"quoll::ui::effect: it depends on a field of props its component does not have"});
+  CHECK(loads.lines.empty());
 }

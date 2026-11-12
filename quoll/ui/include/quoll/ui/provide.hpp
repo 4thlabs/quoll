@@ -52,6 +52,8 @@
 
 namespace quoll::ui {
 
+struct router;
+
 namespace detail {
 
 template <class T>
@@ -83,6 +85,7 @@ template <class T>
 [[nodiscard]] constexpr context_spec provide() noexcept {
   static_assert(std::is_aggregate_v<T> && !std::is_const_v<T>,
                 "quoll::ui: a context is an aggregate, as a component: public members and no constructor");
+  static_assert(!std::is_same_v<T, router>, "quoll::ui: an app's router is made by routing(), with its routes");
   static_assert(
       !MountedComponent<T> && !UnmountedComponent<T> && !ComponentWithProps<T> &&
           !requires(T &context) { context.view(); },

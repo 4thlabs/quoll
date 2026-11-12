@@ -283,6 +283,24 @@ reference, as FTXUI's: the lifetime would be the program's to keep, and a stale 
 **For you.** Declare the context, give it to the app, `{.contexts = {provide<catalog>()}}`, and add a `shared<catalog>`
 to each component that reads or changes it. Run what must go on once a component goes through `run()`.
 
+### Routes checked at compile time, their parameters a page's props
+
+**The question.** An app has several pages, each at its addresses, some with parameters, as a product's id. How are
+they declared, and how does a link to one stay right?
+
+**Taken.** A table of routes, checked at compile time, as Dioxus's and TanStack Router's are typed: a route's path is
+a template whose parameters are fields of its page's props, which give their types, and the other fields come from the
+query. A link to a page takes its props, so that a page that changes its parameters breaks the links to it at compile
+time. Layouts show the page under them in an outlet, as React Router's. The router is a context, its location a state,
+its history the browser's or one in memory.
+
+**Set aside.** Parameters read as strings, as React Router's `useParams`: each page would check its own. Types written
+in the template, `{id:int64}`: they would repeat the props', and could differ. Loaders run by the router: an effect on
+a field of the props does it, as React does with `useEffect`.
+
+**For you.** Give each page props for its parameters, declare the routes, and put `outlet()` where pages show. Use
+`link_to<Page>(props, text)` for links, and `shared<router>` to go elsewhere from a handler.
+
 ### JavaScript libraries as modules
 
 **The question.** How does a page use chart.js, a map or a terminal?

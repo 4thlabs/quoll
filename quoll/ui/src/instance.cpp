@@ -58,7 +58,8 @@ namespace {
 instance::instance(component_table const &table, std::shared_ptr<void const> props, std::string key,
                    std::stop_token const &app_stop, context_finder const &contexts)
     : table_(&table), props_(std::move(props)), component_(made_finding(table, contexts)), key_(std::move(key)),
-      follow_app_(app_stop, async::detail::stop_waker{&stop_}) {
+      follow_app_(app_stop, async::detail::stop_waker{&stop_}),
+      parent_(std::static_pointer_cast<instance const>(contexts.from)) {
   if (table_->bind != nullptr) {
     table_->bind(component_.get(), contexts);
   }
@@ -112,6 +113,20 @@ element const *instance::unchanged_view(std::uint64_t epoch) const noexcept {
 }
 
 void instance::link(state_link app) noexcept { app_link_ = app; }
+
+found_context instance::provided_above(std::shared_ptr<void const> const &from, async::detail::type_id type) noexcept {
+  for (auto at = std::static_pointer_cast<instance const>(from); at; at = at->parent_.lock()) {
+    if (at->table_->provides == nullptr) {
+      continue;
+    }
+
+    if (auto *const entry = at->table_->provides(at->component_.get(), type)) {
+      return {.entry = entry, .keeper = at};
+    }
+  }
+
+  return {};
+}
 
 void instance::changed_in(void *self) {
   auto &changed = *static_cast<instance *>(self);

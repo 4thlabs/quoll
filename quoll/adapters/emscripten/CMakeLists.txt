@@ -7,6 +7,7 @@ endif()
 quoll_declare_module(
   NAME emscripten
   SOURCES
+    src/browser_history.cpp
     src/executor.cpp
     src/fetch_platform.cpp
     src/runtime.cpp

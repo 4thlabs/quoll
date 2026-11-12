@@ -39,6 +39,7 @@
 
 #include <quoll/async/any_executor.hpp>
 #include <quoll/async/detail/task_group.hpp>
+#include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/app_options.hpp>
 #include <quoll/ui/detail/context_entry.hpp>
@@ -70,6 +71,7 @@ public:
   using unmounted_function = void (*)(void *component);
   using effects_function = void (*)(void *component, effect_starter const &start);
   using finds_function = bool (*)(context_finder const &finder);
+  using provides_function = context_entry *(*)(void *component, async::detail::type_id type);
 
   // `unmounted`, none for a component without it, runs as the app stops, once its view showed.
   // `effects` start those of the component whose dependency changed, after each of its views. The contexts of `options`
@@ -79,7 +81,8 @@ public:
   // which is checked here, before the app makes it, as for each context before it is made: one refused is never made,
   // so that its destructor, which may read what it found, does not run.
   app_core(async::any_executor executor, renderer_ref renderer, view_function view, unmounted_function unmounted,
-           effects_function effects, finds_function finds, void *component, app_options options);
+           effects_function effects, finds_function finds, provides_function provides, void *component,
+           app_options options);
 
   app_core(app_core const &) = delete;
   app_core(app_core &&) = delete;
@@ -147,6 +150,8 @@ private:
   view_function view_;
   unmounted_function unmounted_;
   effects_function effects_;
+  // What the app's own component provides to the components of its view, found before the app's contexts.
+  provides_function provides_;
   void *component_;
   app_options options_;
   // Before what may refer to them, the tasks and the components: destroyed after them.

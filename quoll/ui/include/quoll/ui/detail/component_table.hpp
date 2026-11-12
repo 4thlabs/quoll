@@ -66,6 +66,8 @@ struct component_table {
   // None for a component using no context: whether those it uses are there, before it is made, then finds them, marks
   // what it sees of them as its view runs, keeps it once the view shows, and tells whether one it read changed since.
   bool (*finds)(context_finder const &finder);
+  // None for a component providing no context: the one of a type it provides, to those of its view.
+  context_entry *(*provides)(void *component, async::detail::type_id type);
   void (*bind)(void *component, context_finder const &finder);
   void (*mark_contexts)(void *component);
   void (*commit_contexts)(void *component);
@@ -124,6 +126,7 @@ inline constexpr component_table table_of{
     .make = &make_held<C>,
     .link = [](void *component, state_link to) { link_states(*static_cast<C *>(component), to); },
     .finds = finds_of<C>(),
+    .provides = provides_of<C>(),
     .bind = binds_of<C>(),
     .mark_contexts = marks_of<C>(),
     .commit_contexts = commits_of<C>(),

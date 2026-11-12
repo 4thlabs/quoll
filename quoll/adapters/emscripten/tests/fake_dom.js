@@ -93,6 +93,10 @@ addToLibrary({
         this.attributes.delete(name);
       }
 
+      hasAttribute(name) {
+        return this.attributes.has(name);
+      }
+
       addEventListener(name, listener) {
         this.listeners.set(name, listener);
       }
@@ -170,6 +174,79 @@ addToLibrary({
 
     target.listeners.get('click')({ target });
   },
+
+  // Clicks the element holding this text with the left button, a key held if `held`, as a browser does: whether the
+  // page kept the browser from following it.
+  quoll_test_dom_click_link__deps: ['$quollFakeDom', '$UTF8ToString'],
+  quoll_test_dom_click_link: (text, held) => {
+    const target = quollFakeDom.root.find(UTF8ToString(text));
+    const event = {
+      target,
+      currentTarget: target,
+      button: 0,
+      ctrlKey: held !== 0,
+      metaKey: false,
+      shiftKey: false,
+      altKey: false,
+      defaultPrevented: false,
+      preventDefault() {
+        this.defaultPrevented = true;
+      },
+    };
+
+    target.listeners.get('click')(event);
+    return event.defaultPrevented ? 1 : 0;
+  },
+
+  // A location and a history as a browser's, starting at `start`, its popstate listeners on globalThis.
+  quoll_test_history_install__deps: ['$UTF8ToString'],
+  quoll_test_history_install: (start) => {
+    const entries = [UTF8ToString(start)];
+    let at = 0;
+    const popped = new Set();
+    const place = () => {
+      const href = entries[at];
+      const question = href.indexOf('?');
+
+      globalThis.location = {
+        pathname: question < 0 ? href : href.slice(0, question),
+        search: question < 0 ? '' : href.slice(question),
+      };
+    };
+
+    place();
+    globalThis.history = {
+      pushState(_state, _title, href) {
+        entries.splice(at + 1);
+        entries.push(href);
+        at = entries.length - 1;
+        place();
+      },
+      replaceState(_state, _title, href) {
+        entries[at] = href;
+        place();
+      },
+      back() {
+        if (at > 0) {
+          at -= 1;
+          place();
+          popped.forEach((listener) => listener());
+        }
+      },
+    };
+    globalThis.addEventListener = (name, listener) => name === 'popstate' && popped.add(listener);
+    globalThis.removeEventListener = (name, listener) => name === 'popstate' && popped.delete(listener);
+    globalThis.quollTestPopListeners = () => popped.size;
+  },
+
+  quoll_test_history_location__deps: ['$stringToUTF8'],
+  quoll_test_history_location: (out, size) => {
+    stringToUTF8(globalThis.location.pathname + globalThis.location.search, out, size);
+  },
+
+  quoll_test_history_back: () => globalThis.history.back(),
+
+  quoll_test_history_listeners: () => globalThis.quollTestPopListeners(),
 
   // A registry of widgets, as the Vite plugin makes, with one module: a chart that logs what it is asked, and keeps its
   // emit for quoll_test_widgets_emit.

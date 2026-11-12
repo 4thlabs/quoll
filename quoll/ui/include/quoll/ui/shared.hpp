@@ -134,9 +134,11 @@ public:
     auto *const context = static_cast<T *>(entry().object());
 
     // Mutable, so that `member` is called as the constraint says.
-    auto function = std::make_shared<function_type const>([context, member](std::decay_t<A> &&...values) mutable {
-      return std::invoke(member, *context, std::move(values)...);
-    });
+    // Holds what provides the context, a component above, until the work ends: its caller may go first.
+    auto function =
+        std::make_shared<function_type const>([context, member, keeper = keeper_](std::decay_t<A> &&...values) mutable {
+          return std::invoke(member, *context, std::move(values)...);
+        });
 
     return detail::call_in<R>(std::move(function), detail::call_target{.app = app_},
                               std::decay_t<A>(std::forward<A>(args))...);
@@ -147,17 +149,19 @@ public:
    * @throws std::logic_error for an app given no context of type T.
    */
   void bind(detail::context_finder const &finder) {
-    if (finder.find == nullptr) {
+    auto found = finder(async::detail::type_id_of<T>());
+
+    // A view written once finds none, and stays unbound: using it then throws.
+    if (found.entry == nullptr && finder.find == nullptr) {
       return;
     }
 
-    auto *const found = finder(async::detail::type_id_of<T>());
-
-    if (found == nullptr) {
+    if (found.entry == nullptr) {
       throw std::logic_error{detail::missing_context};
     }
 
-    entry_ = found;
+    entry_ = found.entry;
+    keeper_ = std::move(found.keeper);
     app_ = finder.app;
   }
 
@@ -200,6 +204,8 @@ private:
   std::uint64_t marked_ = 0;
   std::uint64_t seen_ = 0;
   std::shared_ptr<detail::app_link> app_{};
+  // What provides its context, a component above, kept as long as this one: none for the app's.
+  std::shared_ptr<void const> keeper_{};
 };
 
 namespace detail {

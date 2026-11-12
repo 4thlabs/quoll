@@ -118,10 +118,11 @@ struct app_core::outcome {
 };
 
 app_core::app_core(async::any_executor executor, renderer_ref renderer, view_function view,
-                   unmounted_function unmounted, effects_function effects, finds_function finds, void *component,
-                   app_options options)
+                   unmounted_function unmounted, effects_function effects, finds_function finds,
+                   provides_function provides, void *component, app_options options)
     : executor_(std::move(executor)), renderer_(renderer), link_(std::make_shared<app_link>(app_link{this})),
-      view_(view), unmounted_(unmounted), effects_(effects), component_(component), options_(std::move(options)) {
+      view_(view), unmounted_(unmounted), effects_(effects), provides_(provides), component_(component),
+      options_(std::move(options)) {
   for (auto const &spec : options_.contexts) {
     auto const &table = spec.table();
 
@@ -133,7 +134,7 @@ app_core::app_core(async::any_executor executor, renderer_ref renderer, view_fun
       throw std::logic_error{missing_context};
     }
 
-    auto entry = std::make_unique<context_entry>(table, state_link{this, &app_core::state_changed});
+    auto entry = std::make_unique<context_entry>(table, state_link{this, &app_core::state_changed}, spec.make());
 
     // Those given before it only, which it finds made: none can use another that uses it.
     if (table.bind != nullptr) {
@@ -149,7 +150,11 @@ app_core::app_core(async::any_executor executor, renderer_ref renderer, view_fun
 }
 
 context_finder app_core::contexts() const noexcept {
-  return {.app = link_, .owner = this, .find = &app_core::find_context};
+  return {.app = link_,
+          .owner = this,
+          .find = &app_core::find_context,
+          .from = nullptr,
+          .find_above = &instance::provided_above};
 }
 
 context_entry *app_core::context(async::detail::type_id type) const noexcept {
@@ -163,7 +168,16 @@ context_entry *app_core::context(async::detail::type_id type) const noexcept {
 }
 
 context_entry *app_core::find_context(void const *self, async::detail::type_id type) noexcept {
-  return static_cast<app_core const *>(self)->context(type);
+  auto const &core = *static_cast<app_core const *>(self);
+
+  // What the app's own component provides, above every component of its view, then the app's.
+  if (core.provides_ != nullptr && core.component_ != nullptr) {
+    if (auto *const provided = core.provides_(core.component_, type)) {
+      return provided;
+    }
+  }
+
+  return core.context(type);
 }
 
 app_core::~app_core() { link_->core = nullptr; }
@@ -304,7 +318,7 @@ void app_core::start_effects(effects_function effects, void *component, held_vie
   };
 
   try {
-    effects(component, {.owner = &context, .start = start});
+    effects(component, {.owner = &context, .start = start, .props = held.props.get()});
   } catch (...) {
     failed(std::current_exception());
   }

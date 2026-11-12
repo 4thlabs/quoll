@@ -45,6 +45,7 @@
 #include <quoll/http/event_reader.hpp>
 #include <quoll/http/event_writer.hpp>
 #include <quoll/http/fields.hpp>
+#include <quoll/http/fixed_string.hpp>
 #include <quoll/http/format_event.hpp>
 #include <quoll/http/format_websocket_frame.hpp>
 #include <quoll/http/is_event_stream.hpp>
