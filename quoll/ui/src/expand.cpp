@@ -212,7 +212,7 @@ void walk_children(std::vector<element> &children, matching &shown, std::vector<
 
 void check_undecorated(element const &value) {
   if (!value.tag.empty() || !value.content.empty() || !value.classes.empty() || !value.attributes.empty() ||
-      !value.events.empty() || value.value || !value.children.empty()) {
+      !value.events.empty() || value.value || value.checked || !value.children.empty()) {
     throw std::logic_error{"quoll::ui: a component is decorated in its own view, but for its key"};
   }
 }
