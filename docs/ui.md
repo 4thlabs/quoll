@@ -241,42 +241,45 @@ points to what the caller gave.
 
 What a component loads as its states change, and what it runs on a click, are members of it. Both write what they
 give into a state of the component, their target, and the view reads only states. An `effect` is React's `useEffect`:
-it runs after a view in which one of its states changed. An `action<R(Args...)>` is what a handler runs, once at a
+it runs after a view in which one of its states changed. An `action<&function>` is what a handler runs, once at a
 time by default.
 
 ```cpp
 struct sales_panel {
   state<std::int64_t> id;
 
-  // The sales, whether they are loading, and why they did not load. Loading from the start, as React's
-  // useState(true): the first view comes before the first run.
-  state<std::tuple<products::monthly_sales, bool, std::exception_ptr>> sales{{{}, true, nullptr}};
+  // The sales, whether they are loading, and why they did not load.
+  async_state<products::monthly_sales> sales;
   effect load{id, products_client::sales, sales};
 
   element view() {
-    auto const &[monthly, loading, error] = *sales;
-
-    if (loading) {
+    if (sales->loading) {
       return p("Loading its sales");
     }
 
-    if (error) {
+    if (sales->error) {
       return p("No sales for now");
     }
 
-    return component<sales_chart>({.sales = monthly});
+    return component<sales_chart>({.sales = sales->value});
   }
 };
 ```
 
-**What a target receives goes by the type of its elements.** A target is a `state<T>`, or a `state<std::tuple<...>>`
-of several elements:
+**An `async_state<T>`**, in `<quoll/ui/async_state.hpp>`, is the target most components want: a state of an
+`async_value<T>`, whose fields are `value`, `loading` and `error`, read as `sales->loading`. `async_state<>` has no
+`value`, for a run that gives nothing, as a save whose answer only the handler wants. It is a state like any other,
+set and updated as one: `items.update([](auto &held) { held.value.push_back(...); })`.
+
+**What a target receives goes by the type of its elements.** A target is an `async_state`, a `state<T>`, or a
+`state<std::tuple<...>>` of several elements:
 
 - a `bool` is whether a run is under way;
 - a `std::exception_ptr` is why the last run failed;
-- every other element is one of the values the function gives, in order.
+- every other element is one of the values the function gives, in order; the `value` of an `async_state`.
 
-As a run starts, its target is loading and has no error, the values before kept, as a state keeps its value until it
+An effect's target is loading from the start, as React's `useState(true)`: the first view of its component comes
+before its first run. As a run starts, its target is loading and has no error, the values before kept, as a state keeps its value until it
 is set. As it ends, the target holds all it gave at once, in one render, or why it failed, the values before kept. A
 target holds one `bool` and one `std::exception_ptr` at most, and a function giving a `bool` or an error as a value
 does not compile: the target could not tell it from its flags. Each value is of the type the function gives, with no
@@ -297,8 +300,8 @@ state<std::tuple<products::monthly_sales, bool>> sales;        // and whether it
   a task of the component with a copy of each value;
 - the run before is stopped, as React's cleanup: what it gives after the view of the change writes nothing, even an
   answer that came anyway;
-- the view the change makes comes before the run, which starts once that view is shown, as in React: it still shows
-  the values before, not yet loading. A value that must match the state, as a product's sales, can be given with what
+- the view a later change makes comes before the run, which starts once that view is shown, as in React: it still
+  shows the values before, not yet loading. A value that must match the state, as a product's sales, can be given with what
   it is of, and the view compare them;
 - a state holding a `std::optional` gives what it holds; while one holds none, nothing runs, the run before stopped
   and the target loading no more;
@@ -328,45 +331,59 @@ effect search{query, [this](std::string text) -> task<> {
 }};
 ```
 
-**An action runs once at a time**:
+**An action runs a function once at a time**, which its template argument names, and gives its signature:
 
-- `co_await save.run(args...)` gives what the function gave, or what it threw, as a `std::expected`, for the handler to
-  go on with; its target receives what an effect's does, the values copied;
-- a call while one is under way is refused, `run_refused` at once, its target left as it is;
-- with `overlap::restart` as its second parameter, a call stops the run under way instead, which gives `run_replaced`
-  and writes nothing;
-- a run its caller stops, as a timeout does, is under way no more;
-- a target holding no value, as `state<std::tuple<bool, std::exception_ptr>>`, leaves the value to the handler alone;
-  an action with no target tells only its caller;
-- its runs are its component's tasks: a component that goes, as a detail keyed by its product once another is chosen,
-  stops them. A save that must go on, as one the list of the page shows, is the page's: the action runs the page's
-  callback, whose work belongs to the page and goes on as the detail stops waiting.
+- a free function returning a task, as `action<&products_client::update> save{saving};`;
+- a member function of a context, given its `shared<C>`, as `action<&catalog::save> save{products, saving};`, which
+  runs as the context's `run()` does: its work goes on as the component goes;
+- a member function of the component itself, given `this`, as `action<&product_detail::save> save{this, saving};`,
+  declared before the action.
+
+What it gives goes to its target, and to what follows a success, given last, as React Query's `onSuccess`:
 
 ```cpp
 struct rename_form {
-  state<std::int64_t> id;
-  state<std::string> name;
+  struct props {
+    products::product item;
+  };
 
-  // Whether a save is on its way, and why the last one failed: the product saved goes to the handler.
-  state<std::tuple<bool, std::exception_ptr>> saving;
-  action<products::product(std::int64_t, products::product_update)> save{products_client::update, saving};
+  state<std::optional<std::string>> name;
 
-  task<> submit(products::product_update changes) {
-    changes.name = *name;
+  // Whether a save is on its way, and why the last one failed; saved, what is typed is forgotten.
+  async_state<products::product> saving;
+  action<&products_client::update> save{saving, [this](products::product const &) { name = std::nullopt; }};
 
-    auto const saved = co_await save.run(*id, std::move(changes));
+  element view(props const &given) {
+    products::product_update const changes{.name = name->value_or(given.item.name)};
 
-    if (saved) {
-      name = saved->name;
+    if (saving->loading) {
+      return button("Saving…") | attribute("disabled", "");
     }
+
+    return button("Save") | on_click(save.with(given.item.id, changes));
   }
 };
 ```
 
-None is copied nor moved: a run under way refers to it, as a component stays where it was made. Its states and its
-target are members of the same component, declared before it. Arguments and values are copied into the run, so that
-none can be a reference or a view, which does not compile. A function given empty, as a null pointer, throws
-`std::invalid_argument` as the member is made.
+- `save.with(args...)` gives a handler that runs it with copies of the arguments, for `on_click`: what it gave goes to
+  its target and to what follows a success, and a failure its target has no place for, with no `std::exception_ptr`
+  or no target, to the app's `on_error`, as a handler's;
+- `co_await save.run(args...)` gives what the function gave, or what it threw, as a `std::expected`, for a handler
+  that goes on with it, after what follows a success, which throws to it what it throws;
+- both take the function's parameters, so that a braced argument builds one, as `save.with(id, {.name = "tea"})`;
+- a call while one is under way is refused, `run_refused` at once, its target left as it is;
+- with `overlap::restart` as its second parameter, a call stops the run under way instead, which gives `run_replaced`
+  and writes nothing;
+- a run its caller stops, as a timeout does, is under way no more;
+- what follows a success is told what the run gave, `void()` for a function that gives nothing; a failure, a refused
+  call or a stopped one tell it nothing;
+- its runs are its component's tasks: a component that goes, as a detail keyed by its product once another is chosen,
+  stops them, and what follows them. A save that must go on, as one the list of the page shows, is a context's: the
+  action runs a member function of it, whose work goes on as the detail stops waiting.
+
+None is copied nor moved: a run under way refers to it, as a component stays where it was made. Its target and what
+it is given are members of the same component, declared before it. Arguments and values are copied into the run, the
+arguments given to the function as rvalues, so that none can be a view, which does not compile.
 
 ## Contexts
 
@@ -377,14 +394,14 @@ lives, and a component finds it through a `shared<T>` member, by type.
 ```cpp
 struct catalog {
   // The products, whether they are loading, and why they did not load.
-  state<std::tuple<std::vector<products::product>, bool, std::exception_ptr>> items;
+  async_state<std::vector<products::product>> items;
   effect load{std::tie(), products_client::list, items};
 
   task<products::product> save(std::int64_t id, products::product_update changes) {
     auto saved = co_await products_client::update(id, std::move(changes));
 
     items.update([&saved](auto &held) {
-      std::ranges::replace_if(std::get<0>(held), [&saved](auto const &item) { return item.id == saved.id; }, saved);
+      std::ranges::replace_if(held.value, [&saved](auto const &item) { return item.id == saved.id; }, saved);
     });
     co_return saved;
   }
@@ -394,20 +411,20 @@ struct product_list {
   shared<catalog> products;
 
   element view() {
-    auto const &[all, loading, error] = *products->items;
+    if (products->items->loading) {
+      return p("Loading the products");
+    }
+
     // ...
   }
 };
 
 struct product_detail {
   shared<catalog> products;
-  state<std::tuple<bool, std::exception_ptr>> saving;
 
-  action<products::product(std::int64_t, products::product_update)> save{
-      [this](std::int64_t id, products::product_update changes) {
-        return products.run(&catalog::save, id, std::move(changes));
-      },
-      saving};
+  // The save is the catalog's: it goes on as the detail goes.
+  async_state<products::product> saving;
+  action<&catalog::save> save{products, saving};
 };
 
 int main() {
@@ -473,7 +490,7 @@ struct product_page {
   };
 
   // Its sales, loaded again as the address gives another id.
-  state<std::tuple<products::monthly_sales, bool, std::exception_ptr>> sales;
+  async_state<products::monthly_sales> sales;
   effect load{&props::id, products_client::sales, sales};
 
   element view(props const &given);

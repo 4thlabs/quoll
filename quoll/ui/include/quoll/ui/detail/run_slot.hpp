@@ -50,7 +50,6 @@
 #include <exception>
 #include <expected>
 #include <optional>
-#include <stdexcept>
 #include <stop_token>
 #include <type_traits>
 #include <utility>
@@ -70,13 +69,8 @@ struct run_slot {
 // this one gets a stop of its own, as React's cleanup sets the ignore flag of the effect before.
 [[nodiscard]] std::stop_token ask(run_slot &slot);
 
-// A function to run, refused empty rather than at each run.
-template <class Function>
-void check_function(Function const &function, char const *message) {
-  if (!function) {
-    throw std::invalid_argument{message};
-  }
-}
+// Whether `failure` is a call that gave no result of its own, refused or replaced, rather than a failure of its run.
+[[nodiscard]] bool gave_no_result(std::exception_ptr const &failure) noexcept;
 
 // A run that goes without ending, its frame destroyed from above, is under way no more and loading no more, unless a
 // later run took its place. Neither copied nor moved: it lives in the run's frame.

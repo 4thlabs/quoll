@@ -52,7 +52,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <tuple>
 #include <vector>
 
 namespace dashboard_web {
@@ -86,7 +85,7 @@ struct product_list {
 
     std::vector<products::product> shown;
 
-    std::ranges::copy_if(std::get<0>(*products->items), std::back_inserter(shown), matches);
+    std::ranges::copy_if(products->items->value, std::back_inserter(shown), matches);
 
     auto const row = [&given](products::product const &item) {
       auto const chosen = component<product_row>({

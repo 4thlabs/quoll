@@ -48,7 +48,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <exception>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -58,9 +57,8 @@ namespace dashboard_web {
 using namespace quoll::ui;
 
 struct catalog {
-  // The products, whether they are loading, and why they did not load: loading from the start, as the first view of a
-  // page comes before their load.
-  state<std::tuple<std::vector<products::product>, bool, std::exception_ptr>> items{{{}, true, nullptr}};
+  // The products, whether they are loading, and why they did not load: loading from the start, their load due.
+  async_state<std::vector<products::product>> items;
   effect load{std::tie(), products_client::list, items};
 
   // Saves a product, which the list then shows. Two details of one product may still send their saves together, the
@@ -69,8 +67,8 @@ struct catalog {
   quoll::async::task<products::product> save(std::int64_t id, products::product_update changes) {
     auto saved = co_await products_client::update(id, std::move(changes));
 
-    auto const replace = [&saved](std::tuple<std::vector<products::product>, bool, std::exception_ptr> &held) {
-      std::ranges::replace_if(std::get<0>(held), [&saved](auto const &item) { return item.id == saved.id; }, saved);
+    auto const replace = [&saved](auto &held) {
+      std::ranges::replace_if(held.value, [&saved](auto const &item) { return item.id == saved.id; }, saved);
     };
 
     items.update(replace);

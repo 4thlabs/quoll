@@ -54,9 +54,9 @@
 #include <exception>
 #include <format>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <system_error>
-#include <tuple>
 #include <utility>
 
 namespace dashboard_web {
@@ -96,75 +96,56 @@ struct product_detail {
   state<std::optional<std::string>> name;
   state<std::optional<std::string>> price;
   state<std::optional<std::string>> stock;
-  // What is wrong with what is typed.
-  state<std::string> problem;
   shared<catalog> products;
-  // Whether a save is on its way, and why the last one failed: once at a time, a click while one is on its way
-  // refused. The save is the catalog's: a detail left stops waiting for it, and it goes on.
-  state<std::tuple<bool, std::exception_ptr>> saving;
 
-  action<products::product(std::int64_t, products::product_update)> save_product{
-      [this](std::int64_t id, products::product_update changes) {
-        return products.run(&catalog::save, id, std::move(changes));
-      },
-      saving};
-
-  task<> save(products::product item) {
+  // The changes typed, or why they cannot be sent.
+  [[nodiscard]] products::product_update changes(products::product const &item) const {
     auto const new_price = number_in<double>(price->value_or(std::format("{}", item.price)));
     auto const new_stock = number_in<int>(stock->value_or(std::to_string(item.stock)));
 
     if (!new_price || !new_stock) {
-      problem = std::string{"The price and the stock are numbers"};
-      co_return;
+      throw std::invalid_argument{"the price and the stock are numbers"};
     }
 
-    problem.set({});
-
-    // What was typed as it left: a field changed while the save is on its way keeps what it holds now. Kept by hand,
-    // until quoll::ui has a form draft from the props that tells what changed since it was sent (docs/PLAN.md, step 6,
-    // and issue #163).
-    auto const sent_name = *name;
-    auto const sent_price = *price;
-    auto const sent_stock = *stock;
-
-    products::product_update changes{.name = name->value_or(item.name), .price = *new_price, .stock = *new_stock};
-
-    auto const saved = co_await save_product.run(item.id, std::move(changes));
-
-    if (!saved) {
-      co_return;
-    }
-
-    // Saved, the product given next holds what was sent: the fields that still hold it show it again.
-    auto const forget = [](state<std::optional<std::string>> &typed, std::optional<std::string> const &sent) {
-      if (typed->has_value() && *typed == sent) {
-        typed.set({});
-      }
-    };
-
-    forget(name, sent_name);
-    forget(price, sent_price);
-    forget(stock, sent_stock);
+    return {.name = name->value_or(item.name), .price = *new_price, .stock = *new_stock};
   }
+
+  // Sent through the catalog: a detail left stops waiting for it, and it goes on.
+  task<products::product> save(products::product item) {
+    co_return co_await products.run(&catalog::save, item.id, changes(item));
+  }
+
+  // Saved, the product given next holds what was sent: the fields that hold it show it again, and those changed while
+  // the save was on its way keep what they hold. Compared by hand, until quoll::ui has a form draft from the props
+  // that tells what changed (docs/PLAN.md, step 6, and issue #163).
+  void forget_saved(products::product const &saved) {
+    if (*name == saved.name) {
+      name = std::nullopt;
+    }
+
+    if (price->has_value() && number_in<double>(**price) == saved.price) {
+      price = std::nullopt;
+    }
+
+    if (stock->has_value() && number_in<int>(**stock) == saved.stock) {
+      stock = std::nullopt;
+    }
+  }
+
+  // Whether a save is on its way, and why the last one failed: once at a time, a click while one is on its way refused.
+  async_state<products::product> saving;
+  action<&product_detail::save> save_product{this, saving, [this](auto const &saved) { forget_saved(saved); }};
 
   element view(props const &given) {
     auto const edit = [](state<std::optional<std::string>> &typed) {
       return [&typed](std::string value) { typed = std::optional<std::string>{std::move(value)}; };
     };
 
-    auto const &[busy, save_failure] = *saving;
-
-    auto const send = [this, &given] { return save(given.item); };
-
-    auto const save_failed = [&save_failure] {
-      return error_text("Not saved: " + told(save_failure, "the save failed"));
-    };
+    auto const save_failed = [this] { return error_text("Not saved: " + told(saving->error, "the save failed")); };
 
     // The fields stay open while a save is on its way: what is typed meanwhile is kept for the next.
-    auto const button_shown = button(busy ? "Saving…" : "Save") | tw("btn btn-primary self-start");
-    auto const save_button = busy ? button_shown | attribute("disabled", "") : button_shown | on_click(send);
-
-    auto const typed_wrong = [this] { return error_text(*problem); };
+    auto const save_button = saving->loading ? button("Saving…") | attribute("disabled", "")
+                                             : button("Save") | on_click(save_product.with(given.item));
 
     auto const form = section({
         h2(given.item.name) | tw("text-2xl font-semibold"),
@@ -179,10 +160,8 @@ struct product_detail {
             .value = stock->value_or(std::to_string(given.item.stock)),
             .on_change = edit(stock),
         }),
-        when(!problem->empty(), typed_wrong),
-        // What is typed wrong first: the last save's failure is of what was sent then.
-        when(problem->empty() && save_failure != nullptr, save_failed),
-        save_button,
+        when(saving->error != nullptr, save_failed),
+        save_button | tw("btn btn-primary self-start"),
     });
 
     return form | tw("flex flex-col gap-3");

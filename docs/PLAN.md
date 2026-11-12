@@ -423,6 +423,15 @@ changes only what the harness shows. Candidates:
   component per item has its own action, which runs a callback of the component owning what the save changes, so
   that the save goes on as the item goes. The debounce is to refine. A form's draft from
   the props comes in a pull request of its own.
+- **Less to write for a load and a save** (2026-11-12), as the maintainer found the targets and the actions of the
+  dashboard heavy to write. `ui::async_state<T>` is a state of `value`, `loading` and `error`, read by name rather than
+  as a tuple, `async_state<>` with no value; tuples stay as targets for several values. An effect's target is loading
+  from the start, as React's `useState(true)`. `ui::action<&function>` deduces its signature from a free function, a
+  member function of a context given its `shared<C>`, whose work goes on as the component goes, or of the component
+  given `this`; `with(args...)` gives a handler for `on_click`, and what follows a success is given as the action is
+  made, as React Query's `onSuccess`, rather than a coroutine awaiting `run()` in each component. Kept: `state`, which
+  the maintainer wanted kept, rather than new names such as `loaded<T>`; `run()` for a handler going on with the
+  result.
 - **Routing: routes checked at compile time, their parameters a page's props** (2026-11-12), as the maintainer asked
   for several pages. After React Router, TanStack Router and Dioxus: a route's path is a template, as the REST DSL's,
   whose parameters are fields of its page's props, which give their types, as Dioxus's routes are an enum of typed

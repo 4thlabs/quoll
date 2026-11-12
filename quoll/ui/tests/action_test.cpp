@@ -52,10 +52,12 @@
 #include <quoll/test/virtual_time.hpp>
 #include <quoll/ui.hpp>
 #include <quoll/ui/action.hpp>
+#include <quoll/ui/async_state.hpp>
 #include <quoll/ui/effect.hpp>
 #include <quoll/ui/run_error.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 
 #include <chrono>
 #include <coroutine>
@@ -140,7 +142,7 @@ template <overlap Policy>
 struct running_page {
   state<int> next{1};
   state<flags> running;
-  action<int(int), Policy> run{doubled, running};
+  action<&doubled, Policy> run{running};
 
   element view() {
     auto const go = [this]() -> task<> {
@@ -159,7 +161,7 @@ struct running_page {
 // Its target holds what it gave too, a copy: its caller is given the run's own.
 struct valued_page {
   state<std::tuple<int, bool, std::exception_ptr>> doubled_value;
-  action<int(int)> run{doubled, doubled_value};
+  action<&doubled> run{doubled_value};
 
   element view() { return p(std::to_string(std::get<0>(*doubled_value))); }
 };
@@ -202,7 +204,7 @@ task<touchy> touchy_of(int value) {
 
 struct touchy_page {
   state<std::tuple<touchy, std::exception_ptr>> kept;
-  action<touchy(int)> run{touchy_of, kept};
+  action<&touchy_of> run{kept};
 
   element view() { return div({}); }
 };
@@ -215,21 +217,21 @@ task<std::tuple<int, touchy>> pair_of(int value) {
 // Two values, the second's copy may throw: written both, or neither.
 struct pair_page {
   state<std::tuple<int, touchy, std::exception_ptr>> kept;
-  action<std::tuple<int, touchy>(int)> run{pair_of, kept};
+  action<&pair_of> run{kept};
 
   element view() { return div({}); }
 };
 
 struct timed_page {
   state<bool> busy;
-  action<int(int)> run{doubled, busy};
+  action<&doubled> run{busy};
 
   element view() { return div({}); }
 };
 
 struct timed_restart_page {
   state<bool> busy;
-  action<int(int), overlap::restart> run{doubled, busy};
+  action<&doubled, overlap::restart> run{busy};
 
   element view() { return div({}); }
 };
@@ -237,7 +239,7 @@ struct timed_restart_page {
 // Runs its action as it first shows, and goes as its page asks.
 struct running_panel {
   state<bool> busy;
-  action<int(int)> run{doubled, busy};
+  action<&doubled> run{busy};
 
   task<> mounted() { static_cast<void>(co_await run.run(1)); }
 
@@ -254,8 +256,68 @@ struct panel_page {
   }
 };
 
+// Its action with() a value, on a click, its result in a named state, and what follows a success.
+struct with_page {
+  state<int> next{3};
+  async_state<int> doubled_value;
+  state<std::vector<int>> told;
+  action<&doubled> run{doubled_value,
+                       [this](int const &value) { told.update([value](auto &all) { all.push_back(value); }); }};
+
+  element view() { return div({button("go") | on_click(run.with(*next)), p(std::to_string(doubled_value->value))}); }
+};
+
+// Its action runs a member function of the component itself, declared before it, then what follows a success.
+struct self_page {
+  // A parameter a braced argument builds, as with({.times = 2}).
+  struct order {
+    int times = 0;
+  };
+
+  int calls = 0;
+  int successes = 0;
+
+  task<> work(order given) {
+    co_await quoll::async::sleep_for(1ms);
+
+    if (given.times == 0) {
+      throw std::runtime_error{"no work"};
+    }
+
+    calls += given.times;
+  }
+
+  async_state<> working;
+  action<&self_page::work> run{this, working, [this] { ++successes; }};
+  // With no target: only its caller hears of it.
+  action<&self_page::work> bare{this};
+
+  element view() {
+    return div({
+        button("work") | on_click(run.with({.times = 2})),
+        button("fail") | on_click(run.with({.times = 0})),
+        button("bare") | on_click(bare.with({.times = 3})),
+    });
+  }
+};
+
+// An action with no target from a click: its failure goes to the app's on_error, a click refused does not.
+struct untold_page {
+  action<&doubled> run;
+
+  element view() { return button("go") | on_click(run.with(4)); }
+};
+
+// What follows a success throws.
+struct throwing_success_page {
+  async_state<int> doubled_value;
+  action<&doubled> run{doubled_value, [](int const &) { throw std::runtime_error{"after"}; }};
+
+  element view() { return p(std::to_string(doubled_value->value)); }
+};
+
 struct void_page {
-  action<void(int)> touch{nothing_much};
+  action<&nothing_much> touch;
 
   element view() { return div({}); }
 };
@@ -416,15 +478,6 @@ TEST_CASE("action: a run its caller stops, as a timeout does, is under way no mo
   CHECK_FALSE(*instance.component().busy);
 }
 
-TEST_CASE("action: no function is refused as it is made", "[ui][action]") {
-  using function = task<int> (*)(int);
-
-  state<bool> busy;
-
-  CHECK_THROWS_AS((action<int(int)>{function{}}), std::invalid_argument);
-  CHECK_THROWS_AS((action<int(int)>{function{}, busy}), std::invalid_argument);
-}
-
 namespace {
 
 task<int> yields_once(int value) {
@@ -455,9 +508,9 @@ void destroyed_while_under_way(Holder &holder, Start start) {
 } // namespace
 
 TEST_CASE("action: destroyed while a run is under way is asserted", "[.assert]") {
-  std::optional<action<int(int)>> held;
+  std::optional<action<&yields_once>> held;
 
-  held.emplace(yields_once);
+  held.emplace();
   destroyed_while_under_way(held, [](auto &run) { return run.run(1); });
 }
 
@@ -495,7 +548,7 @@ TEST_CASE("action: a run its caller stops once a later one took its place leaves
 
     // The first run, under a stop of its caller's that the test asks for.
     auto const stoppable = [&]() -> task<> {
-      using result = action<int(int), overlap::restart>::result_type;
+      using result = action<&doubled, overlap::restart>::result_type;
 
       static_cast<void>(co_await quoll::async::detail::stop_scope<result>(run.run(1), caller.get_token()));
     };
@@ -648,4 +701,110 @@ TEST_CASE("action: a lack of memory at any step of a run is its failure, given t
       break;
     }
   }
+}
+
+TEST_CASE("action: with() runs it from a click, what it gave in a named state, then on_success", "[ui][action]") {
+  runs = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<with_page> instance{time.get_executor(), shown};
+  bool loading_meanwhile = false;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+    loading_meanwhile = instance.component().doubled_value->loading;
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(loading_meanwhile);
+  CHECK(instance.component().doubled_value->value == 6);
+  CHECK_FALSE(instance.component().doubled_value->loading);
+  CHECK(*instance.component().told == std::vector<int>{6});
+  CHECK(shown.html().contains("<p>6</p>"));
+}
+
+TEST_CASE("action: of a member function of its component, run on it", "[ui][action]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<self_page> instance{time.get_executor(), shown};
+
+  bool worked = false;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.dispatch(shown.find_text("work"), "click");
+    co_await quoll::async::sleep_for(5ms);
+    worked = instance.component().working->error == nullptr && !instance.component().working->loading;
+
+    // A failure tells nothing to what follows a success.
+    instance.dispatch(shown.find_text("fail"), "click");
+    co_await quoll::async::sleep_for(5ms);
+
+    instance.dispatch(shown.find_text("bare"), "click");
+    co_await quoll::async::sleep_for(5ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(worked);
+  CHECK(instance.component().calls == 5);
+  CHECK(instance.component().successes == 1);
+  REQUIRE(instance.component().working->error != nullptr);
+  CHECK_THROWS_WITH(std::rethrow_exception(instance.component().working->error), "no work");
+}
+
+TEST_CASE("action: with() of one whose target cannot hold its failure tells the app's on_error, not of a refused click",
+          "[ui][action]") {
+  runs = {};
+  runs.failing = {4};
+
+  virtual_time time;
+  memory_renderer const shown;
+  std::vector<std::string> failures;
+  test_app<untold_page> instance{time.get_executor(), shown, {.on_error = [&failures](std::exception_ptr failure) {
+                                   try {
+                                     std::rethrow_exception(failure);
+                                   } catch (std::exception const &error) {
+                                     failures.emplace_back(error.what());
+                                   }
+                                 }}};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+    instance.dispatch(shown.find("button"), "click");
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(runs.lines == std::vector<std::string>{"start 4"});
+  CHECK(failures == std::vector<std::string>{"no 4"});
+}
+
+TEST_CASE("action: what follows a success throws to run()'s caller, its target holding the success", "[ui][action]") {
+  runs = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<throwing_success_page> instance{time.get_executor(), shown};
+  std::string thrown;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+
+    try {
+      static_cast<void>(co_await instance.component().run.run(5));
+    } catch (std::runtime_error const &error) {
+      thrown = error.what();
+    }
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(thrown == "after");
+  CHECK(instance.component().doubled_value->value == 10);
+  CHECK(instance.component().doubled_value->error == nullptr);
 }

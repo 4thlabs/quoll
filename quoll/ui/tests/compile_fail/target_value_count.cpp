@@ -49,7 +49,7 @@ quoll::async::task<std::string> new_name(int id);
 
 struct page {
   quoll::ui::state<std::tuple<std::string, std::string, bool>> renamed;
-  quoll::ui::action<std::string(int)> run{new_name, renamed};
+  quoll::ui::action<&new_name> run{renamed};
 };
 
 page const shown{};

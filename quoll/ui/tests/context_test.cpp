@@ -338,6 +338,27 @@ struct runner_page {
   element view() { return div({component<name_runner>(), component<name_list>()}); }
 };
 
+// Renames through an action of its context, on a click, what it gave in a state of its own.
+struct action_renamer {
+  shared<names> data;
+  async_state<std::string> renaming;
+  action<&names::rename> rename{data, renaming};
+  // With no target, made but not run: only its caller would hear of it.
+  action<&names::rename> plain{data};
+
+  element view() { return div({button("rename") | on_click(rename.with(1, "mate")), p("renamed " + renaming->value)}); }
+};
+
+struct action_page {
+  state<bool> renames{true};
+
+  element view() {
+    auto const renamer_shown = [] { return component<action_renamer>(); };
+
+    return div({when(*renames, renamer_shown), component<name_list>()});
+  }
+};
+
 // The names, as its own member: run() from outside, once the app stopped.
 struct holding_page {
   shared<names> data;
@@ -991,4 +1012,40 @@ TEST_CASE("context: the app's own component finds the app's contexts, what it pr
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(&*instance.component().app_draft == &instance.context<draft>());
   CHECK(&*instance.component().app_draft != &*instance.component().mine);
+}
+
+TEST_CASE("context: an action of one of its member functions runs it on the context, which goes on as its caller goes",
+          "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<action_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  bool waited = false;
+  std::string given;
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+    waited = *instance.component().renames && shown.html().contains("<p>renamed </p>");
+    co_await quoll::async::sleep_for(20ms);
+    given = shown.html();
+
+    // Clicked again, then gone before the rename ends: the rename goes on, and the list shows it.
+    instance.context<names>().all.update([](auto &held) { std::get<0>(held).at(1) = "coffee"; });
+    co_await settle();
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+    instance.component().renames = false;
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(waited);
+  CHECK(given.contains("<p>renamed mate</p>"));
+  CHECK(given.contains("<p>tea;mate;</p>"));
+  CHECK(lines == std::vector<std::string>{"loaded", "rename mate", "renamed mate", "rename mate", "renamed mate"});
+  CHECK(shown.html().contains("<p>tea;mate;</p>"));
+  CHECK_FALSE(shown.html().contains("renamed"));
 }

@@ -39,10 +39,10 @@
 
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/async/task.hpp>
-#include <quoll/ui/detail/callback_traits.hpp>
 #include <quoll/ui/detail/run_slot.hpp>
 #include <quoll/ui/detail/target.hpp>
 #include <quoll/ui/run_error.hpp>
+#include <quoll/ui/shared.hpp>
 #include <quoll/ui/state.hpp>
 
 #include <cassert>
@@ -68,90 +68,199 @@ enum class overlap {
 
 namespace detail {
 
-// What an action's arguments and result may be: kept, as values.
+// What an action runs: a function returning a task, free or a member, its arguments, its result, and whose it is.
+// What an action's function gives, the arguments it takes, and whose member it is: a task-returning free function or
+// member function, or none, which the action refuses with a message of its own.
+template <class F>
+struct action_function {
+  static constexpr bool valid = false;
+  using result = void;
+  using arguments = std::tuple<>;
+  using owner = void;
+  static constexpr bool writes_arguments = false;
+};
+
 template <class R, class... Args>
-inline constexpr bool action_signature = kept_as_values<R> && kept_as_values<std::tuple<Args...>>;
+struct action_function<async::task<R> (*)(Args...)> {
+  using result = R;
+  using arguments = std::tuple<std::decay_t<Args>...>;
+  using owner = void;
+  static constexpr bool valid = true;
+  static constexpr bool writes_arguments =
+      (... || (std::is_lvalue_reference_v<Args> && !std::is_const_v<std::remove_reference_t<Args>>));
+};
+
+template <class R, class... Args>
+struct action_function<async::task<R> (*)(Args...) noexcept> : action_function<async::task<R> (*)(Args...)> {};
+
+template <class R, class C, class... Args>
+struct action_function<async::task<R> (C::*)(Args...)> {
+  using result = R;
+  using arguments = std::tuple<std::decay_t<Args>...>;
+  using owner = C;
+  static constexpr bool valid = true;
+  static constexpr bool writes_arguments =
+      (... || (std::is_lvalue_reference_v<Args> && !std::is_const_v<std::remove_reference_t<Args>>));
+};
+
+template <class R, class C, class... Args>
+struct action_function<async::task<R> (C::*)(Args...) const> : action_function<async::task<R> (C::*)(Args...)> {};
+
+template <class R, class C, class... Args>
+struct action_function<async::task<R> (C::*)(Args...) noexcept> : action_function<async::task<R> (C::*)(Args...)> {};
+
+template <class R, class C, class... Args>
+struct action_function<async::task<R> (C::*)(Args...) const noexcept>
+    : action_function<async::task<R> (C::*)(Args...)> {};
+
+// What is told of a run that gave R: the value, or nothing for void.
+template <class R>
+struct success_of {
+  using type = std::function<void(R const &)>;
+};
+
+template <>
+struct success_of<void> {
+  using type = std::function<void()>;
+};
+
+// run() and with() of an action, taking the function's parameters as they are, so that a braced argument, as
+// `{.name = "tea"}`, builds the parameter it is given for.
+template <class Action, class Arguments>
+class action_calls;
+
+template <class Action, class... Ts>
+class action_calls<Action, std::tuple<Ts...>> {
+public:
+  /**
+   * @brief Runs it, as its overlap says: what it gave, or what it threw, as its target then holds; run_refused or
+   * run_replaced for a call that gave no result of its own.
+   */
+  [[nodiscard]] auto run(Ts... args) QUOLL_LIFETIMEBOUND {
+    return self().run_with(std::tuple<Ts...>{std::move(args)...});
+  }
+
+  /**
+   * @brief A handler running it with copies of `args`, for on_click: what it gave goes to its target and to what
+   * follows a success, and a failure its target has no place for to the app's on_error.
+   */
+  [[nodiscard]] auto with(Ts... args) QUOLL_LIFETIMEBOUND {
+    // Not a coroutine: each call copies the arguments into the frame of its own run, which outlives this lambda.
+    return [action = &self(), given = std::tuple<Ts...>{std::move(args)...}] { return action->run_from_event(given); };
+  }
+
+private:
+  [[nodiscard]] Action &self() noexcept { return static_cast<Action &>(*this); }
+};
 
 } // namespace detail
-
-template <class Signature, overlap Policy = overlap::refuse>
-class action;
 
 /**
  * @brief A function a handler of a component runs, once at a time by default, what it gives written into a target
  * state, as an effect's: whether it is under way, and why it failed, for a button to wait on and a view to show.
  *
  * @code
- * struct note_form {
- *   state<std::string> draft;
- *   // Whether it is being added, and why it was not.
- *   state<std::tuple<bool, std::exception_ptr>> adding;
+ * struct product_detail {
+ *   state<std::optional<std::string>> name;
+ *   async_state<> saving;
  *
- *   action<notes::note(std::string)> add{notes_client::create, adding};
+ *   // After a success, as React Query's onSuccess: what is typed is forgotten.
+ *   action<&products_client::update> save{saving, [this](products::product const &) { name = std::nullopt; }};
  *
- *   task<> send() {
- *     if (auto const added = co_await add.run(*draft)) {
- *       draft.set({});
+ *   element view(props const &given) {
+ *     if (saving->loading) {
+ *       return button("Saving…") | attribute("disabled", "");
  *     }
- *   }
  *
- *   element view() {
- *     auto const &[busy, error] = *adding;
- *     auto const send_it = [this] { return send(); };
- *
- *     return div({
- *         input() | bind(draft),
- *         busy ? button("Adding…") | attribute("disabled", "") : button("Add") | on_click(send_it),
- *     });
+ *     return button("Save") | on_click(save.with(given.item.id, changes()));
  *   }
  * };
  * @endcode
  *
- * A member of a component, after its target, a state of the same component. run() runs the function in the task
- * awaiting it, a handler's or mounted()'s, and gives what it gave or what it threw, before giving its task too, as a
- * std::expected, not thrown again. The target receives what an effect's does, by the type of its elements: whether a
- * run is under way, why the last failed, and the values it gave, copied, as its caller is given them too. A call while
- * one is under way is refused, run_refused at once, the target left as it is, or, with `overlap::restart`, stops it, so
- * that it writes nothing, even one that ignored the stop and came anyway, and gives run_replaced to its caller, which
- * goes on. A stop of the caller, as a timeout, ends the run and its caller, as a stop does, the target loading no more.
- * With no target, only its caller hears of it.
+ * `Function` gives its signature: a free function returning a task, as `&products_client::update`, or a member
+ * function of a context, given its `shared<C>`, whose work then goes on as the component goes, or of the component
+ * itself, given `this`. The target, a state of the same component declared before it, receives what an effect's does:
+ * whether a run is under way, why the last failed, and the values it gave, copied; with none, only its caller hears of
+ * it. What follows a success, given as it is made, is told what the run gave, before its caller.
  *
- * Awaited from a task of its component, which the component outlives: a component that goes stops its runs. Neither
- * copied nor moved: a run under way refers to it. Its arguments are copied into the run, given to the function as
- * rvalues: none can be a reference or a view, nor hold one in an optional, a pair, a tuple, a variant or an expected,
- * which would outlive what it refers to; a view in a container or a struct of the program's is not seen. Thread safety:
- * none, as a state.
+ * run() runs it in the task awaiting it, a handler's or mounted()'s, and gives what it gave or what it threw, as a
+ * std::expected, not thrown again; what follows a success throws to it, as code of the handler after the run would.
+ * with() gives a handler that runs it, for on_click, whose failure, when its target has no place for it, goes to the
+ * app's on_error, as a handler's. Both take the function's parameters, so that a braced argument builds one. A call
+ * while one is under way is refused, run_refused at once, the target left as it is, or, with `overlap::restart`, stops
+ * it, so that it writes nothing, even one that ignored the stop and came anyway, and gives run_replaced to its caller.
+ * A stop of the caller, as a timeout, ends the run and its caller, as a stop does, the target loading no more.
+ *
+ * Neither copied nor moved: a run under way refers to it. Its arguments are copied into the run, given to the function
+ * as rvalues: none can be a view, which would outlive what it refers to. Thread safety: none, as a state.
  */
-template <class R, class... Args, overlap Policy>
-class action<R(Args...), Policy> {
-  static_assert(detail::action_signature<R, Args...>,
-                "quoll::ui::action: its arguments are copied into the run, and its result kept: none can be a "
-                "reference or a view");
+template <auto Function, overlap Policy = overlap::refuse>
+class action : public detail::action_calls<action<Function, Policy>,
+                                           typename detail::action_function<decltype(Function)>::arguments> {
+  using traits = detail::action_function<decltype(Function)>;
+
+  static_assert(traits::valid, "quoll::ui::action: its function is a free function or a member function that returns "
+                               "a quoll::async::task");
 
 public:
-  using result_type = std::expected<R, std::exception_ptr>;
-  // Given the run's own copies, as rvalues: one taking them by reference refers to the run's copy.
-  using function_type = std::function<async::task<R>(Args &&...)>;
+  using value_type = typename traits::result;
+  using arguments = typename traits::arguments;
+  using owner_type = typename traits::owner;
+  using result_type = std::expected<value_type, std::exception_ptr>;
+  using success_function = typename detail::success_of<value_type>::type;
 
-  /**
-   * @brief Runs `function`, which takes the arguments and returns a task of the result, its caller alone hearing of it.
-   * @throws std::invalid_argument for no function, as a null pointer, rather than at each run.
-   */
-  template <class F>
-    requires std::constructible_from<function_type, F>
-  explicit action(F function) : function_(std::move(function)) {
-    detail::check_function(function_, "quoll::ui::action: no function");
+private:
+  static_assert(detail::kept_as_values<value_type> && detail::kept_as_values<arguments>,
+                "quoll::ui::action: its arguments are copied into the run, and its result kept: none can be a view");
+  static_assert(!traits::writes_arguments,
+                "quoll::ui::action: its function is given copies, which it cannot write back: no parameter can be a "
+                "reference to what is not const");
+
+  static constexpr bool free = std::is_void_v<owner_type>;
+
+  using call_type = std::function<async::task<value_type>(arguments &&)>;
+
+public:
+  /** @brief Of a free function: its caller alone hears of it. */
+  action()
+    requires free
+      : call_(free_call()) {}
+
+  /** @brief Of a free function, writing into `target`, then telling `on_success`, if any, what it gave. */
+  template <class T>
+    requires free
+  explicit action(state<T> &target, success_function on_success = {})
+      : call_(free_call()), target_(target, std::true_type{}), on_success_(std::move(on_success)),
+        tells_error_(detail::target_roles<T>::error) {
+    detail::check_target<T, value_type, true>();
   }
 
-  /**
-   * @brief Runs `function`, which takes the arguments and returns a task of the result, written into `target`.
-   * @throws std::invalid_argument for no function, as a null pointer, rather than at each run.
-   */
-  template <class F, class T>
-    requires std::constructible_from<function_type, F>
-  action(F function, state<T> &target) : function_(std::move(function)), target_(target, std::true_type{}) {
-    detail::check_target<T, R, true>();
-    detail::check_function(function_, "quoll::ui::action: no function");
+  /** @brief Of a member function of the context `context`, a shared<C> of the same component. */
+  template <class C>
+    requires(!free && std::same_as<C, owner_type>)
+  explicit action(shared<C> &context) : call_(context_call(context)) {}
+
+  /** @brief See above, writing into `target`, then telling `on_success`, if any, what it gave. */
+  template <class C, class T>
+    requires(!free && std::same_as<C, owner_type>)
+  action(shared<C> &context, state<T> &target, success_function on_success = {})
+      : call_(context_call(context)), target_(target, std::true_type{}), on_success_(std::move(on_success)),
+        tells_error_(detail::target_roles<T>::error) {
+    detail::check_target<T, value_type, true>();
+  }
+
+  /** @brief Of a member function of the component itself, `self`. */
+  template <class C>
+    requires(!free && std::same_as<C, owner_type>)
+  explicit action(C *self) : call_(self_call(self)) {}
+
+  /** @brief See above, writing into `target`, then telling `on_success`, if any, what it gave. */
+  template <class C, class T>
+    requires(!free && std::same_as<C, owner_type>)
+  action(C *self, state<T> &target, success_function on_success = {})
+      : call_(self_call(self)), target_(target, std::true_type{}), on_success_(std::move(on_success)),
+        tells_error_(detail::target_roles<T>::error) {
+    detail::check_target<T, value_type, true>();
   }
 
   action(action const &) = delete;
@@ -162,13 +271,35 @@ public:
   // No run's frame is left: one refers to it until it goes, and its component goes once its tasks have ended.
   ~action() { assert(slot_.frames == 0 && "quoll::ui::action: destroyed while a run is under way"); }
 
-  /**
-   * @brief Runs it, as its overlap says: what it gave, or what it threw, as its target then holds; run_refused or
-   * run_replaced for a call that gave no result of its own.
-   */
-  [[nodiscard]] async::task<result_type> run(Args... args) QUOLL_LIFETIMEBOUND {
+private:
+  friend class detail::action_calls<action, arguments>;
+
+  [[nodiscard]] static call_type free_call() {
+    return [](arguments &&given) {
+      return std::apply([](auto &&...values) { return std::invoke(Function, std::move(values)...); }, std::move(given));
+    };
+  }
+
+  template <class C>
+  [[nodiscard]] static call_type context_call(shared<C> &context) {
+    return [&context](arguments &&given) {
+      return std::apply([&context](auto &&...values) { return context.run(Function, std::move(values)...); },
+                        std::move(given));
+    };
+  }
+
+  template <class C>
+  [[nodiscard]] static call_type self_call(C *self) {
+    return [self](arguments &&given) {
+      return std::apply([self](auto &&...values) { return std::invoke(Function, *self, std::move(values)...); },
+                        std::move(given));
+    };
+  }
+
+  // A coroutine of its own, its arguments in its frame.
+  [[nodiscard]] async::task<result_type> run_with(arguments given) {
     // Called once the run before is stopped, or not at all once refused: what it throws is this run's failure.
-    auto make = [this, ... args = std::move(args)]() mutable { return function_(std::move(args)...); };
+    auto make = [this, given = std::move(given)]() mutable { return call_(std::move(given)); };
 
     auto ask = [this]() -> std::optional<std::stop_token> {
       if (Policy == overlap::refuse && slot_.pending) {
@@ -178,12 +309,35 @@ public:
       return detail::ask(slot_);
     };
 
-    return detail::run_in<R>(slot_, target_, std::move(make), std::move(ask));
+    auto ended = co_await detail::run_in<value_type>(slot_, target_, std::move(make), std::move(ask));
+
+    // What follows a success, before its caller: what it throws is thrown to the caller, as what a handler runs after
+    // the run would be.
+    if (ended && on_success_) {
+      if constexpr (std::is_void_v<value_type>) {
+        on_success_();
+      } else {
+        on_success_(*ended);
+      }
+    }
+
+    co_return ended;
   }
 
-private:
-  function_type function_;
-  detail::target_ref<R> target_;
+  // A run from an event, which drops its result: a failure its target has no place for goes to the app's on_error, as
+  // a handler's, but for a call refused or replaced, which is no failure of the run.
+  [[nodiscard]] async::task<> run_from_event(arguments given) {
+    auto const ended = co_await run_with(std::move(given));
+
+    if (!ended && !tells_error_ && !detail::gave_no_result(ended.error())) {
+      std::rethrow_exception(ended.error());
+    }
+  }
+
+  call_type call_;
+  detail::target_ref<value_type> target_{};
+  success_function on_success_{};
+  bool tells_error_ = false;
   detail::run_slot slot_;
 };
 

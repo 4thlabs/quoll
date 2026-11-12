@@ -60,7 +60,7 @@ quoll::async::task<heavy> make(int id);
 
 struct page {
   quoll::ui::state<std::tuple<heavy, bool>> made;
-  quoll::ui::action<heavy(int)> run{make, made};
+  quoll::ui::action<&make> run{made};
 };
 
 page const shown{};

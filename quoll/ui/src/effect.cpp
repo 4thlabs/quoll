@@ -59,16 +59,16 @@ void effect::after_view(detail::effect_starter const &start) {
 
   auto const *const props = start.props;
 
-  // On the props of another component, or a field of a base of them, or of an app's own component, which has none:
-  // refused at its first view, then waiting for reload(), as its type tells no more.
-  if (props_type_ != async::detail::type_id{} && (props_type_ != start.props_type || props == nullptr)) {
-    failed_ = true;
-    throw std::logic_error{"quoll::ui::effect: it depends on a field of props its component does not have"};
-  }
-
   // One way out for what fails, whatever it is, comparing or copying its states, or starting: a view in which they
   // changed, or may have, stops the run before, which would give what the values before ask for.
   try {
+    // On the props of another component, or a field of a base of them, or of an app's own component, which has none:
+    // refused at its first view, its target, loading from the start, told, then waiting for reload(), as its type
+    // tells no more.
+    if (props_type_ != async::detail::type_id{} && (props_type_ != start.props_type || props == nullptr)) {
+      throw std::logic_error{"quoll::ui::effect: it depends on a field of props its component does not have"};
+    }
+
     auto const now = *watch_(watching::record, props);
 
     if (!now.differs) {

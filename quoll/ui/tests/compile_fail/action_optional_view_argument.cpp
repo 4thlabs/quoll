@@ -34,8 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui::action: its arguments are copied into the run, and its result kept: none can be a reference or a
-// view
+// expect: quoll::ui::action: its arguments are copied into the run, and its result kept: none can be a view
 //
 // An action taking an optional view: the run, which outlives the call that made it, would read what the caller held.
 
@@ -47,4 +46,4 @@
 
 quoll::async::task<int> length(std::optional<std::string_view> text);
 
-quoll::ui::action<int(std::optional<std::string_view>)> const measured{length};
+quoll::ui::action<&length> const measured{};
