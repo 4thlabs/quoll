@@ -38,10 +38,12 @@
 #define QUOLL_UI_PROVIDED_HPP
 
 #include <quoll/ui/detail/context_entry.hpp>
+#include <quoll/ui/detail/context_member.hpp>
 #include <quoll/ui/detail/effect_starter.hpp>
 #include <quoll/ui/detail/state_link.hpp>
 #include <quoll/ui/provide.hpp>
 
+#include <cstdint>
 #include <memory>
 #include <type_traits>
 
@@ -122,9 +124,21 @@ public:
   [[nodiscard]] detail::context_entry &entry() noexcept { return *entry_; }
 
 private:
+  friend struct detail::context_access;
+
+  // What its component's view sees of it, and of the contexts it uses, kept once that view shows, as a shared<T>'s:
+  // a change of a context it uses shows its component again, which reads it through it.
+  void mark() noexcept { marked_ = entry_->version(); }
+
+  void commit() noexcept { seen_ = marked_; }
+
+  [[nodiscard]] bool changed() const noexcept { return entry_->version() != seen_; }
+
   [[nodiscard]] T *get() const noexcept { return static_cast<T *>(entry_->object()); }
 
   std::unique_ptr<detail::context_entry> entry_;
+  std::uint64_t marked_ = 0;
+  std::uint64_t seen_ = 0;
 };
 
 } // namespace quoll::ui

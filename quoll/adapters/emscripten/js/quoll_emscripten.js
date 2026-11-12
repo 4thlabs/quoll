@@ -153,10 +153,13 @@ addToLibrary({
       }
 
       // A link of the app's routing goes there without leaving the page, but for a click that opens elsewhere, with a
-      // key held or another button, which the browser keeps.
+      // key held or another button, or a link to another window or a download, which the browser keeps.
       if (eventName === 'click' && event.currentTarget?.hasAttribute?.('data-quoll-link')) {
+        const link = event.currentTarget;
+        const elsewhere = (link.getAttribute?.('target') ?? '_self') !== '_self' || link.hasAttribute('download');
+
         if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey ||
-            event.altKey) {
+            event.altKey || elsewhere) {
           return;
         }
 

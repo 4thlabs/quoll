@@ -417,6 +417,30 @@ struct providing_root {
   element view() { return div({component<draft_adder>(), component<draft_view>()}); }
 };
 
+// A context of the app using a draft, as the app's own component provides one too.
+struct draft_user {
+  shared<draft> used;
+};
+
+// Greets through what it provides, which uses the app's names: a change of them shows it again.
+struct local_greeting {
+  shared<names> from;
+};
+
+struct greeting_holder {
+  provided<local_greeting> mine;
+
+  element view() {
+    auto const &all = std::get<0>(*mine->from->all);
+
+    return p(all.empty() ? "holder nobody" : "holder " + all.front());
+  }
+};
+
+struct greeting_holder_page {
+  element view() { return div({component<greeting_holder>()}); }
+};
+
 } // namespace
 
 TEST_CASE("context: its effects start after the app's first view, and its components show what it holds",
@@ -910,4 +934,38 @@ TEST_CASE("context: one the app's own component provides is found by the compone
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(shown.html().contains("<p>draft typed;loaded tea;loaded coffee;</p>"));
+}
+
+TEST_CASE("context: the app's contexts are made before its own component, which they do not find", "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  // The app's own component provides a draft too, made after the app's contexts: the user finds the app's.
+  test_app<providing_root> instance{
+      time.get_executor(), shown, {.contexts = {provide<draft>(), provide<draft_user>()}}};
+
+  auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(&*instance.context<draft_user>().used == &instance.context<draft>());
+}
+
+TEST_CASE("context: a component shows again as a context what it provides uses changes", "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<greeting_holder_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  std::string before;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    before = shown.html();
+    co_await quoll::async::sleep_for(5ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(before.contains("<p>holder nobody</p>"));
+  CHECK(shown.html().contains("<p>holder tea</p>"));
 }

@@ -40,6 +40,7 @@
 #include <glaze/core/reflect.hpp>
 
 #include <charconv>
+#include <cmath>
 #include <concepts>
 #include <cstddef>
 #include <optional>
@@ -91,6 +92,13 @@ template <class T>
 
     if (error != std::errc{} || stop != end) {
       return std::nullopt;
+    }
+
+    // Not a NaN, which no value equals, nor an infinity: what an address names is a number.
+    if constexpr (std::floating_point<T>) {
+      if (!std::isfinite(value)) {
+        return std::nullopt;
+      }
     }
 
     return value;

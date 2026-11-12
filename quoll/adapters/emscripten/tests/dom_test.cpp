@@ -572,7 +572,13 @@ struct second_page {
 
 inline constexpr auto both = quoll::ui::routes(route<"/", first_page>(), route<"/second", second_page>());
 
-element first_page::view() { return div({p("first"), link_to<second_page>("go second")}); }
+element first_page::view() {
+  return div({
+      p("first"),
+      link_to<second_page>("go second"),
+      link_to<second_page>("open second") | attribute("target", "_blank"),
+  });
+}
 
 struct routed_shell {
   element view() { return main_({outlet()}); }
@@ -600,8 +606,9 @@ TEST_CASE("browser_history: a link goes through the browser's history, and its b
   REQUIRE(page().contains("<p>first</p>"));
   CHECK(quoll_test_history_listeners() == 1);
 
-  // With a key held, the browser opens it elsewhere: the page stays.
+  // With a key held, or to another window, the browser opens it elsewhere: the page stays.
   CHECK(quoll_test_dom_click_link("go second", 1) == 0);
+  CHECK(quoll_test_dom_click_link("open second", 0) == 0);
   settle();
   CHECK(location_now() == "/");
 

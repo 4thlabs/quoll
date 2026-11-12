@@ -72,6 +72,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/route_child_absolute.cpp
     tests/compile_fail/route_param_not_in_props.cpp
     tests/compile_fail/route_props_not_routable.cpp
+    tests/compile_fail/route_trailing_slash.cpp
     tests/compile_fail/route_typed_param.cpp
     tests/compile_fail/router_provided.cpp
     tests/compile_fail/shared_const_context.cpp

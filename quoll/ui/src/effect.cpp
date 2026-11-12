@@ -59,9 +59,9 @@ void effect::after_view(detail::effect_starter const &start) {
 
   auto const *const props = start.props;
 
-  // On the props of another component, or a field of a base of them: refused at its first view, then waiting for
-  // reload(), as its type tells no more.
-  if (props_type_ != async::detail::type_id{} && props_type_ != start.props_type) {
+  // On the props of another component, or a field of a base of them, or of an app's own component, which has none:
+  // refused at its first view, then waiting for reload(), as its type tells no more.
+  if (props_type_ != async::detail::type_id{} && (props_type_ != start.props_type || props == nullptr)) {
     failed_ = true;
     throw std::logic_error{"quoll::ui::effect: it depends on a field of props its component does not have"};
   }

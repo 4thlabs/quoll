@@ -99,6 +99,9 @@ public:
   // component's destructor writing to a context, reaches nothing half made or half gone.
   void made() noexcept { made_ = true; }
 
+  // The app's own component is made: what it provides is found from now on, not by the contexts made before it.
+  void component_made() noexcept { component_made_ = true; }
+
   void going() noexcept { made_ = false; }
 
   // Where its components find its contexts.
@@ -170,6 +173,7 @@ private:
   bool stopped_ = false;
   // Between made() and going().
   bool made_ = false;
+  bool component_made_ = false;
   // Its view showed, and its unmounted() has not run yet.
   bool shown_once_ = false;
 };

@@ -350,6 +350,22 @@ struct stray_page {
   element view() { return div({component<stray_panel>({.other = *other})}); }
 };
 
+// An app's own component that has props as a component of a view would: as the app's, it has none.
+struct two_view_page {
+  struct props {
+    int key = 0;
+
+    [[nodiscard]] bool operator==(props const &) const = default;
+  };
+
+  state<text_target> text;
+  effect load{&props::key, load_text, text};
+
+  element view() { return p("root"); }
+
+  element view(props const &) { return p("component"); }
+};
+
 // Keeps what an effect starts, as its app would after a view, for the test to run when it chooses.
 struct kept_starts {
   std::vector<task<>> started;
@@ -1133,5 +1149,22 @@ TEST_CASE("effect: on a field of the props of another component is refused once,
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(failures ==
         std::vector<std::string>{"quoll::ui::effect: it depends on a field of props its component does not have"});
+  CHECK(loads.lines.empty());
+}
+
+TEST_CASE("effect: on a field of the props of an app's own component, which has none, is refused", "[ui][effect]") {
+  loads = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  std::vector<std::string> failures;
+  test_app<two_view_page> instance{time.get_executor(), shown, {.on_error = [&failures](std::exception_ptr failure) {
+                                     failures.push_back(what_of(failure));
+                                   }}};
+
+  auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(failures.size() == 1);
   CHECK(loads.lines.empty());
 }

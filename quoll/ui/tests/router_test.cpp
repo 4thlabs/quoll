@@ -114,14 +114,25 @@ struct products_layout {
   element view() { return section({h1("products"), outlet()}); }
 };
 
+// A ratio, from its route: a NaN or an infinity is no number an address names.
+struct ratio_page {
+  struct props {
+    double x = 0;
+
+    [[nodiscard]] bool operator==(props const &) const = default;
+  };
+
+  element view(props const &given) { return p("ratio " + std::to_string(given.x)); }
+};
+
 struct missing_page {
   element view() { return p("missing"); }
 };
 
-inline constexpr auto shop_routes =
-    quoll::ui::routes(route<"/", home_page>(),
-                      route<"/products", products_layout>(route<"", product_list>(), route<"{id}", product_page>()),
-                      redirect<"/items/{id}", "/products/{id}">(), not_found<missing_page>());
+inline constexpr auto shop_routes = quoll::ui::routes(
+    route<"/", home_page>(),
+    route<"/products", products_layout>(route<"", product_list>(), route<"{id}", product_page>()),
+    route<"/ratio/{x}", ratio_page>(), redirect<"/items/{id}", "/products/{id}">(), not_found<missing_page>());
 
 element home_page::view() {
   return div({
@@ -156,6 +167,9 @@ TEST_CASE("router: shows the page of the location, in the outlets of its layouts
       {"/products/7/", "<p>page 7: </p>"},
       {"/products/seven", "<p>missing</p>"},
       {"/nowhere", "<p>missing</p>"},
+      {"/ratio/0.5", "<p>ratio 0.500000</p>"},
+      {"/ratio/nan", "<p>missing</p>"},
+      {"/ratio/inf", "<p>missing</p>"},
   };
 
   for (auto const &[start, shown_there] : pages) {

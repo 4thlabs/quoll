@@ -138,10 +138,12 @@ template <class C>
 // none.
 template <class C>
 [[nodiscard]] constexpr auto marks_of() noexcept -> void (*)(void *) {
-  if constexpr (any_member<C, is_context_member>) {
+  if constexpr (any_member<C, is_context_user>) {
     return [](void *object) {
       for_each_member(*static_cast<C *>(object), [](auto &member) {
-        if constexpr (ContextMember<std::remove_cvref_t<decltype(member)>>) {
+        using member_type = std::remove_cvref_t<decltype(member)>;
+
+        if constexpr (ContextMember<member_type> || ProvidedMember<member_type>) {
           context_access::mark(member);
         }
       });
@@ -154,10 +156,12 @@ template <class C>
 // What a table holds to keep what the members of `C` marked, once its view shows: none for one that uses none.
 template <class C>
 [[nodiscard]] constexpr auto commits_of() noexcept -> void (*)(void *) {
-  if constexpr (any_member<C, is_context_member>) {
+  if constexpr (any_member<C, is_context_user>) {
     return [](void *object) {
       for_each_member(*static_cast<C *>(object), [](auto &member) {
-        if constexpr (ContextMember<std::remove_cvref_t<decltype(member)>>) {
+        using member_type = std::remove_cvref_t<decltype(member)>;
+
+        if constexpr (ContextMember<member_type> || ProvidedMember<member_type>) {
           context_access::commit(member);
         }
       });
@@ -171,12 +175,14 @@ template <class C>
 // for one that uses none.
 template <class C>
 [[nodiscard]] constexpr auto changes_of() noexcept -> bool (*)(void *) {
-  if constexpr (any_member<C, is_context_member>) {
+  if constexpr (any_member<C, is_context_user>) {
     return [](void *object) {
       bool changed = false;
 
       for_each_member(*static_cast<C *>(object), [&changed](auto &member) {
-        if constexpr (ContextMember<std::remove_cvref_t<decltype(member)>>) {
+        using member_type = std::remove_cvref_t<decltype(member)>;
+
+        if constexpr (ContextMember<member_type> || ProvidedMember<member_type>) {
           changed = changed || context_access::changed(member);
         }
       });

@@ -97,6 +97,10 @@ addToLibrary({
         return this.attributes.has(name);
       }
 
+      getAttribute(name) {
+        return this.attributes.has(name) ? this.attributes.get(name) : null;
+      }
+
       addEventListener(name, listener) {
         this.listeners.set(name, listener);
       }

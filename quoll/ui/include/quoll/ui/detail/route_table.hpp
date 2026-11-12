@@ -174,6 +174,8 @@ consteval void check_route() {
                 "quoll::ui: a route's path is a valid template: whole segments, {name} parameters, balanced braces");
   static_assert(!typed,
                 "quoll::ui: a route parameter takes its type from its page's props: write {id}, not {id:int64}");
+  static_assert(Full.view() == "/" || Full.view().back() != '/',
+                "quoll::ui: a route's path does not end with '/', which an address loses as it is matched");
 
   if constexpr (ComponentWithProps<Page>) {
     using props = typename Page::props;

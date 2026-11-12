@@ -171,7 +171,7 @@ context_entry *app_core::find_context(void const *self, async::detail::type_id t
   auto const &core = *static_cast<app_core const *>(self);
 
   // What the app's own component provides, above every component of its view, then the app's.
-  if (core.provides_ != nullptr && core.component_ != nullptr) {
+  if (core.provides_ != nullptr && core.component_made_) {
     if (auto *const provided = core.provides_(core.component_, type)) {
       return provided;
     }
