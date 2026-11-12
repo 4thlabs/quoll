@@ -265,6 +265,24 @@ depends on, or call `reload()`, and its run follows. Await `run()` from a task o
 caller goes on. A component that goes stops its runs; a save that must go on runs a callback of the component that
 owns what it changes, whose work goes on.
 
+### Contexts given to the app, found by type
+
+**The question.** Several components show and change the same data, as a list and the detail of a product. Who holds
+it, and who does a save that must go on once the detail is left?
+
+**Taken.** A context, as React's: an aggregate with no view, its states, its effects and member functions, which the
+app makes from its options, `provide<T>()`, and holds as long as it lives. A component finds it through a `shared<T>`
+member, by type, as the app makes the component. A change of its states shows again the components using it.
+`shared<T>::run()` runs a member function of it as a task of the app: a component that goes stops waiting, and the
+work goes on, as a callback's does.
+
+**Set aside.** A page doing the save of each of its components and passing callbacks down, which does not hold for a
+page of many components. A context made at its first use: what an app holds shows in `main`. Data a component keeps by
+reference, as FTXUI's: the lifetime would be the program's to keep, and a stale answer or a cancellation too.
+
+**For you.** Declare the context, give it to the app, `{.contexts = {provide<catalog>()}}`, and add a `shared<catalog>`
+to each component that reads or changes it. Run what must go on once a component goes through `run()`.
+
 ### JavaScript libraries as modules
 
 **The question.** How does a page use chart.js, a map or a terminal?

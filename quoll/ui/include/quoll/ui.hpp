@@ -44,6 +44,7 @@
 #include <quoll/ui/child_component.hpp>
 #include <quoll/ui/component.hpp>
 #include <quoll/ui/component_with_props.hpp>
+#include <quoll/ui/context_spec.hpp>
 #include <quoll/ui/decorators.hpp>
 #include <quoll/ui/effect.hpp>
 #include <quoll/ui/element.hpp>
@@ -52,9 +53,11 @@
 #include <quoll/ui/json_event_function.hpp>
 #include <quoll/ui/mounted_component.hpp>
 #include <quoll/ui/node_id.hpp>
+#include <quoll/ui/provide.hpp>
 #include <quoll/ui/renderer.hpp>
 #include <quoll/ui/renderer_ref.hpp>
 #include <quoll/ui/run_error.hpp>
+#include <quoll/ui/shared.hpp>
 #include <quoll/ui/state.hpp>
 #include <quoll/ui/tags.hpp>
 #include <quoll/ui/to_html.hpp>

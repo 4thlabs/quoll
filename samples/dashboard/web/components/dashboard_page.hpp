@@ -34,12 +34,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The page: the products and the one chosen, its detail and its sales. Its calls to the server are in
-// products_client.cpp, so that a change here does not compile REST and JSON again.
+// The page: the products, from the catalog, and the one chosen, its detail and its sales. Its calls to the server are
+// in products_client.cpp, so that a change here does not compile REST and JSON again.
 
 #ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_DASHBOARD_PAGE_HPP
 #define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_DASHBOARD_PAGE_HPP
 
+#include "catalog.hpp"
 #include "error_text.hpp"
 #include "product.hpp"
 #include "product_detail.hpp"
@@ -65,6 +66,7 @@ using quoll::async::task;
 using quoll::ui::callback;
 using quoll::ui::effect;
 using quoll::ui::element;
+using quoll::ui::shared;
 using quoll::ui::state;
 
 // The sales of a product, with the product they are of: those of the product before stay as the next load, as a state
@@ -76,9 +78,8 @@ using quoll::ui::state;
 }
 
 struct dashboard_page {
-  // The products, and why they did not load, in the alert: loaded once, as the page first shows.
-  state<std::tuple<std::vector<products::product>, std::exception_ptr>> items;
-  effect load_items{std::tie(), products_client::list, items};
+  // The products, which its list and its detail read too.
+  shared<catalog> products;
 
   // The product chosen, and its sales, whether they are loading and why they did not load: loaded again as it changes,
   // the load before stopped, as React's useEffect.
@@ -89,27 +90,13 @@ struct dashboard_page {
   // Its sales follow.
   void select(std::int64_t id) { selected = std::optional<std::int64_t>{id}; }
 
-  // Saves a product, and the list shows it: a task of the page, which goes on if the detail that asked for it goes.
-  // Here until a context holds the products (docs/PLAN.md, step 6, Contexts), which would also save a product once at
-  // a time across its details, and keep the failure of a save whose detail went.
-  task<products::product> save(std::int64_t id, products::product_update changes) {
-    auto saved = co_await products_client::update(id, std::move(changes));
-
-    auto const replace = [&saved](std::tuple<std::vector<products::product>, std::exception_ptr> &held) {
-      std::ranges::replace_if(std::get<0>(held), [&saved](auto const &item) { return item.id == saved.id; }, saved);
-    };
-
-    items.update(replace);
-    co_return saved;
-  }
-
   // The product chosen, while the list holds it.
   [[nodiscard]] products::product const *chosen() const {
     if (!selected->has_value()) {
       return nullptr;
     }
 
-    auto const &all = std::get<0>(*items);
+    auto const &all = std::get<0>(*products->items);
     auto const found = std::ranges::find(all, **selected, &products::product::id);
 
     return found == all.end() ? nullptr : &*found;
@@ -118,14 +105,10 @@ struct dashboard_page {
   element view() {
     using namespace quoll::ui;
 
-    auto const &[all, problem] = *items;
+    auto const &problem = std::get<2>(*products->items);
 
-    // One callback of each, which every row and detail shares.
+    // One callback, which every row shares.
     callback<void(std::int64_t)> const on_select = [this](std::int64_t id) { return select(id); };
-
-    save_callback const on_save = [this](std::int64_t id, products::product_update changes) {
-      return save(id, std::move(changes));
-    };
 
     auto const alert = [&problem] {
       return p(told(problem, "the products did not load")) | tw("alert alert-error") | attribute("role", "alert");
@@ -168,8 +151,8 @@ struct dashboard_page {
 
       auto const shown = div({
           // Keyed by the product: another product chosen is another detail, with nothing typed; a save on its way goes
-          // on in the page.
-          component<product_detail>({.item = item, .on_save = on_save}) | key(item.id),
+          // on in the catalog.
+          component<product_detail>({.item = item}) | key(item.id),
           sales_shown(),
       });
 
@@ -180,7 +163,7 @@ struct dashboard_page {
         h1("Products") | tw("text-4xl font-bold"),
         when(problem != nullptr, alert),
         div({
-            component<product_list>({.items = all, .selected = *selected, .on_select = on_select}),
+            component<product_list>({.selected = *selected, .on_select = on_select}),
             when(item_chosen == nullptr, none),
             when(item_chosen != nullptr, detail),
         }) | tw("grid gap-8 md:grid-cols-2"),
@@ -189,6 +172,9 @@ struct dashboard_page {
     return page | tw("mx-auto flex max-w-5xl flex-col gap-6 p-8");
   }
 };
+
+// What the page's app holds, which its main and its tests give alike: the catalog its components share.
+[[nodiscard]] inline quoll::ui::app_options page_options() { return {.contexts = {quoll::ui::provide<catalog>()}}; }
 
 } // namespace dashboard_web
 

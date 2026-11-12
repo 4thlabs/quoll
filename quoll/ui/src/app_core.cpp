@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/ui/detail/app_core.hpp>
+#include <quoll/ui/detail/bind_contexts.hpp>
 
 #include <quoll/async/co_spawn.hpp>
 #include <quoll/async/current_stop_token.hpp>
@@ -117,9 +118,53 @@ struct app_core::outcome {
 };
 
 app_core::app_core(async::any_executor executor, renderer_ref renderer, view_function view,
-                   unmounted_function unmounted, effects_function effects, void *component, app_options options)
+                   unmounted_function unmounted, effects_function effects, finds_function finds, void *component,
+                   app_options options)
     : executor_(std::move(executor)), renderer_(renderer), link_(std::make_shared<app_link>(app_link{this})),
-      view_(view), unmounted_(unmounted), effects_(effects), component_(component), options_(std::move(options)) {}
+      view_(view), unmounted_(unmounted), effects_(effects), component_(component), options_(std::move(options)) {
+  for (auto const &spec : options_.contexts) {
+    auto const &table = spec.table();
+
+    if (context(table.type) != nullptr) {
+      throw std::logic_error{"quoll::ui::app: two contexts of one type"};
+    }
+
+    if (table.finds != nullptr && !table.finds(contexts())) {
+      throw std::logic_error{missing_context};
+    }
+
+    auto entry = std::make_unique<context_entry>(table, state_link{this, &app_core::state_changed});
+
+    // Those given before it only, which it finds made: none can use another that uses it.
+    if (table.bind != nullptr) {
+      table.bind(entry->object(), contexts());
+    }
+
+    contexts_.push_back(std::move(entry));
+  }
+
+  if (finds != nullptr && !finds(contexts())) {
+    throw std::logic_error{missing_context};
+  }
+}
+
+context_finder app_core::contexts() const noexcept {
+  return {.app = link_, .owner = this, .find = &app_core::find_context};
+}
+
+context_entry *app_core::context(async::detail::type_id type) const noexcept {
+  for (auto const &entry : contexts_) {
+    if (entry->table().type == type) {
+      return entry.get();
+    }
+  }
+
+  return nullptr;
+}
+
+context_entry *app_core::find_context(void const *self, async::detail::type_id type) noexcept {
+  return static_cast<app_core const *>(self)->context(type);
+}
 
 app_core::~app_core() { link_->core = nullptr; }
 
@@ -136,7 +181,8 @@ void app_core::render() {
                  .epoch = epoch_,
                  .app_stop = stop_.get_token(),
                  .link = {this, &app_core::state_changed},
-                 .sink = {this, &app_core::failed_in}};
+                 .sink = {this, &app_core::failed_in},
+                 .contexts = contexts()};
 
   if (!components_.empty() || has_component(view)) {
     expand(view, components_, made);
@@ -216,6 +262,11 @@ void app_core::render() {
   }
 
   start_effects(effects_, component_, {});
+
+  // Then those of its contexts, as tasks of the app: they run after a view, as a component's.
+  for (auto const &entry : contexts_) {
+    start_effects(entry->table().effects, entry->object(), {});
+  }
 
   // A state a new component changed in its first view, which its app did not hear of then, shows in another render.
   // One that cannot be scheduled is told as a failure.
@@ -367,7 +418,7 @@ void app_core::reloaded(void *self) {
 void app_core::state_changed(void *self) {
   auto &owner = *static_cast<app_core *>(self);
 
-  if (owner.render_pending_ || owner.stopped_) {
+  if (!owner.made_ || owner.render_pending_ || owner.stopped_) {
     return;
   }
 

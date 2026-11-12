@@ -34,11 +34,12 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The products, filtered by what is typed above them: the filter is the list's own state, the products the page's.
+// The products, filtered by what is typed above them: the filter is the list's own state, the products the catalog's.
 
 #ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_LIST_HPP
 #define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_LIST_HPP
 
+#include "catalog.hpp"
 #include "product.hpp"
 #include "product_row.hpp"
 
@@ -51,12 +52,14 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 namespace dashboard_web {
 
 using quoll::ui::callback;
 using quoll::ui::element;
+using quoll::ui::shared;
 using quoll::ui::state;
 
 // Whether `text` holds `part`, whatever the case of their ASCII letters.
@@ -70,13 +73,13 @@ using quoll::ui::state;
 
 struct product_list {
   struct props {
-    std::vector<products::product> items;
     std::optional<std::int64_t> selected;
     callback<void(std::int64_t)> on_select;
 
     [[nodiscard]] bool operator==(props const &) const = default;
   };
 
+  shared<catalog> products;
   state<std::string> query;
 
   element view(props const &given) {
@@ -88,7 +91,7 @@ struct product_list {
 
     std::vector<products::product> shown;
 
-    std::ranges::copy_if(given.items, std::back_inserter(shown), matches);
+    std::ranges::copy_if(std::get<0>(*products->items), std::back_inserter(shown), matches);
 
     auto const row = [&given](products::product const &item) {
       auto const chosen = component<product_row>({

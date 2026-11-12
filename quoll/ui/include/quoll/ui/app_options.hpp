@@ -37,12 +37,15 @@
 #ifndef QUOLL_UI_APP_OPTIONS_HPP
 #define QUOLL_UI_APP_OPTIONS_HPP
 
+#include <quoll/ui/context_spec.hpp>
+
 #include <exception>
 #include <functional>
+#include <vector>
 
 namespace quoll::ui {
 
-/** @brief What an app does with what its handlers throw. */
+/** @brief What an app does with what its handlers throw, and the contexts it holds for its components. */
 struct app_options {
   /**
    * @brief Called with what a handler threw, other than `operation_canceled`, on the executor; a handler that ended on
@@ -50,6 +53,9 @@ struct app_options {
    * console in a browser.
    */
   std::function<void(std::exception_ptr)> on_error{};
+
+  /** @brief The contexts it makes and holds, one of each type, as `provide<T>()` gives, in order: see shared. */
+  std::vector<context_spec> contexts{};
 };
 
 } // namespace quoll::ui

@@ -69,8 +69,9 @@ struct failure_sink {
 // Thread safety: none, as its app.
 class instance {
 public:
+  // Finds its contexts with `contexts`: throws std::logic_error for one its app was not given.
   instance(component_table const &table, std::shared_ptr<void const> props, std::string key,
-           std::stop_token const &app_stop);
+           std::stop_token const &app_stop, context_finder const &contexts);
 
   instance(instance const &) = delete;
   instance(instance &&) = delete;
@@ -101,12 +102,17 @@ public:
   // What its parent gave it, last.
   [[nodiscard]] std::shared_ptr<void const> const &own() const noexcept { return own_; }
 
-  // Its last view that showed, while none of its states changed since and it was made in `epoch`, of the app's hot
-  // reloads: none otherwise.
+  // Its last view that showed, while none of its states, nor of the contexts it read, changed since and it was made in
+  // `epoch`, of the app's hot reloads: none otherwise.
   [[nodiscard]] element const *unchanged_view(std::uint64_t epoch) const noexcept;
 
-  // How many times its states changed: a view records what it saw.
+  // How many times its states changed: a view records what it saw before it runs, so that a change it makes shows
+  // again.
   [[nodiscard]] std::uint64_t version() const noexcept { return version_; }
+
+  // What it sees of its contexts, as its view is about to run, so that a change its view makes shows again too, kept
+  // by viewed(): a context it read and that changed since its last view that showed gives no unchanged view.
+  void mark_contexts() noexcept;
 
   // Links it to its app, which a change of its states tells once counted: its states count from its making.
   void link(state_link app) noexcept;

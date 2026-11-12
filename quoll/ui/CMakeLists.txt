@@ -2,6 +2,7 @@ quoll_declare_module(
   NAME ui
   SOURCES
     src/app_core.cpp
+    src/context_entry.cpp
     src/effect.cpp
     src/element.cpp
     src/expand.cpp
@@ -32,6 +33,7 @@ quoll_declare_tests(
     tests/action_test.cpp
     tests/app_test.cpp
     tests/callback_test.cpp
+    tests/context_test.cpp
     tests/nested_test.cpp
     tests/skip_test.cpp
     tests/effect_test.cpp
@@ -59,7 +61,10 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/child_component_not_aggregate.cpp
     tests/compile_fail/child_component_without_props_not_aggregate.cpp
     tests/compile_fail/component_not_aggregate.cpp
+    tests/compile_fail/context_with_mounted.cpp
+    tests/compile_fail/context_with_view.cpp
     tests/compile_fail/event_function_signature.cpp
+    tests/compile_fail/shared_const_context.cpp
     tests/compile_fail/effect_optional_view_dependency.cpp
     tests/compile_fail/effect_pair_span_value.cpp
     tests/compile_fail/effect_values_without_target.cpp

@@ -34,10 +34,10 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The products in a browser: the page, from components/, shown in #app.
+// The products in a browser: the page, from components/, shown in #app, with the catalog its components share.
 
 #include "components/dashboard_page.hpp"
 
 #include <quoll/emscripten/mount.hpp>
 
-int main() { quoll::emscripten::mount<dashboard_web::dashboard_page>(); }
+int main() { quoll::emscripten::mount<dashboard_web::dashboard_page>("#app", dashboard_web::page_options()); }

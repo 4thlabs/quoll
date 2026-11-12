@@ -41,6 +41,7 @@
 #include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/app_options.hpp>
+#include <quoll/ui/detail/context_entry.hpp>
 #include <quoll/ui/detail/effect_starter.hpp>
 #include <quoll/ui/detail/held_view.hpp>
 #include <quoll/ui/detail/instance.hpp>
@@ -68,11 +69,17 @@ public:
   using view_function = element (*)(void *component);
   using unmounted_function = void (*)(void *component);
   using effects_function = void (*)(void *component, effect_starter const &start);
+  using finds_function = bool (*)(context_finder const &finder);
 
   // `unmounted`, none for a component without it, runs as the app stops, once its view showed.
-  // `effects` start those of the component whose dependency changed, after each of its views.
+  // `effects` start those of the component whose dependency changed, after each of its views. The contexts of `options`
+  // are made here, in their order, each finding those it uses among those given before it.
+  // Throws std::logic_error for two contexts of one type, or one using a context not given before it.
+  // `finds`, none for a component using no context, tells whether the contexts the app's own component uses are there,
+  // which is checked here, before the app makes it, as for each context before it is made: one refused is never made,
+  // so that its destructor, which may read what it found, does not run.
   app_core(async::any_executor executor, renderer_ref renderer, view_function view, unmounted_function unmounted,
-           effects_function effects, void *component, app_options options);
+           effects_function effects, finds_function finds, void *component, app_options options);
 
   app_core(app_core const &) = delete;
   app_core(app_core &&) = delete;
@@ -83,6 +90,19 @@ public:
   ~app_core();
 
   [[nodiscard]] bool stopped() const noexcept { return stopped_; }
+
+  // Made whole, its own component's contexts found and its states linked: until then, and from going(), as it is
+  // destroyed, a change asks for no render, so that what changes as a failed making unwinds, or as the app goes, as a
+  // component's destructor writing to a context, reaches nothing half made or half gone.
+  void made() noexcept { made_ = true; }
+
+  void going() noexcept { made_ = false; }
+
+  // Where its components find its contexts.
+  [[nodiscard]] context_finder contexts() const noexcept;
+
+  // Its context of `type`, or none.
+  [[nodiscard]] context_entry *context(async::detail::type_id type) const noexcept;
 
   void render();
   // Under the stop of the component `held` names, kept with its props until it ends, or the app's for none.
@@ -118,6 +138,7 @@ private:
   void unmount_widgets(std::vector<element> const &shown) const noexcept;
   void failed(std::exception_ptr failure) const noexcept;
   static void failed_in(void *self, std::exception_ptr failure) noexcept;
+  static context_entry *find_context(void const *self, async::detail::type_id type) noexcept;
 
   async::any_executor executor_;
   renderer_ref renderer_;
@@ -128,6 +149,8 @@ private:
   effects_function effects_;
   void *component_;
   app_options options_;
+  // Before what may refer to them, the tasks and the components: destroyed after them.
+  context_list contexts_;
   std::stop_source stop_;
   async::detail::task_group tasks_;
   std::vector<element> shown_;
@@ -140,6 +163,8 @@ private:
   // Counts the hot reloads: a component's last view, from an epoch before, is not given again.
   std::uint64_t epoch_ = 0;
   bool stopped_ = false;
+  // Between made() and going().
+  bool made_ = false;
   // Its view showed, and its unmounted() has not run yet.
   bool shown_once_ = false;
 };

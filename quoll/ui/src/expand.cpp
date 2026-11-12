@@ -251,6 +251,8 @@ void scope_keys(element &view, std::string const &scope) {
                                std::shared_ptr<void const> const &props, made_by by, expansion &context) {
   auto const version = kept->version();
 
+  kept->mark_contexts();
+
   // Room for its record, made once its view has returned: recording it then cannot fail.
   if (context.views.size() == context.views.capacity()) {
     context.views.reserve(std::max<std::size_t>(4, context.views.capacity() * 2));
@@ -300,7 +302,7 @@ void walk_component(element &value, matching &shown, std::vector<std::shared_ptr
           : spec.props;
 
   if (fresh) {
-    kept = std::make_shared<instance>(*spec.table, props, value.key, context.app_stop);
+    kept = std::make_shared<instance>(*spec.table, props, value.key, context.app_stop, context.contexts);
   }
 
   now.push_back(kept);
