@@ -49,7 +49,8 @@
 namespace quoll::ui::detail {
 
 // After a view of `component`: each of its effects whose dependency changed starts, through `start`. One that cannot
-// start leaves the others to start all the same, and what it threw is thrown once they have.
+// start leaves the others to start all the same, and what it threw is reported, each failure, or, with no reporter,
+// the first thrown once they have.
 template <class C>
 void run_effects(C &component, effect_starter const &start) {
   std::exception_ptr first;
@@ -64,7 +65,9 @@ void run_effects(C &component, effect_starter const &start) {
       try {
         member.after_view(given);
       } catch (...) {
-        if (!first) {
+        if (start.report != nullptr) {
+          start.report(start.owner, std::current_exception());
+        } else if (!first) {
           first = std::current_exception();
         }
       }

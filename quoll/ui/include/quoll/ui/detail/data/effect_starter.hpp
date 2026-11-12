@@ -40,6 +40,8 @@
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/task.hpp>
 
+#include <exception>
+
 #include <utility>
 
 namespace quoll::ui::detail {
@@ -48,6 +50,9 @@ namespace quoll::ui::detail {
 struct effect_starter {
   void *owner = nullptr;
   void (*start)(void *owner, async::task<> work) = nullptr;
+  // Where each failure to start goes, as the app's on_error, so that two in one view are both told; none to throw the
+  // first once the others started, as for a test calling after_view() itself.
+  void (*report)(void *owner, std::exception_ptr failure) noexcept = nullptr;
   // The props of the view that ran, none for a component without them, and their type, for an effect on a field of
   // them.
   void const *props = nullptr;
