@@ -1403,3 +1403,44 @@ TEST_CASE("effect: on an optional field of the props, its target is loading at f
   CHECK(optional_prop_views[1] == "0 idle");
   CHECK(shown.html().contains("<p>text 1</p>"));
 }
+
+namespace {
+
+// Two effects on one key, whose copies may throw: both fail to start in the same view.
+struct two_touchy_page {
+  state<touchy_key> key{touchy_key{1}};
+  state<text_target> first;
+  effect load_first{key, load_key, first};
+  state<text_target> second;
+  effect load_second{key, load_key, second};
+
+  element view() { return p("two"); }
+};
+
+} // namespace
+
+TEST_CASE("effect: two that fail to start in one view are both told to on_error", "[ui][effect]") {
+  loads = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  std::vector<std::string> failures;
+  test_app<two_touchy_page> instance{time.get_executor(), shown, {.on_error = [&failures](std::exception_ptr failure) {
+                                       failures.push_back(what_of(failure));
+                                     }}};
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+    failures.clear();
+
+    throwing_keys const copies{key_copy_throws};
+
+    instance.component().key = touchy_key{2};
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(failures == std::vector<std::string>{"no copy", "no copy"});
+  CHECK(std::get<2>(*instance.component().first) != nullptr);
+  CHECK(std::get<2>(*instance.component().second) != nullptr);
+}

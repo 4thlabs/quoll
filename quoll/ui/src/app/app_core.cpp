@@ -316,8 +316,13 @@ void app_core::start_effects(effects_function effects, void *component, held_vie
     app->spawn(std::move(work), *given);
   };
 
+  // Each failure to start told, as every failure of a run.
+  auto const report = [](void *owner, std::exception_ptr failure) noexcept {
+    static_cast<starting *>(owner)->app->failed(std::move(failure));
+  };
+
   try {
-    effects(component, {.owner = &context, .start = start, .props = held.props.get()});
+    effects(component, {.owner = &context, .start = start, .report = report, .props = held.props.get()});
   } catch (...) {
     failed(std::current_exception());
   }
