@@ -72,7 +72,7 @@ using namespace quoll::ui;
 }
 
 [[nodiscard]] inline element error_text(std::string_view text) {
-  return p(text) | tw("text-sm text-error") | attribute("role", "alert");
+  return p(text) | tw("text-sm text-error") | role("alert");
 }
 
 } // namespace dashboard_web

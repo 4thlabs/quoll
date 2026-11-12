@@ -62,7 +62,7 @@ struct notes_page {
     };
 
     return main_({
-        input() | bind(draft) | attribute("placeholder", "A new note"),
+        input() | bind(draft) | placeholder("A new note"),
         button("Add") | on_click(add),
         when(items->empty(), nothing),
         ul({list(items, row)}),
@@ -71,19 +71,25 @@ struct notes_page {
 };
 ```
 
-| To                     | Write                                                                                                                |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Show an element        | `div({...})`, `button("Add")`, `node("video", {...})`; `main_` for `<main>`                                          |
-| Show a text            | `text("Hello")`, or `p("Hello")` for a tag holding it                                                             |
-| Style it               | `\| tw("flex gap-2")`, `\| tw_if(done, "line-through")`, classes written whole, as Tailwind reads them in the source |
-| Set an attribute       | `\| attribute("placeholder", "A note")`, `\| disabled(saving)` while a condition holds                                |
-| Handle an event        | `\| on_click(...)`, `\| on_input(...)`, `\| on("submit", ...)`                                                       |
-| Edit a value           | `input() \| bind(draft)`, for a `state<std::string>`                                                                 |
-| Repeat, or show or not | `list(items, ...)` with a `key()` on each, `when(condition, ...)`                                                    |
-| Read a state           | `*count`, `items->size()`                                                                                            |
-| Change a state         | `count = 1;`, `count.set(1);`, `items.update(...)`                                                                   |
-| Call an API            | A `rest::client`, over [`fetch`](runtimes.md#httpclient-in-a-browser)                                                     |
-| Make a decorator       | `decorator([](element &target) { target.classes += " card"; })`                                                    |
+| To                     | Write                                                                                                                                         |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Show an element        | `div({...})`, `button("Add")`, `node("video", {...})`; `main_` for `<main>`                                                                   |
+| Show a text            | `text("Hello")`, or `p("Hello")` for a tag holding it                                                                                         |
+| Style it               | `\| tw("flex gap-2")`, `\| tw_if(done, "line-through")`, classes written whole, as Tailwind reads them in the source                          |
+| Set an attribute       | `\| placeholder("A note")`, `\| role("alert")`, `\| aria("label", "Name")`, `\| attribute("id", "price")`                                     |
+| Set one while it holds | `\| disabled(saving)`, `\| hidden(!open)`, `\| required(true)`, `\| readonly(locked)`                                                         |
+| Show a value given     | `input() \| value(given.text) \| on_input(...)`, for a field showing a prop                                                                   |
+| Handle an event        | `\| on_click(...)`, `\| on_input(...)`, `\| on_change(...)`, `\| on_key_down(...)` given the key                                              |
+| Send a form            | `form({...}) \| on_submit(...)`, as Enter in one of its inputs does: the page stays                                                           |
+| Edit a value           | `input() \| bind(draft)` for a `state<std::string>`, a checkbox `input() \| bind(done)` for a `state<bool>`, `\| checked(done)` for one given |
+| Repeat, or show or not | `list(items, ...)` with a `key()` on each, `when(condition, ...)`                                                                             |
+| Read a state           | `*count`, `items->size()`                                                                                                                     |
+| Change a state         | `count = 1;`, `count.set(1);`, `items.update(...)`                                                                                            |
+| Call an API            | A `rest::client`, over [`fetch`](runtimes.md#httpclient-in-a-browser)                                                                         |
+| Make a decorator       | `decorator([](element &target) { target.classes += " card"; })`                                                                               |
+
+A member of a component named as a decorator, as a `state<bool> checked`, hides it in its view: write
+`quoll::ui::checked(...)` there.
 
 ## Components of a view
 

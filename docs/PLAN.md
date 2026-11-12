@@ -245,7 +245,7 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
 - A trial on a real screen of an application, chosen with the maintainer at the start of this step: a dashboard
   (2026-11-11), a list to filter, a detail to edit, and a chart.js chart fed by the REST API. Written with what Quoll
   has in `samples/dashboard`, whose README lists what it lacked, for the base components to give: an input showing a
-  value it is given, labelled and number fields, states that start from the props, and above all requests that
+  value it is given (now `value()`), labelled and number fields, states that start from the props, and above all requests that
   overlap: three rounds of review found stale answers and saves out of order, handled by hand. The screen needed no
   handle on the widget, and no WebSocket. What takes the place of that bookkeeping was decided on 2026-11-11 (see
   [Decided](#decided)): `ui::effect` and `ui::action`, then a form's draft from the props.

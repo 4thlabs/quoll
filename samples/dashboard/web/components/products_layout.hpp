@@ -66,7 +66,7 @@ struct products_layout {
     auto const &problem = products->items->error;
 
     auto const alert = [&problem] {
-      return p(told(problem, "the products did not load")) | tw("alert alert-error") | attribute("role", "alert");
+      return p(told(problem, "the products did not load")) | tw("alert alert-error") | role("alert");
     };
 
     auto const columns = div({

@@ -48,11 +48,13 @@ namespace quoll::ui {
  *
  * Every operation names its nodes by id. `insert(parent, child, before)` places a node, or moves one already placed,
  * before `before`, or at the end of `parent` with no_node; the interface's own parent is no_node as well. `remove(id)`
- * forgets a node: its descendants are removed first. `listen(id, name)` asks for the events `name` of a node, reported
- * to app::dispatch().
+ * forgets a node: its descendants are removed first. `set_value` and `set_checked` set the properties of an input,
+ * what it holds and whether it is checked, as the browser shows them. `listen(id, name)` asks for the events `name` of
+ * a node, reported to app::dispatch() with a value: for a key event the key, after the modifiers held, as
+ * "Shift+Enter"; for a checkbox "true" or "false"; for any other what the node holds. A form never leaves the page.
  */
 template <class R>
-concept Renderer = requires(R &renderer, node_id id, std::string_view text) {
+concept Renderer = requires(R &renderer, node_id id, std::string_view text, bool flag) {
   renderer.create_element(id, text);
   renderer.create_text(id, text);
   renderer.set_text(id, text);
@@ -60,6 +62,7 @@ concept Renderer = requires(R &renderer, node_id id, std::string_view text) {
   renderer.set_attribute(id, text, text);
   renderer.remove_attribute(id, text);
   renderer.set_value(id, text);
+  renderer.set_checked(id, flag);
   renderer.listen(id, text);
   renderer.unlisten(id, text);
   renderer.insert(id, id, id);

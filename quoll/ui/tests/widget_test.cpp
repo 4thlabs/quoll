@@ -116,6 +116,8 @@ struct plain_renderer {
 
   void set_value(node_id, std::string_view) {}
 
+  void set_checked(node_id, bool) {}
+
   void listen(node_id, std::string_view) {}
 
   void unlisten(node_id, std::string_view) {}
@@ -255,6 +257,8 @@ struct hooked_renderer {
   void remove_attribute(node_id id, std::string_view name) { shown.remove_attribute(id, name); }
 
   void set_value(node_id id, std::string_view value) { shown.set_value(id, value); }
+
+  void set_checked(node_id id, bool checked) { shown.set_checked(id, checked); }
 
   void listen(node_id id, std::string_view name) { shown.listen(id, name); }
 

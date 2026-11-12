@@ -65,6 +65,7 @@ void quoll_emscripten_ui_set_attribute(int instance, std::uint32_t id, char cons
                                        char const *value, std::size_t value_size);
 void quoll_emscripten_ui_remove_attribute(int instance, std::uint32_t id, char const *name, std::size_t size);
 void quoll_emscripten_ui_set_value(int instance, std::uint32_t id, char const *value, std::size_t size);
+void quoll_emscripten_ui_set_checked(int instance, std::uint32_t id, int checked);
 void quoll_emscripten_ui_listen(int instance, std::uint32_t id, char const *name, std::size_t size);
 void quoll_emscripten_ui_unlisten(int instance, std::uint32_t id, char const *name, std::size_t size);
 void quoll_emscripten_ui_insert(int instance, std::uint32_t parent, std::uint32_t child, std::uint32_t before);

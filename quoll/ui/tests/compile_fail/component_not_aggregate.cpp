@@ -53,6 +53,7 @@ struct silent_renderer {
   void set_attribute(node_id, std::string_view, std::string_view);
   void remove_attribute(node_id, std::string_view);
   void set_value(node_id, std::string_view);
+  void set_checked(node_id, bool);
   void listen(node_id, std::string_view);
   void unlisten(node_id, std::string_view);
   void insert(node_id, node_id, node_id);

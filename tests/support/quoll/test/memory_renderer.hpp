@@ -91,6 +91,17 @@ public:
     state_->nodes.at(id).attributes["value"] = value;
   }
 
+  // Shown as the attribute, while checked.
+  void set_checked(ui::node_id id, bool checked) {
+    ++state_->operations;
+
+    if (checked) {
+      state_->nodes.at(id).attributes["checked"] = "";
+    } else {
+      state_->nodes.at(id).attributes.erase("checked");
+    }
+  }
+
   void listen(ui::node_id id, std::string_view name) {
     ++state_->operations;
     state_->nodes.at(id).events.emplace_back(name);

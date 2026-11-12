@@ -172,7 +172,8 @@ void append_attribute(std::string_view name, std::string_view value, std::string
 void write_attributes(element const &shown, bool value_is_attribute, std::string &out) {
   auto const given_by_decorator = [&](std::string_view name) {
     return (!shown.classes.empty() && same_name(name, "class")) ||
-           (value_is_attribute && shown.value && same_name(name, "value"));
+           (value_is_attribute && shown.value && same_name(name, "value")) ||
+           (shown.checked && same_name(name, "checked"));
   };
 
   if (!shown.classes.empty()) {
@@ -181,6 +182,11 @@ void write_attributes(element const &shown, bool value_is_attribute, std::string
 
   if (value_is_attribute && shown.value) {
     append_attribute("value", *shown.value, out);
+  }
+
+  // The attribute a page parsed starts its property with.
+  if (shown.checked.value_or(false)) {
+    append_attribute("checked", "", out);
   }
 
   for (auto entry = shown.attributes.begin(); entry != shown.attributes.end(); ++entry) {

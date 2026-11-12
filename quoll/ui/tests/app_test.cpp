@@ -958,3 +958,161 @@ TEST_CASE("ui::app: disabled() sets the attribute while its condition holds, and
   CHECK(waiting == R"(<button disabled="">Save</button>)");
   CHECK(shown.html() == first);
 }
+
+namespace {
+
+// The base decorators, set while their conditions hold, and the events they name.
+struct decorated_form {
+  state<bool> locked;
+  state<std::vector<std::string>> heard;
+
+  element view() {
+    auto const told = [this](std::string what) {
+      return [this, what](std::string given) { heard.update([&](auto &all) { all.push_back(what + " " + given); }); };
+    };
+
+    return form({
+               input() | placeholder("A note") | value("tea") | required(true) | readonly(*locked) |
+                   aria("label", "note") | on_change(told("change")) | on_key_down(told("key")),
+               p("hint") | role("note") | hidden(!*locked),
+           }) |
+           on_submit(told("submit"));
+  }
+};
+
+} // namespace
+
+TEST_CASE("ui::app: the base decorators set their attributes, and their events reach their functions", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<decorated_form> instance{time.get_executor(), shown};
+  std::string first;
+  std::string locked;
+
+  auto const act = [&]() -> task<> {
+    first = shown.html();
+
+    instance.dispatch(shown.find("input"), "change", "green tea");
+    instance.dispatch(shown.find("input"), "keydown", "Enter");
+    instance.dispatch(shown.find("form"), "submit");
+    co_await settle();
+
+    instance.component().locked = true;
+    co_await settle();
+    locked = shown.html();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(first == R"(<form><input aria-label="note" placeholder="A note" required="" value="tea"></input>)"
+                 R"(<p hidden="" role="note">hint</p></form>)");
+  CHECK(locked == R"(<form><input aria-label="note" placeholder="A note" readonly="" required="" value="tea"></input>)"
+                  R"(<p role="note">hint</p></form>)");
+  CHECK(*instance.component().heard == std::vector<std::string>{"change green tea", "key Enter", "submit "});
+}
+
+namespace {
+
+// A box bound to a state, and another checked from it, given as a value.
+struct checked_boxes {
+  state<bool> done;
+
+  element view() { return div({input() | bind(done), input() | attribute("type", "checkbox") | checked(!*done)}); }
+};
+
+} // namespace
+
+TEST_CASE("ui::app: bind() keeps a checkbox and a bool the same, checked() shows one given", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<checked_boxes> instance{time.get_executor(), shown};
+  std::string first;
+  std::string clicked;
+
+  auto const act = [&]() -> task<> {
+    first = shown.html();
+
+    instance.dispatch(shown.find("input"), "change", "true");
+    co_await settle();
+    clicked = shown.html();
+
+    instance.dispatch(shown.find("input"), "change", "false");
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(first == R"(<div><input type="checkbox"></input><input checked="" type="checkbox"></input></div>)");
+  CHECK(clicked == R"(<div><input checked="" type="checkbox"></input><input type="checkbox"></input></div>)");
+  CHECK_FALSE(*instance.component().done);
+  CHECK(shown.html() == first);
+}
+
+TEST_CASE("to_html: a box checked has the attribute a page starts its property with", "[ui][html]") {
+  CHECK(to_html(input() | attribute("type", "checkbox") | checked(true)) == R"(<input checked="" type="checkbox"/>)");
+  CHECK(to_html(input() | attribute("type", "checkbox") | checked(false)) == R"(<input type="checkbox"/>)");
+}
+
+namespace {
+
+// What a renderer is asked, in order: where a select's value comes among its options.
+struct ordered_renderer {
+  std::vector<std::string> *asked;
+
+  void create_element(node_id, std::string_view tag) { asked->push_back("create " + std::string{tag}); }
+
+  void create_text(node_id, std::string_view) {}
+
+  void set_text(node_id, std::string_view) {}
+
+  void set_class(node_id, std::string_view) {}
+
+  void set_attribute(node_id, std::string_view, std::string_view) {}
+
+  void remove_attribute(node_id, std::string_view) {}
+
+  void set_value(node_id, std::string_view value) { asked->push_back("value " + std::string{value}); }
+
+  void set_checked(node_id, bool) {}
+
+  void listen(node_id, std::string_view) {}
+
+  void unlisten(node_id, std::string_view) {}
+
+  void insert(node_id, node_id, node_id) { asked->push_back("insert"); }
+
+  void remove(node_id) {}
+};
+
+static_assert(Renderer<ordered_renderer>);
+
+// A select of the options its state holds, the second chosen.
+struct choosing_select {
+  state<std::vector<std::string>> options{std::vector<std::string>{"a"}};
+
+  element view() {
+    auto const option = [](std::string const &name) { return node("option", {text(name)}) | key(name); };
+
+    return node("select", {list(options, option)}) | value("b");
+  }
+};
+
+} // namespace
+
+TEST_CASE("ui::app: a select is given its value once its options are placed, and again as they change", "[ui]") {
+  virtual_time time;
+  std::vector<std::string> asked;
+  app<choosing_select, ordered_renderer> instance{time.get_executor(), ordered_renderer{&asked}};
+  std::vector<std::string> first;
+
+  auto const act = [&]() -> task<> {
+    first = asked;
+    asked.clear();
+
+    instance.component().options.update([](auto &all) { all.push_back("b"); });
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  // Its option made, its text in it and it in the select, then its value, then the select placed in the page.
+  CHECK(first == std::vector<std::string>{"create select", "create option", "insert", "insert", "value b", "insert"});
+  CHECK(asked.back() == "value b");
+}

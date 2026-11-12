@@ -99,8 +99,7 @@ struct product_list {
     auto const nothing = [] { return p("No product matches") | tw("px-4 py-2 opacity-70"); };
 
     auto const panel = div({
-        input() | bind(query) | tw("input input-bordered w-full") |
-            attribute("placeholder", "Filter by name or category"),
+        input() | bind(query) | tw("input input-bordered w-full") | placeholder("Filter by name or category"),
         when(shown.empty(), nothing),
         ul({list(shown, row)}) | tw("flex flex-col gap-1"),
     });

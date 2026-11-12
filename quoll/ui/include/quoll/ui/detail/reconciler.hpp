@@ -74,6 +74,9 @@ private:
   void create(element &value);
   void patch(element &before, element &after);
   void patch_attributes(element const &before, element const &after);
+  // What an input holds and whether it is checked, set once its children are placed.
+  void set_properties(element const &value);
+  void patch_properties(element const &before, element const &after);
   void patch_events(element const &before, element const &after);
   void remove(element const &value);
 

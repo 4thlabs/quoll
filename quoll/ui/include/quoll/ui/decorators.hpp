@@ -127,8 +127,8 @@ template <std::integral T>
 }
 
 /**
- * @brief Sets an attribute of the element: set again, it takes the last value. `class` and `value` have their own ways,
- * tw() and bind(), and are not to be set here.
+ * @brief Sets an attribute of the element: set again, it takes the last value. `class`, `value` and `checked` have
+ * their own ways, tw(), value() or bind(), and checked(), and are not to be set here.
  */
 [[nodiscard]] inline auto attribute(std::string_view name, std::string_view value) {
   return decorator([name = std::string{name}, value = std::string{value}](element &target) {
@@ -136,19 +136,16 @@ template <std::integral T>
   });
 }
 
-/**
- * @brief The boolean attribute `disabled`, set while `condition` holds, as a button that waits or a field locked: a
- * view without it, made again as a state changes, has it no more. A false condition leaves the element as it is.
- */
-[[nodiscard]] inline auto disabled(bool condition) {
-  return decorator([condition](element &target) {
+namespace detail {
+
+// A boolean attribute, set while `condition` holds: a false one leaves the element as it is.
+[[nodiscard]] inline auto boolean_attribute(std::string_view name, bool condition) {
+  return decorator([name = std::string{name}, condition](element &target) {
     if (condition) {
-      target.attributes.insert_or_assign("disabled", "");
+      target.attributes.insert_or_assign(name, "");
     }
   });
 }
-
-namespace detail {
 
 // What an event runs, from what the application gave: with the node's value or without, awaited or plain. The value
 // lives in this frame, so that a task may borrow it. The caller holds a copy of this handler meanwhile: a coroutine
@@ -177,7 +174,52 @@ template <EventFunction F>
 } // namespace detail
 
 /**
- * @brief Runs `function` on the event `name` of the element, given the node's value or nothing. It returns nothing, or
+ * @brief The boolean attribute `disabled`, set while `condition` holds, as a button that waits or a field locked: a
+ * view without it, made again as a state changes, has it no more. A false condition leaves the element as it is.
+ */
+[[nodiscard]] inline auto disabled(bool condition) { return detail::boolean_attribute("disabled", condition); }
+
+/** @brief The boolean attribute `hidden`, set while `condition` holds, as disabled(). */
+[[nodiscard]] inline auto hidden(bool condition) { return detail::boolean_attribute("hidden", condition); }
+
+/** @brief The boolean attribute `required`, set while `condition` holds, as disabled(). */
+[[nodiscard]] inline auto required(bool condition) { return detail::boolean_attribute("required", condition); }
+
+/** @brief The boolean attribute `readonly`, set while `condition` holds, as disabled(). */
+[[nodiscard]] inline auto readonly(bool condition) { return detail::boolean_attribute("readonly", condition); }
+
+/**
+ * @brief Whether a checkbox or a radio is checked, given as a value, as value() gives what an input shows: its
+ * property, which the browser keeps apart from the attribute once clicked. Its changes come through on_change(): a
+ * checkbox gives "true" or "false", a radio its value, as the one chosen of a group.
+ */
+[[nodiscard]] inline auto checked(bool condition) {
+  return decorator([condition](element &target) { target.checked = condition; });
+}
+
+/** @brief attribute("placeholder", text): what an empty input shows. */
+[[nodiscard]] inline auto placeholder(std::string_view text) { return attribute("placeholder", text); }
+
+/** @brief attribute("role", name), as role("alert"). */
+[[nodiscard]] inline auto role(std::string_view name) { return attribute("role", name); }
+
+/** @brief attribute("aria-" + name, value), as aria("live", "polite"). */
+[[nodiscard]] inline auto aria(std::string_view name, std::string_view value) {
+  return attribute("aria-" + std::string{name}, value);
+}
+
+/**
+ * @brief What an input shows, given as a value rather than held as bind() holds a state: a field showing a prop, its
+ * changes told through on_input(). The browser keeps what is typed while the value given stays the same.
+ */
+[[nodiscard]] inline auto value(std::string_view text) {
+  return decorator([text = std::string{text}](element &target) { target.value = text; });
+}
+
+/**
+ * @brief Runs `function` on the event `name` of the element, given the node's value or nothing: a key event gives
+ * the key, after the modifiers held, as "Enter" or "Shift+Enter", none while an input method composes; a checkbox's
+ * whether it is checked, "true" or "false"; any other what the element holds. It returns nothing, or
  * a task or anything else to await, whose result is dropped.
  *
  * Each event runs its own copy of `function`, alive until its task ends, even if the element is gone by then: what it
@@ -205,6 +247,38 @@ template <EventFunction F>
 template <EventFunction F>
 [[nodiscard]] auto on_input(F function) {
   return on("input", std::move(function));
+}
+
+/** @brief on("change"), given what the element holds once changed: a select chosen, an input left. */
+template <EventFunction F>
+[[nodiscard]] auto on_change(F function) {
+  return on("change", std::move(function));
+}
+
+/** @brief on("submit") of a form, as Enter in one of its inputs sends it: the page stays, the app handles it. */
+template <EventFunction F>
+[[nodiscard]] auto on_submit(F function) {
+  return on("submit", std::move(function));
+}
+
+/** @brief on("keydown"), given the key pressed, as the browser names it: "Enter", "Escape", "a". */
+template <EventFunction F>
+[[nodiscard]] auto on_key_down(F function) {
+  return on("keydown", std::move(function));
+}
+
+/**
+ * @brief Keeps a checkbox and a state the same: the box shows the state, and a click changes it. A checkbox, of the
+ * type it gives an input given none: a radio a group unchecks tells no change, and is chosen through its value with
+ * on_change() and checked().
+ */
+[[nodiscard]] inline auto bind(state<bool> &to) {
+  return decorator([&to](element &target) {
+    target.attributes.try_emplace("type", "checkbox");
+    target.checked = *to;
+    target.events.push_back(
+        {.name = "change", .handler = detail::to_handler([&to](std::string given) { to.set(given == "true"); })});
+  });
 }
 
 /** @brief Keeps an input and a state the same: the input shows the state, and typing changes it. */

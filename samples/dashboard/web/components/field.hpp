@@ -58,14 +58,11 @@ struct field {
   };
 
   element view(props const &given) {
-    // bind() holds a state<std::string>: a value given as a prop goes in through a decorator of its own.
-    auto const shows = decorator([&given](element &target) { target.value = given.value; });
-
     auto const change = [&given](std::string typed) { return given.on_change(std::move(typed)); };
 
     auto const shown = label({
         span(given.label) | tw("text-sm opacity-70"),
-        input() | shows | tw("input input-bordered w-full") | on_input(change),
+        input() | value(given.value) | tw("input input-bordered w-full") | on_input(change),
     });
 
     return shown | tw("flex flex-col gap-1");

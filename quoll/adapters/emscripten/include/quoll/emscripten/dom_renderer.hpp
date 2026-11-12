@@ -109,6 +109,10 @@ public:
     detail::quoll_emscripten_ui_set_value(instance_, id, value.data(), value.size());
   }
 
+  void set_checked(ui::node_id id, bool checked) {
+    detail::quoll_emscripten_ui_set_checked(instance_, id, checked ? 1 : 0);
+  }
+
   void listen(ui::node_id id, std::string_view name) {
     detail::quoll_emscripten_ui_listen(instance_, id, name.data(), name.size());
   }
