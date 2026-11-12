@@ -125,14 +125,26 @@ struct ratio_page {
   element view(props const &given) { return p("ratio " + std::to_string(given.x)); }
 };
 
+// A file, the rest of its route's path, which may start with '/'.
+struct file_page {
+  struct props {
+    std::string path;
+
+    [[nodiscard]] bool operator==(props const &) const = default;
+  };
+
+  element view(props const &given) { return p("file [" + given.path + "]"); }
+};
+
 struct missing_page {
   element view() { return p("missing"); }
 };
 
-inline constexpr auto shop_routes = quoll::ui::routes(
-    route<"/", home_page>(),
-    route<"/products", products_layout>(route<"", product_list>(), route<"{id}", product_page>()),
-    route<"/ratio/{x}", ratio_page>(), redirect<"/items/{id}", "/products/{id}">(), not_found<missing_page>());
+inline constexpr auto shop_routes =
+    quoll::ui::routes(route<"/", home_page>(),
+                      route<"/products", products_layout>(route<"", product_list>(), route<"{id}", product_page>()),
+                      route<"/ratio/{x}", ratio_page>(), route<"/files/{path:path}", file_page>(),
+                      redirect<"/items/{id}", "/products/{id}">(), not_found<missing_page>());
 
 element home_page::view() {
   return div({
@@ -290,4 +302,22 @@ TEST_CASE("router: an address written without its first '/' is the same, pushed 
   CHECK(history.ref().target<memory_history>() == &history);
   CHECK(instance.context<router>().where->path == "/products/5");
   CHECK(shown.html().contains("<p>page 5: product 5</p>"));
+}
+
+TEST_CASE("router: the rest of a path keeps its segments as they were, an empty first one included", "[ui][router]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<shell> instance{time.get_executor(), shown, at("/")};
+  std::string href;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    href = instance.context<router>().href<file_page>({.path = "/docs/report.txt"});
+    instance.context<router>().go(href);
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(href == "/files//docs/report.txt");
+  CHECK(shown.html().contains("<p>file [/docs/report.txt]</p>"));
 }

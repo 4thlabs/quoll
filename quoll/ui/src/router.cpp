@@ -156,8 +156,12 @@ constexpr int most_redirects = 8;
 
       std::string rest;
 
-      for (; at < segments.size(); ++at) {
-        rest += rest.empty() ? "" : "/";
+      // A separator before each segment but the first, an empty one included, so that "/a" stays "/a".
+      for (auto const first = at; at < segments.size(); ++at) {
+        if (at != first) {
+          rest += '/';
+        }
+
         rest += segments[at];
       }
 

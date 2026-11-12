@@ -441,6 +441,14 @@ struct greeting_holder_page {
   element view() { return div({component<greeting_holder>()}); }
 };
 
+// The app's own component uses the app's draft, and provides one of its own to the components of its view.
+struct using_and_providing_root {
+  shared<draft> app_draft;
+  provided<draft> mine;
+
+  element view() { return div({component<draft_view>()}); }
+};
+
 } // namespace
 
 TEST_CASE("context: its effects start after the app's first view, and its components show what it holds",
@@ -968,4 +976,19 @@ TEST_CASE("context: a component shows again as a context what it provides uses c
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(before.contains("<p>holder nobody</p>"));
   CHECK(shown.html().contains("<p>holder tea</p>"));
+}
+
+TEST_CASE("context: the app's own component finds the app's contexts, what it provides being for those of its view",
+          "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<using_and_providing_root> instance{time.get_executor(), shown, {.contexts = {provide<draft>()}}};
+
+  auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(&*instance.component().app_draft == &instance.context<draft>());
+  CHECK(&*instance.component().app_draft != &*instance.component().mine);
 }

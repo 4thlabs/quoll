@@ -99,7 +99,8 @@ public:
   // component's destructor writing to a context, reaches nothing half made or half gone.
   void made() noexcept { made_ = true; }
 
-  // The app's own component is made: what it provides is found from now on, not by the contexts made before it.
+  // The app's own component is made and has found its contexts: what it provides is found from now on, by the
+  // components of its view, not by the app's contexts nor by itself.
   void component_made() noexcept { component_made_ = true; }
 
   void going() noexcept { made_ = false; }
