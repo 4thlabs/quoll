@@ -2,6 +2,7 @@ quoll_declare_module(
   NAME ui
   SOURCES
     src/app/app_core.cpp
+    src/component/hook_store.cpp
     src/component/instance.cpp
     src/component/ready.cpp
     src/context/context_entry.cpp
@@ -35,6 +36,7 @@ quoll_declare_tests(
   SOURCES
     tests/app/app_test.cpp
     tests/component/callback_test.cpp
+    tests/component/function_component_test.cpp
     tests/component/nested_test.cpp
     tests/component/skip_test.cpp
     tests/context/context_test.cpp
@@ -76,6 +78,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/effect_view_value.cpp
     tests/compile_fail/event_function_signature.cpp
     tests/compile_fail/form_state_bind_struct_field.cpp
+    tests/compile_fail/function_component_with_member.cpp
     tests/compile_fail/form_state_other_props.cpp
     tests/compile_fail/form_state_without_props.cpp
     tests/compile_fail/redirect_trailing_slash.cpp

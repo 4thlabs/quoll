@@ -189,6 +189,25 @@ input methods, selection and accessibility. The same view also writes HTML, with
 **Set aside.** A React and TypeScript client beside the C++ application, with a bridge between them: two languages,
 and the API described twice.
 
+### Components are functions, their state their hooks
+
+**The question.** A component holds states, effects, actions and contexts. Declared as members of a struct, they are
+found by walking the struct, which takes reflection, Glaze's, and code generated for each type; written in order in a
+view, they read as the screen does.
+
+**Taken.** Functions, as React's components: `element product_view(props const &given)`, whose `use_state`,
+`use_effect`, `use_action`, `use_form`, `use_context` and `provide_context` give what the component holds, found again
+at each view by the place of the call and its rank there, so that a branch shifts nothing. A component of a state, an
+effect and a handler costs a third of the code of a struct, as its effect depends on values rather than on its type of
+props, and nothing is reflected. A struct whose `operator()` gives the view is one too.
+
+**Set aside.** Struct components found by Glaze's reflection, which ties the UI to a JSON library; struct components
+whose members list themselves as they are made, which needs no reflection but generates as much code as before; hooks
+found by the order of their calls, as React's, which a branch would shift with nothing to catch it in C++.
+
+**For you.** Write `auto &` for what a `use_` call gives, capture it by reference, and keep the calls out of loops
+whose number of turns changes.
+
 ### Components are aggregates with states
 
 **Taken.** A component is a struct whose `state<T>` members are what its view depends on, found by reflection, and a
