@@ -47,22 +47,33 @@ example describes the contract `users` of `docs/rest.md`, without its declared 4
 implemented: they are sketches, whose points to check are listed.
 
 Every form but today's names endpoints after their method, `get`, `post`, `delete_`, in `quoll::rest`, which a contract
-brings in with `using namespace quoll::rest`. Where they are class or alias templates, as in A and D, an unqualified
-`get<0>(pair)` there finds `rest::get`, which stops argument-dependent lookup from finding `std::get`, and no longer
-compiles; in A, an endpoint cannot be called `get` either. Other names (`http_get`), or qualified ones, avoid it. Where
-they are functions, as in B, C and E, argument-dependent lookup still runs and `get<0>(pair)` finds `std::get`.
+brings in with `using namespace quoll::rest`, in its own namespace:
+
+- **No endpoint can be called after a method**, in any of them: `struct get : endpoint<get(...)>`,
+  `inline constexpr auto get = get(...)`, a member `get<...> get;` all refer to themselves or change the name's meaning
+  in their class. The guide's `users::get` becomes `users::find` in every example below.
+- **Where they are class or alias templates**, as in A and D, an unqualified `get<0>(pair)` in that namespace finds
+  `rest::get`, which stops argument-dependent lookup from finding `std::get`, and no longer compiles. Where they are
+  functions, as in B, C and E, argument-dependent lookup still runs and finds `std::get`.
+
+Other names (`http_get`), or qualified ones, avoid both.
 
 ## Errors
 
 No error is declared by default, which already works today. An undeclared status throws `rest::call_error`, with its
 `status()`, the whole response and the `problem`'s detail; a service throws `rest::http_error` without declaring
-anything. Servant, tRPC and Go's net/http make the same choice: only success is typed.
+anything. Servant types only success, and Go's net/http types nothing; tRPC types one error shape per router, through
+its `errorFormatter`, which is what `errors<T>` would be.
+
+A `with<>` can already declare an error response once for a group, `with<returns<error, status::not_found>, ...>`, which
+the server answers and the client decodes, not a service. The GitHub sample does not use it yet.
 
 What [#176](https://github.com/4thlabs/quoll/issues/176) adds:
 
 - **`errors<T>`** in a `with<>`: the body of every 4xx and 5xx response not otherwise declared, as OpenAPI's `default`,
   for an API with its own format, as GitHub's.
-- **`errors<T, Statuses...>`**: the same, for some statuses only.
+- **`errors<T, Statuses...>`**: the same, for some statuses only: a shorter spelling of one `with<returns<T, Status>>`
+  per status, which it would replace.
 - **`codec<C>`** in a `with<>`: the codec of a group, so that the GitHub sample needs no `answers` alias.
 - **`returns<T, Status>`** stays, on its endpoint, for an error whose body the caller uses: a 409 with the current
   version, a 422 with the invalid fields.
@@ -82,20 +93,53 @@ using me = rest::endpoint<"users.me", http::verb::get, "/user", rest::security<r
                           answers<error, http::status::unauthorized>, answers<error, http::status::forbidden>>;
 ```
 
-After:
+With today's `with<>`, the errors are written once, still one per status:
 
 ```cpp
-using get = endpoint<"repos.get", verb::get, "/", returns<repository>>;
-using issues = endpoint<"repos.issues", verb::get, "/issues", query_params<issue_filter>, returns<std::vector<issue>>>;
-using me = endpoint<"users.me", verb::get, "/user", security<bearer_auth>, returns<github::me>>;
+namespace repos {
+using get = rest::endpoint<"repos.get", http::verb::get, "/", answers<repository>>;
+using issues = rest::endpoint<"repos.issues", http::verb::get, "/issues", rest::query_params<issue_filter>,
+                              answers<std::vector<issue>>>;
 
-using api = rest::api<"", with<codec<lenient_json_codec>, errors<error>,
-                               rest::api<"/repos/{owner}/{repo}", get, issues>,
-                               me>>;
+using api = rest::api<"/repos/{owner}/{repo}", get, issues>;
+} // namespace repos
+
+namespace users {
+using me = rest::endpoint<"users.me", http::verb::get, "/user", rest::security<rest::bearer_auth>, answers<github::me>>;
+} // namespace users
+
+using api = rest::api<"", rest::with<answers<error, http::status::unauthorized>, answers<error, http::status::forbidden>,
+                                     answers<error, http::status::not_found>, repos::api, users::me>>;
 ```
 
-Left to the issue: how `call_error`, `reply<>` and `try_call` give the decoded body and its status, and how a service
-answers with an `errors<T>` body, which must say its status.
+With #176, the same namespaces:
+
+```cpp
+namespace repos {
+using get = rest::endpoint<"repos.get", http::verb::get, "/", rest::returns<repository>>;
+using issues = rest::endpoint<"repos.issues", http::verb::get, "/issues", rest::query_params<issue_filter>,
+                              rest::returns<std::vector<issue>>>;
+
+using api = rest::api<"/repos/{owner}/{repo}", get, issues>;
+} // namespace repos
+
+namespace users {
+using me = rest::endpoint<"users.me", http::verb::get, "/user", rest::security<rest::bearer_auth>,
+                          rest::returns<github::me>>;
+} // namespace users
+
+using api = rest::api<"", rest::with<rest::codec<rest::lenient_json_codec>, rest::errors<error>, repos::api, users::me>>;
+```
+
+Left to the issue:
+
+- how `call_error`, `reply<>` and `try_call` give the decoded body and its status;
+- how a service answers with an `errors<T>` body, which must say its status;
+- Quoll's own answers: a Quoll server answers 400, 401 and 415 with a `rest::problem`, and a 500 from an unknown
+  exception with no body. `errors<T>` must leave them out, for instance by decoding a `problem` when the response says
+  `application/problem+json`;
+- `codec<C>` needs `returns<>` to tell an inherited codec from a chosen one: its default, `json_codec`, would become a
+  placeholder resolved by the group, which changes the type of every `returns<>` and what reads its codec.
 
 ## Contract options
 
@@ -223,6 +267,9 @@ A resource is a struct, each endpoint a member whose type is its method. The sho
 write.
 
 ```cpp
+namespace contract {
+using namespace quoll::rest; // a struct cannot hold it: in the contract's own namespace, never at global scope
+
 struct users {
   get<"/", query_params<user_filter>, returns<std::vector<user>>> list;
   get<"/{id:int64}", returns<user>> find;
@@ -230,8 +277,8 @@ struct users {
   delete_<"/{id:int64}"> remove;
 };
 
-using api = rest::api<"/users", users>;
 using v1 = rest::api<"/api/v1", with<security<bearer_auth>, rest::api<"/users", users>, rest::api<"/cards", cards>>>;
+} // namespace contract
 ```
 
 Use:
@@ -244,21 +291,22 @@ struct users_service {
 };
 ```
 
-- **Identity:** the member pointer. `&users::remove` and `&cards::remove` differ, and two members of a struct never share
-  a method and a path.
-- **Without Glaze:** `api<>` finds the members in standard C++23, as Boost.PFR does, by probing the aggregate's
-  initialization, then through structured bindings. It ties a member pointer to its endpoint by comparing, in
-  `constexpr`, the addresses of the members of an object.
-- **Route name:** from the method and the path. Glaze, which `quoll::rest` already links for its codecs, would give the
-  members' names (`glz::reflect<users>::keys`); this form leaves it out, so that the shape of a contract depends on the
-  language alone.
+- **Identity:** the member pointer. `&users::remove` and `&cards::remove` differ, and its type is enough to find the
+  member: `api<>` already refuses two endpoints with one method and path, so each member of a resource has its own
+  type, and `decltype(&users::find)` names it.
+- **Finding the members:** `api<>` counts and ties the members of the aggregate. Glaze's `glz::reflect` and
+  `glz::to_tie` do it, as `detail/fields_of.hpp` does for `query_params`; this form leaves Glaze out, so that the
+  contract's shape does not depend on the JSON library, and does it as Boost.PFR does, by probing the aggregate's
+  initialization, then through structured bindings.
+- **Route name:** from the method and the path. Glaze would give the members' names (`glz::reflect<users>::keys`), left
+  out for the same reason.
 - **For:** a resource in one block, read as an interface. No `static constexpr auto`.
 - **Against:** commas instead of `|`, as a non-static member cannot be `auto`. The client writes `&users::find` and the
   service `rest::op<&users::find>`. Everything that takes an endpoint as a type takes a member pointer instead:
   `mount`, the client and its `scope<>`, `reply<>`, `try_call`, `subscribe` and its `event_sink`, the interceptors.
   A response other than the first reads `rest::reply<&users::find>`.
-- **To check:** the enumeration and the `constexpr` address comparison on GCC 13, Clang 19, Apple Clang 21 and
-  Emscripten. One struct mounted under two prefixes would be ambiguous, so refused at compile time.
+- **To check:** the enumeration on GCC 13, Clang 19, Apple Clang 21 and Emscripten. One struct mounted under two
+  prefixes would be ambiguous, so refused at compile time.
 
 ### E: C++26, reflection and annotations (later)
 
@@ -284,7 +332,7 @@ struct [[=prefix("/users")]] api {
 };
 } // namespace users
 
-server.mount<users::api>(users_service{}); // matched by name
+rest::mount<users::api>(server, users_service{}); // matched by name
 user const found = co_await client.call<^^users::api::find>(42);
 ```
 
@@ -305,61 +353,49 @@ waits for upstream Clang, then Apple Clang and emsdk. Sources, as of 2026-11-12:
 
 ## Service options
 
-Both forms stay and mix: the builder makes the overload set `mount` already takes. The examples assume contract D; with
-today's contract, `.on<users::find>(...)`.
-
-**An overload set**, for a service with a state and functions of its own, as a database:
-
-```cpp
-struct users_service {
-  std::shared_ptr<database> db;
-
-  std::vector<user> operator()(rest::op<&users::list>, user_filter filter) const;
-  async::task<user> operator()(rest::op<&users::find>, std::int64_t id) const;
-  user operator()(rest::op<&users::create>, new_user const &created) const;
-  void operator()(rest::op<&users::remove>, std::int64_t id) const;
-};
-
-rest::mount<rest::api<"/users", users>>(router, users_service{db});
-```
-
-**A builder**, for small handlers:
-
-```cpp
-auto const service = rest::service<users>()
-    .on(&users::list, [](user_filter filter) { return find_users(filter); })
-    .on(&users::find, [](std::int64_t id) -> async::task<user> { co_return co_await load(id); })
-    .on(&users::create, [](new_user const &created) { return insert(created); })
-    .on(&users::remove, [](std::int64_t id) { erase(id); });
-
-rest::mount<rest::api<"/users", users>>(router, service);
-```
-
-**Both**, starting from a struct that serves some of the endpoints:
+`mount` already takes several services, and a lambda with `operator()(Endpoint, ...)` is one: "both" exists today.
 
 ```cpp
 struct users_reads {
   std::shared_ptr<database> db;
 
-  std::vector<user> operator()(rest::op<&users::list>, user_filter filter) const;
-  async::task<user> operator()(rest::op<&users::find>, std::int64_t id) const;
+  std::vector<user> operator()(users::list, user_filter filter) const;
+  async::task<user> operator()(users::find, std::int64_t id) const;
 };
 
-auto const service = rest::service<users>(users_reads{db})                       // its operator()s first
-    .on(&users::create, [](new_user const &created) { return insert(created); })  // then the handlers
-    .on(&users::remove, [](std::int64_t id) { erase(id); });
+rest::mount<users::api>(router, users_reads{db},
+                        [](users::create, new_user const &created) { return insert(created); },
+                        [](users::remove, std::int64_t id) { erase(id); });
 ```
 
-- **Checked at compile time:** an endpoint without a handler, a handler given twice, parameters that are not the
-  endpoint's.
-- **The builder owns its handlers**, as a service does today: a lambda captures by value, and is moved into the router's
-  storage.
+What is left to choose is only how a handler names its endpoint: by a tag parameter, as above, or by a builder. With
+contract D, the tag is `rest::op<&users::find>`; the builder takes the member pointer as a template argument, as
+`call<&users::find>` does:
+
+```cpp
+auto const service = rest::service<users>()
+    .on<&users::list>([](user_filter filter) { return find_users(filter); })
+    .on<&users::find>([](std::int64_t id) -> async::task<user> { co_return co_await load(id); })
+    .on<&users::create>([](new_user const &created) { return insert(created); })
+    .on<&users::remove>([](std::int64_t id) { erase(id); });
+
+rest::mount<rest::api<"/users", users>>(router, service);
+```
+
+- **What the builder adds:** handlers without the tag parameter, which matters most with D, where the tag is
+  `rest::op<&users::find>`. With today's contract the tag is `users::find`, and the builder (`.on<users::find>(...)`)
+  adds little.
+- **Checked at compile time**, as `mount` does today: an endpoint without a handler, a handler given twice, parameters
+  that are not the endpoint's.
+- **The builder owns its handlers**, as a service does today: copied or moved into the router's storage, as it is
+  passed.
 - **A coroutine lambda writes its return type** (`-> async::task<user>`): a coroutine cannot deduce it.
-- **Cost:** some tens of lines over `mount`, which can come before the contract's shape is decided.
+- **Cost:** some tens of lines over `mount`, which can come before the contract's shape is decided, or not at all if
+  the tag parameter is kept.
 
 ## Comparison
 
-D is the shortest form that holds in C++23 without Glaze. B and C keep `|`: B at the price of a struct and an
+D is the shortest form that holds in C++23 without Glaze. B and C keep `|`, their parts becoming values: B at the price of a struct and an
 `endpoint<...> {}` per endpoint, C of a `static constexpr auto` per line.
 
 | Form | An endpoint | Name written | Client | Service | What changes |
@@ -368,7 +404,7 @@ D is the shortest form that holds in C++23 without Glaze. B and C keep `|`: B at
 | A, lighter | `using find = get<"users.get", "/{id:int64}", returns<user>>;` | yes | `call<users::find>` | `operator()(users::find, ...)` | aliases |
 | B, struct per endpoint | `struct find : endpoint<get("/{id:int64}") \| returns<user>> {};` | no | `call<users::find>` | `operator()(users::find, ...)` | `endpoint<>`, how the internals read an endpoint |
 | C, operators | `static constexpr auto find = get("/{id:int64}") \| returns<user>;` | no | `call<users::find>` | `operator()(rest::op<users::find>, ...)` | `api` and groups become values, and all that takes an endpoint type |
-| D, members | `get<"/{id:int64}", returns<user>> find;` | no | `call<&users::find>` | `operator()(rest::op<&users::find>, ...)` | all that takes an endpoint type: `mount`, the client, `reply<>`, `try_call`, `subscribe` |
+| D, members | `get<"/{id:int64}", returns<user>> find;` | no | `call<&users::find>` | `operator()(rest::op<&users::find>, ...)` | all that takes an endpoint type: `mount`, the client and its `scope<>`, `reply<>`, `try_call`, `subscribe` and its `event_sink`, the interceptors |
 | E, C++26 | `[[=get("/{id:int64}")]] user find(std::int64_t id);` | no | `call<^^users::api::find>` | a function of the same name | everything, and reflection everywhere |
 
 ## Decision
@@ -377,9 +413,9 @@ To be taken by the maintainer:
 
 - [ ] Errors: `errors<T>` per API and `codec<C>` per group (#176).
 - [ ] The contract's shape: A, B, C or D, keeping E for later.
-- [ ] The service: a builder beside the overload set.
-- [ ] The order: #176 and the builder first, independent of the contract, then a prototype of the chosen shape on the
-      notes and GitHub samples.
+- [ ] The service: a builder beside the tag parameter, or the tag alone.
+- [ ] The order: #176 first, independent of the contract, then a prototype of the chosen shape on the notes and GitHub
+      samples, with the builder if it is kept.
 
 ## Consequences
 
