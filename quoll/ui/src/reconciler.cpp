@@ -49,6 +49,15 @@ namespace quoll::ui::detail {
 
 namespace {
 
+// Whether two lists of elements show the same, their descendants included: what a select's options hold and say.
+bool same_content(std::vector<element> const &before, std::vector<element> const &after) {
+  return std::ranges::equal(before, after, [](element const &one, element const &other) {
+    return one.type == other.type && one.tag == other.tag && one.content == other.content &&
+           one.attributes == other.attributes && one.value == other.value && one.key == other.key &&
+           same_content(one.children, other.children);
+  });
+}
+
 [[nodiscard]] std::string key_of(element const &value, std::size_t position) {
   // A key from the application is text: it does not start with this character.
   return value.key.empty() ? std::string(1, '\0') + std::to_string(position) : value.key;
@@ -232,16 +241,11 @@ void reconciler::patch(element &before, element &after) {
 }
 
 void reconciler::patch_properties(element const &before, element const &after) {
-  // A select whose options changed is given its value again, as the one it named may be there now; otherwise what
-  // the user chose stays while the value given does.
-  auto const options_changed = [&] {
-    return before.children.size() != after.children.size() ||
-           !std::ranges::equal(before.children, after.children,
-                               [](element const &one, element const &other) { return one.key == other.key; });
-  };
-
+  // A select whose options changed, in what they hold or say, within a group too, is given its value again, as the
+  // one it named may be there now; otherwise what the user chose stays while the value given does.
   // An input no longer bound holds nothing rather than what it was last given.
-  if (before.value != after.value || (after.value && after.tag == "select" && options_changed())) {
+  if (before.value != after.value ||
+      (after.value && after.tag == "select" && !same_content(before.children, after.children))) {
     renderer_.set_value(after.id, after.value.value_or(std::string{}));
   }
 

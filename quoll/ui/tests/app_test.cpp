@@ -1127,3 +1127,42 @@ TEST_CASE("ui::app: a select is given its value once its options are placed, and
   CHECK(changed.back() == "value b");
   CHECK(std::ranges::find(asked, "value b") == asked.end());
 }
+
+namespace {
+
+// A select of two options with no key, the second's text a state's, inside a group.
+struct relabelled_select {
+  state<std::string> second{std::string{"c"}};
+  state<int> other;
+
+  element view() {
+    auto const group = node("optgroup", {node("option", {text("a")}), node("option", {text(*second)})});
+
+    return div({node("select", {group}) | value("b"), p(std::to_string(*other))});
+  }
+};
+
+} // namespace
+
+TEST_CASE("ui::app: a select is given its value again as an option within it changes what it says", "[ui]") {
+  virtual_time time;
+  std::vector<std::string> asked;
+  app<relabelled_select, ordered_renderer> instance{time.get_executor(), ordered_renderer{&asked}};
+  std::vector<std::string> relabelled;
+
+  auto const act = [&]() -> task<> {
+    asked.clear();
+
+    instance.component().second = std::string{"b"};
+    co_await settle();
+    relabelled = asked;
+    asked.clear();
+
+    instance.component().other = 1;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(std::ranges::find(relabelled, "value b") != relabelled.end());
+  CHECK(std::ranges::find(asked, "value b") == asked.end());
+}
