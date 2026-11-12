@@ -39,6 +39,7 @@
 
 #include <quoll/async/current_stop_token.hpp>
 #include <quoll/async/detail/type_id.hpp>
+#include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/data/state.hpp>
 #include <quoll/ui/detail/callback_traits.hpp>
@@ -50,6 +51,7 @@
 #include <quoll/ui/detail/data/state_link.hpp>
 #include <quoll/ui/detail/data/target.hpp>
 
+#include <chrono>
 #include <concepts>
 #include <exception>
 #include <functional>
@@ -93,7 +95,29 @@ async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::s
   static_cast<void>(co_await std::move(*running));
 }
 
+// What `make` gives, once `pause` has passed: a coroutine of its own, so that the wait and the call are in its frame,
+// and stop with the run.
+template <class V, class Make>
+async::task<V> after_pause(std::chrono::nanoseconds pause, Make make) {
+  co_await async::sleep_for(pause);
+
+  if constexpr (std::is_void_v<V>) {
+    co_await make();
+  } else {
+    co_return co_await make();
+  }
+}
+
 } // namespace detail
+
+/** @brief How an effect runs, given after its function and its target: `{.debounce = 300ms}`. */
+struct effect_options {
+  /**
+   * @brief How long its states stay the same before a run that follows a change starts, as a search waits for what
+   * is typed: each change starts the wait again. None by default.
+   */
+  std::chrono::nanoseconds debounce{0};
+};
 
 /**
  * @brief What a component runs as states of its change, as React's useEffect with them as its dependencies: after each
@@ -117,7 +141,10 @@ async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::s
  * the run before is stopped, so that it writes nothing, even one that ignored the stop and came anyway, and the
  * function runs, as a task of the component, with a copy of each value, as rvalues. A state holding a `std::optional`
  * gives what it holds, and while one holds none, nothing runs, the run before stopped. reload() runs it again, after
- * the view it asks for, as a change would: one way to run it, as React has.
+ * the view it asks for, as a change would: one way to run it, as React has. Its options, last, may debounce it, as
+ * `{.debounce = 300ms}` for a search on what is typed: a run that follows a change waits that long before it calls the
+ * function, its target loading, and the next change stops it there, as any; the first run that starts, as once an
+ * optional holds a value, and one reload() asks for do not wait.
  *
  * The function returns a task of nothing, of a value, or of a `std::tuple` of values, as `when_all` gives several
  * loads, which go into the target, a state of the same component, declared before it: what each of its elements
@@ -128,9 +155,9 @@ async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::s
  * run; a view written once, with to_html, which runs no effect, shows it loading. As a run starts, its target is
  * loading and has no error, the values before kept; as it ends, the target holds all it gave at once, or its failure,
  * the values before kept. Every failure reaches the app's on_error too, shown or not, as a handler's, and an effect
- * with no target runs a function that gives nothing, such as a debounced search. The values of a target read by type
- * cannot be a bool or an error, which it would not tell apart from its flags; an async_state's value is what the
- * function gives, whole, whatever it is.
+ * with no target runs a function that gives nothing, such as one that saves what is typed. The values of a target read
+ * by type cannot be a bool or an error, which it would not tell apart from its flags; an async_state's value is what
+ * the function gives, whole, whatever it is. A debounce of less than nothing throws std::invalid_argument.
  *
  * Neither copied nor moved: a run under way refers to it, and a component stays where it was made. The values of its
  * states are values: a reference or a view would outlive what it refers to, also inside an optional, a pair, a tuple,
@@ -145,7 +172,8 @@ public:
    */
   template <class D, class F>
     requires detail::EffectFunction<F, D>
-  effect(state<D> &dependency, F function) : effect(std::tie(dependency), std::move(function)) {}
+  effect(state<D> &dependency, F function, effect_options options = {})
+      : effect(std::tie(dependency), std::move(function), options) {}
 
   /**
    * @brief Runs `function` with what `dependency` holds as it changes, what it gives written into `target`.
@@ -153,8 +181,8 @@ public:
    */
   template <class D, class F, class T>
     requires detail::EffectFunction<F, D>
-  effect(state<D> &dependency, F function, state<T> &target)
-      : effect(std::tie(dependency), std::move(function), target) {}
+  effect(state<D> &dependency, F function, state<T> &target, effect_options options = {})
+      : effect(std::tie(dependency), std::move(function), target, options) {}
 
   /**
    * @brief Runs `function` with what `dependencies`, from std::tie, hold as one changes, for a function that gives
@@ -163,12 +191,12 @@ public:
    */
   template <class... D, class F>
     requires detail::EffectFunction<F, D...>
-  effect(std::tuple<state<D> &...> dependencies, F function) {
+  effect(std::tuple<state<D> &...> dependencies, F function, effect_options options = {}) {
     using value = detail::effect_value_t<F, D...>;
 
     static_assert(std::is_void_v<value>, "quoll::ui::effect: the values its function gives go into a target state");
 
-    init<value, D...>(states_reader(dependencies), std::move(function), detail::target_ref<value>{}, nullptr);
+    init<value, D...>(states_reader(dependencies), std::move(function), detail::target_ref<value>{}, nullptr, options);
   }
 
   /**
@@ -178,14 +206,14 @@ public:
    */
   template <class... D, class F, class T>
     requires detail::EffectFunction<F, D...>
-  effect(std::tuple<state<D> &...> dependencies, F function, state<T> &target) {
+  effect(std::tuple<state<D> &...> dependencies, F function, state<T> &target, effect_options options = {}) {
     using value = detail::effect_value_t<F, D...>;
 
     static_assert(detail::kept_as_values<value>,
                   "quoll::ui::effect: the values its function gives are kept, as values");
     detail::check_target<T, value, false>();
     init<value, D...>(states_reader(dependencies), std::move(function),
-                      detail::target_ref<value>{target, std::false_type{}}, nullptr);
+                      detail::target_ref<value>{target, std::false_type{}}, nullptr, options);
   }
 
   /**
@@ -195,13 +223,13 @@ public:
    */
   template <class P, class D, class F>
     requires(!std::is_function_v<D>) && detail::EffectFunction<F, D>
-  effect(D P::*member, F function) {
+  effect(D P::*member, F function, effect_options options = {}) {
     using value = detail::effect_value_t<F, D>;
 
     static_assert(std::is_void_v<value>, "quoll::ui::effect: the values its function gives go into a target state");
 
     init<value, D>(props_reader(member), std::move(function), detail::target_ref<value>{},
-                   async::detail::type_id_of<P>());
+                   async::detail::type_id_of<P>(), options);
   }
 
   /**
@@ -211,14 +239,14 @@ public:
    */
   template <class P, class D, class F, class T>
     requires(!std::is_function_v<D>) && detail::EffectFunction<F, D>
-  effect(D P::*member, F function, state<T> &target) {
+  effect(D P::*member, F function, state<T> &target, effect_options options = {}) {
     using value = detail::effect_value_t<F, D>;
 
     static_assert(detail::kept_as_values<value>,
                   "quoll::ui::effect: the values its function gives are kept, as values");
     detail::check_target<T, value, false>();
     init<value, D>(props_reader(member), std::move(function), detail::target_ref<value>{target, std::false_type{}},
-                   async::detail::type_id_of<P>());
+                   async::detail::type_id_of<P>(), options);
   }
 
   effect(effect const &) = delete;
@@ -266,7 +294,8 @@ private:
   // `read` gives what it depends on, from the props of its component, as a tuple of references to D...; `props_type`,
   // none for an effect on states, is the type of the props it reads.
   template <class V, class... D, class Read, class F>
-  void init(Read read, F function, detail::target_ref<V> target, async::detail::type_id props_type) {
+  void init(Read read, F function, detail::target_ref<V> target, async::detail::type_id props_type,
+            effect_options options) {
     static_assert((!detail::holds_view<D> && ...),
                   "quoll::ui::effect: its states' values are copied into the run, which a view would outlive");
     static_assert((... && (std::equality_comparable<D> && std::copyable<D>)),
@@ -278,6 +307,10 @@ private:
       if (function == nullptr) {
         throw std::invalid_argument{"quoll::ui::effect: no function"};
       }
+    }
+
+    if (options.debounce < std::chrono::nanoseconds::zero()) {
+      throw std::invalid_argument{"quoll::ui::effect: a debounce of less than nothing"};
     }
 
     target_ = target.hooks();
@@ -311,7 +344,8 @@ private:
       return std::optional<watched>{watched{.differs = differs, .holds = holds}};
     };
 
-    run_ = [this, read, function = std::move(function), target](std::stop_token mine, void const *props) {
+    run_ = [this, read, function = std::move(function), target,
+            debounce = options.debounce](std::stop_token mine, void const *props, bool waits) {
       // Its own copy of each value, given as rvalues: a function taking them by reference refers to the run's copy.
       auto copied = std::apply(
           [](auto const &...held) {
@@ -319,8 +353,18 @@ private:
           },
           read(props));
 
-      auto make = [function, copied = std::move(copied)]() mutable {
+      auto call = [function, copied = std::move(copied)]() mutable {
         return std::apply([&function](auto &...value) { return function(std::move(value)...); }, copied);
+      };
+
+      // The function called once the pause has passed, so that a run a change stops meanwhile calls nothing.
+      auto make = [call = std::move(call),
+                   pause = waits ? debounce : std::chrono::nanoseconds::zero()]() mutable -> async::task<V> {
+        if (pause == std::chrono::nanoseconds::zero()) {
+          return call();
+        }
+
+        return detail::after_pause<V>(pause, std::move(call));
       };
 
       return detail::run_effect<V>(slot_, target, std::move(make), std::move(mine));
@@ -342,7 +386,8 @@ private:
   // for their values now: erased, as their types are not the effect's.
   // What `record` saw, none for `forget`.
   std::function<std::optional<watched>(watching, void const *)> watch_;
-  std::function<async::task<>(std::stop_token, void const *)> run_;
+  // `waits` for a run its debounce waits for, one that follows a run started.
+  std::function<async::task<>(std::stop_token, void const *, bool waits)> run_;
   // The type of the props it reads, none for an effect on states.
   async::detail::type_id props_type_{};
   detail::run_slot slot_;
@@ -350,6 +395,8 @@ private:
   detail::state_link link_{};
   // Failed to start, until reload().
   bool failed_ = false;
+  // A run started since it was made or reloaded: the next one waits for its debounce, the first calls at once.
+  bool started_ = false;
 };
 
 static_assert(detail::LinkedMember<effect>);

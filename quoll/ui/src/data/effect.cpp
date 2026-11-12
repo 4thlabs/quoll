@@ -46,6 +46,7 @@ effect::~effect() { assert(slot_.frames == 0 && "quoll::ui::effect: destroyed wh
 
 void effect::reload() {
   failed_ = false;
+  started_ = false;
   watch_(watching::forget, nullptr);
   detail::tell(link_);
 }
@@ -96,7 +97,8 @@ void effect::after_view(detail::effect_starter const &start) {
 
     // Asked for now, as the view is shown: the run before stops at once, so that an answer of its that comes before
     // this one starts writes nothing.
-    start(run_(detail::ask(slot_), props));
+    start(run_(detail::ask(slot_), props, started_));
+    started_ = true;
   } catch (...) {
     // Its failure, which its target shows, and the app's on_error hears of.
     stop_before();

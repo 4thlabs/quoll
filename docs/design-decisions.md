@@ -266,7 +266,8 @@ what follows a success given as it is made, as React Query's `onSuccess`. An act
 `useMutation`: `save->loading`, `save->error`, `save->value`, rather than a state declared beside it, which named one
 of its three fields. New names for the states, as `loaded<T>`, were set aside: a state stays a `state`. Every failure of a
 run reaches the app's `on_error`, shown or not, as React Query's global `onError`, but for `run()`'s, which its caller
-is given.
+is given. A debounce is an option of the effect, `{.debounce = 300ms}`, rather than a debounced value to declare beside
+the state, or a pause Quoll would add to any change made by typing, which would hide where it waits.
 
 **For you.** Declare an `async_state`, then the effect that writes into it; an action is read as one. Set the states an effect
 depends on, or call `reload()`, and its run follows. Give `save.with(args...)` to `on_click`, or await `run()` from a

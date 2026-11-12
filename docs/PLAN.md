@@ -423,7 +423,7 @@ changes only what the harness shows. Candidates:
   not invented again; then an effect and an action holding their status and result, two ways for a view to read data,
   and named queries tied to the REST DSL, which a component need not use, were set aside, as was `keyed_action`: a
   component per item has its own action, which runs a callback of the component owning what the save changes, so
-  that the save goes on as the item goes. The debounce is to refine.
+  that the save goes on as the item goes.
 - **Less to write for a load and a save** (2026-11-12), as the maintainer found the targets and the actions of the
   dashboard heavy to write. `ui::async_state<T>` is a state of `value`, `loading` and `error`, read by name rather than
   as a tuple, `async_state<>` with no value; tuples stay as targets for several values. An effect's target is loading
@@ -440,6 +440,12 @@ changes only what the harness shows. Candidates:
   (`saving`, which said one of its three fields), the state of a save being the action's own. It changes #167's "no
   status on the members" only in form: the action is read as a state, so the view still reads states only. An effect
   keeps its target, which is the data it loads.
+- **A debounce is an option of the effect** (2026-11-12), as the maintainer chose over a `debounced<T>` value to
+  declare beside the state, as React's `useDebounce`, and over a pause Quoll would add to any change made by typing:
+  `effect search{query, f, found, {.debounce = 300ms}}`. A run that follows a change waits that long before it calls
+  the function, its target loading, and the next change stops it there, as any run is stopped; the first run that
+  starts and one `reload()` asks for do not wait. It replaces a `sleep_for` at the top of the function, which mixed the pause with
+  the call.
 - **A form edits a value its props give** (2026-11-12), as React Hook Form's `defaultValues` with `keepDirtyValues`:
   `form_state<&props::item>` takes the value before each view of its component, `bind(form, &item::price)` keeps an
   input and a field the same, reading the text by the field's type, `valid()` says whether every field typed in reads,
