@@ -52,6 +52,9 @@ struct effect_starter {
   // them.
   void const *props = nullptr;
   async::detail::type_id props_type = nullptr;
+  // Before the first view of a component made, or a context: nothing starts, and each effect whose first run will
+  // start says its target is loading, as React's useState(true).
+  bool first = false;
 
   void operator()(async::task<> work) const { start(owner, std::move(work)); }
 };

@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/ui/detail/instance.hpp>
+#include <quoll/ui/detail/run_effects.hpp>
 
 #include <stdexcept>
 #include <utility>
@@ -67,6 +68,8 @@ instance::instance(component_table const &table, std::shared_ptr<void const> pro
   // Counted from the start, its first view and what made it included, so that a change there views it again; its
   // app hears of changes once it shows.
   table_->link(component_.get(), {this, &instance::changed_in});
+  // Made, its first view next: the targets of the effects whose first run will start say they are loading.
+  first_effects(table_->effects, component_.get(), props_.get());
 }
 
 void instance::tried(std::shared_ptr<void const> props) noexcept {

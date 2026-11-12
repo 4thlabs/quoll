@@ -58,17 +58,29 @@ void effect::after_view(detail::effect_starter const &start) {
   }
 
   auto const *const props = start.props;
+  bool const wrong_props =
+      props_type_ != async::detail::type_id{} && (props_type_ != start.props_type || props == nullptr);
+
+  // Before the first view: loading if its first run will start, which wrong props, refused at that view, do not.
+  if (start.first) {
+    if (!wrong_props && watch_(watching::peek, props)->holds) {
+      target_.begin();
+    }
+
+    return;
+  }
+
+  // On the props of another component, or a field of a base of them, or of an app's own component, which has none: a
+  // mistake of the program, refused at its first view, to the app's on_error whatever its target holds, which was not
+  // loading; then waiting for reload(), as its type tells no more.
+  if (wrong_props) {
+    failed_ = true;
+    throw std::logic_error{"quoll::ui::effect: it depends on a field of props its component does not have"};
+  }
 
   // One way out for what fails, whatever it is, comparing or copying its states, or starting: a view in which they
   // changed, or may have, stops the run before, which would give what the values before ask for.
   try {
-    // On the props of another component, or a field of a base of them, or of an app's own component, which has none:
-    // refused at its first view, its target, loading from the start, told, then waiting for reload(), as its type
-    // tells no more.
-    if (props_type_ != async::detail::type_id{} && (props_type_ != start.props_type || props == nullptr)) {
-      throw std::logic_error{"quoll::ui::effect: it depends on a field of props its component does not have"};
-    }
-
     auto const now = *watch_(watching::record, props);
 
     if (!now.differs) {

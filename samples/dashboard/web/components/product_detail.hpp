@@ -44,7 +44,6 @@
 #include "field.hpp"
 #include "product.hpp"
 
-#include <quoll/async/task.hpp>
 #include <quoll/ui.hpp>
 
 #include <charconv>
@@ -54,7 +53,6 @@
 #include <exception>
 #include <format>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -62,8 +60,6 @@
 namespace dashboard_web {
 
 using namespace quoll::ui;
-
-using quoll::async::task;
 
 // The number `text` holds whole, or nothing: from_chars reads "inf" and "nan" too, which JSON cannot hold.
 template <class T>
@@ -98,21 +94,16 @@ struct product_detail {
   state<std::optional<std::string>> stock;
   shared<catalog> products;
 
-  // The changes typed, or why they cannot be sent.
-  [[nodiscard]] products::product_update changes(products::product const &item) const {
+  // The changes typed, or none while the price or the stock is not a number.
+  [[nodiscard]] std::optional<products::product_update> changes(products::product const &item) const {
     auto const new_price = number_in<double>(price->value_or(std::format("{}", item.price)));
     auto const new_stock = number_in<int>(stock->value_or(std::to_string(item.stock)));
 
     if (!new_price || !new_stock) {
-      throw std::invalid_argument{"the price and the stock are numbers"};
+      return std::nullopt;
     }
 
-    return {.name = name->value_or(item.name), .price = *new_price, .stock = *new_stock};
-  }
-
-  // Sent through the catalog: a detail left stops waiting for it, and it goes on.
-  task<products::product> save(products::product item) {
-    co_return co_await products.run(&catalog::save, item.id, changes(item));
+    return products::product_update{.name = name->value_or(item.name), .price = *new_price, .stock = *new_stock};
   }
 
   // Saved, the product given next holds what was sent: the fields that hold it show it again, and those changed while
@@ -133,19 +124,27 @@ struct product_detail {
   }
 
   // Whether a save is on its way, and why the last one failed: once at a time, a click while one is on its way refused.
+  // The save is the catalog's: a detail left stops waiting for it, and it goes on.
   async_state<products::product> saving;
-  action<&product_detail::save> save_product{this, saving, [this](auto const &saved) { forget_saved(saved); }};
+  action<&catalog::save> save{products, saving, [this](products::product const &saved) { forget_saved(saved); }};
 
   element view(props const &given) {
     auto const edit = [](state<std::optional<std::string>> &typed) {
       return [&typed](std::string value) { typed = std::optional<std::string>{std::move(value)}; };
     };
 
+    auto const update = changes(given.item);
+
+    auto const not_numbers = [] { return error_text("The price and the stock are numbers"); };
     auto const save_failed = [this] { return error_text("Not saved: " + told(saving->error, "the save failed")); };
 
-    // The fields stay open while a save is on its way: what is typed meanwhile is kept for the next.
-    auto const save_button = saving->loading ? button("Saving…") | attribute("disabled", "")
-                                             : button("Save") | on_click(save_product.with(given.item));
+    // The fields stay open while a save is on its way: what is typed meanwhile is kept for the next. A click sends the
+    // update, none while the fields are wrong; one while a save is on its way the action refuses.
+    auto save_button = button(saving->loading ? "Saving…" : "Save") | disabled(saving->loading || !update);
+
+    if (update) {
+      save_button = std::move(save_button) | on_click(save.with(given.item.id, *update));
+    }
 
     auto const form = section({
         h2(given.item.name) | tw("text-2xl font-semibold"),
@@ -160,7 +159,9 @@ struct product_detail {
             .value = stock->value_or(std::to_string(given.item.stock)),
             .on_change = edit(stock),
         }),
-        when(saving->error != nullptr, save_failed),
+        // What is typed wrong first: the last save's failure is of what was sent then.
+        when(!update, not_numbers),
+        when(update && saving->error != nullptr, save_failed),
         save_button | tw("btn btn-primary self-start"),
     });
 

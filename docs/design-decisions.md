@@ -260,7 +260,7 @@ page, as the trial screen of step 6 first did: three rounds of review kept findi
 hand.
 
 Less to write, as a load and a save are most of a screen: an `async_state<T>` names its `value`, `loading` and
-`error`, an effect's target is loading from the start, as React's `useState(true)`, and `action<&function>` takes its
+`error`, an effect's target is loading from the start, as React's `useState(true)`, when its first run will start, and `action<&function>` takes its
 signature from the function, a free one, a context's or the component's own, with `with(args...)` for a click and
 what follows a success given as it is made, as React Query's `onSuccess`. New names for the states, as `loaded<T>`,
 were set aside: a state stays a `state`.

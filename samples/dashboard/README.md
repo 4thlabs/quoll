@@ -27,10 +27,10 @@ dashboard/
 | `web/components/products_layout.hpp` | the layout of `/products`: the heading, the list, and the page of the address in its `outlet()` |
 | `web/components/product_page.hpp` | the page of `/products/{id}`: the product the catalog holds, or why it is not shown |
 | `web/components/product_view.hpp` | a product's detail, and its sales, loaded by an `effect` on its `id` prop into an `async_state`: the sales, whether they are loading and why they failed |
-| `web/components/catalog.hpp` | the products, a context the layout, the list, the product's page and its detail share: loaded by an `effect` on no state, saved by `save`, which `run()` calls from the detail |
+| `web/components/catalog.hpp` | the products, a context the layout, the list, the product's page and its detail share: loaded by an `effect` on no state, saved by `save`, which the detail's `action` runs |
 | `web/components/product_list.hpp` | the filter, a state of its own, and the rows of the catalog's products it matches |
 | `web/components/product_row.hpp` | one product, a `link_to` its page |
-| `web/components/product_detail.hpp` | the fields of the product shown, what is typed kept until saved, and kept when typed while a save is on its way; its save, an `action` of its own member, which checks what is typed and runs the catalog's save, writing into an `async_state`, then forgetting the fields that hold what was saved |
+| `web/components/product_detail.hpp` | the fields of the product shown, what is typed kept until saved, and kept when typed while a save is on its way; what is typed checked as it is typed; its save, an `action` of the catalog's save, writing into an `async_state`, then forgetting the fields that hold what was saved |
 | `web/components/field.hpp` | a labelled input showing a value it is given, with an `on_change` callback |
 | `web/components/sales_chart.hpp`, `.cpp` | the `line_chart` widget, and the month of the point clicked; its view in a source of its own, as the widget's JSON goes through Glaze |
 | `web/widgets/line_chart.js` | the widget's module: `mount`, `update` and `unmount` over chart.js, a click emitting `point_selected` |

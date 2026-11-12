@@ -96,6 +96,7 @@ public:
     core_.component_made();
 
     detail::link_states(component_, {&core_, &detail::app_core::state_changed});
+    detail::first_effects(detail::effects_of<C>(), &component_, nullptr);
 
 #if defined(QUOLL_UI_HOT)
     detail::hot_subscribe(&core_, &detail::app_core::reloaded);

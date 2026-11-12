@@ -76,6 +76,15 @@ void run_effects(C &component, effect_starter const &start) {
   }
 }
 
+// Before the first view of a component, or a context, just made, `props` its props or none: the targets of its effects
+// whose first run will start say they are loading. Nothing starts, and nothing throws.
+inline void first_effects(void (*effects)(void *, effect_starter const &), void *component,
+                          void const *props) noexcept {
+  if (effects != nullptr) {
+    effects(component, effect_starter{.props = props, .first = true});
+  }
+}
+
 // What a table holds to start the effects of `C`: none for a component that has none.
 template <class C>
 [[nodiscard]] constexpr auto effects_of() noexcept -> void (*)(void *, effect_starter const &) {

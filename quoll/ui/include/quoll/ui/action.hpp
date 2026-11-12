@@ -81,28 +81,25 @@ struct action_function {
   static constexpr bool writes_arguments = false;
 };
 
-template <class R, class... Args>
-struct action_function<async::task<R> (*)(Args...)> {
+// What a free function and a member function share: the parameters as values, and whether one is written back.
+template <class R, class Owner, class... Args>
+struct function_parts {
   using result = R;
   using arguments = std::tuple<std::decay_t<Args>...>;
-  using owner = void;
+  using owner = Owner;
   static constexpr bool valid = true;
   static constexpr bool writes_arguments =
       (... || (std::is_lvalue_reference_v<Args> && !std::is_const_v<std::remove_reference_t<Args>>));
 };
+
+template <class R, class... Args>
+struct action_function<async::task<R> (*)(Args...)> : function_parts<R, void, Args...> {};
 
 template <class R, class... Args>
 struct action_function<async::task<R> (*)(Args...) noexcept> : action_function<async::task<R> (*)(Args...)> {};
 
 template <class R, class C, class... Args>
-struct action_function<async::task<R> (C::*)(Args...)> {
-  using result = R;
-  using arguments = std::tuple<std::decay_t<Args>...>;
-  using owner = C;
-  static constexpr bool valid = true;
-  static constexpr bool writes_arguments =
-      (... || (std::is_lvalue_reference_v<Args> && !std::is_const_v<std::remove_reference_t<Args>>));
-};
+struct action_function<async::task<R> (C::*)(Args...)> : function_parts<R, C, Args...> {};
 
 template <class R, class C, class... Args>
 struct action_function<async::task<R> (C::*)(Args...) const> : action_function<async::task<R> (C::*)(Args...)> {};
@@ -146,6 +143,9 @@ public:
    * follows a success, and a failure its target has no place for to the app's on_error.
    */
   [[nodiscard]] auto with(Ts... args) QUOLL_LIFETIMEBOUND {
+    static_assert((std::copy_constructible<Ts> && ...),
+                  "quoll::ui::action: with() copies its arguments for each click: they are copyable");
+
     // Not a coroutine: each call copies the arguments into the frame of its own run, which outlives this lambda.
     return [action = &self(), given = std::tuple<Ts...>{std::move(args)...}] {
       return action->run_with(given, detail::untold::thrown);
@@ -171,11 +171,8 @@ private:
  *   action<&products_client::update> save{saving, [this](products::product const &) { name = std::nullopt; }};
  *
  *   element view(props const &given) {
- *     if (saving->loading) {
- *       return button("Saving…") | attribute("disabled", "");
- *     }
- *
- *     return button("Save") | on_click(save.with(given.item.id, changes()));
+ *     return button(saving->loading ? "Saving…" : "Save") | disabled(saving->loading) |
+ *            on_click(save.with(given.item.id, changes()));
  *   }
  * };
  * @endcode

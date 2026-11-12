@@ -136,6 +136,18 @@ template <std::integral T>
   });
 }
 
+/**
+ * @brief The boolean attribute `disabled`, set while `condition` holds, as a button that waits or a field locked: a
+ * view without it, made again as a state changes, has it no more. A false condition leaves the element as it is.
+ */
+[[nodiscard]] inline auto disabled(bool condition) {
+  return decorator([condition](element &target) {
+    if (condition) {
+      target.attributes.insert_or_assign("disabled", "");
+    }
+  });
+}
+
 namespace detail {
 
 // What an event runs, from what the application gave: with the node's value or without, awaited or plain. The value

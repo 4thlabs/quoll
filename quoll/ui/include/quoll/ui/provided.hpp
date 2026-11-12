@@ -104,6 +104,11 @@ public:
 
   /** @brief For the app, after each view of its component: the effects of the context whose states changed start. */
   void after_view(detail::effect_starter const &start) {
+    // Its context said, as it was made, what its effects' targets are before their first view.
+    if (start.first) {
+      return;
+    }
+
     if (auto const effects = entry_->table().effects; effects != nullptr) {
       auto own = start;
 
