@@ -34,16 +34,22 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui::action: its arguments are copied into the run, and its result kept: none can be a reference or a
-// view
-//
-// An action taking a reference: the run, which outlives the call that made it, would read what the caller held.
+// expect: quoll::ui::action: its function is given copies, which it cannot write back: no parameter can be a
+// reference to what is not const
 
 #include <quoll/async/task.hpp>
 #include <quoll/ui/action.hpp>
 
 #include <string>
 
-quoll::async::task<int> length(std::string const &text);
+namespace {
 
-quoll::ui::action<int(std::string const &)> const measured{length};
+// Writes into what it is given, which would be the run's own copy.
+quoll::async::task<> make_upper(std::string &name) {
+  name = "UPPER";
+  co_return;
+}
+
+} // namespace
+
+int main() { quoll::ui::action<&make_upper> const upper{}; }

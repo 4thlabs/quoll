@@ -93,17 +93,12 @@ async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::s
  * @code
  * struct sales_panel {
  *   state<std::int64_t> id;
- *   // The sales, whether they are loading, and why they did not load: loading from the start, as the first view comes
- *   // before the first run.
- *   state<std::tuple<products::monthly_sales, bool, std::exception_ptr>> sales{{{}, true, nullptr}};
+ *   // The sales, whether they are loading, and why they did not load.
+ *   async_state<products::monthly_sales> sales;
  *
  *   effect load{id, products_client::sales, sales};
  *
- *   element view() {
- *     auto const &[monthly, loading, error] = *sales;
- *
- *     return loading ? p("Loading") : component<sales_chart>({.sales = monthly});
- *   }
+ *   element view() { return sales->loading ? p("Loading") : component<sales_chart>({.sales = sales->value}); }
  * };
  * @endcode
  *
@@ -118,8 +113,10 @@ async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::s
  * The function returns a task of nothing, of a value, or of a `std::tuple` of values, as `when_all` gives several
  * loads, which go into the target, a state of the same component, declared before it: what each of its elements
  * receives goes by its type. A `bool` is whether a run is under way, a `std::exception_ptr` why the last failed, and
- * the others the values, in order. A target holding no tuple holds one of these. As a run starts, its target is loading
- * and has no error, the values before kept; as it ends, the target holds all it gave at once, or its failure, the
+ * the others the values, in order; an `async_state` names them `loading`, `error` and `value`. A target holding no
+ * tuple holds one of these. The target is loading from the start, as React's `useState(true)`: the first view of its
+ * component comes before the first run. As a run starts, its target is loading and has no error, the values before
+ * kept; as it ends, the target holds all it gave at once, or its failure, the
  * values before kept. A target with no error leaves a failure to the app's on_error, as a handler's, and an effect
  * with no target runs a function that gives nothing, such as a debounced search. The values cannot be a bool or an
  * error, which the target would not tell apart from its flags.
@@ -178,6 +175,8 @@ public:
     detail::check_target<T, value, false>();
     init<value, D...>(states_reader(dependencies), std::move(function),
                       detail::target_ref<value>{target, std::false_type{}}, detail::target_roles<T>::error, nullptr);
+    // Loading from the start: its first view runs it.
+    target_.begin();
   }
 
   /**
@@ -211,6 +210,8 @@ public:
     detail::check_target<T, value, false>();
     init<value, D>(props_reader(member), std::move(function), detail::target_ref<value>{target, std::false_type{}},
                    detail::target_roles<T>::error, async::detail::type_id_of<P>());
+    // Loading from the start: its first view runs it.
+    target_.begin();
   }
 
   effect(effect const &) = delete;

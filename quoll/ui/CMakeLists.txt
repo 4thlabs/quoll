@@ -51,8 +51,9 @@ quoll_declare_tests(
 # What a component must be, with the message the user gets.
 quoll_declare_compile_fail_tests(
   SOURCES
+    tests/compile_fail/action_mutable_reference_argument.cpp
+    tests/compile_fail/action_not_a_task_function.cpp
     tests/compile_fail/action_optional_view_argument.cpp
-    tests/compile_fail/action_reference_argument.cpp
     tests/compile_fail/action_throwing_move.cpp
     tests/compile_fail/callback_optional_view_argument.cpp
     tests/compile_fail/callback_optional_view_result.cpp

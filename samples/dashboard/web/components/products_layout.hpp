@@ -47,7 +47,6 @@
 
 #include <cstdint>
 #include <optional>
-#include <tuple>
 
 namespace dashboard_web {
 
@@ -64,7 +63,7 @@ struct products_layout {
   shared<catalog> products;
 
   element view(props const &given) {
-    auto const &problem = std::get<2>(*products->items);
+    auto const &problem = products->items->error;
 
     auto const alert = [&problem] {
       return p(told(problem, "the products did not load")) | tw("alert alert-error") | attribute("role", "alert");

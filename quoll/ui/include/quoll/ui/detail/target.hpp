@@ -37,6 +37,7 @@
 #ifndef QUOLL_UI_DETAIL_TARGET_HPP
 #define QUOLL_UI_DETAIL_TARGET_HPP
 
+#include <quoll/ui/async_state.hpp>
 #include <quoll/ui/detail/callback_traits.hpp>
 #include <quoll/ui/state.hpp>
 
@@ -71,6 +72,23 @@ template <class... E>
 struct elements_of<std::tuple<E...>> {
   using type = std::tuple<E...>;
 };
+
+// An async_state's: its value, whether a run is under way, and why the last failed, by name.
+template <class V>
+struct elements_of<async_value<V>> {
+  using type = std::tuple<V, bool, std::exception_ptr>;
+};
+
+template <>
+struct elements_of<async_value<>> {
+  using type = std::tuple<bool, std::exception_ptr>;
+};
+
+template <class T>
+inline constexpr bool is_async_value = false;
+
+template <class V>
+inline constexpr bool is_async_value<async_value<V>> = true;
 
 // The values a run's result gives: none for void, a tuple's, or the result alone.
 template <class R>
@@ -145,11 +163,13 @@ struct target_roles {
   // Its values alone, in order.
   using values_type = typename value_elements<elements, in, std::make_index_sequence<values>>::type;
 
-  // An element of `value`: of the tuple, or the value itself.
+  // An element of `value`: of the tuple, a field of an async_value, or the value itself.
   template <std::size_t Index, class U>
     requires std::same_as<std::remove_const_t<U>, T>
   [[nodiscard]] static constexpr auto &element(U &value) noexcept {
-    if constexpr (tuple) {
+    if constexpr (is_async_value<T>) {
+      return std::get<Index>(fields_of(value));
+    } else if constexpr (tuple) {
       return std::get<Index>(value);
     } else {
       return value;

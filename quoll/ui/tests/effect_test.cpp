@@ -44,6 +44,7 @@
 #include <quoll/test/ui_session.hpp>
 #include <quoll/test/virtual_time.hpp>
 #include <quoll/ui.hpp>
+#include <quoll/ui/async_state.hpp>
 #include <quoll/ui/detail/effect_starter.hpp>
 #include <quoll/ui/effect.hpp>
 
@@ -341,7 +342,12 @@ struct stray_panel {
   state<text_target> text;
   effect load{&keyed_panel::props::key, load_text, text};
 
-  element view(props const &) { return p("stray"); }
+  // Loading from the start, then why it was refused.
+  element view(props const &) {
+    auto const &[value, loading, error] = *text;
+
+    return p(loading ? "loading" : error ? what_of(error) : "stray");
+  }
 };
 
 struct stray_page {
@@ -1129,7 +1135,8 @@ TEST_CASE("effect: on a field of its props, runs as that field changes, as useEf
   CHECK(loads.lines == std::vector<std::string>{"start 1", "end 1", "start 2", "end 2"});
 }
 
-TEST_CASE("effect: on a field of the props of another component is refused once, at its first view", "[ui][effect]") {
+TEST_CASE("effect: on a field of the props of another component is refused once, at its first view, in its target",
+          "[ui][effect]") {
   loads = {};
 
   virtual_time time;
@@ -1147,12 +1154,13 @@ TEST_CASE("effect: on a field of the props of another component is refused once,
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(failures ==
-        std::vector<std::string>{"quoll::ui::effect: it depends on a field of props its component does not have"});
+  CHECK(failures.empty());
+  CHECK(shown.html().contains("<p>quoll::ui::effect: it depends on a field of props its component does not have</p>"));
   CHECK(loads.lines.empty());
 }
 
-TEST_CASE("effect: on a field of the props of an app's own component, which has none, is refused", "[ui][effect]") {
+TEST_CASE("effect: on a field of the props of an app's own component, which has none, is refused in its target",
+          "[ui][effect]") {
   loads = {};
 
   virtual_time time;
@@ -1165,6 +1173,42 @@ TEST_CASE("effect: on a field of the props of an app's own component, which has 
   auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(failures.size() == 1);
+  CHECK(failures.empty());
+  CHECK_FALSE(std::get<1>(*instance.component().text));
+  CHECK(what_of(std::get<2>(*instance.component().text)) ==
+        "quoll::ui::effect: it depends on a field of props its component does not have");
   CHECK(loads.lines.empty());
+}
+
+namespace {
+
+// Its text in an async_state, which its first view, before the first run, reads as loading.
+struct async_text_page {
+  state<int> key{1};
+  async_state<std::string> text;
+  effect load{std::tie(key), load_text, text};
+  std::vector<std::string> views;
+
+  element view() {
+    views.push_back(text->loading ? "loading" : text->value);
+    return p(text->value);
+  }
+};
+
+} // namespace
+
+TEST_CASE("effect: its target is loading from the start, and holds what the run gave in an async_state",
+          "[ui][effect]") {
+  loads = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<async_text_page> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(instance.component().views == std::vector<std::string>{"loading", "text 1"});
+  CHECK(instance.component().text->error == nullptr);
+  CHECK(shown.html().contains("<p>text 1</p>"));
 }

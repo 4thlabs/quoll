@@ -49,8 +49,6 @@
 #include <quoll/ui.hpp>
 
 #include <cstdint>
-#include <exception>
-#include <tuple>
 
 namespace dashboard_web {
 
@@ -66,32 +64,29 @@ struct product_view {
     [[nodiscard]] bool operator==(props const &) const = default;
   };
 
-  // Its sales, whether they are loading, and why they did not load: loading from the start, as its first view comes
-  // before its first load.
-  state<std::tuple<products::monthly_sales, bool, std::exception_ptr>> sales{{{}, true, nullptr}};
+  // Its sales, whether they are loading, and why they did not load: loading from the start, its first load due.
+  async_state<products::monthly_sales> sales;
   effect load_sales{&props::id, products_client::sales, sales};
 
   // Loading, or why they did not load and a way to try again, or their chart.
   [[nodiscard]] element sales_shown() {
-    auto const &[monthly, loading, failure] = *sales;
-
-    if (loading) {
+    if (sales->loading) {
       return p("Loading its sales") | tw("opacity-70");
     }
 
-    if (failure) {
+    if (sales->error) {
       // As React runs an effect again: the product does not change.
       auto const retry = [this] { load_sales.reload(); };
 
       auto const failed = div({
-          error_text(told(failure, "the sales did not load")),
+          error_text(told(sales->error, "the sales did not load")),
           button("Try again") | tw("btn btn-sm self-start") | on_click(retry),
       });
 
       return failed | tw("flex flex-col gap-2");
     }
 
-    return component<sales_chart>({.sales = monthly});
+    return component<sales_chart>({.sales = sales->value});
   }
 
   element view(props const &given) {

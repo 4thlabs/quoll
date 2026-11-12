@@ -47,7 +47,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <tuple>
 
 namespace dashboard_web {
 
@@ -64,16 +63,16 @@ struct product_page {
   shared<catalog> products;
 
   element view(props const &given) {
-    auto const &[all, loading, failure] = *products->items;
-    auto const found = std::ranges::find(all, given.id, &products::product::id);
+    auto const &items = *products->items;
+    auto const found = std::ranges::find(items.value, given.id, &products::product::id);
 
     // The layout tells why the products did not load.
-    if (failure) {
+    if (items.error) {
       return div({});
     }
 
-    if (found == all.end()) {
-      return p(loading ? "Loading the product" : "No such product") | tw("opacity-70");
+    if (found == items.value.end()) {
+      return p(items.loading ? "Loading the product" : "No such product") | tw("opacity-70");
     }
 
     // Keyed by the product: another one is another view, with nothing typed and its own sales; a save on its way goes

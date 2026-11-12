@@ -259,11 +259,17 @@ home-made resource with a key and a loader, which the maintainer found less clea
 page, as the trial screen of step 6 first did: three rounds of review kept finding the same bugs in counters kept by
 hand.
 
-**For you.** Declare the target state, then the effect or the action that writes into it. Set the states an effect
-depends on, or call `reload()`, and its run follows. Await `run()` from a task of the component, a handler or
-`mounted()`: a call refused, or a run a later one took the place of, gives `run_refused` or `run_replaced`, and its
-caller goes on. A component that goes stops its runs; a save that must go on runs a callback of the component that
-owns what it changes, whose work goes on.
+Less to write, as a load and a save are most of a screen: an `async_state<T>` names its `value`, `loading` and
+`error`, an effect's target is loading from the start, as React's `useState(true)`, and `action<&function>` takes its
+signature from the function, a free one, a context's or the component's own, with `with(args...)` for a click and
+what follows a success given as it is made, as React Query's `onSuccess`. New names for the states, as `loaded<T>`,
+were set aside: a state stays a `state`.
+
+**For you.** Declare an `async_state`, then the effect or the action that writes into it. Set the states an effect
+depends on, or call `reload()`, and its run follows. Give `save.with(args...)` to `on_click`, or await `run()` from a
+task of the component, a handler or `mounted()`: a call refused, or a run a later one took the place of, gives
+`run_refused` or `run_replaced`, and its caller goes on. A component that goes stops its runs; a save that must go on
+is a member function of a context, which the action runs, whose work goes on.
 
 ### Contexts given to the app, found by type
 

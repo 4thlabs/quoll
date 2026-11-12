@@ -36,10 +36,23 @@
 
 #include <quoll/ui/detail/run_slot.hpp>
 
+#include <exception>
 #include <stop_token>
 #include <utility>
 
 namespace quoll::ui::detail {
+
+bool gave_no_result(std::exception_ptr const &failure) noexcept {
+  try {
+    std::rethrow_exception(failure);
+  } catch (run_refused const &) {
+    return true;
+  } catch (run_replaced const &) {
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
 
 std::stop_token ask(run_slot &slot) {
   // Made first: one that cannot be made, as for a lack of memory, leaves the run before as it was.

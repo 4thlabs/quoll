@@ -325,12 +325,12 @@ TEST_CASE("dashboard web: the detail saves what is typed, and refuses a price th
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(refused.contains("The price and the stock are numbers"));
-  CHECK(infinite.contains("The price and the stock are numbers"));
+  CHECK(refused.contains("Not saved: the price and the stock are numbers"));
+  CHECK(infinite.contains("Not saved: the price and the stock are numbers"));
   CHECK(server.items[2] ==
         products::product{.id = 3, .name = "Grinder", .category = "Gear", .price = 45.5, .stock = 7});
-  CHECK(std::get<0>(*instance.context<dashboard_web::catalog>().items).at(2) == server.items[2]);
-  CHECK(std::get<2>(*instance.context<dashboard_web::catalog>().items) == nullptr);
+  CHECK(instance.context<dashboard_web::catalog>().items->value.at(2) == server.items[2]);
+  CHECK(instance.context<dashboard_web::catalog>().items->error == nullptr);
 }
 
 TEST_CASE("dashboard web: a change the server refuses shows why, and stays typed for the next save",
@@ -364,7 +364,7 @@ TEST_CASE("dashboard web: a change the server refuses shows why, and stays typed
   CHECK(refused.contains("role=\"alert\""));
   CHECK(refused.contains("the server is gone"));
   CHECK(server.items[1].name == "Sencha");
-  CHECK(std::get<2>(*instance.context<dashboard_web::catalog>().items) == nullptr);
+  CHECK(instance.context<dashboard_web::catalog>().items->error == nullptr);
 }
 
 TEST_CASE("dashboard web: the sales of a product chosen before are not shown once another is", "[samples][dashboard]") {
@@ -613,7 +613,7 @@ TEST_CASE("dashboard web: a product saves once at a time, a click while it is on
   CHECK(sent_meanwhile == 1);
   CHECK(server.updates == 2);
   CHECK(server.items[2].price == 46);
-  CHECK(std::get<0>(*instance.context<dashboard_web::catalog>().items).at(2).price == 46);
+  CHECK(instance.context<dashboard_web::catalog>().items->value.at(2).price == 46);
   CHECK_FALSE(shown.html().contains("Not saved"));
 }
 
@@ -642,7 +642,7 @@ TEST_CASE("dashboard web: a save goes on once its detail is left, and the list s
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(server.updates == 1);
   CHECK(server.items[2].price == 45.5);
-  CHECK(std::get<0>(*instance.context<dashboard_web::catalog>().items).at(2).price == 45.5);
+  CHECK(instance.context<dashboard_web::catalog>().items->value.at(2).price == 45.5);
 }
 
 TEST_CASE("dashboard web: a save ending on what is no std::exception is over, and says it failed",
