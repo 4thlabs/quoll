@@ -46,8 +46,7 @@
 
 namespace dashboard_web {
 
-using quoll::ui::callback;
-using quoll::ui::element;
+using namespace quoll::ui;
 
 struct field {
   struct props {
@@ -59,8 +58,6 @@ struct field {
   };
 
   element view(props const &given) {
-    using namespace quoll::ui;
-
     // bind() holds a state<std::string>: a value given as a prop goes in through a decorator of its own.
     auto const shows = decorator([&given](element &target) { target.value = given.value; });
 

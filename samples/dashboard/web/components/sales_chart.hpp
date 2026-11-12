@@ -51,6 +51,8 @@
 
 namespace dashboard_web {
 
+using namespace quoll::ui;
+
 struct sales_chart {
   struct props {
     products::monthly_sales sales;
@@ -58,9 +60,9 @@ struct sales_chart {
     [[nodiscard]] bool operator==(props const &) const = default;
   };
 
-  quoll::ui::state<std::optional<std::size_t>> selected;
+  state<std::optional<std::size_t>> selected;
 
-  quoll::ui::element view(props const &given);
+  element view(props const &given);
 };
 
 } // namespace dashboard_web

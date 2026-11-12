@@ -108,8 +108,14 @@ public:
 private:
   static void changed(void *self, std::string_view href);
 
-  // Sets the location to `href`, following redirects, which replace it in the history.
+  // Sets the location to `href`, the history gave, following redirects, which replace it in the history.
   void arrive(std::string_view href);
+
+  // Where `href` ends, its redirects followed, in the one form an address has.
+  [[nodiscard]] location resolved(std::string_view href) const;
+
+  // Sets the location, which shows it again unless it is the same.
+  void set_location(location where);
 
   std::span<route_entry const> routes_{};
   std::unique_ptr<memory_history> owned_{};
@@ -138,8 +144,9 @@ private:
  * };
  * @endcode
  *
- * Made by routing() in an app's options. Going elsewhere pushes the address onto the history, which its back button
- * goes back through; a component reading `where` shows again as it changes.
+ * Made by routing() in an app's options. Going elsewhere pushes the address onto the history, but for the address
+ * shown, or one that redirects to it, which takes its place, as a browser's link to the page it shows does; its back
+ * button goes back through; a component reading `where` shows again as it changes.
  */
 struct router {
   /** @brief The location now. */
@@ -147,7 +154,7 @@ struct router {
   /** @brief For Quoll. */
   detail::router_core core;
 
-  /** @brief Goes to `href`, an address of the app, as a link to it does. */
+  /** @brief Goes to `href`, an address of the app, as a link to it does: pushed, unless it is the one shown. */
   void go(std::string_view href) { core.go(href, false); }
 
   /** @brief Goes to the page `Page` for `props`, by its first route. */

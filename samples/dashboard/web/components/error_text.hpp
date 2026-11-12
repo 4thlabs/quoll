@@ -47,6 +47,8 @@
 
 namespace dashboard_web {
 
+using namespace quoll::ui;
+
 // What a failure says, or `otherwise` when it says nothing, so that it still shows.
 [[nodiscard]] inline std::string told(std::exception const &failure, std::string_view otherwise) {
   char const *const said = failure.what();
@@ -69,9 +71,7 @@ namespace dashboard_web {
   }
 }
 
-[[nodiscard]] inline quoll::ui::element error_text(std::string_view text) {
-  using namespace quoll::ui;
-
+[[nodiscard]] inline element error_text(std::string_view text) {
   return p(text) | tw("text-sm text-error") | attribute("role", "alert");
 }
 

@@ -47,8 +47,7 @@
 
 namespace dashboard_web {
 
-using quoll::ui::element;
-using quoll::ui::widget;
+using namespace quoll::ui;
 
 // What the chart emits as a point is clicked. Outside an unnamed namespace, where Glaze cannot reflect a type under
 // Clang.
@@ -64,8 +63,6 @@ constexpr auto line_chart = widget<products::monthly_sales>("../widgets/line_cha
 } // namespace
 
 element sales_chart::view(props const &given) {
-  using namespace quoll::ui;
-
   // Sales come from the server, as months and units: only the months that have both are points of this chart.
   auto const points = std::min(given.sales.months.size(), given.sales.units.size());
 

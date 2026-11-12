@@ -34,12 +34,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// One product of the list, which tells the page it was chosen.
+// One product of the list: a link to its page.
 
 #ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_ROW_HPP
 #define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_ROW_HPP
 
 #include "product.hpp"
+#include "product_page.hpp"
 
 #include <quoll/ui.hpp>
 
@@ -48,35 +49,30 @@
 
 namespace dashboard_web {
 
-using quoll::ui::callback;
-using quoll::ui::element;
+using namespace quoll::ui;
 
 struct product_row {
   struct props {
     products::product item;
     bool selected = false;
-    callback<void(std::int64_t)> on_select;
 
     // A row whose product and selection are unchanged is not viewed again.
     [[nodiscard]] bool operator==(props const &) const = default;
   };
 
   element view(props const &given) {
-    using namespace quoll::ui;
-
-    auto const select = [&given] { return given.on_select(given.item.id); };
-
     auto const stock =
         given.item.stock == 0 ? std::string{"out of stock"} : std::to_string(given.item.stock) + " in stock";
 
-    auto const row = button({
-        span(given.item.name) | tw("flex-1 text-left font-medium"),
-        span(given.item.category) | tw("badge badge-ghost"),
-        span(stock) | tw("whitespace-nowrap text-right text-sm opacity-70"),
-    });
+    auto const name = span(given.item.name) | tw("flex-1 text-left font-medium");
+    auto const category = span(given.item.category) | tw("badge badge-ghost");
+    auto const in_stock = span(stock) | tw("whitespace-nowrap text-right text-sm opacity-70");
+
+    // A link to its page: the address follows, and the back button comes back.
+    auto const row = link_to<product_page>({.id = given.item.id}, {name, category, in_stock});
 
     auto const shown = row | tw("flex w-full items-center gap-3 rounded-box px-4 py-2 hover:bg-base-200") |
-                       tw_if(given.selected, "bg-base-200") | on_click(select);
+                       tw_if(given.selected, "bg-base-200");
 
     return li({shown});
   }

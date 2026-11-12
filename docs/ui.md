@@ -514,9 +514,10 @@ int main() {
 - an address has one form, as a browser keeps it: rooted, its `.` and `..` segments resolved, no last '/' but for
   `/`; what goes onto the history and what is matched are both of it, and a route's path, a redirect's too, is
   written in it, which a path ending with '/' is not;
-- `routing<routes>(history)` is a context of the app, `shared<router>` in a component: `go(href)` and
-  `go<Page>(props)` push an address onto the history, `replace(href)` takes the place of the one now, `back()` goes
-  back, `href<Page>(props)` writes one, and `where` is the location, a state;
+- `routing<routes>(history)` is a context of the app, `shared<router>` in a component. `go(href)` and
+  `go<Page>(props)` push an address onto the history; going to the address shown, or to one that redirects there,
+  takes its place instead, as a browser's link to the page it shows does. `replace(href)` takes the place of the one
+  now, `back()` goes back, `href<Page>(props)` writes one, and `where` is the location, a state;
 - `link_to<Page>(props, text)` and `link_to(href, text)` are links, `<a href>` that a click follows without leaving
   the page; a click with a key held, or another button, opens elsewhere, as the browser does;
 - the history is the browser's, `quoll::emscripten::browser_history()`, whose back button the router follows, or one

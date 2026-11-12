@@ -57,10 +57,7 @@
 
 namespace dashboard_web {
 
-using quoll::ui::callback;
-using quoll::ui::element;
-using quoll::ui::shared;
-using quoll::ui::state;
+using namespace quoll::ui;
 
 // Whether `text` holds `part`, whatever the case of their ASCII letters.
 [[nodiscard]] inline bool holds(std::string_view text, std::string_view part) {
@@ -73,8 +70,8 @@ using quoll::ui::state;
 
 struct product_list {
   struct props {
+    // The product of the address, shown chosen.
     std::optional<std::int64_t> selected;
-    callback<void(std::int64_t)> on_select;
 
     [[nodiscard]] bool operator==(props const &) const = default;
   };
@@ -83,8 +80,6 @@ struct product_list {
   state<std::string> query;
 
   element view(props const &given) {
-    using namespace quoll::ui;
-
     auto const matches = [this](products::product const &item) {
       return holds(item.name, *query) || holds(item.category, *query);
     };
@@ -97,7 +92,6 @@ struct product_list {
       auto const chosen = component<product_row>({
           .item = item,
           .selected = given.selected == item.id,
-          .on_select = given.on_select,
       });
 
       return chosen | key(item.id);
