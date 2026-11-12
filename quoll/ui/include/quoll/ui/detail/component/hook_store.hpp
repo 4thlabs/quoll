@@ -38,6 +38,7 @@
 #define QUOLL_UI_DETAIL_COMPONENT_HOOK_STORE_HPP
 
 #include <quoll/async/detail/type_id.hpp>
+#include <quoll/ui/detail/component/committed_hook.hpp>
 #include <quoll/ui/detail/component/held_component.hpp>
 #include <quoll/ui/detail/context/context_entry.hpp>
 #include <quoll/ui/detail/context/context_member.hpp>
@@ -62,10 +63,13 @@ struct hook_ops {
   void (*link)(void *hook, state_link to) noexcept = nullptr;
   void (*after_view)(void *hook, effect_starter const &start) = nullptr;
   void (*mark)(void *hook) noexcept = nullptr;
+  // Its component's view showed: what it saw of a context is kept, or what that view wrote takes effect.
   void (*commit)(void *hook) noexcept = nullptr;
   bool (*changed)(void const *hook) noexcept = nullptr;
   // The context it provides to the components of its view, of type `type`, none for another.
   context_entry *(*provides)(void *hook, async::detail::type_id type) noexcept = nullptr;
+  // A view of its component starts: what one before it wrote and did not show goes.
+  void (*unwritten)(void *hook) noexcept = nullptr;
 };
 
 // The entries of hook_ops for a hook of type H: functions rather than lambdas in a variable template, which GCC 13 may
@@ -106,7 +110,22 @@ context_entry *hook_provides(void *hook, async::detail::type_id type) noexcept {
 }
 
 template <class H>
+void hook_committed(void *hook) noexcept {
+  static_cast<H *>(hook)->committed();
+}
+
+template <class H>
+void hook_unwritten(void *hook) noexcept {
+  static_cast<H *>(hook)->unwritten();
+}
+
+template <class H>
 [[nodiscard]] consteval hook_ops make_hook_ops() {
+  static_assert(
+      !((ContextMember<H> || ProvidedMember<H>) && CommittedHook<H>),
+      "quoll::ui: a hook reads a context or holds what its view writes, not both: its one commit entry does one"
+  );
+
   hook_ops ops{.destroy = &destroy_hook<H>};
 
   if constexpr (LinkedMember<H>) {
@@ -121,6 +140,9 @@ template <class H>
     ops.mark = &mark_hook<H>;
     ops.commit = &commit_hook<H>;
     ops.changed = &hook_changed<H>;
+  } else if constexpr (CommittedHook<H>) {
+    ops.unwritten = &hook_unwritten<H>;
+    ops.commit = &hook_committed<H>;
   }
 
   if constexpr (ProvidedMember<H>) {
@@ -205,6 +227,7 @@ public:
 
   void effects(effect_starter const &start);
   void mark() noexcept;
+  // Its component's view showed: what it saw of its contexts is kept, and what the view wrote takes effect.
   void commit() noexcept;
   [[nodiscard]] bool changed() const noexcept;
   [[nodiscard]] context_entry *provides(async::detail::type_id type) const noexcept;

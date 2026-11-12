@@ -35,14 +35,22 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/ui/context/context_spec.hpp>
+#include <quoll/ui/detail/context/bind_contexts.hpp>
 #include <quoll/ui/detail/context/context_entry.hpp>
 #include <quoll/ui/detail/data/run_effects.hpp>
 
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 
 namespace quoll::ui::detail {
+
+void refuse_missing(bool (*finds)(context_finder const &), context_finder const &finder) {
+  if (finds != nullptr && !finds(finder)) {
+    throw std::logic_error{missing_context};
+  }
+}
 
 context_entry::context_entry(context_table const &table, state_link app) : context_entry(table, app, table.make()) {}
 

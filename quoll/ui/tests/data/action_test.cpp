@@ -717,6 +717,37 @@ TEST_CASE(
   CHECK(clean);
 }
 
+namespace {
+
+// What follows a success, a function object that counts what it is told: one object, whatever run tells it.
+struct counting_page {
+  int told = 0;
+  action<&doubled> run{[count = 0, this](int const &) mutable { told = ++count; }};
+
+  element view() { return button("run") | on_click(run.with(3)); }
+};
+
+} // namespace
+
+TEST_CASE("action: what follows a success is one object, told by every run", "[ui][action]") {
+  runs = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<counting_page> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.dispatch(shown.find("button"), "click");
+    co_await quoll::async::sleep_for(20ms);
+    instance.dispatch(shown.find("button"), "click");
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(instance.component().told == 2);
+}
+
 TEST_CASE("action: with() runs it from a click, what it gave held, then on_success", "[ui][action]") {
   runs = {};
 

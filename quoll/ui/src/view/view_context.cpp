@@ -64,6 +64,8 @@ call_target current_target() noexcept {
   };
 }
 
+std::shared_ptr<void const> current_props() noexcept { return current.held.props; }
+
 bool spawn_in(call_target const &target, async::task<> work) {
   auto *const core = target.app ? target.app->core : nullptr;
   auto owner = target.owner.lock();

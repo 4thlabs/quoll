@@ -205,8 +205,14 @@ props, and nothing is reflected. A struct whose `operator()` gives the view is o
 whose members list themselves as they are made, which needs no reflection but generates as much code as before; hooks
 found by the order of their calls, as React's, which a branch would shift with nothing to catch it in C++.
 
+What a view writes into its hooks, an effect's dependencies and function or what follows an action's success, takes
+effect once that view shows, with that view's props, as React's effects are those of the committed render; a run calls
+the closure shown as it is asked for. Fixing each closure that outlives the props it captured, one at a time, was set aside for
+that rule.
+
 **For you.** Write `auto &` for what a `use_` call gives, capture it by reference, and keep the calls out of loops
-whose number of turns changes.
+whose number of turns changes. A closure captures `given` and what a `use_` call gives by reference, and what the view
+computed by value.
 
 ### Components are aggregates with states
 

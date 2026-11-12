@@ -443,14 +443,17 @@ changes only what the harness shows. Candidates:
 - **Components are functions, their state their `use_` hooks** (2026-11-12), as React's function components: the
   maintainer compared a prototype of function components with one of struct components whose members list themselves,
   and chose the functions ("il y a pas photo"). A component of a state, an effect and a handler generates about 102
-  functions and 11 KB of code, against 318 and 36 KB as a struct, an effect depending on values rather than on a type
-  of props; the view reads from top to bottom; and no member is walked, so Glaze serves JSON only (#182). A hook is
-  found again by the place of its call and how many times that place was called before in the view, rather than by
-  the order of the calls, so that a branch shifts nothing; `use_state` gives a reference that cannot be copied; an
-  effect's function is the last view's, as React's. A struct with `operator()` is one too, for one who keeps a
-  component's props and helpers together. `use_context` and `provide_context` take Leptos's names; no `use_mounted`,
-  as an effect on nothing runs once and stops as the component goes. Next: the samples, the router's pages and the
-  app's own component as functions, then the struct components removed.
+  functions and 11 KB of code, against 318 and 36 KB as a struct, an effect depending on values rather than on a type of
+  props; the view reads from top to bottom; and no member is walked, so Glaze serves JSON only (#182). A hook is found
+  again by the place of its call and how many times that place was called before in the view, rather than by the order
+  of the calls, so that a branch shifts nothing; `use_state` gives a reference that cannot be copied. What a view
+  writes, an effect's dependencies and function or what follows an action's success, takes effect once that view shows,
+  and a run calls the one shown as it is asked for, with its view's props, as React's effects are the committed
+  render's: Codex then the local review found closures that outlived the props they captured, case after case, and the
+  maintainer agreed to the rule rather than a fix per closure. A struct with `operator()` is one too, for one who keeps
+  a component's props and helpers together. `use_context` and `provide_context` take Leptos's names; no `use_mounted`,
+  as an effect on nothing runs once and stops as the component goes. Next: the samples, the router's pages and the app's
+  own component as functions, then the struct components removed.
 - **A debounce is an option of the effect** (2026-11-12), as the maintainer chose over a `debounced<T>` value to
   declare beside the state, as React's `useDebounce`, and over a pause Quoll would add to any change made by typing:
   `effect search{query, f, found, {.debounce = 300ms}}`. A run that follows a change waits that long before it calls

@@ -100,12 +100,21 @@ void effect::after_view(detail::effect_starter const &start) {
     start(run_(detail::ask(slot_), props, started_));
     started_ = true;
   } catch (...) {
-    // Its failure, which its target shows, and the app's on_error hears of.
-    stop_before();
-    failed_ = true;
-    detail::tell_failure(target_, detail::failure_to::app, std::current_exception());
+    fail_start(std::current_exception());
   }
 }
+
+void effect::fail_start(std::exception_ptr const &failure) {
+  stop_before();
+  failed_ = true;
+  detail::tell_failure(target_, detail::failure_to::app, failure);
+  // tell_failure throws for failure_to::app: what follows does not run.
+  std::rethrow_exception(failure);
+}
+
+void detail::effect_access::fail(effect &run, std::exception_ptr const &failure) { run.fail_start(failure); }
+
+bool detail::effect_access::failed(effect const &run) noexcept { return run.failed_; }
 
 void effect::stop_before() noexcept {
   slot_.last.request_stop();

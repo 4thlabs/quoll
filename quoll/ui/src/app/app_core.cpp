@@ -131,9 +131,7 @@ app_core::app_core(
       throw std::logic_error{"quoll::ui::app: two contexts of one type"};
     }
 
-    if (table.finds != nullptr && !table.finds(contexts())) {
-      throw std::logic_error{missing_context};
-    }
+    refuse_missing(table.finds, contexts());
 
     auto entry = std::make_unique<context_entry>(table, state_link{this, &app_core::state_changed}, spec.make());
 
@@ -145,9 +143,7 @@ app_core::app_core(
     contexts_.push_back(std::move(entry));
   }
 
-  if (finds != nullptr && !finds(contexts())) {
-    throw std::logic_error{missing_context};
-  }
+  refuse_missing(finds, contexts());
 }
 
 context_finder app_core::contexts() const noexcept {

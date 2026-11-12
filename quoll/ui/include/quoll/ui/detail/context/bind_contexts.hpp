@@ -56,6 +56,11 @@ inline constexpr char const *missing_context =
     "quoll::ui::shared: no context of this type was found: the app was given none, or, for a context using it, none "
     "before it";
 
+// Throws std::logic_error unless `finds`, a table's, none for what uses no context, finds with `finder` what it uses:
+// checked before a component or a context is made, so that one refused is never made, and its destructor, which may
+// write to what it found, does not run.
+void refuse_missing(bool (*finds)(context_finder const &), context_finder const &finder);
+
 // What a table holds to tell, before making a `C`, whether the contexts its members use are there: none for one that
 // uses none, and true with no finder, for a view written once.
 template <class C>

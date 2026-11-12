@@ -288,11 +288,14 @@ component<product_view>({.id = 1, .item = item})
   changes, shifts the later calls of that place, as React's.
 - **Write `auto &`**: `auto x = use_state(0)` does not compile, as a copy would be unlinked. What it refers to lives as
   long as the component, so that a handler or an effect captures it by reference, as a struct's members through `this`.
-- **An effect's function is the one of the last view**, as React's, so that what it captures is never stale; its target
-  is the one of its first view. It runs after the view: it captures by reference what a `use_` call gives, and `given`,
-  the props of the view that started it, which its run keeps, but by value what the view computed, as a handler does.
-  In the component's first view, its target is loading if its first run will start; made in a later view, as in a
-  branch, as the run starts.
+- **What a view writes takes effect once it shows**, as React's effects are those of the render committed: an effect's
+  dependencies and function, and what follows an action's success; a view that throws, or whose render fails, writes
+  none. A form is the exception, as the view shows it: `use_form` takes the value its view gives as the view runs. A run
+  calls the function of the view that asked for it, whose props it keeps, and a run of an action tells what followed a
+  success when it started: a view shown during a run changes nothing of it. So a closure captures by reference what a
+  `use_` call gives, and `given`, but by value what the view computed, as a handler does. An effect's target is the one
+  of its first view; in the component's first view, it is loading if its first run will start, and made in a later view,
+  as in a branch, as the run starts.
 - **A struct whose `element operator()(props const &) const`** gives the view keeps its props and helpers together; it
   holds no member, as it is made for each view: what lasts is its hooks, and a struct with members does not compile.
 - A `use_` call outside the view of a function component throws `std::logic_error`.
