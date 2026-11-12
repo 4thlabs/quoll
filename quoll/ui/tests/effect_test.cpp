@@ -39,6 +39,7 @@
 #include <quoll/async/when_all.hpp>
 #include <quoll/async/work_item.hpp>
 #include <quoll/async/yield.hpp>
+#include <quoll/test/allocations.hpp>
 #include <quoll/test/memory_renderer.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/ui_session.hpp>
@@ -55,6 +56,7 @@
 #include <exception>
 #include <functional>
 #include <map>
+#include <new>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -1211,4 +1213,91 @@ TEST_CASE("effect: its target is loading from the start, and holds what the run 
   CHECK(instance.component().views == std::vector<std::string>{"loading", "text 1"});
   CHECK(instance.component().text->error == nullptr);
   CHECK(shown.html().contains("<p>text 1</p>"));
+}
+
+namespace {
+
+task<bool> is_ready() {
+  co_await quoll::async::sleep_for(1ms);
+  co_return true;
+}
+
+task<std::tuple<std::string, int>> name_and_count() {
+  co_await quoll::async::sleep_for(1ms);
+  co_return std::tuple<std::string, int>{"tea", 2};
+}
+
+// async_states of a bool and of a tuple, which its fields tell apart from its flags.
+struct named_fields_page {
+  async_state<bool> ready;
+  effect check{std::tie(), is_ready, ready};
+  async_state<std::tuple<std::string, int>> both;
+  effect load{std::tie(), name_and_count, both};
+
+  element view() { return p(ready->value ? "ready" : "waiting"); }
+};
+
+} // namespace
+
+TEST_CASE("effect: an async_state of a bool, or of a tuple, holds it as its value", "[ui][effect]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<named_fields_page> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(instance.component().ready->value);
+  CHECK_FALSE(instance.component().ready->loading);
+  CHECK(instance.component().both->value == std::tuple<std::string, int>{"tea", 2});
+  CHECK(shown.html().contains("<p>ready</p>"));
+}
+
+TEST_CASE("effect: a lack of memory at any step of a run leaves its async_state loading no more", "[ui][effect]") {
+  // Each allocation of its first run, and of what goes with it, in turn, fails: the target, loading from the start,
+  // ends loading no more, holding what the run gave, or why it failed, or the failure is the app's on_error's.
+  bool clean = false;
+
+  for (long before = 0; before < 200; ++before) {
+    loads = {};
+
+    virtual_time time;
+    memory_renderer const shown;
+    int told = 0;
+    test_app<async_text_page> instance{
+        time.get_executor(), shown, {.on_error = [&told](std::exception_ptr) { ++told; }}};
+    bool injected = false;
+
+    // From its first run, its target loading since it was made.
+    auto const act = [&]() -> task<> {
+      quoll::test::allocations_before_failing = before;
+
+      // The test's own wait may be what fails: it then waits again below.
+      try {
+        co_await quoll::async::sleep_for(5ms);
+      } catch (std::bad_alloc const &) { // NOLINT(bugprone-empty-catch): it waits again below.
+      }
+
+      injected = quoll::test::allocations_before_failing < 0;
+      quoll::test::allocations_before_failing = -1;
+      co_await quoll::async::sleep_for(5ms);
+    };
+
+    INFO("allocations before failing: " << before);
+    REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+
+    auto const &text = *instance.component().text;
+
+    CHECK_FALSE(text.loading);
+    CHECK((text.value == "text 1" || text.error != nullptr || told > 0));
+    // One allocation fails: a failure its target shows is not the app's on_error's as well.
+    CHECK_FALSE((told > 0 && text.error != nullptr));
+
+    if (!injected) {
+      clean = true;
+      break;
+    }
+  }
+
+  CHECK(clean);
 }

@@ -165,7 +165,7 @@ struct greeting {
   }
 };
 
-struct greeting_page {
+struct greeter_page {
   shared<greeting> said;
 
   element view() { return p(said->first()); }
@@ -651,7 +651,7 @@ TEST_CASE("context: one using another given after it is refused, so that none us
   memory_renderer const shown;
 
   CHECK_THROWS_AS(
-      (test_app<greeting_page>{time.get_executor(), shown, {.contexts = {provide<greeting>(), provide<names>()}}}),
+      (test_app<greeter_page>{time.get_executor(), shown, {.contexts = {provide<greeting>(), provide<names>()}}}),
       std::logic_error);
 }
 
@@ -665,7 +665,7 @@ TEST_CASE("context: one using another goes before it, which it may still read", 
   {
     virtual_time time;
     memory_renderer const shown;
-    test_app<greeting_page> instance{
+    test_app<greeter_page> instance{
         time.get_executor(), shown, {.contexts = {provide<names>(), provide<greeting>(), provide<last_word>()}}};
 
     auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };

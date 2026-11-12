@@ -73,22 +73,22 @@ struct elements_of<std::tuple<E...>> {
   using type = std::tuple<E...>;
 };
 
-// An async_state's: its value, whether a run is under way, and why the last failed, by name.
-template <class V>
-struct elements_of<async_value<V>> {
-  using type = std::tuple<V, bool, std::exception_ptr>;
-};
-
-template <>
-struct elements_of<async_value<>> {
-  using type = std::tuple<bool, std::exception_ptr>;
-};
-
 template <class T>
 inline constexpr bool is_async_value = false;
 
 template <class V>
 inline constexpr bool is_async_value<async_value<V>> = true;
+
+// The fields of an async_value, in the order of their roles below.
+template <class V, class U>
+  requires std::same_as<std::remove_const_t<U>, async_value<V>>
+[[nodiscard]] constexpr auto fields_of(U &value) noexcept {
+  if constexpr (std::is_void_v<V>) {
+    return std::tie(value.loading, value.error);
+  } else {
+    return std::tie(value.value, value.loading, value.error);
+  }
+}
 
 // The values a run's result gives: none for void, a tuple's, or the result alone.
 template <class R>
@@ -112,12 +112,10 @@ inline constexpr bool kept_as_values = []<class... E>(std::type_identity<std::tu
   return (!holds_view<E> && ...);
 }(std::type_identity<typename values_of<R>::type>{});
 
-template <class Tuple>
-struct roles_in;
-
-template <class... E>
-struct roles_in<std::tuple<E...>> {
-  static constexpr std::array<role, sizeof...(E)> roles{role_of<E>...};
+// The roles of a target's elements, in order, with a lookup of each.
+template <role... Roles>
+struct fixed_roles {
+  static constexpr std::array<role, sizeof...(Roles)> roles{Roles...};
 
   [[nodiscard]] static consteval std::size_t count(role wanted) {
     std::size_t found = 0;
@@ -141,6 +139,13 @@ struct roles_in<std::tuple<E...>> {
   }
 };
 
+// The roles of a tuple's elements, by their type.
+template <class Tuple>
+struct roles_in;
+
+template <class... E>
+struct roles_in<std::tuple<E...>> : fixed_roles<role_of<E>...> {};
+
 template <class Elements, class Roles, class Sequence>
 struct value_elements;
 
@@ -149,11 +154,41 @@ struct value_elements<Elements, Roles, std::index_sequence<Index...>> {
   using type = std::tuple<std::tuple_element_t<Roles::index(role::value, Index), Elements>...>;
 };
 
-// The roles of a target state holding T.
+// The roles of a target state holding T: by the type of each element, or, for an async_value, by its fields, whatever
+// its value is, as their names tell them apart.
 template <class T>
-struct target_roles {
+struct roles_of {
   using elements = typename elements_of<T>::type;
   using in = roles_in<elements>;
+};
+
+template <class V>
+struct roles_of<async_value<V>> {
+  using elements = std::tuple<V, bool, std::exception_ptr>;
+  using in = fixed_roles<role::value, role::loading, role::error>;
+};
+
+template <>
+struct roles_of<async_value<>> {
+  using elements = std::tuple<bool, std::exception_ptr>;
+  using in = fixed_roles<role::loading, role::error>;
+};
+
+// The values a run giving R gives a target holding T: R's, or, for an async_value, R whole, a tuple too.
+template <class T, class R>
+struct given_values {
+  using type = typename values_of<R>::type;
+};
+
+template <class V, class R>
+struct given_values<async_value<V>, R> {
+  using type = std::conditional_t<std::is_void_v<R>, std::tuple<>, std::tuple<R>>;
+};
+
+template <class T>
+struct target_roles {
+  using elements = typename roles_of<T>::elements;
+  using in = typename roles_of<T>::in;
 
   static constexpr bool loading = in::count(role::loading) == 1;
   static constexpr bool error = in::count(role::error) == 1;
@@ -168,7 +203,7 @@ struct target_roles {
     requires std::same_as<std::remove_const_t<U>, T>
   [[nodiscard]] static constexpr auto &element(U &value) noexcept {
     if constexpr (is_async_value<T>) {
-      return std::get<Index>(fields_of(value));
+      return std::get<Index>(fields_of<typename T::value_type>(value));
     } else if constexpr (tuple) {
       return std::get<Index>(value);
     } else {
@@ -183,7 +218,7 @@ struct target_roles {
 template <class T, class R, bool Copied>
 inline constexpr bool values_writable = [] {
   using roles = target_roles<T>;
-  using given = typename values_of<R>::type;
+  using given = typename given_values<T, R>::type;
 
   if constexpr (roles::values != std::tuple_size_v<given>) {
     return false;
@@ -204,22 +239,21 @@ inline constexpr bool values_writable = [] {
 // flags alone.
 template <class T, class R, bool Copied>
 consteval void check_target() {
-  using elements = typename elements_of<T>::type;
+  using in = typename target_roles<T>::in;
+  using given = typename given_values<T, R>::type;
 
-  static_assert(roles_in<elements>::count(role::loading) <= 1,
-                "quoll::ui: a target state holds one bool at most, its loading flag");
-  static_assert(roles_in<elements>::count(role::error) <= 1,
+  static_assert(in::count(role::loading) <= 1, "quoll::ui: a target state holds one bool at most, its loading flag");
+  static_assert(in::count(role::error) <= 1,
                 "quoll::ui: a target state holds one std::exception_ptr at most, its error");
   static_assert(std::is_void_v<R> || std::is_nothrow_move_constructible_v<R>,
                 "quoll::ui: what a run gives moves without throwing, once its target holds it, so that the run ends "
                 "on what its target holds");
 
   if constexpr (!Copied || target_roles<T>::values > 0) {
-    static_assert(roles_in<typename values_of<R>::type>::count(role::value) ==
-                      std::tuple_size_v<typename values_of<R>::type>,
+    static_assert(is_async_value<T> || roles_in<given>::count(role::value) == std::tuple_size_v<given>,
                   "quoll::ui: a function's values cannot be a bool or a std::exception_ptr, which a target state "
                   "reads as its loading flag or its error");
-    static_assert(target_roles<T>::values == std::tuple_size_v<typename values_of<R>::type>,
+    static_assert(target_roles<T>::values == std::tuple_size_v<given>,
                   "quoll::ui: a target state holds as many values as its function gives, in order");
     static_assert(values_writable<T, R, Copied>,
                   "quoll::ui: each value of a target state is of the type its function gives, in order, and moved "
@@ -242,7 +276,7 @@ template <class R>
 struct typed_target_table {
   target_table common;
   // Its values written, all at once, loading no more. A value that throws as it is made, as a copy lacking memory, is
-  // the run's failure, which `ended` then holds, the target left as it was but for that failure.
+  // the run's failure, which `ended` then holds, the target left as it was, for its runner to write as any failure.
   void (*finish)(void *target, std::expected<R, std::exception_ptr> &ended) noexcept;
 };
 
@@ -327,9 +361,9 @@ bool fail_target(void *target, std::exception_ptr failure) noexcept {
 }
 
 // The value of `given` at `Index`: of a tuple, or the value itself.
-template <std::size_t Index, class R>
+template <class T, std::size_t Index, class R>
 [[nodiscard]] auto &value_at(std::expected<R, std::exception_ptr> &given) noexcept {
-  if constexpr (std::same_as<typename values_of<R>::type, std::tuple<R>>) {
+  if constexpr (std::same_as<typename given_values<T, R>::type, std::tuple<R>>) {
     return *given;
   } else {
     return std::get<Index>(*given);
@@ -343,9 +377,9 @@ template <class T, class R, bool Copied, std::size_t... Index>
   using values = typename target_roles<T>::values_type;
 
   if constexpr (Copied) {
-    return values(std::as_const(value_at<Index>(given))...);
+    return values(std::as_const(value_at<T, Index>(given))...);
   } else {
-    return values(std::move(value_at<Index>(given))...);
+    return values(std::move(value_at<T, Index>(given))...);
   }
 }
 
@@ -365,7 +399,6 @@ void finish_target(void *target, std::expected<R, std::exception_ptr> &ended) no
       auto const failure = std::current_exception();
 
       ended = std::unexpected{failure};
-      fail_target<T>(target, failure);
       return;
     }
 

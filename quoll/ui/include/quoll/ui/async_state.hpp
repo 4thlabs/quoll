@@ -41,13 +41,14 @@
 #include <quoll/ui/state.hpp>
 
 #include <exception>
-#include <tuple>
 
 namespace quoll::ui {
 
 /** @brief What an async_state holds: what a run gave, whether one is under way, and why the last failed. */
 template <class T = void>
 struct async_value {
+  using value_type = T;
+
   T value{};
   bool loading = false;
   std::exception_ptr error{};
@@ -58,6 +59,8 @@ struct async_value {
 /** @brief See async_value: for a run that gives nothing. */
 template <>
 struct async_value<void> {
+  using value_type = void;
+
   bool loading = false;
   std::exception_ptr error{};
 
@@ -95,27 +98,6 @@ public:
 };
 
 static_assert(detail::LinkedMember<async_state<int>>);
-
-namespace detail {
-
-// The fields of an async_value, in the order a target's roles read them.
-template <class T>
-[[nodiscard]] constexpr auto fields_of(async_value<T> &value) noexcept {
-  return std::tie(value.value, value.loading, value.error);
-}
-
-[[nodiscard]] constexpr auto fields_of(async_value<> &value) noexcept { return std::tie(value.loading, value.error); }
-
-template <class T>
-[[nodiscard]] constexpr auto fields_of(async_value<T> const &value) noexcept {
-  return std::tie(value.value, value.loading, value.error);
-}
-
-[[nodiscard]] constexpr auto fields_of(async_value<> const &value) noexcept {
-  return std::tie(value.loading, value.error);
-}
-
-} // namespace detail
 
 } // namespace quoll::ui
 

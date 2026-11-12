@@ -42,15 +42,9 @@
 
 namespace quoll::ui::detail {
 
-bool gave_no_result(std::exception_ptr const &failure) noexcept {
-  try {
+void tell_failure(target_hooks target, untold failures, std::exception_ptr const &failure) {
+  if (!target.fail(failure) && failures == untold::thrown) {
     std::rethrow_exception(failure);
-  } catch (run_refused const &) {
-    return true;
-  } catch (run_replaced const &) {
-    return true;
-  } catch (...) {
-    return false;
   }
 }
 
