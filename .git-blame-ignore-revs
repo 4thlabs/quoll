@@ -1,3 +1,3 @@
 # Commits that only reformat, which git blame passes over: git config blame.ignoreRevsFile .git-blame-ignore-revs
 # AlignAfterOpenBracket: BlockIndent, the whole repository
-a90095fffbcd3b28f311d382cf3468acdc0a570e
+4c0f92d97cb33c44ef2472c61d0858913f936cb7
