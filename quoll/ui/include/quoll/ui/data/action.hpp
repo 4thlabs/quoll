@@ -112,13 +112,11 @@ template <class R, class C, class... Args>
 struct action_function<async::task<R> (C::*)(Args...) const noexcept>
     : action_function<async::task<R> (C::*)(Args...)> {};
 
-// What is told of a run that gave R: the value, or nothing for void.
-// What an action holds of what its runs give: a copy, for a value it can make empty and copy, and move without
-// throwing; nothing for another, as a move-only one, which only run()'s caller is given.
+// What an action holds of what its runs give: a copy, for a value it can make empty and copy; nothing for another, as a
+// move-only one, which only run()'s caller is given. One held moves in without throwing, which its check says.
 template <class V>
 struct held_by_action {
-  using type = std::conditional_t<
-      std::copy_constructible<V> && std::default_initializable<V> && std::is_nothrow_move_assignable_v<V>, V, void>;
+  using type = std::conditional_t<std::copy_constructible<V> && std::default_initializable<V>, V, void>;
 };
 
 template <>
@@ -126,6 +124,7 @@ struct held_by_action<void> {
   using type = void;
 };
 
+// What is told of a run that gave R: the value, or nothing for void.
 template <class R>
 struct success_of {
   using type = std::function<void(R const &)>;
@@ -193,9 +192,9 @@ private:
  * `Function` gives its signature: a free function returning a task, as `&products_client::update`, or a member
  * function of a context, given its `shared<C>`, whose work then goes on as the component goes, or of the component
  * itself, given `this`, declared before it. It is read as a state: `save->loading`, `save->error` and `save->value`,
- * what the last run gave, copied, none for a value it cannot copy or make empty, as a move-only one, which only run()'s
- * caller is given; a change of them shows its component again. What follows a success, given as it is
- * made, as React Query's onSuccess, is told what the run gave, before its caller.
+ * what the last run that succeeded gave, copied, none for a value it cannot copy or make empty, as a move-only one,
+ * which only run()'s caller is given; a change of them shows its component again. What follows a success, given as it
+ * is made, as React Query's onSuccess, is told what the run gave, before its caller.
  *
  * run() runs it in the task awaiting it, a handler's or mounted()'s, and gives what it gave or what it threw, as a
  * std::expected, not thrown again; what follows a success throws to it, as code of the handler after the run would.

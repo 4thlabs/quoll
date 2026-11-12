@@ -457,7 +457,7 @@ struct touchy_key_page {
   effect load{key, load_key, text};
 };
 
-// Its target has no place for an error: a failure to start is thrown.
+// Its target has no place for an error: a failure to start is thrown, as every failure.
 struct touchy_key_loading_page {
   state<touchy_key> key{touchy_key{1}};
   state<std::tuple<std::string, bool>> text;
@@ -614,14 +614,18 @@ TEST_CASE("effect: a run asked for after a view writes nothing once a later view
   }
 }
 
-TEST_CASE("effect: a run that fails leaves why in its target, and reload runs it again, why gone as it starts",
-          "[ui][effect]") {
+TEST_CASE(
+    "effect: a run that fails leaves why in its target and on_error, and reload runs it again, why gone as it starts",
+    "[ui][effect]") {
   loads = {};
   loads.failing = {1};
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<loading_page> instance{time.get_executor(), shown};
+  std::vector<std::string> failures;
+  test_app<loading_page> instance{time.get_executor(), shown, {.on_error = [&failures](std::exception_ptr failure) {
+                                    failures.push_back(what_of(failure));
+                                  }}};
   std::string failed;
   bool cleared = false;
 
@@ -641,6 +645,8 @@ TEST_CASE("effect: a run that fails leaves why in its target, and reload runs it
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(failed.contains("<p>failed</p>"));
+  // Shown in its target, it reaches the app's on_error too, once.
+  CHECK(failures == std::vector<std::string>{"no text 1"});
   CHECK(cleared);
   CHECK(shown.html().contains("<p>text 1</p>"));
   CHECK(loads.lines == std::vector<std::string>{"start 1", "start 1", "end 1"});
@@ -1020,8 +1026,8 @@ TEST_CASE("effect: a view whose change cannot be recorded stops the run before, 
   CHECK(std::get<2>(*page.text) == nullptr);
 }
 
-TEST_CASE("effect: a run under way whose next view cannot compare its states is stopped, its failure thrown with no "
-          "place for it",
+TEST_CASE("effect: a run under way whose next view cannot compare its states is stopped, its failure thrown, as "
+          "every failure",
           "[ui][effect]") {
   loads = {};
   loads.delays = {{1, 10ms}};

@@ -65,9 +65,9 @@ namespace quoll::ui {
 namespace detail {
 
 // Runs an effect as a task of its component, unless the component stopped since it was started, as one that went with
-// its app before its executor ran: an effect does nothing once unmounted() ran. A failure its target has no place for,
-// as one without an error, goes where a handler's does, through tell_failure(), as a lack of memory making the run
-// does. A coroutine of its own, so that what it needs is in its frame.
+// its app before its executor ran: an effect does nothing once unmounted() ran. Every failure goes where a handler's
+// does, through tell_failure(), its target showing it, as a lack of memory making the run does. A coroutine of its own,
+// so that what it needs is in its frame.
 template <class V, class Make>
 async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::stop_token mine) {
   auto const stop = co_await async::current_stop_token();

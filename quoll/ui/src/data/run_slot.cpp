@@ -43,7 +43,7 @@
 namespace quoll::ui::detail {
 
 void tell_failure(target_hooks target, failure_to failures, std::exception_ptr const &failure) {
-  static_cast<void>(target.fail(failure));
+  target.fail(failure);
 
   // Every failure reaches the app, but for one its caller is given: shown or not, as React Query's global onError.
   if (failures == failure_to::app) {
