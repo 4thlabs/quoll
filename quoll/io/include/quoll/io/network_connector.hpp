@@ -60,8 +60,8 @@ struct network_connector {
     return io::connect(std::move(host), port);
   }
 
-  [[nodiscard]] async::task<any_stream> connect_tls(std::string host, std::uint16_t port,
-                                                    tls_client_options const &options) const {
+  [[nodiscard]] async::task<any_stream>
+  connect_tls(std::string host, std::uint16_t port, tls_client_options const &options) const {
     return io::connect_tls(std::move(host), port, options);
   }
 };

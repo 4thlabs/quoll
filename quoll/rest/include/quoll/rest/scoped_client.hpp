@@ -78,8 +78,9 @@ public:
   template <class Endpoint>
   using arguments = detail::arguments_of<view, Endpoint>;
 
-  scoped_client(Client client, prefix_type prefix) noexcept(std::is_nothrow_move_constructible_v<Client> &&
-                                                            std::is_nothrow_move_constructible_v<prefix_type>)
+  scoped_client(
+      Client client, prefix_type prefix
+  ) noexcept(std::is_nothrow_move_constructible_v<Client> && std::is_nothrow_move_constructible_v<prefix_type>)
       : client_(std::move(client)), prefix_(std::move(prefix)) {}
 
   /**
@@ -88,17 +89,22 @@ public:
    */
   template <class Inner, class... More>
   [[nodiscard]] scoped_client<Client, Inner> scope(More... more) const {
-    static_assert(detail::nested_in<Scope>(typename Inner::routes{}),
-                  "quoll::rest::scoped_client::scope: the api is not nested in the scope's");
+    static_assert(
+        detail::nested_in<Scope>(typename Inner::routes{}),
+        "quoll::rest::scoped_client::scope: the api is not nested in the scope's"
+    );
 
     using inner = typename scoped_client<Client, Inner>::prefix_type;
 
-    static_assert(std::tuple_size_v<prefix_type> + sizeof...(More) == std::tuple_size_v<inner>,
-                  "quoll::rest::scoped_client::scope: as many arguments as the prefixes between the two apis have "
-                  "parameters");
+    static_assert(
+        std::tuple_size_v<prefix_type> + sizeof...(More) == std::tuple_size_v<inner>,
+        "quoll::rest::scoped_client::scope: as many arguments as the prefixes between the two apis have "
+        "parameters"
+    );
 
-    return {client_,
-            std::apply([&more...](auto const &...fixed) { return inner{fixed..., std::move(more)...}; }, prefix_)};
+    return {
+        client_, std::apply([&more...](auto const &...fixed) { return inner{fixed..., std::move(more)...}; }, prefix_)
+    };
   }
 
   /** @brief The client it calls through. */

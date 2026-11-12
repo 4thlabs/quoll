@@ -279,8 +279,9 @@ template <EventFunction F>
   return decorator([&to](element &target) {
     target.attributes.try_emplace("type", "checkbox");
     target.checked = *to;
-    target.events.push_back(
-        {.name = "change", .handler = detail::to_handler([&to](std::string given) { to.set(given == "true"); })});
+    target.events.push_back({.name = "change", .handler = detail::to_handler([&to](std::string given) {
+                                                 to.set(given == "true");
+                                               })});
   });
 }
 
@@ -288,8 +289,9 @@ template <EventFunction F>
 [[nodiscard]] inline auto bind(state<std::string> &to) {
   return decorator([&to](element &target) {
     target.value = *to;
-    target.events.push_back(
-        {.name = "input", .handler = detail::to_handler([&to](std::string typed) { to.set(std::move(typed)); })});
+    target.events.push_back({.name = "input", .handler = detail::to_handler([&to](std::string typed) {
+                                                to.set(std::move(typed));
+                                              })});
   });
 }
 

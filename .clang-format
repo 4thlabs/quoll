@@ -11,3 +11,4 @@ AlwaysBreakTemplateDeclarations: true
 FixNamespaceComments: true
 NamespaceIndentation: None
 SeparateDefinitionBlocks: Always
+AlignAfterOpenBracket: BlockIndent

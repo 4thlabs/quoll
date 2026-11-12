@@ -58,8 +58,9 @@ namespace quoll::asio::detail {
 
 // What an acceptor keeps at a stable address: the listening socket and the cancellation of its accepts.
 struct acceptor_state {
-  explicit acceptor_state(::asio::ip::tcp::acceptor &&listening,
-                          std::optional<::asio::any_io_executor> strands = std::nullopt)
+  explicit acceptor_state(
+      ::asio::ip::tcp::acceptor &&listening, std::optional<::asio::any_io_executor> strands = std::nullopt
+  )
       : acceptor(std::move(listening)), cancel(std::make_shared<cancellation>(acceptor.get_executor())),
         socket_strands(std::move(strands)) {}
 
@@ -72,12 +73,14 @@ struct acceptor_state {
 
 inline async::task<::asio::ip::tcp::socket> accept_socket(acceptor_state &state) {
   // Accepted into a socket of its own: the operation's values are default constructible, a socket is not.
-  ::asio::ip::tcp::socket socket{state.socket_strands
-                                     ? ::asio::any_io_executor{::asio::make_strand(*state.socket_strands)}
-                                     : ::asio::any_io_executor{state.acceptor.get_executor()}};
+  ::asio::ip::tcp::socket socket{
+      state.socket_strands ? ::asio::any_io_executor{::asio::make_strand(*state.socket_strands)}
+                           : ::asio::any_io_executor{state.acceptor.get_executor()}
+  };
 
-  auto const [error] = co_await make_operation<>(
-      state.cancel, [&](auto handler) { state.acceptor.async_accept(socket, std::move(handler)); });
+  auto const [error] = co_await make_operation<>(state.cancel, [&](auto handler) {
+    state.acceptor.async_accept(socket, std::move(handler));
+  });
 
   if (error) {
     throw std::system_error{to_io_error(error), "quoll::asio::acceptor: cannot accept"};

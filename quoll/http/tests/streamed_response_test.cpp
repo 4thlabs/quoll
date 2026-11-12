@@ -122,8 +122,9 @@ TEST_CASE("response_body reads its source, whichever transport gave it", "[http]
   }
 
   SECTION("holding its source for as long as a copy lives") {
-    std::optional<http::response_body> body{std::in_place,
-                                            std::make_shared<pieces>(std::vector<std::string>{"ab"}, gone)};
+    std::optional<http::response_body> body{
+        std::in_place, std::make_shared<pieces>(std::vector<std::string>{"ab"}, gone)
+    };
     auto const copy = *body;
 
     body.reset();

@@ -136,8 +136,10 @@ TEST_CASE("co_spawn hands its stop token to the task", "[async][stop_token][co_s
   std::stop_source source;
   std::optional<int> steps;
 
-  co_spawn(loop.get_executor(), steps_until_stopped(), overloaded{[&](int value) { steps = value; }, fail_on_error},
-           source.get_token());
+  co_spawn(
+      loop.get_executor(), steps_until_stopped(), overloaded{[&](int value) { steps = value; }, fail_on_error},
+      source.get_token()
+  );
   co_spawn(loop.get_executor(), stop_after(source, 3), overloaded{ignore_success, fail_on_error});
   loop.run();
 
@@ -150,8 +152,9 @@ TEST_CASE("when_all stops the other children when one fails", "[async][stop_toke
   run_loop loop;
   std::optional<int> steps;
 
-  co_spawn(loop.get_executor(), sibling_steps_after_failure(),
-           overloaded{[&](int value) { steps = value; }, fail_on_error});
+  co_spawn(
+      loop.get_executor(), sibling_steps_after_failure(), overloaded{[&](int value) { steps = value; }, fail_on_error}
+  );
   loop.run();
 
   REQUIRE(steps);
@@ -164,8 +167,10 @@ TEST_CASE("when_all forwards the awaiter's stop request to its children", "[asyn
   std::stop_source source;
   std::optional<std::tuple<int, int>> steps;
 
-  co_spawn(loop.get_executor(), two_children_until_stopped(),
-           overloaded{[&](std::tuple<int, int> value) { steps = value; }, fail_on_error}, source.get_token());
+  co_spawn(
+      loop.get_executor(), two_children_until_stopped(),
+      overloaded{[&](std::tuple<int, int> value) { steps = value; }, fail_on_error}, source.get_token()
+  );
   co_spawn(loop.get_executor(), stop_after(source, 3), overloaded{ignore_success, fail_on_error});
   loop.run();
 

@@ -74,22 +74,25 @@ struct github_service {
   rest::reply<github::repos::get> operator()(github::repos::get, std::string owner, std::string repo) const {
     if (owner == "4thlabs" && repo == "private") {
       return rest::respond<http::status::forbidden>(
-          github::error{.message = "Resource not accessible", .documentation_url = {}});
+          github::error{.message = "Resource not accessible", .documentation_url = {}}
+      );
     }
 
     if (owner != "4thlabs" || repo != "quoll") {
       return rest::respond<http::status::not_found>(github::error{.message = "Not Found", .documentation_url = {}});
     }
 
-    return github::repository{.full_name = "4thlabs/quoll",
-                              .description = "A C++23 web framework",
-                              .stars = 42,
-                              .open_issues_count = 2,
-                              .html_url = "https://github.com/4thlabs/quoll"};
+    return github::repository{
+        .full_name = "4thlabs/quoll",
+        .description = "A C++23 web framework",
+        .stars = 42,
+        .open_issues_count = 2,
+        .html_url = "https://github.com/4thlabs/quoll"
+    };
   }
 
-  std::vector<github::issue> operator()(github::repos::issues, std::string, std::string,
-                                        github::issue_filter filter) const {
+  std::vector<github::issue>
+  operator()(github::repos::issues, std::string, std::string, github::issue_filter filter) const {
     if (++*issues_asked == 1) {
       throw rest::http_error{http::status::service_unavailable, "busy"};
     }
@@ -99,12 +102,14 @@ struct github_service {
       return {};
     }
 
-    return {{.number = 7, .title = "SSE", .state = "open", .user = {.login = "ada"}, .pull_request = {}},
-            {.number = 9,
-             .title = "WebSocket",
-             .state = "open",
-             .user = {.login = "grace"},
-             .pull_request = github::pull_request_link{.url = "https://api.github.com/repos/4thlabs/quoll/pulls/9"}}};
+    return {
+        {.number = 7, .title = "SSE", .state = "open", .user = {.login = "ada"}, .pull_request = {}},
+        {.number = 9,
+         .title = "WebSocket",
+         .state = "open",
+         .user = {.login = "grace"},
+         .pull_request = github::pull_request_link{.url = "https://api.github.com/repos/4thlabs/quoll/pulls/9"}}
+    };
   }
 
   github::me operator()(github::users::me) const { return {.login = "ada", .name = "Ada Lovelace"}; }
@@ -148,9 +153,11 @@ async::task<> serve(std::uint16_t port) {
   http::router router;
 
   router.use(as_github_wants);
-  rest::mount<github::api>(router, github_service{},
-                           // The middleware above has checked it already, answering as GitHub does.
-                           rest::validators([](rest::credential<rest::bearer_auth> const &) { return true; }));
+  rest::mount<github::api>(
+      router, github_service{},
+      // The middleware above has checked it already, answering as GitHub does.
+      rest::validators([](rest::credential<rest::bearer_auth> const &) { return true; })
+  );
 
   auto listener = co_await quoll::io::listen(port);
 

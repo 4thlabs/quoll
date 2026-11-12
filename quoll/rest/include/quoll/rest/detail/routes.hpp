@@ -72,8 +72,9 @@ struct rebase;
 
 template <fixed_string Prefix, class Inherited, class... Routes>
 struct rebase<Prefix, Inherited, type_list<Routes...>> {
-  using type = type_list<route<typename Routes::endpoint, join_paths<Prefix, Routes::path_value>(),
-                               concat_t<typename Routes::inherited, Inherited>>...>;
+  using type = type_list<route<
+      typename Routes::endpoint, join_paths<Prefix, Routes::path_value>(),
+      concat_t<typename Routes::inherited, Inherited>>...>;
 };
 
 template <fixed_string Prefix, class Member>
@@ -99,8 +100,9 @@ struct member_routes<type_list<Members...>> {
 
 template <fixed_string Prefix, With W>
 struct routes_of<Prefix, W> {
-  using type = typename rebase<Prefix, filter_t<is_part, typename W::members>,
-                               typename member_routes<filter_t<is_member, typename W::members>>::type>::type;
+  using type = typename rebase<
+      Prefix, filter_t<is_part, typename W::members>,
+      typename member_routes<filter_t<is_member, typename W::members>>::type>::type;
 };
 
 template <class E, class Routes>
@@ -108,9 +110,8 @@ struct matching_routes;
 
 template <class E, class... Routes>
 struct matching_routes<E, type_list<Routes...>> {
-  using type =
-      concat_t<type_list<>,
-               std::conditional_t<std::same_as<typename Routes::endpoint, E>, type_list<Routes>, type_list<>>...>;
+  using type = concat_t<
+      type_list<>, std::conditional_t<std::same_as<typename Routes::endpoint, E>, type_list<Routes>, type_list<>>...>;
 };
 
 template <class E, class Matches>

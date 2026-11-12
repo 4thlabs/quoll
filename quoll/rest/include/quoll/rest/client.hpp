@@ -103,8 +103,9 @@ using result = detail::call_result<Endpoint>;
  * client); calls on a const client may be concurrent.
  */
 template <class Api, http::HttpTransport Transport = ::quoll::http::client>
-class client : public detail::client_call_set<client<Api, Transport>, Api,
-                                              std::make_index_sequence<detail::max_arity(typename Api::routes{}) + 1>> {
+class client
+    : public detail::client_call_set<
+          client<Api, Transport>, Api, std::make_index_sequence<detail::max_arity(typename Api::routes{}) + 1>> {
 public:
   /** @brief The contract it calls. */
   using api_type = Api;
@@ -145,8 +146,10 @@ public:
   /** @brief The credential sent, from now on, to the endpoints that require `Scheme`. */
   template <class Scheme>
   void credentials(std::string value) {
-    static_assert(detail::uses_scheme<Scheme>(typename Api::routes{}), "quoll::rest::client: the api has no endpoint "
-                                                                       "that requires this scheme");
+    static_assert(
+        detail::uses_scheme<Scheme>(typename Api::routes{}), "quoll::rest::client: the api has no endpoint "
+                                                             "that requires this scheme"
+    );
 
     credentials_.insert_or_assign(std::string{detail::scheme_traits<Scheme>::key.view()}, std::move(value));
   }
@@ -174,7 +177,8 @@ public:
         interception_
             ? std::make_shared<detail::interception>(*interception_)
             : std::make_shared<detail::interception>(detail::interception{
-                  {}, [transport = transport_](http::request message) { return transport->send(std::move(message)); }});
+                  {}, [transport = transport_](http::request message) { return transport->send(std::move(message)); }
+              });
 
     grown->interceptors.push_back(std::make_shared<interceptor const>(std::move(wrapping)));
     interception_ = std::move(grown);
@@ -193,8 +197,10 @@ public:
   [[nodiscard]] scoped_client<client, Scope> scope(Prefix... prefix) const {
     using fixed = typename scoped_client<client, Scope>::prefix_type;
 
-    static_assert(sizeof...(Prefix) == std::tuple_size_v<fixed>,
-                  "quoll::rest::client::scope: as many arguments as the prefixes above the api have parameters");
+    static_assert(
+        sizeof...(Prefix) == std::tuple_size_v<fixed>,
+        "quoll::rest::client::scope: as many arguments as the prefixes above the api have parameters"
+    );
 
     return {*this, fixed{std::move(prefix)...}};
   }
@@ -229,8 +235,9 @@ private:
 
   template <class Endpoint>
   [[nodiscard]] async::task<result<Endpoint>> try_call_with(arguments<Endpoint> args) const {
-    static_assert(!detail::has_events<Endpoint>,
-                  "quoll::rest::client::try_call: the endpoint answers events<>: subscribe");
+    static_assert(
+        !detail::has_events<Endpoint>, "quoll::rest::client::try_call: the endpoint answers events<>: subscribe"
+    );
 
     using route = typename Api::template route<Endpoint>;
 
@@ -240,10 +247,13 @@ private:
   // `auto`, so that an endpoint without events<> meets the static_assert, not a failure to name what it returns.
   template <class Endpoint>
   [[nodiscard]] auto subscribe_with(arguments<Endpoint> args) const {
-    static_assert(detail::has_events<Endpoint>,
-                  "quoll::rest::client::subscribe: the endpoint has no events<>, call it");
-    static_assert(http::StreamingTransport<Transport>,
-                  "quoll::rest::client::subscribe: the transport gives no response as its head comes (no stream())");
+    static_assert(
+        detail::has_events<Endpoint>, "quoll::rest::client::subscribe: the endpoint has no events<>, call it"
+    );
+    static_assert(
+        http::StreamingTransport<Transport>,
+        "quoll::rest::client::subscribe: the transport gives no response as its head comes (no stream())"
+    );
 
     if constexpr (detail::has_events<Endpoint> && http::StreamingTransport<Transport>) {
       // Interceptors take whole responses: rather than go out without what they add, a token say, it refuses.

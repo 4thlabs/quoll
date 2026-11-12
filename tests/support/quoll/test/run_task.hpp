@@ -63,11 +63,14 @@ T run_task(async::task<T> work) {
   std::exception_ptr failure;
   auto stopped = false;
 
-  co_spawn(runtime.get_executor(), std::move(work),
-           overloaded{[&](T result) { value = std::move(result); },
-                      [&](std::exception_ptr error) { failure = std::move(error); },
-                      [&](async::stopped_t) { stopped = true; }},
-           runtime.get_stop_token());
+  co_spawn(
+      runtime.get_executor(), std::move(work),
+      overloaded{
+          [&](T result) { value = std::move(result); }, [&](std::exception_ptr error) { failure = std::move(error); },
+          [&](async::stopped_t) { stopped = true; }
+      },
+      runtime.get_stop_token()
+  );
   runtime.run();
 
   if (failure) {

@@ -54,10 +54,11 @@ namespace quoll::io {
  * handshake has checked the server. What http::client needs for `https://`.
  */
 template <class C>
-concept TlsConnector = Connector<C> && requires(C const &connector, std::string host, std::uint16_t port,
-                                                tls_client_options const &options) {
-  { connector.connect_tls(std::move(host), port, options) } -> std::same_as<async::task<any_stream>>;
-};
+concept TlsConnector =
+    Connector<C> &&
+    requires(C const &connector, std::string host, std::uint16_t port, tls_client_options const &options) {
+      { connector.connect_tls(std::move(host), port, options) } -> std::same_as<async::task<any_stream>>;
+    };
 
 } // namespace quoll::io
 

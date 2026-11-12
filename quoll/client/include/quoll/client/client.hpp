@@ -261,22 +261,23 @@ public:
    *
    * @throws std::invalid_argument here, as send() does.
    */
-  [[nodiscard]] async::task<http::response> post(std::string target, std::string body,
-                                                 std::string_view content_type = {}) const;
+  [[nodiscard]] async::task<http::response>
+  post(std::string target, std::string body, std::string_view content_type = {}) const;
 
   /** @brief Sends a PUT of `body` to `target`: see post(). */
-  [[nodiscard]] async::task<http::response> put(std::string target, std::string body,
-                                                std::string_view content_type = {}) const;
+  [[nodiscard]] async::task<http::response>
+  put(std::string target, std::string body, std::string_view content_type = {}) const;
 
   /** @brief Sends a PATCH of `body` to `target`: see post(). */
-  [[nodiscard]] async::task<http::response> patch(std::string target, std::string body,
-                                                  std::string_view content_type = {}) const;
+  [[nodiscard]] async::task<http::response>
+  patch(std::string target, std::string body, std::string_view content_type = {}) const;
 
 private:
   template <io::Connector Connector>
   client(Connector connector, detail::origin server, client_options const &options)
-      : backend_(make_backend(std::move(connector), std::move(server.host), server.port, server.secure,
-                              std::move(server.prefix), options)) {
+      : backend_(make_backend(
+            std::move(connector), std::move(server.host), server.port, server.secure, std::move(server.prefix), options
+        )) {
     if (server.secure && !io::TlsConnector<Connector>) {
       throw std::invalid_argument{"quoll::http::client: this connector cannot open https connections"};
     }
@@ -293,11 +294,13 @@ private:
 
   // The only part that knows the connector.
   template <io::Connector Connector>
-  [[nodiscard]] static detail::client_backend make_backend(Connector connector, std::string host, std::uint16_t port,
-                                                           bool secure, std::string prefix,
-                                                           client_options const &options) {
-    return detail::make_client_backend(detail::make_connector_handle(std::move(connector)), std::move(host), port,
-                                       secure, std::move(prefix), options);
+  [[nodiscard]] static detail::client_backend make_backend(
+      Connector connector, std::string host, std::uint16_t port, bool secure, std::string prefix,
+      client_options const &options
+  ) {
+    return detail::make_client_backend(
+        detail::make_connector_handle(std::move(connector)), std::move(host), port, secure, std::move(prefix), options
+    );
   }
 
   detail::client_backend backend_;

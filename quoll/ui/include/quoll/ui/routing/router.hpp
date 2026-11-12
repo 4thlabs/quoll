@@ -91,8 +91,10 @@ public:
   ~router_core();
 
   // Routes `routes` through `history`, owning `owned` when it is a memory history of its own, its location in `where`.
-  void start(std::span<route_entry const> routes, history_ref history, std::unique_ptr<memory_history> owned,
-             state<location> &where);
+  void start(
+      std::span<route_entry const> routes, history_ref history, std::unique_ptr<memory_history> owned,
+      state<location> &where
+  );
 
   // Goes to `href`, pushed onto the history or replacing its last, a redirect followed.
   void go(std::string_view href, bool replace);

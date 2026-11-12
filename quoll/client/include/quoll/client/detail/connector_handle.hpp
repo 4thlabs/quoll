@@ -54,29 +54,32 @@ namespace quoll::http::detail {
 // A connector, whichever it is: the core owns it through this.
 struct connector_handle {
   std::shared_ptr<void const> connector;
-  async::task<io::any_stream> (*open)(void const *connector, std::string const &host, std::uint16_t port, bool secure,
-                                      io::tls_client_options const &tls);
+  async::task<io::any_stream> (*open)(
+      void const *connector, std::string const &host, std::uint16_t port, bool secure, io::tls_client_options const &tls
+  );
 };
 
 // `connector`, erased: shared, as one may move without copying, and opened with TLS when asked, if it can.
 template <io::Connector Connector>
 [[nodiscard]] connector_handle make_connector_handle(Connector connector) {
-  return {std::make_shared<Connector const>(std::move(connector)),
-          [](void const *erased, std::string const &to, std::uint16_t on, bool use_tls,
-             [[maybe_unused]] io::tls_client_options const &tls) -> async::task<io::any_stream> {
-            auto const &target = *static_cast<Connector const *>(erased);
+  return {
+      std::make_shared<Connector const>(std::move(connector)),
+      [](void const *erased, std::string const &to, std::uint16_t on, bool use_tls,
+         [[maybe_unused]] io::tls_client_options const &tls) -> async::task<io::any_stream> {
+        auto const &target = *static_cast<Connector const *>(erased);
 
-            if constexpr (io::TlsConnector<Connector>) {
-              if (use_tls) {
-                return target.connect_tls(to, on, tls);
-              }
-            } else if (use_tls) {
-              // What calls it refuses this first: a plain connection in place of a TLS one is never what was asked.
-              throw std::logic_error{"quoll::http: this connector cannot open TLS connections"};
-            }
+        if constexpr (io::TlsConnector<Connector>) {
+          if (use_tls) {
+            return target.connect_tls(to, on, tls);
+          }
+        } else if (use_tls) {
+          // What calls it refuses this first: a plain connection in place of a TLS one is never what was asked.
+          throw std::logic_error{"quoll::http: this connector cannot open TLS connections"};
+        }
 
-            return target.connect(to, on);
-          }};
+        return target.connect(to, on);
+      }
+  };
 }
 
 } // namespace quoll::http::detail

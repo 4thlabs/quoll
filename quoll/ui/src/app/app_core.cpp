@@ -117,9 +117,10 @@ struct app_core::outcome {
   }
 };
 
-app_core::app_core(async::any_executor executor, renderer_ref renderer, view_function view,
-                   unmounted_function unmounted, effects_function effects, finds_function finds,
-                   provides_function provides, void *component, app_options options)
+app_core::app_core(
+    async::any_executor executor, renderer_ref renderer, view_function view, unmounted_function unmounted,
+    effects_function effects, finds_function finds, provides_function provides, void *component, app_options options
+)
     : executor_(std::move(executor)), renderer_(renderer), link_(std::make_shared<app_link>(app_link{this})),
       view_(view), unmounted_(unmounted), effects_(effects), provides_(provides), component_(component),
       options_(std::move(options)) {
@@ -150,11 +151,13 @@ app_core::app_core(async::any_executor executor, renderer_ref renderer, view_fun
 }
 
 context_finder app_core::contexts() const noexcept {
-  return {.app = link_,
-          .owner = this,
-          .find = &app_core::find_context,
-          .from = nullptr,
-          .find_above = &instance::provided_above};
+  return {
+      .app = link_,
+      .owner = this,
+      .find = &app_core::find_context,
+      .from = nullptr,
+      .find_above = &instance::provided_above
+  };
 }
 
 context_entry *app_core::context(async::detail::type_id type) const noexcept {
@@ -191,12 +194,14 @@ void app_core::render() {
     return view_(component_);
   }();
   reconciler reconciled{renderer_, last_id_};
-  expansion made{.app = link_,
-                 .epoch = epoch_,
-                 .app_stop = stop_.get_token(),
-                 .link = {this, &app_core::state_changed},
-                 .sink = {this, &app_core::failed_in},
-                 .contexts = contexts()};
+  expansion made{
+      .app = link_,
+      .epoch = epoch_,
+      .app_stop = stop_.get_token(),
+      .link = {this, &app_core::state_changed},
+      .sink = {this, &app_core::failed_in},
+      .contexts = contexts()
+  };
 
   if (!components_.empty() || has_component(view)) {
     expand(view, components_, made);

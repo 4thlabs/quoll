@@ -63,8 +63,8 @@ using namespace std::string_view_literals;
 constexpr http::websocket_mask key{0x37, 0xfa, 0x21, 0x3d};
 
 // The messages of `bytes`, fed `piece` bytes at a time.
-[[nodiscard]] std::vector<http::websocket_message> messages_of(websocket_role role, std::string_view bytes,
-                                                               std::size_t piece = 1000) {
+[[nodiscard]] std::vector<http::websocket_message>
+messages_of(websocket_role role, std::string_view bytes, std::size_t piece = 1000) {
   http::websocket_parser parser{role};
   std::vector<http::websocket_message> messages;
 
@@ -117,8 +117,9 @@ constexpr http::websocket_mask key{0x37, 0xfa, 0x21, 0x3d};
 }
 
 // The error of the first failure reading `bytes`, none if it reads.
-[[nodiscard]] std::error_code failure_of(websocket_role role, std::string_view bytes,
-                                         std::size_t max = http::websocket_parser::default_max_message_size) {
+[[nodiscard]] std::error_code failure_of(
+    websocket_role role, std::string_view bytes, std::size_t max = http::websocket_parser::default_max_message_size
+) {
   http::websocket_parser parser{role, max};
 
   try {
@@ -141,15 +142,21 @@ TEST_CASE("websocket_parser: the examples of RFC 6455, whole and a byte at a tim
   // A single-frame unmasked text message, to a client.
   REQUIRE(messages_of(websocket_role::client, "\x81\x05Hello"sv, piece) == std::vector{text("Hello")});
   // The same, masked, to a server.
-  REQUIRE(messages_of(websocket_role::server, "\x81\x85\x37\xfa\x21\x3d\x7f\x9f\x4d\x51\x58"sv, piece) ==
-          std::vector{text("Hello")});
+  REQUIRE(
+      messages_of(websocket_role::server, "\x81\x85\x37\xfa\x21\x3d\x7f\x9f\x4d\x51\x58"sv, piece) ==
+      std::vector{text("Hello")}
+  );
   // Fragmented.
   REQUIRE(messages_of(websocket_role::client, "\x01\x03Hel\x80\x02lo"sv, piece) == std::vector{text("Hello")});
   // A ping, and a masked pong.
-  REQUIRE(messages_of(websocket_role::client, "\x89\x05Hello"sv, piece) ==
-          std::vector{http::websocket_message{.opcode = websocket_opcode::ping, .data = "Hello", .close_code = 0}});
-  REQUIRE(messages_of(websocket_role::server, "\x8a\x85\x37\xfa\x21\x3d\x7f\x9f\x4d\x51\x58"sv, piece) ==
-          std::vector{http::websocket_message{.opcode = websocket_opcode::pong, .data = "Hello", .close_code = 0}});
+  REQUIRE(
+      messages_of(websocket_role::client, "\x89\x05Hello"sv, piece) ==
+      std::vector{http::websocket_message{.opcode = websocket_opcode::ping, .data = "Hello", .close_code = 0}}
+  );
+  REQUIRE(
+      messages_of(websocket_role::server, "\x8a\x85\x37\xfa\x21\x3d\x7f\x9f\x4d\x51\x58"sv, piece) ==
+      std::vector{http::websocket_message{.opcode = websocket_opcode::pong, .data = "Hello", .close_code = 0}}
+  );
 }
 
 TEST_CASE("websocket_parser: lengths of 16 and 64 bits, binary", "[http][websocket]") {
@@ -157,10 +164,11 @@ TEST_CASE("websocket_parser: lengths of 16 and 64 bits, binary", "[http][websock
   std::string const large(std::size_t{65536}, 'l');
   auto const piece = GENERATE(std::size_t{1000}, std::size_t{4096});
 
-  auto const read = messages_of(websocket_role::client,
-                                std::string{"\x82\x7e\x01\x00", 4} + medium +
-                                    std::string{"\x82\x7f\x00\x00\x00\x00\x00\x01\x00\x00", 10} + large,
-                                piece);
+  auto const read = messages_of(
+      websocket_role::client,
+      std::string{"\x82\x7e\x01\x00", 4} + medium + std::string{"\x82\x7f\x00\x00\x00\x00\x00\x01\x00\x00", 10} + large,
+      piece
+  );
 
   REQUIRE(read.size() == 2);
   REQUIRE(read[0] == http::websocket_message{.opcode = websocket_opcode::binary, .data = medium, .close_code = 0});
@@ -172,9 +180,12 @@ TEST_CASE("websocket_parser: control frames between the fragments of a message",
                      http::format_websocket_frame(websocket_opcode::ping, "p", true, key) +
                      http::format_websocket_frame(websocket_opcode::continuation, "lo", true, key);
 
-  REQUIRE(messages_of(websocket_role::server, bytes, 1) ==
-          std::vector{http::websocket_message{.opcode = websocket_opcode::ping, .data = "p", .close_code = 0},
-                      text("Hello")});
+  REQUIRE(
+      messages_of(websocket_role::server, bytes, 1) ==
+      std::vector{
+          http::websocket_message{.opcode = websocket_opcode::ping, .data = "p", .close_code = 0}, text("Hello")
+      }
+  );
 }
 
 TEST_CASE("websocket_parser: a close, its code and reason; nothing after it", "[http][websocket]") {
@@ -184,14 +195,17 @@ TEST_CASE("websocket_parser: a close, its code and reason; nothing after it", "[
 
   parser.feed(bytes);
 
-  REQUIRE(parser.next() ==
-          http::websocket_message{.opcode = websocket_opcode::close, .data = "bye", .close_code = 1000});
+  REQUIRE(
+      parser.next() == http::websocket_message{.opcode = websocket_opcode::close, .data = "bye", .close_code = 1000}
+  );
   REQUIRE(parser.closed());
   REQUIRE_FALSE(parser.next());
 
   // A close with no body: 1005.
-  REQUIRE(messages_of(websocket_role::client, "\x88\x00"sv) ==
-          std::vector{http::websocket_message{.opcode = websocket_opcode::close, .data = "", .close_code = 1005}});
+  REQUIRE(
+      messages_of(websocket_role::client, "\x88\x00"sv) ==
+      std::vector{http::websocket_message{.opcode = websocket_opcode::close, .data = "", .close_code = 1005}}
+  );
 }
 
 TEST_CASE("websocket_parser: text split in the middle of a character, joined", "[http][websocket]") {
@@ -227,23 +241,34 @@ TEST_CASE("websocket_parser: what breaks the protocol fails with 1002", "[http][
   }
 
   // Masked to a client.
-  REQUIRE(failure_of(websocket_role::client, http::format_websocket_frame(websocket_opcode::text, "x", true, key)) ==
-          protocol);
+  REQUIRE(
+      failure_of(websocket_role::client, http::format_websocket_frame(websocket_opcode::text, "x", true, key)) ==
+      protocol
+  );
 }
 
-TEST_CASE("websocket_parser: text that is not UTF-8 fails with 1007, a message too large with 1009",
-          "[http][websocket]") {
-  REQUIRE(failure_of(websocket_role::client, http::format_websocket_frame(websocket_opcode::text, "\xFF")) ==
-          http::error::websocket_invalid_text);
+TEST_CASE(
+    "websocket_parser: text that is not UTF-8 fails with 1007, a message too large with 1009", "[http][websocket]"
+) {
+  REQUIRE(
+      failure_of(websocket_role::client, http::format_websocket_frame(websocket_opcode::text, "\xFF")) ==
+      http::error::websocket_invalid_text
+  );
   REQUIRE(failure_of(websocket_role::client, raw_close("\x03\xE8\xFF")) == http::error::websocket_invalid_text);
-  REQUIRE(failure_of(websocket_role::client, http::format_websocket_frame(websocket_opcode::binary, "12345"), 4) ==
-          http::error::websocket_too_large);
+  REQUIRE(
+      failure_of(websocket_role::client, http::format_websocket_frame(websocket_opcode::binary, "12345"), 4) ==
+      http::error::websocket_too_large
+  );
 
   // Fragments that pass the limit together, refused at the second's header, before any of its bytes.
-  REQUIRE(failure_of(websocket_role::client,
-                     http::format_websocket_frame(websocket_opcode::binary, "123", false) +
-                         http::format_websocket_frame(websocket_opcode::continuation, "45", true).substr(0, 2),
-                     4) == http::error::websocket_too_large);
+  REQUIRE(
+      failure_of(
+          websocket_role::client,
+          http::format_websocket_frame(websocket_opcode::binary, "123", false) +
+              http::format_websocket_frame(websocket_opcode::continuation, "45", true).substr(0, 2),
+          4
+      ) == http::error::websocket_too_large
+  );
 
   REQUIRE(http::close_code_of(http::error::websocket_protocol) == 1002);
   REQUIRE(http::close_code_of(http::error::websocket_invalid_text) == 1007);
@@ -251,8 +276,10 @@ TEST_CASE("websocket_parser: text that is not UTF-8 fails with 1007, a message t
   REQUIRE(http::close_code_of(std::make_error_code(std::errc::io_error)) == 1011);
 }
 
-TEST_CASE("websocket_parser: a failure is for good, and fed again before every message is taken, it refuses",
-          "[http][websocket]") {
+TEST_CASE(
+    "websocket_parser: a failure is for good, and fed again before every message is taken, it refuses",
+    "[http][websocket]"
+) {
   http::websocket_parser parser{websocket_role::client};
 
   parser.feed("\x81\x01"
@@ -261,9 +288,11 @@ TEST_CASE("websocket_parser: a failure is for good, and fed again before every m
               "b");
 
   REQUIRE(parser.next() == text("a"));
-  REQUIRE_THROWS_AS(parser.feed("\x81\x01"
-                                "c"),
-                    std::logic_error);
+  REQUIRE_THROWS_AS(
+      parser.feed("\x81\x01"
+                  "c"),
+      std::logic_error
+  );
   REQUIRE(parser.next() == text("b"));
   REQUIRE_FALSE(parser.next());
 
@@ -271,20 +300,26 @@ TEST_CASE("websocket_parser: a failure is for good, and fed again before every m
 
   REQUIRE_THROWS_AS(parser.next(), std::system_error);
   REQUIRE_THROWS_AS(parser.next(), std::system_error);
-  REQUIRE_THROWS_AS(parser.feed("\x81\x01"
-                                "d"),
-                    std::system_error);
+  REQUIRE_THROWS_AS(
+      parser.feed("\x81\x01"
+                  "d"),
+      std::system_error
+  );
 }
 
 TEST_CASE("format_websocket_frame: what it writes reads back, masked or not, of every length", "[http][websocket]") {
   for (auto const size : {std::size_t{0}, std::size_t{125}, std::size_t{126}, std::size_t{65535}, std::size_t{65536}}) {
     std::string const payload(size, 'x');
 
-    REQUIRE(messages_of(websocket_role::server,
-                        http::format_websocket_frame(websocket_opcode::binary, payload, true, key)) ==
-            std::vector{http::websocket_message{.opcode = websocket_opcode::binary, .data = payload, .close_code = 0}});
-    REQUIRE(messages_of(websocket_role::client, http::format_websocket_frame(websocket_opcode::binary, payload)) ==
-            std::vector{http::websocket_message{.opcode = websocket_opcode::binary, .data = payload, .close_code = 0}});
+    REQUIRE(
+        messages_of(
+            websocket_role::server, http::format_websocket_frame(websocket_opcode::binary, payload, true, key)
+        ) == std::vector{http::websocket_message{.opcode = websocket_opcode::binary, .data = payload, .close_code = 0}}
+    );
+    REQUIRE(
+        messages_of(websocket_role::client, http::format_websocket_frame(websocket_opcode::binary, payload)) ==
+        std::vector{http::websocket_message{.opcode = websocket_opcode::binary, .data = payload, .close_code = 0}}
+    );
   }
 }
 
@@ -298,26 +333,32 @@ TEST_CASE("format_websocket_frame: what a peer would refuse is refused", "[http]
   REQUIRE(http::format_websocket_close(4000, std::string(123, 'r')).size() == 2 + 125);
 }
 
-TEST_CASE("websocket_parser: a 64-bit length, in its shortest form, its top bit clear, bounded before its bytes",
-          "[http][websocket]") {
+TEST_CASE(
+    "websocket_parser: a 64-bit length, in its shortest form, its top bit clear, bounded before its bytes",
+    "[http][websocket]"
+) {
   auto const protocol = std::error_code{http::error::websocket_protocol};
 
   // 127 for a length that fits in 16 bits; the top bit set.
   REQUIRE(failure_of(websocket_role::client, "\x82\x7f\x00\x00\x00\x00\x00\x00\xff\xff"sv) == protocol);
   REQUIRE(failure_of(websocket_role::client, "\x82\x7f\x80\x00\x00\x00\x00\x01\x00\x00"sv) == protocol);
   // 2^40 bytes announced: refused at its header, none of them held.
-  REQUIRE(failure_of(websocket_role::client, "\x82\x7f\x00\x00\x01\x00\x00\x00\x00\x00"sv) ==
-          http::error::websocket_too_large);
+  REQUIRE(
+      failure_of(websocket_role::client, "\x82\x7f\x00\x00\x01\x00\x00\x00\x00\x00"sv) ==
+      http::error::websocket_too_large
+  );
 }
 
 TEST_CASE("websocket_parser: text that is not UTF-8 fails at its first fragment, not its last", "[http][websocket]") {
   http::websocket_parser parser{websocket_role::client};
 
   // A first fragment whose first byte no UTF-8 starts with: refused before the rest comes.
-  parser.feed(http::format_websocket_frame(websocket_opcode::text,
-                                           "\xFF"
-                                           "abc",
-                                           false));
+  parser.feed(http::format_websocket_frame(
+      websocket_opcode::text,
+      "\xFF"
+      "abc",
+      false
+  ));
 
   REQUIRE(failure_code(parser) == http::error::websocket_invalid_text);
 
@@ -331,11 +372,14 @@ TEST_CASE("websocket_parser: text that is not UTF-8 fails at its first fragment,
   // A character cut between two fragments is no failure: they read as they come.
   http::websocket_parser cut{websocket_role::client};
 
-  cut.feed(http::format_websocket_frame(websocket_opcode::text, "a\xE2\x82", false) +
-           http::format_websocket_frame(websocket_opcode::continuation,
-                                        "\xAC"
-                                        "b",
-                                        false));
+  cut.feed(
+      http::format_websocket_frame(websocket_opcode::text, "a\xE2\x82", false) + http::format_websocket_frame(
+                                                                                     websocket_opcode::continuation,
+                                                                                     "\xAC"
+                                                                                     "b",
+                                                                                     false
+                                                                                 )
+  );
   REQUIRE_FALSE(cut.next());
 
   // One never ended at the last is.
@@ -376,8 +420,9 @@ TEST_CASE("websocket_parser: bytes fed after a close are dropped", "[http][webso
   REQUIRE(parser.closed());
 }
 
-TEST_CASE("format_websocket_frame: an opcode RFC 6455 does not name, or a close a peer would refuse",
-          "[http][websocket]") {
+TEST_CASE(
+    "format_websocket_frame: an opcode RFC 6455 does not name, or a close a peer would refuse", "[http][websocket]"
+) {
   REQUIRE_THROWS_AS(http::format_websocket_frame(static_cast<websocket_opcode>(3), "x"), std::invalid_argument);
   REQUIRE_THROWS_AS(http::format_websocket_frame(websocket_opcode::close, "\x03"), std::invalid_argument);
   REQUIRE_THROWS_AS(http::format_websocket_frame(websocket_opcode::close, "\x03\xED"), std::invalid_argument);
@@ -385,8 +430,9 @@ TEST_CASE("format_websocket_frame: an opcode RFC 6455 does not name, or a close 
   REQUIRE(http::format_websocket_frame(websocket_opcode::close, "") == std::string{"\x88\x00", 2});
 }
 
-TEST_CASE("websocket_parser: bytes fed after the close is read, with no next() between, are dropped",
-          "[http][websocket]") {
+TEST_CASE(
+    "websocket_parser: bytes fed after the close is read, with no next() between, are dropped", "[http][websocket]"
+) {
   http::websocket_parser parser{websocket_role::client};
 
   parser.feed(http::format_websocket_close(1000) + http::format_websocket_frame(websocket_opcode::text, "x"));
@@ -411,7 +457,10 @@ TEST_CASE("websocket_parser: to a server, masked text cut in the middle of a cha
                      http::format_websocket_frame(websocket_opcode::ping, "p", true, key) +
                      http::format_websocket_frame(websocket_opcode::continuation, "\xAC", true, key);
 
-  REQUIRE(messages_of(websocket_role::server, bytes, 1) ==
-          std::vector{http::websocket_message{.opcode = websocket_opcode::ping, .data = "p", .close_code = 0},
-                      text("a\xE2\x82\xAC")});
+  REQUIRE(
+      messages_of(websocket_role::server, bytes, 1) ==
+      std::vector{
+          http::websocket_message{.opcode = websocket_opcode::ping, .data = "p", .close_code = 0}, text("a\xE2\x82\xAC")
+      }
+  );
 }

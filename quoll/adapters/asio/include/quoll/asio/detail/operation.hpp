@@ -83,8 +83,9 @@ class operation {
 public:
   using result_type = std::tuple<std::error_code, Values...>;
 
-  operation(Initiation initiation,
-            std::shared_ptr<cancellation> cancellation) noexcept(std::is_nothrow_move_constructible_v<Initiation>)
+  operation(
+      Initiation initiation, std::shared_ptr<cancellation> cancellation
+  ) noexcept(std::is_nothrow_move_constructible_v<Initiation>)
       : initiation_(std::move(initiation)), cancellation_(std::move(cancellation)) {}
 
   operation(operation const &) = delete;
@@ -178,8 +179,8 @@ private:
 
     try {
       if (stoppable) {
-        initiation_(
-            ::asio::bind_cancellation_slot(cancellation_->start(ticket_), completion{this, cancellation_.get()}));
+        initiation_(::asio::bind_cancellation_slot(cancellation_->start(ticket_), completion{this, cancellation_.get()})
+        );
       } else {
         initiation_(completion{this, nullptr});
       }
@@ -206,8 +207,8 @@ private:
 
 // Builds an operation, naming only the values its handler receives after the error code.
 template <class... Values, class Initiation>
-[[nodiscard]] operation<Initiation, Values...> make_operation(std::shared_ptr<cancellation> cancellation,
-                                                              Initiation initiation) {
+[[nodiscard]] operation<Initiation, Values...>
+make_operation(std::shared_ptr<cancellation> cancellation, Initiation initiation) {
   return {std::move(initiation), std::move(cancellation)};
 }
 

@@ -231,9 +231,10 @@ TEST_CASE("static_files: a content type of the application's", "[server][static]
 TEST_CASE("static_files: what is not there, or not to be served, stays a 404", "[server][static]") {
   site const served;
 
-  auto const target = GENERATE(as<std::string>{}, "/assets/missing.txt", "/assets/.env", "/assets/.git/config",
-                               "/assets/sub", "/assets/hello.txt/", "/assets//hello.txt", "/assets/sub%2Fdeep.css",
-                               "/other/hello.txt", "/assetshello.txt");
+  auto const target = GENERATE(
+      as<std::string>{}, "/assets/missing.txt", "/assets/.env", "/assets/.git/config", "/assets/sub",
+      "/assets/hello.txt/", "/assets//hello.txt", "/assets/sub%2Fdeep.css", "/other/hello.txt", "/assetshello.txt"
+  );
 
   CAPTURE(target);
   REQUIRE(ask(served.router, target).status == status::not_found);
@@ -242,8 +243,10 @@ TEST_CASE("static_files: what is not there, or not to be served, stays a 404", "
 TEST_CASE("static_files: a path that climbs out is refused by the router first", "[server][static]") {
   site const served;
 
-  auto const target = GENERATE(as<std::string>{}, "/assets/../hello.txt", "/assets/%2e%2e/hello.txt",
-                               "/assets/sub/..%2F..%2Fhello.txt", "/assets/a%00b");
+  auto const target = GENERATE(
+      as<std::string>{}, "/assets/../hello.txt", "/assets/%2e%2e/hello.txt", "/assets/sub/..%2F..%2Fhello.txt",
+      "/assets/a%00b"
+  );
 
   CAPTURE(target);
 
@@ -548,8 +551,10 @@ TEST_CASE("static_files: the middlewares after it decide first, and what they ad
   }
 }
 
-TEST_CASE("static_files: of several, the last added looks first, and the one before takes what it does not have",
-          "[server][static]") {
+TEST_CASE(
+    "static_files: of several, the last added looks first, and the one before takes what it does not have",
+    "[server][static]"
+) {
   temporary_directory first;
   temporary_directory second;
 
@@ -599,9 +604,11 @@ TEST_CASE("static_files: on a connection, a HEAD and a part as they go out", "[s
     }
   };
 
-  auto outcome =
-      quoll::test::run(loop, quoll::async::when_all(http::server{served.router}.serve_connection(std::move(connection)),
-                                                    peer(std::move(client))));
+  auto outcome = quoll::test::run(
+      loop, quoll::async::when_all(
+                http::server{served.router}.serve_connection(std::move(connection)), peer(std::move(client))
+            )
+  );
   auto const &received = std::get<1>(outcome.value());
   auto const second = received.find("HTTP/1.1 206");
 
@@ -710,10 +717,11 @@ TEST_CASE("static_files: what a later middleware made of the 404 goes with it", 
 TEST_CASE("static_files: a date is one or it is ignored", "[server][static]") {
   site const served;
 
-  auto const value = GENERATE(as<std::string>{}, "Thu, 01 Jan -2147483648 00:00:00 GMT",
-                              "Thu, 01 Jan 99999999999999999999 00:00:00 GMT", "Mon, 99 Jan 2099 99:99:99 GMT",
-                              "Mon, 01 Jan 2099 00:00:00 PST", "Mon, 01 Jq 2099 00:00:00 GMT",
-                              "Mon, 01 Jan 2099 00:00:00 GMT", "Sunday, 06-Nov-94 08:49:37 GMT");
+  auto const value = GENERATE(
+      as<std::string>{}, "Thu, 01 Jan -2147483648 00:00:00 GMT", "Thu, 01 Jan 99999999999999999999 00:00:00 GMT",
+      "Mon, 99 Jan 2099 99:99:99 GMT", "Mon, 01 Jan 2099 00:00:00 PST", "Mon, 01 Jq 2099 00:00:00 GMT",
+      "Mon, 01 Jan 2099 00:00:00 GMT", "Sunday, 06-Nov-94 08:49:37 GMT"
+  );
 
   CAPTURE(value);
 
@@ -1031,8 +1039,10 @@ TEST_CASE("static_files: a file that shrinks under its response cuts it, and say
 
   auto outcome = quoll::test::run(
       loop,
-      quoll::async::when_all(http::server{router, {.connection = options}}.serve_connection(std::move(connection)),
-                             peer(std::move(client))));
+      quoll::async::when_all(
+          http::server{router, {.connection = options}}.serve_connection(std::move(connection)), peer(std::move(client))
+      )
+  );
   auto const &received = std::get<1>(outcome.value());
 
   REQUIRE(received.starts_with("HTTP/1.1 200"));
@@ -1184,8 +1194,10 @@ TEST_CASE("static_files: a date in a condition, with what a field may have aroun
 TEST_CASE("static_files: a file from the future is not said to be", "[server][static]") {
   site served;
 
-  std::filesystem::last_write_time(served.directory.path() / "hello.txt",
-                                   std::filesystem::file_time_type::clock::now() + std::chrono::hours{24 * 365});
+  std::filesystem::last_write_time(
+      served.directory.path() / "hello.txt",
+      std::filesystem::file_time_type::clock::now() + std::chrono::hours{24 * 365}
+  );
 
   auto const answer = ask(served.router, "/assets/hello.txt");
   auto const date = std::string{answer.fields.find("Last-Modified").value()};

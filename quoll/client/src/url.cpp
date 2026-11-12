@@ -222,8 +222,8 @@ struct authority_parts {
 };
 
 // `host[:port]` or `[ipv6][:port]`, brackets holding an IPv6 address only (RFC 3986): nothing when it is neither.
-[[nodiscard]] constexpr std::optional<authority_parts>
-split_authority(std::string_view authority QUOLL_LIFETIMEBOUND) noexcept {
+[[nodiscard]] constexpr std::optional<authority_parts> split_authority(std::string_view authority QUOLL_LIFETIMEBOUND
+) noexcept {
   auto host = authority;
   std::string_view rest;
 
@@ -273,8 +273,8 @@ split_authority(std::string_view authority QUOLL_LIFETIMEBOUND) noexcept {
 
 // Whether `authority` names what the `Host` field `host` does. Credentials end up in the host, or in the port, and
 // differ.
-[[nodiscard]] constexpr bool same_authority(std::string_view authority, std::string_view host,
-                                            std::uint16_t default_port) noexcept {
+[[nodiscard]] constexpr bool
+same_authority(std::string_view authority, std::string_view host, std::uint16_t default_port) noexcept {
   auto const named = split_authority(authority);
   auto const asked = split_authority(host);
 
@@ -320,8 +320,9 @@ split_authority(std::string_view authority QUOLL_LIFETIMEBOUND) noexcept {
     return std::nullopt;
   }
 
-  std::erase_if(*decoded,
-                [](char const character) { return character == '\t' || character == '\n' || character == '\r'; });
+  std::erase_if(*decoded, [](char const character) {
+    return character == '\t' || character == '\n' || character == '\r';
+  });
   std::ranges::replace(*decoded, '\\', '/');
 
   return decoded;
@@ -492,8 +493,8 @@ std::string host_field(std::string_view host, std::uint16_t port, std::uint16_t 
   return field;
 }
 
-std::optional<std::string> resolve_location(std::string_view location, std::string_view host, bool secure,
-                                            std::string_view target) {
+std::optional<std::string>
+resolve_location(std::string_view location, std::string_view host, bool secure, std::string_view target) {
   auto reference = location.substr(0, location.find('#'));
 
   if (!std::ranges::all_of(reference, reference_character) || !http::detail::valid_escapes(reference)) {

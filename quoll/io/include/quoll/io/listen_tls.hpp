@@ -55,8 +55,8 @@ namespace quoll::io {
  * Throws std::invalid_argument without both a certificate and its key, std::system_error when they cannot be loaded or
  * the address cannot be bound, std::logic_error if the executor offers no TLS network.
  */
-[[nodiscard]] async::task<any_listener> listen_tls(std::uint16_t port, tls_server_options options,
-                                                   std::string address = std::string{default_listen_address});
+[[nodiscard]] async::task<any_listener>
+listen_tls(std::uint16_t port, tls_server_options options, std::string address = std::string{default_listen_address});
 
 } // namespace quoll::io
 

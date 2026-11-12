@@ -208,8 +208,7 @@ private:
 
   template <class F>
   void add_typed(verb method, std::string_view path, F target) {
-    add_route(method, path, std::string{path}, detail::typed_handler(std::move(target)),
-              detail::reads_body_in_pieces<F>);
+    add_route(method, path, std::string{path}, detail::typed_handler(std::move(target)), detail::reads_body_in_pieces<F>);
   }
 
   void add_route(verb method, std::string_view path, std::string name, handler target, bool body_in_pieces);
@@ -217,8 +216,8 @@ private:
   // What routing finds for a request, without running anything.
   [[nodiscard]] detail::resolved_route resolve(request const &message) const;
   // From the middleware at `position`, or the route past the last one.
-  [[nodiscard]] async::task<response> run_from(detail::resolved_route const &resolved, std::size_t position,
-                                               request message) const;
+  [[nodiscard]] async::task<response>
+  run_from(detail::resolved_route const &resolved, std::size_t position, request message) const;
 
   std::vector<entry> routes_;
   std::vector<middleware> middlewares_;

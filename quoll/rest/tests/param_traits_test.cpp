@@ -145,8 +145,10 @@ TEST_CASE("param_traits: a floating-point number that fits no double reads back"
 #endif
 
 TEST_CASE("param_traits: a number that is not finite has no text", "[rest]") {
-  REQUIRE_THROWS_AS(quoll::rest::param_traits<double>::to_text(std::numeric_limits<double>::infinity()),
-                    std::invalid_argument);
-  REQUIRE_THROWS_AS(quoll::rest::param_traits<float>::to_text(std::numeric_limits<float>::quiet_NaN()),
-                    std::invalid_argument);
+  REQUIRE_THROWS_AS(
+      quoll::rest::param_traits<double>::to_text(std::numeric_limits<double>::infinity()), std::invalid_argument
+  );
+  REQUIRE_THROWS_AS(
+      quoll::rest::param_traits<float>::to_text(std::numeric_limits<float>::quiet_NaN()), std::invalid_argument
+  );
 }

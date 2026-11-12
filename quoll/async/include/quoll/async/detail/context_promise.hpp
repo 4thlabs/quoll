@@ -72,17 +72,21 @@ class context_promise : public recycled_frame {
 public:
   template <class A>
     requires ContextAwaitable<std::remove_cvref_t<A>>
-  [[nodiscard]] context_adapter<A> await_transform(A &&awaitable) noexcept(
-      std::is_nothrow_constructible_v<context_adapter<A>, A &&, await_context const &>) {
+  [[nodiscard]] context_adapter<A> await_transform(A &&awaitable
+  ) noexcept(std::is_nothrow_constructible_v<context_adapter<A>, A &&, await_context const &>) {
     // A task is moved into the co_await, so that its frame belongs to its awaiter: one awaited by name could be
     // destroyed elsewhere while it runs, or awaited again once it has ended.
-    static_assert(!is_task_v<std::remove_cvref_t<A>> || !std::is_lvalue_reference_v<A>,
-                  "quoll: co_await std::move(task): a task awaited by name could be dropped while it runs, or "
-                  "started again");
+    static_assert(
+        !is_task_v<std::remove_cvref_t<A>> || !std::is_lvalue_reference_v<A>,
+        "quoll: co_await std::move(task): a task awaited by name could be dropped while it runs, or "
+        "started again"
+    );
     // As one holding a task: awaited by name, it could be moved elsewhere while it waits, its task with it.
-    static_assert(is_task_v<std::remove_cvref_t<A>> || !awaited_as_a_temporary_v<std::remove_cvref_t<A>> ||
-                      !std::is_lvalue_reference_v<A>,
-                  "quoll: co_await std::move(...): what holds a task, awaited by name, could be moved while it waits");
+    static_assert(
+        is_task_v<std::remove_cvref_t<A>> || !awaited_as_a_temporary_v<std::remove_cvref_t<A>> ||
+            !std::is_lvalue_reference_v<A>,
+        "quoll: co_await std::move(...): what holds a task, awaited by name, could be moved while it waits"
+    );
 
     return context_adapter<A>{std::forward<A>(awaitable), *context_};
   }

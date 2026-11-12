@@ -135,16 +135,18 @@ using api = rest::api<"/users", list, get, create, remove>;
 namespace cards {
 using namespace quoll::rest;
 
-using list = endpoint<"cards.list", verb::get, "/", query<"status", std::optional<std::string>>,
-                      header<"X-Request-Id", std::string>, returns<std::vector<card>>>;
+using list = endpoint<
+    "cards.list", verb::get, "/", query<"status", std::optional<std::string>>, header<"X-Request-Id", std::string>,
+    returns<std::vector<card>>>;
 
 // A list header: its values may come on several lines, or combined on one.
-using tagged = endpoint<"cards.tagged", verb::get, "/tagged", header<"X-Tag", std::vector<std::string>>,
-                        returns<std::vector<std::string>>>;
+using tagged = endpoint<
+    "cards.tagged", verb::get, "/tagged", header<"X-Tag", std::vector<std::string>>, returns<std::vector<std::string>>>;
 
 // Required parameters of a type that is no class.
-using paged = endpoint<"cards.paged", verb::get, "/paged", query<"page", std::int64_t>, query<"all", bool>,
-                       header<"X-Limit", std::int64_t>, returns<std::string, status::ok, text_codec>>;
+using paged = endpoint<
+    "cards.paged", verb::get, "/paged", query<"page", std::int64_t>, query<"all", bool>,
+    header<"X-Limit", std::int64_t>, returns<std::string, status::ok, text_codec>>;
 
 using api = rest::api<"/users/{user_id:int64}/cards", list, tagged, paged>;
 } // namespace cards
@@ -152,10 +154,11 @@ using api = rest::api<"/users/{user_id:int64}/cards", list, tagged, paged>;
 namespace keys {
 using namespace quoll::rest;
 
-using ping = endpoint<"keys.ping", verb::get, "/ping", security<api_key<"X-Api-Key">>,
-                      returns<std::string, status::ok, text_codec>>;
-using ping_query = endpoint<"keys.ping_query", verb::get, "/ping-query", security<api_key_query<"key">>,
-                            returns<std::string, status::ok, text_codec>>;
+using ping = endpoint<
+    "keys.ping", verb::get, "/ping", security<api_key<"X-Api-Key">>, returns<std::string, status::ok, text_codec>>;
+using ping_query = endpoint<
+    "keys.ping_query", verb::get, "/ping-query", security<api_key_query<"key">>,
+    returns<std::string, status::ok, text_codec>>;
 
 using api = rest::api<"/keys", ping, ping_query>;
 } // namespace keys
@@ -164,11 +167,12 @@ using v1 =
     rest::api<"/api/v1", auth::api, keys::api, rest::with<rest::security<rest::bearer_auth>, users::api, cards::api>>;
 
 using slow_one = rest::endpoint<"slow", verb::get, "/slow", rest::returns<std::string, status::ok, rest::text_codec>>;
-using two_schemes =
-    rest::endpoint<"both", verb::get, "/both", rest::security<rest::bearer_auth, rest::api_key<"X-Key">>,
-                   rest::returns<std::string, status::ok, rest::text_codec>>;
-using a_pair = rest::endpoint<"pair", verb::post, "/pair", rest::body<std::pair<std::string, int>>,
-                              rest::returns<std::string, status::ok, rest::text_codec>>;
+using two_schemes = rest::endpoint<
+    "both", verb::get, "/both", rest::security<rest::bearer_auth, rest::api_key<"X-Key">>,
+    rest::returns<std::string, status::ok, rest::text_codec>>;
+using a_pair = rest::endpoint<
+    "pair", verb::post, "/pair", rest::body<std::pair<std::string, int>>,
+    rest::returns<std::string, status::ok, rest::text_codec>>;
 using slow_api = rest::api<"", slow_one, two_schemes, a_pair>;
 
 // Synchronous: returns the value itself.
@@ -232,8 +236,8 @@ struct users_service {
 };
 
 struct cards_service {
-  std::vector<card> operator()(cards::list, std::int64_t owner, std::optional<std::string> state,
-                               std::string request_id) const {
+  std::vector<card>
+  operator()(cards::list, std::int64_t owner, std::optional<std::string> state, std::string request_id) const {
     return {{.owner = owner, .request_id = std::move(request_id), .status = std::move(state)}};
   }
 
@@ -265,11 +269,14 @@ http::router make_router() {
 
   rest::mount<v1>(
       router, auth_service{}, users_service{}, cards_service{}, keys_service{},
-      rest::validators([](rest::credential<rest::bearer_auth> const &given) { return given.value == "valid"; },
-                       [](rest::credential<rest::api_key<"X-Api-Key">> const &given) -> task<bool> {
-                         co_return given.value == "key";
-                       },
-                       [](rest::credential<rest::api_key_query<"key">> const &given) { return given.value == "key"; }));
+      rest::validators(
+          [](rest::credential<rest::bearer_auth> const &given) { return given.value == "valid"; },
+          [](rest::credential<rest::api_key<"X-Api-Key">> const &given) -> task<bool> {
+            co_return given.value == "key";
+          },
+          [](rest::credential<rest::api_key_query<"key">> const &given) { return given.value == "key"; }
+      )
+  );
   return router;
 }
 
@@ -277,8 +284,10 @@ using field_list = std::vector<std::pair<std::string, std::string>>;
 
 field_list const bearer{{"Authorization", "Bearer valid"}};
 
-http::response send(http::router const &router, verb method, std::string target, field_list const &fields = bearer,
-                    std::string body = {}) {
+http::response send(
+    http::router const &router, verb method, std::string target, field_list const &fields = bearer,
+    std::string body = {}
+) {
   http::request message;
 
   message.method = method;
@@ -339,9 +348,13 @@ TEST_CASE("mount: bearer credentials are required where with<> asks for them", "
   REQUIRE(problem_of(rejected).detail == "rejected credentials");
   REQUIRE(send(router, verb::get, "/api/v1/users/42", {{"Authorization", "bearer valid"}}).status == http::status::ok);
   // Not under with<security<>>: no credentials needed.
-  REQUIRE(send(router, verb::post, "/api/v1/auth/login", {{"Content-Type", "application/json"}},
-               R"({"email":"ada","password":"secret"})")
-              .status == http::status::ok);
+  REQUIRE(
+      send(
+          router, verb::post, "/api/v1/auth/login", {{"Content-Type", "application/json"}},
+          R"({"email":"ada","password":"secret"})"
+      )
+          .status == http::status::ok
+  );
 }
 
 TEST_CASE("mount: api keys, in a header or in the query", "[rest][mount]") {
@@ -375,15 +388,18 @@ TEST_CASE("mount: path and query arguments are decoded, or answer 400", "[rest][
 
   REQUIRE(problem_of(send(router, verb::get, "/api/v1/users/abc")).detail == "invalid path parameter id");
   REQUIRE(problem_of(send(router, verb::get, "/api/v1/users?limit=x")).detail == "invalid query parameter limit");
-  REQUIRE(problem_of(send(router, verb::get, "/api/v1/users?limit=1&limit=2")).detail ==
-          "query parameter limit is repeated");
+  REQUIRE(
+      problem_of(send(router, verb::get, "/api/v1/users?limit=1&limit=2")).detail == "query parameter limit is repeated"
+  );
   REQUIRE(problem_of(send(router, verb::get, "/api/v1/users?name=%zz")).detail == "invalid query string");
 }
 
 TEST_CASE("mount: headers and inherited path parameters", "[rest][mount]") {
   auto const router = make_router();
-  auto const listed = send(router, verb::get, "/api/v1/users/5/cards?status=active",
-                           {{"Authorization", "Bearer valid"}, {"x-request-id", "r-1"}});
+  auto const listed = send(
+      router, verb::get, "/api/v1/users/5/cards?status=active",
+      {{"Authorization", "Bearer valid"}, {"x-request-id", "r-1"}}
+  );
 
   REQUIRE(listed.status == http::status::ok);
 
@@ -423,9 +439,10 @@ TEST_CASE("mount: a body is decoded with its codec, of its media type", "[rest][
 
 TEST_CASE("mount: errors thrown by services", "[rest][mount]") {
   auto const router = make_router();
-  auto const conflict = send(router, verb::post, "/api/v1/users",
-                             {{"Authorization", "Bearer valid"}, {"Content-Type", "application/json"}},
-                             R"({"name":"taken","email":"x"})");
+  auto const conflict = send(
+      router, verb::post, "/api/v1/users", {{"Authorization", "Bearer valid"}, {"Content-Type", "application/json"}},
+      R"({"name":"taken","email":"x"})"
+  );
 
   REQUIRE(conflict.status == http::status::conflict);
   REQUIRE(problem_of(conflict).detail == "name taken");
@@ -484,14 +501,17 @@ struct waits {
 
   rest::mount<slow_api>(
       router, waits{},
-      rest::validators([](rest::credential<rest::bearer_auth> const &given) { return given.value == "valid"; },
-                       [](rest::credential<rest::api_key<"X-Key">> const &given) {
-                         if (given.value == "throws") {
-                           throw rest::http_error{status::forbidden, "not this one"};
-                         }
+      rest::validators(
+          [](rest::credential<rest::bearer_auth> const &given) { return given.value == "valid"; },
+          [](rest::credential<rest::api_key<"X-Key">> const &given) {
+            if (given.value == "throws") {
+              throw rest::http_error{status::forbidden, "not this one"};
+            }
 
-                         return given.value == "valid";
-                       }));
+            return given.value == "valid";
+          }
+      )
+  );
 
   return router;
 }
@@ -538,8 +558,10 @@ TEST_CASE("mount: a stop or a timeout goes through a route, not into a 500", "[r
 
     stop.request_stop();
 
-    REQUIRE(quoll::test::run(time, quoll::test::code_thrown_by(router.dispatch(make_request())), stop.get_token())
-                .value() == std::errc::operation_canceled);
+    REQUIRE(
+        quoll::test::run(time, quoll::test::code_thrown_by(router.dispatch(make_request())), stop.get_token())
+            .value() == std::errc::operation_canceled
+    );
   }
 
   SECTION("a typed client timing a call out hears the timeout") {
@@ -585,11 +607,15 @@ TEST_CASE("mount: a credential that comes twice is none", "[rest][mount]") {
   auto const router = make_router();
 
   REQUIRE(send(router, verb::get, "/api/v1/users/42").status == status::ok);
-  REQUIRE(send(router, verb::get, "/api/v1/users/42",
-               {{"Authorization", "Bearer valid"}, {"Authorization", "Bearer forged"}})
-              .status == status::unauthorized);
-  REQUIRE(send(router, verb::get, "/api/v1/keys/ping", {{"X-Api-Key", "key"}, {"x-api-key", "forged"}}).status ==
-          status::unauthorized);
+  REQUIRE(
+      send(
+          router, verb::get, "/api/v1/users/42", {{"Authorization", "Bearer valid"}, {"Authorization", "Bearer forged"}}
+      ).status == status::unauthorized
+  );
+  REQUIRE(
+      send(router, verb::get, "/api/v1/keys/ping", {{"X-Api-Key", "key"}, {"x-api-key", "forged"}}).status ==
+      status::unauthorized
+  );
   REQUIRE(send(router, verb::get, "/api/v1/keys/ping-query?key=key&key=forged", {}).status == status::unauthorized);
 }
 
@@ -631,12 +657,16 @@ TEST_CASE("mount: a query is read by the route that declares one", "[rest][mount
 TEST_CASE("mount: a repeated Content-Type is refused", "[rest][mount]") {
   auto const router = make_router();
 
-  REQUIRE(problem_of(send(router, verb::post, "/api/v1/users",
-                          {{"Authorization", "Bearer valid"},
-                           {"Content-Type", "application/json"},
-                           {"Content-Type", "text/plain"}},
-                          R"({"name":"fine","email":"x"})"))
-              .detail == "repeated Content-Type");
+  REQUIRE(
+      problem_of(
+          send(
+              router, verb::post, "/api/v1/users",
+              {{"Authorization", "Bearer valid"}, {"Content-Type", "application/json"}, {"Content-Type", "text/plain"}},
+              R"({"name":"fine","email":"x"})"
+          )
+      )
+          .detail == "repeated Content-Type"
+  );
 }
 
 TEST_CASE("mount: a body that cannot be read answers a problem that can", "[rest][mount]") {
@@ -664,8 +694,9 @@ TEST_CASE("mount: credentials come before arguments, and empty ones are missing"
   auto const router = make_router();
 
   REQUIRE(send(router, verb::get, "/api/v1/users?name=%zz", {}).status == http::status::unauthorized);
-  REQUIRE(problem_of(send(router, verb::get, "/api/v1/keys/ping", {{"X-Api-Key", ""}})).detail ==
-          "missing credentials");
+  REQUIRE(
+      problem_of(send(router, verb::get, "/api/v1/keys/ping", {{"X-Api-Key", ""}})).detail == "missing credentials"
+  );
   REQUIRE(problem_of(send(router, verb::get, "/api/v1/keys/ping-query?key=", {})).detail == "missing credentials");
 }
 
@@ -674,14 +705,17 @@ TEST_CASE("mount: a NUL in the query string is refused", "[rest][mount]") {
 
   REQUIRE(problem_of(send(router, verb::get, "/api/v1/users?name=a%00b")).detail == "invalid query string");
   // The key cannot be read: missing, not "key".
-  REQUIRE(send(router, verb::get, "/api/v1/keys/ping-query?key=key%00garbage", {}).status ==
-          http::status::unauthorized);
+  REQUIRE(
+      send(router, verb::get, "/api/v1/keys/ping-query?key=key%00garbage", {}).status == http::status::unauthorized
+  );
 }
 
 TEST_CASE("mount: a list header takes its values from every line, split at commas", "[rest][mount]") {
   auto const router = make_router();
-  auto const tagged = send(router, verb::get, "/api/v1/users/5/cards/tagged",
-                           {{"Authorization", "Bearer valid"}, {"X-Tag", "a, b"}, {"X-Tag", "c"}, {"X-Tag", " , "}});
+  auto const tagged = send(
+      router, verb::get, "/api/v1/users/5/cards/tagged",
+      {{"Authorization", "Bearer valid"}, {"X-Tag", "a, b"}, {"X-Tag", "c"}, {"X-Tag", " , "}}
+  );
 
   REQUIRE(tagged.status == http::status::ok);
   REQUIRE(json.decode<std::vector<std::string>>(tagged.body) == std::vector<std::string>{"a", "b", "c"});
@@ -690,8 +724,10 @@ TEST_CASE("mount: a list header takes its values from every line, split at comma
 TEST_CASE("mount: a required parameter of a scalar type is read, and missing or invalid is 400", "[rest][mount]") {
   auto const router = make_router();
   auto const paged = [&](std::string const &query, std::string const &limit) {
-    return send(router, verb::get, "/api/v1/users/5/cards/paged" + query,
-                {{"Authorization", "Bearer valid"}, {"X-Limit", limit}});
+    return send(
+        router, verb::get, "/api/v1/users/5/cards/paged" + query,
+        {{"Authorization", "Bearer valid"}, {"X-Limit", limit}}
+    );
   };
   auto const found = paged("?page=3&all=true", "20");
 
@@ -702,8 +738,10 @@ TEST_CASE("mount: a required parameter of a scalar type is read, and missing or 
   REQUIRE(problem_of(paged("?page=x&all=true", "20")).detail == "invalid query parameter page");
   REQUIRE(problem_of(paged("?page=3&all=maybe", "20")).detail == "invalid query parameter all");
   REQUIRE(problem_of(paged("?page=3&all=true", "many")).detail == "invalid header X-Limit");
-  REQUIRE(problem_of(send(router, verb::get, "/api/v1/users/5/cards/paged?page=3&all=true", bearer)).detail ==
-          "missing header X-Limit");
+  REQUIRE(
+      problem_of(send(router, verb::get, "/api/v1/users/5/cards/paged?page=3&all=true", bearer)).detail ==
+      "missing header X-Limit"
+  );
 }
 
 TEST_CASE("mount: a body without media type is 415, not missing", "[rest][mount]") {
@@ -716,9 +754,10 @@ TEST_CASE("mount: a body without media type is 415, not missing", "[rest][mount]
 TEST_CASE("mount: what http_error answers", "[rest][mount]") {
   auto const router = make_router();
   auto create = [&](std::string name) {
-    return send(router, verb::post, "/api/v1/users",
-                {{"Authorization", "Bearer valid"}, {"Content-Type", "application/json"}},
-                R"({"name":")" + name + R"(","email":"x"})");
+    return send(
+        router, verb::post, "/api/v1/users", {{"Authorization", "Bearer valid"}, {"Content-Type", "application/json"}},
+        R"({"name":")" + name + R"(","email":"x"})"
+    );
   };
 
   // On a secured route, a 401 gets the challenge of its scheme.
@@ -738,15 +777,21 @@ TEST_CASE("mount: what http_error answers", "[rest][mount]") {
 TEST_CASE("mount: adds all the routes or none", "[rest][mount]") {
   http::router router;
 
-  router.add(verb::get, "/api/v1/users/{x}", "taken",
-             [](http::request, http::route_match) -> task<http::response> { co_return http::response{}; });
+  router.add(verb::get, "/api/v1/users/{x}", "taken", [](http::request, http::route_match) -> task<http::response> {
+    co_return http::response{};
+  });
 
   REQUIRE_THROWS_AS(
-      rest::mount<v1>(router, auth_service{}, users_service{}, cards_service{}, keys_service{},
-                      rest::validators([](rest::credential<rest::bearer_auth> const &) { return true; },
-                                       [](rest::credential<rest::api_key<"X-Api-Key">> const &) { return true; },
-                                       [](rest::credential<rest::api_key_query<"key">> const &) { return true; })),
-      std::invalid_argument);
+      rest::mount<v1>(
+          router, auth_service{}, users_service{}, cards_service{}, keys_service{},
+          rest::validators(
+              [](rest::credential<rest::bearer_auth> const &) { return true; },
+              [](rest::credential<rest::api_key<"X-Api-Key">> const &) { return true; },
+              [](rest::credential<rest::api_key_query<"key">> const &) { return true; }
+          )
+      ),
+      std::invalid_argument
+  );
   // Routes mount() would have added before the clash are not there.
   REQUIRE(send(router, verb::post, "/api/v1/auth/login").status == http::status::not_found);
 }

@@ -288,12 +288,14 @@ std::vector<std::string> searched;
 struct searching_page {
   state<std::string> query;
 
-  effect search{query,
-                [](std::string text) -> task<> {
-                  searched.push_back(std::move(text));
-                  co_return;
-                },
-                {.debounce = 300ms}};
+  effect search{
+      query,
+      [](std::string text) -> task<> {
+        searched.push_back(std::move(text));
+        co_return;
+      },
+      {.debounce = 300ms}
+  };
 
   element view() { return input() | bind(query); }
 };
@@ -326,7 +328,8 @@ struct debounced_pair_page {
   state<int> right{2};
   state<text_target> text;
   effect load{
-      std::tie(left, right), [](int one, int two) { return load_text(one * 10 + two); }, text, {.debounce = 50ms}};
+      std::tie(left, right), [](int one, int two) { return load_text(one * 10 + two); }, text, {.debounce = 50ms}
+  };
 
   element view() { return p(shown_of(*text)); }
 };
@@ -363,15 +366,17 @@ struct backwards_page {
 struct flags_page {
   state<int> next{1};
   state<std::tuple<bool, std::exception_ptr>> touched;
-  effect touch{next,
-               [](int key) -> task<> {
-                 co_await quoll::async::sleep_for(1ms);
+  effect touch{
+      next,
+      [](int key) -> task<> {
+        co_await quoll::async::sleep_for(1ms);
 
-                 if (key == 2) {
-                   throw std::runtime_error{"no touch"};
-                 }
-               },
-               touched};
+        if (key == 2) {
+          throw std::runtime_error{"no touch"};
+        }
+      },
+      touched
+  };
 
   element view() { return p(std::get<0>(*touched) ? "touching" : std::get<1>(*touched) ? "failed" : "touched"); }
 };
@@ -529,8 +534,9 @@ struct touchy_key_loading_page {
 
 } // namespace
 
-TEST_CASE("effect: runs once its component first shows, its target loading, then holding what it gave",
-          "[ui][effect]") {
+TEST_CASE(
+    "effect: runs once its component first shows, its target loading, then holding what it gave", "[ui][effect]"
+) {
   loads = {};
   loads.delays = {{1, 10ms}};
 
@@ -679,7 +685,8 @@ TEST_CASE("effect: a run asked for after a view writes nothing once a later view
 
 TEST_CASE(
     "effect: a run that fails leaves why in its target and on_error, and reload runs it again, why gone as it starts",
-    "[ui][effect]") {
+    "[ui][effect]"
+) {
   loads = {};
   loads.failing = {1};
 
@@ -737,8 +744,9 @@ TEST_CASE("effect: a target with no error leaves a failure to the app's on_error
   CHECK(shown.html().contains("<p>text 1</p>"));
 }
 
-TEST_CASE("effect: while a change runs, its target keeps the values before, as React shows the state before",
-          "[ui][effect]") {
+TEST_CASE(
+    "effect: while a change runs, its target keeps the values before, as React shows the state before", "[ui][effect]"
+) {
   loads = {};
   loads.delays = {{2, 10ms}};
 
@@ -951,8 +959,9 @@ TEST_CASE("effect: the run of a component that goes is stopped with it", "[ui][e
   CHECK(loads.stopped == 1);
 }
 
-TEST_CASE("effect: with no target, debounced, a run that follows a change waits for the typing to stop",
-          "[ui][effect]") {
+TEST_CASE(
+    "effect: with no target, debounced, a run that follows a change waits for the typing to stop", "[ui][effect]"
+) {
   searched.clear();
 
   virtual_time time;
@@ -975,8 +984,9 @@ TEST_CASE("effect: with no target, debounced, a run that follows a change waits 
   CHECK(searched == std::vector<std::string>{"", "abc"});
 }
 
-TEST_CASE("effect: debounced, its first run starts at once, one after a change once it has stayed 50 ms",
-          "[ui][effect]") {
+TEST_CASE(
+    "effect: debounced, its first run starts at once, one after a change once it has stayed 50 ms", "[ui][effect]"
+) {
   loads = {};
 
   virtual_time time;
@@ -1035,8 +1045,9 @@ TEST_CASE("effect: debounced, a run reload() asks for does not wait", "[ui][effe
   CHECK(reloaded == std::vector<std::string>{"start 1", "end 1", "start 1"});
 }
 
-TEST_CASE("effect: debounced, the first run that starts, once an optional holds a value, does not wait",
-          "[ui][effect]") {
+TEST_CASE(
+    "effect: debounced, the first run that starts, once an optional holds a value, does not wait", "[ui][effect]"
+) {
   loads = {};
 
   virtual_time time;
@@ -1142,9 +1153,10 @@ TEST_CASE("effect: one that could not start ends on that failure, which reload t
   bool fail = false;
   std::vector<std::string> failures;
   test_app<other_page> instance{
-      failing_executor{time.get_executor(), &fail}, shown, {.on_error = [&failures](std::exception_ptr failure) {
-        failures.push_back(what_of(failure));
-      }}};
+      failing_executor{time.get_executor(), &fail},
+      shown,
+      {.on_error = [&failures](std::exception_ptr failure) { failures.push_back(what_of(failure)); }}
+  };
   std::string failed_kept;
   std::string other;
 
@@ -1221,9 +1233,11 @@ TEST_CASE("effect: a view whose change cannot be recorded stops the run before, 
   CHECK(std::get<2>(*page.text) == nullptr);
 }
 
-TEST_CASE("effect: a run under way whose next view cannot compare its states is stopped, its failure thrown, as "
-          "every failure",
-          "[ui][effect]") {
+TEST_CASE(
+    "effect: a run under way whose next view cannot compare its states is stopped, its failure thrown, as "
+    "every failure",
+    "[ui][effect]"
+) {
   loads = {};
   loads.delays = {{1, 10ms}};
 
@@ -1341,8 +1355,10 @@ TEST_CASE("effect: on a field of its props, runs as that field changes, as useEf
   CHECK(loads.lines == std::vector<std::string>{"start 1", "end 1", "start 2", "end 2"});
 }
 
-TEST_CASE("effect: on a field of the props of another component is refused once, at its first view, to on_error",
-          "[ui][effect]") {
+TEST_CASE(
+    "effect: on a field of the props of another component is refused once, at its first view, to on_error",
+    "[ui][effect]"
+) {
   loads = {};
 
   virtual_time time;
@@ -1360,14 +1376,17 @@ TEST_CASE("effect: on a field of the props of another component is refused once,
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(failures ==
-        std::vector<std::string>{"quoll::ui::effect: it depends on a field of props its component does not have"});
+  CHECK(
+      failures ==
+      std::vector<std::string>{"quoll::ui::effect: it depends on a field of props its component does not have"}
+  );
   CHECK(shown.html().contains("<p>stray</p>"));
   CHECK(loads.lines.empty());
 }
 
-TEST_CASE("effect: on a field of the props of an app's own component, which has none, is refused to on_error",
-          "[ui][effect]") {
+TEST_CASE(
+    "effect: on a field of the props of an app's own component, which has none, is refused to on_error", "[ui][effect]"
+) {
   loads = {};
 
   virtual_time time;
@@ -1403,8 +1422,9 @@ struct async_text_page {
 
 } // namespace
 
-TEST_CASE("effect: its target is loading from the start, and holds what the run gave in an async_state",
-          "[ui][effect]") {
+TEST_CASE(
+    "effect: its target is loading from the start, and holds what the run gave in an async_state", "[ui][effect]"
+) {
   loads = {};
 
   virtual_time time;
@@ -1468,8 +1488,9 @@ TEST_CASE("effect: a lack of memory at any step of a run leaves its async_state 
     virtual_time time;
     memory_renderer const shown;
     int told = 0;
-    test_app<async_text_page> instance{
-        time.get_executor(), shown, {.on_error = [&told](std::exception_ptr) { ++told; }}};
+    test_app<async_text_page> instance{time.get_executor(), shown, {.on_error = [&told](std::exception_ptr) {
+                                         ++told;
+                                       }}};
     bool injected = false;
 
     // From its first run, its target loading since it was made.
@@ -1542,8 +1563,9 @@ TEST_CASE("effect: its target is not loading at first while a state it depends o
   CHECK(instance.component().views.back() == "idle text 1");
 }
 
-TEST_CASE("effect: a view written once, which runs no effect, shows its target loading if its run would start",
-          "[ui][effect]") {
+TEST_CASE(
+    "effect: a view written once, which runs no effect, shows its target loading if its run would start", "[ui][effect]"
+) {
   // As React's server rendering shows useState(true): the page loads where it runs.
   CHECK(to_html(component<async_text_page>()) == "<p>loading</p>");
   CHECK(to_html(component<choosing_views_page>()) == "<p></p>");
@@ -1581,8 +1603,10 @@ struct optional_prop_page {
 
 } // namespace
 
-TEST_CASE("effect: on an optional field of the props, its target is loading at first when the field holds a value",
-          "[ui][effect]") {
+TEST_CASE(
+    "effect: on an optional field of the props, its target is loading at first when the field holds a value",
+    "[ui][effect]"
+) {
   loads = {};
   optional_prop_views.clear();
 

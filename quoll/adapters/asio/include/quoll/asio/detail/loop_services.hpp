@@ -52,8 +52,8 @@ namespace quoll::asio::detail {
 #if defined(QUOLL_ASIO_TLS)
 using loop_services = async::service_list<io::network_ref, async::timer_ref, async::offloader_ref, io::tls_network_ref>;
 // What a runtime's executor offers: the same, and its strands.
-using runtime_services = async::service_list<io::network_ref, async::timer_ref, async::offloader_ref,
-                                             io::tls_network_ref, async::strands_ref>;
+using runtime_services = async::service_list<
+    io::network_ref, async::timer_ref, async::offloader_ref, io::tls_network_ref, async::strands_ref>;
 #else
 using loop_services = async::service_list<io::network_ref, async::timer_ref, async::offloader_ref>;
 using runtime_services =

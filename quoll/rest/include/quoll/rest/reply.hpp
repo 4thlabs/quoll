@@ -91,8 +91,10 @@ public:
   template <class T>
     requires(detail::count_true(detail::with_type<std::decay_t<T>>(responses{})) == 1)
   reply(T &&value)
-      : value_(std::in_place_index<detail::first_true(detail::with_type<std::decay_t<T>>(responses{}))>,
-               std::forward<T>(value)) {}
+      : value_(
+            std::in_place_index<detail::first_true(detail::with_type<std::decay_t<T>>(responses{}))>,
+            std::forward<T>(value)
+        ) {}
 
   template <http::status Status, class T>
     requires(detail::first_true(detail::with_status<Status, T>(responses{})) < responses::size)

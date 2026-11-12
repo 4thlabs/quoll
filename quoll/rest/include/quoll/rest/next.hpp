@@ -72,8 +72,8 @@ struct interception {
   std::function<async::task<http::response>(http::request)> send;
 };
 
-[[nodiscard]] async::task<http::response> send_through(std::shared_ptr<interception const> through,
-                                                       http::request message);
+[[nodiscard]] async::task<http::response>
+send_through(std::shared_ptr<interception const> through, http::request message);
 
 } // namespace detail
 
@@ -101,8 +101,8 @@ private:
       : through_(std::move(through)), position_(position) {}
 
   // A coroutine of its own, its arguments by value: the next that calls it may go before its task ends.
-  [[nodiscard]] static async::task<http::response> send_from(std::shared_ptr<detail::interception const> through,
-                                                             std::size_t position, http::request message);
+  [[nodiscard]] static async::task<http::response>
+  send_from(std::shared_ptr<detail::interception const> through, std::size_t position, http::request message);
 
   std::shared_ptr<detail::interception const> through_;
   std::size_t position_;

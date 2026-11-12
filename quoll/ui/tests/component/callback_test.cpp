@@ -119,12 +119,14 @@ struct saving_page {
 
   element view() {
     return div({when(*shows, [this] {
-      return component<saving_row>({.label = "a",
-                                    .on_save = [this](std::string const &label) -> task<> {
-                                      co_await quoll::async::sleep_for(1min);
-                                      log.lines.push_back("saved " + label);
-                                    },
-                                    .log = &log});
+      return component<saving_row>(
+          {.label = "a",
+           .on_save = [this](std::string const &label) -> task<> {
+             co_await quoll::async::sleep_for(1min);
+             log.lines.push_back("saved " + label);
+           },
+           .log = &log}
+      );
     })});
   }
 };
@@ -147,11 +149,13 @@ struct relaying_page {
 
   element view() {
     return div({when(*shows, [this] {
-      return component<relay>({.on_save = [this](std::string label) -> task<> {
-                                 co_await quoll::async::sleep_for(1min);
-                                 log.lines.push_back("saved " + label);
-                               },
-                               .log = &log});
+      return component<relay>(
+          {.on_save = [this](std::string label) -> task<> {
+             co_await quoll::async::sleep_for(1min);
+             log.lines.push_back("saved " + label);
+           },
+           .log = &log}
+      );
     })});
   }
 };
@@ -204,11 +208,13 @@ struct failing_page {
 
   element view() {
     return div({when(*shows, [this] {
-      return component<failing_row>({.on_go = []() -> task<> {
-                                       co_await quoll::async::sleep_for(1min);
-                                       throw std::runtime_error{"refused"};
-                                     },
-                                     .log = &log});
+      return component<failing_row>(
+          {.on_go = []() -> task<> {
+             co_await quoll::async::sleep_for(1min);
+             throw std::runtime_error{"refused"};
+           },
+           .log = &log}
+      );
     })});
   }
 };
@@ -267,8 +273,9 @@ struct keeping_parent {
   element view(props const &given) {
     if (!armed) {
       armed = true;
-      gone = std::shared_ptr<void>{nullptr,
-                                   [lines = &given.log->lines](void * /*nothing*/) { lines->emplace_back("gone"); }};
+      gone = std::shared_ptr<void>{nullptr, [lines = &given.log->lines](void * /*nothing*/) {
+                                     lines->emplace_back("gone");
+                                   }};
     }
 
     return component<exposing>({.out = &kept, .ran = &ran});
@@ -299,8 +306,9 @@ struct self_keeping {
 
     if (!armed) {
       armed = true;
-      gone = std::shared_ptr<void>{nullptr,
-                                   [lines = &given.log->lines](void * /*nothing*/) { lines->emplace_back("gone"); }};
+      gone = std::shared_ptr<void>{nullptr, [lines = &given.log->lines](void * /*nothing*/) {
+                                     lines->emplace_back("gone");
+                                   }};
     }
 
     return p("keeping");
@@ -366,8 +374,10 @@ static_assert(!std::convertible_to<callback<void(long)>, callback<void(int)>>);
 
 } // namespace
 
-TEST_CASE("callback: a call runs in the task of the component that wrote it, which goes on when the caller goes",
-          "[ui][callback]") {
+TEST_CASE(
+    "callback: a call runs in the task of the component that wrote it, which goes on when the caller goes",
+    "[ui][callback]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<saving_page> instance{time.get_executor(), shown};
@@ -551,8 +561,10 @@ TEST_CASE("callback: a caller stopped already starts nothing", "[ui][callback]")
   REQUIRE_FALSE(instance.component().ran);
 }
 
-TEST_CASE("callback: one of the app's own view runs as a task of the app, which a caller's stop leaves running",
-          "[ui][callback]") {
+TEST_CASE(
+    "callback: one of the app's own view runs as a task of the app, which a caller's stop leaves running",
+    "[ui][callback]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<own_page> instance{time.get_executor(), shown};
@@ -621,8 +633,9 @@ TEST_CASE("callback: once the app has stopped, or is gone, a call ends on a stop
   REQUIRE_FALSE(ran);
 }
 
-TEST_CASE("callback: one made outside a view runs in the caller's task, with copies of its arguments",
-          "[ui][callback]") {
+TEST_CASE(
+    "callback: one made outside a view runs in the caller's task, with copies of its arguments", "[ui][callback]"
+) {
   std::vector<std::string> seen;
   callback<int(int)> const next = [](int value) { return value + 1; };
   callback<long(int)> const widened = [](int value) { return value * 2; };
@@ -673,8 +686,9 @@ TEST_CASE("callback: one kept by the component that made it does not keep that c
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
 }
 
-TEST_CASE("callback: a call once the view that made it has been replaced throws, as its given may be gone",
-          "[ui][callback]") {
+TEST_CASE(
+    "callback: a call once the view that made it has been replaced throws, as its given may be gone", "[ui][callback]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<stale_page> instance{time.get_executor(), shown};

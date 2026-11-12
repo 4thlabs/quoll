@@ -85,7 +85,8 @@ public:
   [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> awaiter, await_context const &context) {
     owner_.bind(awaiter, context.executor);
     context_.emplace(
-        await_context{context.executor, stop_token_ ? std::move(*stop_token_) : context.stop_token, &owner_});
+        await_context{context.executor, stop_token_ ? std::move(*stop_token_) : context.stop_token, &owner_}
+    );
     return awaiting::suspend(work_, awaiter, *context_);
   }
 

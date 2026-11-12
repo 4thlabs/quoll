@@ -107,8 +107,10 @@ public:
   // Waits on `item`, unless the work ended meanwhile, or the caller's stop came: then false, and the caller goes on,
   // or, the work or the caller stopped, `stopped` is set and the caller ends on the stop. Checked under the lock, after
   // the stop callback is registered, so that a stop coming at any time is seen here or by it.
-  [[nodiscard]] bool wait(async::work_item &item, async::executor_ref executor, async::detail::chain_owner *chain,
-                          std::stop_token const &caller_stop, bool &stopped) {
+  [[nodiscard]] bool wait(
+      async::work_item &item, async::executor_ref executor, async::detail::chain_owner *chain,
+      std::stop_token const &caller_stop, bool &stopped
+  ) {
     return shared_.with([&](shared &state) {
       // What the work gave or threw comes first: a failure the caller takes is not lost.
       stopped = state.stopped || (!state.done && caller_stop.stop_requested());

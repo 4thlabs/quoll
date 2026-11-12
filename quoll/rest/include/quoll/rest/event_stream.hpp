@@ -96,8 +96,10 @@ public:
     }
 
     // Its turn, for the whole of it: the read and the decoding, which the text kept here outlives.
-    http::detail::one_at_a_time turn{std::shared_ptr<std::atomic<bool>>{state_, &state_->busy},
-                                     "quoll::rest::event_stream: next() while another is pending"};
+    http::detail::one_at_a_time turn{
+        std::shared_ptr<std::atomic<bool>>{state_, &state_->busy},
+        "quoll::rest::event_stream: next() while another is pending"
+    };
 
     return decoded(std::move(turn), events_.next(), state_);
   }
@@ -117,9 +119,10 @@ private:
   };
 
   // No `this`: the reader's task holds what it reads, and `kept` the event's text, which a `T` may point into.
-  [[nodiscard]] static async::task<std::optional<T>> decoded(http::detail::one_at_a_time turn,
-                                                             async::task<std::optional<http::server_sent_event>> next,
-                                                             std::shared_ptr<state> kept) {
+  [[nodiscard]] static async::task<std::optional<T>> decoded(
+      http::detail::one_at_a_time turn, async::task<std::optional<http::server_sent_event>> next,
+      std::shared_ptr<state> kept
+  ) {
     auto const held = std::move(turn);
     auto *const data = &kept->data;
     auto event = co_await std::move(next);

@@ -117,9 +117,10 @@ void tell_failure(target_hooks target, failure_to failures, std::exception_ptr c
 template <class R, class Make, class Ask, class FollowUp = no_follow_up>
   requires std::same_as<std::invoke_result_t<Make &>, async::task<R>> &&
            std::same_as<std::invoke_result_t<Ask &>, std::optional<std::stop_token>>
-async::task<std::expected<R, std::exception_ptr>> run_in(run_slot &slot, target_ref<R> target, Make make, Ask ask,
-                                                         failure_to failures = failure_to::caller,
-                                                         FollowUp follow_up = no_follow_up{}) {
+async::task<std::expected<R, std::exception_ptr>> run_in(
+    run_slot &slot, target_ref<R> target, Make make, Ask ask, failure_to failures = failure_to::caller,
+    FollowUp follow_up = no_follow_up{}
+) {
   std::optional<std::stop_token> asked;
 
   try {

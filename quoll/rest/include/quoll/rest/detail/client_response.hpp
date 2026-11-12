@@ -62,8 +62,9 @@ inline constexpr bool has_responses = own_responses<Endpoint>::size > 0;
 
 // What try_call produces: one of the endpoint's responses, or the 204 of an endpoint without returns<>.
 template <class Endpoint>
-using call_result = std::conditional_t<has_responses<Endpoint>, std::expected<reply<Endpoint>, unexpected_response>,
-                                       std::expected<void, unexpected_response>>;
+using call_result = std::conditional_t<
+    has_responses<Endpoint>, std::expected<reply<Endpoint>, unexpected_response>,
+    std::expected<void, unexpected_response>>;
 
 template <class Endpoint, bool = has_responses<Endpoint>>
 struct call_value {

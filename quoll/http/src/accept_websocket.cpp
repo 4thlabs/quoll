@@ -64,8 +64,8 @@ namespace {
 
 } // namespace
 
-response accept_websocket(request const &message, std::function<async::task<>(websocket)> handler,
-                          websocket_options options) {
+response
+accept_websocket(request const &message, std::function<async::task<>(websocket)> handler, websocket_options options) {
   if (!handler) {
     throw std::invalid_argument{"quoll::http::accept_websocket: an empty handler"};
   }
@@ -90,8 +90,8 @@ response accept_websocket(request const &message, std::function<async::task<>(we
   accepted.fields.set("Connection", "Upgrade");
   accepted.fields.set("Sec-WebSocket-Accept", websocket_accept(message.fields.find("Sec-WebSocket-Key").value_or("")));
   // A copy of the handler for each run, held by the frame that calls it, rather than this lambda's.
-  accepted.upgrade = [handler = std::move(handler), options](io::any_stream stream, std::string received,
-                                                             std::stop_token drain) {
+  accepted.upgrade = [handler = std::move(handler),
+                      options](io::any_stream stream, std::string received, std::stop_token drain) {
     return detail::serve_websocket(handler, std::move(stream), std::move(received), options, std::move(drain));
   };
 

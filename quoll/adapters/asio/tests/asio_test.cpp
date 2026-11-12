@@ -148,10 +148,11 @@ struct not_found {
 namespace accounts {
 using namespace quoll::rest;
 
-using get = endpoint<"accounts.get", quoll::http::verb::get, "/{id:int64}", returns<account>,
-                     returns<not_found, quoll::http::status::not_found>>;
-using open = endpoint<"accounts.open", quoll::http::verb::post, "/", body<new_account>,
-                      returns<account, quoll::http::status::created>>;
+using get = endpoint<
+    "accounts.get", quoll::http::verb::get, "/{id:int64}", returns<account>,
+    returns<not_found, quoll::http::status::not_found>>;
+using open = endpoint<
+    "accounts.open", quoll::http::verb::post, "/", body<new_account>, returns<account, quoll::http::status::created>>;
 
 using api = quoll::rest::api<"/api/accounts", get, open>;
 } // namespace accounts
@@ -182,12 +183,17 @@ using tcp = ::asio::ip::tcp;
 
 // Spawns `work` on `context` and stores its outcome in `result` / `failure`.
 template <class T>
-void spawn(::asio::io_context &context, task<T> work, std::optional<T> &result, std::exception_ptr &failure,
-           std::stop_token stop_token = {}) {
-  co_spawn(quoll::asio::executor{context.get_executor()}, std::move(work),
-           overloaded{[&](T value) { result = std::move(value); },
-                      [&](std::exception_ptr error) { failure = std::move(error); }},
-           std::move(stop_token));
+void spawn(
+    ::asio::io_context &context, task<T> work, std::optional<T> &result, std::exception_ptr &failure,
+    std::stop_token stop_token = {}
+) {
+  co_spawn(
+      quoll::asio::executor{context.get_executor()}, std::move(work),
+      overloaded{
+          [&](T value) { result = std::move(value); }, [&](std::exception_ptr error) { failure = std::move(error); }
+      },
+      std::move(stop_token)
+  );
 }
 
 // Runs `context` until it is out of work, then rethrows a failure, so that Catch2 reports it.
@@ -283,8 +289,8 @@ task<bool> read_until_stopped(quoll::asio::connector connector, std::uint16_t po
 }
 
 // Starts connecting, then requests stop while the attempt is pending.
-task<std::error_code> connect_then_stop(quoll::asio::connector connector, std::uint16_t port,
-                                        std::stop_source &source) {
+task<std::error_code>
+connect_then_stop(quoll::asio::connector connector, std::uint16_t port, std::stop_source &source) {
   auto const [error, stopped] = co_await quoll::async::when_all(connect_error(connector, port), request_stop(source));
 
   co_return error;
@@ -421,7 +427,8 @@ task<std::error_code> sleep_error(std::chrono::nanoseconds duration) {
 task<std::error_code> call_silent_server(std::chrono::nanoseconds timeout) {
   auto listener = co_await io::listen(0);
   quoll::rest::client<asio_test::accounts::api> accounts{
-      "http://127.0.0.1:" + std::to_string(listener.local_port().value()), {.response_timeout = timeout}};
+      "http://127.0.0.1:" + std::to_string(listener.local_port().value()), {.response_timeout = timeout}
+  };
 
   auto const call = [&]() -> task<std::error_code> {
     try {
@@ -458,8 +465,9 @@ task<std::error_code> idle_on_server(std::chrono::nanoseconds timeout) {
   };
 
   auto const serving = [&]() -> task<> {
-    co_await quoll::test::under_stop(quoll::http::server{router, std::move(options)}.serve(std::move(listener)),
-                                     stop.get_token());
+    co_await quoll::test::under_stop(
+        quoll::http::server{router, std::move(options)}.serve(std::move(listener)), stop.get_token()
+    );
   };
 
   auto [served, error] = co_await quoll::async::when_all(serving(), peer());
@@ -592,7 +600,8 @@ TEST_CASE("asio: a connection does not wait to fill a packet, on either side", "
 
   auto const connecting = [&]() -> task<bool> {
     co_return without_nagle(co_await quoll::asio::detail::connect_socket(
-        ::asio::any_io_executor{context.get_executor()}, std::string{"127.0.0.1"}, port));
+        ::asio::any_io_executor{context.get_executor()}, std::string{"127.0.0.1"}, port
+    ));
   };
 
   quoll::asio::detail::acceptor_state state{std::move(acceptor)};
@@ -710,8 +719,10 @@ TEST_CASE("asio: a stop request cancels a pending read", "[asio]") {
     check(error);
     silent_peer.emplace(std::move(socket));
   });
-  spawn(context, read_until_stopped(quoll::asio::connector{context.get_executor()}, port_of(acceptor), source), read,
-        failure, source.get_token());
+  spawn(
+      context, read_until_stopped(quoll::asio::connector{context.get_executor()}, port_of(acceptor), source), read,
+      failure, source.get_token()
+  );
   run(context, failure);
 
   REQUIRE(read);
@@ -726,8 +737,10 @@ TEST_CASE("asio: a stop request abandons a connection attempt", "[asio]") {
   std::stop_source source;
 
   source.request_stop();
-  spawn(context, connect_error(quoll::asio::connector{context.get_executor()}, port_of(acceptor)), error, failure,
-        source.get_token());
+  spawn(
+      context, connect_error(quoll::asio::connector{context.get_executor()}, port_of(acceptor)), error, failure,
+      source.get_token()
+  );
   run(context, failure);
 
   REQUIRE(error);
@@ -748,16 +761,20 @@ TEST_CASE("asio: a client on a thread pool talks through sockets run by another 
     check(error);
     spawn(context, serve_one(quoll::asio::tcp_stream{std::move(socket)}), request, failure);
   });
-  co_spawn(quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own},
-           get(quoll::asio::connector{context.get_executor()}, port_of(acceptor)),
-           overloaded{[&](http::response value) {
-                        response.set_value(std::move(value));
-                        work.reset();
-                      },
-                      [&](std::exception_ptr error) {
-                        response.set_exception(std::move(error));
-                        work.reset();
-                      }});
+  co_spawn(
+      quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own},
+      get(quoll::asio::connector{context.get_executor()}, port_of(acceptor)),
+      overloaded{
+          [&](http::response value) {
+            response.set_value(std::move(value));
+            work.reset();
+          },
+          [&](std::exception_ptr error) {
+            response.set_exception(std::move(error));
+            work.reset();
+          }
+      }
+  );
   run(context, failure);
 
   auto const received = response.get_future().get();
@@ -798,16 +815,20 @@ TEST_CASE("asio: a client on a thread pool sends a body_writer through sockets r
     co_return co_await client.send(std::move(message));
   };
 
-  co_spawn(quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own},
-           uploading(quoll::asio::connector{context.get_executor()}, port_of(acceptor)),
-           overloaded{[&](http::response value) {
-                        response.set_value(std::move(value));
-                        work.reset();
-                      },
-                      [&](std::exception_ptr error) {
-                        response.set_exception(std::move(error));
-                        work.reset();
-                      }});
+  co_spawn(
+      quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own},
+      uploading(quoll::asio::connector{context.get_executor()}, port_of(acceptor)),
+      overloaded{
+          [&](http::response value) {
+            response.set_value(std::move(value));
+            work.reset();
+          },
+          [&](std::exception_ptr error) {
+            response.set_exception(std::move(error));
+            work.reset();
+          }
+      }
+  );
   run(context, failure);
 
   auto const received = response.get_future().get();
@@ -824,8 +845,10 @@ TEST_CASE("asio: a stop request while connecting abandons the attempt", "[asio]"
   std::exception_ptr failure;
   std::stop_source source;
 
-  spawn(context, connect_then_stop(quoll::asio::connector{context.get_executor()}, port_of(acceptor), source), error,
-        failure, source.get_token());
+  spawn(
+      context, connect_then_stop(quoll::asio::connector{context.get_executor()}, port_of(acceptor), source), error,
+      failure, source.get_token()
+  );
   run(context, failure);
 
   REQUIRE(error);
@@ -846,17 +869,21 @@ TEST_CASE("asio: a stop request from a pool thread cancels a read pending on the
     silent_peer.emplace(std::move(socket));
   });
   // when_all runs on the pool: its second child requests stop there, while the read waits on the I/O thread.
-  co_spawn(quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own},
-           read_until_stopped(quoll::asio::connector{context.get_executor()}, port_of(acceptor), source),
-           overloaded{[&](bool value) {
-                        read.set_value(value);
-                        work.reset();
-                      },
-                      [&](std::exception_ptr error) {
-                        read.set_exception(std::move(error));
-                        work.reset();
-                      }},
-           source.get_token());
+  co_spawn(
+      quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own},
+      read_until_stopped(quoll::asio::connector{context.get_executor()}, port_of(acceptor), source),
+      overloaded{
+          [&](bool value) {
+            read.set_value(value);
+            work.reset();
+          },
+          [&](std::exception_ptr error) {
+            read.set_exception(std::move(error));
+            work.reset();
+          }
+      },
+      source.get_token()
+  );
   context.run();
 
   // Ended on the stop, with no result.
@@ -869,15 +896,19 @@ TEST_CASE("asio: an operation starts on its I/O executor, even awaited from a po
   ::asio::thread_pool pool{1};
   std::promise<std::thread::id> started_on;
 
-  co_spawn(quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own}, start_thread(context),
-           overloaded{[&](std::thread::id value) {
-                        started_on.set_value(value);
-                        work.reset();
-                      },
-                      [&](std::exception_ptr error) {
-                        started_on.set_exception(std::move(error));
-                        work.reset();
-                      }});
+  co_spawn(
+      quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own}, start_thread(context),
+      overloaded{
+          [&](std::thread::id value) {
+            started_on.set_value(value);
+            work.reset();
+          },
+          [&](std::exception_ptr error) {
+            started_on.set_exception(std::move(error));
+            work.reset();
+          }
+      }
+  );
   context.run();
 
   REQUIRE(started_on.get_future().get() == std::this_thread::get_id());
@@ -907,22 +938,26 @@ TEST_CASE("asio: quoll::server serves a router over TCP, until a stop request", 
   quoll::asio::executor const executor{context.get_executor()};
   http::router router;
 
-  router.add(http::verb::get, "/accounts/{id}", "accounts.get",
-             [](http::request, http::route_match match) -> task<http::response> {
-               http::response response;
+  router.add(
+      http::verb::get, "/accounts/{id}", "accounts.get",
+      [](http::request, http::route_match match) -> task<http::response> {
+        http::response response;
 
-               response.body = "account " + match.params.front();
-               co_return response;
-             });
+        response.body = "account " + match.params.front();
+        co_return response;
+      }
+  );
 
   std::stop_source source;
   std::optional<http::response> response;
   std::exception_ptr failure;
   bool served = false;
 
-  co_spawn(executor, quoll::http::server{router}.serve(std::move(acceptor)),
-           overloaded{[&] { served = true; }, [&](std::exception_ptr error) { failure = std::move(error); }},
-           source.get_token());
+  co_spawn(
+      executor, quoll::http::server{router}.serve(std::move(acceptor)),
+      overloaded{[&] { served = true; }, [&](std::exception_ptr error) { failure = std::move(error); }},
+      source.get_token()
+  );
   spawn(context, get_then_stop(quoll::asio::connector{context.get_executor()}, port, source), response, failure);
   run(context, failure);
 
@@ -944,12 +979,15 @@ TEST_CASE("asio: a REST client calls a mounted API over TCP, on one connection k
   std::stop_source source;
   int connections = 0;
   accounts_client client{quoll::http::client{
-      counting_connector{quoll::asio::connector{context.get_executor()}, connections}, "127.0.0.1", port}};
+      counting_connector{quoll::asio::connector{context.get_executor()}, connections}, "127.0.0.1", port
+  }};
   std::optional<accounts_calls> calls;
   std::exception_ptr failure;
 
-  co_spawn(executor, quoll::http::server{router}.serve(std::move(acceptor)),
-           overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }}, source.get_token());
+  co_spawn(
+      executor, quoll::http::server{router}.serve(std::move(acceptor)),
+      overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }}, source.get_token()
+  );
   spawn(context, call_accounts(std::move(client), source), calls, failure);
   run(context, failure);
 
@@ -977,9 +1015,11 @@ TEST_CASE("asio: a stop request abandons a request waiting for its response", "[
   std::optional<std::error_code> error;
   std::exception_ptr failure;
 
-  spawn(context,
-        send_error(quoll::http::client{quoll::asio::connector{context.get_executor()}, "127.0.0.1", port_of(acceptor)}),
-        error, failure, source.get_token());
+  spawn(
+      context,
+      send_error(quoll::http::client{quoll::asio::connector{context.get_executor()}, "127.0.0.1", port_of(acceptor)}),
+      error, failure, source.get_token()
+  );
   run(context, failure);
 
   REQUIRE(error);
@@ -1064,9 +1104,13 @@ TEST_CASE("asio: the executor over a strand, its loop run by two threads", "[asi
     co_return reply;
   };
 
-  co_spawn(executor, work(),
-           overloaded{[&](std::string value) { answer = std::move(value); },
-                      [&](std::exception_ptr error) { failure = std::move(error); }});
+  co_spawn(
+      executor, work(),
+      overloaded{
+          [&](std::string value) { answer = std::move(value); },
+          [&](std::exception_ptr error) { failure = std::move(error); }
+      }
+  );
 
   std::thread other{[&context] { context.run(); }};
 
@@ -1160,8 +1204,10 @@ TEST_CASE("asio::runtime on several threads runs tasks of different executors at
   std::atomic<int> met{0};
 
   for (int task_index = 0; task_index < 2; ++task_index) {
-    co_spawn(runtime.get_executor(), meet(arrived, 2),
-             overloaded{[&met](bool together) { met += together ? 1 : 0; }, [](std::exception_ptr) {}});
+    co_spawn(
+        runtime.get_executor(), meet(arrived, 2),
+        overloaded{[&met](bool together) { met += together ? 1 : 0; }, [](std::exception_ptr) {}}
+    );
   }
 
   runtime.run();
@@ -1169,8 +1215,10 @@ TEST_CASE("asio::runtime on several threads runs tasks of different executors at
   REQUIRE(met == 2);
 }
 
-TEST_CASE("asio::runtime on several threads: http::server::listen and its clients, through the runtime's network",
-          "[asio][runtime][threads][server]") {
+TEST_CASE(
+    "asio::runtime on several threads: http::server::listen and its clients, through the runtime's network",
+    "[asio][runtime][threads][server]"
+) {
   quoll::asio::runtime runtime{quoll::async::runtime_options{.threads = 4}};
   auto const port = quoll::test::free_port();
   http::router router;
@@ -1194,8 +1242,10 @@ TEST_CASE("asio::runtime on several threads: http::server::listen and its client
   std::atomic<int> ended{0};
   std::atomic<int> failures{0};
 
-  co_spawn(runtime.get_executor(), http::server{router}.listen(port),
-           overloaded{[] {}, [&failures](std::exception_ptr) { ++failures; }}, server_stop.get_token());
+  co_spawn(
+      runtime.get_executor(), http::server{router}.listen(port),
+      overloaded{[] {}, [&failures](std::exception_ptr) { ++failures; }}, server_stop.get_token()
+  );
 
   auto const calling = [](std::uint16_t to) -> task<int> {
     // Until the server listens: it starts on another thread.
@@ -1213,21 +1263,25 @@ TEST_CASE("asio::runtime on several threads: http::server::listen and its client
   };
 
   for (int client = 0; client < clients; ++client) {
-    co_spawn(runtime.get_executor(), calling(port),
-             overloaded{[&](int counted) {
-                          right += counted;
+    co_spawn(
+        runtime.get_executor(), calling(port),
+        overloaded{
+            [&](int counted) {
+              right += counted;
 
-                          if (++ended == clients) {
-                            server_stop.request_stop();
-                          }
-                        },
-                        [&](std::exception_ptr) {
-                          ++failures;
+              if (++ended == clients) {
+                server_stop.request_stop();
+              }
+            },
+            [&](std::exception_ptr) {
+              ++failures;
 
-                          if (++ended == clients) {
-                            server_stop.request_stop();
-                          }
-                        }});
+              if (++ended == clients) {
+                server_stop.request_stop();
+              }
+            }
+        }
+    );
   }
 
   runtime.run();
@@ -1236,8 +1290,10 @@ TEST_CASE("asio::runtime on several threads: http::server::listen and its client
   REQUIRE(right == clients * 4 * 2);
 }
 
-TEST_CASE("asio::runtime on several threads: a handler's exception stops every thread, and run() throws it",
-          "[asio][runtime][threads]") {
+TEST_CASE(
+    "asio::runtime on several threads: a handler's exception stops every thread, and run() throws it",
+    "[asio][runtime][threads]"
+) {
   quoll::asio::runtime runtime{quoll::async::runtime_options{.threads = 4}};
   // Kept, it keeps the loop running: the work never drains, and only the stop can end run().
   auto const kept = runtime.get_executor();
@@ -1298,25 +1354,31 @@ TEST_CASE("asio::runtime on several threads runs a server's connections at once"
   std::atomic<int> ended{0};
   std::atomic<int> failures{0};
 
-  co_spawn(runtime.get_executor(), http::server{router}.listen(port),
-           overloaded{[] {}, [&failures](std::exception_ptr) { ++failures; }}, server_stop.get_token());
+  co_spawn(
+      runtime.get_executor(), http::server{router}.listen(port),
+      overloaded{[] {}, [&failures](std::exception_ptr) { ++failures; }}, server_stop.get_token()
+  );
 
   for (int client = 0; client < 2; ++client) {
-    co_spawn(runtime.get_executor(), get_once_listening(port, "/meet"),
-             overloaded{[&](std::string const &body) {
-                          met += body == "met" ? 1 : 0;
+    co_spawn(
+        runtime.get_executor(), get_once_listening(port, "/meet"),
+        overloaded{
+            [&](std::string const &body) {
+              met += body == "met" ? 1 : 0;
 
-                          if (++ended == 2) {
-                            server_stop.request_stop();
-                          }
-                        },
-                        [&](std::exception_ptr) {
-                          ++failures;
+              if (++ended == 2) {
+                server_stop.request_stop();
+              }
+            },
+            [&](std::exception_ptr) {
+              ++failures;
 
-                          if (++ended == 2) {
-                            server_stop.request_stop();
-                          }
-                        }});
+              if (++ended == 2) {
+                server_stop.request_stop();
+              }
+            }
+        }
+    );
   }
 
   runtime.run();
@@ -1330,8 +1392,10 @@ TEST_CASE("asio::runtime on several threads: the tasks of one executor take turn
   std::atomic<int> total{0};
 
   for (int task_index = 0; task_index < 8; ++task_index) {
-    co_spawn(runtime.get_executor(), two_on_one_strand(),
-             overloaded{[&total](int counted) { total += counted; }, [](std::exception_ptr) {}});
+    co_spawn(
+        runtime.get_executor(), two_on_one_strand(),
+        overloaded{[&total](int counted) { total += counted; }, [](std::exception_ptr) {}}
+    );
   }
 
   runtime.run();
@@ -1339,12 +1403,15 @@ TEST_CASE("asio::runtime on several threads: the tasks of one executor take turn
   REQUIRE(total == 8 * 4000);
 }
 
-TEST_CASE("asio::runtime on several threads: a server and clients, each connection on a strand of its own",
-          "[asio][runtime][threads][server][client]") {
+TEST_CASE(
+    "asio::runtime on several threads: a server and clients, each connection on a strand of its own",
+    "[asio][runtime][threads][server][client]"
+) {
   quoll::asio::runtime runtime{quoll::async::runtime_options{.threads = 4}};
   auto &context = runtime.context();
-  ::asio::ip::tcp::acceptor listening{::asio::make_strand(context),
-                                      ::asio::ip::tcp::endpoint{::asio::ip::address_v4::loopback(), 0}};
+  ::asio::ip::tcp::acceptor listening{
+      ::asio::make_strand(context), ::asio::ip::tcp::endpoint{::asio::ip::address_v4::loopback(), 0}
+  };
   auto const port = listening.local_endpoint().port();
   quoll::asio::acceptor acceptor{std::move(listening), ::asio::any_io_executor{context.get_executor()}};
   http::router router;
@@ -1369,26 +1436,32 @@ TEST_CASE("asio::runtime on several threads: a server and clients, each connecti
   std::atomic<int> ended{0};
   std::atomic<int> failures{0};
 
-  co_spawn(runtime.get_executor(), http::server{router}.serve(std::move(acceptor)),
-           overloaded{[] {}, [&failures](std::exception_ptr) { ++failures; }}, server_stop.get_token());
+  co_spawn(
+      runtime.get_executor(), http::server{router}.serve(std::move(acceptor)),
+      overloaded{[] {}, [&failures](std::exception_ptr) { ++failures; }}, server_stop.get_token()
+  );
 
   for (int client = 0; client < clients; ++client) {
     // Each executor of the runtime is a strand of its own: the clients run in parallel.
-    co_spawn(runtime.get_executor(), call_many(port, requests),
-             overloaded{[&](int counted) {
-                          right += counted;
+    co_spawn(
+        runtime.get_executor(), call_many(port, requests),
+        overloaded{
+            [&](int counted) {
+              right += counted;
 
-                          if (++ended == clients) {
-                            server_stop.request_stop();
-                          }
-                        },
-                        [&](std::exception_ptr) {
-                          ++failures;
+              if (++ended == clients) {
+                server_stop.request_stop();
+              }
+            },
+            [&](std::exception_ptr) {
+              ++failures;
 
-                          if (++ended == clients) {
-                            server_stop.request_stop();
-                          }
-                        }});
+              if (++ended == clients) {
+                server_stop.request_stop();
+              }
+            }
+        }
+    );
   }
 
   runtime.run();
@@ -1418,8 +1491,9 @@ TEST_CASE("asio::runtime runs a task to its end", "[asio][runtime]") {
   REQUIRE_THROWS_AS(run_task(io::connect("127.0.0.1", free_port())), std::system_error);
 }
 
-TEST_CASE("asio::runtime turns the first Ctrl-C into a stop request, then gives SIGINT its action back",
-          "[asio][runtime]") {
+TEST_CASE(
+    "asio::runtime turns the first Ctrl-C into a stop request, then gives SIGINT its action back", "[asio][runtime]"
+) {
   if (sigint_handler() == SIG_IGN) {
     SKIP("SIGINT is ignored by this process (started in the background): raise() would not reach the runtime");
   }
@@ -1444,9 +1518,11 @@ TEST_CASE("asio::runtime runs again, with a fresh stop token and the signals wai
     std::exception_ptr failure;
 
     REQUIRE_FALSE(stop_token.stop_requested());
-    co_spawn(runtime.get_executor(), interrupt_then_check_restored(before),
-             overloaded{[&](bool value) { restored = value; }, [&](std::exception_ptr error) { failure = error; }},
-             stop_token);
+    co_spawn(
+        runtime.get_executor(), interrupt_then_check_restored(before),
+        overloaded{[&](bool value) { restored = value; }, [&](std::exception_ptr error) { failure = error; }},
+        stop_token
+    );
     runtime.run();
 
     if (failure) {
@@ -1457,8 +1533,10 @@ TEST_CASE("asio::runtime runs again, with a fresh stop token and the signals wai
   }
 }
 
-TEST_CASE("asio::runtime on several threads turns Ctrl-C into a stop request, and gives SIGINT its action back",
-          "[asio][runtime][threads]") {
+TEST_CASE(
+    "asio::runtime on several threads turns Ctrl-C into a stop request, and gives SIGINT its action back",
+    "[asio][runtime][threads]"
+) {
   if (sigint_handler() == SIG_IGN) {
     SKIP("SIGINT is ignored by this process (started in the background): raise() would not reach the runtime");
   }
@@ -1469,8 +1547,10 @@ TEST_CASE("asio::runtime on several threads turns Ctrl-C into a stop request, an
   std::atomic<bool> restored{false};
   std::atomic<bool> failed{false};
 
-  co_spawn(runtime.get_executor(), interrupt_then_check_restored(before),
-           overloaded{[&](bool value) { restored = value; }, [&](std::exception_ptr) { failed = true; }}, stop_token);
+  co_spawn(
+      runtime.get_executor(), interrupt_then_check_restored(before),
+      overloaded{[&](bool value) { restored = value; }, [&](std::exception_ptr) { failed = true; }}, stop_token
+  );
   runtime.run();
 
   REQUIRE_FALSE(failed);
@@ -1485,8 +1565,9 @@ TEST_CASE("asio::runtime runs until the work its tasks started has ended", "[asi
   REQUIRE(yields == 100);
 }
 
-TEST_CASE("asio::runtime: run(task) is the program's exit status, and reports what the task let escape",
-          "[asio][runtime]") {
+TEST_CASE(
+    "asio::runtime: run(task) is the program's exit status, and reports what the task let escape", "[asio][runtime]"
+) {
   auto const succeeding = []() -> task<> { co_await quoll::async::yield(); };
   auto const failing = []() -> task<> {
     co_await quoll::async::yield();
@@ -1555,8 +1636,10 @@ TEST_CASE("asio::runtime: run(task) stopped by a Ctrl-C is no failure", "[asio][
   REQUIRE(quoll::test::reports().empty());
 }
 
-TEST_CASE("asio::runtime: once run(task)'s task ends, those spawned with the runtime's stop token are asked to stop",
-          "[asio][runtime][timer]") {
+TEST_CASE(
+    "asio::runtime: once run(task)'s task ends, those spawned with the runtime's stop token are asked to stop",
+    "[asio][runtime][timer]"
+) {
   quoll::asio::runtime runtime;
   // Not an executor: one kept here would keep run() going.
   auto const token = runtime.get_stop_token();
@@ -1569,7 +1652,8 @@ TEST_CASE("asio::runtime: once run(task)'s task ends, those spawned with the run
 
     quoll::async::co_spawn(
         here, serving(),
-        overloaded{[] {}, [](std::exception_ptr) {}, [&stopped](quoll::async::stopped_t) { stopped = true; }}, token);
+        overloaded{[] {}, [](std::exception_ptr) {}, [&stopped](quoll::async::stopped_t) { stopped = true; }}, token
+    );
     co_await quoll::async::yield();
   };
 
@@ -1760,8 +1844,9 @@ TEST_CASE("asio::runtime: run() waits for an offload a detached task is on", "[a
   REQUIRE(ended);
 }
 
-TEST_CASE("asio: static_files over TCP: a file far larger than a piece, read away from the loop",
-          "[asio][runtime][server]") {
+TEST_CASE(
+    "asio: static_files over TCP: a file far larger than a piece, read away from the loop", "[asio][runtime][server]"
+) {
   auto const directory = std::filesystem::temp_directory_path() / ("quoll_static_asio_" + std::to_string(::getpid()));
 
   std::filesystem::create_directories(directory);
@@ -1784,8 +1869,9 @@ TEST_CASE("asio: static_files over TCP: a file far larger than a piece, read awa
     std::stop_source stop;
 
     auto const serving = [&]() -> task<> {
-      co_await quoll::test::under_stop(quoll::http::server{router, {.shutdown_timeout = {}}}.serve(std::move(listener)),
-                                       stop.get_token());
+      co_await quoll::test::under_stop(
+          quoll::http::server{router, {.shutdown_timeout = {}}}.serve(std::move(listener)), stop.get_token()
+      );
     };
 
     auto const calling = [&]() -> task<std::string> {
@@ -1842,8 +1928,10 @@ TEST_CASE("asio: a stop request from another thread ends a sleep", "[asio][timer
   std::stop_source source;
   std::optional<std::error_code> error;
 
-  co_spawn(executor, sleep_error(1h),
-           overloaded{[&](std::error_code result) { error = result; }, [](std::exception_ptr) {}}, source.get_token());
+  co_spawn(
+      executor, sleep_error(1h), overloaded{[&](std::error_code result) { error = result; }, [](std::exception_ptr) {}},
+      source.get_token()
+  );
 
   std::jthread const stopper{[&source] {
     std::this_thread::sleep_for(10ms);
@@ -1874,9 +1962,11 @@ task<refused_upload> upload_refused(quoll::http::connection_options connection) 
 
   auto const serving = [&]() -> task<> {
     co_await quoll::test::under_stop(
-        quoll::http::server{router, {.connection = std::move(connection), .shutdown_timeout = {}}}.serve(
-            std::move(listener)),
-        stop.get_token());
+        quoll::http::server{
+            router, {.connection = std::move(connection), .shutdown_timeout = {}}
+        }.serve(std::move(listener)),
+        stop.get_token()
+    );
   };
 
   auto const uploading = [&]() -> task<refused_upload> {
@@ -1932,8 +2022,9 @@ TEST_CASE("asio: a client with a path in its URL sends its requests under it", "
     std::stop_source stop;
 
     auto const serving = [&]() -> task<> {
-      co_await quoll::test::under_stop(quoll::http::server{router, {.shutdown_timeout = {}}}.serve(std::move(listener)),
-                                       stop.get_token());
+      co_await quoll::test::under_stop(
+          quoll::http::server{router, {.shutdown_timeout = {}}}.serve(std::move(listener)), stop.get_token()
+      );
     };
 
     auto const calling = [&]() -> task<std::string> {
@@ -1989,8 +2080,9 @@ TEST_CASE("asio: a body read in pieces over TCP, on a connection then reused", "
     std::stop_source stop;
 
     auto const serving = [&]() -> task<> {
-      co_await quoll::test::under_stop(quoll::http::server{router, {.shutdown_timeout = {}}}.serve(std::move(listener)),
-                                       stop.get_token());
+      co_await quoll::test::under_stop(
+          quoll::http::server{router, {.shutdown_timeout = {}}}.serve(std::move(listener)), stop.get_token()
+      );
     };
 
     auto const calling = [&]() -> task<std::string> {
@@ -2026,8 +2118,10 @@ TEST_CASE("asio: a body read in pieces over TCP, on a connection then reused", "
   REQUIRE(run_task(exchange()) == "1048576 in pieces hello");
 }
 
-TEST_CASE("asio: a body_writer over TCP: all of it, a server refusing it, and a peer that stops reading",
-          "[asio][runtime][client][timer]") {
+TEST_CASE(
+    "asio: a body_writer over TCP: all of it, a server refusing it, and a peer that stops reading",
+    "[asio][runtime][client][timer]"
+) {
   auto const endless = [](http::body_stream out) -> task<> {
     std::string const piece(std::size_t{64} * 1024, 'x');
 
@@ -2059,7 +2153,8 @@ TEST_CASE("asio: a body_writer over TCP: all of it, a server refusing it, and a 
 
       auto const serving = [&]() -> task<> {
         co_await quoll::test::under_stop(
-            quoll::http::server{router, {.shutdown_timeout = {}}}.serve(std::move(listener)), stop.get_token());
+            quoll::http::server{router, {.shutdown_timeout = {}}}.serve(std::move(listener)), stop.get_token()
+        );
       };
 
       auto const calling = [&]() -> task<std::string> {
@@ -2129,8 +2224,9 @@ TEST_CASE("asio: a body_writer over TCP: all of it, a server refusing it, and a 
   }
 }
 
-TEST_CASE("asio: the minimum rate on a real clock, and a writer reading its request as it writes",
-          "[asio][runtime][server]") {
+TEST_CASE(
+    "asio: the minimum rate on a real clock, and a writer reading its request as it writes", "[asio][runtime][server]"
+) {
   using namespace std::chrono_literals;
 
   auto const exchange = [](std::size_t part, int parts) -> task<std::string> {
@@ -2157,8 +2253,9 @@ TEST_CASE("asio: the minimum rate on a real clock, and a writer reading its requ
     options.connection.min_read_rate = 1024;
 
     auto const serving = [&]() -> task<> {
-      co_await quoll::test::under_stop(quoll::http::server{router, options}.serve(std::move(listener)),
-                                       stop.get_token());
+      co_await quoll::test::under_stop(
+          quoll::http::server{router, options}.serve(std::move(listener)), stop.get_token()
+      );
     };
 
     auto const calling = [&]() -> task<std::string> {
@@ -2211,8 +2308,9 @@ TEST_CASE("asio: the minimum rate on a real clock, and a writer reading its requ
   REQUIRE(!slow.ends_with("0\r\n\r\n"));
 }
 
-TEST_CASE("asio: a timeout as far back as nanoseconds go has expired, and stays so on a real clock",
-          "[asio][runtime][server]") {
+TEST_CASE(
+    "asio: a timeout as far back as nanoseconds go has expired, and stays so on a real clock", "[asio][runtime][server]"
+) {
   auto const exchange = []() -> task<std::string> {
     http::router router;
 
@@ -2227,8 +2325,9 @@ TEST_CASE("asio: a timeout as far back as nanoseconds go has expired, and stays 
     options.connection.read_timeout = std::chrono::nanoseconds::min();
 
     auto const serving = [&]() -> task<> {
-      co_await quoll::test::under_stop(quoll::http::server{router, options}.serve(std::move(listener)),
-                                       stop.get_token());
+      co_await quoll::test::under_stop(
+          quoll::http::server{router, options}.serve(std::move(listener)), stop.get_token()
+      );
     };
 
     auto const calling = [&]() -> task<std::string> {
@@ -2310,9 +2409,11 @@ TEST_CASE("http::server: the task of a temporary runs once it has gone, with its
 
   quoll::async::co_spawn(
       runtime.get_executor(),
-      http::server{router, {.connection = {.on_handler_error = [&told](std::exception_ptr) { told = true; }}}}.listen(
-          port),
-      quoll::async::detached, stop.get_token());
+      http::server{
+          router, {.connection = {.on_handler_error = [&told](std::exception_ptr) { told = true; }}}
+      }.listen(port),
+      quoll::async::detached, stop.get_token()
+  );
   quoll::async::co_spawn(runtime.get_executor(), get_then_stop(), quoll::async::detached);
   runtime.run();
 
@@ -2361,8 +2462,9 @@ task<> serve_and_call(http::router const &router QUOLL_LIFETIMEBOUND, Calling ca
   std::stop_source stop;
 
   auto const serving = [&]() -> task<int> {
-    co_await quoll::test::under_stop(http::server{router, {.shutdown_timeout = {}}}.serve(std::move(listener)),
-                                     stop.get_token());
+    co_await quoll::test::under_stop(
+        http::server{router, {.shutdown_timeout = {}}}.serve(std::move(listener)), stop.get_token()
+    );
     co_return 1;
   };
 
@@ -2382,8 +2484,10 @@ void calling_a_server_on_several_threads(http::router const &router, Calling cal
   quoll::asio::runtime runtime{quoll::async::runtime_options{.threads = 4}};
   std::exception_ptr failure;
 
-  co_spawn(runtime.get_executor(), serve_and_call(router, std::move(calling)),
-           overloaded{[] {}, [&failure](std::exception_ptr error) { failure = std::move(error); }});
+  co_spawn(
+      runtime.get_executor(), serve_and_call(router, std::move(calling)),
+      overloaded{[] {}, [&failure](std::exception_ptr error) { failure = std::move(error); }}
+  );
   runtime.run();
 
   if (failure) {
@@ -2398,17 +2502,21 @@ void calling_a_server_with_no_strand(http::router const &router, Calling calling
   ::asio::thread_pool pool{4};
   std::promise<void> done;
 
-  co_spawn(quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own},
-           serve_and_call(router, std::move(calling)),
-           overloaded{[&done] { done.set_value(); },
-                      [&done](std::exception_ptr error) { done.set_exception(std::move(error)); }});
+  co_spawn(
+      quoll::asio::executor{pool.get_executor(), quoll::asio::object_strands::own},
+      serve_and_call(router, std::move(calling)),
+      overloaded{
+          [&done] { done.set_value(); }, [&done](std::exception_ptr error) { done.set_exception(std::move(error)); }
+      }
+  );
   done.get_future().get();
 }
 
 } // namespace
 
-TEST_CASE("response_writer: on a runtime of several threads, as the connection it runs in",
-          "[asio][runtime][server][threads]") {
+TEST_CASE(
+    "response_writer: on a runtime of several threads, as the connection it runs in", "[asio][runtime][server][threads]"
+) {
   http::router router;
 
   router.get("/rows", [](http::response_writer out) -> task<> {
@@ -2436,8 +2544,9 @@ TEST_CASE("response_writer: on a runtime of several threads, as the connection i
 
 // What TSan is here for: the first write asks whether the connection goes on, as the read side feeds the parser, on
 // another thread, as no strand makes them take turns.
-TEST_CASE("response_writer: on a thread pool with no strand per connection, reading as it writes",
-          "[asio][server][threads]") {
+TEST_CASE(
+    "response_writer: on a thread pool with no strand per connection, reading as it writes", "[asio][server][threads]"
+) {
   http::router router;
   std::atomic<std::size_t> read_in_all{0};
 
@@ -2538,15 +2647,17 @@ TEST_CASE("asio: over TCP, a stop request lets the request under way finish", "[
   auto const exchange = []() -> task<quoll::http::response> {
     quoll::http::router router;
 
-    router.add(quoll::http::verb::get, "/slow", "slow",
-               [](quoll::http::request, quoll::http::route_match) -> task<quoll::http::response> {
-                 co_await quoll::async::sleep_for(100ms);
+    router.add(
+        quoll::http::verb::get, "/slow", "slow",
+        [](quoll::http::request, quoll::http::route_match) -> task<quoll::http::response> {
+          co_await quoll::async::sleep_for(100ms);
 
-                 quoll::http::response response;
+          quoll::http::response response;
 
-                 response.body = "done";
-                 co_return response;
-               });
+          response.body = "done";
+          co_return response;
+        }
+    );
 
     auto listener = co_await quoll::io::listen(0);
     auto const port = listener.local_port().value();

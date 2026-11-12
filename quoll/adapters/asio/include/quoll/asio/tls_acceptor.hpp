@@ -77,7 +77,8 @@ inline async::task<io::any_stream> accept_tls(acceptor_state &state, std::shared
   auto socket = co_await accept_socket(state);
 
   co_return io::any_stream{
-      asio::accepted_tls_stream{tls_stream{tls_stream::session_type{std::move(socket), *context}}, std::move(context)}};
+      asio::accepted_tls_stream{tls_stream{tls_stream::session_type{std::move(socket), *context}}, std::move(context)}
+  };
 }
 
 } // namespace detail
@@ -99,8 +100,10 @@ public:
    *
    * @throws std::system_error when it cannot be loaded, or the key is not the certificate's.
    */
-  tls_acceptor(::asio::ip::tcp::acceptor listening, io::tls_server_options const &options,
-               std::optional<::asio::any_io_executor> socket_strands = std::nullopt)
+  tls_acceptor(
+      ::asio::ip::tcp::acceptor listening, io::tls_server_options const &options,
+      std::optional<::asio::any_io_executor> socket_strands = std::nullopt
+  )
       : state_(std::make_unique<detail::acceptor_state>(std::move(listening), std::move(socket_strands))),
         context_(detail::server_context(options)) {}
 

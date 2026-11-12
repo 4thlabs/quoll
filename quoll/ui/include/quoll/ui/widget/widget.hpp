@@ -98,8 +98,9 @@ public:
     element made{.tag = std::string{tag_}};
 
     made.type = element::kind::widget;
-    made.widget = std::make_shared<detail::widget_spec const>(
-        detail::widget_spec{.module = module_, .props = std::move(written)});
+    made.widget =
+        std::make_shared<detail::widget_spec const>(detail::widget_spec{.module = module_, .props = std::move(written)}
+        );
     return made;
   }
 

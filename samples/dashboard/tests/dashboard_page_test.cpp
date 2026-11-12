@@ -226,8 +226,10 @@ task<products::monthly_sales> sales(std::int64_t id) {
   ++server.sales_asked;
 
   auto const delay = server.delays.find(id);
-  sales_call call{.delay = delay == server.delays.end() ? std::chrono::milliseconds{0} : delay->second,
-                  .fails = server.failing.contains(id)};
+  sales_call call{
+      .delay = delay == server.delays.end() ? std::chrono::milliseconds{0} : delay->second,
+      .fails = server.failing.contains(id)
+  };
 
   if (auto const planned = server.calls.find(id); planned != server.calls.end() && !planned->second.empty()) {
     call = planned->second.front();
@@ -251,8 +253,10 @@ task<products::monthly_sales> sales(std::int64_t id) {
 
 } // namespace products_client
 
-TEST_CASE("dashboard web: the list filters, a product chosen shows its sales in the chart, and a point its figure",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: the list filters, a product chosen shows its sales in the chart, and a point its figure",
+    "[samples][dashboard]"
+) {
   server = three_products();
 
   virtual_time time;
@@ -291,8 +295,9 @@ TEST_CASE("dashboard web: the list filters, a product chosen shows its sales in 
   CHECK(figure.contains("Feb: 50 units"));
 }
 
-TEST_CASE("dashboard web: the detail saves what is typed, and refuses a price that is no number",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: the detail saves what is typed, and refuses a price that is no number", "[samples][dashboard]"
+) {
   server = three_products();
 
   virtual_time time;
@@ -332,14 +337,16 @@ TEST_CASE("dashboard web: the detail saves what is typed, and refuses a price th
   // A click while the fields are wrong sends nothing, nor shows a failed save: the one save is the last.
   CHECK_FALSE(refused.contains("Not saved"));
   CHECK(server.updates == 1);
-  CHECK(server.items[2] ==
-        products::product{.id = 3, .name = "Grinder", .category = "Gear", .price = 45.5, .stock = 7});
+  CHECK(
+      server.items[2] == products::product{.id = 3, .name = "Grinder", .category = "Gear", .price = 45.5, .stock = 7}
+  );
   CHECK(instance.context<dashboard_web::catalog>().items->value.at(2) == server.items[2]);
   CHECK(instance.context<dashboard_web::catalog>().items->error == nullptr);
 }
 
-TEST_CASE("dashboard web: a change the server refuses shows why, and stays typed for the next save",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: a change the server refuses shows why, and stays typed for the next save", "[samples][dashboard]"
+) {
   server = three_products();
   server.refuses = true;
 
@@ -394,8 +401,10 @@ TEST_CASE("dashboard web: the sales of a product chosen before are not shown onc
   CHECK(chart_props(shown) == R"(mount ../widgets/line_chart.js {"months":["Jan","Feb","Mar"],"units":[40,50,60]})");
 }
 
-TEST_CASE("dashboard web: the sales of the product chosen that fail show why, those of one left say nothing",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: the sales of the product chosen that fail show why, those of one left say nothing",
+    "[samples][dashboard]"
+) {
   server = three_products();
   server.delays = {{1, 10ms}, {2, 1ms}};
   server.failing = {1, 3};
@@ -428,8 +437,9 @@ TEST_CASE("dashboard web: the sales of the product chosen that fail show why, th
   CHECK_FALSE(failed.contains("Loading its sales"));
 }
 
-TEST_CASE("dashboard web: a month without units, from sales that do not match, shows no figure",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: a month without units, from sales that do not match, shows no figure", "[samples][dashboard]"
+) {
   server = three_products();
   server.sales[2] = {.months = {"Jan", "Feb", "Mar"}, .units = {40}};
 
@@ -492,8 +502,10 @@ TEST_CASE("dashboard web: a field changed while a save is on its way keeps what 
   CHECK(server.items[2] == products::product{.id = 3, .name = "Grinder", .category = "Gear", .price = 46, .stock = 7});
 }
 
-TEST_CASE("dashboard web: sales that failed load again on Try again, a product chosen again loading nothing",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: sales that failed load again on Try again, a product chosen again loading nothing",
+    "[samples][dashboard]"
+) {
   server = three_products();
   // The first request for its sales fails, the next succeeds.
   server.calls[1] = {{.delay = 1ms, .fails = true}, {.delay = 1ms, .fails = false}};
@@ -528,8 +540,10 @@ TEST_CASE("dashboard web: sales that failed load again on Try again, a product c
   CHECK(chart_props(shown) == R"(mount ../widgets/line_chart.js {"months":["Jan","Feb"],"units":[10,20]})");
 }
 
-TEST_CASE("dashboard web: a failure of the sales and one of a save each stay, and a product chosen clears the first",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: a failure of the sales and one of a save each stay, and a product chosen clears the first",
+    "[samples][dashboard]"
+) {
   server = three_products();
   server.failing = {3};
   server.delays = {{2, 10ms}};
@@ -581,8 +595,9 @@ TEST_CASE("dashboard web: a failure of the sales and one of a save each stay, an
   CHECK(loaded.contains("<canvas"));
 }
 
-TEST_CASE("dashboard web: a product saves once at a time, a click while it is on its way refused",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: a product saves once at a time, a click while it is on its way refused", "[samples][dashboard]"
+) {
   server = three_products();
   server.update_delay = 10ms;
 
@@ -650,8 +665,9 @@ TEST_CASE("dashboard web: a save goes on once its detail is left, and the list s
   CHECK(instance.context<dashboard_web::catalog>().items->value.at(2).price == 45.5);
 }
 
-TEST_CASE("dashboard web: a save ending on what is no std::exception is over, and says it failed",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: a save ending on what is no std::exception is over, and says it failed", "[samples][dashboard]"
+) {
   server = three_products();
   server.throws_other = true;
 
@@ -675,8 +691,10 @@ TEST_CASE("dashboard web: a save ending on what is no std::exception is over, an
   CHECK(server.items[2].price == 49);
 }
 
-TEST_CASE("dashboard web: a save tried again shows it waits, and a detail chosen again starts with no failure",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: a save tried again shows it waits, and a detail chosen again starts with no failure",
+    "[samples][dashboard]"
+) {
   server = three_products();
   server.refuses = true;
 
@@ -743,8 +761,9 @@ TEST_CASE("dashboard web: sales ending on what is no std::exception say they did
   CHECK_FALSE(shown.html().contains("Loading its sales"));
 }
 
-TEST_CASE("dashboard web: products that fail to load with nothing said still say they did not load",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: products that fail to load with nothing said still say they did not load", "[samples][dashboard]"
+) {
   server = three_products();
   server.list_fails = true;
 
@@ -759,8 +778,10 @@ TEST_CASE("dashboard web: products that fail to load with nothing said still say
   CHECK(shown.html().contains("role=\"alert\""));
 }
 
-TEST_CASE("dashboard web: a product's address opens its page, and the back button goes back to the list",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: a product's address opens its page, and the back button goes back to the list",
+    "[samples][dashboard]"
+) {
   server = three_products();
 
   virtual_time time;
@@ -793,9 +814,11 @@ TEST_CASE("dashboard web: a product's address opens its page, and the back butto
   CHECK(chart_props(shown) == R"(mount ../widgets/line_chart.js {"months":["Jan","Feb","Mar"],"units":[40,50,60]})");
 }
 
-TEST_CASE("dashboard web: the root goes to the products, a product none holds and an unknown address say so, asking "
-          "for no sales",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: the root goes to the products, a product none holds and an unknown address say so, asking "
+    "for no sales",
+    "[samples][dashboard]"
+) {
   struct seen {
     std::string start;
     std::string path;
@@ -825,8 +848,10 @@ TEST_CASE("dashboard web: the root goes to the products, a product none holds an
   }
 }
 
-TEST_CASE("dashboard web: a product's own row goes nowhere new, the back button leaving its page at once",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: a product's own row goes nowhere new, the back button leaving its page at once",
+    "[samples][dashboard]"
+) {
   server = three_products();
 
   virtual_time time;
@@ -853,8 +878,10 @@ TEST_CASE("dashboard web: a product's own row goes nowhere new, the back button 
   CHECK(shown.html().contains("Choose a product"));
 }
 
-TEST_CASE("dashboard web: a product's address says it loads, not that it is missing, before the products came",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard web: a product's address says it loads, not that it is missing, before the products came",
+    "[samples][dashboard]"
+) {
   server = three_products();
 
   virtual_time time;

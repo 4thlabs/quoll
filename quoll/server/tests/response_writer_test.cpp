@@ -252,7 +252,8 @@ TEST_CASE("response_writer: a route reads as it writes", "[server]") {
   });
 
   auto const answer = answer_to(
-      http::server{router}, "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello");
+      http::server{router}, "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello"
+  );
 
   REQUIRE(answer.starts_with("HTTP/1.1 200"));
   REQUIRE(answer.find("hello") != std::string::npos);
@@ -301,8 +302,10 @@ TEST_CASE("response_writer: to HEAD, a write that was refused stays refused", "[
     }
   });
 
-  auto const answer = answer_to(http::server{router}, "HEAD /rows HTTP/1.1\r\nHost: x\r\n\r\n"
-                                                      "GET /rows HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  auto const answer = answer_to(
+      http::server{router}, "HEAD /rows HTTP/1.1\r\nHost: x\r\n\r\n"
+                            "GET /rows HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+  );
 
   REQUIRE(refused == 3);
   REQUIRE(answer.starts_with("HTTP/1.1 200"));
@@ -485,8 +488,10 @@ TEST_CASE("response_writer: a body refused by the server is answered as such, no
   });
 
   http::server const server{router, {.connection = {.limits = {.max_body_size = 4, .max_streamed_body_size = 4}}}};
-  auto const answer = answer_to(server, "POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
-                                        "a\r\n0123456789\r\n0\r\n\r\n");
+  auto const answer = answer_to(
+      server, "POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+              "a\r\n0123456789\r\n0\r\n\r\n"
+  );
 
   REQUIRE(answer.starts_with("HTTP/1.1 413"));
 }
@@ -576,15 +581,19 @@ TEST_CASE("response_writer: a body read whole by its first write leaves the conn
     return response;
   });
 
-  auto const answer = answer_to(http::server{router}, "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello"
-                                                      "GET /next HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  auto const answer = answer_to(
+      http::server{router}, "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello"
+                            "GET /next HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+  );
 
   REQUIRE(answer.find("hello") != std::string::npos);
   REQUIRE(answer.ends_with("next"));
 }
 
-TEST_CASE("response_writer: to HEAD, what asks for a body gets 100 Continue first, as it may read before it writes",
-          "[server]") {
+TEST_CASE(
+    "response_writer: to HEAD, what asks for a body gets 100 Continue first, as it may read before it writes",
+    "[server]"
+) {
   http::router router;
   auto read = false;
 
@@ -612,7 +621,8 @@ TEST_CASE("response_writer: to HEAD, what asks for a body gets 100 Continue firs
     };
 
     auto outcome = quoll::test::run(
-        time, async::when_all(http::server{router}.serve_connection(std::move(ours)), peer(std::move(client))));
+        time, async::when_all(http::server{router}.serve_connection(std::move(ours)), peer(std::move(client)))
+    );
 
     return std::move(std::get<1>(outcome.value()));
   }();
@@ -841,7 +851,8 @@ TEST_CASE("response_writer: to HEAD, a head that fails to leave ends the connect
   };
 
   (void)quoll::test::run(
-      time, async::when_all(server.serve_connection(failing_writes{std::move(ours)}), peer(std::move(client))));
+      time, async::when_all(server.serve_connection(failing_writes{std::move(ours)}), peer(std::move(client)))
+  );
 
   REQUIRE(ran == 1);
 }
@@ -954,8 +965,10 @@ TEST_CASE("response_writer: a body beside what writes one answers 500, HEAD incl
   auto const target = GENERATE(as<std::string>{}, "/handler", "/writer");
   auto const method = GENERATE(http::verb::get, http::verb::head);
   http::server const server{router, {.connection = {.on_handler_error = [&told](std::exception_ptr) { ++told; }}}};
-  auto const answer = answer_to(server, std::string{method == http::verb::get ? "GET " : "HEAD "} + target +
-                                            " HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  auto const answer = answer_to(
+      server, std::string{method == http::verb::get ? "GET " : "HEAD "} + target +
+                  " HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+  );
 
   REQUIRE(answer.starts_with("HTTP/1.1 500"));
   REQUIRE_FALSE(answer.contains("from-"));
@@ -1223,8 +1236,10 @@ TEST_CASE("server: a refusal already decided invites no body", "[server]") {
     return http::response{};
   });
 
-  auto const answer = answer_to(http::server{router}, "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n"
-                                                      "Expect: 100-continue\r\nConnection: close\r\n\r\n");
+  auto const answer = answer_to(
+      http::server{router}, "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n"
+                            "Expect: 100-continue\r\nConnection: close\r\n\r\n"
+  );
 
   REQUIRE(ran);
   REQUIRE(answer.starts_with("HTTP/1.1 401"));
@@ -1263,8 +1278,10 @@ TEST_CASE("server: to HTTP/1.0, another coding than chunks answers 500 rather th
   REQUIRE_FALSE(answer.contains("gzipped"));
 }
 
-TEST_CASE("response_writer: through local_transport, a write that failed in a task of its own is no whole body",
-          "[server][timer]") {
+TEST_CASE(
+    "response_writer: through local_transport, a write that failed in a task of its own is no whole body",
+    "[server][timer]"
+) {
   http::router router;
 
   // Stopped by a stop of its own, not by the transport's token, and the writer makes nothing of it.
@@ -1426,7 +1443,8 @@ TEST_CASE("server: a 100 Continue that cannot leave runs nothing", "[server]") {
   };
 
   (void)quoll::test::run(
-      time, async::when_all(server.serve_connection(failing_writes{std::move(ours)}), peer(std::move(client))));
+      time, async::when_all(server.serve_connection(failing_writes{std::move(ours)}), peer(std::move(client)))
+  );
 
   REQUIRE(ran == 0);
 }
@@ -1508,7 +1526,8 @@ TEST_CASE("server: HTTP/1.0 kept open says so of what answers in its place, and 
   REQUIRE(reported.size() == 1);
   REQUIRE(reported.front().starts_with(
       target == "/throws" ? "quoll: a body_writer threw, its response answered 500 or cut short: before anything left"
-                          : "quoll: a handler's response could not be written: "));
+                          : "quoll: a handler's response could not be written: "
+  ));
 
   auto const both = answer_to(server, "GET /names-another HTTP/1.0\r\nConnection: keep-alive\r\n\r\n");
 

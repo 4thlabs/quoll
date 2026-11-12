@@ -164,9 +164,12 @@ TEST_CASE("io::connect and io::listen go through the network of the task's execu
   network_log log;
   std::optional<int> result;
 
-  co_spawn(network_executor{loop, log}, use_network(),
-           quoll::test::overloaded{[&](int value) { result = value; },
-                                   [](std::exception_ptr error) { std::rethrow_exception(error); }});
+  co_spawn(
+      network_executor{loop, log}, use_network(),
+      quoll::test::overloaded{
+          [&](int value) { result = value; }, [](std::exception_ptr error) { std::rethrow_exception(error); }
+      }
+  );
   loop.run();
 
   REQUIRE(result == 1);
@@ -234,15 +237,15 @@ static_assert(io::Network<viewing_network>);
 struct viewing_tls_network {
   std::string *seen;
 
-  [[nodiscard]] task<io::any_stream> connect_tls(std::string_view host, std::uint16_t,
-                                                 io::tls_client_options const &options) const {
+  [[nodiscard]] task<io::any_stream>
+  connect_tls(std::string_view host, std::uint16_t, io::tls_client_options const &options) const {
     seen->assign(host);
     *seen += "|" + options.ca_file;
     co_return io::any_stream{io::make_memory_stream_pair().first};
   }
 
-  [[nodiscard]] io::any_listener listen_tls(std::string address, std::uint16_t,
-                                            io::tls_server_options const &options) const {
+  [[nodiscard]] io::any_listener
+  listen_tls(std::string address, std::uint16_t, io::tls_server_options const &options) const {
     seen->assign(address);
     *seen += "|" + options.certificate_file;
 
@@ -352,8 +355,10 @@ TEST_CASE("io::connect_tls and io::listen_tls go through the TLS network of the 
     co_return 0;
   };
 
-  co_spawn(tls_executor{loop, seen}, work(),
-           quoll::test::overloaded{[](int) {}, [](std::exception_ptr error) { std::rethrow_exception(error); }});
+  co_spawn(
+      tls_executor{loop, seen}, work(),
+      quoll::test::overloaded{[](int) {}, [](std::exception_ptr error) { std::rethrow_exception(error); }}
+  );
   loop.run();
 
   REQUIRE(ran);
@@ -487,8 +492,9 @@ TEST_CASE("network_ref: what it is given outlives the connection's frame, run or
   }
 }
 
-TEST_CASE("network_ref and tls_network_ref: the network is used at the call, and may go before the task runs",
-          "[io][network]") {
+TEST_CASE(
+    "network_ref and tls_network_ref: the network is used at the call, and may go before the task runs", "[io][network]"
+) {
   auto calls = 0;
 
   auto connecting = [&] {

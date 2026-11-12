@@ -76,8 +76,8 @@ public:
 
 #if defined(QUOLL_ASIO_TLS)
   /** @brief Connects to `host` (a name or an address) on `port` over TLS, checking it as `options` says. */
-  [[nodiscard]] async::task<io::any_stream> connect_tls(std::string host, std::uint16_t port,
-                                                        io::tls_client_options const &options) const {
+  [[nodiscard]] async::task<io::any_stream>
+  connect_tls(std::string host, std::uint16_t port, io::tls_client_options const &options) const {
     return detail::connect_tls(executor_, std::move(host), port, options);
   }
 #endif

@@ -321,9 +321,10 @@ namespace {
     return nullptr;
   }
 
-  return std::make_shared<runtime_strand>(
-      runtime_strand{asio::executor<::asio::strand<::asio::io_context::executor_type>>{
-          ::asio::make_strand(shared.context.get_executor())}});
+  return std::make_shared<runtime_strand>(runtime_strand{
+      asio::executor<::asio::strand<::asio::io_context::executor_type>>{::asio::make_strand(shared.context.get_executor(
+      ))}
+  });
 }
 
 } // namespace

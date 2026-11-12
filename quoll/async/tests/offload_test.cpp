@@ -187,8 +187,9 @@ TEST_CASE("offload: a stop requested before it starts cancels it, on an executor
 
   stop.request_stop();
   // Ended on the stop: test::run says so.
-  REQUIRE_THROWS_WITH(quoll::test::run(loop, working(), stop.get_token()),
-                      "quoll::test::run: the task ended on a stop");
+  REQUIRE_THROWS_WITH(
+      quoll::test::run(loop, working(), stop.get_token()), "quoll::test::run: the task ended on a stop"
+  );
   REQUIRE_FALSE(ran);
 }
 

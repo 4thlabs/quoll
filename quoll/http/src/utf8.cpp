@@ -47,8 +47,8 @@ constexpr std::string_view replacement = "\xEF\xBF\xBD";
 
 // The length of the valid sequence at `position`, or of its maximal subpart, negated, when it is not one; `truncated`
 // set when that subpart only lacks what comes after the text.
-[[nodiscard]] std::ptrdiff_t sequence_at(std::string_view text, std::size_t position,
-                                         bool *truncated = nullptr) noexcept {
+[[nodiscard]] std::ptrdiff_t
+sequence_at(std::string_view text, std::size_t position, bool *truncated = nullptr) noexcept {
   auto const lead = static_cast<unsigned char>(text[position]);
 
   if (lead < 0x80U) {

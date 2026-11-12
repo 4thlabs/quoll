@@ -79,8 +79,8 @@ struct websocket_target {
 // sent. Nothing when it names another scheme than `secure` says, another host or port than `host`, says nothing but a
 // fragment, holds what RFC 3986 does not allow in a reference, or leads to a path that, once decoded, starts with two
 // slashes or a slash and a backslash, whatever a URL parser drops and dot segments apart, or holds a NUL.
-[[nodiscard]] std::optional<std::string> resolve_location(std::string_view location, std::string_view host, bool secure,
-                                                          std::string_view target);
+[[nodiscard]] std::optional<std::string>
+resolve_location(std::string_view location, std::string_view host, bool secure, std::string_view target);
 
 } // namespace quoll::http::detail
 

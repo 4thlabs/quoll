@@ -93,8 +93,9 @@ namespace quoll::http {
  *
  * @throws std::invalid_argument for an empty handler.
  */
-[[nodiscard]] response accept_websocket(request const &message, std::function<async::task<>(websocket)> handler,
-                                        websocket_options options = {});
+[[nodiscard]] response accept_websocket(
+    request const &message, std::function<async::task<>(websocket)> handler, websocket_options options = {}
+);
 
 } // namespace quoll::http
 

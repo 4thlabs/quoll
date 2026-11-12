@@ -54,5 +54,6 @@ struct service {
 void mount_it(quoll::http::router &router) {
   mount<api<"", secured>>(
       router, service{},
-      validators([](auto const &) { return true; }, [](credential<bearer_auth> const &) { return false; }));
+      validators([](auto const &) { return true; }, [](credential<bearer_auth> const &) { return false; })
+  );
 }

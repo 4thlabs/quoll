@@ -140,11 +140,12 @@ struct missing_page {
   element view() { return p("missing"); }
 };
 
-inline constexpr auto shop_routes =
-    quoll::ui::routes(route<"/", home_page>(),
-                      route<"/products", products_layout>(route<"", product_list>(), route<"{id}", product_page>()),
-                      route<"/ratio/{x}", ratio_page>(), route<"/files/{path:path}", file_page>(),
-                      redirect<"/items/{id}", "/products/{id}">(), not_found<missing_page>());
+inline constexpr auto shop_routes = quoll::ui::routes(
+    route<"/", home_page>(),
+    route<"/products", products_layout>(route<"", product_list>(), route<"{id}", product_page>()),
+    route<"/ratio/{x}", ratio_page>(), route<"/files/{path:path}", file_page>(),
+    redirect<"/items/{id}", "/products/{id}">(), not_found<missing_page>()
+);
 
 element home_page::view() {
   return div({

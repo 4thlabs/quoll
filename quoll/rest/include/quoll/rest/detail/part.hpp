@@ -119,14 +119,16 @@ using events_part_of = typename front<events_of<Endpoint>>::type;
 // for.
 template <class... Parts>
 [[nodiscard]] consteval bool any_success_response(type_list<Parts...>) {
-  return ([]<class P>() {
-    if constexpr (std::same_as<typename P::part_category, response_part>) {
-      return static_cast<int>(P::status) < 400;
-    } else {
-      return false;
-    }
-  }.template operator()<Parts>() ||
-          ...);
+  return (
+      []<class P>() {
+        if constexpr (std::same_as<typename P::part_category, response_part>) {
+          return static_cast<int>(P::status) < 400;
+        } else {
+          return false;
+        }
+      }.template operator()<Parts>() ||
+      ...
+  );
 }
 
 template <class P>

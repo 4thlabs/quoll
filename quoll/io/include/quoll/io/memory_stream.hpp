@@ -230,8 +230,8 @@ public:
   }
 
   /** @brief Hands all of `data` to the peer. */
-  [[nodiscard]] write_awaitable
-  write_some(std::span<std::byte const> data QUOLL_LIFETIMEBOUND) noexcept QUOLL_LIFETIMEBOUND {
+  [[nodiscard]] write_awaitable write_some(std::span<std::byte const> data QUOLL_LIFETIMEBOUND
+  ) noexcept QUOLL_LIFETIMEBOUND {
     return {outbound(), data};
   }
 

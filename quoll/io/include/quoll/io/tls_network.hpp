@@ -57,8 +57,10 @@ namespace quoll::io {
  * a connection it accepts takes place on its first read, so that a slow peer holds nothing but its own connection.
  */
 template <class N>
-concept TlsNetwork = requires(N const &network, std::string text, std::uint16_t port, tls_client_options const &client,
-                              tls_server_options const &server) {
+concept TlsNetwork = requires(
+    N const &network, std::string text, std::uint16_t port, tls_client_options const &client,
+    tls_server_options const &server
+) {
   { network.connect_tls(text, port, client) } -> std::same_as<async::task<any_stream>>;
   { network.listen_tls(text, port, server) } -> std::same_as<any_listener>;
 };

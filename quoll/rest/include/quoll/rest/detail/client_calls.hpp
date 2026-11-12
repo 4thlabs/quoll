@@ -72,31 +72,35 @@ struct client_calls<Client, Api, std::index_sequence<Index...>> {
   template <class Endpoint>
     requires(std::tuple_size_v<arguments_of<Api, Endpoint>> == sizeof...(Index))
   [[nodiscard]] auto call(typename nth_argument<arguments_of<Api, Endpoint>, Index>::type... args) const {
-    return static_cast<Client const &>(*this).template call_with<Endpoint>(
-        arguments_of<Api, Endpoint>{std::move(args)...});
+    return static_cast<Client const &>(*this).template call_with<Endpoint>(arguments_of<Api, Endpoint>{std::move(args
+    )...});
   }
 
   template <class Endpoint>
     requires(std::tuple_size_v<arguments_of<Api, Endpoint>> == sizeof...(Index))
   [[nodiscard]] auto try_call(typename nth_argument<arguments_of<Api, Endpoint>, Index>::type... args) const {
     return static_cast<Client const &>(*this).template try_call_with<Endpoint>(
-        arguments_of<Api, Endpoint>{std::move(args)...});
+        arguments_of<Api, Endpoint>{std::move(args)...}
+    );
   }
 
   template <class Endpoint>
     requires(std::tuple_size_v<arguments_of<Api, Endpoint>> == sizeof...(Index))
   [[nodiscard]] auto subscribe(typename nth_argument<arguments_of<Api, Endpoint>, Index>::type... args) const {
     return static_cast<Client const &>(*this).template subscribe_with<Endpoint>(
-        arguments_of<Api, Endpoint>{std::move(args)...});
+        arguments_of<Api, Endpoint>{std::move(args)...}
+    );
   }
 };
 
 template <class Scheme, class... Routes>
 [[nodiscard]] consteval bool uses_scheme(type_list<Routes...>) {
-  return ([]<class... Schemes>(type_list<Schemes...>) {
-    return (std::same_as<Schemes, Scheme> || ...);
-  }(typename Routes::schemes{}) ||
-          ...);
+  return (
+      []<class... Schemes>(type_list<Schemes...>) {
+        return (std::same_as<Schemes, Scheme> || ...);
+      }(typename Routes::schemes{}) ||
+      ...
+  );
 }
 
 // The most arguments a call to an endpoint of the api takes: the client has an overload per arity up to it.

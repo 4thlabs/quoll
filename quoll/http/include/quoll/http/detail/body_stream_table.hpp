@@ -83,8 +83,10 @@ inline constexpr body_stream_table body_stream_table_of{
             static_cast<Sink *>(erased)->head(status, std::move(fields));
           } else {
             // One with another signature would lose the status and fields of what it wraps, with no one told.
-            static_assert(no_member_named_head<Sink>(),
-                          "quoll::http::body_stream: a sink's head() takes an http::status and an http::fields");
+            static_assert(
+                no_member_named_head<Sink>(),
+                "quoll::http::body_stream: a sink's head() takes an http::status and an http::fields"
+            );
           }
         },
     .type = async::detail::type_id_of<Sink>(),

@@ -81,8 +81,9 @@ public:
     auto &item = find(*this, id);
 
     if (changes.name.empty() || changes.price < 0 || changes.stock < 0) {
-      throw quoll::rest::http_error{quoll::http::status::unprocessable_content,
-                                    "a product needs a name, and a price and a stock of zero at least"};
+      throw quoll::rest::http_error{
+          quoll::http::status::unprocessable_content, "a product needs a name, and a price and a stock of zero at least"
+      };
     }
 
     item.name = std::move(changes.name);

@@ -44,8 +44,9 @@
 
 namespace quoll::http {
 
-std::string format_websocket_frame(websocket_opcode opcode, std::string_view payload, bool fin,
-                                   std::optional<websocket_mask> mask) {
+std::string format_websocket_frame(
+    websocket_opcode opcode, std::string_view payload, bool fin, std::optional<websocket_mask> mask
+) {
   if (!detail::is_known_opcode(static_cast<std::uint8_t>(opcode))) {
     throw std::invalid_argument{"quoll::http::format_websocket_frame: an opcode RFC 6455 does not name"};
   }

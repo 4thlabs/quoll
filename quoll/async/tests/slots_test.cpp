@@ -73,7 +73,8 @@ TEST_CASE("slots: what waits goes first come, first served, one place at a time"
   std::vector<int> order;
 
   REQUIRE(quoll::test::run(
-      quoll::async::when_all(take_turn(places, order, 1), take_turn(places, order, 2), take_turn(places, order, 3))));
+      quoll::async::when_all(take_turn(places, order, 1), take_turn(places, order, 2), take_turn(places, order, 3))
+  ));
   REQUIRE(order == std::vector{1, -1, 2, -2, 3, -3});
   REQUIRE(places.available() == 1);
 }
@@ -83,7 +84,8 @@ TEST_CASE("slots: as many go at once as there are places", "[async][slots]") {
   std::vector<int> order;
 
   REQUIRE(quoll::test::run(
-      quoll::async::when_all(take_turn(places, order, 1), take_turn(places, order, 2), take_turn(places, order, 3))));
+      quoll::async::when_all(take_turn(places, order, 1), take_turn(places, order, 2), take_turn(places, order, 3))
+  ));
   REQUIRE(order.at(0) == 1);
   REQUIRE(order.at(1) == 2);
   REQUIRE(places.available() == 2);

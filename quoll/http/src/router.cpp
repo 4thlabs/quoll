@@ -210,8 +210,10 @@ struct target_parts {
       break;
     case segment_kind::rest:
       // An encoded slash in the rest of the path would read as a separator once joined: no match.
-      return std::ranges::none_of(segments.begin() + static_cast<std::ptrdiff_t>(index), segments.end(),
-                                  [](std::string const &segment) { return segment.contains('/'); });
+      return std::ranges::none_of(
+          segments.begin() + static_cast<std::ptrdiff_t>(index), segments.end(),
+          [](std::string const &segment) { return segment.contains('/'); }
+      );
     }
   }
 
@@ -219,8 +221,8 @@ struct target_parts {
 }
 
 // The parameters of a route that matches the segments.
-[[nodiscard]] std::vector<std::string> extract_params(std::vector<route_segment> const &route,
-                                                      std::vector<std::string> const &segments) {
+[[nodiscard]] std::vector<std::string>
+extract_params(std::vector<route_segment> const &route, std::vector<std::string> const &segments) {
   std::vector<std::string> params;
 
   for (std::size_t index = 0; index < route.size(); ++index) {
@@ -521,8 +523,8 @@ async::task<response> router::dispatch(request message, body_reader reader) cons
 
 // A coroutine: what a handler or a middleware throws before it returns its task comes out of this one, and what it is
 // given by reference lives in this frame until its task ends.
-async::task<response> router::run_from(detail::resolved_route const &resolved, std::size_t position,
-                                       request message) const {
+async::task<response>
+router::run_from(detail::resolved_route const &resolved, std::size_t position, request message) const {
   if (position < middlewares_.size()) {
     next const following{*this, resolved, position + 1};
 

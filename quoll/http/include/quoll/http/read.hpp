@@ -59,8 +59,8 @@ namespace detail {
 
 // Reads until `reached()`. Awaited by what follows, whose documentation says how it ends.
 template <io::ByteStream Stream, class Message, std::predicate Reached>
-[[nodiscard]] async::task<std::error_code> read_until(Stream &stream, std::string &buffer,
-                                                      parser<Message> &message_parser, Reached reached) {
+[[nodiscard]] async::task<std::error_code>
+read_until(Stream &stream, std::string &buffer, parser<Message> &message_parser, Reached reached) {
   // In the coroutine frame rather than in `buffer`: an exception or a destroyed task leaves `buffer` untouched.
   std::array<char, 4096> chunk;
 
@@ -118,9 +118,10 @@ template <io::ByteStream Stream, class Message, std::predicate Reached>
  * outlive the task. Precondition: the parser holds no complete message.
  */
 template <io::ByteStream Stream, class Message>
-[[nodiscard]] async::task<std::error_code> read(Stream &stream QUOLL_LIFETIMEBOUND,
-                                                std::string &buffer QUOLL_LIFETIMEBOUND,
-                                                parser<Message> &message_parser QUOLL_LIFETIMEBOUND) {
+[[nodiscard]] async::task<std::error_code> read(
+    Stream &stream QUOLL_LIFETIMEBOUND, std::string &buffer QUOLL_LIFETIMEBOUND,
+    parser<Message> &message_parser QUOLL_LIFETIMEBOUND
+) {
   assert(!message_parser.done() && "http::read() with a message not released yet");
 
   // Going on would hold in memory what the larger limit of a body in pieces lets through.
@@ -135,13 +136,15 @@ template <io::ByteStream Stream, class Message>
  * report, and parser::failure() says so at once.
  */
 template <io::ByteStream Stream, class Message>
-[[nodiscard]] async::task<std::error_code> read_head(Stream &stream QUOLL_LIFETIMEBOUND,
-                                                     std::string &buffer QUOLL_LIFETIMEBOUND,
-                                                     parser<Message> &message_parser QUOLL_LIFETIMEBOUND) {
+[[nodiscard]] async::task<std::error_code> read_head(
+    Stream &stream QUOLL_LIFETIMEBOUND, std::string &buffer QUOLL_LIFETIMEBOUND,
+    parser<Message> &message_parser QUOLL_LIFETIMEBOUND
+) {
   assert(!message_parser.done() && "http::read_head() with a message not released yet");
 
-  return detail::read_until(stream, buffer, message_parser,
-                            [&message_parser] { return message_parser.head_complete(); });
+  return detail::read_until(stream, buffer, message_parser, [&message_parser] {
+    return message_parser.head_complete();
+  });
 }
 
 /**
@@ -155,11 +158,14 @@ template <io::ByteStream Stream, class Message>
  * as read_head() gets it, and parser::body_streamed().
  */
 template <io::ByteStream Stream, class Message>
-[[nodiscard]] async::task<std::error_code>
-read_body(Stream &stream QUOLL_LIFETIMEBOUND, std::string &buffer QUOLL_LIFETIMEBOUND,
-          parser<Message> &message_parser QUOLL_LIFETIMEBOUND, std::string &piece QUOLL_LIFETIMEBOUND) {
-  assert(message_parser.head_complete() && message_parser.body_streamed() &&
-         "http::read_body() for a message whose body does not come in pieces");
+[[nodiscard]] async::task<std::error_code> read_body(
+    Stream &stream QUOLL_LIFETIMEBOUND, std::string &buffer QUOLL_LIFETIMEBOUND,
+    parser<Message> &message_parser QUOLL_LIFETIMEBOUND, std::string &piece QUOLL_LIFETIMEBOUND
+) {
+  assert(
+      message_parser.head_complete() && message_parser.body_streamed() &&
+      "http::read_body() for a message whose body does not come in pieces"
+  );
 
   auto const has_news = [&message_parser] { return message_parser.done() || !message_parser.head().body.empty(); };
   std::error_code error;

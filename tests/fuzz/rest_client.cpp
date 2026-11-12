@@ -79,16 +79,18 @@ static_assert(http::HttpTransport<canned_transport>);
 } // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size) {
-  constexpr std::array statuses{http::status::ok, http::status::created, http::status::not_found,
-                                http::status::internal_server_error};
+  constexpr std::array statuses{
+      http::status::ok, http::status::created, http::status::not_found, http::status::internal_server_error
+  };
 
   if (size == 0) {
     return 0;
   }
 
-  quoll::rest::client<quoll::fuzz::api, canned_transport> client{
-      canned_transport{statuses[data[0] % statuses.size()], std::string{quoll::fuzz::as_text(data + 1, size - 1)},
-                       (data[0] & 4U) != 0 ? "application/problem+json" : "application/json"}};
+  quoll::rest::client<quoll::fuzz::api, canned_transport> client{canned_transport{
+      statuses[data[0] % statuses.size()], std::string{quoll::fuzz::as_text(data + 1, size - 1)},
+      (data[0] & 4U) != 0 ? "application/problem+json" : "application/json"
+  }};
 
   // try_call reports what it cannot decode as a value: anything thrown is a bug.
   quoll::fuzz::require(quoll::test::run(client.try_call<quoll::fuzz::get>(1)).has_value());

@@ -144,7 +144,8 @@ private:
     [&]<std::size_t... Index>(std::index_sequence<Index...>) {
       static_cast<void>(
           ((glz::reflect<Enum>::keys[Index] == name && (found = glz::get<Index>(glz::reflect<Enum>::values), true)) ||
-           ...));
+           ...)
+      );
     }(std::make_index_sequence<glz::reflect<Enum>::size>{});
 
     return found;

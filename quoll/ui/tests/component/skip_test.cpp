@@ -130,7 +130,8 @@ struct panel_page {
 
   element view() {
     return div(
-        {p(std::to_string(*unrelated)), component<counted_panel>({.views = &panel_views, .row_views = &row_views})});
+        {p(std::to_string(*unrelated)), component<counted_panel>({.views = &panel_views, .row_views = &row_views})}
+    );
   }
 };
 
@@ -152,8 +153,8 @@ struct calling_page {
   std::vector<int> seen;
 
   element view() {
-    return div(
-        {p(std::to_string(*count)), component<calling_row>({.on_go = [this, n = *count] { seen.push_back(n); }})});
+    return div({p(std::to_string(*count)), component<calling_row>({.on_go = [this, n = *count] { seen.push_back(n); }})}
+    );
   }
 };
 
@@ -169,8 +170,10 @@ struct calling_panel {
   state<int> count;
 
   element view(props const &given) {
-    return div({p(std::to_string(*count)) | on_click([this] { count = *count + 1; }),
-                component<calling_row>({.on_go = [seen = given.seen] { seen->push_back(1); }})});
+    return div(
+        {p(std::to_string(*count)) | on_click([this] { count = *count + 1; }),
+         component<calling_row>({.on_go = [seen = given.seen] { seen->push_back(1); }})}
+    );
   }
 };
 
@@ -410,8 +413,9 @@ TEST_CASE("skip: a component whose view ran in a render that failed is viewed ag
   REQUIRE(shown.shown.html() == "<div><button>b:0</button></div>");
 }
 
-TEST_CASE("skip: a callback a component gave before it viewed again still calls it, from a row not viewed again",
-          "[ui][skip]") {
+TEST_CASE(
+    "skip: a callback a component gave before it viewed again still calls it, from a row not viewed again", "[ui][skip]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<calling_panel_page> instance{time.get_executor(), shown};
@@ -429,8 +433,9 @@ TEST_CASE("skip: a callback a component gave before it viewed again still calls 
   REQUIRE(instance.component().seen == std::vector<int>{1});
 }
 
-TEST_CASE("skip: a component of a view given again is not viewed again, even with props that have no ==",
-          "[ui][skip]") {
+TEST_CASE(
+    "skip: a component of a view given again is not viewed again, even with props that have no ==", "[ui][skip]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<holding_page> instance{time.get_executor(), shown};

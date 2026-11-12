@@ -55,11 +55,13 @@ view_scope::view_scope(view_context context) noexcept : previous_(std::exchange(
 view_scope::~view_scope() { current = std::move(previous_); }
 
 call_target current_target() noexcept {
-  return {.app = current.app,
-          .owner = current.held.owner,
-          .props = current.held.props,
-          .of_component = current.held.owner != nullptr,
-          .of_props = current.held.props != nullptr};
+  return {
+      .app = current.app,
+      .owner = current.held.owner,
+      .props = current.held.props,
+      .of_component = current.held.owner != nullptr,
+      .of_props = current.held.props != nullptr
+  };
 }
 
 bool spawn_in(call_target const &target, async::task<> work) {

@@ -105,11 +105,12 @@ struct is_vector<std::vector<T>> : std::true_type {};
 // A query or header value from the texts the request has for it: a vector takes them all, an optional none or one,
 // any other type exactly one.
 template <class T>
-[[nodiscard]] std::expected<T, argument_error> from_texts(std::string_view what, std::string_view name,
-                                                          std::vector<std::string_view> const &texts) {
+[[nodiscard]] std::expected<T, argument_error>
+from_texts(std::string_view what, std::string_view name, std::vector<std::string_view> const &texts) {
   auto const invalid = [&] {
     return std::unexpected{
-        argument_error{http::status::bad_request, "invalid " + std::string{what} + " " + std::string{name}}};
+        argument_error{http::status::bad_request, "invalid " + std::string{what} + " " + std::string{name}}
+    };
   };
 
   if constexpr (is_vector<T>::value) {
@@ -129,7 +130,8 @@ template <class T>
   } else {
     if (texts.size() > 1) {
       return std::unexpected{
-          argument_error{http::status::bad_request, std::string{what} + " " + std::string{name} + " is repeated"}};
+          argument_error{http::status::bad_request, std::string{what} + " " + std::string{name} + " is repeated"}
+      };
     }
 
     if (texts.empty()) {
@@ -137,7 +139,8 @@ template <class T>
         return T{};
       } else {
         return std::unexpected{
-            argument_error{http::status::bad_request, "missing " + std::string{what} + " " + std::string{name}}};
+            argument_error{http::status::bad_request, "missing " + std::string{what} + " " + std::string{name}}
+        };
       }
     }
 
@@ -151,8 +154,8 @@ template <class T>
   }
 }
 
-[[nodiscard]] std::vector<std::string_view> header_texts(http::fields const &fields QUOLL_LIFETIMEBOUND,
-                                                         std::string_view name);
+[[nodiscard]] std::vector<std::string_view>
+header_texts(http::fields const &fields QUOLL_LIFETIMEBOUND, std::string_view name);
 
 // The media type of a Content-Type value, without its parameters: "application/json; charset=utf-8" gives
 // "application/json".
@@ -175,7 +178,8 @@ decode_source(std::type_identity<path_source<Path, Index>>, request_input const 
 
   if (!value) {
     return std::unexpected{
-        argument_error{http::status::bad_request, "invalid path parameter " + std::string{source::param.name}}};
+        argument_error{http::status::bad_request, "invalid path parameter " + std::string{source::param.name}}
+    };
   }
 
   return std::move(*value);
@@ -200,8 +204,8 @@ void for_each_text(T const &value, Add &&add) {
 
 // The fields of `Struct` from the `name=value` entries of a query or a form, each as a parameter is (see from_texts).
 template <class Struct>
-[[nodiscard]] std::expected<Struct, argument_error> decode_fields(std::string_view what,
-                                                                  std::vector<query_entry> const &entries) {
+[[nodiscard]] std::expected<Struct, argument_error>
+decode_fields(std::string_view what, std::vector<query_entry> const &entries) {
   Struct value{};
   std::optional<argument_error> error;
 
@@ -236,14 +240,14 @@ void append_fields(std::string &out, Struct const &value, std::string_view what)
 }
 
 template <fixed_string Name, class T>
-[[nodiscard]] std::expected<T, argument_error> decode_source(std::type_identity<query<Name, T>>,
-                                                             request_input const &input) {
+[[nodiscard]] std::expected<T, argument_error>
+decode_source(std::type_identity<query<Name, T>>, request_input const &input) {
   return from_texts<T>("query parameter", Name.view(), query_texts(input.query, Name.view()));
 }
 
 template <class Struct>
-[[nodiscard]] std::expected<Struct, argument_error> decode_source(std::type_identity<query_params<Struct>>,
-                                                                  request_input const &input) {
+[[nodiscard]] std::expected<Struct, argument_error>
+decode_source(std::type_identity<query_params<Struct>>, request_input const &input) {
   return decode_fields<Struct>("query parameter", input.query);
 }
 
@@ -252,8 +256,8 @@ template <class Struct>
 [[nodiscard]] std::vector<std::string_view> list_elements(std::vector<std::string_view> const &lines);
 
 template <fixed_string Name, class T>
-[[nodiscard]] std::expected<T, argument_error> decode_source(std::type_identity<header<Name, T>>,
-                                                             request_input const &input) {
+[[nodiscard]] std::expected<T, argument_error>
+decode_source(std::type_identity<header<Name, T>>, request_input const &input) {
   auto lines = header_texts(input.request.fields, Name.view());
 
   if constexpr (is_vector<T>::value) {
@@ -264,8 +268,8 @@ template <fixed_string Name, class T>
 }
 
 template <class T, class BodyCodec>
-[[nodiscard]] std::expected<T, argument_error> decode_source(std::type_identity<body<T, BodyCodec>>,
-                                                             request_input const &input) {
+[[nodiscard]] std::expected<T, argument_error>
+decode_source(std::type_identity<body<T, BodyCodec>>, request_input const &input) {
   BodyCodec const codec{};
   auto const content_type = input.request.fields.find("Content-Type");
 
@@ -279,8 +283,9 @@ template <class T, class BodyCodec>
   }
 
   if (!content_type || !http::detail::iequals(media_type(*content_type), media_type(codec.content_type))) {
-    return std::unexpected{argument_error{http::status::unsupported_media_type,
-                                          "the body is " + std::string{media_type(codec.content_type)}}};
+    return std::unexpected{argument_error{
+        http::status::unsupported_media_type, "the body is " + std::string{media_type(codec.content_type)}
+    }};
   }
 
   auto value = codec.template decode<T>(input.request.body);
@@ -315,8 +320,8 @@ struct source_value<path_source<Path, Index>> {
 
 // Decodes every source in order, stopping at the first error.
 template <class First, class... Sources>
-[[nodiscard]] std::expected<std::tuple<typename source_value<First>::type, typename source_value<Sources>::type...>,
-                            argument_error>
+[[nodiscard]] std::expected<
+    std::tuple<typename source_value<First>::type, typename source_value<Sources>::type...>, argument_error>
 decode_all(type_list<First, Sources...>, request_input const &input) {
   std::optional<argument_error> error;
 
@@ -347,10 +352,11 @@ decode_all(type_list<First, Sources...>, request_input const &input) {
   // Named: a sole std::pair would otherwise deduce a tuple of its two members.
   return std::apply(
       [](auto &...value) {
-        return std::tuple<typename source_value<First>::type, typename source_value<Sources>::type...>{
-            std::move(*value)...};
+        return std::tuple<typename source_value<First>::type, typename source_value<Sources>::type...>{std::move(*value
+        )...};
       },
-      values);
+      values
+  );
 }
 
 // The arguments of a route, decoded from a request: path parameters, then the argument parts in order.

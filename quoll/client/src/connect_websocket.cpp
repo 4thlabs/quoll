@@ -76,24 +76,27 @@ namespace quoll::http {
 namespace {
 
 // The handshake's own fields, and what would give it a body, which it has none of (RFC 6455, 4.1).
-constexpr std::array handshake_fields{std::string_view{"Host"},
-                                      std::string_view{"Upgrade"},
-                                      std::string_view{"Connection"},
-                                      std::string_view{"Sec-WebSocket-Key"},
-                                      std::string_view{"Sec-WebSocket-Version"},
-                                      std::string_view{"Sec-WebSocket-Extensions"},
-                                      std::string_view{"Sec-WebSocket-Accept"},
-                                      std::string_view{"Content-Length"},
-                                      std::string_view{"Transfer-Encoding"}};
+constexpr std::array handshake_fields{
+    std::string_view{"Host"},
+    std::string_view{"Upgrade"},
+    std::string_view{"Connection"},
+    std::string_view{"Sec-WebSocket-Key"},
+    std::string_view{"Sec-WebSocket-Version"},
+    std::string_view{"Sec-WebSocket-Extensions"},
+    std::string_view{"Sec-WebSocket-Accept"},
+    std::string_view{"Content-Length"},
+    std::string_view{"Transfer-Encoding"}
+};
 
 // Whether `answer` switches to the WebSocket the handshake with `key`, offering `offered`, asked for (RFC 6455, 4.1).
 // A subprotocol is compared as it is, as RFC 6455 has them.
-[[nodiscard]] bool switches(http::response const &answer, std::string_view key,
-                            std::vector<std::string> const &offered) {
+[[nodiscard]] bool
+switches(http::response const &answer, std::string_view key, std::vector<std::string> const &offered) {
   // One of each, as two would leave which one counts to whoever reads them.
   auto const count = [&answer](std::string_view name) {
-    return std::ranges::count_if(answer.fields,
-                                 [name](auto const &field) { return detail::iequals(field.name, name); });
+    return std::ranges::count_if(answer.fields, [name](auto const &field) {
+      return detail::iequals(field.name, name);
+    });
   };
 
   // `websocket` alone, whatever its case (RFC 6455, 4.1), in one Upgrade field.
@@ -151,9 +154,10 @@ static_assert(io::HalfClosableStream<keeping_connector>);
   throw std::system_error{unsent, "quoll::http::connect_websocket: cannot send the handshake"};
 }
 
-[[nodiscard]] async::task<connected_websocket> shake_hands(detail::connector_handle connector, detail::origin server,
-                                                           detail::websocket_handshake handshake,
-                                                           websocket_connect_options options) {
+[[nodiscard]] async::task<connected_websocket> shake_hands(
+    detail::connector_handle connector, detail::origin server, detail::websocket_handshake handshake,
+    websocket_connect_options options
+) {
   auto stream =
       co_await connector.open(connector.connector.get(), server.host, server.port, server.secure, options.tls);
   // Kept rather than thrown at once when the peer has gone: a server refusing as it read may have answered, which says
@@ -191,8 +195,9 @@ static_assert(io::HalfClosableStream<keeping_connector>);
 
     if (is_informational(answer.status) && answer.status != status::switching_protocols) {
       if (interim == detail::max_interim_responses) {
-        throw std::system_error{make_error_code(error::bad_message),
-                                "quoll::http::connect_websocket: too many interim answers"};
+        throw std::system_error{
+            make_error_code(error::bad_message), "quoll::http::connect_websocket: too many interim answers"
+        };
       }
 
       continue;
@@ -209,9 +214,12 @@ static_assert(io::HalfClosableStream<keeping_connector>);
 
     // What came after the 101 is the WebSocket's.
     co_return connected_websocket{
-        websocket{io::any_stream{keeping_connector{std::move(stream), std::move(connector.connector)}},
-                  websocket_role::client, std::move(buffer), options.websocket},
-        std::move(answer)};
+        websocket{
+            io::any_stream{keeping_connector{std::move(stream), std::move(connector.connector)}},
+            websocket_role::client, std::move(buffer), options.websocket
+        },
+        std::move(answer)
+    };
   }
 }
 
@@ -243,14 +251,16 @@ websocket_handshake prepare_websocket_handshake(websocket_target const &where, h
 
       // One no server could choose (RFC 6455, 4.1: a token).
       if (!is_token(token)) {
-        throw std::invalid_argument{"quoll::http::connect_websocket: a subprotocol that is no token: " +
-                                    std::string{token}};
+        throw std::invalid_argument{
+            "quoll::http::connect_websocket: a subprotocol that is no token: " + std::string{token}
+        };
       }
 
       // Each one once (RFC 6455, 4.1).
       if (std::ranges::find(handshake.offered, token) != handshake.offered.end()) {
-        throw std::invalid_argument{"quoll::http::connect_websocket: a subprotocol offered twice: " +
-                                    std::string{token}};
+        throw std::invalid_argument{
+            "quoll::http::connect_websocket: a subprotocol offered twice: " + std::string{token}
+        };
       }
 
       handshake.offered.emplace_back(token);
@@ -306,14 +316,15 @@ websocket_handshake prepare_websocket_handshake(websocket_target const &where, h
   return handshake;
 }
 
-async::task<connected_websocket> connect_websocket_through(connector_handle connector, origin server,
-                                                           websocket_handshake handshake,
-                                                           websocket_connect_options options) {
+async::task<connected_websocket> connect_websocket_through(
+    connector_handle connector, origin server, websocket_handshake handshake, websocket_connect_options options
+) {
   // Read before what holds it is moved; every argument goes by value into the task.
   auto const limit = options.handshake_timeout;
 
   return async::detail::with_optional_timeout(
-      limit, shake_hands(std::move(connector), std::move(server), std::move(handshake), std::move(options)));
+      limit, shake_hands(std::move(connector), std::move(server), std::move(handshake), std::move(options))
+  );
 }
 
 } // namespace detail

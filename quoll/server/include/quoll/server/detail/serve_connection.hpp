@@ -47,8 +47,10 @@ namespace quoll::http::detail {
 
 // What http::server does for each connection, with what it holds for all of them: no copy per connection, which is why
 // `router` and `options` are references, here where the library answers for their lifetime.
-[[nodiscard]] async::task<> serve_connection(io::any_stream stream, http::router const &router QUOLL_LIFETIMEBOUND,
-                                             connection_options const &options QUOLL_LIFETIMEBOUND);
+[[nodiscard]] async::task<> serve_connection(
+    io::any_stream stream, http::router const &router QUOLL_LIFETIMEBOUND,
+    connection_options const &options QUOLL_LIFETIMEBOUND
+);
 
 } // namespace quoll::http::detail
 

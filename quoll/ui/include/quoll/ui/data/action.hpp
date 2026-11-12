@@ -160,8 +160,10 @@ public:
    * handler going on with the result awaits run(), whose caller alone is given a failure.
    */
   [[nodiscard]] auto with(Ts... args) QUOLL_LIFETIMEBOUND {
-    static_assert((std::copy_constructible<Ts> && ...),
-                  "quoll::ui::action: with() copies its arguments for each click: they are copyable");
+    static_assert(
+        (std::copy_constructible<Ts> && ...),
+        "quoll::ui::action: with() copies its arguments for each click: they are copyable"
+    );
 
     // Not a coroutine: each call copies the arguments into the frame of its own run, which outlives this lambda.
     return [action = &self(), given = std::tuple<Ts...>{std::move(args)...}] {
@@ -226,12 +228,14 @@ private:
  * as rvalues: none can be a view, which would outlive what it refers to. Thread safety: none, as a state.
  */
 template <auto Function, overlap Policy = overlap::refuse>
-class action : public detail::action_calls<action<Function, Policy>,
-                                           typename detail::action_function<decltype(Function)>::arguments> {
+class action : public detail::action_calls<
+                   action<Function, Policy>, typename detail::action_function<decltype(Function)>::arguments> {
   using traits = detail::action_function<decltype(Function)>;
 
-  static_assert(traits::valid, "quoll::ui::action: its function is a free function or a member function that returns "
-                               "a quoll::async::task");
+  static_assert(
+      traits::valid, "quoll::ui::action: its function is a free function or a member function that returns "
+                     "a quoll::async::task"
+  );
 
 public:
   using value_type = typename traits::result;
@@ -243,11 +247,15 @@ public:
   using held_type = typename detail::held_by_action<value_type>::type;
 
 private:
-  static_assert(detail::kept_as_values<value_type> && detail::kept_as_values<arguments>,
-                "quoll::ui::action: its arguments are copied into the run, and its result kept: none can be a view");
-  static_assert(!traits::writes_arguments,
-                "quoll::ui::action: its function is given copies, which it cannot write back: no parameter can be a "
-                "reference to what is not const");
+  static_assert(
+      detail::kept_as_values<value_type> && detail::kept_as_values<arguments>,
+      "quoll::ui::action: its arguments are copied into the run, and its result kept: none can be a view"
+  );
+  static_assert(
+      !traits::writes_arguments,
+      "quoll::ui::action: its function is given copies, which it cannot write back: no parameter can be a "
+      "reference to what is not const"
+  );
 
   static constexpr bool free = std::is_void_v<owner_type>;
 
@@ -314,16 +322,18 @@ private:
   template <class C>
   [[nodiscard]] static call_type context_call(shared<C> &context) {
     return [&context](arguments &&given) {
-      return std::apply([&context](auto &&...values) { return context.run(Function, std::move(values)...); },
-                        std::move(given));
+      return std::apply(
+          [&context](auto &&...values) { return context.run(Function, std::move(values)...); }, std::move(given)
+      );
     };
   }
 
   template <class C>
   [[nodiscard]] static call_type self_call(C *self) {
     return [self](arguments &&given) {
-      return std::apply([self](auto &&...values) { return std::invoke(Function, *self, std::move(values)...); },
-                        std::move(given));
+      return std::apply(
+          [self](auto &&...values) { return std::invoke(Function, *self, std::move(values)...); }, std::move(given)
+      );
     };
   }
 

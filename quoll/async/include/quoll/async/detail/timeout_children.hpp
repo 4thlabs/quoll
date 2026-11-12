@@ -80,8 +80,8 @@ template <class T>
 }
 
 // A timer that ends on its stop rather than say false is taken for one that has not expired.
-[[nodiscard]] inline task<> timeout_watchdog(timer_ref timer, std::chrono::nanoseconds timeout,
-                                             timeout_state &state QUOLL_LIFETIMEBOUND) {
+[[nodiscard]] inline task<>
+timeout_watchdog(timer_ref timer, std::chrono::nanoseconds timeout, timeout_state &state QUOLL_LIFETIMEBOUND) {
   stop_on_exit const stop_work{state.work};
 
   state.expired = (co_await owned_chain<bool>{timer.wait_for(timeout), state.watchdog.get_token()}).value_or(false);

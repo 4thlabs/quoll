@@ -126,8 +126,8 @@ private:
     std::exception_ptr failure;
   };
 
-  [[nodiscard]] static async::task<std::optional<server_sent_event>> read_next(std::shared_ptr<state> reading,
-                                                                               detail::one_at_a_time turn);
+  [[nodiscard]] static async::task<std::optional<server_sent_event>>
+  read_next(std::shared_ptr<state> reading, detail::one_at_a_time turn);
 
   // Null once moved from.
   std::shared_ptr<state> state_;

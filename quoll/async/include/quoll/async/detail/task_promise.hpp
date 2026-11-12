@@ -139,8 +139,10 @@ protected:
   // chain unwinds after a stop, whatever destroys it (a task, or a handle held elsewhere). What its awaitables
   // registered points into it until then, and they undo it as they are destroyed.
   ~task_promise_base() {
-    assert((!continuation_ || finished_ || this->unwinding()) &&
-           "quoll::async::task: destroyed while it runs, with what it registered still pointing into its frame");
+    assert(
+        (!continuation_ || finished_ || this->unwinding()) &&
+        "quoll::async::task: destroyed while it runs, with what it registered still pointing into its frame"
+    );
   }
 
   task_promise_base() = default;
@@ -157,8 +159,10 @@ private:
 
 template <class T>
 class task_promise : public task_promise_base<T> {
-  static_assert(alignof(T) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__,
-                "task<T>: T must not be over-aligned, as its coroutine frame is not");
+  static_assert(
+      alignof(T) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__,
+      "task<T>: T must not be over-aligned, as its coroutine frame is not"
+  );
 
 public:
   template <class U = T>

@@ -75,7 +75,8 @@ detached spawn_root(E executor, task<T> work, Handler handler, std::stop_token s
 
   try {
     outcome.emplace(
-        co_await context_adapter<owned_chain<T>>{owned_chain<T>{std::move(work), std::move(stop_token)}, context});
+        co_await context_adapter<owned_chain<T>>{owned_chain<T>{std::move(work), std::move(stop_token)}, context}
+    );
   } catch (...) {
     error = std::current_exception();
   }
@@ -109,11 +110,13 @@ template <Executor E, class T, CompletionHandler<T> Handler>
 void co_spawn(E const &executor, task<T> work, Handler handler, std::stop_token stop_token = {}) {
   static_assert(
       !std::convertible_to<T, std::exception_ptr>,
-      "quoll::async::co_spawn: a task of std::exception_ptr cannot be told apart from a failure by its handler");
+      "quoll::async::co_spawn: a task of std::exception_ptr cannot be told apart from a failure by its handler"
+  );
   static_assert(
       std::is_void_v<T> || !std::convertible_to<stopped_t, T>,
       "quoll::async::co_spawn: a task of a type stopped_t converts to cannot be told apart from a stop by its "
-      "handler");
+      "handler"
+  );
 
   auto root = [&] {
     if constexpr (std::same_as<E, executor_ref>) {
@@ -182,8 +185,8 @@ private:
  * it.
  */
 template <class T, CompletionHandler<T> Handler>
-[[nodiscard]] detail::spawn_on_this_executor<T, Handler> co_spawn(this_executor_t, task<T> work, Handler handler,
-                                                                  std::stop_token stop_token = {}) {
+[[nodiscard]] detail::spawn_on_this_executor<T, Handler>
+co_spawn(this_executor_t, task<T> work, Handler handler, std::stop_token stop_token = {}) {
   return {std::move(work), std::move(handler), std::move(stop_token)};
 }
 
@@ -195,8 +198,8 @@ template <class T, CompletionHandler<T> Handler>
  * @endcode
  */
 template <class T, CompletionHandler<T> Handler>
-[[nodiscard]] detail::spawn_on_this_executor<T, Handler> co_spawn(task<T> work, Handler handler,
-                                                                  std::stop_token stop_token = {}) {
+[[nodiscard]] detail::spawn_on_this_executor<T, Handler>
+co_spawn(task<T> work, Handler handler, std::stop_token stop_token = {}) {
   return {std::move(work), std::move(handler), std::move(stop_token)};
 }
 

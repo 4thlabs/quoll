@@ -194,8 +194,9 @@ void write_attributes(element const &shown, bool value_is_attribute, std::string
 
     check_attribute_name(name);
 
-    if (given_by_decorator(name) || std::any_of(std::next(entry), shown.attributes.end(),
-                                                [&name](auto const &other) { return same_name(name, other.first); })) {
+    if (given_by_decorator(name) || std::any_of(std::next(entry), shown.attributes.end(), [&name](auto const &other) {
+          return same_name(name, other.first);
+        })) {
       refuse("attribute given twice: " + name);
     }
 

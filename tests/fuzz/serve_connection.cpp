@@ -90,7 +90,8 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
 
   auto const serve = [&]() -> quoll::async::task<bool> {
     co_await server.serve_connection(
-        quoll::io::any_stream{checked_stream{quoll::fuzz::as_text(data + 1, size - 1), data[0]}});
+        quoll::io::any_stream{checked_stream{quoll::fuzz::as_text(data + 1, size - 1), data[0]}}
+    );
     co_return true;
   };
 

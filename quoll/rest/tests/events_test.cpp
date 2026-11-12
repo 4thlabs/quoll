@@ -103,9 +103,9 @@ namespace changes {
 using namespace quoll::rest;
 
 // Changes after a given one, as many as asked; 404 for a feed that does not exist, before any event.
-using feed =
-    endpoint<"changes.feed", verb::get, "/{name}", query<"count", int>,
-             header<"Last-Event-ID", std::optional<std::string>>, events<change>, returns<problem, status::not_found>>;
+using feed = endpoint<
+    "changes.feed", verb::get, "/{name}", query<"count", int>, header<"Last-Event-ID", std::optional<std::string>>,
+    events<change>, returns<problem, status::not_found>>;
 // One event the client cannot decode, then a good one.
 using broken = endpoint<"changes.broken", verb::get, "/broken", events<change>>;
 // An error once the stream has started.
@@ -133,8 +133,8 @@ using kept_then_failing = endpoint<"changes.kept_then_failing", verb::get, "/kep
 // What a client decodes as views into its events.
 using viewed = endpoint<"changes.viewed", verb::get, "/viewed", events<filter>>;
 
-using api = rest::api<"/changes", feed, broken, cut, none, checked, failing, paced, opened, search, kept,
-                      kept_then_failing, viewed>;
+using api = rest::api<
+    "/changes", feed, broken, cut, none, checked, failing, paced, opened, search, kept, kept_then_failing, viewed>;
 
 // The same feeds, scoped under one name.
 namespace named {
@@ -146,8 +146,8 @@ using all = rest::api<"", api, named::api>;
 
 // A feed behind a token, whose contract asks a media type of its own.
 namespace secured {
-using feed = endpoint<"secured.feed", verb::get, "/secured", security<bearer_auth>, header<"Accept", std::string>,
-                      events<change>>;
+using feed = endpoint<
+    "secured.feed", verb::get, "/secured", security<bearer_auth>, header<"Accept", std::string>, events<change>>;
 using api = rest::api<"", feed>;
 } // namespace secured
 } // namespace changes
@@ -197,8 +197,9 @@ struct changes_service {
     co_return;
   }
 
-  quoll::async::task<> operator()(changes::feed, std::string name, int count, std::optional<std::string> last_id,
-                                  rest::event_sink<change> &events) const {
+  quoll::async::task<> operator()(
+      changes::feed, std::string name, int count, std::optional<std::string> last_id, rest::event_sink<change> &events
+  ) const {
     if (name != "main") {
       throw rest::http_error{status::not_found, "no feed " + name};
     }
@@ -339,9 +340,10 @@ public:
   [[nodiscard]] std::size_t reads() const { return *reads_; }
 
 private:
-  static task<http::streamed_response> streamed(http::router router, http::request request,
-                                                std::shared_ptr<http::request> asked, std::error_code failure,
-                                                std::shared_ptr<std::size_t> reads) {
+  static task<http::streamed_response> streamed(
+      http::router router, http::request request, std::shared_ptr<http::request> asked, std::error_code failure,
+      std::shared_ptr<std::size_t> reads
+  ) {
     *asked = request;
 
     auto answer = co_await router.dispatch(std::move(request));
@@ -663,8 +665,8 @@ TEST_CASE("rest events: a refusal's body cut short is said so", "[rest][sse]") {
     co_await out.write("partial");
   });
 
-  changes_client const client{
-      streaming_transport{std::move(router), std::make_error_code(std::errc::connection_reset)}};
+  changes_client const client{streaming_transport{std::move(router), std::make_error_code(std::errc::connection_reset)}
+  };
 
   REQUIRE(quoll::test::run(refusal_of(client)).value() == "undeclared status 503 (its body cut short)|7");
 }
@@ -678,7 +680,8 @@ TEST_CASE("rest events: a stop while a refusal is read goes on as a stop, not as
   });
 
   changes_client const client{
-      streaming_transport{std::move(router), std::make_error_code(std::errc::operation_canceled)}};
+      streaming_transport{std::move(router), std::make_error_code(std::errc::operation_canceled)}
+  };
 
   auto const reading = [&client]() -> task<std::string> {
     try {
@@ -693,8 +696,9 @@ TEST_CASE("rest events: a stop while a refusal is read goes on as a stop, not as
 
 TEST_CASE("rest events: HEAD gets the status and head GET would, no event", "[rest][sse]") {
   auto const head = [](std::string_view target) {
-    return answer_to(make_router(),
-                     "HEAD " + std::string{target} + " HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    return answer_to(
+        make_router(), "HEAD " + std::string{target} + " HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+    );
   };
 
   auto const missing = head("/changes/other?count=1");
@@ -740,7 +744,8 @@ TEST_CASE("rest events: subscribe sends the credentials, and an Accept the contr
 
   rest::mount<changes::secured::api>(
       router, changes_service{},
-      rest::validators([](rest::credential<rest::bearer_auth> const &given) { return given.value == "token"; }));
+      rest::validators([](rest::credential<rest::bearer_auth> const &given) { return given.value == "token"; })
+  );
 
   rest::client<changes::secured::api, streaming_transport> client{streaming_transport{std::move(router)}};
 
@@ -808,8 +813,9 @@ TEST_CASE("rest events: through http::client and http::server, events come as th
   REQUIRE(quoll::test::run(loop, reading()).value() == std::vector<change>{{1, "first"}, {2, "second"}});
 }
 
-TEST_CASE("rest events: an operation asked and not run starts nothing, and an http_error still answers",
-          "[rest][sse]") {
+TEST_CASE(
+    "rest events: an operation asked and not run starts nothing, and an http_error still answers", "[rest][sse]"
+) {
   auto const answer = answer_to(make_router(), get("/changes/opened"));
 
   REQUIRE(answer.starts_with("HTTP/1.1 404"));
@@ -878,7 +884,8 @@ TEST_CASE("rest events: a refusal through http::client leaves the client whole f
     options.max_connections = 1;
 
     rest::client<changes::all> const client{
-        http::client{quoll::test::memory_connector{server}, "example.com", 80, options}};
+        http::client{quoll::test::memory_connector{server}, "example.com", 80, options}
+    };
     std::string seen;
 
     try {
@@ -1003,9 +1010,11 @@ TEST_CASE("rest events: a comment or a retry refused leaves the stream unstarted
 }
 
 TEST_CASE("rest events: an argument that points into the request reads it whole, as the stream runs", "[rest][sse]") {
-  auto const answer = answer_to(make_router(), "POST /changes/search HTTP/1.1\r\nHost: x\r\nConnection: close\r\n"
-                                               "Content-Type: application/json\r\nContent-Length: 32\r\n\r\n"
-                                               "{\"word\":\"a word long enough xx\"}");
+  auto const answer = answer_to(
+      make_router(), "POST /changes/search HTTP/1.1\r\nHost: x\r\nConnection: close\r\n"
+                     "Content-Type: application/json\r\nContent-Length: 32\r\n\r\n"
+                     "{\"word\":\"a word long enough xx\"}"
+  );
 
   REQUIRE(answer.starts_with("HTTP/1.1 200"));
   REQUIRE(answer.find(R"(data: {"id":1,"what":"a word long enough xx"})") != std::string::npos);
@@ -1036,8 +1045,9 @@ TEST_CASE("rest events: a sink operation that runs once its service has ended th
   REQUIRE(sent.empty());
 }
 
-TEST_CASE("rest events: an operation kept past its service, dropped later, leaves the connection alone",
-          "[rest][sse]") {
+TEST_CASE(
+    "rest events: an operation kept past its service, dropped later, leaves the connection alone", "[rest][sse]"
+) {
   changes_service const service;
   auto const held = service.held;
   http::router router;
@@ -1073,12 +1083,15 @@ TEST_CASE("rest events: a value decoded into views of its event is valid until t
     co_return word + "|" + std::string{second.value().word};
   };
 
-  REQUIRE(quoll::test::run(reading()).value() ==
-          "a word long enough to leave the buffer|another word long enough to leave it");
+  REQUIRE(
+      quoll::test::run(reading()).value() ==
+      "a word long enough to leave the buffer|another word long enough to leave it"
+  );
 }
 
-TEST_CASE("rest events: an operation kept by a service that fails, dropped later, leaves the connection alone",
-          "[rest][sse]") {
+TEST_CASE(
+    "rest events: an operation kept by a service that fails, dropped later, leaves the connection alone", "[rest][sse]"
+) {
   changes_service const service;
   auto const held = service.held;
   http::router router;
@@ -1259,7 +1272,8 @@ TEST_CASE("rest events: an operation not running yet when its service returns is
     // Spawned, and not run yet when the service returns: refused rather than write to a connection gone.
     async::co_spawn(
         co_await async::current_executor(), events.send({.id = 1, .what = "late"}),
-        quoll::test::overloaded{[] {}, [&failure](std::exception_ptr error) { failure = std::move(error); }});
+        quoll::test::overloaded{[] {}, [&failure](std::exception_ptr error) { failure = std::move(error); }}
+    );
     co_await rest::detail::event_sink_access::drain(events);
 
     // Its turn now comes.

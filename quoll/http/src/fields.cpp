@@ -70,8 +70,9 @@ void fields::set(std::string_view name, std::string_view value) {
 }
 
 fields::size_type fields::erase(std::string_view name) {
-  auto const aliased = std::ranges::any_of(
-      fields_, [name](field const &entry) { return views_into(name, entry.name) || views_into(name, entry.value); });
+  auto const aliased = std::ranges::any_of(fields_, [name](field const &entry) {
+    return views_into(name, entry.name) || views_into(name, entry.value);
+  });
 
   return aliased ? remove_named(fields_, std::string{name}) : remove_named(fields_, name);
 }

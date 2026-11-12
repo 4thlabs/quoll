@@ -72,8 +72,9 @@ http::status status_of(Task work) {
 
 } // namespace
 
-TEST_CASE("dashboard service: lists the products, saves a change, and gives a product's sales",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard service: lists the products, saves a change, and gives a product's sales", "[samples][dashboard]"
+) {
   http::router router;
 
   rest::mount<products::api>(router, products::service{});
@@ -98,20 +99,26 @@ TEST_CASE("dashboard service: lists the products, saves a change, and gives a pr
   CHECK(sales.units.front() == 40);
 }
 
-TEST_CASE("dashboard service: refuses an empty name or a negative figure, and an unknown product",
-          "[samples][dashboard]") {
+TEST_CASE(
+    "dashboard service: refuses an empty name or a negative figure, and an unknown product", "[samples][dashboard]"
+) {
   http::router router;
 
   rest::mount<products::api>(router, products::service{});
 
   products_client const client{http::local_transport{router}};
 
-  CHECK(status_of(client.call<products::update>(1, {.name = "", .price = 1, .stock = 1})) ==
-        http::status::unprocessable_content);
-  CHECK(status_of(client.call<products::update>(1, {.name = "Beans", .price = -1, .stock = 1})) ==
-        http::status::unprocessable_content);
-  CHECK(status_of(client.call<products::update>(99, {.name = "Beans", .price = 1, .stock = 1})) ==
-        http::status::not_found);
+  CHECK(
+      status_of(client.call<products::update>(1, {.name = "", .price = 1, .stock = 1})) ==
+      http::status::unprocessable_content
+  );
+  CHECK(
+      status_of(client.call<products::update>(1, {.name = "Beans", .price = -1, .stock = 1})) ==
+      http::status::unprocessable_content
+  );
+  CHECK(
+      status_of(client.call<products::update>(99, {.name = "Beans", .price = 1, .stock = 1})) == http::status::not_found
+  );
   CHECK(status_of(client.call<products::sales>(99)) == http::status::not_found);
   CHECK(quoll::test::run(client.call<products::list>()).value().front().name == "Espresso beans");
 }

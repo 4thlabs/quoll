@@ -117,8 +117,9 @@ public:
    * @brief Over `inner`. With object_strands::own, each socket, acceptor and timer it makes is on a strand of its own,
    * for an execution context run by several threads: asio's I/O objects need one handler at a time.
    */
-  explicit executor(AsioExecutor inner, object_strands strands = object_strands::shared) noexcept(
-      std::is_nothrow_move_constructible_v<AsioExecutor>)
+  explicit executor(
+      AsioExecutor inner, object_strands strands = object_strands::shared
+  ) noexcept(std::is_nothrow_move_constructible_v<AsioExecutor>)
       : inner_(std::move(inner)), strand_per_object_(strands == object_strands::own) {}
 
   void post(async::work_item &item) const { ::asio::post(inner_, resumer{&item}); }
@@ -163,18 +164,19 @@ public:
 
 #if defined(QUOLL_ASIO_TLS)
   /** @brief Opens a TLS connection to `host` (a name or an address) on `port`, on the execution context. */
-  [[nodiscard]] async::task<io::any_stream> connect_tls(std::string host, std::uint16_t port,
-                                                        io::tls_client_options const &options) const {
+  [[nodiscard]] async::task<io::any_stream>
+  connect_tls(std::string host, std::uint16_t port, io::tls_client_options const &options) const {
     return detail::connect_tls(object_executor(), std::move(host), port, options);
   }
 
   /** @brief Listens for TLS connections on `address` and `port` (0 for any free port), on the execution context. */
-  [[nodiscard]] io::any_listener listen_tls(std::string address, std::uint16_t port,
-                                            io::tls_server_options const &options) const {
+  [[nodiscard]] io::any_listener
+  listen_tls(std::string address, std::uint16_t port, io::tls_server_options const &options) const {
     ::asio::ip::tcp::endpoint const endpoint{::asio::ip::make_address(address), port};
 
     return io::any_listener{
-        tls_acceptor{::asio::ip::tcp::acceptor{object_executor(), endpoint}, options, socket_strands()}};
+        tls_acceptor{::asio::ip::tcp::acceptor{object_executor(), endpoint}, options, socket_strands()}
+    };
   }
 
   /** @brief This executor, as the TLS network of its execution context: valid while it lives. */

@@ -60,8 +60,10 @@ using websocket_mask = std::array<std::uint8_t, 4>;
  * fragment or longer than 125 bytes, or a close a peer would refuse: of one byte, with a code no one may send, or a
  * reason that is not UTF-8.
  */
-[[nodiscard]] std::string format_websocket_frame(websocket_opcode opcode, std::string_view payload, bool fin = true,
-                                                 std::optional<websocket_mask> mask = std::nullopt);
+[[nodiscard]] std::string format_websocket_frame(
+    websocket_opcode opcode, std::string_view payload, bool fin = true,
+    std::optional<websocket_mask> mask = std::nullopt
+);
 
 /**
  * @brief A close frame with `code` and `reason`, masked with `mask` if given.
@@ -69,8 +71,9 @@ using websocket_mask = std::array<std::uint8_t, 4>;
  * @throws std::invalid_argument for a code no one may send (1004 to 1006, 1015, under 1000, 1016 to 2999, 5000 and
  * above), a reason that is not UTF-8, or longer than 123 bytes.
  */
-[[nodiscard]] std::string format_websocket_close(std::uint16_t code, std::string_view reason = {},
-                                                 std::optional<websocket_mask> mask = std::nullopt);
+[[nodiscard]] std::string format_websocket_close(
+    std::uint16_t code, std::string_view reason = {}, std::optional<websocket_mask> mask = std::nullopt
+);
 
 } // namespace quoll::http
 

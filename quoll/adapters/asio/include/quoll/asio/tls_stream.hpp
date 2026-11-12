@@ -164,10 +164,11 @@ public:
 
 private:
   // On the state, bound at the call: the stream may move before its task runs.
-  static async::task<std::error_code> shake_hands(detail::stream_state<session_type> &state,
-                                                  session_type::handshake_type type) {
-    auto const [error] = co_await detail::make_operation<>(
-        state.read, [&state, type](auto handler) { state.stream.async_handshake(type, std::move(handler)); });
+  static async::task<std::error_code>
+  shake_hands(detail::stream_state<session_type> &state, session_type::handshake_type type) {
+    auto const [error] = co_await detail::make_operation<>(state.read, [&state, type](auto handler) {
+      state.stream.async_handshake(type, std::move(handler));
+    });
 
     co_return detail::to_io_error(error);
   }

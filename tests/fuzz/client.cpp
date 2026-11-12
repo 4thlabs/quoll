@@ -72,8 +72,9 @@ static_assert(quoll::io::Connector<input_connector>);
 } // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size) {
-  constexpr std::array methods{quoll::http::verb::get, quoll::http::verb::head, quoll::http::verb::post,
-                               quoll::http::verb::get};
+  constexpr std::array methods{
+      quoll::http::verb::get, quoll::http::verb::head, quoll::http::verb::post, quoll::http::verb::get
+  };
 
   if (size == 0) {
     return 0;
@@ -87,8 +88,8 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
   // With a timer, as a client has one. A second send takes the connection the first one kept, or finds it closed.
   quoll::test::virtual_time time;
   quoll::http::client const client{
-      input_connector{quoll::fuzz::as_text(data + 1, size - 1), std::size_t{data[0]} >> 4U}, "fuzz.example", 80,
-      options};
+      input_connector{quoll::fuzz::as_text(data + 1, size - 1), std::size_t{data[0]} >> 4U}, "fuzz.example", 80, options
+  };
 
   for (unsigned send = 0; send < 2; ++send) {
     quoll::http::request request;

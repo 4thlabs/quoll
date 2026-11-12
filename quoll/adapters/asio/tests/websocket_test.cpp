@@ -74,8 +74,9 @@ using quoll::async::task;
 task<std::string> echo_over_tcp() {
   http::router router;
 
-  router.get("/echo",
-             [](http::request request) { return http::accept_websocket(request, quoll::test::websocket_echo); });
+  router.get("/echo", [](http::request request) {
+    return http::accept_websocket(request, quoll::test::websocket_echo);
+  });
 
   auto listener = co_await io::listen(0);
   auto const url = "ws://127.0.0.1:" + std::to_string(listener.local_port().value()) + "/echo";
@@ -115,8 +116,9 @@ task<std::error_code> unanswered_over_tcp() {
   // A handler that never receives: the client's pings go unanswered. It ends in 5 s, which a receive() whose keep-alive
   // failed would wait for.
   router.get("/quiet", [](http::request request) {
-    return http::accept_websocket(
-        request, [](http::websocket) -> task<> { co_await quoll::async::sleep_for(std::chrono::seconds{5}); });
+    return http::accept_websocket(request, [](http::websocket) -> task<> {
+      co_await quoll::async::sleep_for(std::chrono::seconds{5});
+    });
   });
 
   auto listener = co_await io::listen(0);
@@ -168,15 +170,20 @@ task<std::error_code> unanswered_over_tcp() {
 
 } // namespace
 
-TEST_CASE("asio: a WebSocket client's keep-alive takes a quiet server as gone, on a runtime of several threads",
-          "[asio][websocket]") {
+TEST_CASE(
+    "asio: a WebSocket client's keep-alive takes a quiet server as gone, on a runtime of several threads",
+    "[asio][websocket]"
+) {
   quoll::asio::runtime runtime{{.threads = 4}};
   std::optional<std::error_code> code;
   std::exception_ptr failure;
 
-  quoll::async::co_spawn(runtime.get_executor(), unanswered_over_tcp(),
-                         quoll::test::overloaded{[&](std::error_code ended) { code = ended; },
-                                                 [&](std::exception_ptr error) { failure = std::move(error); }});
+  quoll::async::co_spawn(
+      runtime.get_executor(), unanswered_over_tcp(),
+      quoll::test::overloaded{
+          [&](std::error_code ended) { code = ended; }, [&](std::exception_ptr error) { failure = std::move(error); }
+      }
+  );
   runtime.run();
 
   if (failure) {

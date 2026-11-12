@@ -58,10 +58,14 @@ namespace quoll::rest {
  */
 template <class... Members>
 struct with {
-  static_assert(((detail::Part<Members> || detail::Api<Members> || detail::Endpoint<Members>) && ...),
-                "quoll::rest::with: a member is neither a part nor an api<> or endpoint<>");
-  static_assert(((!std::same_as<typename detail::part_category_of<Members>::type, detail::events_part>) && ...),
-                "quoll::rest::with: events<> is a part of one endpoint, not one to share");
+  static_assert(
+      ((detail::Part<Members> || detail::Api<Members> || detail::Endpoint<Members>) && ...),
+      "quoll::rest::with: a member is neither a part nor an api<> or endpoint<>"
+  );
+  static_assert(
+      ((!std::same_as<typename detail::part_category_of<Members>::type, detail::events_part>) && ...),
+      "quoll::rest::with: events<> is a part of one endpoint, not one to share"
+  );
 
   using contract_category = detail::with_category;
   using members = detail::type_list<Members...>;
@@ -78,8 +82,10 @@ template <fixed_string Prefix, class... Members>
 struct api {
   static_assert(detail::checked_path<Prefix>::valid);
   static_assert(Prefix.view().empty() || Prefix.view().back() != '/', "quoll::rest::api: the prefix ends with '/'");
-  static_assert(((detail::Api<Members> || detail::Endpoint<Members> || detail::With<Members>) && ...),
-                "quoll::rest::api: a member is not an endpoint<>, api<> or with<>");
+  static_assert(
+      ((detail::Api<Members> || detail::Endpoint<Members> || detail::With<Members>) && ...),
+      "quoll::rest::api: a member is not an endpoint<>, api<> or with<>"
+  );
 
   using contract_category = detail::api_category;
   using routes = detail::concat_t<detail::type_list<>, typename detail::routes_of<Prefix, Members>::type...>;

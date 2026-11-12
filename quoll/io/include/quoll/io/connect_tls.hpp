@@ -53,8 +53,8 @@ namespace quoll::io {
  * Fails like a Connector, a server that does not pass the checks of `options` included; throws std::logic_error if the
  * executor offers no TLS network.
  */
-[[nodiscard]] async::task<any_stream> connect_tls(std::string host, std::uint16_t port,
-                                                  tls_client_options options = {});
+[[nodiscard]] async::task<any_stream>
+connect_tls(std::string host, std::uint16_t port, tls_client_options options = {});
 
 } // namespace quoll::io
 

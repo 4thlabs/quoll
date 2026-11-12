@@ -106,8 +106,9 @@ http::router make_router() {
   router.get("/ws", [](http::request request) {
     // Autobahn sends messages of up to 16 MiB.
     // Every message back as it came, text or binary, as Autobahn's fuzzing client asks of a server.
-    return http::accept_websocket(request, quoll::test::websocket_echo,
-                                  {.max_message_size = std::size_t{64} * 1024 * 1024});
+    return http::accept_websocket(
+        request, quoll::test::websocket_echo, {.max_message_size = std::size_t{64} * 1024 * 1024}
+    );
   });
   return router;
 }

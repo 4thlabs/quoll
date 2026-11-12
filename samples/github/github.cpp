@@ -251,9 +251,11 @@ struct record_status {
 int main(int argc, char **argv) {
   quoll::runtime runtime;
 
-  given what{.arguments = std::vector<std::string>(argv + 1, argv + argc),
-             .url = from_environment("QUOLL_GITHUB_URL").value_or("https://api.github.com"),
-             .token = from_environment("GITHUB_TOKEN")};
+  given what{
+      .arguments = std::vector<std::string>(argv + 1, argv + argc),
+      .url = from_environment("QUOLL_GITHUB_URL").value_or("https://api.github.com"),
+      .token = from_environment("GITHUB_TOKEN")
+  };
 
   co_spawn(runtime.get_executor(), run(std::move(what)), record_status{});
   runtime.run();

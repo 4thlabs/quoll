@@ -47,8 +47,9 @@ using held_component = std::unique_ptr<void, void (*)(void *) noexcept>;
 // A T, value-initialized, held without its type.
 template <class T>
 [[nodiscard]] held_component make_held() {
-  return held_component{std::make_unique<T>().release(),
-                        [](void *held) noexcept { std::unique_ptr<T>{static_cast<T *>(held)}.reset(); }};
+  return held_component{std::make_unique<T>().release(), [](void *held) noexcept {
+                          std::unique_ptr<T>{static_cast<T *>(held)}.reset();
+                        }};
 }
 
 } // namespace quoll::ui::detail

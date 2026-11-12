@@ -142,8 +142,8 @@ private:
   };
 
   // By type, then by key.
-  [[nodiscard]] static bool less(type_id left_type, std::string const &left_key, type_id right_type,
-                                 std::string const &right_key) noexcept {
+  [[nodiscard]] static bool
+  less(type_id left_type, std::string const &left_key, type_id right_type, std::string const &right_key) noexcept {
     if (left_type != right_type) {
       return std::less<>{}(left_type, right_type);
     }
@@ -186,8 +186,10 @@ struct chained_props {
 
 void walk(element &value, matching &shown, std::vector<std::shared_ptr<instance>> &now, made_by by, expansion &context);
 
-void walk_children(std::vector<element> &children, matching &shown, std::vector<std::shared_ptr<instance>> &now,
-                   made_by by, expansion &context) {
+void walk_children(
+    std::vector<element> &children, matching &shown, std::vector<std::shared_ptr<instance>> &now, made_by by,
+    expansion &context
+) {
   auto fragments = false;
 
   for (auto &child : children) {
@@ -247,8 +249,10 @@ void scope_keys(element &view, std::string const &scope) {
 }
 
 // Runs the view of `kept` with `props`, and records it for commit(): a view that threw records nothing.
-[[nodiscard]] element run_view(component_spec const &spec, std::shared_ptr<instance> const &kept,
-                               std::shared_ptr<void const> const &props, made_by by, expansion &context) {
+[[nodiscard]] element run_view(
+    component_spec const &spec, std::shared_ptr<instance> const &kept, std::shared_ptr<void const> const &props,
+    made_by by, expansion &context
+) {
   auto const version = kept->version();
 
   kept->mark_contexts();
@@ -266,19 +270,22 @@ void scope_keys(element &view, std::string const &scope) {
   }();
 
   // Recorded at once, which cannot fail: then the view it keeps, copied, which may.
-  context.views.push_back({.owner = kept,
-                           .props = props,
-                           .own = spec.props,
-                           .placed_by = by.props,
-                           .view = {},
-                           .version = version,
-                           .epoch = context.epoch});
+  context.views.push_back(
+      {.owner = kept,
+       .props = props,
+       .own = spec.props,
+       .placed_by = by.props,
+       .view = {},
+       .version = version,
+       .epoch = context.epoch}
+  );
   context.views.back().view = view;
   return view;
 }
 
-void walk_component(element &value, matching &shown, std::vector<std::shared_ptr<instance>> &now, made_by by,
-                    expansion &context) {
+void walk_component(
+    element &value, matching &shown, std::vector<std::shared_ptr<instance>> &now, made_by by, expansion &context
+) {
   check_undecorated(value);
 
   auto const &spec = *value.component;
@@ -334,8 +341,9 @@ void walk_component(element &value, matching &shown, std::vector<std::shared_ptr
   value = std::move(view);
 }
 
-void walk(element &value, matching &shown, std::vector<std::shared_ptr<instance>> &now, made_by by,
-          expansion &context) {
+void walk(
+    element &value, matching &shown, std::vector<std::shared_ptr<instance>> &now, made_by by, expansion &context
+) {
   if (value.type == element::kind::component) {
     walk_component(value, shown, now, by, context);
     return;
@@ -388,8 +396,10 @@ void commit(expansion &context, std::vector<std::shared_ptr<instance>> &shown) n
   }
 
   for (auto &record : context.views) {
-    record.owner->viewed(std::move(record.props), std::move(record.own), std::move(record.placed_by),
-                         std::move(record.view), record.version, record.epoch);
+    record.owner->viewed(
+        std::move(record.props), std::move(record.own), std::move(record.placed_by), std::move(record.view),
+        record.version, record.epoch
+    );
   }
 
   for (auto &[parent, children] : context.children) {

@@ -97,11 +97,13 @@ constexpr lenient_json_codec lenient;
 } // namespace
 
 TEST_CASE("json_codec: a value goes out and comes back", "[rest][json]") {
-  user const sent{.id = 9'007'199'254'740'993,
-                  .name = "Ada",
-                  .email = "ada@example.com",
-                  .addresses = {{"Paris"}, {"London"}},
-                  .status = card_status::frozen};
+  user const sent{
+      .id = 9'007'199'254'740'993,
+      .name = "Ada",
+      .email = "ada@example.com",
+      .addresses = {{"Paris"}, {"London"}},
+      .status = card_status::frozen
+  };
   auto const body = json.encode(sent);
   auto const received = json.decode<user>(body);
 
@@ -187,7 +189,8 @@ TEST_CASE("json_codec: anything but whitespace after the value is an error", "[r
   REQUIRE_FALSE(json.decode<repository>(R"({"full_name":"a","stargazers_count":1}xyz)").has_value());
   REQUIRE_FALSE(
       json.decode<repository>(R"({"full_name":"a","stargazers_count":1}{"full_name":"b","stargazers_count":2})")
-          .has_value());
+          .has_value()
+  );
   REQUIRE_FALSE(lenient.decode<repository>(R"({"full_name":"a","stargazers_count":1},)").has_value());
 }
 
@@ -210,8 +213,9 @@ TEST_CASE("json_codec: what it writes it reads back, control characters included
   quoll::rest::json_codec const json;
 
   // Short and long: Glaze writes a long one another way.
-  for (std::string const &name : {std::string{"a\x01z"}, std::string(81, '\x02'), std::string(81, 'x') + '\x1f',
-                                  std::string{"\t\n\"\\"}, std::string{"caf\xC3\xA9 \xF0\x9F\x90\xA8"}}) {
+  for (std::string const &name :
+       {std::string{"a\x01z"}, std::string(81, '\x02'), std::string(81, 'x') + '\x1f', std::string{"\t\n\"\\"},
+        std::string{"caf\xC3\xA9 \xF0\x9F\x90\xA8"}}) {
     json_codec_test::address const place{.city = name};
     auto const written = json.encode(place);
     auto const read = json.decode<json_codec_test::address>(written);

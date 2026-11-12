@@ -74,8 +74,8 @@ using namespace std::string_view_literals;
   return events;
 }
 
-[[nodiscard]] http::server_sent_event event(std::string data, std::optional<std::string> id = std::nullopt,
-                                            std::string type = "message") {
+[[nodiscard]] http::server_sent_event
+event(std::string data, std::optional<std::string> id = std::nullopt, std::string type = "message") {
   return {.type = std::move(type), .data = std::move(data), .id = std::move(id)};
 }
 
@@ -85,9 +85,11 @@ TEST_CASE("event_parser: the examples of the standard, whole and a byte at a tim
   auto const piece = GENERATE(std::size_t{1}, std::size_t{2}, std::size_t{7}, std::size_t{1000});
 
   REQUIRE(events_of("data: YHOO\ndata: +2\ndata: 10\n\n", piece) == std::vector{event("YHOO\n+2\n10")});
-  REQUIRE(events_of(": test stream\n\ndata: first event\nid: 1\n\ndata:second event\nid\n\ndata:  third event\n\n",
-                    piece) ==
-          std::vector{event("first event", "1"), event("second event", ""), event(" third event", "")});
+  REQUIRE(
+      events_of(
+          ": test stream\n\ndata: first event\nid: 1\n\ndata:second event\nid\n\ndata:  third event\n\n", piece
+      ) == std::vector{event("first event", "1"), event("second event", ""), event(" third event", "")}
+  );
   REQUIRE(events_of("data\n\ndata\ndata\n\ndata:", piece) == std::vector{event(""), event("\n")});
   REQUIRE(events_of("data:test\n\ndata: test\n\n", piece) == std::vector{event("test"), event("test")});
 }
@@ -95,29 +97,41 @@ TEST_CASE("event_parser: the examples of the standard, whole and a byte at a tim
 TEST_CASE("event_parser: CRLF, LF and CR end a line, a CRLF split between two pieces too", "[http][sse]") {
   auto const piece = GENERATE(std::size_t{1}, std::size_t{3}, std::size_t{1000});
 
-  REQUIRE(events_of("data: a\r\ndata: b\rdata: c\n\r\ndata: d\r\r", piece) ==
-          std::vector{event("a\nb\nc"), event("d")});
+  REQUIRE(
+      events_of("data: a\r\ndata: b\rdata: c\n\r\ndata: d\r\r", piece) == std::vector{event("a\nb\nc"), event("d")}
+  );
 }
 
 TEST_CASE("event_parser: a BOM at the start is skipped, even split, and nowhere else", "[http][sse]") {
   auto const piece = GENERATE(std::size_t{1}, std::size_t{2}, std::size_t{1000});
 
-  REQUIRE(events_of("\xEF\xBB\xBF"
-                    "data: a\n\n",
-                    piece) == std::vector{event("a")});
+  REQUIRE(
+      events_of(
+          "\xEF\xBB\xBF"
+          "data: a\n\n",
+          piece
+      ) == std::vector{event("a")}
+  );
   // Later, it is part of a field's name, which no field has.
-  REQUIRE(events_of("data: a\n\n\xEF\xBB\xBF"
-                    "data: b\n\n",
-                    piece) == std::vector{event("a")});
-  REQUIRE(events_of("\xEF\xBB"
-                    "data: a\n\n",
-                    piece)
+  REQUIRE(
+      events_of(
+          "data: a\n\n\xEF\xBB\xBF"
+          "data: b\n\n",
+          piece
+      ) == std::vector{event("a")}
+  );
+  REQUIRE(events_of(
+              "\xEF\xBB"
+              "data: a\n\n",
+              piece
+  )
               .empty());
 }
 
 TEST_CASE("event_parser: the type, and what resets it", "[http][sse]") {
-  REQUIRE(events_of("event: add\ndata: x\n\ndata: y\n\n", 1000) ==
-          std::vector{event("x", std::nullopt, "add"), event("y")});
+  REQUIRE(
+      events_of("event: add\ndata: x\n\ndata: y\n\n", 1000) == std::vector{event("x", std::nullopt, "add"), event("y")}
+  );
   // A block with no data dispatches nothing, and forgets its type.
   REQUIRE(events_of("event: add\n\ndata: y\n\n", 1000) == std::vector{event("y")});
   REQUIRE(events_of("event\ndata: y\n\n", 1000) == std::vector{event("y")});
@@ -246,8 +260,10 @@ TEST_CASE("event_parser: fed again before every event is taken, it refuses", "[h
 }
 
 TEST_CASE("event_parser: what is not UTF-8 in a comment or an unknown field is dropped with it", "[http][sse]") {
-  REQUIRE(events_of(": \xFF\xFF\nfoo: \xFF\nid: a\xFF\nevent: b\xFF\ndata: c\n\n", 1000) ==
-          std::vector{event("c", "a\uFFFD", "b\uFFFD")});
+  REQUIRE(
+      events_of(": \xFF\xFF\nfoo: \xFF\nid: a\xFF\nevent: b\xFF\ndata: c\n\n", 1000) ==
+      std::vector{event("c", "a\uFFFD", "b\uFFFD")}
+  );
 }
 
 TEST_CASE("event_parser: unknown fields and comments are ignored, a colon in a value kept", "[http][sse]") {
@@ -258,20 +274,28 @@ TEST_CASE("event_parser: what is not UTF-8 reads as U+FFFD, a maximal subpart at
   auto const piece = GENERATE(std::size_t{1}, std::size_t{1000});
 
   // A lone continuation byte, a truncated sequence, a surrogate, an overlong form, and a valid one after them.
-  REQUIRE(events_of("data: a\x80"
-                    "b\xE2\x82"
-                    "c\xED\xA0\x80"
-                    "d\xC0\xAF"
-                    "e\xE2\x82\xAC\n\n",
-                    piece) == std::vector{event("a�"
-                                                "b�"
-                                                "c���"
-                                                "d��"
-                                                "e€")});
+  REQUIRE(
+      events_of(
+          "data: a\x80"
+          "b\xE2\x82"
+          "c\xED\xA0\x80"
+          "d\xC0\xAF"
+          "e\xE2\x82\xAC\n\n",
+          piece
+      ) == std::vector{event("a�"
+                             "b�"
+                             "c���"
+                             "d��"
+                             "e€")}
+  );
   // In a field's name too, which then names no field.
-  REQUIRE(events_of("dat\xFF"
-                    "a: x\n\ndata: y\n\n",
-                    piece) == std::vector{event("y")});
+  REQUIRE(
+      events_of(
+          "dat\xFF"
+          "a: x\n\ndata: y\n\n",
+          piece
+      ) == std::vector{event("y")}
+  );
 }
 
 TEST_CASE("event_parser: an event the stream does not end is none", "[http][sse]") {

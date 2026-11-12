@@ -125,7 +125,8 @@ static_assert(async::ContextAwaitable<timer_operation>);
 
 std::chrono::nanoseconds executor::now() const noexcept {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
-      std::chrono::duration<double, std::milli>{::emscripten_get_now()});
+      std::chrono::duration<double, std::milli>{::emscripten_get_now()}
+  );
 }
 
 async::task<bool> executor::wait_for(std::chrono::nanoseconds duration) const {

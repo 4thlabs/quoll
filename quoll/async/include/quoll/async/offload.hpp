@@ -102,7 +102,8 @@ template <class F>
             self.failure = std::current_exception();
           }
         },
-        &running);
+        &running
+    );
 
     if (running.failure) {
       std::rethrow_exception(running.failure);
@@ -124,7 +125,8 @@ template <class F>
             self.failure = std::current_exception();
           }
         },
-        &running);
+        &running
+    );
 
     if (running.failure) {
       std::rethrow_exception(running.failure);

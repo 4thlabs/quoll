@@ -97,8 +97,9 @@ void check_header_text(std::string_view name, std::string_view text) {
   auto const listed = !is_vector<T>::value || (!text.empty() && !text.contains(','));
 
   if (!trimmed || !listed) {
-    throw std::invalid_argument{"quoll::rest::client: header " + std::string{name} +
-                                " has a value the server would read differently"};
+    throw std::invalid_argument{
+        "quoll::rest::client: header " + std::string{name} + " has a value the server would read differently"
+    };
   }
 }
 
@@ -127,7 +128,8 @@ void add_credentials(type_list<Scheme...>, credential_map const &credentials, re
           scheme_traits<Scheme>::add(found->second, draft.request.fields, draft.query);
         }
       }(),
-      ...);
+      ...
+  );
 }
 
 // A path parameter the server reads back as it is, and that stays where the template puts it. Not empty, for a single
@@ -181,8 +183,8 @@ void add_parts(typename Route::arguments const &arguments, request_draft &draft,
 // The request of a call: method, target with the path parameters and the query, fields, body, and the credentials
 // the client has for the route's schemes (a scheme without one is left out: the server answers 401).
 template <class Route>
-[[nodiscard]] http::request build_request(typename Route::arguments const &arguments,
-                                          credential_map const &credentials) {
+[[nodiscard]] http::request
+build_request(typename Route::arguments const &arguments, credential_map const &credentials) {
   using argument_parts = filter_t<is_argument_part, typename Route::parts>;
 
   constexpr auto path_size = checked_path<Route::path_value>::parsed.size;

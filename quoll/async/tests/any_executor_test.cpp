@@ -170,8 +170,10 @@ TEST_CASE("a task finds the services of the executor it runs on", "[async][any_e
   run_loop loop;
   std::optional<std::string> greeted;
 
-  co_spawn(any_executor{big_executor{loop, "from the executor"}}, greet(),
-           quoll::test::overloaded{[&](std::string text) { greeted = std::move(text); }, [](std::exception_ptr) {}});
+  co_spawn(
+      any_executor{big_executor{loop, "from the executor"}}, greet(),
+      quoll::test::overloaded{[&](std::string text) { greeted = std::move(text); }, [](std::exception_ptr) {}}
+  );
   loop.run();
 
   REQUIRE(greeted == "from the executor");

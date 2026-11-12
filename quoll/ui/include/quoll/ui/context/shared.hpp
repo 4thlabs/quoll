@@ -90,8 +90,10 @@ namespace quoll::ui {
  */
 template <class T>
 class shared {
-  static_assert(!std::is_const_v<T> && !std::is_volatile_v<T>,
-                "quoll::ui::shared: a context is found by its type, as provide<T>() gave it, with no const");
+  static_assert(
+      !std::is_const_v<T> && !std::is_volatile_v<T>,
+      "quoll::ui::shared: a context is found by its type, as provide<T>() gave it, with no const"
+  );
 
 public:
   using element_type = T;
@@ -128,9 +130,11 @@ public:
     using R = typename detail::task_value<std::invoke_result_t<Member &, T &, std::decay_t<A> &&...>>::type;
     using function_type = std::function<async::task<R>(std::decay_t<A> && ...)>;
 
-    static_assert((!detail::holds_view<std::decay_t<A>> && ...) && !detail::holds_view<R>,
-                  "quoll::ui::shared: what run() gives the context, and gives back, outlives the caller: none can be "
-                  "a view");
+    static_assert(
+        (!detail::holds_view<std::decay_t<A>> && ...) && !detail::holds_view<R>,
+        "quoll::ui::shared: what run() gives the context, and gives back, outlives the caller: none can be "
+        "a view"
+    );
 
     // Not a read: a component that only runs on its context does not show again as it changes.
     auto *const context = static_cast<T *>(entry().object());
@@ -142,8 +146,9 @@ public:
           return std::invoke(member, *context, std::move(values)...);
         });
 
-    return detail::call_in<R>(std::move(function), detail::call_target{.app = app_},
-                              std::decay_t<A>(std::forward<A>(args))...);
+    return detail::call_in<R>(
+        std::move(function), detail::call_target{.app = app_}, std::decay_t<A>(std::forward<A>(args))...
+    );
   }
 
   /**
@@ -187,7 +192,8 @@ private:
     if (entry_ == nullptr) {
       throw std::logic_error{
           "quoll::ui::shared: used by a component no app made, or held other than as a member of the "
-          "component itself, as a state is"};
+          "component itself, as a state is"
+      };
     }
 
     return *entry_;

@@ -163,8 +163,9 @@ public:
     auto const closed = state_.with([given_back](state &pool) {
       std::vector<idle_connection> older;
 
-      auto const end = std::ranges::find_if(
-          pool.idle, [given_back](idle_connection const &kept) { return kept.given_back > given_back; });
+      auto const end = std::ranges::find_if(pool.idle, [given_back](idle_connection const &kept) {
+        return kept.given_back > given_back;
+      });
 
       older.assign(std::make_move_iterator(pool.idle.begin()), std::make_move_iterator(end));
       pool.idle.erase(pool.idle.begin(), end);
@@ -228,8 +229,10 @@ struct prepared_request {
 // two threads.
 class upload {
 public:
-  upload(io::any_stream &connection QUOLL_LIFETIMEBOUND, prepared_request const &request QUOLL_LIFETIMEBOUND,
-         std::chrono::nanoseconds timeout)
+  upload(
+      io::any_stream &connection QUOLL_LIFETIMEBOUND, prepared_request const &request QUOLL_LIFETIMEBOUND,
+      std::chrono::nanoseconds timeout
+  )
       : connection_(&connection), request_(&request), wire_(request.wire, request.framing), timeout_(timeout) {}
 
   // Ends once the answer has come, or throws what ends it without one.
@@ -286,8 +289,9 @@ public:
       throw std::system_error{failure_, "quoll::http::client: cannot send the body"};
     }
 
-    throw std::system_error{std::make_error_code(std::errc::timed_out),
-                            "quoll::http::client: no response to the request"};
+    throw std::system_error{
+        std::make_error_code(std::errc::timed_out), "quoll::http::client: no response to the request"
+    };
   }
 
   // What the writer writes through: see http::body_stream.
@@ -297,8 +301,10 @@ public:
     }
 
     if (stop_.stop_requested()) {
-      throw std::system_error{std::make_error_code(std::errc::operation_canceled),
-                              "quoll::http::client: the body was answered before its end"};
+      throw std::system_error{
+          std::make_error_code(std::errc::operation_canceled),
+          "quoll::http::client: the body was answered before its end"
+      };
     }
 
     if (wire_.past_its_length(piece)) {
@@ -422,10 +428,11 @@ enum class attempt : std::uint8_t {
 // Sends `request` on `connection` and reads its final response, skipping the interim 1xx ones; the connection goes
 // back to `pool` if it can carry another request. On an idle connection, `on` says when there is no response, and the
 // caller sends the request again on a new connection; otherwise, a response or an exception.
-[[nodiscard]] async::task<std::optional<http::response>>
-exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
-         io::any_stream &connection QUOLL_LIFETIMEBOUND, prepared_request const &request QUOLL_LIFETIMEBOUND,
-         attempt on, bool *reusable QUOLL_LIFETIMEBOUND = nullptr) {
+[[nodiscard]] async::task<std::optional<http::response>> exchange(
+    connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
+    io::any_stream &connection QUOLL_LIFETIMEBOUND, prepared_request const &request QUOLL_LIFETIMEBOUND, attempt on,
+    bool *reusable QUOLL_LIFETIMEBOUND = nullptr
+) {
   std::error_code unsent;
 
   // Its request is on its way, and its connection stays with what sends it.
@@ -508,17 +515,18 @@ exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
 
 // exchange() for a request with a body in pieces: on a connection of its own, as a writer runs once and nothing can be
 // sent again.
-[[nodiscard]] async::task<http::response> exchange_uploading(connection_pool &pool QUOLL_LIFETIMEBOUND,
-                                                             http::parse_limits limits, io::any_stream connection,
-                                                             prepared_request const &request QUOLL_LIFETIMEBOUND,
-                                                             std::chrono::nanoseconds timeout) {
+[[nodiscard]] async::task<http::response> exchange_uploading(
+    connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits, io::any_stream connection,
+    prepared_request const &request QUOLL_LIFETIMEBOUND, std::chrono::nanoseconds timeout
+) {
   upload sending{connection, request, timeout};
   auto reusable = false;
   std::optional<http::response> response;
 
   try {
     auto [uploaded, answer] = co_await async::when_all(
-        sending.run(), until_answered(sending, exchange(pool, limits, connection, request, attempt::fresh, &reusable)));
+        sending.run(), until_answered(sending, exchange(pool, limits, connection, request, attempt::fresh, &reusable))
+    );
 
     response = std::move(answer);
   } catch (std::system_error const &thrown) {
@@ -540,8 +548,10 @@ exchange(connection_pool &pool QUOLL_LIFETIMEBOUND, http::parse_limits limits,
 // What the copies of a client share. Thread safety: what does not change, and what holds its own lock.
 class client_core {
 public:
-  client_core(connector_handle to, std::string name, std::uint16_t number, bool tls, std::string field,
-              std::string path, client_options const &given)
+  client_core(
+      connector_handle to, std::string name, std::uint16_t number, bool tls, std::string field, std::string path,
+      client_options const &given
+  )
       : connector(std::move(to)), host(std::move(name)), port(number), secure(tls), host_field(std::move(field)),
         prefix(std::move(path)), options(given), pool(given.max_idle_connections) {
     if (given.max_connections > 0) {
@@ -592,8 +602,8 @@ struct idle_attempt {
 // bytes nothing asked for, as a 408 sent before closing, is closed, and the next one is checked. A request not sent
 // twice takes only one its stream can check, as one the server closed shows otherwise only once the request is on it;
 // an idempotent one takes any, and goes again on a new one.
-[[nodiscard]] std::optional<idle_attempt> take_idle(client_core &shared, prepared_request const &request,
-                                                    async::executor_ref executor) {
+[[nodiscard]] std::optional<idle_attempt>
+take_idle(client_core &shared, prepared_request const &request, async::executor_ref executor) {
   if (request.writer) {
     return std::nullopt;
   }
@@ -668,7 +678,8 @@ void after_idle_attempt(client_core &shared, std::uint64_t given_back, std::opti
     try {
       response = co_await async::detail::with_optional_timeout(
           shared->options.response_timeout,
-          exchange(shared->pool, shared->options.limits, kept->idle.connection, request, kept->on));
+          exchange(shared->pool, shared->options.limits, kept->idle.connection, request, kept->on)
+      );
     } catch (std::system_error const &thrown) {
       after_idle_failure(*shared, given_back, thrown.code());
       throw;
@@ -686,13 +697,15 @@ void after_idle_attempt(client_core &shared, std::uint64_t given_back, std::opti
   auto connection = co_await async::detail::with_optional_timeout(shared->options.connect_timeout, shared->open());
 
   if (request.writer) {
-    co_return co_await exchange_uploading(shared->pool, shared->options.limits, std::move(connection), request,
-                                          shared->options.response_timeout);
+    co_return co_await exchange_uploading(
+        shared->pool, shared->options.limits, std::move(connection), request, shared->options.response_timeout
+    );
   }
 
   auto response = co_await async::detail::with_optional_timeout(
       shared->options.response_timeout,
-      exchange(shared->pool, shared->options.limits, connection, request, attempt::fresh));
+      exchange(shared->pool, shared->options.limits, connection, request, attempt::fresh)
+  );
 
   // On a new connection, exchange() produces a response or throws.
   assert(response && "exchange() on a new connection produced no response");
@@ -704,10 +717,12 @@ void after_idle_attempt(client_core &shared, std::uint64_t given_back, std::opti
   auto const keep_alive = request.version == http::version::http_1_1 &&
                           !http::detail::closes_connection(request.fields) && shared.options.max_idle_connections > 0;
 
-  prepared_request prepared{.method = request.method,
-                            .keep_alive = keep_alive,
-                            .replayable = idempotent(request.method) || request.fields.contains("Idempotency-Key") ||
-                                          request.fields.contains("X-Idempotency-Key")};
+  prepared_request prepared{
+      .method = request.method,
+      .keep_alive = keep_alive,
+      .replayable = idempotent(request.method) || request.fields.contains("Idempotency-Key") ||
+                    request.fields.contains("X-Idempotency-Key")
+  };
 
   if (request.body_writer) {
     prepared.framing = http::detail::serialize_streamed_head(request, prepared.wire);
@@ -795,8 +810,8 @@ void redirect_request(http::request &request, http::status status, std::string t
 }
 
 // Sends `request`, already prepared as `prepared` and given its `Host` field, then the ones its redirects ask for.
-[[nodiscard]] async::task<http::response> send_following(std::shared_ptr<client_core> shared, http::request request,
-                                                         prepared_request prepared) {
+[[nodiscard]] async::task<http::response>
+send_following(std::shared_ptr<client_core> shared, http::request request, prepared_request prepared) {
   for (std::size_t followed = 0;; ++followed) {
     auto response = co_await send_prepared(shared, std::move(prepared));
     auto const location = location_of(response.fields);
@@ -832,8 +847,9 @@ public:
 
   // Sends `request` on `connection` and reads the head of its final response. As in exchange(), on an idle connection,
   // false when the request goes again on a new one.
-  [[nodiscard]] async::task<bool> start(io::any_stream connection, prepared_request const &request QUOLL_LIFETIMEBOUND,
-                                        attempt on) QUOLL_LIFETIMEBOUND {
+  [[nodiscard]] async::task<bool> start(
+      io::any_stream connection, prepared_request const &request QUOLL_LIFETIMEBOUND, attempt on
+  ) QUOLL_LIFETIMEBOUND {
     auto const sent = co_await io::write(connection, std::as_bytes(std::span{request.wire}));
 
     if (sent.error) {
@@ -872,13 +888,14 @@ public:
 
   // start() for a request with a body in pieces. A head that comes before its end stops it: this is not a conversation,
   // and what is left of the body has nowhere to go while the caller reads.
-  [[nodiscard]] async::task<> start_uploading(io::any_stream connection,
-                                              prepared_request const &request QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+  [[nodiscard]] async::task<>
+  start_uploading(io::any_stream connection, prepared_request const &request QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
     upload sending{connection, request, shared_->options.response_timeout};
 
     try {
       static_cast<void>(co_await async::when_all(
-          sending.run(), until_answered(sending, read_final_head(connection, request, attempt::fresh))));
+          sending.run(), until_answered(sending, read_final_head(connection, request, attempt::fresh))
+      ));
     } catch (std::system_error const &thrown) {
       throw_what_ended(sending, thrown);
     }
@@ -889,11 +906,12 @@ public:
 
   // What the caller gets of the head: the rest of the message stays for read(). A message with nothing more to come
   // gives its connection back at once, as nothing will read it to its end.
-  [[nodiscard]] http::streamed_response take_head(std::shared_ptr<response_stream> const &self,
-                                                  async::executor_ref executor) {
+  [[nodiscard]] http::streamed_response
+  take_head(std::shared_ptr<response_stream> const &self, async::executor_ref executor) {
     auto const &message = parser_->head();
     http::streamed_response response{
-        message.status, message.reason, message.version, message.fields, http::response_body{self}, trailers_};
+        message.status, message.reason, message.version, message.fields, http::response_body{self}, trailers_
+    };
 
     // Nothing more can come: its connection and its place go now, whether the caller reads what came or not, and
     // however the bytes were cut.
@@ -933,7 +951,8 @@ public:
     try {
       // A stop too: a stream does not take it up again, and over TLS its session is gone. The read ends on it.
       if (!co_await async::stopped_as_optional(
-              async::detail::with_optional_timeout(shared_->options.response_timeout, read_piece()))) {
+              async::detail::with_optional_timeout(shared_->options.response_timeout, read_piece())
+          )) {
         fail(std::make_error_code(std::errc::operation_canceled));
         co_await async::detail::end_stopped{};
       }
@@ -965,9 +984,9 @@ public:
 
 private:
   // Reads the head of the final response, on an attempt of its own; false as start() says.
-  [[nodiscard]] async::task<bool> read_final_head(io::any_stream &connection QUOLL_LIFETIMEBOUND,
-                                                  prepared_request const &request QUOLL_LIFETIMEBOUND,
-                                                  attempt on) QUOLL_LIFETIMEBOUND {
+  [[nodiscard]] async::task<bool> read_final_head(
+      io::any_stream &connection QUOLL_LIFETIMEBOUND, prepared_request const &request QUOLL_LIFETIMEBOUND, attempt on
+  ) QUOLL_LIFETIMEBOUND {
     auto interim = 0;
 
     // Afresh for each attempt: the one before may have left anything in it.
@@ -1057,13 +1076,14 @@ private:
   bool held_piece_ = false;
 };
 
-[[nodiscard]] async::task<http::streamed_response> stream_prepared(std::shared_ptr<client_core> shared,
-                                                                   prepared_request request) {
+[[nodiscard]] async::task<http::streamed_response>
+stream_prepared(std::shared_ptr<client_core> shared, prepared_request request) {
   auto stream = std::make_shared<response_stream>(shared);
 
   if (shared->places) {
-    co_await async::detail::with_optional_timeout(shared->options.connect_timeout,
-                                                  stream->place().take(*shared->places));
+    co_await async::detail::with_optional_timeout(
+        shared->options.connect_timeout, stream->place().take(*shared->places)
+    );
   }
 
   throw_if_stopped(co_await async::current_stop_token());
@@ -1077,7 +1097,8 @@ private:
 
     try {
       started = co_await async::detail::with_optional_timeout(
-          shared->options.response_timeout, stream->start(std::move(kept->idle.connection), request, kept->on));
+          shared->options.response_timeout, stream->start(std::move(kept->idle.connection), request, kept->on)
+      );
     } catch (std::system_error const &thrown) {
       after_idle_failure(*shared, given_back, thrown.code());
       throw;
@@ -1103,7 +1124,8 @@ private:
   }
 
   static_cast<void>(co_await async::detail::with_optional_timeout(
-      shared->options.response_timeout, stream->start(std::move(connection), request, attempt::fresh)));
+      shared->options.response_timeout, stream->start(std::move(connection), request, attempt::fresh)
+  ));
   co_return stream->take_head(stream, executor);
 }
 
@@ -1117,14 +1139,14 @@ void make_ready(client_core const &core, http::request &request) {
   }
 }
 
-[[nodiscard]] async::task<http::streamed_response> stream_connected(std::shared_ptr<client_core> const &core,
-                                                                    http::request request) {
+[[nodiscard]] async::task<http::streamed_response>
+stream_connected(std::shared_ptr<client_core> const &core, http::request request) {
   make_ready(*core, request);
   return stream_prepared(core, prepare(*core, request));
 }
 
-[[nodiscard]] async::task<http::response> send_connected(std::shared_ptr<client_core> const &core,
-                                                         http::request request) {
+[[nodiscard]] async::task<http::response>
+send_connected(std::shared_ptr<client_core> const &core, http::request request) {
   make_ready(*core, request);
 
   auto prepared = prepare(*core, request);
@@ -1139,8 +1161,10 @@ void make_ready(client_core const &core, http::request &request) {
 
 } // namespace
 
-client_backend make_client_backend(connector_handle connector, std::string host, std::uint16_t port, bool secure,
-                                   std::string prefix, client_options const &options) {
+client_backend make_client_backend(
+    connector_handle connector, std::string host, std::uint16_t port, bool secure, std::string prefix,
+    client_options const &options
+) {
   auto field = host_field(host, port, secure ? 443 : 80);
 
   static constexpr client_operations operations{
@@ -1152,9 +1176,12 @@ client_backend make_client_backend(connector_handle connector, std::string host,
       },
   };
 
-  return {std::make_shared<client_core>(std::move(connector), std::move(host), port, secure, std::move(field),
-                                        std::move(prefix), options),
-          &operations};
+  return {
+      std::make_shared<client_core>(
+          std::move(connector), std::move(host), port, secure, std::move(field), std::move(prefix), options
+      ),
+      &operations
+  };
 }
 
 } // namespace quoll::http::detail
@@ -1163,8 +1190,8 @@ namespace quoll::http {
 
 namespace {
 
-[[nodiscard]] request simple_request(verb method, std::string target, std::string body = {},
-                                     std::string_view content_type = {}) {
+[[nodiscard]] request
+simple_request(verb method, std::string target, std::string body = {}, std::string_view content_type = {}) {
   request made;
 
   made.method = method;

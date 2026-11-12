@@ -170,8 +170,8 @@ private:
   void check_writable() const;
 
   // `text` lives in the frame until it has left; `turn` until the frame goes.
-  [[nodiscard]] static async::task<> write(std::shared_ptr<state> writing, detail::one_at_a_time turn,
-                                           std::string text);
+  [[nodiscard]] static async::task<>
+  write(std::shared_ptr<state> writing, detail::one_at_a_time turn, std::string text);
 
   // Null once moved from.
   std::shared_ptr<state> state_;

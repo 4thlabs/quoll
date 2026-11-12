@@ -140,8 +140,10 @@ public:
       the_only_type_a_path_says_is_path_as_the_handler_says_the_others();
     }
 
-    auto const in_path = static_cast<std::size_t>(std::ranges::count_if(
-        parsed.segments, [](template_segment const &segment) { return segment.kind != segment_kind::literal; }));
+    auto const in_path =
+        static_cast<std::size_t>(std::ranges::count_if(parsed.segments, [](template_segment const &segment) {
+          return segment.kind != segment_kind::literal;
+        }));
 
     if (in_path != count()) {
       the_handler_does_not_take_as_many_parameters_as_the_path_has();
@@ -182,7 +184,8 @@ template <class T, std::size_t Index>
 template <class Result, class F, class Request, class... Parameters, std::size_t... Index>
 async::task<response> call_typed(F &target, request message, route_match match, std::index_sequence<Index...>) {
   std::tuple<std::optional<std::remove_cvref_t<Parameters>>...> values{
-      read_parameter<std::remove_cvref_t<Parameters>, Index>(match)...};
+      read_parameter<std::remove_cvref_t<Parameters>, Index>(match)...
+  };
 
   if (!(std::get<Index>(values).has_value() && ...)) {
     co_return status_response(status::bad_request);
@@ -244,8 +247,8 @@ template <class Parameter, std::size_t Index, class Frame>
 }
 
 template <class F, class Request, class... Parameters, std::size_t... Index>
-async::task<> run_writing(std::shared_ptr<writing_frame<stored_request<Request>, Parameters...>> frame,
-                          std::shared_ptr<F> target, body_stream out, std::index_sequence<Index...>) {
+async::task<>
+run_writing(std::shared_ptr<writing_frame<stored_request<Request>, Parameters...>> frame, std::shared_ptr<F> target, body_stream out, std::index_sequence<Index...>) {
   if (frame->started.test_and_set()) {
     throw std::logic_error{"quoll::http::response_writer: a handler runs once"};
   }
@@ -256,18 +259,21 @@ async::task<> run_writing(std::shared_ptr<writing_frame<stored_request<Request>,
   if constexpr (std::same_as<Request, no_request>) {
     co_await std::invoke(*target, writing_argument<Parameters, Index>(*frame, writer)...);
   } else {
-    co_await std::invoke(*target, std::forward<Request>(frame->message),
-                         writing_argument<Parameters, Index>(*frame, writer)...);
+    co_await std::invoke(
+        *target, std::forward<Request>(frame->message), writing_argument<Parameters, Index>(*frame, writer)...
+    );
   }
 }
 
 // The answer of such a route: its parameters read, and its handler to run as the body's writer, which holds it, as a
 // response may go on after its router.
 template <class F, class Request, class... Parameters, std::size_t... Index>
-[[nodiscard]] response answer_writing(std::shared_ptr<F> const &target, request message, route_match match,
-                                      std::index_sequence<Index...> indices) {
+[[nodiscard]] response answer_writing(
+    std::shared_ptr<F> const &target, request message, route_match match, std::index_sequence<Index...> indices
+) {
   auto frame = std::make_shared<writing_frame<stored_request<Request>, Parameters...>>(
-      keeping<Request>(std::move(message)), std::move(match));
+      keeping<Request>(std::move(message)), std::move(match)
+  );
   auto const read = [&]<class T, std::size_t At>() {
     if constexpr (!is_response_writer<T>) {
       std::get<At>(frame->values) = read_parameter<T, At>(frame->match);
@@ -312,29 +318,41 @@ template <class Result, class F, class Request, class... Parameters>
 [[nodiscard]] auto typed_handler_for(F target) {
   constexpr auto writes = (is_response_writer<Parameters> || ...);
 
-  static_assert(writes || is_response_result<Result>,
-                "quoll::http::router: a handler returns http::response or task<http::response>");
-  static_assert(!writes || std::same_as<Result, async::task<>>,
-                "quoll::http::router: a handler taking an http::response_writer returns task<>");
-  static_assert(((PathParameter<std::remove_cvref_t<Parameters>> || is_body_reader<Parameters> ||
-                  is_response_writer<Parameters>) &&
-                 ...),
-                "quoll::http::router: a path parameter is a std::string, a std::string_view, a number or a bool");
-  static_assert(body_reader_comes_last<Parameters...>(),
-                "quoll::http::router: a handler takes one http::body_reader, after its path parameters");
-  static_assert(response_writer_comes_last<Parameters...>(),
-                "quoll::http::router: a handler takes one http::response_writer, last");
+  static_assert(
+      writes || is_response_result<Result>,
+      "quoll::http::router: a handler returns http::response or task<http::response>"
+  );
+  static_assert(
+      !writes || std::same_as<Result, async::task<>>,
+      "quoll::http::router: a handler taking an http::response_writer returns task<>"
+  );
+  static_assert(
+      ((PathParameter<std::remove_cvref_t<Parameters>> || is_body_reader<Parameters> ||
+        is_response_writer<Parameters>) &&
+       ...),
+      "quoll::http::router: a path parameter is a std::string, a std::string_view, a number or a bool"
+  );
+  static_assert(
+      body_reader_comes_last<Parameters...>(),
+      "quoll::http::router: a handler takes one http::body_reader, after its path parameters"
+  );
+  static_assert(
+      response_writer_comes_last<Parameters...>(),
+      "quoll::http::router: a handler takes one http::response_writer, last"
+  );
 
   if constexpr (writes) {
     return
         [target = std::make_shared<F>(std::move(target))](request message, route_match match) -> async::task<response> {
-          co_return answer_writing<F, Request, Parameters...>(target, std::move(message), std::move(match),
-                                                              std::index_sequence_for<Parameters...>{});
+          co_return answer_writing<F, Request, Parameters...>(
+              target, std::move(message), std::move(match), std::index_sequence_for<Parameters...>{}
+          );
         };
   } else {
     return [target = std::move(target)](request message, route_match match) mutable -> async::task<response> {
-      return call_typed<Result, F, Request, Parameters...>(target, std::move(message), std::move(match),
-                                                           std::index_sequence_for<Parameters...>{});
+      return call_typed<Result, F, Request, Parameters...>(
+          target, std::move(message), std::move(match), std::index_sequence_for<Parameters...>{}
+      );
     };
   }
 }
@@ -358,8 +376,9 @@ template <class F>
 [[nodiscard]] auto typed_handler(F target) {
   using traits = signature_of<F>;
 
-  return typed_handler_from<F, typename traits::result>(std::move(target),
-                                                        static_cast<typename traits::arguments const *>(nullptr));
+  return typed_handler_from<F, typename traits::result>(
+      std::move(target), static_cast<typename traits::arguments const *>(nullptr)
+  );
 }
 
 } // namespace quoll::http::detail

@@ -52,8 +52,8 @@ namespace http = quoll::http;
 namespace rest = quoll::rest;
 
 using list = rest::endpoint<"products.list", http::verb::get, "/", rest::returns<std::vector<product>>>;
-using update = rest::endpoint<"products.update", http::verb::put, "/{id:int64}", rest::body<product_update>,
-                              rest::returns<product>>;
+using update = rest::endpoint<
+    "products.update", http::verb::put, "/{id:int64}", rest::body<product_update>, rest::returns<product>>;
 using sales = rest::endpoint<"products.sales", http::verb::get, "/{id:int64}/sales", rest::returns<monthly_sales>>;
 
 using api = rest::api<"/api/products", list, update, sales>;

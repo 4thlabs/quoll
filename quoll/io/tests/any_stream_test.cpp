@@ -159,8 +159,8 @@ public:
     [[nodiscard]] bool await_ready() const noexcept { return false; }
 
     // Transfers straight back to the writer.
-    [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle,
-                                                        quoll::async::await_context const &) const noexcept {
+    [[nodiscard]] std::coroutine_handle<>
+    await_suspend(std::coroutine_handle<> handle, quoll::async::await_context const &) const noexcept {
       return handle;
     }
 
@@ -216,7 +216,8 @@ static_assert(!std::constructible_from<io::any_stream, reference_stream>);
 
 // The memory_stream tests below cover the third form of await_suspend: theirs returns void.
 static_assert(std::is_void_v<decltype(std::declval<io::memory_stream::read_awaitable &>().await_suspend(
-                  std::coroutine_handle<>{}, std::declval<quoll::async::await_context const &>()))>);
+                  std::coroutine_handle<>{}, std::declval<quoll::async::await_context const &>()
+              ))>);
 
 // What a read brought, as text, with its error.
 struct received {
@@ -277,10 +278,14 @@ TEST_CASE("any_stream: a stop request reaches the wrapped read", "[io][any_strea
   std::optional<received> read;
   auto stopped = false;
 
-  co_spawn(loop.get_executor(), read_once(stream),
-           overloaded{[&](received value) { read = std::move(value); }, [](std::exception_ptr) {},
-                      [&stopped](quoll::async::stopped_t) { stopped = true; }},
-           source.get_token());
+  co_spawn(
+      loop.get_executor(), read_once(stream),
+      overloaded{
+          [&](received value) { read = std::move(value); }, [](std::exception_ptr) {},
+          [&stopped](quoll::async::stopped_t) { stopped = true; }
+      },
+      source.get_token()
+  );
   loop.run();
 
   REQUIRE_FALSE(read);
@@ -378,8 +383,9 @@ TEST_CASE("any_stream: shutdown_send goes to a stream that can, and fails on one
     std::array<char, 4> chunk{};
 
     REQUIRE_FALSE((co_await closing.shutdown_send()).error);
-    REQUIRE((co_await client.read_some(std::as_writable_bytes(std::span{chunk}))).error ==
-            quoll::io::error::end_of_stream);
+    REQUIRE(
+        (co_await client.read_some(std::as_writable_bytes(std::span{chunk}))).error == quoll::io::error::end_of_stream
+    );
     co_return (co_await plain.shutdown_send()).error;
   };
 
@@ -517,8 +523,9 @@ struct counted_stream {
 
 } // namespace
 
-TEST_CASE("any_stream: an operation that has completed leaves room for the next, in one expression",
-          "[io][any_stream]") {
+TEST_CASE(
+    "any_stream: an operation that has completed leaves room for the next, in one expression", "[io][any_stream]"
+) {
   auto const frames = std::make_shared<int>(0);
   std::array<std::byte, 4> buffer{};
 

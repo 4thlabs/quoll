@@ -87,8 +87,10 @@ private:
 } // namespace
 
 http::detail::one_at_a_time sink_turn(std::shared_ptr<event_sink_state> const &state) {
-  return http::detail::one_at_a_time{std::shared_ptr<std::atomic<bool>>{state, &state->busy},
-                                     "quoll::rest::event_sink: an operation while another is pending"};
+  return http::detail::one_at_a_time{
+      std::shared_ptr<std::atomic<bool>>{state, &state->busy},
+      "quoll::rest::event_sink: an operation while another is pending"
+  };
 }
 
 async::task<> sink_open(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn) {
@@ -98,8 +100,8 @@ async::task<> sink_open(std::shared_ptr<event_sink_state> state, http::detail::o
   co_await writer_of(*state).open();
 }
 
-async::task<> sink_send(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn,
-                        http::server_sent_event event) {
+async::task<>
+sink_send(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn, http::server_sent_event event) {
   auto const held = std::move(turn);
   running const counted{*state};
 
@@ -110,8 +112,8 @@ async::task<> sink_send(std::shared_ptr<event_sink_state> state, http::detail::o
   co_await writer_of(*state).send(event);
 }
 
-async::task<> sink_comment(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn,
-                           std::string text) {
+async::task<>
+sink_comment(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn, std::string text) {
   auto const held = std::move(turn);
   running const counted{*state};
 
@@ -122,8 +124,8 @@ async::task<> sink_comment(std::shared_ptr<event_sink_state> state, http::detail
   co_await writer_of(*state).comment(text);
 }
 
-async::task<> sink_retry(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn,
-                         std::chrono::milliseconds delay) {
+async::task<>
+sink_retry(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn, std::chrono::milliseconds delay) {
   auto const held = std::move(turn);
   running const counted{*state};
 

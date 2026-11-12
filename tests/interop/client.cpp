@@ -144,9 +144,11 @@ async::task<> http_checks(std::string base) {
     auto const [got, sent] = std::ranges::mismatch(response.body, body);
 
     if (got != response.body.end()) {
-      throw std::runtime_error{"byte " + std::to_string(got - response.body.begin()) + " is " +
-                               std::to_string(static_cast<unsigned char>(*got)) + ", not " +
-                               std::to_string(static_cast<unsigned char>(*sent))};
+      throw std::runtime_error{
+          "byte " + std::to_string(got - response.body.begin()) + " is " +
+          std::to_string(static_cast<unsigned char>(*got)) + ", not " +
+          std::to_string(static_cast<unsigned char>(*sent))
+      };
     }
   });
   co_await check("a body in pieces, whole", [&]() -> async::task<> {
@@ -258,7 +260,8 @@ async::task<> autobahn(std::string base) {
     // A case that cannot even start fails the run, once those that can are run and reported.
     try {
       running.emplace(co_await async::with_timeout(
-          bound, http::connect_websocket(base + "/runCase?case=" + std::to_string(index) + "&agent=quoll", options)));
+          bound, http::connect_websocket(base + "/runCase?case=" + std::to_string(index) + "&agent=quoll", options)
+      ));
     } catch (std::exception const &failure) {
       ++not_started;
       std::cout << "case " << index << " not started: " << failure.what() << std::endl;

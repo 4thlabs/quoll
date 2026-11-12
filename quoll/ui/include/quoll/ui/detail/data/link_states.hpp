@@ -50,8 +50,10 @@ namespace quoll::ui::detail {
 template <class C>
 void link_states(C &component, state_link link) {
   // Checked here, where every component, context and app passes: what reads props is in a component that has them.
-  static_assert(ComponentWithProps<C> || !any_member<C, is_props_member>,
-                "quoll::ui::form_state: in a component with props, one of whose fields it edits");
+  static_assert(
+      ComponentWithProps<C> || !any_member<C, is_props_member>,
+      "quoll::ui::form_state: in a component with props, one of whose fields it edits"
+  );
 
   for_each_member(component, [&link](auto &member) {
     if constexpr (LinkedMember<std::remove_cvref_t<decltype(member)>>) {
