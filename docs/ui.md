@@ -272,7 +272,7 @@ struct sales_panel {
 };
 ```
 
-**An `async_state<T>`**, in `<quoll/ui/async_state.hpp>`, is the target most components want: a state of an
+**An `async_state<T>`**, in `<quoll/ui/data/async_state.hpp>`, is the target most components want: a state of an
 `async_value<T>`, whose fields are `value`, `loading` and `error`, read as `sales->loading`. `async_state<>` has no
 `value`, for a run that gives nothing, as a save whose answer only the handler wants. It is a state like any other,
 set and updated as one: `items.update([](auto &held) { held.value.push_back(...); })`.
@@ -441,7 +441,7 @@ int main() {
 }
 ```
 
-- `provide<T>()`, in `<quoll/ui/provide.hpp>`, gives the app a context, one of each type, which has no view, `mounted()` nor `unmounted()`: its
+- `provide<T>()`, in `<quoll/ui/context/provide.hpp>`, gives the app a context, one of each type, which has no view, `mounted()` nor `unmounted()`: its
   effects do what a component's `mounted()` would. The app makes them as it is made, in their order, and each finds
   those it uses itself, as a `shared<U>` member, among those given before it, so that none uses one that uses it. Their
   changes reach the app once it is made, and they go the last given first, telling the app of nothing as they go, so

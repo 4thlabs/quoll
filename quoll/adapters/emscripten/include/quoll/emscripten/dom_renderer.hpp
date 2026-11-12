@@ -38,9 +38,9 @@
 #define QUOLL_EMSCRIPTEN_DOM_RENDERER_HPP
 
 #include <quoll/emscripten/detail/js.hpp>
-#include <quoll/ui/node_id.hpp>
-#include <quoll/ui/renderer.hpp>
-#include <quoll/ui/widget_renderer.hpp>
+#include <quoll/ui/view/node_id.hpp>
+#include <quoll/ui/view/renderer.hpp>
+#include <quoll/ui/widget/widget_renderer.hpp>
 
 #include <stdexcept>
 #include <string>

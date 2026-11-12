@@ -38,7 +38,7 @@
 //
 // A context asked for as const: no app was given that type, and it would never be found.
 
-#include <quoll/ui/shared.hpp>
+#include <quoll/ui/context/shared.hpp>
 
 struct catalog {};
 

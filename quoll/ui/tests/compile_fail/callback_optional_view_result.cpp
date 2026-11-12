@@ -39,7 +39,7 @@
 //
 // A callback giving a view in a pair: the caller would read it once the work, and what it viewed, may be gone.
 
-#include <quoll/ui/callback.hpp>
+#include <quoll/ui/component/callback.hpp>
 
 #include <string_view>
 #include <utility>

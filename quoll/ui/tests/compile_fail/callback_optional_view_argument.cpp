@@ -38,7 +38,7 @@
 //
 // A callback taking an optional view: the copy is of the view, and the work would read what the caller held.
 
-#include <quoll/ui/callback.hpp>
+#include <quoll/ui/component/callback.hpp>
 
 #include <optional>
 #include <string_view>

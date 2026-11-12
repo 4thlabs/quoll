@@ -39,9 +39,9 @@
 //
 // A component given as a context: its view, with its props, would never run.
 
-#include <quoll/ui/element.hpp>
-#include <quoll/ui/provide.hpp>
-#include <quoll/ui/state.hpp>
+#include <quoll/ui/context/provide.hpp>
+#include <quoll/ui/data/state.hpp>
+#include <quoll/ui/view/element.hpp>
 
 #include <string>
 

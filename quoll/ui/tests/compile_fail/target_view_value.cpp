@@ -40,8 +40,8 @@
 // A target of a view, for a function giving a string: the view would refer to the run's string, gone as it ends.
 
 #include <quoll/async/task.hpp>
-#include <quoll/ui/effect.hpp>
-#include <quoll/ui/state.hpp>
+#include <quoll/ui/data/effect.hpp>
+#include <quoll/ui/data/state.hpp>
 
 #include <string>
 #include <string_view>

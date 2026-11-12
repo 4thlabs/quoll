@@ -40,8 +40,8 @@
 // A context with a mounted(), as a component has: it would never run, and its data never load.
 
 #include <quoll/async/task.hpp>
-#include <quoll/ui/provide.hpp>
-#include <quoll/ui/state.hpp>
+#include <quoll/ui/context/provide.hpp>
+#include <quoll/ui/data/state.hpp>
 
 #include <string>
 

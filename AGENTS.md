@@ -78,6 +78,10 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
   This creates the target `quoll_<module>`, a static library, or `INTERFACE` without `SOURCES`, alias `quoll::<module>`, exported as `quoll::<module>`
   by `find_package(quoll)`. Modules are added in dependency order in the root `CMakeLists.txt`.
+- `quoll::ui`, the largest, has its headers in folders by subject, `view`, `component`, `data`, `context`, `routing`,
+  `widget` and `app` (`<quoll/ui/data/state.hpp>`), its details in the same folders under `detail/`, but for helpers
+  they all use, at its root, and its `src/` and `tests/` alike, `tests/compile_fail/` flat; its namespace stays
+  `quoll::ui`, and `<quoll/ui.hpp>` includes them all. The other modules stay flat for now.
 - Adapters (asio, Emscripten, later a webview...) are modules like the others, grouped under
   `quoll/adapters/<adapter>/` (added by `quoll/adapters/CMakeLists.txt`) rather than at the root. Only the directory
   changes: the target stays `quoll::<adapter>` and the headers `<quoll/<adapter>/...>`.

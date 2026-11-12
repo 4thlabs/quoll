@@ -38,7 +38,7 @@
 //
 // A router given as a context of its own: it would have no routes and no history.
 
-#include <quoll/ui/provide.hpp>
-#include <quoll/ui/router.hpp>
+#include <quoll/ui/context/provide.hpp>
+#include <quoll/ui/routing/router.hpp>
 
 auto const given = quoll::ui::provide<quoll::ui::router>();

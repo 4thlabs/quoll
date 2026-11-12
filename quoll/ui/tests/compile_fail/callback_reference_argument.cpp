@@ -38,7 +38,7 @@
 //
 // A callback writing to its argument: the work writes to a copy, which its caller never sees.
 
-#include <quoll/ui/callback.hpp>
+#include <quoll/ui/component/callback.hpp>
 
 #include <string>
 

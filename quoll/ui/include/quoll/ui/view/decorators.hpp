@@ -1,0 +1,298 @@
+//   ___              _ _
+//  / _ \ _   _  ___ | | |
+// | | | | | | |/ _ \| | |
+// | |_| | |_| | (_) | | |
+//  \__\_\\__,_|\___/|_|_|
+//
+// BSD 3-Clause License
+//
+// Copyright (c) 2026, Thomas Gourgues (thomas.gourgues@gmail.com)
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#ifndef QUOLL_UI_VIEW_DECORATORS_HPP
+#define QUOLL_UI_VIEW_DECORATORS_HPP
+
+#include <quoll/async/task.hpp>
+#include <quoll/ui/data/state.hpp>
+#include <quoll/ui/detail/view/hot.hpp>
+#include <quoll/ui/view/element.hpp>
+#include <quoll/ui/view/event_function.hpp>
+
+#include <concepts>
+#include <functional>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+
+namespace quoll::ui {
+
+/** @brief What follows an element after `|`: applying it completes the element. Make your own with decorator(). */
+template <class F>
+class basic_decorator {
+public:
+  explicit basic_decorator(F apply) noexcept(std::is_nothrow_move_constructible_v<F>) : apply_(std::move(apply)) {}
+
+  [[nodiscard]] element operator()(element target) && {
+    apply_(target);
+    return target;
+  }
+
+private:
+  F apply_;
+};
+
+/** @brief A decorator from what it does to an element: `decorator([](element &target) { ... })`. */
+template <class F>
+  requires std::invocable<F &, element &>
+[[nodiscard]] basic_decorator<F> decorator(F apply) {
+  return basic_decorator<F>{std::move(apply)};
+}
+
+/** @brief `text("hello") | tw("text-sm")`. */
+template <class F>
+[[nodiscard]] element operator|(element target, basic_decorator<F> applied) {
+  return std::move(applied)(std::move(target));
+}
+
+/**
+ * @brief Adds classes: Tailwind's, or anyone's.
+ *
+ * Tailwind finds the classes it generates by reading the sources, so write them whole: `tw("bg-red-500")`, never a name
+ * put together at run time.
+ */
+[[nodiscard]] inline auto tw(detail::literal_text classes) {
+  return decorator([classes = std::string{std::string_view{classes}}](element &target) {
+    if (classes.empty()) {
+      return;
+    }
+
+    if (!target.classes.empty()) {
+      target.classes += ' ';
+    }
+
+    target.classes += classes;
+  });
+}
+
+/** @brief tw(), when `condition` holds. */
+[[nodiscard]] inline auto tw_if(bool condition, std::string_view classes) {
+  return decorator([classes = condition ? std::string{classes} : std::string{}](element &target) {
+    if (classes.empty()) {
+      return;
+    }
+
+    if (!target.classes.empty()) {
+      target.classes += ' ';
+    }
+
+    target.classes += classes;
+  });
+}
+
+/** @brief Names an element among its siblings, so that it keeps its node when they move. */
+[[nodiscard]] inline auto key(std::string_view name) {
+  return decorator([name = std::string{name}](element &target) { target.key = name; });
+}
+
+/** @brief key() from a number. */
+template <std::integral T>
+[[nodiscard]] auto key(T number) {
+  return decorator([name = std::to_string(number)](element &target) { target.key = name; });
+}
+
+/**
+ * @brief Sets an attribute of the element: set again, it takes the last value. `class`, `value` and `checked` have
+ * their own ways, tw(), value() or bind(), and checked(), and are not to be set here.
+ */
+[[nodiscard]] inline auto attribute(std::string_view name, std::string_view value) {
+  return decorator([name = std::string{name}, value = std::string{value}](element &target) {
+    target.attributes.insert_or_assign(name, value);
+  });
+}
+
+namespace detail {
+
+// A boolean attribute, set while `condition` holds: a false one leaves the element as it is.
+[[nodiscard]] inline auto boolean_attribute(std::string_view name, bool condition) {
+  return decorator([name = std::string{name}, condition](element &target) {
+    if (condition) {
+      target.attributes.insert_or_assign(name, "");
+    }
+  });
+}
+
+// What an event runs, from what the application gave: with the node's value or without, awaited or plain. The value
+// lives in this frame, so that a task may borrow it. The caller holds a copy of this handler meanwhile: a coroutine
+// lambda keeps its captures in the lambda.
+template <EventFunction F>
+[[nodiscard]] event_handler to_handler(F function) {
+  return [function = std::move(function)](std::string value) mutable -> async::task<> {
+    auto const call = [&]() -> decltype(auto) {
+      if constexpr (std::invocable<F &, std::string>) {
+        return std::invoke(function, std::move(value));
+      } else {
+        return std::invoke(function);
+      }
+    };
+
+    if constexpr (std::is_void_v<decltype(call())>) {
+      call();
+    } else {
+      co_await call();
+    }
+
+    co_return;
+  };
+}
+
+} // namespace detail
+
+/**
+ * @brief The boolean attribute `disabled`, set while `condition` holds, as a button that waits or a field locked: a
+ * view without it, made again as a state changes, has it no more. A false condition leaves the element as it is.
+ */
+[[nodiscard]] inline auto disabled(bool condition) { return detail::boolean_attribute("disabled", condition); }
+
+/** @brief The boolean attribute `hidden`, set while `condition` holds, as disabled(). */
+[[nodiscard]] inline auto hidden(bool condition) { return detail::boolean_attribute("hidden", condition); }
+
+/** @brief The boolean attribute `required`, set while `condition` holds, as disabled(). */
+[[nodiscard]] inline auto required(bool condition) { return detail::boolean_attribute("required", condition); }
+
+/** @brief The boolean attribute `readonly`, set while `condition` holds, as disabled(). */
+[[nodiscard]] inline auto readonly(bool condition) { return detail::boolean_attribute("readonly", condition); }
+
+/**
+ * @brief Whether a checkbox or a radio is checked, given as a value, as value() gives what an input shows: its
+ * property, which the browser keeps apart from the attribute once clicked. Its changes come through on_change(): a
+ * checkbox gives "true" or "false", a radio its value, as the one chosen of a group.
+ */
+[[nodiscard]] inline auto checked(bool condition) {
+  return decorator([condition](element &target) { target.checked = condition; });
+}
+
+/** @brief attribute("placeholder", text): what an empty input shows. */
+[[nodiscard]] inline auto placeholder(std::string_view text) { return attribute("placeholder", text); }
+
+/** @brief attribute("role", name), as role("alert"). */
+[[nodiscard]] inline auto role(std::string_view name) { return attribute("role", name); }
+
+/** @brief attribute("aria-" + name, value), as aria("live", "polite"). */
+[[nodiscard]] inline auto aria(std::string_view name, std::string_view value) {
+  return attribute("aria-" + std::string{name}, value);
+}
+
+/**
+ * @brief What an input shows, given as a value rather than held as bind() holds a state: a field showing a prop, its
+ * changes told through on_input(). The browser keeps what is typed while the value given stays the same.
+ */
+[[nodiscard]] inline auto value(std::string_view text) {
+  return decorator([text = std::string{text}](element &target) { target.value = text; });
+}
+
+/**
+ * @brief Runs `function` on the event `name` of the element, given the node's value or nothing: a key event gives
+ * the key, after the modifiers held, as "Enter" or "Shift+Enter", none while an input method composes; a checkbox's
+ * whether it is checked, "true" or "false"; any other what the element holds. It returns nothing, or
+ * a task or anything else to await, whose result is dropped.
+ *
+ * Each event runs its own copy of `function`, alive until its task ends, even if the element is gone by then: what it
+ * changes in itself is lost for the next event, and belongs in the component. What it captures by reference has to stay
+ * alive as well: capture `this`, which lives as long as the app, whose stop() waits for the tasks. An event not started
+ * when stop() is called does not run.
+ *
+ * A `std::string_view` or a `std::string const &` borrows the value until that task ends. Take a `std::string` to keep
+ * it longer. A task must not take a reference to any other type made from the string: that one dies with the call.
+ */
+template <EventFunction F>
+[[nodiscard]] auto on(std::string_view name, F function) {
+  return decorator([name = std::string{name}, handler = detail::to_handler(std::move(function))](element &target) {
+    target.events.push_back({.name = name, .handler = handler});
+  });
+}
+
+/** @brief on("click"). */
+template <EventFunction F>
+[[nodiscard]] auto on_click(F function) {
+  return on("click", std::move(function));
+}
+
+/** @brief on("input"), given what the input holds now. */
+template <EventFunction F>
+[[nodiscard]] auto on_input(F function) {
+  return on("input", std::move(function));
+}
+
+/** @brief on("change"), given what the element holds once changed: a select chosen, an input left. */
+template <EventFunction F>
+[[nodiscard]] auto on_change(F function) {
+  return on("change", std::move(function));
+}
+
+/**
+ * @brief on("submit") of a form, as Enter in one of its inputs or a button in it sends it: the page stays, the app
+ * handles it. A form without it stays as well, but for one naming an `action`, which the browser sends there.
+ */
+template <EventFunction F>
+[[nodiscard]] auto on_submit(F function) {
+  return on("submit", std::move(function));
+}
+
+/** @brief on("keydown"), given the key pressed, as the browser names it: "Enter", "Escape", "a". */
+template <EventFunction F>
+[[nodiscard]] auto on_key_down(F function) {
+  return on("keydown", std::move(function));
+}
+
+/**
+ * @brief Keeps a checkbox and a state the same: the box shows the state, and a click changes it. A checkbox, of the
+ * type it gives an input given none: a radio a group unchecks tells no change, and is chosen through its value with
+ * on_change() and checked().
+ */
+[[nodiscard]] inline auto bind(state<bool> &to) {
+  return decorator([&to](element &target) {
+    target.attributes.try_emplace("type", "checkbox");
+    target.checked = *to;
+    target.events.push_back(
+        {.name = "change", .handler = detail::to_handler([&to](std::string given) { to.set(given == "true"); })});
+  });
+}
+
+/** @brief Keeps an input and a state the same: the input shows the state, and typing changes it. */
+[[nodiscard]] inline auto bind(state<std::string> &to) {
+  return decorator([&to](element &target) {
+    target.value = *to;
+    target.events.push_back(
+        {.name = "input", .handler = detail::to_handler([&to](std::string typed) { to.set(std::move(typed)); })});
+  });
+}
+
+} // namespace quoll::ui
+
+#endif // QUOLL_UI_VIEW_DECORATORS_HPP

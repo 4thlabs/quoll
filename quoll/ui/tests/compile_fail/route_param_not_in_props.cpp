@@ -38,8 +38,8 @@
 //
 // A route whose parameter its page does not take: its value would go nowhere.
 
-#include <quoll/ui/element.hpp>
-#include <quoll/ui/route.hpp>
+#include <quoll/ui/routing/route.hpp>
+#include <quoll/ui/view/element.hpp>
 
 #include <cstdint>
 

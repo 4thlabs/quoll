@@ -40,8 +40,8 @@
 // A function giving a bool: its target would take it for the loading flag.
 
 #include <quoll/async/task.hpp>
-#include <quoll/ui/effect.hpp>
-#include <quoll/ui/state.hpp>
+#include <quoll/ui/data/effect.hpp>
+#include <quoll/ui/data/state.hpp>
 
 #include <tuple>
 

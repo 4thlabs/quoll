@@ -50,7 +50,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
-// What takes one literal that hot reload can replace: tw(), text() and the tags of quoll/ui/tags.hpp.
+// What takes one literal that hot reload can replace: tw(), text() and the tags of quoll/ui/view/tags.hpp.
 const replaceable = new Set([
   'tw', 'text', 'a', 'article', 'button', 'div', 'footer', 'form', 'h1', 'h2', 'h3', 'header', 'label', 'li', 'main_',
   'nav', 'ol', 'p', 'section', 'span', 'ul',

@@ -39,8 +39,8 @@
 //
 // A page whose props hold what no address can give.
 
-#include <quoll/ui/element.hpp>
-#include <quoll/ui/route.hpp>
+#include <quoll/ui/routing/route.hpp>
+#include <quoll/ui/view/element.hpp>
 
 #include <vector>
 

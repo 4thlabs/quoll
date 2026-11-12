@@ -38,7 +38,7 @@
 //
 // A function that gives its value at once: an action runs tasks.
 
-#include <quoll/ui/action.hpp>
+#include <quoll/ui/data/action.hpp>
 
 namespace {
 

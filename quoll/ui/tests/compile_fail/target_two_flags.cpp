@@ -39,8 +39,8 @@
 // A target with two bools: which one says the run is under way could not be told.
 
 #include <quoll/async/task.hpp>
-#include <quoll/ui/effect.hpp>
-#include <quoll/ui/state.hpp>
+#include <quoll/ui/data/effect.hpp>
+#include <quoll/ui/data/state.hpp>
 
 #include <string>
 #include <tuple>
