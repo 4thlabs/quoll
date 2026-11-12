@@ -37,31 +37,11 @@
 #ifndef QUOLL_UI_CONTEXT_SPEC_HPP
 #define QUOLL_UI_CONTEXT_SPEC_HPP
 
-#include <quoll/async/detail/type_id.hpp>
-#include <quoll/ui/detail/bind_contexts.hpp>
-#include <quoll/ui/detail/context_entry.hpp>
-#include <quoll/ui/detail/held_component.hpp>
-#include <quoll/ui/detail/link_states.hpp>
-#include <quoll/ui/detail/run_effects.hpp>
-#include <quoll/ui/mounted_component.hpp>
-#include <quoll/ui/unmounted_component.hpp>
-
-#include <memory>
-#include <type_traits>
-
 namespace quoll::ui {
 
 namespace detail {
 
-template <class T>
-inline constexpr context_table context_table_of{
-    .type = async::detail::type_id_of<T>(),
-    .make = &make_held<T>,
-    .link = [](void *context, state_link to) { link_states(*static_cast<T *>(context), to); },
-    .effects = effects_of<T>(),
-    .bind = binds_of<T>(),
-    .contexts_version = contexts_version_of<T>(),
-};
+struct context_table;
 
 } // namespace detail
 
@@ -70,7 +50,7 @@ class context_spec;
 template <class T>
 [[nodiscard]] constexpr context_spec provide() noexcept;
 
-/** @brief A context an app makes and holds, which only `provide<T>()` makes, for its options: see shared. */
+/** @brief A context an app makes and holds, which only `provide<T>()`, in <quoll/ui/provide.hpp>, makes: see shared. */
 class context_spec {
 public:
   [[nodiscard]] detail::context_table const &table() const noexcept { return *table_; }
@@ -83,30 +63,6 @@ private:
 
   detail::context_table const *table_;
 };
-
-/**
- * @brief The context of type T, for an app's options: the app makes it as it is made, and holds it as long as it
- * lives, for each component using a `shared<T>`.
- *
- * @code
- * mount<dashboard_page>("#app", {.contexts = {provide<catalog>()}});
- * @endcode
- *
- * T is an aggregate, as a component, with no view, mounted() nor unmounted(): its states, its effects, which start
- * after each view of the app and do what a component's mounted() would, and what its components run on it, through
- * shared<T>::run().
- */
-template <class T>
-[[nodiscard]] constexpr context_spec provide() noexcept {
-  static_assert(std::is_aggregate_v<T>, "quoll::ui: a context is an aggregate, as a component: public members and no "
-                                        "constructor");
-  static_assert(
-      !MountedComponent<T> && !UnmountedComponent<T> && !requires(T &context) { context.view(); },
-      "quoll::ui: a context has no view, mounted() nor unmounted(), which would never run: its effects do "
-      "what a component's mounted() would");
-
-  return context_spec{detail::context_table_of<T>};
-}
 
 } // namespace quoll::ui
 

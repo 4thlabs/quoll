@@ -53,6 +53,7 @@
 #include <quoll/ui/json_event_function.hpp>
 #include <quoll/ui/mounted_component.hpp>
 #include <quoll/ui/node_id.hpp>
+#include <quoll/ui/provide.hpp>
 #include <quoll/ui/renderer.hpp>
 #include <quoll/ui/renderer_ref.hpp>
 #include <quoll/ui/run_error.hpp>

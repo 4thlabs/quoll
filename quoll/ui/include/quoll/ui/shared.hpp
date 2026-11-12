@@ -87,6 +87,9 @@ namespace quoll::ui {
  */
 template <class T>
 class shared {
+  static_assert(!std::is_const_v<T> && !std::is_volatile_v<T>,
+                "quoll::ui::shared: a context is found by its type, as provide<T>() gave it, with no const");
+
 public:
   using element_type = T;
 
@@ -126,9 +129,13 @@ public:
                   "quoll::ui::shared: what run() gives the context, and gives back, outlives the caller: none can be "
                   "a view");
 
-    auto *const context = get();
-    auto function = std::make_shared<function_type const>(
-        [context, member](std::decay_t<A> &&...values) { return std::invoke(member, *context, std::move(values)...); });
+    // Not a read: a component that only runs on its context does not show again as it changes.
+    auto *const context = static_cast<T *>(entry().object());
+
+    // Mutable, so that `member` is called as the constraint says.
+    auto function = std::make_shared<function_type const>([context, member](std::decay_t<A> &&...values) mutable {
+      return std::invoke(member, *context, std::move(values)...);
+    });
 
     return detail::call_in<R>(std::move(function), detail::call_target{.app = app_},
                               std::decay_t<A>(std::forward<A>(args))...);
@@ -153,21 +160,33 @@ public:
     app_ = finder.app;
   }
 
-  /** @brief How many times the states of its context changed: a view not run again compares it. */
-  [[nodiscard]] std::uint64_t version() const noexcept { return entry_ == nullptr ? 0 : entry_->version(); }
+  /**
+   * @brief How many times the states of its context changed, once it was read through it: a view not run again compares
+   * it, so that a component that only runs on its context does not show again as it changes.
+   */
+  [[nodiscard]] std::uint64_t version() const noexcept { return entry_ == nullptr || !read_ ? 0 : entry_->version(); }
 
 private:
-  [[nodiscard]] T *get() const {
+  [[nodiscard]] detail::context_entry &entry() const {
     if (entry_ == nullptr) {
       throw std::logic_error{
           "quoll::ui::shared: used by a component no app made, or held other than as a member of the "
           "component itself, as a state is"};
     }
 
-    return static_cast<T *>(entry_->object());
+    return *entry_;
+  }
+
+  // A read: from then on, the context's changes show the component again.
+  [[nodiscard]] T *get() const {
+    auto *const context = static_cast<T *>(entry().object());
+
+    read_ = true;
+    return context;
   }
 
   detail::context_entry *entry_ = nullptr;
+  mutable bool read_ = false;
   std::shared_ptr<detail::app_link> app_{};
 };
 

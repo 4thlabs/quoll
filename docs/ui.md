@@ -414,14 +414,16 @@ int main() {
 }
 ```
 
-- `provide<T>()` gives the app a context, one of each type, which has no view, `mounted()` nor `unmounted()`: its
+- `provide<T>()`, in `<quoll/ui/provide.hpp>`, gives the app a context, one of each type, which has no view, `mounted()` nor `unmounted()`: its
   effects do what a component's `mounted()` would. The app makes them as it is made, in their order, and each finds
-  those it uses itself, as a `shared<U>` member, among those given before it, so that none uses one that uses it;
+  those it uses itself, as a `shared<U>` member, among those given before it, so that none uses one that uses it. They
+  go the last given first, telling the app of nothing as they go, so that one may still read those it uses as it goes;
 - a `shared<T>` finds the app's context as the app makes its component: an app given none of that type throws
   `std::logic_error` there;
-- `*shared` and `shared->` give the context; a change of its states, or of a context it uses, shows again every
-  component using it, whose view runs again even if its own states did not change. A `shared<T>` is a member of the
-  component itself, as a state is: one inside a member of it is not found;
+- `*shared` and `shared->` give the context; once a component read it so, a change of its states, or of a context it
+  uses, shows that component again, whose view runs again even if its own states did not change. A component that
+  only runs on it does not show again as it changes. A `shared<T>` is a member of the component itself, as a state
+  is, and names the type as given, with no `const`: one inside a member of it is not found;
 - its effects start after each view of the app, as a component's after its own;
 - `shared.run(&T::member, args...)` runs a member function of the context, or of a base of it, with copies of the arguments, as a task of
   the app, and gives what it gave or throws what it threw: a component that goes stops waiting, and the work goes on,

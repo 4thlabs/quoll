@@ -45,6 +45,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <utility>
+#include <vector>
 
 namespace quoll::ui::detail {
 
@@ -96,9 +98,10 @@ public:
   [[nodiscard]] void *object() const noexcept { return object_.get(); }
 
   // How many times its states, and those of the contexts it uses, changed.
-  [[nodiscard]] std::uint64_t version() const noexcept {
-    return version_ + (table_->contexts_version == nullptr ? 0 : table_->contexts_version(object_.get()));
-  }
+  [[nodiscard]] std::uint64_t version() const noexcept;
+
+  // Its app tells nothing more of its changes: it is going.
+  void detach() noexcept { app_ = {}; }
 
 private:
   static void changed_in(void *self);
@@ -108,6 +111,31 @@ private:
   std::uint64_t version_ = 0;
   // Last, as it refers to what is above.
   held_component object_;
+};
+
+// The contexts of an app, destroyed the last made first, as one may use those made before it, in its destructor too,
+// and telling the app of nothing as they go: whatever destroys the list, the app, or its constructor failing past some
+// of them, which may be half destroyed.
+class context_list {
+public:
+  context_list() = default;
+
+  context_list(context_list const &) = delete;
+  context_list(context_list &&) = delete;
+  context_list &operator=(context_list const &) = delete;
+  context_list &operator=(context_list &&) = delete;
+
+  // Each told first that its app hears of nothing more, as one going may change another, then the last made first.
+  ~context_list();
+
+  void push_back(std::unique_ptr<context_entry> entry);
+
+  [[nodiscard]] auto begin() const noexcept { return entries_.begin(); }
+
+  [[nodiscard]] auto end() const noexcept { return entries_.end(); }
+
+private:
+  std::vector<std::unique_ptr<context_entry>> entries_;
 };
 
 } // namespace quoll::ui::detail

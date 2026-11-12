@@ -36,6 +36,10 @@
 
 #include <quoll/ui/detail/context_entry.hpp>
 
+#include <cstdint>
+#include <memory>
+#include <utility>
+
 namespace quoll::ui::detail {
 
 context_entry::context_entry(context_table const &table, state_link app)
@@ -51,5 +55,21 @@ void context_entry::changed_in(void *self) {
   ++changed.version_;
   tell(changed.app_);
 }
+
+std::uint64_t context_entry::version() const noexcept {
+  return version_ + (table_->contexts_version == nullptr ? 0 : table_->contexts_version(object_.get()));
+}
+
+context_list::~context_list() {
+  for (auto const &entry : entries_) {
+    entry->detach();
+  }
+
+  while (!entries_.empty()) {
+    entries_.pop_back();
+  }
+}
+
+void context_list::push_back(std::unique_ptr<context_entry> entry) { entries_.push_back(std::move(entry)); }
 
 } // namespace quoll::ui::detail

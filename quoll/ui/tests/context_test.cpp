@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/sleep_for.hpp>
+#include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/test/memory_renderer.hpp>
 #include <quoll/test/run.hpp>
@@ -45,6 +46,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <stdexcept>
@@ -161,6 +163,68 @@ struct greeting_page {
   shared<greeting> said;
 
   element view() { return p(said->first()); }
+};
+
+// Reads the names as it goes: given after them, it goes before them.
+// An aggregate, as a context is, which declares no constructor: its shared<names> is neither copied nor moved already.
+// NOLINTNEXTLINE(cppcoreguidelines-special-member-functions,hicpp-special-member-functions)
+struct last_word {
+  shared<names> from;
+
+  ~last_word() { lines.push_back("last word " + std::to_string(std::get<0>(*from->all).size())); }
+};
+
+// Say as they go, in that order: the second, using the first, goes before it.
+struct first_gone {
+  state<int> count;
+
+  // NOLINTNEXTLINE(cppcoreguidelines-special-member-functions,hicpp-special-member-functions): an aggregate.
+  ~first_gone() { lines.emplace_back("first gone"); }
+};
+
+// Writes to the first as it goes: its app, going too, hears nothing of it.
+struct second_gone {
+  shared<first_gone> from;
+
+  // NOLINTNEXTLINE(cppcoreguidelines-special-member-functions,hicpp-special-member-functions): an aggregate.
+  ~second_gone() {
+    from->count = 1;
+    lines.emplace_back("second gone");
+  }
+};
+
+struct counting_page {
+  shared<second_gone> said;
+
+  element view() { return p("counting"); }
+};
+
+// A component that only runs on its context, and counts its views.
+int runner_views = 0;
+
+struct name_runner {
+  shared<names> data;
+
+  element view() {
+    ++runner_views;
+
+    auto const rename = [this]() -> task<> {
+      static_cast<void>(co_await data.run(&names::rename, 1, std::string{"mate"}));
+    };
+
+    return button("rename") | on_click(rename);
+  }
+};
+
+struct runner_page {
+  element view() { return div({component<name_runner>(), component<name_list>()}); }
+};
+
+// The names, as its own member: run() from outside, once the app stopped.
+struct holding_page {
+  shared<names> data;
+
+  element view() { return p("holding"); }
 };
 
 // The greeting in a component of a view: no props, so that its view runs again only as what it reads changes.
@@ -361,4 +425,82 @@ TEST_CASE("context: one using another given after it is refused, so that none us
 
 TEST_CASE("context: a component a view written once shows, with no app, cannot use one", "[ui][context]") {
   CHECK_THROWS_AS(to_html(div({component<name_list>()})), std::logic_error);
+}
+
+TEST_CASE("context: one using another goes before it, which it may still read", "[ui][context]") {
+  lines.clear();
+
+  {
+    virtual_time time;
+    memory_renderer const shown;
+    test_app<greeting_page> instance{
+        time.get_executor(), shown, {.contexts = {provide<names>(), provide<greeting>(), provide<last_word>()}}};
+
+    auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
+
+    REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  }
+
+  CHECK(lines == std::vector<std::string>{"loaded", "last word 2"});
+}
+
+TEST_CASE("context: the contexts go the last given first, telling their app of nothing as they go", "[ui][context]") {
+  lines.clear();
+
+  {
+    virtual_time time;
+    memory_renderer const shown;
+
+    // Never started: what the second writes to the first as it goes reaches no app.
+    test_app<counting_page> instance{
+        time.get_executor(), shown, {.contexts = {provide<first_gone>(), provide<second_gone>()}}};
+  }
+
+  CHECK(lines == std::vector<std::string>{"second gone", "first gone"});
+}
+
+TEST_CASE("context: a component that only runs on its context does not show again as the context changes",
+          "[ui][context]") {
+  lines.clear();
+  runner_views = 0;
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<runner_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  int before = 0;
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+    before = runner_views;
+
+    instance.dispatch(shown.find("button"), "click");
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(before == 1);
+  CHECK(runner_views == 1);
+  CHECK(shown.html().contains("<p>tea;mate;</p>"));
+}
+
+TEST_CASE("context: run() once its app stopped runs nothing, and ends its caller on a stop", "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<holding_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+
+  auto const act = [&]() -> task<int> {
+    instance.start();
+    co_await instance.stop();
+
+    auto const given = co_await quoll::async::stopped_as_optional(
+        instance.component().data.run(&names::rename, 0, std::string{"late"}));
+
+    co_return given ? 1 : 0;
+  };
+
+  REQUIRE(quoll::test::run(time, act()) == 0);
+  CHECK(std::ranges::find(lines, "rename late") == lines.end());
+  CHECK(std::get<0>(*std::as_const(instance).context<names>().all).empty());
 }

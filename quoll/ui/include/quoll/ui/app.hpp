@@ -43,7 +43,6 @@
 #include <quoll/async/task.hpp>
 #include <quoll/ui/app_options.hpp>
 #include <quoll/ui/component.hpp>
-#include <quoll/ui/context_spec.hpp>
 #include <quoll/ui/detail/app_core.hpp>
 #include <quoll/ui/detail/bind_contexts.hpp>
 #include <quoll/ui/detail/component_table.hpp>
@@ -159,12 +158,14 @@ public:
    * @throws std::logic_error when it was given none.
    */
   template <class T>
+    requires(!std::is_const_v<T>)
   [[nodiscard]] T &context() {
     return *static_cast<T *>(context_of(async::detail::type_id_of<T>()));
   }
 
   /** @brief See context(). */
   template <class T>
+    requires(!std::is_const_v<T>)
   [[nodiscard]] T const &context() const {
     return *static_cast<T const *>(context_of(async::detail::type_id_of<T>()));
   }

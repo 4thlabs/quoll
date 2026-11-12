@@ -139,7 +139,7 @@ private:
   void *component_;
   app_options options_;
   // Before what may refer to them, the tasks and the components: destroyed after them.
-  std::vector<std::unique_ptr<context_entry>> contexts_;
+  context_list contexts_;
   std::stop_source stop_;
   async::detail::task_group tasks_;
   std::vector<element> shown_;
