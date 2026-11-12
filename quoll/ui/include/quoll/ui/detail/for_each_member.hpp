@@ -56,6 +56,20 @@ void for_each_member(C &component, F &&visit) {
   }(std::make_index_sequence<glz::tuple_size_v<decltype(members)>>{});
 }
 
+// Calls `visit(index, member)` with each member of the aggregate `object` and its place, in order.
+template <class T, class F>
+void for_each_member_at(T &object, F &&visit) {
+  auto members = glz::to_tie(object);
+
+  [&]<std::size_t... Index>(std::index_sequence<Index...>) {
+    (visit(Index, glz::get<Index>(members)), ...);
+  }(std::make_index_sequence<glz::tuple_size_v<decltype(members)>>{});
+}
+
+// How many members the aggregate `T` has.
+template <class T>
+inline constexpr std::size_t member_count = glz::tuple_size_v<decltype(glz::to_tie(std::declval<T &>()))>;
+
 // Whether a member of `C` models what `Has` tells, `Has<M>::value`, for a table to leave out what none needs.
 template <class C, template <class> class Has>
 inline constexpr bool any_member = [] {

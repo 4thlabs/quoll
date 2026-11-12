@@ -52,6 +52,7 @@
 #include <quoll/ui/data/action.hpp>
 #include <quoll/ui/data/async_state.hpp>
 #include <quoll/ui/data/effect.hpp>
+#include <quoll/ui/data/form_state.hpp>
 #include <quoll/ui/data/run_error.hpp>
 #include <quoll/ui/data/state.hpp>
 #include <quoll/ui/routing/history.hpp>

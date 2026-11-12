@@ -46,8 +46,6 @@
 #include <quoll/async/task.hpp>
 #include <quoll/ui.hpp>
 
-#include <algorithm>
-#include <cstdint>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -61,18 +59,25 @@ struct catalog {
   async_state<std::vector<products::product>> items;
   effect load{std::tie(), products_client::list, items};
 
-  // Saves a product, which the list then shows. Two details of one product may still send their saves together, the
-  // last answer kept; what a context keeps per item, as a save of a product once at a time, is to settle
-  // (docs/PLAN.md, step 6, Contexts).
-  quoll::async::task<products::product> save(std::int64_t id, products::product_update changes) {
-    auto saved = co_await products_client::update(id, std::move(changes));
+  // Sends the product edited, and shows in the list what the server kept. Two details of one product may still send
+  // their saves together, the last answer kept; what a context keeps per item, as a save of a product once at a time,
+  // is to settle (docs/PLAN.md, step 6, Contexts).
+  quoll::async::task<products::product> save(products::product edited) {
+    auto saved = co_await products_client::update(
+        edited.id, {.name = std::move(edited.name), .price = edited.price, .stock = edited.stock});
 
-    auto const replace = [&saved](auto &held) {
-      std::ranges::replace_if(held.value, [&saved](auto const &item) { return item.id == saved.id; }, saved);
-    };
-
-    items.update(replace);
+    replace(saved);
     co_return saved;
+  }
+
+  void replace(products::product const &saved) {
+    items.update([&saved](auto &held) {
+      for (auto &item : held.value) {
+        if (item.id == saved.id) {
+          item = saved;
+        }
+      }
+    });
   }
 };
 

@@ -248,7 +248,8 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
   value it is given (now `value()`), labelled and number fields, states that start from the props, and above all requests that
   overlap: three rounds of review found stale answers and saves out of order, handled by hand. The screen needed no
   handle on the widget, and no WebSocket. What takes the place of that bookkeeping was decided on 2026-11-11 (see
-  [Decided](#decided)): `ui::effect` and `ui::action`, then a form's draft from the props.
+  [Decided](#decided)): `ui::effect` and `ui::action`, then `ui::form_state`, a form of a value the props give (done,
+  2026-11-12).
 - **Contexts**: done, data the components of an app share, as React's contexts, agreed with the maintainer on
   2026-11-11 and 2026-11-12 (see [Decided](#decided)): `provide<T>()` in the app's options, `shared<T>` in a component,
   `run()` for what goes on as the component goes, and `provided<T>`, a context a component provides to those of its
@@ -422,8 +423,7 @@ changes only what the harness shows. Candidates:
   not invented again; then an effect and an action holding their status and result, two ways for a view to read data,
   and named queries tied to the REST DSL, which a component need not use, were set aside, as was `keyed_action`: a
   component per item has its own action, which runs a callback of the component owning what the save changes, so
-  that the save goes on as the item goes. The debounce is to refine. A form's draft from
-  the props comes in a pull request of its own.
+  that the save goes on as the item goes. The debounce is to refine.
 - **Less to write for a load and a save** (2026-11-12), as the maintainer found the targets and the actions of the
   dashboard heavy to write. `ui::async_state<T>` is a state of `value`, `loading` and `error`, read by name rather than
   as a tuple, `async_state<>` with no value; tuples stay as targets for several values. An effect's target is loading
@@ -440,6 +440,14 @@ changes only what the harness shows. Candidates:
   (`saving`, which said one of its three fields), the state of a save being the action's own. It changes #167's "no
   status on the members" only in form: the action is read as a state, so the view still reads states only. An effect
   keeps its target, which is the data it loads.
+- **A form edits a value its props give** (2026-11-12), as React Hook Form's `defaultValues` with `keepDirtyValues`:
+  `form_state<&props::item>` takes the value before each view of its component, `bind(form, &item::price)` keeps an
+  input and a field the same, reading the text by the field's type, `valid()` says whether every field typed in reads,
+  and `action::with(form)` runs an action with the value as it is at the click, refused while it is not valid. When the
+  props give another value, as once a save comes back, a field typed in that holds it is typed in no more: no reset to
+  write, nor a callback after the save. The maintainer found a draft of optional strings, compared by hand with what
+  was saved, hard to read, and named it `form_state`, as `form` is the HTML tag. Another value to edit from the start
+  is another component, with a key, as React resets a state.
 - **Every failure of a run reaches the app's `on_error`** (2026-11-12), shown or not, as React Query's global
   `onError`: an effect's, `with()`'s, a handler's alike; the target or the action says what the view shows. The
   maintainer found it a pity that `on_error` heard of a failure or not by what the target could hold. `run()`'s caller
