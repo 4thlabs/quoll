@@ -6,10 +6,12 @@ quoll_declare_module(
     src/effect.cpp
     src/element.cpp
     src/expand.cpp
+    src/history.cpp
     src/hot.cpp
     src/instance.cpp
     src/ready.cpp
     src/reconciler.cpp
+    src/router.cpp
     src/renderer_ref.cpp
     src/run_error.cpp
     src/run_slot.cpp
@@ -17,6 +19,7 @@ quoll_declare_module(
     src/view_context.cpp
   DEPS
     quoll::async
+    quoll::http
     $<BUILD_INTERFACE:${quoll_glaze_dependency}>
     $<INSTALL_INTERFACE:glaze::glaze>
 )
@@ -35,6 +38,7 @@ quoll_declare_tests(
     tests/callback_test.cpp
     tests/context_test.cpp
     tests/nested_test.cpp
+    tests/router_test.cpp
     tests/skip_test.cpp
     tests/effect_test.cpp
     tests/element_test.cpp
@@ -64,6 +68,14 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/context_with_mounted.cpp
     tests/compile_fail/context_with_view.cpp
     tests/compile_fail/event_function_signature.cpp
+    tests/compile_fail/redirect_trailing_slash.cpp
+    tests/compile_fail/redirect_unknown_param.cpp
+    tests/compile_fail/route_child_absolute.cpp
+    tests/compile_fail/route_param_not_in_props.cpp
+    tests/compile_fail/route_props_not_routable.cpp
+    tests/compile_fail/route_trailing_slash.cpp
+    tests/compile_fail/route_typed_param.cpp
+    tests/compile_fail/router_provided.cpp
     tests/compile_fail/shared_const_context.cpp
     tests/compile_fail/effect_optional_view_dependency.cpp
     tests/compile_fail/effect_pair_span_value.cpp

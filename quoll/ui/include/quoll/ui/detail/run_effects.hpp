@@ -37,6 +37,8 @@
 #ifndef QUOLL_UI_DETAIL_RUN_EFFECTS_HPP
 #define QUOLL_UI_DETAIL_RUN_EFFECTS_HPP
 
+#include <quoll/async/detail/type_id.hpp>
+#include <quoll/ui/component_with_props.hpp>
 #include <quoll/ui/detail/effect_member.hpp>
 #include <quoll/ui/detail/effect_starter.hpp>
 #include <quoll/ui/detail/for_each_member.hpp>
@@ -51,11 +53,16 @@ namespace quoll::ui::detail {
 template <class C>
 void run_effects(C &component, effect_starter const &start) {
   std::exception_ptr first;
+  auto given = start;
+
+  if constexpr (ComponentWithProps<C>) {
+    given.props_type = async::detail::type_id_of<typename C::props>();
+  }
 
   for_each_member(component, [&](auto &member) {
     if constexpr (EffectMember<std::remove_cvref_t<decltype(member)>>) {
       try {
-        member.after_view(start);
+        member.after_view(given);
       } catch (...) {
         if (!first) {
           first = std::current_exception();

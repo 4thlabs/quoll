@@ -37,6 +37,7 @@
 #ifndef QUOLL_UI_DETAIL_EFFECT_STARTER_HPP
 #define QUOLL_UI_DETAIL_EFFECT_STARTER_HPP
 
+#include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/task.hpp>
 
 #include <utility>
@@ -47,6 +48,10 @@ namespace quoll::ui::detail {
 struct effect_starter {
   void *owner = nullptr;
   void (*start)(void *owner, async::task<> work) = nullptr;
+  // The props of the view that ran, none for a component without them, and their type, for an effect on a field of
+  // them.
+  void const *props = nullptr;
+  async::detail::type_id props_type = nullptr;
 
   void operator()(async::task<> work) const { start(owner, std::move(work)); }
 };

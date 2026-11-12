@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/task.hpp>
+#include <quoll/emscripten/browser_history.hpp>
 #include <quoll/emscripten/dom_renderer.hpp>
 #include <quoll/emscripten/mount.hpp>
 #include <quoll/ui.hpp>
@@ -54,6 +55,11 @@ extern "C" {
 void quoll_test_dom_reset();
 void quoll_test_dom_html(char *out, std::size_t size);
 void quoll_test_dom_click(char const *text);
+int quoll_test_dom_click_link(char const *text, int held);
+void quoll_test_history_install(char const *start);
+void quoll_test_history_location(char *out, std::size_t size);
+void quoll_test_history_back();
+int quoll_test_history_listeners();
 void quoll_test_dom_type(char const *text);
 void quoll_test_widgets_install();
 void quoll_test_widgets_log(char *out, std::size_t size);
@@ -550,4 +556,69 @@ TEST_CASE("dom_renderer: once closed, a mount still running calls its owner no m
   settle();
 
   REQUIRE(failures.empty());
+}
+
+namespace dom_routes {
+
+using namespace quoll::ui;
+
+struct first_page {
+  element view();
+};
+
+struct second_page {
+  element view() { return p("second"); }
+};
+
+inline constexpr auto both = quoll::ui::routes(route<"/", first_page>(), route<"/second", second_page>());
+
+element first_page::view() {
+  return div({
+      p("first"),
+      link_to<second_page>("go second"),
+      link_to<second_page>("open second") | attribute("target", "_blank"),
+  });
+}
+
+struct routed_shell {
+  element view() { return main_({outlet()}); }
+};
+
+[[nodiscard]] std::string location_now() {
+  std::array<char, 256> out{};
+
+  quoll_test_history_location(out.data(), out.size());
+  return out.data();
+}
+
+} // namespace dom_routes
+
+TEST_CASE("browser_history: a link goes through the browser's history, and its back button comes back",
+          "[emscripten][ui]") {
+  using namespace dom_routes;
+
+  quoll_test_dom_reset();
+  quoll_test_history_install("/");
+
+  quoll::emscripten::mount<routed_shell>(
+      "#app", {.contexts = {quoll::ui::routing<both>(quoll::emscripten::browser_history())}});
+  settle();
+  REQUIRE(page().contains("<p>first</p>"));
+  CHECK(quoll_test_history_listeners() == 1);
+
+  // With a key held, or to another window, the browser opens it elsewhere: the page stays.
+  CHECK(quoll_test_dom_click_link("go second", 1) == 0);
+  CHECK(quoll_test_dom_click_link("open second", 0) == 0);
+  settle();
+  CHECK(location_now() == "/");
+
+  CHECK(quoll_test_dom_click_link("go second", 0) == 1);
+  settle();
+  CHECK(location_now() == "/second");
+  CHECK(page().contains("<p>second</p>"));
+
+  quoll_test_history_back();
+  settle();
+  CHECK(location_now() == "/");
+  CHECK(page().contains("<p>first</p>"));
 }

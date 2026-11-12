@@ -72,6 +72,19 @@ concept ContextMember = requires(T &member, T const &held, context_finder const 
   { held.context_version() } noexcept -> std::same_as<std::uint64_t>;
 };
 
+// What provides a context to the components of its component's view, as a provided<T> does: the context, and its
+// own uses of others, which it finds as its component's would.
+template <class T>
+concept ProvidedMember = requires(T &member, context_finder const &finder) {
+  typename T::provided_type;
+  { member.entry() } noexcept -> std::same_as<context_entry &>;
+  member.bind(finder);
+};
+
+// What finds a context, or provides one that does: what a table walks.
+template <class T>
+struct is_context_user : std::bool_constant<ContextMember<T> || ProvidedMember<T>> {};
+
 // ContextMember, as a trait for any_member().
 template <class T>
 struct is_context_member : std::bool_constant<ContextMember<T>> {};

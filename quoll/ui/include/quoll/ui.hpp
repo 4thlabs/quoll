@@ -49,13 +49,17 @@
 #include <quoll/ui/effect.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/event_function.hpp>
+#include <quoll/ui/history.hpp>
 #include <quoll/ui/json_event.hpp>
 #include <quoll/ui/json_event_function.hpp>
 #include <quoll/ui/mounted_component.hpp>
 #include <quoll/ui/node_id.hpp>
 #include <quoll/ui/provide.hpp>
+#include <quoll/ui/provided.hpp>
 #include <quoll/ui/renderer.hpp>
 #include <quoll/ui/renderer_ref.hpp>
+#include <quoll/ui/route.hpp>
+#include <quoll/ui/router.hpp>
 #include <quoll/ui/run_error.hpp>
 #include <quoll/ui/shared.hpp>
 #include <quoll/ui/state.hpp>

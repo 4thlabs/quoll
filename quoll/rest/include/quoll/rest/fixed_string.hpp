@@ -37,34 +37,12 @@
 #ifndef QUOLL_REST_FIXED_STRING_HPP
 #define QUOLL_REST_FIXED_STRING_HPP
 
-#include <quoll/async/lifetimebound.hpp>
-
-#include <algorithm>
-#include <cstddef>
-#include <string_view>
+#include <quoll/http/fixed_string.hpp>
 
 namespace quoll::rest {
 
-/**
- * @brief A string usable as a template argument: the names and paths of the DSL (`endpoint<"users.get", ...>`).
- *
- * Built from a string literal, whose size `N` counts the terminating null. A literal converts to it implicitly, so a
- * contract never names this type.
- */
-template <std::size_t N>
-struct fixed_string {
-  constexpr fixed_string() noexcept = default;
-
-  // Not explicit: a literal must convert to it in a template argument.
-  consteval fixed_string(char const (&text)[N]) noexcept { std::copy_n(text, N, value); }
-
-  [[nodiscard]] constexpr std::string_view view() const noexcept QUOLL_LIFETIMEBOUND { return {value, N - 1}; }
-
-  [[nodiscard]] constexpr bool operator==(fixed_string const &) const noexcept = default;
-
-  // Public: a template argument of class type has only public members.
-  char value[N]{};
-};
+/** @brief See http::fixed_string: the names and paths of the DSL, which a contract never names. */
+using http::fixed_string;
 
 } // namespace quoll::rest
 

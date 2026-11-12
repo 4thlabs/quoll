@@ -52,15 +52,32 @@ namespace quoll::ui::detail {
 
 class context_entry;
 
-// Where a component finds the contexts of its app, by type: none for a view written once (to_html).
+// A context found, and what holds what provides it, a component above, for as long as the one using it lives: none for
+// the app's, which outlives its components.
+struct found_context {
+  context_entry *entry = nullptr;
+  std::shared_ptr<void const> keeper{};
+};
+
+// Where a component finds its contexts, by type: those the components above it provide, nearest first, then those the
+// app's own component provides, then the app's; none for a view written once (to_html).
 struct context_finder {
   std::shared_ptr<app_link> app{};
   void const *owner = nullptr;
   context_entry *(*find)(void const *owner, async::detail::type_id type) noexcept = nullptr;
+  // The component placing the one it finds for, from which those above are walked: none for the app's own.
+  std::shared_ptr<void const> from{};
+  found_context (*find_above)(std::shared_ptr<void const> const &from, async::detail::type_id type) noexcept = nullptr;
 
   // The context of that type, or none.
-  [[nodiscard]] context_entry *operator()(async::detail::type_id type) const noexcept {
-    return find == nullptr ? nullptr : find(owner, type);
+  [[nodiscard]] found_context operator()(async::detail::type_id type) const noexcept {
+    if (from && find_above != nullptr) {
+      if (auto found = find_above(from, type); found.entry != nullptr) {
+        return found;
+      }
+    }
+
+    return {.entry = find == nullptr ? nullptr : find(owner, type), .keeper = nullptr};
   }
 };
 
@@ -85,8 +102,10 @@ struct context_table {
 // Thread safety: none, as its app.
 class context_entry {
 public:
-  // Made, its states telling `app` of their changes, which the app hears only while it is made and not going.
+  // Made, its states telling `app` of their changes, which the app hears only while it is made and not going: the
+  // object as `table` makes it, or `object`.
   context_entry(context_table const &table, state_link app);
+  context_entry(context_table const &table, state_link app, held_component object);
 
   context_entry(context_entry const &) = delete;
   context_entry(context_entry &&) = delete;
@@ -96,6 +115,9 @@ public:
   ~context_entry();
 
   [[nodiscard]] context_table const &table() const noexcept { return *table_; }
+
+  // Its changes are told to `app` from now on: a context a component provides tells its component.
+  void link(state_link app) noexcept { app_ = app; }
 
   [[nodiscard]] void *object() const noexcept { return object_.get(); }
 

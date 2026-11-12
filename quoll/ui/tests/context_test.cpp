@@ -43,6 +43,7 @@
 #include <quoll/test/ui_session.hpp>
 #include <quoll/test/virtual_time.hpp>
 #include <quoll/ui.hpp>
+#include <quoll/ui/provided.hpp>
 #include <quoll/ui/shared.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -353,6 +354,99 @@ struct greeting_line {
 
 struct greeting_child_page {
   element view() { return div({component<greeting_line>()}); }
+};
+
+// A draft of names, which a panel provides to the components of its view.
+struct draft {
+  state<std::vector<std::string>> lines;
+  state<std::tuple<std::vector<std::string>, bool, std::exception_ptr>> loaded;
+  effect load{std::tie(), load_names, loaded};
+};
+
+// Shows the draft it finds: the nearest provided above, or the app's.
+struct draft_view {
+  shared<draft> shown;
+
+  element view() {
+    std::string text;
+
+    for (auto const &line : *shown->lines) {
+      text += line + ";";
+    }
+
+    for (auto const &name : std::get<0>(*shown->loaded)) {
+      text += "loaded " + name + ";";
+    }
+
+    return p("draft " + text);
+  }
+};
+
+// Adds to the draft it finds, on a click.
+struct draft_adder {
+  shared<draft> added;
+
+  element view() {
+    auto const add = [this] { added->lines.update([](auto &all) { all.emplace_back("typed"); }); };
+
+    return button("add") | on_click(add);
+  }
+};
+
+struct draft_panel {
+  provided<draft> mine;
+
+  element view() { return div({component<draft_adder>(), component<draft_view>()}); }
+};
+
+// A panel providing its draft, and beside it a view of the app's.
+struct drafts_page {
+  state<bool> shows{true};
+
+  element view() {
+    auto const panel = [] { return component<draft_panel>(); };
+
+    return div({when(*shows, panel), component<draft_view>()});
+  }
+};
+
+// The app's own component provides a draft to the components of its view.
+struct providing_root {
+  provided<draft> mine;
+
+  element view() { return div({component<draft_adder>(), component<draft_view>()}); }
+};
+
+// A context of the app using a draft, as the app's own component provides one too.
+struct draft_user {
+  shared<draft> used;
+};
+
+// Greets through what it provides, which uses the app's names: a change of them shows it again.
+struct local_greeting {
+  shared<names> from;
+};
+
+struct greeting_holder {
+  provided<local_greeting> mine;
+
+  element view() {
+    auto const &all = std::get<0>(*mine->from->all);
+
+    return p(all.empty() ? "holder nobody" : "holder " + all.front());
+  }
+};
+
+struct greeting_holder_page {
+  element view() { return div({component<greeting_holder>()}); }
+};
+
+// The app's own component uses the app's draft, and provides one of its own to the components of its view.
+struct using_and_providing_root {
+  shared<draft> app_draft;
+  provided<draft> mine;
+
+  element view() { return div({component<draft_view>()}); }
 };
 
 } // namespace
@@ -782,4 +876,119 @@ TEST_CASE("context: the app's own component, or a context, missing one is never 
   CHECK_THROWS_AS((test_app<counting_page>{time.get_executor(), shown, {.contexts = {provide<broken_user>()}}}),
                   std::logic_error);
   CHECK(lines.empty());
+}
+
+TEST_CASE("context: one a component provides is found by those of its view before the app's, and shows their changes",
+          "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<drafts_page> instance{time.get_executor(), shown, {.contexts = {provide<draft>()}}};
+  std::string added;
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+
+    // The panel's adder adds to the panel's draft: its view shows it, the view of the app's does not.
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+    added = shown.html();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+
+  // Both loaded, the panel's by its own effect, and the app's.
+  CHECK(added.contains("<p>draft typed;loaded tea;loaded coffee;</p>"));
+  CHECK(added.contains("<p>draft loaded tea;loaded coffee;</p>"));
+}
+
+TEST_CASE("context: one a component provides goes with it", "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<drafts_page> instance{time.get_executor(), shown, {.contexts = {provide<draft>()}}};
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+
+    // The panel goes, and comes back: its draft is a new one.
+    instance.component().shows = false;
+    co_await settle();
+    instance.component().shows = true;
+    co_await quoll::async::sleep_for(5ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK_FALSE(shown.html().contains("typed"));
+}
+
+TEST_CASE("context: one the app's own component provides is found by the components of its view", "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  // No context of the app: what the components find is the app's own component's.
+  test_app<providing_root> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html().contains("<p>draft typed;loaded tea;loaded coffee;</p>"));
+}
+
+TEST_CASE("context: the app's contexts are made before its own component, which they do not find", "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  // The app's own component provides a draft too, made after the app's contexts: the user finds the app's.
+  test_app<providing_root> instance{
+      time.get_executor(), shown, {.contexts = {provide<draft>(), provide<draft_user>()}}};
+
+  auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(&*instance.context<draft_user>().used == &instance.context<draft>());
+}
+
+TEST_CASE("context: a component shows again as a context what it provides uses changes", "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<greeting_holder_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  std::string before;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    before = shown.html();
+    co_await quoll::async::sleep_for(5ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(before.contains("<p>holder nobody</p>"));
+  CHECK(shown.html().contains("<p>holder tea</p>"));
+}
+
+TEST_CASE("context: the app's own component finds the app's contexts, what it provides being for those of its view",
+          "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<using_and_providing_root> instance{time.get_executor(), shown, {.contexts = {provide<draft>()}}};
+
+  auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(&*instance.component().app_draft == &instance.context<draft>());
+  CHECK(&*instance.component().app_draft != &*instance.component().mine);
 }

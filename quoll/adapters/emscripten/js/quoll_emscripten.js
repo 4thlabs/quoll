@@ -152,6 +152,20 @@ addToLibrary({
         event.preventDefault();
       }
 
+      // A link of the app's routing goes there without leaving the page, but for a click that opens elsewhere, with a
+      // key held or another button, or a link to another window or a download, which the browser keeps.
+      if (eventName === 'click' && event.currentTarget?.hasAttribute?.('data-quoll-link')) {
+        const link = event.currentTarget;
+        const elsewhere = (link.getAttribute?.('target') ?? '_self') !== '_self' || link.hasAttribute('download');
+
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey ||
+            event.altKey || elsewhere) {
+          return;
+        }
+
+        event.preventDefault();
+      }
+
       callUserCallback(() => {
         const namePointer = stringToNewUTF8(eventName);
         const valuePointer = stringToNewUTF8(String(event.target?.value ?? ''));
@@ -640,5 +654,49 @@ addToLibrary({
   quoll_emscripten_fetch_release__deps: ['$quollFetches'],
   quoll_emscripten_fetch_release: (id) => {
     delete quollFetches.entries[id];
+  },
+
+  // The browser's history, for an app's routing: none in Node, whose location stays "/".
+  $quollHistory: { listeners: new Map() },
+
+  quoll_emscripten_history_location__deps: ['$stringToNewUTF8'],
+  quoll_emscripten_history_location: () =>
+    stringToNewUTF8(globalThis.location ? globalThis.location.pathname + globalThis.location.search : '/'),
+
+  quoll_emscripten_history_push__deps: ['$UTF8ToString'],
+  quoll_emscripten_history_push: (href, size) => globalThis.history?.pushState(null, '', UTF8ToString(href, size)),
+
+  quoll_emscripten_history_replace__deps: ['$UTF8ToString'],
+  quoll_emscripten_history_replace: (href, size) =>
+    globalThis.history?.replaceState(null, '', UTF8ToString(href, size)),
+
+  quoll_emscripten_history_back: () => globalThis.history?.back(),
+
+  quoll_emscripten_history_listen__deps: ['$quollHistory', '$stringToNewUTF8', '$callUserCallback', 'free'],
+  quoll_emscripten_history_listen: (changed, listener) => {
+    const handler = () => {
+      callUserCallback(() => {
+        const href = stringToNewUTF8(globalThis.location.pathname + globalThis.location.search);
+
+        try {
+          {{{ makeDynCall('vpp', 'changed') }}}(listener, href);
+        } finally {
+          _free(href);
+        }
+      });
+    };
+
+    globalThis.addEventListener?.('popstate', handler);
+    quollHistory.listeners.set(listener, handler);
+  },
+
+  quoll_emscripten_history_unlisten__deps: ['$quollHistory'],
+  quoll_emscripten_history_unlisten: (listener) => {
+    const handler = quollHistory.listeners.get(listener);
+
+    if (handler) {
+      globalThis.removeEventListener?.('popstate', handler);
+      quollHistory.listeners.delete(listener);
+    }
   },
 });

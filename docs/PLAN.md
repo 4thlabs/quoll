@@ -251,9 +251,12 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
   [Decided](#decided)): `ui::effect` and `ui::action`, then a form's draft from the props.
 - **Contexts**: done, data the components of an app share, as React's contexts, agreed with the maintainer on
   2026-11-11 and 2026-11-12 (see [Decided](#decided)): `provide<T>()` in the app's options, `shared<T>` in a component,
-  `run()` for what goes on as the component goes. Left: a context a component provides to those of its view, as a
-  page under a router will, found before the app's, which `shared<T>` will find unchanged; and what a context keeps
-  per item, as a save of a product once at a time across its details, and the failure of a save whose detail went.
+  `run()` for what goes on as the component goes, and `provided<T>`, a context a component provides to those of its
+  view, found before the app's. Left: what a context keeps per item, as a save of a product once at a time across
+  its details, and the failure of a save whose detail went.
+- **Routing**: done (2026-11-12, see [Decided](#decided)): `routes(...)` of `route<Path, Page>`, layouts with
+  `outlet()`, `redirect<From, To>`, `not_found<Page>`, `routing<routes>(history)` as a context, `link_to`, the
+  browser's history in `quoll::emscripten`. Next: the dashboard as pages, and pages written by a server.
 - WebSocket in the browser and in the REST DSL, left from step 5, if that screen needs them; if it does not, the maintainer
   says where they go once the step ends, and step 5 is done.
 
@@ -419,6 +422,16 @@ changes only what the harness shows. Candidates:
   component per item has its own action, which runs a callback of the component owning what the save changes, so
   that the save goes on as the item goes. The debounce is to refine. A form's draft from
   the props comes in a pull request of its own.
+- **Routing: routes checked at compile time, their parameters a page's props** (2026-11-12), as the maintainer asked
+  for several pages. After React Router, TanStack Router and Dioxus: a route's path is a template, as the REST DSL's,
+  whose parameters are fields of its page's props, which give their types, as Dioxus's routes are an enum of typed
+  values and TanStack's links are typed; the other fields come from the query. A link to a page takes its props, and
+  one to an address a string. Layouts show the page under them in an `outlet()`, as React Router's. The router is a
+  context, `shared<router>`, its location a state; its history the browser's or one in memory. An effect may depend on
+  a field of its component's props, as `useEffect(…, [props.id])`, so that a page loads what its parameter names;
+  and a component provides a context to those of its view with `provided<T>`, as React's `Provider`, for what only
+  a page needs. A route types no parameter itself, `{id}` rather than `{id:int64}`: the props do, and the two could
+  differ. `link` became `link_to`, as POSIX's `link()` takes two strings and wins over it.
 - **Contexts: data the components of an app share, given to the app, found by type** (2026-11-11 and 2026-11-12), as
   a page cannot do the save of each of its components and pass callbacks down. A context is an aggregate with no view,
   its states, its effects, and member functions; the app makes the contexts its options give, `provide<T>()`, as it is

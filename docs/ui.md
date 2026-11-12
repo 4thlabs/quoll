@@ -291,7 +291,8 @@ state<std::tuple<products::monthly_sales, bool>> sales;        // and whether it
 **An effect runs as its states change**, as React's `useEffect(…, [states])`:
 
 - it depends on one state, on several as `std::tie(filter, page)`, or on none as `std::tie()`, which runs it once, as
-  its component first shows;
+  its component first shows, or on a field of its component's props, as `effect load{&props::id, get, product};`,
+  which React's `useEffect(…, [props.id])` is: a page under a route loads what its parameter names so;
 - after a view of its component in which one changed, compared with `==`, once the view is shown, the function runs as
   a task of the component with a copy of each value;
 - the run before is stopped, as React's cleanup: what it gives after the view of the change writes nothing, even an
@@ -435,6 +436,93 @@ int main() {
 - `app.context<T>()` gives it from outside, as a test does;
 - a component a view written once shows, with `to_html`, has no app: using its `shared<T>` throws
   `std::logic_error`.
+
+A component provides a context to the components of its view, and theirs, as React's `Provider`, through a
+`provided<T>` member: a `shared<T>` among them finds it before the app's, the nearest first, and it goes with the
+component, as a page under a route keeps what only it needs.
+
+```cpp
+struct checkout_page {
+  // The cart being filled, for the steps of the page: gone as the page goes.
+  provided<cart_draft> cart;
+
+  element view() {
+    return div({component<cart_lines>(), component<payment_step>()});
+  }
+};
+
+struct cart_lines {
+  shared<cart_draft> cart;
+  // ...
+};
+```
+
+- its states show again the components reading it, and the component providing it; its effects start after each
+  view of that component, as its tasks; it uses the contexts its component finds;
+- a component using it keeps the component providing it while it lives, and `run()` as long as its work.
+
+## Routing
+
+The pages of an app, and the addresses that show them, are routes, checked at compile time: a route's parameters are
+fields of its page's props, which give their types, and a link to a page takes those props.
+
+```cpp
+struct product_page {
+  struct props {
+    std::int64_t id = 0;
+  };
+
+  // Its sales, loaded again as the address gives another id.
+  state<std::tuple<products::monthly_sales, bool, std::exception_ptr>> sales;
+  effect load{&props::id, products_client::sales, sales};
+
+  element view(props const &given);
+};
+
+inline constexpr auto routes = ui::routes(
+    ui::route<"/", home_page>(),
+    ui::route<"/products", products_layout>(
+        ui::route<"", product_list>(),          // /products, its `q` from ?q=tea
+        ui::route<"{id}", product_page>()),     // /products/7
+    ui::redirect<"/items/{id}", "/products/{id}">(),
+    ui::not_found<missing_page>());
+
+// The app's own component, or a layout: the page of the address in its outlet().
+struct app_shell {
+  element view() {
+    return div({nav({link_to<home_page>("Home"), link_to("/products", "Products")}), outlet()});
+  }
+};
+
+int main() {
+  quoll::emscripten::mount<app_shell>(
+      "#app", {.contexts = {ui::routing<routes>(quoll::emscripten::browser_history()), provide<catalog>()}});
+}
+```
+
+- `routes(...)` is the table, in order: the first route that matches an address wins. A route of the top level
+  starts with '/', one under another adds its own segments to its parent's, none for its index route;
+- a route's path is a template, as the REST DSL's: `{name}` is a field of its page's props, of any type a number,
+  a bool, a string or an optional of one gives, written `{id}` and not `{id:int64}`; `{name:path}` takes the rest of
+  the path. An address whose parameter is no such value, as `/products/seven`, matches no route;
+- the other fields of the props come from the query, `?q=tea`, percent-decoded, or stay as made when it lacks them;
+- a route with routes under it is a layout: its page shows the page of the address in its `outlet()`, as the app's
+  own component does in its own. A page shown for another value of its parameter is the same component, given other
+  props, as an effect on that prop sees;
+- `redirect<From, To>()` goes on to `To`, the parameters of `From` given by name and its query kept, replacing the
+  address in the history; `not_found<Page>()` shows when no route matches;
+- an address has one form, as a browser keeps it: rooted, its `.` and `..` segments resolved, no last '/' but for
+  `/`; what goes onto the history and what is matched are both of it, and a route's path, a redirect's too, is
+  written in it, which a path ending with '/' is not;
+- `routing<routes>(history)` is a context of the app, `shared<router>` in a component: `go(href)` and
+  `go<Page>(props)` push an address onto the history, `replace(href)` takes the place of the one now, `back()` goes
+  back, `href<Page>(props)` writes one, and `where` is the location, a state;
+- `link_to<Page>(props, text)` and `link_to(href, text)` are links, `<a href>` that a click follows without leaving
+  the page; a click with a key held, or another button, opens elsewhere, as the browser does;
+- the history is the browser's, `quoll::emscripten::browser_history()`, whose back button the router follows, or one
+  in memory, `routing<routes>("/products/7")`, for a program with no browser and for tests;
+- a page's props are not in an unnamed namespace: the names of their fields, which a route reads, cannot be reflected
+  in a type without linkage under Clang.
 
 ## JavaScript widgets
 

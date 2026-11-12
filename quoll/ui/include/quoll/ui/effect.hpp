@@ -38,6 +38,7 @@
 #define QUOLL_UI_EFFECT_HPP
 
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/detail/callback_traits.hpp>
 #include <quoll/ui/detail/effect_function.hpp>
@@ -159,7 +160,7 @@ public:
 
     static_assert(std::is_void_v<value>, "quoll::ui::effect: the values its function gives go into a target state");
 
-    init(dependencies, std::move(function), detail::target_ref<value>{}, false);
+    init<value, D...>(states_reader(dependencies), std::move(function), detail::target_ref<value>{}, false, nullptr);
   }
 
   /**
@@ -175,8 +176,41 @@ public:
     static_assert(detail::kept_as_values<value>,
                   "quoll::ui::effect: the values its function gives are kept, as values");
     detail::check_target<T, value, false>();
-    init(dependencies, std::move(function), detail::target_ref<value>{target, std::false_type{}},
-         detail::target_roles<T>::error);
+    init<value, D...>(states_reader(dependencies), std::move(function),
+                      detail::target_ref<value>{target, std::false_type{}}, detail::target_roles<T>::error, nullptr);
+  }
+
+  /**
+   * @brief Runs `function` with what the field `member` of its component's props holds as it changes, as React's
+   * useEffect(…, [props.id]), for a function that gives nothing.
+   * @throws std::invalid_argument for no function, as a null pointer, rather than at each run.
+   */
+  template <class P, class D, class F>
+    requires(!std::is_function_v<D>) && detail::EffectFunction<F, D>
+  effect(D P::*member, F function) {
+    using value = detail::effect_value_t<F, D>;
+
+    static_assert(std::is_void_v<value>, "quoll::ui::effect: the values its function gives go into a target state");
+
+    init<value, D>(props_reader(member), std::move(function), detail::target_ref<value>{}, false,
+                   async::detail::type_id_of<P>());
+  }
+
+  /**
+   * @brief Runs `function` with what the field `member` of its component's props holds as it changes, what it gives
+   * written into `target`.
+   * @throws std::invalid_argument for no function, as a null pointer, rather than at each run.
+   */
+  template <class P, class D, class F, class T>
+    requires(!std::is_function_v<D>) && detail::EffectFunction<F, D>
+  effect(D P::*member, F function, state<T> &target) {
+    using value = detail::effect_value_t<F, D>;
+
+    static_assert(detail::kept_as_values<value>,
+                  "quoll::ui::effect: the values its function gives are kept, as values");
+    detail::check_target<T, value, false>();
+    init<value, D>(props_reader(member), std::move(function), detail::target_ref<value>{target, std::false_type{}},
+                   detail::target_roles<T>::error, async::detail::type_id_of<P>());
   }
 
   effect(effect const &) = delete;
@@ -205,8 +239,24 @@ public:
   void after_view(detail::effect_starter const &start);
 
 private:
-  template <class V, class... D, class F>
-  void init(std::tuple<state<D> &...> dependencies, F function, detail::target_ref<V> target, bool takes_errors) {
+  // What reads its values, from its states, whatever the props are.
+  template <class... D>
+  [[nodiscard]] static auto states_reader(std::tuple<state<D> &...> dependencies) {
+    return [dependencies](void const *) {
+      return std::apply([](auto &...held) { return std::tie(*held...); }, dependencies);
+    };
+  }
+
+  // What reads its value, from the field `member` of the props of its component, which `props` points to.
+  template <class P, class D>
+  [[nodiscard]] static auto props_reader(D P::*member) {
+    return [member](void const *props) { return std::tie(static_cast<P const *>(props)->*member); };
+  }
+
+  // `read` gives what it depends on, from the props of its component, as a tuple of references to D...; `props_type`,
+  // none for an effect on states, is the type of the props it reads.
+  template <class V, class... D, class Read, class F>
+  void init(Read read, F function, detail::target_ref<V> target, bool takes_errors, async::detail::type_id props_type) {
     static_assert((!detail::holds_view<D> && ...),
                   "quoll::ui::effect: its states' values are copied into the run, which a view would outlive");
     static_assert((... && (std::equality_comparable<D> && std::copyable<D>)),
@@ -221,22 +271,22 @@ private:
     }
 
     target_ = target.hooks();
+    props_type_ = props_type;
 
-    watch_ = [dependencies, last = std::optional<std::tuple<D...>>{}](watching asked) mutable {
+    watch_ = [read, last = std::optional<std::tuple<D...>>{}](watching asked, void const *props) mutable {
       // Forgotten before any comparison, which may be what failed: reload() runs it whatever its states compare.
       if (asked == watching::forget) {
         last.reset();
         return std::optional<watched>{};
       }
 
-      auto const now = std::apply([](auto &...held) { return std::tie(*held...); }, dependencies);
+      auto const now = read(props);
       bool const differs = !last || !(*last == now);
       bool const holds = std::apply(
-          [](auto &...held) {
-            return (detail::dependency_traits<typename std::remove_cvref_t<decltype(held)>::value_type>::holds(*held) &&
-                    ...);
+          [](auto const &...held) {
+            return (detail::dependency_traits<std::remove_cvref_t<decltype(held)>>::holds(held) && ...);
           },
-          dependencies);
+          now);
 
       if (differs) {
         last.emplace(now);
@@ -245,14 +295,13 @@ private:
       return std::optional<watched>{watched{.differs = differs, .holds = holds}};
     };
 
-    run_ = [this, dependencies, function = std::move(function), target, takes_errors](std::stop_token mine) {
+    run_ = [this, read, function = std::move(function), target, takes_errors](std::stop_token mine, void const *props) {
       // Its own copy of each value, given as rvalues: a function taking them by reference refers to the run's copy.
       auto copied = std::apply(
-          [](auto &...held) {
-            return values{
-                detail::dependency_traits<typename std::remove_cvref_t<decltype(held)>::value_type>::value(*held)...};
+          [](auto const &...held) {
+            return values{detail::dependency_traits<std::remove_cvref_t<decltype(held)>>::value(held)...};
           },
-          dependencies);
+          read(props));
 
       auto make = [function, copied = std::move(copied)]() mutable {
         return std::apply([&function](auto &...value) { return function(std::move(value)...); }, copied);
@@ -276,8 +325,10 @@ private:
   // and the run, made
   // for their values now: erased, as their types are not the effect's.
   // What `record` saw, none for `forget`.
-  std::function<std::optional<watched>(watching)> watch_;
-  std::function<async::task<>(std::stop_token)> run_;
+  std::function<std::optional<watched>(watching, void const *)> watch_;
+  std::function<async::task<>(std::stop_token, void const *)> run_;
+  // The type of the props it reads, none for an effect on states.
+  async::detail::type_id props_type_{};
   detail::run_slot slot_;
   detail::target_hooks target_;
   detail::state_link link_{};

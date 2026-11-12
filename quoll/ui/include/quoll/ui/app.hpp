@@ -84,12 +84,16 @@ class app {
 public:
   template <async::Executor E>
   app(E executor, R renderer, app_options options = {})
-      : renderer_(std::move(renderer)),
-        core_(async::any_executor{executor}, renderer_ref{renderer_}, &view_of, detail::unmounted_of<C>(),
-              detail::effects_of<C>(), detail::finds_of<C>(), &component_, std::move(options)) {
+      : renderer_(std::move(renderer)), core_(async::any_executor{executor}, renderer_ref{renderer_}, &view_of,
+                                              detail::unmounted_of<C>(), detail::effects_of<C>(), detail::finds_of<C>(),
+                                              detail::provides_of<C>(), &component_, std::move(options)) {
+    // Its own contexts found among the app's, then what it provides found by the components of its view only, as a
+    // component of a view finds what those above it provide.
     if constexpr (detail::binds_of<C>() != nullptr) {
       detail::binds_of<C>()(&component_, core_.contexts());
     }
+
+    core_.component_made();
 
     detail::link_states(component_, {&core_, &detail::app_core::state_changed});
 

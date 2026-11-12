@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/ui/context_spec.hpp>
 #include <quoll/ui/detail/context_entry.hpp>
 
 #include <cstdint>
@@ -42,8 +43,10 @@
 
 namespace quoll::ui::detail {
 
-context_entry::context_entry(context_table const &table, state_link app)
-    : table_(&table), app_(app), object_(table.make()) {
+context_entry::context_entry(context_table const &table, state_link app) : context_entry(table, app, table.make()) {}
+
+context_entry::context_entry(context_table const &table, state_link app, held_component object)
+    : table_(&table), app_(app), object_(std::move(object)) {
   table_->link(object_.get(), {this, &context_entry::changed_in});
 }
 
@@ -69,3 +72,9 @@ context_list::~context_list() {
 void context_list::push_back(std::unique_ptr<context_entry> entry) { entries_.push_back(std::move(entry)); }
 
 } // namespace quoll::ui::detail
+
+namespace quoll::ui {
+
+detail::held_component context_spec::make() const { return make_ ? make_() : table_->make(); }
+
+} // namespace quoll::ui

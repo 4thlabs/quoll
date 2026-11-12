@@ -37,11 +37,18 @@
 #ifndef QUOLL_UI_CONTEXT_SPEC_HPP
 #define QUOLL_UI_CONTEXT_SPEC_HPP
 
+#include <quoll/ui/detail/held_component.hpp>
+
+#include <functional>
+#include <utility>
+
 namespace quoll::ui {
 
 namespace detail {
 
 struct context_table;
+
+struct context_spec_access;
 
 } // namespace detail
 
@@ -50,19 +57,42 @@ class context_spec;
 template <class T>
 [[nodiscard]] constexpr context_spec provide() noexcept;
 
-/** @brief A context an app makes and holds, which only `provide<T>()`, in <quoll/ui/provide.hpp>, makes: see shared. */
+/**
+ * @brief A context an app makes and holds, which only `provide<T>()`, in <quoll/ui/provide.hpp>, and Quoll's own, as
+ * routing(), make: see shared.
+ */
 class context_spec {
 public:
   [[nodiscard]] detail::context_table const &table() const noexcept { return *table_; }
+
+  // What makes the context: its table's, unless the spec gave its own.
+  [[nodiscard]] detail::held_component make() const;
 
 private:
   template <class T>
   friend constexpr context_spec provide() noexcept;
 
+  friend struct detail::context_spec_access;
+
   explicit constexpr context_spec(detail::context_table const &table) noexcept : table_(&table) {}
 
+  context_spec(detail::context_table const &table, std::function<detail::held_component()> make) noexcept
+      : table_(&table), make_(std::move(make)) {}
+
   detail::context_table const *table_;
+  std::function<detail::held_component()> make_{};
 };
+
+namespace detail {
+
+// For Quoll's own contexts, made otherwise than value-made.
+struct context_spec_access {
+  [[nodiscard]] static context_spec made_with(context_table const &table, std::function<held_component()> make) {
+    return {table, std::move(make)};
+  }
+};
+
+} // namespace detail
 
 } // namespace quoll::ui
 

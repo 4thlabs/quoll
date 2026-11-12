@@ -83,6 +83,13 @@ void quoll_emscripten_ui_hot_install(void (*replace)(char const *file, unsigned 
                                                      char const *value));
 
 // `complete` always runs, from the event loop, with `elapsed` false once cancelled.
+char *quoll_emscripten_history_location();
+void quoll_emscripten_history_push(char const *href, std::size_t size);
+void quoll_emscripten_history_replace(char const *href, std::size_t size);
+void quoll_emscripten_history_back();
+void quoll_emscripten_history_listen(void (*changed)(void *listener, char const *href), void *listener);
+void quoll_emscripten_history_unlisten(void *listener);
+
 int quoll_emscripten_timer_start(double milliseconds, void (*complete)(void *operation, int elapsed), void *operation);
 void quoll_emscripten_timer_cancel(int id);
 

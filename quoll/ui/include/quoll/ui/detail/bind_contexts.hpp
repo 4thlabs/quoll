@@ -59,8 +59,11 @@ inline constexpr char const *missing_context =
 // What a table holds to tell, before making a `C`, whether the contexts its members use are there: none for one that
 // uses none, and true with no finder, for a view written once.
 template <class C>
+[[nodiscard]] constexpr auto finds_of() noexcept -> bool (*)(context_finder const &);
+
+template <class C>
 [[nodiscard]] constexpr auto finds_of() noexcept -> bool (*)(context_finder const &) {
-  if constexpr (any_member<C, is_context_member>) {
+  if constexpr (any_member<C, is_context_user>) {
     return [](context_finder const &finder) {
       using members = decltype(glz::to_tie(std::declval<C &>()));
 
@@ -71,7 +74,12 @@ template <class C>
       return [&finder]<std::size_t... Index>(std::index_sequence<Index...>) {
         auto const found = [&finder]<class M>(std::type_identity<M>) {
           if constexpr (ContextMember<M>) {
-            return finder(async::detail::type_id_of<typename M::element_type>()) != nullptr;
+            return finder(async::detail::type_id_of<typename M::element_type>()).entry != nullptr;
+          } else if constexpr (ProvidedMember<M>) {
+            // What it provides finds its own as its component does.
+            constexpr auto inner = finds_of<typename M::provided_type>();
+
+            return inner == nullptr || inner(finder);
           } else {
             return true;
           }
@@ -90,10 +98,12 @@ template <class C>
 // What a table holds to find the contexts the members of `C` use: none for one that uses none.
 template <class C>
 [[nodiscard]] constexpr auto binds_of() noexcept -> void (*)(void *, context_finder const &) {
-  if constexpr (any_member<C, is_context_member>) {
+  if constexpr (any_member<C, is_context_user>) {
     return [](void *object, context_finder const &finder) {
       for_each_member(*static_cast<C *>(object), [&finder](auto &member) {
-        if constexpr (ContextMember<std::remove_cvref_t<decltype(member)>>) {
+        using member_type = std::remove_cvref_t<decltype(member)>;
+
+        if constexpr (ContextMember<member_type> || ProvidedMember<member_type>) {
           member.bind(finder);
         }
       });
@@ -128,10 +138,12 @@ template <class C>
 // none.
 template <class C>
 [[nodiscard]] constexpr auto marks_of() noexcept -> void (*)(void *) {
-  if constexpr (any_member<C, is_context_member>) {
+  if constexpr (any_member<C, is_context_user>) {
     return [](void *object) {
       for_each_member(*static_cast<C *>(object), [](auto &member) {
-        if constexpr (ContextMember<std::remove_cvref_t<decltype(member)>>) {
+        using member_type = std::remove_cvref_t<decltype(member)>;
+
+        if constexpr (ContextMember<member_type> || ProvidedMember<member_type>) {
           context_access::mark(member);
         }
       });
@@ -144,10 +156,12 @@ template <class C>
 // What a table holds to keep what the members of `C` marked, once its view shows: none for one that uses none.
 template <class C>
 [[nodiscard]] constexpr auto commits_of() noexcept -> void (*)(void *) {
-  if constexpr (any_member<C, is_context_member>) {
+  if constexpr (any_member<C, is_context_user>) {
     return [](void *object) {
       for_each_member(*static_cast<C *>(object), [](auto &member) {
-        if constexpr (ContextMember<std::remove_cvref_t<decltype(member)>>) {
+        using member_type = std::remove_cvref_t<decltype(member)>;
+
+        if constexpr (ContextMember<member_type> || ProvidedMember<member_type>) {
           context_access::commit(member);
         }
       });
@@ -161,17 +175,47 @@ template <class C>
 // for one that uses none.
 template <class C>
 [[nodiscard]] constexpr auto changes_of() noexcept -> bool (*)(void *) {
-  if constexpr (any_member<C, is_context_member>) {
+  if constexpr (any_member<C, is_context_user>) {
     return [](void *object) {
       bool changed = false;
 
       for_each_member(*static_cast<C *>(object), [&changed](auto &member) {
-        if constexpr (ContextMember<std::remove_cvref_t<decltype(member)>>) {
+        using member_type = std::remove_cvref_t<decltype(member)>;
+
+        if constexpr (ContextMember<member_type> || ProvidedMember<member_type>) {
           changed = changed || context_access::changed(member);
         }
       });
 
       return changed;
+    };
+  } else {
+    return nullptr;
+  }
+}
+
+// ProvidedMember, as a trait for any_member().
+template <class T>
+struct is_provided_member : std::bool_constant<ProvidedMember<T>> {};
+
+// What a table holds to give the context of a type the members of `C` provide: none for one that provides none.
+template <class C>
+[[nodiscard]] constexpr auto provides_of() noexcept -> context_entry *(*)(void *, async::detail::type_id) {
+  if constexpr (any_member<C, is_provided_member>) {
+    return [](void *object, async::detail::type_id type) -> context_entry * {
+      context_entry *found = nullptr;
+
+      for_each_member(*static_cast<C *>(object), [&found, type](auto &member) {
+        using member_type = std::remove_cvref_t<decltype(member)>;
+
+        if constexpr (ProvidedMember<member_type>) {
+          if (found == nullptr && async::detail::type_id_of<typename member_type::provided_type>() == type) {
+            found = &member.entry();
+          }
+        }
+      });
+
+      return found;
     };
   } else {
     return nullptr;
