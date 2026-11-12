@@ -271,6 +271,8 @@ struct failing_renderer {
 
   void set_value(node_id id, std::string_view value) { shown.set_value(id, value); }
 
+  void set_checked(node_id id, bool checked) { shown.set_checked(id, checked); }
+
   void listen(node_id id, std::string_view name) { shown.listen(id, name); }
 
   void unlisten(node_id id, std::string_view name) { shown.unlisten(id, name); }

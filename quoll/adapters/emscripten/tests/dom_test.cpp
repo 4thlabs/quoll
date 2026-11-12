@@ -61,6 +61,10 @@ void quoll_test_history_location(char *out, std::size_t size);
 void quoll_test_history_back();
 int quoll_test_history_listeners();
 void quoll_test_dom_type(char const *text);
+int quoll_test_dom_key_and_submit(char const *key);
+void quoll_test_dom_check();
+int quoll_test_dom_checked();
+int quoll_test_dom_submit();
 void quoll_test_widgets_install();
 void quoll_test_widgets_log(char *out, std::size_t size);
 void quoll_test_widgets_emit(char const *name, char const *value);
@@ -167,6 +171,41 @@ struct list_page {
   }
 };
 
+// A form sent with Enter: the keys pressed in its input, and the note sent, the page kept.
+struct sending_form {
+  state<std::string> draft;
+  state<std::vector<std::string>> keys;
+  state<std::vector<std::string>> sent;
+
+  element view() {
+    auto const pressed = [this](std::string key) { keys.update([&key](auto &all) { all.push_back(key); }); };
+    auto const send = [this] { sent.update([this](auto &all) { all.push_back(*draft); }); };
+
+    return form({input() | bind(draft) | placeholder("note") | on_key_down(pressed), p(std::to_string(sent->size()))}) |
+           on_submit(send);
+  }
+};
+
+// A box bound to a state, which a button also sets.
+struct box_page {
+  state<bool> done;
+
+  element view() {
+    return div({input() | bind(done), button("Reset") | on_click([this] { done = false; }), p(*done ? "yes" : "no")});
+  }
+};
+
+// A radio chosen gives its value; a form with no on_submit stays on the page.
+struct radio_page {
+  state<std::string> chosen;
+
+  element view() {
+    auto const pick = [this](std::string value) { chosen = value; };
+
+    return form({input() | attribute("type", "radio") | value("green") | on_change(pick), p(*chosen)});
+  }
+};
+
 // mounted() fails once the first view is in the page, its listeners with it.
 struct failing_after_view {
   static inline bool fail = true;
@@ -248,6 +287,50 @@ TEST_CASE("mount: inputs, lists and removed nodes in the page", "[emscripten][ui
 
   REQUIRE(page() ==
           R"(<div><input placeholder="note" value=""></input><button>Add</button><ul><li>tea</li></ul></div>)");
+}
+
+TEST_CASE("mount: a key pressed reaches on_key_down with its name, a form sent on_submit, the page kept",
+          "[emscripten][ui]") {
+  quoll_test_dom_reset();
+
+  auto &shown = quoll::emscripten::mount<sending_form>();
+
+  quoll_test_dom_type("tea");
+  settle();
+
+  REQUIRE(quoll_test_dom_key_and_submit("Enter") == 1);
+  settle();
+
+  CHECK(*shown.keys == std::vector<std::string>{"Enter"});
+  CHECK(*shown.sent == std::vector<std::string>{"tea"});
+  CHECK(page() == R"(<form><input placeholder="note" value="tea"></input><p>1</p></form>)");
+}
+
+TEST_CASE("mount: a checkbox bound to a state, through its property both ways", "[emscripten][ui]") {
+  quoll_test_dom_reset();
+  quoll::emscripten::mount<box_page>();
+
+  REQUIRE(quoll_test_dom_checked() == 0);
+
+  quoll_test_dom_check();
+  settle();
+  CHECK(page().find("<p>yes</p>") != std::string::npos);
+  CHECK(quoll_test_dom_checked() == 1);
+
+  quoll_test_dom_click("Reset");
+  settle();
+  CHECK(page().find("<p>no</p>") != std::string::npos);
+  CHECK(quoll_test_dom_checked() == 0);
+}
+
+TEST_CASE("mount: a radio chosen gives its value, and a form with no on_submit stays on the page", "[emscripten][ui]") {
+  quoll_test_dom_reset();
+  quoll::emscripten::mount<radio_page>();
+
+  quoll_test_dom_check();
+  settle();
+  CHECK(page().find("<p>green</p>") != std::string::npos);
+  CHECK(quoll_test_dom_submit() == 1);
 }
 
 TEST_CASE("dom_renderer: nothing matching the selector is an error", "[emscripten][ui]") {

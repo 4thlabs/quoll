@@ -65,6 +65,7 @@ addToLibrary({
         this.tag = tag;
         this.className = '';
         this.value = undefined;
+        this.checked = false;
         this.attributes = new Map();
         this.listeners = new Map();
         this.children = [];
@@ -85,6 +86,15 @@ addToLibrary({
         this.parent = null;
       }
 
+      get tagName() {
+        return this.tag.toUpperCase();
+      }
+
+      // As a browser reflects the attribute.
+      get type() {
+        return this.attributes.get('type') ?? '';
+      }
+
       setAttribute(name, value) {
         this.attributes.set(name, value);
       }
@@ -101,8 +111,14 @@ addToLibrary({
         return this.attributes.has(name) ? this.attributes.get(name) : null;
       }
 
+      // A second listener of a name, as a form's own on submit, runs after the first.
       addEventListener(name, listener) {
-        this.listeners.set(name, listener);
+        const first = this.listeners.get(name);
+
+        this.listeners.set(name, first === undefined ? listener : (event) => {
+          first(event);
+          listener(event);
+        });
       }
 
       removeEventListener(name, listener) {
@@ -366,6 +382,56 @@ addToLibrary({
   quoll_test_widgets_emit: (name, value) => {
     quollFakeDom.emit(UTF8ToString(name), JSON.parse(UTF8ToString(value)));
   },
+
+  // Presses this key in the first input, then submits the first form, as Enter in it does: whether the page kept the
+  // browser from leaving it.
+  quoll_test_dom_key_and_submit__deps: ['$quollFakeDom', '$UTF8ToString'],
+  quoll_test_dom_key_and_submit: (key) => {
+    const input = quollFakeDom.root.findTag('input');
+
+    input.listeners.get('keydown')?.({ target: input, key: UTF8ToString(key) });
+
+    const form = quollFakeDom.root.findTag('form');
+    const event = {
+      target: form,
+      defaultPrevented: false,
+      preventDefault() {
+        this.defaultPrevented = true;
+      },
+    };
+
+    form.listeners.get('submit')(event);
+    return event.defaultPrevented ? 1 : 0;
+  },
+
+  // Submits the first form, as a button in it does: whether the page kept the browser from leaving it.
+  quoll_test_dom_submit__deps: ['$quollFakeDom'],
+  quoll_test_dom_submit: () => {
+    const form = quollFakeDom.root.findTag('form');
+    const event = {
+      target: form,
+      defaultPrevented: false,
+      preventDefault() {
+        this.defaultPrevented = true;
+      },
+    };
+
+    form.listeners.get('submit')(event);
+    return event.defaultPrevented ? 1 : 0;
+  },
+
+  // Clicks the first checkbox, as a browser does: its property turns, then its change is told.
+  quoll_test_dom_check__deps: ['$quollFakeDom'],
+  quoll_test_dom_check: () => {
+    const target = quollFakeDom.root.findTag('input');
+
+    target.checked = !target.checked;
+    target.listeners.get('change')({ target });
+  },
+
+  // Whether the first checkbox is checked, as its property says.
+  quoll_test_dom_checked__deps: ['$quollFakeDom'],
+  quoll_test_dom_checked: () => (quollFakeDom.root.findTag('input').checked ? 1 : 0),
 
   // Types this text in the first input.
   quoll_test_dom_type__deps: ['$quollFakeDom', '$UTF8ToString'],

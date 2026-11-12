@@ -85,6 +85,8 @@ public:
 
   void set_value(node_id id, std::string_view value) const { vtable_->set_value(renderer_, id, value); }
 
+  void set_checked(node_id id, bool checked) const { vtable_->set_checked(renderer_, id, checked); }
+
   void listen(node_id id, std::string_view name) const { vtable_->listen(renderer_, id, name); }
 
   void unlisten(node_id id, std::string_view name) const { vtable_->unlisten(renderer_, id, name); }
@@ -123,6 +125,7 @@ private:
     void (*set_attribute)(void *, node_id, std::string_view, std::string_view);
     void (*remove_attribute)(void *, node_id, std::string_view);
     void (*set_value)(void *, node_id, std::string_view);
+    void (*set_checked)(void *, node_id, bool);
     void (*listen)(void *, node_id, std::string_view);
     void (*unlisten)(void *, node_id, std::string_view);
     void (*insert)(void *, node_id, node_id, node_id);
@@ -163,6 +166,7 @@ private:
       },
       [](void *r, node_id id, std::string_view name) { static_cast<R *>(r)->remove_attribute(id, name); },
       [](void *r, node_id id, std::string_view value) { static_cast<R *>(r)->set_value(id, value); },
+      [](void *r, node_id id, bool checked) { static_cast<R *>(r)->set_checked(id, checked); },
       [](void *r, node_id id, std::string_view name) { static_cast<R *>(r)->listen(id, name); },
       [](void *r, node_id id, std::string_view name) { static_cast<R *>(r)->unlisten(id, name); },
       [](void *r, node_id parent, node_id child, node_id before) {

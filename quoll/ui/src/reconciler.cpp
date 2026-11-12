@@ -167,10 +167,6 @@ void reconciler::create(element &value) {
     renderer_.set_attribute(value.id, name, content);
   }
 
-  if (value.value) {
-    renderer_.set_value(value.id, *value.value);
-  }
-
   for (auto const &binding : value.events) {
     if (first_of_its_name(value.events, binding)) {
       renderer_.listen(value.id, binding.name);
@@ -179,6 +175,7 @@ void reconciler::create(element &value) {
 
   // Its children are the module's.
   if (value.type == element::kind::widget) {
+    set_properties(value);
     widgets_.mounts.emplace_back(value.id, value.widget);
     return;
   }
@@ -186,6 +183,19 @@ void reconciler::create(element &value) {
   for (auto &child : value.children) {
     create(child);
     renderer_.insert(value.id, child.id, no_node);
+  }
+
+  // Once its children are there: a select chooses among its options.
+  set_properties(value);
+}
+
+void reconciler::set_properties(element const &value) {
+  if (value.value) {
+    renderer_.set_value(value.id, *value.value);
+  }
+
+  if (value.checked) {
+    renderer_.set_checked(value.id, *value.checked);
   }
 }
 
@@ -205,15 +215,11 @@ void reconciler::patch(element &before, element &after) {
   }
 
   patch_attributes(before, after);
-
-  // An input no longer bound holds nothing rather than what it was last given.
-  if (before.value != after.value) {
-    renderer_.set_value(after.id, after.value.value_or(std::string{}));
-  }
-
   patch_events(before, after);
 
   if (after.type == element::kind::widget) {
+    patch_properties(before, after);
+
     if (before.widget->props != after.widget->props) {
       widgets_.updates.emplace_back(after.id, after.widget);
     }
@@ -222,6 +228,20 @@ void reconciler::patch(element &before, element &after) {
   }
 
   children(after.id, before.children, after.children);
+  patch_properties(before, after);
+}
+
+void reconciler::patch_properties(element const &before, element const &after) {
+  // An input no longer bound holds nothing rather than what it was last given. A select is given its value again, as
+  // its options may have changed: the renderer leaves alone one that holds it already.
+  if (before.value != after.value || (after.value && after.tag == "select")) {
+    renderer_.set_value(after.id, after.value.value_or(std::string{}));
+  }
+
+  // One no longer told whether it is checked is not.
+  if (before.checked != after.checked) {
+    renderer_.set_checked(after.id, after.checked.value_or(false));
+  }
 }
 
 void reconciler::patch_attributes(element const &before, element const &after) {

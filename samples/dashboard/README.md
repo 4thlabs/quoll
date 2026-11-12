@@ -66,8 +66,8 @@ Written with what Quoll has, step 6 of [the plan](../../docs/PLAN.md#step-6-the-
 JavaScript widgets do not give: chart.js takes its data as props, and a click comes back as an event, with no handle on
 the widget and no WebSocket. What took code of its own, for base components to give:
 
-- **An input showing a value it is given.** `bind()` holds a `state<std::string>`; a prop goes in through a decorator
-  of the page's own (`target.value = ...` in `field.hpp`), and what is typed through `on_input`.
+- **An input showing a value it is given.** `bind()` holds a `state<std::string>`; a prop first went in through a
+  decorator of the page's own, which `value()` now gives, and what is typed through `on_input`.
 - **A labelled field, a number field.** `field.hpp` is the first base component the page wanted. The price and the stock
   are parsed and formatted by hand (`std::from_chars`, `std::format`), and refused with a message of the detail's own.
 - **States that start from the props.** `mounted()` has no props, so the detail keeps what is typed as

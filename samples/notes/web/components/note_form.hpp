@@ -83,7 +83,7 @@ struct note_form {
     auto const send = [this, &given] { return add(given.on_add); };
 
     auto const form = div({
-        input() | bind(draft) | tw("input input-bordered flex-1") | attribute("placeholder", "A new note"),
+        input() | bind(draft) | tw("input input-bordered flex-1") | placeholder("A new note"),
         button("Add") | tw("btn btn-primary") | on_click(send),
     });
 

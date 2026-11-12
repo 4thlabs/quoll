@@ -102,7 +102,14 @@ addToLibrary({
 
   quoll_emscripten_ui_create_element__deps: ['$quollUi', '$UTF8ToString'],
   quoll_emscripten_ui_create_element: (instance, id, tag, size) => {
-    quollUi.instances[instance].nodes.set(id, document.createElement(UTF8ToString(tag, size)));
+    const node = document.createElement(UTF8ToString(tag, size));
+
+    // A form never leaves the page, with on_submit or not: a button in it sends it as a click does.
+    if (node.tagName === 'FORM') {
+      node.addEventListener('submit', (event) => event.preventDefault());
+    }
+
+    quollUi.instances[instance].nodes.set(id, node);
   },
 
   quoll_emscripten_ui_create_text__deps: ['$quollUi', '$UTF8ToString'],
@@ -141,15 +148,21 @@ addToLibrary({
     }
   },
 
+  // The property, which the browser keeps apart from the attribute once the box is clicked.
+  quoll_emscripten_ui_set_checked__deps: ['$quollUi'],
+  quoll_emscripten_ui_set_checked: (instance, id, checked) => {
+    quollUi.instances[instance].nodes.get(id).checked = checked !== 0;
+  },
+
   quoll_emscripten_ui_listen__deps: ['$quollUi', '$UTF8ToString', '$stringToNewUTF8', '$callUserCallback', 'free'],
   quoll_emscripten_ui_listen: (instance, id, name, size) => {
     const ui = quollUi.instances[instance];
     const eventName = UTF8ToString(name, size);
 
     const listener = (event) => {
-      // A form does not leave the page: an interface handles its submission.
-      if (eventName === 'submit') {
-        event.preventDefault();
+      // A key that confirms what an input method composes is no key of the page's.
+      if ((eventName === 'keydown' || eventName === 'keyup') && event.isComposing) {
+        return;
       }
 
       // A link of the app's routing goes there without leaving the page, but for a click that opens elsewhere, with a
@@ -168,7 +181,18 @@ addToLibrary({
 
       callUserCallback(() => {
         const namePointer = stringToNewUTF8(eventName);
-        const valuePointer = stringToNewUTF8(String(event.target?.value ?? ''));
+        // A key event gives the key, as the browser names it, after the modifiers held, as "Shift+Enter"; a checkbox
+        // whether it is checked; any other what its element holds, a radio its value.
+        const target = event.target;
+        const keyed = eventName === 'keydown' || eventName === 'keyup';
+        const modifiers = ['Control', 'Alt', 'Shift', 'Meta'];
+        const held = (event) =>
+          [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Meta']
+            .filter((name) => name && !modifiers.includes(event.key))
+            .map((name) => `${name}+`)
+            .join('');
+        const given = keyed ? `${held(event)}${event.key}` : target?.type === 'checkbox' ? target.checked : target?.value;
+        const valuePointer = stringToNewUTF8(String(given ?? ''));
 
         try {
           {{{ makeDynCall('vpipp', 'ui.dispatch') }}}(ui.owner, id, namePointer, valuePointer);

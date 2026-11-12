@@ -111,7 +111,7 @@ struct notes_page {
       return component<note_row>({.item = item, .on_remove = on_remove}) | key(item.id);
     };
 
-    auto const alert = [this] { return p(*problem) | tw("alert alert-error") | attribute("role", "alert"); };
+    auto const alert = [this] { return p(*problem) | tw("alert alert-error") | role("alert"); };
 
     auto const page = main_({
         h1("Notes") | tw("text-4xl font-bold"),

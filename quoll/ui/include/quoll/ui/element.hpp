@@ -100,6 +100,9 @@ struct element {
   std::string key{};
   // The value of an input.
   std::optional<std::string> value{};
+  // Whether a checkbox or a radio is checked: its property, which the browser keeps apart from the attribute once
+  // clicked.
+  std::optional<bool> checked{};
   std::map<std::string, std::string> attributes{};
   std::vector<event_binding> events{};
   std::vector<element> children{};
