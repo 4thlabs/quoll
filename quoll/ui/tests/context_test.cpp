@@ -253,6 +253,52 @@ struct leaving_page {
   element view() { return p("leaving"); }
 };
 
+// Reads its count, and sets it in its view the first time: the view the change asks for shows the count set.
+int counting_views = 0;
+
+struct counting_child {
+  shared<first_gone> data;
+
+  element view() {
+    ++counting_views;
+
+    auto const seen = *data->count;
+
+    if (seen == 0) {
+      data->count = 1;
+    }
+
+    return p("count " + std::to_string(seen));
+  }
+};
+
+// Reads its count, and throws while asked to: a view that failed is run again by the next render.
+bool child_throws = false;
+
+struct throwing_child {
+  shared<first_gone> data;
+
+  element view() {
+    auto const seen = *data->count;
+
+    if (child_throws) {
+      throw std::runtime_error{"no view"};
+    }
+
+    return p("count " + std::to_string(seen));
+  }
+};
+
+struct throwing_child_page {
+  state<int> other;
+
+  element view() { return div({p(std::to_string(*other)), component<throwing_child>()}); }
+};
+
+struct counting_child_page {
+  element view() { return div({component<counting_child>()}); }
+};
+
 // Shows the names once asked to, after they changed.
 struct later_list_page {
   state<bool> shows;
@@ -634,7 +680,7 @@ TEST_CASE("context: a component of a view missing one is refused before it is ma
   CHECK(lines.empty());
 }
 
-TEST_CASE("context: what a component writes to one as its app, never started, goes asks for no render",
+TEST_CASE("context: what a component writes to one as its app goes, never started, asks for no render",
           "[ui][context]") {
   lines.clear();
 
@@ -667,4 +713,59 @@ TEST_CASE("context: a component shown after its context changed shows once", "[u
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(shown.html().contains("<p>tea;coffee;</p>"));
   CHECK(list_views == 1);
+}
+
+TEST_CASE("context: a view that changes the context it reads shows again", "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<counting_child_page> instance{time.get_executor(), shown, {.contexts = {provide<first_gone>()}}};
+
+  auto const act = [&]() -> task<> { co_await settle(); };
+
+  counting_views = 0;
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html().contains("<p>count 1</p>"));
+  CHECK(counting_views == 2);
+}
+
+TEST_CASE("context: a component whose view threw after its context changed views again in the next render",
+          "[ui][context]") {
+  lines.clear();
+  child_throws = false;
+
+  virtual_time time;
+  memory_renderer const shown;
+  std::vector<std::string> failures;
+  test_app<throwing_child_page> instance{time.get_executor(),
+                                         shown,
+                                         {.on_error =
+                                              [&failures](std::exception_ptr failure) {
+                                                try {
+                                                  std::rethrow_exception(failure);
+                                                } catch (std::exception const &error) {
+                                                  failures.emplace_back(error.what());
+                                                }
+                                              },
+                                          .contexts = {provide<first_gone>()}}};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+
+    // Its context changes, and its view throws: that render fails.
+    child_throws = true;
+    instance.context<first_gone>().count = 5;
+    co_await settle();
+    child_throws = false;
+
+    // The next render, for a state of the page, views it again, with what its context holds now.
+    instance.component().other = 1;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(failures == std::vector<std::string>{"no view"});
+  CHECK(shown.html().contains("<p>count 5</p>"));
 }

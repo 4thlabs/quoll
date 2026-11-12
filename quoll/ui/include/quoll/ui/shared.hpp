@@ -161,13 +161,22 @@ public:
     app_ = finder.app;
   }
 
-  /**
-   * @brief How many times the states of its context changed, once it was read through it: a view not run again compares
-   * it, so that a component that only runs on its context does not show again as it changes.
-   */
-  [[nodiscard]] std::uint64_t version() const noexcept { return entry_ == nullptr || !read_ ? 0 : entry_->version(); }
+  /** @brief How many times the states of its context, and of those it uses, changed. */
+  [[nodiscard]] std::uint64_t context_version() const noexcept { return entry_ == nullptr ? 0 : entry_->version(); }
 
 private:
+  friend struct detail::context_access;
+
+  // As its component's view is about to run: what it sees of its context, before the view may change it, kept once the
+  // view shows, so that a view that throws leaves what it saw before.
+  void mark() noexcept { marked_ = context_version(); }
+
+  void commit() noexcept { seen_ = marked_; }
+
+  // Whether its context changed since its component's last view that showed, once read through it: a component that
+  // only runs on its context does not show again as it changes.
+  [[nodiscard]] bool changed() const noexcept { return read_ && context_version() != seen_; }
+
   [[nodiscard]] detail::context_entry &entry() const {
     if (entry_ == nullptr) {
       throw std::logic_error{
@@ -188,6 +197,8 @@ private:
 
   detail::context_entry *entry_ = nullptr;
   mutable bool read_ = false;
+  std::uint64_t marked_ = 0;
+  std::uint64_t seen_ = 0;
   std::shared_ptr<detail::app_link> app_{};
 };
 

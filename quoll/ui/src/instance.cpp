@@ -86,18 +86,29 @@ void instance::viewed(std::shared_ptr<void const> props, std::shared_ptr<void co
   last_view_.emplace(std::move(view));
   viewed_ = version;
   viewed_epoch_ = epoch;
+
+  if (table_->commit_contexts != nullptr) {
+    table_->commit_contexts(component_.get());
+  }
 }
 
 bool instance::made_of(void const *own, void const *placed_by) const noexcept {
   return last_view_ && own == own_.get() && placed_by == placed_by_.get();
 }
 
-std::uint64_t instance::contexts_version() const noexcept {
-  return table_->contexts_version == nullptr ? 0 : table_->contexts_version(component_.get());
+void instance::mark_contexts() noexcept {
+  if (table_->mark_contexts != nullptr) {
+    table_->mark_contexts(component_.get());
+  }
 }
 
 element const *instance::unchanged_view(std::uint64_t epoch) const noexcept {
-  return last_view_ && version() == viewed_ && epoch == viewed_epoch_ ? &*last_view_ : nullptr;
+  // Its contexts last, which costs a walk of its members.
+  if (!last_view_ || version_ != viewed_ || epoch != viewed_epoch_) {
+    return nullptr;
+  }
+
+  return table_->contexts_changed != nullptr && table_->contexts_changed(component_.get()) ? nullptr : &*last_view_;
 }
 
 void instance::link(state_link app) noexcept { app_link_ = app; }

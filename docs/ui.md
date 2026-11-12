@@ -423,8 +423,10 @@ int main() {
   `std::logic_error` there, before making the component, whose destructor then never runs;
 - `*shared` and `shared->` give the context; once a component read it so, a change of its states, or of a context it
   uses, shows that component again, whose view runs again even if its own states did not change. A component that
-  only runs on it does not show again as it changes. A `shared<T>` is a member of the component itself, as a state
-  is, and names the type as given, with no `const`: one inside a member of it is not found;
+  only runs on it does not show again as it changes. A view that changes a context it reads shows again, as one
+  changing its own states does: one that changes it at each view would show without end;
+- a `shared<T>` is a member of the component itself, as a state is, and names the type as given, with no `const`: one
+  inside a member of it is not found;
 - its effects start after each view of the app, as a component's after its own;
 - `shared.run(&T::member, args...)` runs a member function of the context, or of a base of it, with copies of the arguments, as a task of
   the app, and gives what it gave or throws what it threw: a component that goes stops waiting, and the work goes on,

@@ -63,11 +63,13 @@ struct component_table {
   async::detail::type_id type;
   held_component (*make)();
   void (*link)(void *component, state_link to);
-  // None for a component using no context: whether those it uses are there, before it is made, then finds them, then
-  // counts their changes.
+  // None for a component using no context: whether those it uses are there, before it is made, then finds them, marks
+  // what it sees of them as its view runs, keeps it once the view shows, and tells whether one it read changed since.
   bool (*finds)(context_finder const &finder);
   void (*bind)(void *component, context_finder const &finder);
-  std::uint64_t (*contexts_version)(void *component);
+  void (*mark_contexts)(void *component);
+  void (*commit_contexts)(void *component);
+  bool (*contexts_changed)(void *component);
   // After each of its views: its effects whose dependency changed start.
   void (*effects)(void *component, effect_starter const &start);
   element (*view)(void *component, void const *props);
@@ -123,7 +125,9 @@ inline constexpr component_table table_of{
     .link = [](void *component, state_link to) { link_states(*static_cast<C *>(component), to); },
     .finds = finds_of<C>(),
     .bind = binds_of<C>(),
-    .contexts_version = contexts_version_of<C>(),
+    .mark_contexts = marks_of<C>(),
+    .commit_contexts = commits_of<C>(),
+    .contexts_changed = changes_of<C>(),
     .effects = effects_of<C>(),
     .view = [](void *component, [[maybe_unused]] void const *props) -> element {
       if constexpr (ComponentWithProps<C>) {

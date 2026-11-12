@@ -45,12 +45,31 @@
 
 namespace quoll::ui::detail {
 
+// What the app reaches of a shared<T> that its component does not: marking what it sees of its context as its view
+// runs, keeping that once the view shows, and whether the context changed since.
+struct context_access {
+  template <class M>
+  static void mark(M &member) noexcept {
+    member.mark();
+  }
+
+  template <class M>
+  static void commit(M &member) noexcept {
+    member.commit();
+  }
+
+  template <class M>
+  [[nodiscard]] static bool changed(M const &member) noexcept {
+    return member.changed();
+  }
+};
+
 // What finds a context of its app, as a shared<T> does, and says how many times its states changed.
 template <class T>
 concept ContextMember = requires(T &member, T const &held, context_finder const &finder) {
   typename T::element_type;
   member.bind(finder);
-  { held.version() } noexcept -> std::same_as<std::uint64_t>;
+  { held.context_version() } noexcept -> std::same_as<std::uint64_t>;
 };
 
 // ContextMember, as a trait for any_member().

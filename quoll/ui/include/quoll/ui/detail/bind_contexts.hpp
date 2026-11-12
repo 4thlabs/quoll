@@ -103,8 +103,8 @@ template <class C>
   }
 }
 
-// What a table holds to count the changes of the contexts the members of `C` use, which a view not run again
-// compares: none for one that uses none.
+// What a table holds to count the changes of the contexts a context `C` uses, which count in its own: none for one that
+// uses none.
 template <class C>
 [[nodiscard]] constexpr auto contexts_version_of() noexcept -> std::uint64_t (*)(void *) {
   if constexpr (any_member<C, is_context_member>) {
@@ -113,11 +113,65 @@ template <class C>
 
       for_each_member(*static_cast<C *>(object), [&total](auto &member) {
         if constexpr (ContextMember<std::remove_cvref_t<decltype(member)>>) {
-          total += member.version();
+          total += member.context_version();
         }
       });
 
       return total;
+    };
+  } else {
+    return nullptr;
+  }
+}
+
+// What a table holds to mark what the members of `C` see of their contexts, as its view runs: none for one that uses
+// none.
+template <class C>
+[[nodiscard]] constexpr auto marks_of() noexcept -> void (*)(void *) {
+  if constexpr (any_member<C, is_context_member>) {
+    return [](void *object) {
+      for_each_member(*static_cast<C *>(object), [](auto &member) {
+        if constexpr (ContextMember<std::remove_cvref_t<decltype(member)>>) {
+          context_access::mark(member);
+        }
+      });
+    };
+  } else {
+    return nullptr;
+  }
+}
+
+// What a table holds to keep what the members of `C` marked, once its view shows: none for one that uses none.
+template <class C>
+[[nodiscard]] constexpr auto commits_of() noexcept -> void (*)(void *) {
+  if constexpr (any_member<C, is_context_member>) {
+    return [](void *object) {
+      for_each_member(*static_cast<C *>(object), [](auto &member) {
+        if constexpr (ContextMember<std::remove_cvref_t<decltype(member)>>) {
+          context_access::commit(member);
+        }
+      });
+    };
+  } else {
+    return nullptr;
+  }
+}
+
+// What a table holds to tell whether a context the members of `C` read changed since their last view that showed: none
+// for one that uses none.
+template <class C>
+[[nodiscard]] constexpr auto changes_of() noexcept -> bool (*)(void *) {
+  if constexpr (any_member<C, is_context_member>) {
+    return [](void *object) {
+      bool changed = false;
+
+      for_each_member(*static_cast<C *>(object), [&changed](auto &member) {
+        if constexpr (ContextMember<std::remove_cvref_t<decltype(member)>>) {
+          changed = changed || context_access::changed(member);
+        }
+      });
+
+      return changed;
     };
   } else {
     return nullptr;
