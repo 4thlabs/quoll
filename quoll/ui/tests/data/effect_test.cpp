@@ -282,18 +282,81 @@ std::string what_of(std::exception_ptr const &failure) {
   }
 }
 
-// Searches for what is typed, a while after the last change: a debounce.
+// Searches for what is typed, once nothing has been typed for 300 ms: a debounce, of an effect with no target.
 std::vector<std::string> searched;
 
 struct searching_page {
   state<std::string> query;
 
-  effect search{query, [](std::string text) -> task<> {
-                  co_await quoll::async::sleep_for(300ms);
+  effect search{query,
+                [](std::string text) -> task<> {
                   searched.push_back(std::move(text));
-                }};
+                  co_return;
+                },
+                {.debounce = 300ms}};
 
   element view() { return input() | bind(query); }
+};
+
+// Loads the text of the key it holds once it has stayed the same 50 ms: a debounce.
+struct debounced_page {
+  state<int> next{1};
+  state<text_target> text;
+  effect load{next, load_text, text, {.debounce = 50ms}};
+
+  element view() {
+    auto const again = [this] { load.reload(); };
+
+    return div({button("again") | on_click(again), p(shown_of(*text))});
+  }
+};
+
+// Loads once the key, none at first, holds one: its first run that starts does not wait for the debounce.
+struct optional_debounced_page {
+  state<std::optional<int>> next;
+  state<text_target> text;
+  effect load{next, load_text, text, {.debounce = 50ms}};
+
+  element view() { return p(shown_of(*text)); }
+};
+
+// The debounce of an effect on two states, and of one on a field of its props.
+struct debounced_pair_page {
+  state<int> left{1};
+  state<int> right{2};
+  state<text_target> text;
+  effect load{
+      std::tie(left, right), [](int one, int two) { return load_text(one * 10 + two); }, text, {.debounce = 50ms}};
+
+  element view() { return p(shown_of(*text)); }
+};
+
+struct debounced_panel {
+  struct props {
+    int key = 0;
+
+    [[nodiscard]] bool operator==(props const &) const = default;
+  };
+
+  state<text_target> text;
+  effect load{&props::key, load_text, text, {.debounce = 50ms}};
+
+  element view(props const &) { return p(shown_of(*text)); }
+};
+
+struct debounced_props_page {
+  state<int> key{1};
+
+  element view() { return component<debounced_panel>({.key = *key}); }
+};
+
+// A debounce of less than nothing.
+struct backwards_page {
+  state<int> next{1};
+  state<text_target> text;
+  effect load{next, load_text, text, {.debounce = -1ms}};
+
+  element view() { return p(shown_of(*text)); }
 };
 
 // A function of nothing, its target the flags alone.
@@ -888,7 +951,8 @@ TEST_CASE("effect: the run of a component that goes is stopped with it", "[ui][e
   CHECK(loads.stopped == 1);
 }
 
-TEST_CASE("effect: with no target, a change stops the run before, as a debounce", "[ui][effect]") {
+TEST_CASE("effect: with no target, debounced, a run that follows a change waits for the typing to stop",
+          "[ui][effect]") {
   searched.clear();
 
   virtual_time time;
@@ -907,7 +971,138 @@ TEST_CASE("effect: with no target, a change stops the run before, as a debounce"
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(searched == std::vector<std::string>{"abc"});
+  // The first run, on nothing typed, at once; then the last of what was typed 100 ms apart.
+  CHECK(searched == std::vector<std::string>{"", "abc"});
+}
+
+TEST_CASE("effect: debounced, its first run starts at once, one after a change once it has stayed 50 ms",
+          "[ui][effect]") {
+  loads = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<debounced_page> instance{time.get_executor(), shown};
+  std::vector<std::string> first;
+  std::vector<std::string> waiting;
+  std::string shown_waiting;
+  std::vector<std::string> started;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    first = loads.lines;
+    co_await quoll::async::sleep_for(5ms);
+
+    // Two changes 20 ms apart: the first one's run, still waiting, is stopped by the second, and calls nothing.
+    instance.component().next = 2;
+    co_await quoll::async::sleep_for(20ms);
+    instance.component().next = 3;
+    co_await quoll::async::sleep_for(40ms);
+    waiting = loads.lines;
+    shown_waiting = shown.html();
+    co_await quoll::async::sleep_for(15ms);
+    started = loads.lines;
+    co_await quoll::async::sleep_for(15ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(first == std::vector<std::string>{"start 1"});
+  // 40 ms after the last change: none of its runs called yet, the target loading meanwhile.
+  CHECK(waiting == std::vector<std::string>{"start 1", "end 1"});
+  CHECK(shown_waiting.contains("<p>running</p>"));
+  // 55 ms after it: the run of the last change has called its function, once.
+  CHECK(started == std::vector<std::string>{"start 1", "end 1", "start 3", "end 3"});
+  CHECK(loads.lines == std::vector<std::string>{"start 1", "end 1", "start 3", "end 3"});
+  CHECK(shown.html().contains("<p>text 3</p>"));
+}
+
+TEST_CASE("effect: debounced, a run reload() asks for does not wait", "[ui][effect]") {
+  loads = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<debounced_page> instance{time.get_executor(), shown};
+  std::vector<std::string> reloaded;
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+    reloaded = loads.lines;
+    co_await quoll::async::sleep_for(5ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(reloaded == std::vector<std::string>{"start 1", "end 1", "start 1"});
+}
+
+TEST_CASE("effect: debounced, the first run that starts, once an optional holds a value, does not wait",
+          "[ui][effect]") {
+  loads = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<optional_debounced_page> instance{time.get_executor(), shown};
+  std::vector<std::string> at_once;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.component().next = 4;
+    co_await settle();
+    at_once = loads.lines;
+    co_await quoll::async::sleep_for(5ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(at_once == std::vector<std::string>{"start 4"});
+}
+
+TEST_CASE("effect: debounced, on two states, a change waits", "[ui][effect]") {
+  loads = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<debounced_pair_page> instance{time.get_executor(), shown};
+  std::vector<std::string> waiting;
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+    instance.component().right = 3;
+    co_await quoll::async::sleep_for(40ms);
+    waiting = loads.lines;
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(waiting == std::vector<std::string>{"start 12", "end 12"});
+  CHECK(loads.lines == std::vector<std::string>{"start 12", "end 12", "start 13", "end 13"});
+}
+
+TEST_CASE("effect: debounced, on a field of its props, a change waits", "[ui][effect]") {
+  loads = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<debounced_props_page> instance{time.get_executor(), shown};
+  std::vector<std::string> waiting;
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+    instance.component().key = 2;
+    co_await quoll::async::sleep_for(40ms);
+    waiting = loads.lines;
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(waiting == std::vector<std::string>{"start 1", "end 1"});
+  CHECK(loads.lines == std::vector<std::string>{"start 1", "end 1", "start 2", "end 2"});
+}
+
+TEST_CASE("effect: a debounce of less than nothing is refused as it is made", "[ui][effect]") {
+  virtual_time time;
+  memory_renderer const shown;
+
+  CHECK_THROWS_AS((test_app<backwards_page>{time.get_executor(), shown}), std::invalid_argument);
 }
 
 TEST_CASE("effect: no function is refused as it is made", "[ui][effect]") {

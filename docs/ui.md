@@ -336,13 +336,26 @@ effect load_detail{id, [](std::int64_t id) -> task<std::tuple<products::product,
 }, detail};
 ```
 
-An effect with no target runs a function that gives nothing, as a search a while after what is typed:
+**A debounce** is an option, given last: a run that follows a change waits that long before it calls the function,
+and the next change stops it there, as a search waits for what is typed. Its target is loading meanwhile, its values
+kept; the first run that starts, and one `reload()` asks for, do not wait:
 
 ```cpp
-effect search{query, [this](std::string text) -> task<> {
-  co_await quoll::async::sleep_for(300ms);
-  co_await find(std::move(text));
-}};
+// The products whose name holds `text`, from the server.
+task<std::vector<products::product>> search(std::string text);
+
+state<std::string> query;
+async_state<std::vector<products::product>> found;
+
+effect find{query, search, found, {.debounce = 300ms}};
+```
+
+An effect with no target runs a function that gives nothing, as one that saves a draft as it is typed:
+
+```cpp
+effect keep{draft, [this](std::string text) -> task<> {
+  co_await save_draft(std::move(text));
+}, {.debounce = 1s}};
 ```
 
 **An action runs a function once at a time**, which its template argument names, and gives its signature:
