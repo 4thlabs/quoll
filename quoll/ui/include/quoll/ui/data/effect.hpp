@@ -80,11 +80,11 @@ async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::s
   std::optional<async::task<std::expected<V, std::exception_ptr>>> running;
 
   try {
-    running.emplace(run_in<V>(slot, target, std::move(make), asked, untold::thrown));
+    running.emplace(run_in<V>(slot, target, std::move(make), asked, failure_to::app));
   } catch (...) {
     // As run_in would: a run a later one replaced is no failure.
     if (!mine.stop_requested()) {
-      tell_failure(target.hooks(), untold::thrown, std::current_exception());
+      tell_failure(target.hooks(), failure_to::app, std::current_exception());
     }
 
     co_return;
@@ -127,7 +127,7 @@ async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::s
  * will start, its states or the field of the props holding a value: the first view of its component comes before the
  * run; a view written once, with to_html, which runs no effect, shows it loading. As a run starts, its target is
  * loading and has no error, the values before kept; as it ends, the target holds all it gave at once, or its failure,
- * the values before kept. A target with no error leaves a failure to the app's on_error, as a handler's, and an effect
+ * the values before kept. Every failure reaches the app's on_error too, shown or not, as a handler's, and an effect
  * with no target runs a function that gives nothing, such as a debounced search. The values of a target read by type
  * cannot be a bool or an error, which it would not tell apart from its flags; an async_state's value is what the
  * function gives, whole, whatever it is.
@@ -241,8 +241,8 @@ public:
 
   /**
    * @brief For the app of the component holding it, after each of its views: runs it if one of its states changed. What
-   * fails on the way, as a copy or a start lacking memory, stops the run before all the same, and is its target's
-   * failure, or thrown for a target with no place for it; the effect then waits for reload(). One on a field of props
+   * fails on the way, as a copy or a start lacking memory, stops the run before all the same, is its target's failure,
+   * and is thrown, for the app's on_error; the effect then waits for reload(). One on a field of props
    * its component does not have, a mistake of the program, goes to the app's on_error whatever its target, which it
    * never set loading. Before the component's first view, it only says whether its target is loading.
    */

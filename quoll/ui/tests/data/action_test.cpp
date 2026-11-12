@@ -764,7 +764,7 @@ TEST_CASE("action: of a member function of its component, run on it", "[ui][acti
   CHECK_THROWS_WITH(std::rethrow_exception(instance.component().run->error), "no work");
 }
 
-TEST_CASE("action: with()'s failure is its error, not the app's on_error's, and a click refused is no failure",
+TEST_CASE("action: with()'s failure is its error and the app's on_error's, and a click refused is no failure",
           "[ui][action]") {
   runs = {};
   runs.failing = {4};
@@ -790,7 +790,7 @@ TEST_CASE("action: with()'s failure is its error, not the app's on_error's, and 
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(runs.lines == std::vector<std::string>{"start 4"});
-  CHECK(failures.empty());
+  CHECK(failures == std::vector<std::string>{"no 4"});
   REQUIRE(instance.component().run->error != nullptr);
   CHECK_THROWS_WITH(std::rethrow_exception(instance.component().run->error), "no 4");
 }
@@ -819,7 +819,7 @@ TEST_CASE("action: what follows a success throws to run()'s caller, holding the 
   CHECK(instance.component().run->error == nullptr);
 }
 
-TEST_CASE("action: with() under a lack of memory at any step holds why, or throws from its handler, once",
+TEST_CASE("action: with() under a lack of memory at any step holds why, and throws it from its handler",
           "[ui][action]") {
   // Each allocation the handler's run makes, in turn, fails: the run succeeds, or it holds why not, or the
   // handler throws, which the event gives to the app's on_error.
@@ -859,8 +859,8 @@ TEST_CASE("action: with() under a lack of memory at any step holds why, or throw
     auto const &result = *instance.component().run;
 
     CHECK((result.value == 6 || result.error != nullptr || thrown));
-    // Told once: a failure it holds is not thrown as well.
-    CHECK_FALSE((thrown && result.error != nullptr));
+    // A failure it holds is thrown as well, for the app's on_error.
+    CHECK((result.error == nullptr || thrown));
     CHECK_FALSE(result.loading);
 
     if (!injected) {

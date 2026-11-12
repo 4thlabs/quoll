@@ -50,6 +50,7 @@
 #include <quoll/ui/detail/data/effect_starter.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -970,7 +971,8 @@ TEST_CASE("effect: one that could not start ends on that failure, which reload t
   };
 
   REQUIRE(quoll::test::run(time, act()) == 0);
-  CHECK(failures.empty());
+  // Shown in its target, and told to the app's on_error, as every failure.
+  CHECK(failures == std::vector<std::string>{"no more"});
   CHECK(failed_kept == "no more");
   CHECK(other.contains("failed 1"));
   CHECK(loads.lines == std::vector<std::string>{"start 1", "end 1"});
@@ -987,10 +989,11 @@ TEST_CASE("effect: a view whose change cannot be recorded stops the run before, 
   page.load.after_view(starts.starter());
   page.key = touchy_key{2};
 
+  // Its target shows the failure, which reaches the app's on_error too, thrown.
   {
     throwing_keys const copies{key_copy_throws};
 
-    page.load.after_view(starts.starter());
+    CHECK_THROWS_WITH(page.load.after_view(starts.starter()), "no copy");
   }
 
   virtual_time time;
@@ -1099,7 +1102,7 @@ TEST_CASE("effect: reload runs it again after a comparison that keeps failing", 
   {
     throwing_keys const compares{key_compare_throws};
 
-    page.load.after_view(starts.starter());
+    CHECK_THROWS_WITH(page.load.after_view(starts.starter()), "no compare");
     CHECK(std::get<2>(*page.text) != nullptr);
 
     page.load.reload();
@@ -1290,8 +1293,8 @@ TEST_CASE("effect: a lack of memory at any step of a run leaves its async_state 
 
     CHECK_FALSE(text.loading);
     CHECK((text.value == "text 1" || text.error != nullptr || told > 0));
-    // One allocation fails: a failure its target shows is not the app's on_error's as well.
-    CHECK_FALSE((told > 0 && text.error != nullptr));
+    // A failure its target shows is the app's on_error's as well.
+    CHECK((text.error == nullptr || told > 0));
 
     if (!injected) {
       clean = true;

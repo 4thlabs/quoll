@@ -98,10 +98,10 @@ void effect::after_view(detail::effect_starter const &start) {
     // this one starts writes nothing.
     start(run_(detail::ask(slot_), props));
   } catch (...) {
-    // Its failure, which its target shows; a target with no place for it leaves it to the app's on_error.
+    // Its failure, which its target shows, and the app's on_error hears of.
     stop_before();
     failed_ = true;
-    detail::tell_failure(target_, detail::untold::thrown, std::current_exception());
+    detail::tell_failure(target_, detail::failure_to::app, std::current_exception());
   }
 }
 

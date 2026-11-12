@@ -88,10 +88,10 @@ private:
   target_hooks target_;
 };
 
-// Where a run's failure goes that its target does not show, as it has no place for it: to its caller in what it gives,
-// or thrown, for a run whose result is dropped, an effect's or one from an event, so that the app's on_error hears of
-// it. A call refused or replaced is no failure of the run, and never thrown.
-enum class untold : unsigned char { given, thrown };
+// Where a run's failure goes besides its target: to its caller alone, in what it gives, as run()'s, or to the app's
+// on_error as well, thrown, for a run whose result is dropped, an effect's or one from an event. A call refused or
+// replaced is no failure of the run, and goes nowhere.
+enum class failure_to : unsigned char { caller, app };
 
 // Nothing to do after a success, for a run that has nothing to follow it.
 struct no_follow_up {
@@ -99,10 +99,10 @@ struct no_follow_up {
 };
 
 // A run's failure, whatever it is and wherever it happens, an effect's start included: written into its target, which
-// shows it if it has a place for it, and thrown if it has none and `failures` says so. What runs call for each failure,
-// but for a lack of memory making an action's run, which throws from its caller's call. Under a lack of memory before
-// a run begins, the target may show it while the run before is under way, whose answer then writes over it.
-void tell_failure(target_hooks target, untold failures, std::exception_ptr const &failure);
+// shows it if it has a place for it, then thrown to the app's on_error if `failures` says so. What runs call for each
+// failure, but for a lack of memory making an action's run, which throws from its caller's call. Under a lack of memory
+// before a run begins, the target may show it while the run before is under way, whose answer then writes over it.
+void tell_failure(target_hooks target, failure_to failures, std::exception_ptr const &failure);
 
 // Runs what `make` gives for `slot`, and writes what it gives into `target`. `ask` gives the run's stop, or none to
 // refuse it, run_refused at once; what it throws, as for a lack of memory, is the run's failure. A run whose stop was
@@ -118,7 +118,7 @@ template <class R, class Make, class Ask, class FollowUp = no_follow_up>
   requires std::same_as<std::invoke_result_t<Make &>, async::task<R>> &&
            std::same_as<std::invoke_result_t<Ask &>, std::optional<std::stop_token>>
 async::task<std::expected<R, std::exception_ptr>> run_in(run_slot &slot, target_ref<R> target, Make make, Ask ask,
-                                                         untold failures = untold::given,
+                                                         failure_to failures = failure_to::caller,
                                                          FollowUp follow_up = no_follow_up{}) {
   std::optional<std::stop_token> asked;
 

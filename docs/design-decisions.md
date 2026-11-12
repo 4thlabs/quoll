@@ -264,7 +264,9 @@ Less to write, as a load and a save are most of a screen: an `async_state<T>` na
 signature from the function, a free one, a context's or the component's own, with `with(args...)` for a click and
 what follows a success given as it is made, as React Query's `onSuccess`. An action holds where its runs are, as
 `useMutation`: `save->loading`, `save->error`, `save->value`, rather than a state declared beside it, which named one
-of its three fields. New names for the states, as `loaded<T>`, were set aside: a state stays a `state`.
+of its three fields. New names for the states, as `loaded<T>`, were set aside: a state stays a `state`. Every failure of a
+run reaches the app's `on_error`, shown or not, as React Query's global `onError`, but for `run()`'s, which its caller
+is given.
 
 **For you.** Declare an `async_state`, then the effect that writes into it; an action is read as one. Set the states an effect
 depends on, or call `reload()`, and its run follows. Give `save.with(args...)` to `on_click`, or await `run()` from a

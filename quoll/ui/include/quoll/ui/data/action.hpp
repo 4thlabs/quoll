@@ -149,20 +149,22 @@ public:
    * run_replaced for a call that gave no result of its own.
    */
   [[nodiscard]] auto run(Ts... args) QUOLL_LIFETIMEBOUND {
-    return self().run_with(std::tuple<Ts...>{std::move(args)...});
+    return self().run_with(std::tuple<Ts...>{std::move(args)...}, detail::failure_to::caller);
   }
 
   /**
    * @brief A handler running it with copies of `args`, for on_click: what it gave and why it failed are what it holds,
-   * as React Query's mutate(), and what it gave goes to what follows a success. A handler going on with them awaits
-   * run().
+   * and a failure reaches the app's on_error too, as a handler's; what it gave goes to what follows a success. A
+   * handler going on with the result awaits run(), whose caller alone is given a failure.
    */
   [[nodiscard]] auto with(Ts... args) QUOLL_LIFETIMEBOUND {
     static_assert((std::copy_constructible<Ts> && ...),
                   "quoll::ui::action: with() copies its arguments for each click: they are copyable");
 
     // Not a coroutine: each call copies the arguments into the frame of its own run, which outlives this lambda.
-    return [action = &self(), given = std::tuple<Ts...>{std::move(args)...}] { return action->run_with(given); };
+    return [action = &self(), given = std::tuple<Ts...>{std::move(args)...}] {
+      return action->run_with(given, detail::failure_to::app);
+    };
   }
 
 private:
@@ -198,11 +200,12 @@ private:
  * run() runs it in the task awaiting it, a handler's or mounted()'s, and gives what it gave or what it threw, as a
  * std::expected, not thrown again; what follows a success throws to it, as code of the handler after the run would.
  * with() gives a handler that runs it, for on_click. Every failure of a run, a lack of memory before it began included,
- * is its error; a lack of memory making the run itself throws from the call, as any call's. Both take the function's
- * parameters, so that a braced argument builds one. A call while one is under way is refused, run_refused at once,
- * where its runs are left as they are, or, with `overlap::restart`, stops it, so that it writes nothing, even one that
- * ignored the stop and came anyway, and gives run_replaced to its caller. A stop of the caller, as a timeout, ends the
- * run and its caller, as a stop does, loading no more.
+ * is its error, and, from with(), the app's on_error's too, as every failure of an effect or a handler; a lack of
+ * memory making the run itself throws from the call, as any call's. Both take the function's parameters, so that a
+ * braced argument builds one. A call while one is under way is refused, run_refused at once, where its runs are left as
+ * they are, or, with `overlap::restart`, stops it, so that it writes nothing, even one that ignored the stop and came
+ * anyway, and gives run_replaced to its caller. A stop of the caller, as a timeout, ends the run and its caller, as a
+ * stop does, loading no more.
  *
  * Neither copied nor moved: a run under way refers to it. Its arguments are copied into the run, given to the function
  * as rvalues: none can be a view, which would outlive what it refers to. Thread safety: none, as a state.
@@ -310,8 +313,9 @@ private:
   }
 
   // Not a coroutine: run_in's frame, made by this call, holds the arguments, and every failure of the run goes through
-  // tell_failure(), into what it holds; a lack of memory making it throws from the call, as any call's.
-  [[nodiscard]] async::task<result_type> run_with(arguments given) {
+  // tell_failure(), into what it holds, and to the app's on_error for `failure_to::app`, with()'s; a lack of memory
+  // making it throws from the call, as any call's.
+  [[nodiscard]] async::task<result_type> run_with(arguments given, detail::failure_to failures) {
     // Called once the run before is stopped, or not at all once refused: what it throws is this run's failure.
     auto make = [this, given = std::move(given)]() mutable { return call_(std::move(given)); };
 
@@ -331,8 +335,7 @@ private:
       }
     };
 
-    return detail::run_in<value_type>(slot_, target_, std::move(make), std::move(ask), detail::untold::given,
-                                      follow_up);
+    return detail::run_in<value_type>(slot_, target_, std::move(make), std::move(ask), failures, follow_up);
   }
 
   // Where its runs are, before what writes into it.
