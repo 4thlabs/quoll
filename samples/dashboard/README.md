@@ -1,7 +1,8 @@
 # Dashboard: a list, a detail and a chart
 
-A screen of an application, over a small products API: a list to filter, the detail of the product chosen to edit, and
-its sales in a [chart.js](https://www.chartjs.org/) chart, a JavaScript widget of the page.
+A screen of an application, over a small products API: a list to filter at `/products`, and the page of a product at
+`/products/{id}`, its detail to edit and its sales in a [chart.js](https://www.chartjs.org/) chart, a JavaScript widget
+of the page.
 
 ```
 dashboard/
@@ -21,22 +22,25 @@ dashboard/
 
 | File | What it holds |
 |---|---|
-| `web/main.cpp` | `mount<dashboard_page>()`, in `#app`, with the catalog |
-| `web/components/dashboard_page.hpp` | the product chosen, and its sales, loaded by an `effect` on it into a state with whether they are loading and why they failed |
-| `web/components/catalog.hpp` | the products, a context the page, the list and the detail share: loaded by an `effect` on no state, saved by `save`, which `run()` calls from the detail |
+| `web/main.cpp` | `mount<app_shell>()`, in `#app`, its addresses through the browser's history |
+| `web/components/pages.hpp` | the routes, `/products` and `/products/{id}`, a redirect from `/` and a page for an unknown address, the app's own component and its options |
+| `web/components/products_layout.hpp` | the layout of `/products`: the heading, the list, and the page of the address in its `outlet()` |
+| `web/components/product_page.hpp` | the page of `/products/{id}`: the product the catalog holds, or why it is not shown |
+| `web/components/product_view.hpp` | a product's detail, and its sales, loaded by an `effect` on its `id` prop into a state with whether they are loading and why they failed |
+| `web/components/catalog.hpp` | the products, a context the layout, the list, the product's page and its detail share: loaded by an `effect` on no state, saved by `save`, which `run()` calls from the detail |
 | `web/components/product_list.hpp` | the filter, a state of its own, and the rows of the catalog's products it matches |
-| `web/components/product_row.hpp` | one product, with its `on_select` callback |
-| `web/components/product_detail.hpp` | the fields of the product chosen, what is typed kept until saved, and kept when typed while a save is on its way; its save, an `action` writing whether it waits and why it failed, which runs the catalog's save |
+| `web/components/product_row.hpp` | one product, a `link_to` its page |
+| `web/components/product_detail.hpp` | the fields of the product shown, what is typed kept until saved, and kept when typed while a save is on its way; its save, an `action` writing whether it waits and why it failed, which runs the catalog's save |
 | `web/components/field.hpp` | a labelled input showing a value it is given, with an `on_change` callback |
 | `web/components/sales_chart.hpp`, `.cpp` | the `line_chart` widget, and the month of the point clicked; its view in a source of its own, as the widget's JSON goes through Glaze |
 | `web/widgets/line_chart.js` | the widget's module: `mount`, `update` and `unmount` over chart.js, a click emitting `point_selected` |
 | `web/products_client.hpp`, `.cpp` | the calls to the server, through a `rest::client` of the contract, in a source of their own |
 
-The detail and the chart are keyed by the product: another product chosen is another detail, with nothing typed, and
-another chart. Only the sales asked for last show, or their failure: a product chosen again, or another, while some are
-on their way; their failure shows where they would. A product saves once at a time: the page keeps which saves are on
-their way and why a product's last one failed until the next, and gives each detail its own, so that one chosen again
-shows its save waiting, or that it was not saved. A field changed while the save is on its way keeps what it holds once
+A product is an address: a click on a row goes there, the browser's back button comes back, and a link to it opens it.
+The product's page shows a view of the product keyed by it: another product is another view, with nothing typed and
+its own sales, loading from the start, the load of the one before stopped. A detail saves its product once at a time,
+through the catalog, so that a save goes on as its detail is left; two details of one product, as one left and the one
+come back to, may still send theirs together. A field changed while the save is on its way keeps what it holds once
 it is answered.
 
 ## Run it

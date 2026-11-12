@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The product chosen, to edit: what is typed stays here until it is saved, the product itself is the page's.
+// The product shown, to edit: what is typed stays here until it is saved, the product itself is the catalog's.
 
 #ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_DETAIL_HPP
 #define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_DETAIL_HPP
@@ -61,11 +61,9 @@
 
 namespace dashboard_web {
 
+using namespace quoll::ui;
+
 using quoll::async::task;
-using quoll::ui::action;
-using quoll::ui::element;
-using quoll::ui::shared;
-using quoll::ui::state;
 
 // The number `text` holds whole, or nothing: from_chars reads "inf" and "nan" too, which JSON cannot hold.
 template <class T>
@@ -104,6 +102,7 @@ struct product_detail {
   // Whether a save is on its way, and why the last one failed: once at a time, a click while one is on its way
   // refused. The save is the catalog's: a detail left stops waiting for it, and it goes on.
   state<std::tuple<bool, std::exception_ptr>> saving;
+
   action<products::product(std::int64_t, products::product_update)> save_product{
       [this](std::int64_t id, products::product_update changes) {
         return products.run(&catalog::save, id, std::move(changes));
@@ -149,8 +148,6 @@ struct product_detail {
   }
 
   element view(props const &given) {
-    using namespace quoll::ui;
-
     auto const edit = [](state<std::optional<std::string>> &typed) {
       return [&typed](std::string value) { typed = std::optional<std::string>{std::move(value)}; };
     };

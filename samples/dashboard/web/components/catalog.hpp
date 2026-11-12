@@ -55,10 +55,13 @@
 
 namespace dashboard_web {
 
+using namespace quoll::ui;
+
 struct catalog {
-  // The products, whether they are loading, and why they did not load.
-  quoll::ui::state<std::tuple<std::vector<products::product>, bool, std::exception_ptr>> items;
-  quoll::ui::effect load{std::tie(), products_client::list, items};
+  // The products, whether they are loading, and why they did not load: loading from the start, as the first view of a
+  // page comes before their load.
+  state<std::tuple<std::vector<products::product>, bool, std::exception_ptr>> items{{{}, true, nullptr}};
+  effect load{std::tie(), products_client::list, items};
 
   // Saves a product, which the list then shows. Two details of one product may still send their saves together, the
   // last answer kept; what a context keeps per item, as a save of a product once at a time, is to settle

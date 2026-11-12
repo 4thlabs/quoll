@@ -122,6 +122,11 @@ constexpr int most_redirects = 8;
   return canonical.empty() ? std::string{"/"} : canonical;
 }
 
+// `where` as an address, its query after its path.
+[[nodiscard]] std::string href_of(location const &where) {
+  return where.query.empty() ? where.path : where.path + "?" + where.query;
+}
+
 // `href` split into its path, in its one form, and its query, its fragment dropped.
 [[nodiscard]] location location_of(std::string_view href) {
   if (auto const hash = href.find('#'); hash != std::string_view::npos) {
@@ -352,24 +357,25 @@ void router_core::start(std::span<route_entry const> routes, history_ref history
 }
 
 void router_core::go(std::string_view href, bool replace) {
-  // In its one form, what the history holds and what is matched the same: "edit" is "/edit", "/a/./b/" is "/a/b".
-  auto const where = location_of(href);
-  auto const rooted = where.query.empty() ? where.path : where.path + "?" + where.query;
+  // Where it ends, its redirects followed: going to the address shown, or to one that redirects there, pushes nothing,
+  // as a browser's link to the page it shows replaces its entry.
+  auto where = resolved(href);
+  auto const rooted = href_of(where);
 
-  if (replace) {
+  if (replace || where == **where_) {
     history_->replace(rooted);
   } else {
     history_->push(rooted);
   }
 
-  arrive(rooted);
+  set_location(std::move(where));
 }
 
 void router_core::back() const { history_->back(); }
 
 void router_core::changed(void *self, std::string_view href) { static_cast<router_core *>(self)->arrive(href); }
 
-void router_core::arrive(std::string_view href) {
+location router_core::resolved(std::string_view href) const {
   auto where = location_of(href);
 
   for (int followed = 0; followed < most_redirects; ++followed) {
@@ -379,12 +385,24 @@ void router_core::arrive(std::string_view href) {
       break;
     }
 
-    auto const target = redirected(routes_[found.chain.back()].target, found.values, where);
-
-    history_->replace(target);
-    where = location_of(target);
+    where = location_of(redirected(routes_[found.chain.back()].target, found.values, where));
   }
 
+  return where;
+}
+
+void router_core::arrive(std::string_view href) {
+  auto where = resolved(href);
+
+  // An address the history gave that redirects elsewhere: the history holds where it went.
+  if (auto const rooted = href_of(where); rooted != href) {
+    history_->replace(rooted);
+  }
+
+  set_location(std::move(where));
+}
+
+void router_core::set_location(location where) {
   if (**where_ != where) {
     where_->set(std::move(where));
   }

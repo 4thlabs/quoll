@@ -338,3 +338,23 @@ TEST_CASE("router: an address has one form, its dot segments resolved, pushed an
   CHECK(history.current() == "/products/5");
   CHECK(shown.html().contains("<p>page 5: product 5</p>"));
 }
+
+TEST_CASE("router: going to the address shown, or to one that redirects there, pushes nothing", "[ui][router]") {
+  memory_history history{"/products/5"};
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<shell> instance{time.get_executor(), shown, {.contexts = {routing<shop_routes>(history.ref())}}};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.context<router>().go("/products/5");
+    instance.context<router>().go<product_page>({.id = 5});
+
+    // One that redirects to it, as /items/5.
+    instance.context<router>().go("/items/5");
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(history.size() == 1);
+}

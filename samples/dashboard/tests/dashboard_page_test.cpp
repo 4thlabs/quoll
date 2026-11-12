@@ -37,7 +37,7 @@
 // The page of samples/dashboard/web, run natively: the calls to the server are defined here, over products in memory,
 // in place of products_client.cpp, which goes through fetch. The chart is a widget, which memory_renderer logs.
 
-#include "components/dashboard_page.hpp"
+#include "components/pages.hpp"
 #include "product.hpp"
 #include "products_client.hpp"
 
@@ -74,7 +74,7 @@ using quoll::test::session;
 using quoll::test::settle;
 using quoll::test::virtual_time;
 
-using dashboard_app = quoll::ui::app<dashboard_web::dashboard_page, memory_renderer>;
+using dashboard_app = quoll::ui::app<dashboard_web::app_shell, memory_renderer>;
 
 // One call for sales: how long it takes, and whether it fails then.
 struct sales_call {
@@ -141,7 +141,7 @@ struct page_driver {
 
   void filter(std::string text) const { instance.dispatch(shown.find("input"), "input", std::move(text)); }
 
-  // A row is a button around the product's name.
+  // A row is a link around the product's name.
   void choose(std::string_view name) const { instance.dispatch(shown.parent(shown.find_text(name)), "click"); }
 
   // A field is a label around its name and its input.
@@ -387,7 +387,6 @@ TEST_CASE("dashboard web: the sales of a product chosen before are not shown onc
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(chart_props(shown) == R"(mount ../widgets/line_chart.js {"months":["Jan","Feb","Mar"],"units":[40,50,60]})");
-  CHECK(std::get<1>(*instance.component().sales) == server.sales.at(2));
 }
 
 TEST_CASE("dashboard web: the sales of the product chosen that fail show why, those of one left say nothing",
@@ -522,7 +521,6 @@ TEST_CASE("dashboard web: sales that failed load again on Try again, a product c
   CHECK(failed.contains("Try again"));
   CHECK_FALSE(shown.html().contains("no sales for now"));
   CHECK(chart_props(shown) == R"(mount ../widgets/line_chart.js {"months":["Jan","Feb"],"units":[10,20]})");
-  CHECK(std::get<1>(*instance.component().sales) == server.sales.at(1));
 }
 
 TEST_CASE("dashboard web: a failure of the sales and one of a save each stay, and a product chosen clears the first",
@@ -754,4 +752,119 @@ TEST_CASE("dashboard web: products that fail to load with nothing said still say
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(shown.html().contains("the products did not load"));
   CHECK(shown.html().contains("role=\"alert\""));
+}
+
+TEST_CASE("dashboard web: a product's address opens its page, and the back button goes back to the list",
+          "[samples][dashboard]") {
+  server = three_products();
+
+  virtual_time time;
+  memory_renderer const shown;
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options("/products/2")};
+  page_driver const user{instance, shown};
+  std::string opened;
+  std::string other;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    opened = shown.html();
+
+    user.choose("Grinder");
+    co_await settle();
+    other = shown.html();
+
+    instance.context<quoll::ui::router>().back();
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(opened.contains("Green tea</h2>"));
+  CHECK(other.contains("Grinder</h2>"));
+
+  // Back on the product before: its address, its page, its row chosen, and its chart, mounted again for it.
+  CHECK(instance.context<quoll::ui::router>().where->path == "/products/2");
+  CHECK(shown.html().contains("Green tea</h2>"));
+  CHECK(shown.html().contains("bg-base-200\" data-quoll-link=\"\" href=\"/products/2\""));
+  CHECK(chart_props(shown) == R"(mount ../widgets/line_chart.js {"months":["Jan","Feb","Mar"],"units":[40,50,60]})");
+}
+
+TEST_CASE("dashboard web: the root goes to the products, a product none holds and an unknown address say so, asking "
+          "for no sales",
+          "[samples][dashboard]") {
+  struct seen {
+    std::string start;
+    std::string path;
+    std::string shown;
+  };
+
+  std::vector<seen> pages = {
+      {"/", "/products", "Choose a product"},
+      {"/products/42", "/products/42", "No such product"},
+      {"/nowhere", "/nowhere", "<a class=\"link\" data-quoll-link=\"\" href=\"/products\">See the products</a>"},
+  };
+
+  for (auto const &[start, path, shown_there] : pages) {
+    server = three_products();
+
+    virtual_time time;
+    memory_renderer const shown;
+    dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options(start)};
+
+    auto const act = []() -> task<> { co_await settle(); };
+
+    REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+    INFO(start);
+    CHECK(instance.context<quoll::ui::router>().where->path == path);
+    CHECK(shown.html().contains(shown_there));
+    CHECK(server.sales_asked == 0);
+  }
+}
+
+TEST_CASE("dashboard web: a product's own row goes nowhere new, the back button leaving its page at once",
+          "[samples][dashboard]") {
+  server = three_products();
+
+  virtual_time time;
+  memory_renderer const shown;
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options("/products")};
+  page_driver const user{instance, shown};
+  std::string first;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    user.choose("Green tea");
+    co_await settle();
+
+    // Its row again: the history holds one entry for it.
+    user.choose("Green tea");
+    co_await settle();
+
+    instance.context<quoll::ui::router>().back();
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(instance.context<quoll::ui::router>().where->path == "/products");
+  CHECK(shown.html().contains("Choose a product"));
+}
+
+TEST_CASE("dashboard web: a product's address says it loads, not that it is missing, before the products came",
+          "[samples][dashboard]") {
+  server = three_products();
+
+  virtual_time time;
+  memory_renderer const shown;
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options("/products/2")};
+  std::string first;
+
+  // Its first view, before the catalog's load ran.
+  auto const act = [&]() -> task<> {
+    first = shown.html();
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(first.contains("Loading the product"));
+  CHECK_FALSE(first.contains("No such product"));
+  CHECK(shown.html().contains("Green tea</h2>"));
 }

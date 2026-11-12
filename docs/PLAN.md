@@ -227,8 +227,8 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
   goes, the parent's work goes on. A view is not run again when its props compare equal and none of its states
   changed (`docs/ui.md`), its callbacks those of its last view, as decided on 2026-11-11.
 - Restoring the states after a rebuild, which the third level of hot reload still lacks.
-- How a page writes its names: `using namespace quoll::ui;` now sits in each `view()`, as the rules forbid it at
-  namespace scope in a header.
+- How a page writes its names: done, `using namespace quoll::ui;` once in the application's namespace, as the
+  dashboard does (2026-11-12); a rule of Quoll's own headers no longer stands in its way.
 - Base components, styled with Tailwind.
 - In the sample: adding a note during the first load can hide it until a reload.
 - Two siblings with the same key: only caught by an `assert`, on the render after, which a real error should replace. A state
@@ -256,7 +256,8 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
   its details, and the failure of a save whose detail went.
 - **Routing**: done (2026-11-12, see [Decided](#decided)): `routes(...)` of `route<Path, Page>`, layouts with
   `outlet()`, `redirect<From, To>`, `not_found<Page>`, `routing<routes>(history)` as a context, `link_to`, the
-  browser's history in `quoll::emscripten`. Next: the dashboard as pages, and pages written by a server.
+  browser's history in `quoll::emscripten`; the dashboard is pages, `/products` and `/products/{id}`. Next: pages
+  written by a server.
 - WebSocket in the browser and in the REST DSL, left from step 5, if that screen needs them; if it does not, the maintainer
   says where they go once the step ends, and step 5 is done.
 
