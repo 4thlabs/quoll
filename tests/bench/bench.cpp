@@ -377,9 +377,10 @@ private:
 
     // Asked rather than caught: anything else that fails to set TLS up is a failure, and ends the program.
     if ((co_await async::current_executor()).query<io::tls_network_ref>()) {
-      tls_listener =
-          co_await io::listen_tls(0, {.certificate_file = std::string{QUOLL_BENCH_TLS_DIR} + "/server.pem",
-                                      .private_key_file = std::string{QUOLL_BENCH_TLS_DIR} + "/server-key.pem"});
+      tls_listener = co_await io::listen_tls(
+          0, {.certificate_file = std::string{QUOLL_BENCH_TLS_DIR} + "/server.pem",
+              .private_key_file = std::string{QUOLL_BENCH_TLS_DIR} + "/server-key.pem"}
+      );
     } else {
       std::cerr << "no TLS in this build\n";
     }
@@ -390,14 +391,16 @@ private:
     plain_.set_value(listener.local_port().value());
 
     if (tls_listener) {
-      co_await async::when_all(http::server{router}.serve(std::move(listener)),
-                               http::server{files_router}.serve(std::move(files_listener)),
-                               http::server{large_router, large_bodies()}.serve(std::move(large_listener)),
-                               http::server{router}.serve(std::move(*tls_listener)));
+      co_await async::when_all(
+          http::server{router}.serve(std::move(listener)), http::server{files_router}.serve(std::move(files_listener)),
+          http::server{large_router, large_bodies()}.serve(std::move(large_listener)),
+          http::server{router}.serve(std::move(*tls_listener))
+      );
     } else {
-      co_await async::when_all(http::server{router}.serve(std::move(listener)),
-                               http::server{files_router}.serve(std::move(files_listener)),
-                               http::server{large_router, large_bodies()}.serve(std::move(large_listener)));
+      co_await async::when_all(
+          http::server{router}.serve(std::move(listener)), http::server{files_router}.serve(std::move(files_listener)),
+          http::server{large_router, large_bodies()}.serve(std::move(large_listener))
+      );
     }
   }
 
@@ -497,8 +500,8 @@ task<> send_in_turn(measure &measured QUOLL_LIFETIMEBOUND, Call call) {
 // What a client does lives on the loop: the client and the connections it keeps end with the tasks, before the
 // runtime.
 template <class MakeCall>
-task<> start_tasks(quoll::runtime::executor executor, measure &measured QUOLL_LIFETIMEBOUND, int tasks,
-                   MakeCall make_call) {
+task<>
+start_tasks(quoll::runtime::executor executor, measure &measured QUOLL_LIFETIMEBOUND, int tasks, MakeCall make_call) {
   auto const call = make_call();
 
   for (auto index = 0; index < tasks; ++index) {
@@ -516,8 +519,9 @@ bool run_scenario(std::string_view name, std::chrono::duration<double> seconds, 
   constexpr std::size_t most_kept = 4'000'000;
 
   auto const now = steady_clock::now();
-  measure measured{.start = now + warm_up,
-                   .stop = now + warm_up + std::chrono::duration_cast<steady_clock::duration>(seconds)};
+  measure measured{
+      .start = now + warm_up, .stop = now + warm_up + std::chrono::duration_cast<steady_clock::duration>(seconds)
+  };
 
   measured.latencies.reserve(most_kept);
 
@@ -525,8 +529,10 @@ bool run_scenario(std::string_view name, std::chrono::duration<double> seconds, 
     quoll::runtime runtime;
 
     // Not kept in a variable: run() ends once no executor of the runtime is left.
-    co_spawn(runtime.get_executor(), start_tasks(runtime.get_executor(), measured, tasks, std::move(make_call)),
-             quoll::test::ending_the_run{});
+    co_spawn(
+        runtime.get_executor(), start_tasks(runtime.get_executor(), measured, tasks, std::move(make_call)),
+        quoll::test::ending_the_run{}
+    );
     runtime.run();
   }
 
@@ -547,9 +553,11 @@ bool run_scenario(std::string_view name, std::chrono::duration<double> seconds, 
   };
   auto const elapsed = std::chrono::duration<double>(*measured.ended - *measured.began).count();
 
-  print_line("| {} | {:.0f} | {:.0f} | {:.0f} | {:.1f} | {:.1f} |", name, requests / elapsed, percentile(0.50),
-             percentile(0.99), static_cast<double>(measured.server_end - measured.server_begin) / requests,
-             static_cast<double>(measured.client_end - measured.client_begin) / requests);
+  print_line(
+      "| {} | {:.0f} | {:.0f} | {:.0f} | {:.1f} | {:.1f} |", name, requests / elapsed, percentile(0.50),
+      percentile(0.99), static_cast<double>(measured.server_end - measured.server_begin) / requests,
+      static_cast<double>(measured.client_end - measured.client_begin) / requests
+  );
   return true;
 }
 
@@ -575,44 +583,54 @@ int run_tcp(std::chrono::duration<double> seconds) {
   ok = run_scenario("GET, one connection each", seconds, 1, get(plain, true)) && ok;
   ok = run_scenario(
            "POST 1 MiB, echoed", seconds, 1,
-           [&plain] { return [client = http::client{plain}] { return client.send(make_post(megabyte())); }; }) &&
+           [&plain] { return [client = http::client{plain}] { return client.send(make_post(megabyte())); }; }
+       ) &&
        ok;
-  ok = run_scenario("POST 1 MiB, read in pieces", seconds, 1,
-                    [&plain] {
-                      return [client = http::client{plain}] {
-                        auto request = make_post(megabyte());
+  ok = run_scenario(
+           "POST 1 MiB, read in pieces", seconds, 1,
+           [&plain] {
+             return [client = http::client{plain}] {
+               auto request = make_post(megabyte());
 
-                        request.target = "/in-pieces";
-                        return client.send(std::move(request));
-                      };
-                    }) &&
+               request.target = "/in-pieces";
+               return client.send(std::move(request));
+             };
+           }
+       ) &&
        ok;
-  ok = run_scenario("GET 1 MiB, written in pieces", seconds, 1,
-                    [&plain] {
-                      return [client = http::client{plain}] {
-                        auto request = make_get();
+  ok = run_scenario(
+           "GET 1 MiB, written in pieces", seconds, 1,
+           [&plain] {
+             return [client = http::client{plain}] {
+               auto request = make_get();
 
-                        request.target = "/out-pieces";
-                        return client.send(std::move(request));
-                      };
-                    }) &&
+               request.target = "/out-pieces";
+               return client.send(std::move(request));
+             };
+           }
+       ) &&
        ok;
-  ok = run_scenario("GET a file of 1 MiB", seconds, 1,
-                    [files = "http://127.0.0.1:" + std::to_string(server.files_port())] {
-                      return [client = http::client{files}] {
-                        auto request = make_get();
+  ok = run_scenario(
+           "GET a file of 1 MiB", seconds, 1,
+           [files = "http://127.0.0.1:" + std::to_string(server.files_port())] {
+             return [client = http::client{files}] {
+               auto request = make_get();
 
-                        request.target = "/files/megabyte.bin";
-                        return client.send(std::move(request));
-                      };
-                    }) &&
+               request.target = "/files/megabyte.bin";
+               return client.send(std::move(request));
+             };
+           }
+       ) &&
        ok;
-  ok = run_scenario("REST GET, JSON", seconds, 1,
-                    [&plain] { return [api = rest::client<card_api>{plain}] { return api.call<get_card>(42); }; }) &&
+  ok = run_scenario(
+           "REST GET, JSON", seconds, 1,
+           [&plain] { return [api = rest::client<card_api>{plain}] { return api.call<get_card>(42); }; }
+       ) &&
        ok;
   ok = run_scenario(
            "REST POST, JSON", seconds, 1,
-           [&plain] { return [api = rest::client<card_api>{plain}] { return api.call<echo_card>(make_card()); }; }) &&
+           [&plain] { return [api = rest::client<card_api>{plain}] { return api.call<echo_card>(make_card()); }; }
+       ) &&
        ok;
 
   if (server.secure_port() != 0) {
@@ -696,8 +714,10 @@ int run_allocations(bool check) {
     auto const found = std::ranges::find(budgets, scenario, &budget::scenario);
 
     if (check && (found == std::end(budgets) || allocations > found->at_most)) {
-      print_line("{}: {:.2f} allocations per request, over its budget of {:.2f}", scenario, allocations,
-                 found == std::end(budgets) ? 0.0 : found->at_most);
+      print_line(
+          "{}: {:.2f} allocations per request, over its budget of {:.2f}", scenario, allocations,
+          found == std::end(budgets) ? 0.0 : found->at_most
+      );
       ok = false;
       return;
     }
@@ -831,8 +851,10 @@ task<bool> run_large_transfers(std::uint16_t port, std::uint64_t size) {
       print_line("| {} | moved {} bytes of {} | | |", name, moved, size);
       ok = false;
     } else {
-      print_line("| {} | {:.0f} | {:.0f} | {:.1f} |", name, static_cast<double>(size) / (1024.0 * 1024.0 * 1024.0),
-                 static_cast<double>(size) / (1024.0 * 1024.0) / taken.count(), peak_memory());
+      print_line(
+          "| {} | {:.0f} | {:.0f} | {:.1f} |", name, static_cast<double>(size) / (1024.0 * 1024.0 * 1024.0),
+          static_cast<double>(size) / (1024.0 * 1024.0) / taken.count(), peak_memory()
+      );
     }
 
     std::cout.flush();

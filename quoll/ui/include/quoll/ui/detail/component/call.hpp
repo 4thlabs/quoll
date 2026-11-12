@@ -55,8 +55,8 @@ namespace quoll::ui::detail {
 // The work of a call, as a task of what `target` named: what `function` gives or throws reaches the caller through
 // `state`, unless it stopped waiting, its failure then thrown again for the app to report.
 template <class R, class Function, class... Args>
-[[nodiscard]] async::task<> call_work(std::shared_ptr<Function const> function, std::shared_ptr<call_state<R>> state,
-                                      Args... args) {
+[[nodiscard]] async::task<>
+call_work(std::shared_ptr<Function const> function, std::shared_ptr<call_state<R>> state, Args... args) {
   call_end<R> end{std::move(state)};
 
   // What it runs as stopped since the call was posted: it does not run, and the caller ends on the stop with it.

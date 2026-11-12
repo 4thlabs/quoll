@@ -42,6 +42,7 @@
 #include <quoll/emscripten/mount.hpp>
 
 int main() {
-  quoll::emscripten::mount<dashboard_web::app_shell>("#app",
-                                                     dashboard_web::page_options(quoll::emscripten::browser_history()));
+  quoll::emscripten::mount<dashboard_web::app_shell>(
+      "#app", dashboard_web::page_options(quoll::emscripten::browser_history())
+  );
 }

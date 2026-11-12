@@ -69,9 +69,11 @@ TEST_CASE("A GET request is serialized without framing", "[http][serializer]") {
 
   request.fields.add("Host", "example.com");
 
-  REQUIRE(http::serialize(request) == "GET /accounts/42 HTTP/1.1\r\n"
-                                      "Host: example.com\r\n"
-                                      "\r\n");
+  REQUIRE(
+      http::serialize(request) == "GET /accounts/42 HTTP/1.1\r\n"
+                                  "Host: example.com\r\n"
+                                  "\r\n"
+  );
 }
 
 TEST_CASE("A request body gets a Content-Length", "[http][serializer]") {
@@ -82,10 +84,12 @@ TEST_CASE("A request body gets a Content-Length", "[http][serializer]") {
     request.target = "/accounts";
     request.body = "{}";
 
-    REQUIRE(http::serialize(request) == "POST /accounts HTTP/1.1\r\n"
-                                        "Content-Length: 2\r\n"
-                                        "\r\n"
-                                        "{}");
+    REQUIRE(
+        http::serialize(request) == "POST /accounts HTTP/1.1\r\n"
+                                    "Content-Length: 2\r\n"
+                                    "\r\n"
+                                    "{}"
+    );
   }
 
   SECTION("an empty body of a method that has one") {
@@ -94,9 +98,11 @@ TEST_CASE("A request body gets a Content-Length", "[http][serializer]") {
     request.method = http::verb::put;
     request.target = "/flag";
 
-    REQUIRE(http::serialize(request) == "PUT /flag HTTP/1.1\r\n"
-                                        "Content-Length: 0\r\n"
-                                        "\r\n");
+    REQUIRE(
+        http::serialize(request) == "PUT /flag HTTP/1.1\r\n"
+                                    "Content-Length: 0\r\n"
+                                    "\r\n"
+    );
   }
 
   SECTION("an explicit Content-Length is kept") {
@@ -107,10 +113,12 @@ TEST_CASE("A request body gets a Content-Length", "[http][serializer]") {
 
     request.fields.add("Content-Length", "3");
 
-    REQUIRE(http::serialize(request) == "POST / HTTP/1.1\r\n"
-                                        "Content-Length: 3\r\n"
-                                        "\r\n"
-                                        "abc");
+    REQUIRE(
+        http::serialize(request) == "POST / HTTP/1.1\r\n"
+                                    "Content-Length: 3\r\n"
+                                    "\r\n"
+                                    "abc"
+    );
   }
 }
 
@@ -150,10 +158,12 @@ TEST_CASE("A response gets its reason phrase and framing", "[http][serializer]")
 
     response.body = "hello";
 
-    REQUIRE(http::serialize(response) == "HTTP/1.1 200 OK\r\n"
-                                         "Content-Length: 5\r\n"
-                                         "\r\n"
-                                         "hello");
+    REQUIRE(
+        http::serialize(response) == "HTTP/1.1 200 OK\r\n"
+                                     "Content-Length: 5\r\n"
+                                     "\r\n"
+                                     "hello"
+    );
   }
 
   SECTION("204 has no Content-Length") {
@@ -169,9 +179,11 @@ TEST_CASE("A response gets its reason phrase and framing", "[http][serializer]")
 
     response.status = static_cast<http::status>(299);
 
-    REQUIRE(http::serialize(response) == "HTTP/1.1 299 \r\n"
-                                         "Content-Length: 0\r\n"
-                                         "\r\n");
+    REQUIRE(
+        http::serialize(response) == "HTTP/1.1 299 \r\n"
+                                     "Content-Length: 0\r\n"
+                                     "\r\n"
+    );
   }
 }
 
@@ -181,9 +193,11 @@ TEST_CASE("A response may announce a length it does not send", "[http][serialize
 
     response.fields.add("Content-Length", "12");
 
-    REQUIRE(http::serialize(response) == "HTTP/1.1 200 OK\r\n"
-                                         "Content-Length: 12\r\n"
-                                         "\r\n");
+    REQUIRE(
+        http::serialize(response) == "HTTP/1.1 200 OK\r\n"
+                                     "Content-Length: 12\r\n"
+                                     "\r\n"
+    );
   }
 
   SECTION("304") {
@@ -192,9 +206,11 @@ TEST_CASE("A response may announce a length it does not send", "[http][serialize
     response.status = http::status::not_modified;
     response.fields.add("Content-Length", "12");
 
-    REQUIRE(http::serialize(response) == "HTTP/1.1 304 Not Modified\r\n"
-                                         "Content-Length: 12\r\n"
-                                         "\r\n");
+    REQUIRE(
+        http::serialize(response) == "HTTP/1.1 304 Not Modified\r\n"
+                                     "Content-Length: 12\r\n"
+                                     "\r\n"
+    );
   }
 }
 
@@ -205,12 +221,14 @@ TEST_CASE("Chunked coding may follow other codings", "[http][serializer]") {
   request.body = "abc";
   request.fields.add("Transfer-Encoding", "gzip, chunked");
 
-  REQUIRE(http::serialize(request) == "POST / HTTP/1.1\r\n"
-                                      "Transfer-Encoding: gzip, chunked\r\n"
-                                      "\r\n"
-                                      "3\r\nabc\r\n"
-                                      "0\r\n"
-                                      "\r\n");
+  REQUIRE(
+      http::serialize(request) == "POST / HTTP/1.1\r\n"
+                                  "Transfer-Encoding: gzip, chunked\r\n"
+                                  "\r\n"
+                                  "3\r\nabc\r\n"
+                                  "0\r\n"
+                                  "\r\n"
+  );
 }
 
 TEST_CASE("A chunked response carries its trailers", "[http][serializer]") {
@@ -221,13 +239,15 @@ TEST_CASE("A chunked response carries its trailers", "[http][serializer]") {
   response.fields.add("Transfer-Encoding", "chunked");
   response.trailers.add("X-Checksum", "abc");
 
-  REQUIRE(http::serialize(response) == "HTTP/1.1 200 OK\r\n"
-                                       "Transfer-Encoding: chunked\r\n"
-                                       "\r\n"
-                                       "b\r\nhello world\r\n"
-                                       "0\r\n"
-                                       "X-Checksum: abc\r\n"
-                                       "\r\n");
+  REQUIRE(
+      http::serialize(response) == "HTTP/1.1 200 OK\r\n"
+                                   "Transfer-Encoding: chunked\r\n"
+                                   "\r\n"
+                                   "b\r\nhello world\r\n"
+                                   "0\r\n"
+                                   "X-Checksum: abc\r\n"
+                                   "\r\n"
+  );
 }
 
 TEST_CASE("What cannot be sent is rejected", "[http][serializer]") {
@@ -605,10 +625,11 @@ TEST_CASE("What a peer would read differently is refused", "[http][serializer]")
   }
 
   SECTION("a target with what is not visible ASCII") {
-    for (std::string_view const target : {"/a\tb",
-                                          "/a\x7f"
-                                          "b",
-                                          "/a\x01", "/a\xc3\xa9", "/a\x0b", "/a#b"}) {
+    for (std::string_view const target :
+         {"/a\tb",
+          "/a\x7f"
+          "b",
+          "/a\x01", "/a\xc3\xa9", "/a\x0b", "/a#b"}) {
       auto invisible = plain;
 
       invisible.target = target;

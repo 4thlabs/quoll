@@ -75,12 +75,14 @@ namespace uploads {
 using namespace quoll::rest;
 
 // A form in, bytes out: the server answers the bytes of the name it got, reversed.
-using reversed = endpoint<"uploads.reversed", verb::post, "/reversed", body<login, form_codec>,
-                          returns<std::vector<std::byte>, status::ok, bytes_codec>>;
+using reversed = endpoint<
+    "uploads.reversed", verb::post, "/reversed", body<login, form_codec>,
+    returns<std::vector<std::byte>, status::ok, bytes_codec>>;
 
 // Bytes in, their count out.
-using counted = endpoint<"uploads.counted", verb::post, "/counted", body<std::vector<std::byte>, bytes_codec>,
-                         returns<std::string, status::ok, text_codec>>;
+using counted = endpoint<
+    "uploads.counted", verb::post, "/counted", body<std::vector<std::byte>, bytes_codec>,
+    returns<std::string, status::ok, text_codec>>;
 
 using api = rest::api<"/uploads", reversed, counted>;
 } // namespace uploads
@@ -143,8 +145,10 @@ TEST_CASE("form_codec: fields by name, encoded as a query is, and decoded back",
   REQUIRE(codec.decode<login>(body).value() == sent);
 
   // As a browser sends it: '+' for a space; an optional left out, a field it does not know ignored.
-  REQUIRE(codec.decode<login>("username=Ada+Lovelace&other=1").value() ==
-          login{.username = "Ada Lovelace", .age = std::nullopt, .tag = {}});
+  REQUIRE(
+      codec.decode<login>("username=Ada+Lovelace&other=1").value() ==
+      login{.username = "Ada Lovelace", .age = std::nullopt, .tag = {}}
+  );
 }
 
 TEST_CASE("form_codec: an optional without a value is left out", "[rest][codec]") {
@@ -181,8 +185,9 @@ TEST_CASE("form_codec: a field holding a NUL is not encoded, and says it is a fo
     (void)rest::form_codec{}.encode(login{.username = std::string{"a\0b", 3}});
     FAIL("encoded");
   } catch (std::invalid_argument const &error) {
-    REQUIRE(std::string{error.what()} ==
-            "quoll::rest::form_codec: field username holds a NUL, which the server refuses");
+    REQUIRE(
+        std::string{error.what()} == "quoll::rest::form_codec: field username holds a NUL, which the server refuses"
+    );
   }
 }
 
@@ -198,8 +203,9 @@ TEST_CASE("form_codec and bytes_codec: a form sent, bytes answered, through a se
   REQUIRE(quoll::test::run(client.call<uploads::counted>(bytes_of(std::string_view{"a\0b", 3}))).value() == "3");
 }
 
-TEST_CASE("form_codec: a server answers 400 to a form that does not decode, 415 to another media type",
-          "[rest][codec]") {
+TEST_CASE(
+    "form_codec: a server answers 400 to a form that does not decode, 415 to another media type", "[rest][codec]"
+) {
   http::router router;
 
   rest::mount<uploads::api>(router, uploads_service{});

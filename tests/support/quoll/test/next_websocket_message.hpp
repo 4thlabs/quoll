@@ -53,8 +53,9 @@ namespace quoll::test {
 
 // The next WebSocket message `stream` carries, read by `parser`, for a peer that speaks no more than bytes: the
 // stream's error if it ends first.
-inline async::task<http::websocket_message> next_websocket_message(io::memory_stream &stream QUOLL_LIFETIMEBOUND,
-                                                                   http::websocket_parser &parser QUOLL_LIFETIMEBOUND) {
+inline async::task<http::websocket_message> next_websocket_message(
+    io::memory_stream &stream QUOLL_LIFETIMEBOUND, http::websocket_parser &parser QUOLL_LIFETIMEBOUND
+) {
   std::array<char, 256> chunk;
 
   for (;;) {

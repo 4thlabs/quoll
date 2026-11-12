@@ -81,10 +81,12 @@ struct resolve_initiation {
     }
 
     try {
-      resolver->async_resolve(*host, *service,
-                              [pending](std::error_code error, ::asio::ip::tcp::resolver::results_type endpoints) {
-                                complete(*pending, error, std::move(endpoints));
-                              });
+      resolver->async_resolve(
+          *host, *service,
+          [pending](std::error_code error, ::asio::ip::tcp::resolver::results_type endpoints) {
+            complete(*pending, error, std::move(endpoints));
+          }
+      );
     } catch (...) {
       // Not started: nothing left to cancel.
       if (slot.is_connected()) {
@@ -96,8 +98,8 @@ struct resolve_initiation {
   }
 
   template <class Handler>
-  static void complete(std::optional<Handler> &pending, std::error_code error,
-                       ::asio::ip::tcp::resolver::results_type endpoints) {
+  static void
+  complete(std::optional<Handler> &pending, std::error_code error, ::asio::ip::tcp::resolver::results_type endpoints) {
     if (!pending) {
       return;
     }
@@ -109,14 +111,15 @@ struct resolve_initiation {
   }
 };
 
-inline async::task<::asio::ip::tcp::socket> connect_socket(::asio::any_io_executor executor, std::string host,
-                                                           std::uint16_t port) {
+inline async::task<::asio::ip::tcp::socket>
+connect_socket(::asio::any_io_executor executor, std::string host, std::uint16_t port) {
   auto const cancel = std::make_shared<cancellation>(executor);
   ::asio::ip::tcp::resolver resolver{executor};
   auto const service = std::to_string(port);
 
   auto [resolve_error, endpoints] = co_await make_operation<::asio::ip::tcp::resolver::results_type>(
-      cancel, resolve_initiation{&resolver, &host, &service});
+      cancel, resolve_initiation{&resolver, &host, &service}
+  );
 
   if (resolve_error) {
     throw std::system_error{to_io_error(resolve_error), "quoll::asio::connector: cannot resolve " + host};
@@ -124,12 +127,14 @@ inline async::task<::asio::ip::tcp::socket> connect_socket(::asio::any_io_execut
 
   ::asio::ip::tcp::socket socket{executor};
 
-  auto const [connect_error, endpoint] = co_await make_operation<::asio::ip::tcp::endpoint>(
-      cancel, [&](auto handler) { ::asio::async_connect(socket, endpoints, std::move(handler)); });
+  auto const [connect_error, endpoint] = co_await make_operation<::asio::ip::tcp::endpoint>(cancel, [&](auto handler) {
+    ::asio::async_connect(socket, endpoints, std::move(handler));
+  });
 
   if (connect_error) {
-    throw std::system_error{to_io_error(connect_error),
-                            "quoll::asio::connector: cannot connect to " + host + ":" + service};
+    throw std::system_error{
+        to_io_error(connect_error), "quoll::asio::connector: cannot connect to " + host + ":" + service
+    };
   }
 
   disable_nagle(socket);

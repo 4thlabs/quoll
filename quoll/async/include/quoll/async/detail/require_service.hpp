@@ -52,8 +52,10 @@ template <class S>
   auto found = executor.template query<S>();
 
   if (!found) {
-    throw std::logic_error{std::string{caller} + ": the executor offers no " + std::string{what} +
-                           " (spawn the task on a runtime executor)"};
+    throw std::logic_error{
+        std::string{caller} + ": the executor offers no " + std::string{what} +
+        " (spawn the task on a runtime executor)"
+    };
   }
 
   return *found;

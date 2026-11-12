@@ -209,11 +209,14 @@ public:
   effect(std::tuple<state<D> &...> dependencies, F function, state<T> &target, effect_options options = {}) {
     using value = detail::effect_value_t<F, D...>;
 
-    static_assert(detail::kept_as_values<value>,
-                  "quoll::ui::effect: the values its function gives are kept, as values");
+    static_assert(
+        detail::kept_as_values<value>, "quoll::ui::effect: the values its function gives are kept, as values"
+    );
     detail::check_target<T, value, false>();
-    init<value, D...>(states_reader(dependencies), std::move(function),
-                      detail::target_ref<value>{target, std::false_type{}}, nullptr, options);
+    init<value, D...>(
+        states_reader(dependencies), std::move(function), detail::target_ref<value>{target, std::false_type{}}, nullptr,
+        options
+    );
   }
 
   /**
@@ -228,8 +231,9 @@ public:
 
     static_assert(std::is_void_v<value>, "quoll::ui::effect: the values its function gives go into a target state");
 
-    init<value, D>(props_reader(member), std::move(function), detail::target_ref<value>{},
-                   async::detail::type_id_of<P>(), options);
+    init<value, D>(
+        props_reader(member), std::move(function), detail::target_ref<value>{}, async::detail::type_id_of<P>(), options
+    );
   }
 
   /**
@@ -242,11 +246,14 @@ public:
   effect(D P::*member, F function, state<T> &target, effect_options options = {}) {
     using value = detail::effect_value_t<F, D>;
 
-    static_assert(detail::kept_as_values<value>,
-                  "quoll::ui::effect: the values its function gives are kept, as values");
+    static_assert(
+        detail::kept_as_values<value>, "quoll::ui::effect: the values its function gives are kept, as values"
+    );
     detail::check_target<T, value, false>();
-    init<value, D>(props_reader(member), std::move(function), detail::target_ref<value>{target, std::false_type{}},
-                   async::detail::type_id_of<P>(), options);
+    init<value, D>(
+        props_reader(member), std::move(function), detail::target_ref<value>{target, std::false_type{}},
+        async::detail::type_id_of<P>(), options
+    );
   }
 
   effect(effect const &) = delete;
@@ -294,12 +301,16 @@ private:
   // `read` gives what it depends on, from the props of its component, as a tuple of references to D...; `props_type`,
   // none for an effect on states, is the type of the props it reads.
   template <class V, class... D, class Read, class F>
-  void init(Read read, F function, detail::target_ref<V> target, async::detail::type_id props_type,
-            effect_options options) {
-    static_assert((!detail::holds_view<D> && ...),
-                  "quoll::ui::effect: its states' values are copied into the run, which a view would outlive");
-    static_assert((... && (std::equality_comparable<D> && std::copyable<D>)),
-                  "quoll::ui::effect: its states' values are compared with ==, and copied");
+  void
+  init(Read read, F function, detail::target_ref<V> target, async::detail::type_id props_type, effect_options options) {
+    static_assert(
+        (!detail::holds_view<D> && ...),
+        "quoll::ui::effect: its states' values are copied into the run, which a view would outlive"
+    );
+    static_assert(
+        (... && (std::equality_comparable<D> && std::copyable<D>)),
+        "quoll::ui::effect: its states' values are compared with ==, and copied"
+    );
 
     using values = std::tuple<typename detail::dependency_traits<D>::value_type...>;
 
@@ -328,7 +339,8 @@ private:
           [](auto const &...held) {
             return (detail::dependency_traits<std::remove_cvref_t<decltype(held)>>::holds(held) && ...);
           },
-          now);
+          now
+      );
 
       // Before the first view: whether its first run will start, nothing recorded.
       if (asked == watching::peek) {
@@ -351,7 +363,8 @@ private:
           [](auto const &...held) {
             return values{detail::dependency_traits<std::remove_cvref_t<decltype(held)>>::value(held)...};
           },
-          read(props));
+          read(props)
+      );
 
       auto call = [function, copied = std::move(copied)]() mutable {
         return std::apply([&function](auto &...value) { return function(std::move(value)...); }, copied);

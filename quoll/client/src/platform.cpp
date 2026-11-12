@@ -116,13 +116,15 @@ void check_head(http::streamed_response const &head, http::parse_limits const &l
 }
 
 // Through the one with_optional_timeout() that a page has to hold: each kind of result would be one more of its code.
-[[nodiscard]] async::task<> read_piece(http::response_body &body QUOLL_LIFETIMEBOUND,
-                                       std::optional<std::string_view> &piece QUOLL_LIFETIMEBOUND) {
+[[nodiscard]] async::task<>
+read_piece(http::response_body &body QUOLL_LIFETIMEBOUND, std::optional<std::string_view> &piece QUOLL_LIFETIMEBOUND) {
   piece = co_await body.read();
 }
 
-[[nodiscard]] async::task<> open_body(http::platform_ref platform, std::string url, http::request request,
-                                      http::streamed_response &answer QUOLL_LIFETIMEBOUND) {
+[[nodiscard]] async::task<> open_body(
+    http::platform_ref platform, std::string url, http::request request,
+    http::streamed_response &answer QUOLL_LIFETIMEBOUND
+) {
   answer = co_await platform.stream(std::move(url), std::move(request));
 }
 
@@ -171,8 +173,9 @@ private:
 // The platform of the executor, and a request ready for it. The time a writer takes is its own: this comes before any
 // timeout.
 [[nodiscard]] async::task<http::platform_ref> platform_for(http::request &request QUOLL_LIFETIMEBOUND) {
-  auto const platform = async::detail::require_service<http::platform_ref>(co_await async::current_executor(),
-                                                                           "quoll::http::client", "fetch");
+  auto const platform = async::detail::require_service<http::platform_ref>(
+      co_await async::current_executor(), "quoll::http::client", "fetch"
+  );
 
   if (request.body_writer) {
     co_await http::detail::write_whole_body(request);
@@ -182,8 +185,10 @@ private:
 }
 
 // A whole body, of which the platform holds no more than its limit allows: past it, the fetch goes.
-[[nodiscard]] async::task<> gather(http::platform_ref platform, std::string url, http::request request,
-                                   http::parse_limits limits, http::response &answer QUOLL_LIFETIMEBOUND) {
+[[nodiscard]] async::task<> gather(
+    http::platform_ref platform, std::string url, http::request request, http::parse_limits limits,
+    http::response &answer QUOLL_LIFETIMEBOUND
+) {
   auto streamed = co_await platform.stream(std::move(url), std::move(request));
 
   check_head(streamed, limits);
@@ -202,8 +207,8 @@ private:
   answer.fields = std::move(streamed.fields);
 }
 
-[[nodiscard]] async::task<http::response> send_on_platform(std::shared_ptr<platform_state> state,
-                                                           http::request request) {
+[[nodiscard]] async::task<http::response>
+send_on_platform(std::shared_ptr<platform_state> state, http::request request) {
   auto const platform = co_await platform_for(request);
   auto url = state->origin + request.target;
 
@@ -211,18 +216,20 @@ private:
 
   co_await async::detail::with_optional_timeout(
       state->options.response_timeout,
-      gather(platform, std::move(url), std::move(request), state->options.limits, answer));
+      gather(platform, std::move(url), std::move(request), state->options.limits, answer)
+  );
   co_return answer;
 }
 
-[[nodiscard]] async::task<http::streamed_response> stream_on_platform(std::shared_ptr<platform_state> state,
-                                                                      http::request request) {
+[[nodiscard]] async::task<http::streamed_response>
+stream_on_platform(std::shared_ptr<platform_state> state, http::request request) {
   auto const platform = co_await platform_for(request);
   auto url = state->origin + request.target;
   http::streamed_response answer;
 
-  co_await async::detail::with_optional_timeout(state->options.response_timeout,
-                                                open_body(platform, std::move(url), std::move(request), answer));
+  co_await async::detail::with_optional_timeout(
+      state->options.response_timeout, open_body(platform, std::move(url), std::move(request), answer)
+  );
 
   check_head(answer, state->options.limits);
   answer.body = http::response_body{std::make_shared<platform_body>(std::move(answer.body), state->options)};

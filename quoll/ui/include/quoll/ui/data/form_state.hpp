@@ -123,8 +123,10 @@ public:
   using props_type = typename traits::props_type;
 
 private:
-  static_assert(std::is_aggregate_v<value_type> && std::copyable<value_type> && std::default_initializable<value_type>,
-                "quoll::ui::form_state: what it edits is a struct, copied from the props");
+  static_assert(
+      std::is_aggregate_v<value_type> && std::copyable<value_type> && std::default_initializable<value_type>,
+      "quoll::ui::form_state: what it edits is a struct, copied from the props"
+  );
 
   static constexpr std::size_t count = detail::member_count<value_type>;
 

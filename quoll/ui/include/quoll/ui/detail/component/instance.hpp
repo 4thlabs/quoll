@@ -71,8 +71,10 @@ class instance {
 public:
   // Finds its contexts with `contexts`, whose `from` is the component placing it, its parent: throws std::logic_error
   // for one neither those above it provide nor its app was given.
-  instance(component_table const &table, std::shared_ptr<void const> props, std::string key,
-           std::stop_token const &app_stop, context_finder const &contexts);
+  instance(
+      component_table const &table, std::shared_ptr<void const> props, std::string key, std::stop_token const &app_stop,
+      context_finder const &contexts
+  );
 
   instance(instance const &) = delete;
   instance(instance &&) = delete;
@@ -94,8 +96,10 @@ public:
 
   // Its view showed: made with `props`, from `own`, what its parent gave, and `placed_by`, the props of its parent's
   // view, seeing its states at `version`. Kept, so that the next render may give it again, as long as nothing changed.
-  void viewed(std::shared_ptr<void const> props, std::shared_ptr<void const> own, std::shared_ptr<void const> placed_by,
-              element view, std::uint64_t version, std::uint64_t epoch) noexcept;
+  void viewed(
+      std::shared_ptr<void const> props, std::shared_ptr<void const> own, std::shared_ptr<void const> placed_by,
+      element view, std::uint64_t version, std::uint64_t epoch
+  ) noexcept;
 
   // Whether its props were made of these: then they are kept as they are, so that what refers to them stays good.
   [[nodiscard]] bool made_of(void const *own, void const *placed_by) const noexcept;
@@ -125,8 +129,8 @@ public:
   [[nodiscard]] std::vector<std::shared_ptr<instance>> &children() noexcept { return children_; }
 
   // The context of `type` that `from`, an instance, or one above it provides, nearest first, with what holds it.
-  [[nodiscard]] static found_context provided_above(std::shared_ptr<void const> const &from,
-                                                    async::detail::type_id type) noexcept;
+  [[nodiscard]] static found_context
+  provided_above(std::shared_ptr<void const> const &from, async::detail::type_id type) noexcept;
 
   // It goes: its tasks are asked to stop, then the components of its view go, then its unmounted() runs; what one
   // throws goes to `sink`, and the rest go all the same. Its tasks end on their own; what holds it then is them.

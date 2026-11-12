@@ -75,7 +75,8 @@ template <ComponentWithProps C>
 
   made.type = element::kind::component;
   made.component = std::make_shared<detail::component_spec const>(
-      detail::component_spec{&detail::table_of<C>, std::make_shared<typename C::props const>(std::move(given))});
+      detail::component_spec{&detail::table_of<C>, std::make_shared<typename C::props const>(std::move(given))}
+  );
   return made;
 }
 

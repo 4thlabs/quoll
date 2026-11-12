@@ -47,8 +47,8 @@
 struct network {
   [[nodiscard]] quoll::async::task<quoll::io::any_stream>
   connect_tls(std::string host, std::uint16_t port, quoll::io::tls_client_options const &options) const;
-  [[nodiscard]] quoll::io::any_listener listen_tls(std::string address, std::uint16_t port,
-                                                   quoll::io::tls_server_options const &options) const;
+  [[nodiscard]] quoll::io::any_listener
+  listen_tls(std::string address, std::uint16_t port, quoll::io::tls_server_options const &options) const;
 };
 
 // It would dangle at the end of the line.

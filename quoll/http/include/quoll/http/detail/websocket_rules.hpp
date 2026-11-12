@@ -75,8 +75,9 @@ enum class close_payload : std::uint8_t { valid, broken, not_text };
 
 // The code a close's payload of two bytes or more starts with.
 [[nodiscard]] constexpr std::uint16_t close_code_in(std::string_view payload) noexcept {
-  return static_cast<std::uint16_t>((static_cast<std::uint8_t>(payload[0]) << 8U) |
-                                    static_cast<std::uint8_t>(payload[1]));
+  return static_cast<std::uint16_t>(
+      (static_cast<std::uint8_t>(payload[0]) << 8U) | static_cast<std::uint8_t>(payload[1])
+  );
 }
 
 } // namespace quoll::http::detail

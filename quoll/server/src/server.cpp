@@ -189,8 +189,10 @@ struct connection_outcome {
   return true;
 }
 
-async::task<> serve_shared(io::any_stream stream, http::router const &router, connection_options const &options,
-                           std::shared_ptr<shared_options> shared) {
+async::task<> serve_shared(
+    io::any_stream stream, http::router const &router, connection_options const &options,
+    std::shared_ptr<shared_options> shared
+) {
   co_await serve_connection(std::move(stream), router, options);
 }
 
@@ -199,8 +201,10 @@ async::task<> join_then_cancel(async::detail::task_group &connections, std::stop
   deadline.request_stop();
 }
 
-async::task<> stop_past_deadline(async::timer_ref timer, std::chrono::nanoseconds timeout, std::stop_token cancelled,
-                                 std::stop_source &connections_stop) {
+async::task<> stop_past_deadline(
+    async::timer_ref timer, std::chrono::nanoseconds timeout, std::stop_token cancelled,
+    std::stop_source &connections_stop
+) {
   try {
     if (co_await async::detail::stop_scope<bool>{timer.wait_for(timeout), std::move(cancelled)}) {
       connections_stop.request_stop();
@@ -224,8 +228,10 @@ async::task<> wind_down(shared_options &shared, std::stop_source &connections_st
 
   std::stop_source deadline;
 
-  co_await async::when_all(join_then_cancel(shared.connections, deadline),
-                           stop_past_deadline(*timer, timeout, deadline.get_token(), connections_stop));
+  co_await async::when_all(
+      join_then_cancel(shared.connections, deadline),
+      stop_past_deadline(*timer, timeout, deadline.get_token(), connections_stop)
+  );
 }
 
 // Each connection a task of its own on the executor this runs on, or on a strand of its own where the executor makes
@@ -306,8 +312,9 @@ async::task<> serve_accepting(io::any_listener listener, std::shared_ptr<server_
         // Once a streak. Running out of something lasts, and goes past the limit of lines a second, which peers may
         // fill; what one connection on its way may cause, a peer may cause at will, and stays within it.
         if (out_of_resources(error)) {
-          async::detail::report_always("cannot accept connections for want of resources, trying again every 100 ms",
-                                       failure);
+          async::detail::report_always(
+              "cannot accept connections for want of resources, trying again every 100 ms", failure
+          );
         } else {
           async::report("an accept failed on the network, trying again every 100 ms", failure);
         }
@@ -329,9 +336,11 @@ async::task<> serve_accepting(io::any_listener listener, std::shared_ptr<server_
     try {
       // On a strand of its own where tasks run on several threads: what a connection does beside itself (reading
       // while writing, a timer, a stop) then takes turns.
-      async::co_spawn(strands ? strands->make_strand() : executor,
-                      serve_shared(std::move(*stream), state->router, connection, shared), connection_outcome{shared},
-                      connections_stop.get_token());
+      async::co_spawn(
+          strands ? strands->make_strand() : executor,
+          serve_shared(std::move(*stream), state->router, connection, shared), connection_outcome{shared},
+          connections_stop.get_token()
+      );
     } catch (...) {
       // Not spawned: stop the others, wait for them, then fail.
       state->connections.fetch_sub(1);
@@ -364,8 +373,8 @@ async::task<> serve_accepting(io::any_listener listener, std::shared_ptr<server_
   }
 }
 
-[[nodiscard]] async::task<> listen_and_serve(std::shared_ptr<server_state> state, std::uint16_t port,
-                                             listen_options where) {
+[[nodiscard]] async::task<>
+listen_and_serve(std::shared_ptr<server_state> state, std::uint16_t port, listen_options where) {
   auto listener = where.tls.enabled() ? co_await io::listen_tls(port, std::move(where.tls), std::move(where.address))
                                       : co_await io::listen(port, std::move(where.address));
 

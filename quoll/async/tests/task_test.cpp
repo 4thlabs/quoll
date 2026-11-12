@@ -139,8 +139,10 @@ TEST_CASE("A task returns the value of the tasks it awaits", "[async][task]") {
   run_loop loop;
   std::optional<int> result;
 
-  co_spawn(loop.get_executor(), chain(),
-           overloaded{[&](int value) { result = value; }, [](std::exception_ptr) { FAIL("unexpected exception"); }});
+  co_spawn(
+      loop.get_executor(), chain(),
+      overloaded{[&](int value) { result = value; }, [](std::exception_ptr) { FAIL("unexpected exception"); }}
+  );
 
   REQUIRE_FALSE(result);
   loop.run();
@@ -151,9 +153,13 @@ TEST_CASE("An exception propagates to the awaiting task", "[async][task]") {
   run_loop loop;
   std::optional<std::string> result;
 
-  co_spawn(loop.get_executor(), recover(),
-           overloaded{[&](std::string value) { result = std::move(value); },
-                      [](std::exception_ptr) { FAIL("unexpected exception"); }});
+  co_spawn(
+      loop.get_executor(), recover(),
+      overloaded{
+          [&](std::string value) { result = std::move(value); },
+          [](std::exception_ptr) { FAIL("unexpected exception"); }
+      }
+  );
   loop.run();
 
   REQUIRE(result == "boom");
@@ -164,8 +170,10 @@ TEST_CASE("co_spawn hands an escaping exception to the handler", "[async][task][
   std::exception_ptr error;
   bool succeeded = false;
 
-  co_spawn(loop.get_executor(), fail(),
-           overloaded{[&] { succeeded = true; }, [&](std::exception_ptr thrown) { error = std::move(thrown); }});
+  co_spawn(
+      loop.get_executor(), fail(),
+      overloaded{[&] { succeeded = true; }, [&](std::exception_ptr thrown) { error = std::move(thrown); }}
+  );
   loop.run();
 
   REQUIRE_FALSE(succeeded);
@@ -190,8 +198,10 @@ TEST_CASE("A finished task chain frees every frame", "[async][task][co_spawn]") 
   bool started = false;
   bool completed = false;
 
-  co_spawn(loop.get_executor(), hold(resource, started),
-           overloaded{[&] { completed = true; }, [](std::exception_ptr) { FAIL("unexpected exception"); }});
+  co_spawn(
+      loop.get_executor(), hold(resource, started),
+      overloaded{[&] { completed = true; }, [](std::exception_ptr) { FAIL("unexpected exception"); }}
+  );
   REQUIRE(resource.use_count() == 2);
   loop.run();
 
@@ -218,9 +228,13 @@ TEST_CASE("co_spawn hands a failing post to the caller and destroys the task", "
   auto const resource = std::make_shared<int>(42);
   bool handled = false;
 
-  REQUIRE_THROWS_AS(co_spawn(full_executor{}, owns(resource),
-                             overloaded{[&](int) { handled = true; }, [&](std::exception_ptr) { handled = true; }}),
-                    std::bad_alloc);
+  REQUIRE_THROWS_AS(
+      co_spawn(
+          full_executor{}, owns(resource),
+          overloaded{[&](int) { handled = true; }, [&](std::exception_ptr) { handled = true; }}
+      ),
+      std::bad_alloc
+  );
 
   // The task never ran, its handler was not invoked, and its frame (holding a copy of the resource) is gone.
   REQUIRE_FALSE(handled);

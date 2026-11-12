@@ -72,8 +72,10 @@ struct page {
 TEST_CASE("to_html: a component's view, from its states, without its handlers", "[ui][html]") {
   page shown{.count = {2}, .names = {{"Ada", "Grace"}}};
 
-  REQUIRE(ui::to_html(shown.view()) == "<main><h1 class=\"text-3xl\">Notes</h1><p>Count: 2</p>"
-                                       "<ul><li>Ada</li><li>Grace</li></ul><p>Many</p><button>Add</button></main>");
+  REQUIRE(
+      ui::to_html(shown.view()) == "<main><h1 class=\"text-3xl\">Notes</h1><p>Count: 2</p>"
+                                   "<ul><li>Ada</li><li>Grace</li></ul><p>Many</p><button>Add</button></main>"
+  );
 }
 
 TEST_CASE("to_html: what list() and when() stand for, at the root", "[ui][html]") {
@@ -95,8 +97,9 @@ TEST_CASE("to_html: what a user wrote cannot become markup", "[ui][html]") {
   }
 
   SECTION("in the classes") {
-    REQUIRE(ui::to_html(ui::div() | ui::tw_if(true, R"(a" onclick="b)")) ==
-            "<div class=\"a&quot; onclick=&quot;b\"></div>");
+    REQUIRE(
+        ui::to_html(ui::div() | ui::tw_if(true, R"(a" onclick="b)")) == "<div class=\"a&quot; onclick=&quot;b\"></div>"
+    );
   }
 
   SECTION("in a value") {
@@ -123,10 +126,13 @@ TEST_CASE("to_html: a name HTML cannot hold is refused", "[ui][html]") {
     REQUIRE_THROWS_AS(ui::to_html(ui::div() | ui::attribute(name, "x")), std::invalid_argument);
   }
 
-  REQUIRE(ui::to_html(ui::node("my-element") | ui::attribute("data-id", "1") | ui::attribute("aria-label", "x")) ==
-          "<my-element aria-label=\"x\" data-id=\"1\"></my-element>");
-  REQUIRE(ui::to_html(ui::node("svg:path") | ui::attribute("xlink:href", "#a")) ==
-          "<svg:path xlink:href=\"#a\"></svg:path>");
+  REQUIRE(
+      ui::to_html(ui::node("my-element") | ui::attribute("data-id", "1") | ui::attribute("aria-label", "x")) ==
+      "<my-element aria-label=\"x\" data-id=\"1\"></my-element>"
+  );
+  REQUIRE(
+      ui::to_html(ui::node("svg:path") | ui::attribute("xlink:href", "#a")) == "<svg:path xlink:href=\"#a\"></svg:path>"
+  );
 }
 
 TEST_CASE("to_html: an element without an end tag holds nothing", "[ui][html]") {
@@ -136,15 +142,19 @@ TEST_CASE("to_html: an element without an end tag holds nothing", "[ui][html]") 
   REQUIRE_THROWS_AS(ui::to_html(ui::node("BR", {ui::div()})), std::invalid_argument);
   REQUIRE_THROWS_AS(ui::to_html(ui::node("param", {ui::text("x")})), std::invalid_argument);
   // Ended by its slash in svg, where it would otherwise stay open and hold what follows.
-  REQUIRE(ui::to_html(ui::node("svg", {ui::node("link"), ui::node("circle")})) ==
-          "<svg><link/><circle></circle></svg>");
+  REQUIRE(
+      ui::to_html(ui::node("svg", {ui::node("link"), ui::node("circle")})) == "<svg><link/><circle></circle></svg>"
+  );
 }
 
 TEST_CASE("to_html: script and style keep their text, which cannot end them early", "[ui][html]") {
-  REQUIRE(ui::to_html(ui::node("script", {ui::text("if (a < b && c) { d('e'); }")})) ==
-          "<script>if (a < b && c) { d('e'); }</script>");
-  REQUIRE(ui::to_html(ui::node("STYLE", {ui::text("a > b { color: red; }")})) ==
-          "<STYLE>a > b { color: red; }</STYLE>");
+  REQUIRE(
+      ui::to_html(ui::node("script", {ui::text("if (a < b && c) { d('e'); }")})) ==
+      "<script>if (a < b && c) { d('e'); }</script>"
+  );
+  REQUIRE(
+      ui::to_html(ui::node("STYLE", {ui::text("a > b { color: red; }")})) == "<STYLE>a > b { color: red; }</STYLE>"
+  );
   REQUIRE_THROWS_AS(ui::to_html(ui::node("script", {ui::text("</script><img src=x>")})), std::invalid_argument);
   REQUIRE_THROWS_AS(ui::to_html(ui::node("script", {ui::text("</SCRIPT >")})), std::invalid_argument);
   REQUIRE_THROWS_AS(ui::to_html(ui::node("script", {ui::text("<!-- <script>")})), std::invalid_argument);
@@ -154,16 +164,20 @@ TEST_CASE("to_html: script and style keep their text, which cannot end them earl
 }
 
 TEST_CASE("to_html: what is cut in pieces still cannot end a script early", "[ui][html]") {
-  REQUIRE_THROWS_AS(ui::to_html(ui::node("script", {ui::text("<"), ui::text("/script><img src=x onerror=alert(1)>")})),
-                    std::invalid_argument);
+  REQUIRE_THROWS_AS(
+      ui::to_html(ui::node("script", {ui::text("<"), ui::text("/script><img src=x onerror=alert(1)>")})),
+      std::invalid_argument
+  );
   REQUIRE_THROWS_AS(ui::to_html(ui::node("script", {ui::text("<!-"), ui::text("-")})), std::invalid_argument);
   REQUIRE(ui::to_html(ui::node("script", {ui::text("a"), ui::text("b")})) == "<script>ab</script>");
 }
 
 TEST_CASE("to_html: an element holding only text holds no element", "[ui][html]") {
   // The inner end tag would close the outer element, and the text after it would be markup.
-  REQUIRE_THROWS_AS(ui::to_html(ui::node("style", {ui::node("style"), ui::text("<img src=x onerror=alert(1)>")})),
-                    std::invalid_argument);
+  REQUIRE_THROWS_AS(
+      ui::to_html(ui::node("style", {ui::node("style"), ui::text("<img src=x onerror=alert(1)>")})),
+      std::invalid_argument
+  );
   REQUIRE_THROWS_AS(ui::to_html(ui::node("script", {ui::div()})), std::invalid_argument);
   REQUIRE_THROWS_AS(ui::to_html(ui::node("textarea", {ui::div()})), std::invalid_argument);
   REQUIRE_THROWS_AS(ui::to_html(ui::node("title", {ui::div()})), std::invalid_argument);
@@ -182,8 +196,10 @@ TEST_CASE("to_html: no raw text where a parser may read it as markup", "[ui][htm
   }
 
   // Empty, it says nothing, and other text there is escaped.
-  REQUIRE(ui::to_html(ui::node("svg", {ui::node("style"), hostile})) ==
-          "<svg><style></style>&lt;img src=x onerror=alert(1)&gt;</svg>");
+  REQUIRE(
+      ui::to_html(ui::node("svg", {ui::node("style"), hostile})) ==
+      "<svg><style></style>&lt;img src=x onerror=alert(1)&gt;</svg>"
+  );
 }
 
 TEST_CASE("to_html: elements a parser reads by rules of their own are refused", "[ui][html]") {
@@ -222,8 +238,9 @@ TEST_CASE("to_html: an attribute given twice is refused, as a parser keeps the o
 
   REQUIRE_THROWS_AS(ui::to_html(ui::div() | ui::tw("a") | ui::attribute("class", "b")), std::invalid_argument);
   REQUIRE_THROWS_AS(ui::to_html(ui::input() | ui::attribute("value", "a") | ui::bind(name)), std::invalid_argument);
-  REQUIRE_THROWS_AS(ui::to_html(ui::div() | ui::attribute("TITLE", "a") | ui::attribute("title", "b")),
-                    std::invalid_argument);
+  REQUIRE_THROWS_AS(
+      ui::to_html(ui::div() | ui::attribute("TITLE", "a") | ui::attribute("title", "b")), std::invalid_argument
+  );
   REQUIRE(ui::to_html(ui::div() | ui::attribute("class", "b")) == "<div class=\"b\"></div>");
 }
 
@@ -241,17 +258,23 @@ TEST_CASE("to_html: a carriage return stays one, which a parser would read as a 
 TEST_CASE("to_html: the value of a password stays out of the page", "[ui][html]") {
   ui::state<std::string> secret{"hunter2"};
 
-  REQUIRE(ui::to_html(ui::input() | ui::attribute("type", "password") | ui::bind(secret)) ==
-          "<input type=\"password\"/>");
-  REQUIRE(ui::to_html(ui::input() | ui::attribute("TYPE", "PassWord") | ui::bind(secret)) ==
-          "<input TYPE=\"PassWord\"/>");
-  REQUIRE(ui::to_html(ui::input() | ui::attribute("type", "text") | ui::bind(secret)) ==
-          "<input value=\"hunter2\" type=\"text\"/>");
+  REQUIRE(
+      ui::to_html(ui::input() | ui::attribute("type", "password") | ui::bind(secret)) == "<input type=\"password\"/>"
+  );
+  REQUIRE(
+      ui::to_html(ui::input() | ui::attribute("TYPE", "PassWord") | ui::bind(secret)) == "<input TYPE=\"PassWord\"/>"
+  );
+  REQUIRE(
+      ui::to_html(ui::input() | ui::attribute("type", "text") | ui::bind(secret)) ==
+      "<input value=\"hunter2\" type=\"text\"/>"
+  );
 }
 
 TEST_CASE("to_html: image is read as img, and holds nothing", "[ui][html]") {
-  REQUIRE(ui::to_html(ui::node("svg", {ui::node("image") | ui::attribute("href", "a.png")})) ==
-          "<svg><image href=\"a.png\"/></svg>");
+  REQUIRE(
+      ui::to_html(ui::node("svg", {ui::node("image") | ui::attribute("href", "a.png")})) ==
+      "<svg><image href=\"a.png\"/></svg>"
+  );
   REQUIRE_THROWS_AS(ui::to_html(ui::node("image", {ui::text("caption")})), std::invalid_argument);
 }
 

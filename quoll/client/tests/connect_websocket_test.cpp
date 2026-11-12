@@ -124,8 +124,9 @@ std::function<task<>(io::memory_stream)> answering(std::string raw) {
 }
 
 // What connecting to `server` at `url` threw: its message, empty if nothing.
-std::string refusal(memory_server &server, quoll::async::run_loop &loop, std::string url,
-                    http::websocket_connect_options options = {}) {
+std::string refusal(
+    memory_server &server, quoll::async::run_loop &loop, std::string url, http::websocket_connect_options options = {}
+) {
   auto const connecting = [&]() -> task<std::string> {
     try {
       static_cast<void>(co_await http::connect_websocket(memory_connector{server}, url, std::move(options)));
@@ -176,8 +177,8 @@ public:
     return inner_.connect(std::move(host), port);
   }
 
-  [[nodiscard]] task<io::any_stream> connect_tls(std::string host, std::uint16_t port,
-                                                 io::tls_client_options const &tls) const {
+  [[nodiscard]] task<io::any_stream>
+  connect_tls(std::string host, std::uint16_t port, io::tls_client_options const &tls) const {
     *used_tls_ = true;
 
     // What a copy of it, as connect_websocket keeps, was asked to trust.
@@ -455,8 +456,9 @@ public:
   [[nodiscard]] task<io::any_stream> connect(std::string, std::uint16_t) const {
     auto [client_end, server_end] = io::make_memory_stream_pair();
 
-    quoll::async::co_spawn(co_await quoll::async::current_executor(), serve_(std::move(server_end)),
-                           quoll::async::detached);
+    quoll::async::co_spawn(
+        co_await quoll::async::current_executor(), serve_(std::move(server_end)), quoll::async::detached
+    );
     co_return io::any_stream{std::move(client_end)};
   }
 
@@ -581,8 +583,9 @@ TEST_CASE("connect_websocket: a subprotocol chosen is one offered", "[client][we
   }
 }
 
-TEST_CASE("connect_websocket: what is no switch to the WebSocket asked for is refused, with its answer",
-          "[client][websocket]") {
+TEST_CASE(
+    "connect_websocket: what is no switch to the WebSocket asked for is refused, with its answer", "[client][websocket]"
+) {
   quoll::async::run_loop loop;
 
   SECTION("another status") {
@@ -601,12 +604,14 @@ TEST_CASE("connect_websocket: what is no switch to the WebSocket asked for is re
   }
 
   SECTION("a 101 with another accept") {
-    memory_server server{loop.get_executor(),
-                         answering("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-                                   "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n"),
-                         0,
-                         {},
-                         {}};
+    memory_server server{
+        loop.get_executor(),
+        answering("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                  "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n"),
+        0,
+        {},
+        {}
+    };
 
     REQUIRE(refusal(server, loop, "ws://h/") == "101");
   }
@@ -664,8 +669,9 @@ TEST_CASE("connect_websocket: what cannot be asked is refused when it is called"
   REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://user@h/"), std::invalid_argument);
 
   // What a proxy could read as another server, as it is, decoded, without its dot segments, or with a backslash.
-  for (auto const *const url : {"ws://h//evil.example/x", "ws://h/%2F/evil.example/x", "ws://h/.//evil.example/x",
-                                "ws://h/./%2Fevil.example", "ws://h/\\evil.example"}) {
+  for (auto const *const url :
+       {"ws://h//evil.example/x", "ws://h/%2F/evil.example/x", "ws://h/.//evil.example/x", "ws://h/./%2Fevil.example",
+        "ws://h/\\evil.example"}) {
     REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, url), std::invalid_argument);
   }
 
@@ -673,8 +679,9 @@ TEST_CASE("connect_websocket: what cannot be asked is refused when it is called"
 
   no_subprotocol.fields.set("Sec-WebSocket-Protocol", " , ");
 
-  REQUIRE_THROWS_AS(http::connect_websocket(memory_connector{server}, "ws://h/", no_subprotocol),
-                    std::invalid_argument);
+  REQUIRE_THROWS_AS(
+      http::connect_websocket(memory_connector{server}, "ws://h/", no_subprotocol), std::invalid_argument
+  );
 
   http::websocket_connect_options twice;
 
@@ -700,7 +707,8 @@ TEST_CASE("connect_websocket: a server that does not answer the handshake in tim
 
   auto const connecting = [&]() -> task<std::error_code> {
     co_return co_await quoll::test::code_thrown_by(
-        http::connect_websocket(silent_connector{&kept}, "ws://h/", std::move(options)));
+        http::connect_websocket(silent_connector{&kept}, "ws://h/", std::move(options))
+    );
   };
 
   REQUIRE(quoll::test::run(time, connecting()) == std::errc::timed_out);
@@ -756,8 +764,10 @@ TEST_CASE("connect_websocket: wss connects with TLS, on 443", "[client][websocke
   REQUIRE(server.destination == "h:443");
 }
 
-TEST_CASE("connect_websocket: interim answers before the 101 are skipped, through a connector that only moves",
-          "[client][websocket]") {
+TEST_CASE(
+    "connect_websocket: interim answers before the 101 are skipped, through a connector that only moves",
+    "[client][websocket]"
+) {
   quoll::async::run_loop loop;
   memory_server server{loop.get_executor(), early_hints_then_switch, 0, {}, {}};
 
@@ -788,9 +798,12 @@ TEST_CASE("connect_websocket: by URL alone, through the executor's network", "[c
     co_return connected.handshake.status;
   };
 
-  co_spawn(network_executor{server}, connecting(),
-           quoll::test::overloaded{[&](http::status answer) { status = answer; },
-                                   [&](std::exception_ptr error) { failure = std::move(error); }});
+  co_spawn(
+      network_executor{server}, connecting(),
+      quoll::test::overloaded{
+          [&](http::status answer) { status = answer; }, [&](std::exception_ptr error) { failure = std::move(error); }
+      }
+  );
   loop.run();
 
   REQUIRE_FALSE(failure);
@@ -835,15 +848,17 @@ TEST_CASE("connect_websocket: each handshake has a key of its own", "[client][we
   REQUIRE(first != second);
 }
 
-TEST_CASE("connect_websocket: a refusal that came as the handshake could not be sent is the one thrown",
-          "[client][websocket]") {
+TEST_CASE(
+    "connect_websocket: a refusal that came as the handshake could not be sent is the one thrown", "[client][websocket]"
+) {
   quoll::async::run_loop loop;
 
   auto const connecting = [&]() -> task<std::string> {
     try {
       static_cast<void>(co_await http::connect_websocket(
           refusing_connector{"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer\r\nContent-Length: 0\r\n\r\n"},
-          "ws://h/"));
+          "ws://h/"
+      ));
     } catch (http::websocket_refused const &refused) {
       co_return std::string{refused.response().fields.find("WWW-Authenticate").value_or("")};
     }
@@ -871,12 +886,16 @@ TEST_CASE("connect_websocket: interim answers, up to eight", "[client][websocket
     hints += "HTTP/1.1 103 Early Hints\r\n\r\n";
   }
 
-  memory_server server{loop.get_executor(),
-                       answering_with_accept(hints, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
-                                                    "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"),
-                       0,
-                       {},
-                       {}};
+  memory_server server{
+      loop.get_executor(),
+      answering_with_accept(
+          hints, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                 "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
+      ),
+      0,
+      {},
+      {}
+  };
 
   auto const connecting = [&]() -> task<std::error_code> {
     co_return co_await quoll::test::code_thrown_by(http::connect_websocket(memory_connector{server}, "ws://h/"));
@@ -939,13 +958,17 @@ TEST_CASE("connect_websocket: the handshake as it is sent", "[client][websocket]
 
 TEST_CASE("connect_websocket: a subprotocol the server names empty is refused", "[client][websocket]") {
   quoll::async::run_loop loop;
-  memory_server server{loop.get_executor(),
-                       answering_with_accept({}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
-                                                 "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n"
-                                                 "Sec-WebSocket-Protocol: \r\n\r\n"),
-                       0,
-                       {},
-                       {}};
+  memory_server server{
+      loop.get_executor(),
+      answering_with_accept(
+          {}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+              "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n"
+              "Sec-WebSocket-Protocol: \r\n\r\n"
+      ),
+      0,
+      {},
+      {}
+  };
   http::websocket_connect_options options;
 
   options.fields.set("Sec-WebSocket-Protocol", "chat,");
@@ -956,25 +979,27 @@ TEST_CASE("connect_websocket: a subprotocol the server names empty is refused", 
 TEST_CASE("connect_websocket: a refusal is judged by its head, its body left unread", "[client][websocket]") {
   quoll::async::run_loop loop;
   // No length: its body would end with a connection the server keeps open.
-  memory_server server{loop.get_executor(),
-                       [](io::memory_stream stream) -> task<> {
-                         std::string buffer;
-                         http::request_parser parser;
+  memory_server server{
+      loop.get_executor(),
+      [](io::memory_stream stream) -> task<> {
+        std::string buffer;
+        http::request_parser parser;
 
-                         static_cast<void>(co_await http::read(stream, buffer, parser));
+        static_cast<void>(co_await http::read(stream, buffer, parser));
 
-                         auto const refusal = std::string{"HTTP/1.1 403 Forbidden\r\n\r\nno end"};
+        auto const refusal = std::string{"HTTP/1.1 403 Forbidden\r\n\r\nno end"};
 
-                         (void)co_await io::write(stream, std::as_bytes(std::span{refusal}));
+        (void)co_await io::write(stream, std::as_bytes(std::span{refusal}));
 
-                         // Open for as long as the client is there: it sends nothing more.
-                         std::array<char, 16> rest{};
+        // Open for as long as the client is there: it sends nothing more.
+        std::array<char, 16> rest{};
 
-                         static_cast<void>(co_await stream.read_some(std::as_writable_bytes(std::span{rest})));
-                       },
-                       0,
-                       {},
-                       {}};
+        static_cast<void>(co_await stream.read_some(std::as_writable_bytes(std::span{rest})));
+      },
+      0,
+      {},
+      {}
+  };
 
   REQUIRE(refusal(server, loop, "ws://h/") == "403");
 
@@ -1008,19 +1033,24 @@ TEST_CASE("connect_websocket: what a 101 may not name, or name twice", "[client]
 
   SECTION("an Upgrade to another protocol") { answer = "Upgrade: h2c\r\n"; }
 
-  memory_server server{loop.get_executor(),
-                       answering_with_accept({}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
-                                                 "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n" +
-                                                     answer + "\r\n"),
-                       0,
-                       {},
-                       {}};
+  memory_server server{
+      loop.get_executor(),
+      answering_with_accept(
+          {}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+              "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n" +
+                  answer + "\r\n"
+      ),
+      0,
+      {},
+      {}
+  };
 
   REQUIRE(refusal(server, loop, "ws://h/", options) == "101");
 }
 
-TEST_CASE("connect_websocket: each handshake sends a key of its own, and Host as the URL names it",
-          "[client][websocket]") {
+TEST_CASE(
+    "connect_websocket: each handshake sends a key of its own, and Host as the URL names it", "[client][websocket]"
+) {
   quoll::async::run_loop loop;
   http::request first;
   http::request second;
@@ -1055,7 +1085,8 @@ TEST_CASE("connect_websocket: the handshake's limit bounds connecting too", "[cl
 
   auto const connecting = [&]() -> task<std::error_code> {
     co_return co_await quoll::test::code_thrown_by(
-        http::connect_websocket(stuck_connector{}, "ws://h/", std::move(options)));
+        http::connect_websocket(stuck_connector{}, "ws://h/", std::move(options))
+    );
   };
 
   REQUIRE(quoll::test::run(time, connecting()) == std::errc::timed_out);
@@ -1156,7 +1187,8 @@ TEST_CASE("connect_websocket: its options reach what they say", "[client][websoc
 
     auto const connecting = [&]() -> task<std::error_code> {
       co_return co_await quoll::test::code_thrown_by(
-          http::connect_websocket(memory_connector{server}, "ws://h/", std::move(options)));
+          http::connect_websocket(memory_connector{server}, "ws://h/", std::move(options))
+      );
     };
 
     REQUIRE(quoll::test::run(loop, connecting()) == http::error::header_too_large);
@@ -1169,8 +1201,9 @@ TEST_CASE("connect_websocket: its options reach what they say", "[client][websoc
     options.tls.ca_file = "authorities.pem";
 
     auto const connecting = [&]() -> task<int> {
-      auto connected = co_await http::connect_websocket(tls_memory_connector{server, used_tls, &trusted}, "wss://h/",
-                                                        std::move(options));
+      auto connected = co_await http::connect_websocket(
+          tls_memory_connector{server, used_tls, &trusted}, "wss://h/", std::move(options)
+      );
 
       co_await connected.socket.close();
       static_cast<void>(co_await connected.socket.receive());
@@ -1262,18 +1295,23 @@ TEST_CASE("connect_websocket: the subprotocols offered go out as checked", "[cli
 
   REQUIRE(refusal(server, loop, "ws://h/", in_two) == "400");
   REQUIRE(sent.fields.find("Sec-WebSocket-Protocol") == "chat, superchat");
-  REQUIRE(std::ranges::count_if(sent.fields,
-                                [](auto const &field) { return field.name == "Sec-WebSocket-Protocol"; }) == 1);
+  REQUIRE(std::ranges::count_if(sent.fields, [](auto const &field) {
+            return field.name == "Sec-WebSocket-Protocol";
+          }) == 1);
 }
 
 TEST_CASE("connect_websocket: a 101 in HTTP/1.0 is no switch", "[client][websocket]") {
   quoll::async::run_loop loop;
-  memory_server server{loop.get_executor(),
-                       answering_with_accept({}, "HTTP/1.0 101 Switching Protocols\r\nUpgrade: websocket\r\n"
-                                                 "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"),
-                       0,
-                       {},
-                       {}};
+  memory_server server{
+      loop.get_executor(),
+      answering_with_accept(
+          {}, "HTTP/1.0 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+              "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
+      ),
+      0,
+      {},
+      {}
+  };
 
   REQUIRE(refusal(server, loop, "ws://h/") == "101");
 }
@@ -1322,7 +1360,8 @@ TEST_CASE("connect_websocket: under a timer, a refusal keeps its type and a stop
     auto const connecting = [&]() -> task<std::string> {
       try {
         static_cast<void>(co_await http::connect_websocket(
-            spawning_connector{answering("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")}, "ws://h/"));
+            spawning_connector{answering("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")}, "ws://h/"
+        ));
       } catch (http::websocket_refused const &refused) {
         co_return std::to_string(static_cast<int>(refused.response().status));
       }
@@ -1339,7 +1378,8 @@ TEST_CASE("connect_websocket: under a timer, a refusal keeps its type and a stop
 
     auto const connecting = [&]() -> task<std::error_code> {
       co_return co_await quoll::test::under_stop(
-          quoll::test::code_thrown_by(http::connect_websocket(silent_connector{&kept}, "ws://h/")), stop.get_token());
+          quoll::test::code_thrown_by(http::connect_websocket(silent_connector{&kept}, "ws://h/")), stop.get_token()
+      );
     };
     auto const stopping = [&]() -> task<> {
       co_await quoll::async::sleep_for(1s);
@@ -1357,16 +1397,21 @@ TEST_CASE("connect_websocket: under a timer, a refusal keeps its type and a stop
   }
 }
 
-TEST_CASE("connect_websocket: a 101 names the WebSocket in any case, Upgrade among other connection options",
-          "[client][websocket]") {
+TEST_CASE(
+    "connect_websocket: a 101 names the WebSocket in any case, Upgrade among other connection options",
+    "[client][websocket]"
+) {
   quoll::async::run_loop loop;
   memory_server server{
       loop.get_executor(),
-      answering_with_accept({}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: WebSocket\r\n"
-                                "Connection: keep-alive, Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"),
+      answering_with_accept(
+          {}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: WebSocket\r\n"
+              "Connection: keep-alive, Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
+      ),
       0,
       {},
-      {}};
+      {}
+  };
 
   auto const connecting = [&]() -> task<http::status> {
     auto connected = co_await http::connect_websocket(memory_connector{server}, "ws://h/");
@@ -1398,13 +1443,17 @@ TEST_CASE("connect_websocket: what the serializer refuses is said once for conne
 TEST_CASE("connect_websocket: a frame in the same read as the 101 is the first message", "[client][websocket]") {
   quoll::async::run_loop loop;
   // One write of both: they come in one read.
-  memory_server server{loop.get_executor(),
-                       answering_with_accept({}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
-                                                 "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n" +
-                                                     http::format_websocket_frame(websocket_opcode::text, "first")),
-                       0,
-                       {},
-                       {}};
+  memory_server server{
+      loop.get_executor(),
+      answering_with_accept(
+          {}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+              "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n" +
+                  http::format_websocket_frame(websocket_opcode::text, "first")
+      ),
+      0,
+      {},
+      {}
+  };
 
   auto const receiving = [&]() -> task<websocket_message> {
     auto connected = co_await http::connect_websocket(memory_connector{server}, "ws://h/");
@@ -1418,27 +1467,28 @@ TEST_CASE("connect_websocket: a frame in the same read as the 101 is the first m
 TEST_CASE("connect_websocket: an interim answer with a body is read whole before the 101", "[client][websocket]") {
   quoll::async::run_loop loop;
   // Its body split across two writes, the 101 behind the second: a head alone read first.
-  memory_server server{loop.get_executor(),
-                       [](io::memory_stream stream) -> task<> {
-                         std::string buffer;
-                         http::request_parser parser;
+  memory_server server{
+      loop.get_executor(),
+      [](io::memory_stream stream) -> task<> {
+        std::string buffer;
+        http::request_parser parser;
 
-                         static_cast<void>(co_await http::read(stream, buffer, parser));
+        static_cast<void>(co_await http::read(stream, buffer, parser));
 
-                         auto const request = parser.release();
-                         auto const first = std::string{"HTTP/1.1 150 Interim\r\nContent-Length: 4\r\n\r\nab"};
-                         auto const then =
-                             "cdHTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
-                             "Connection: Upgrade\r\nSec-WebSocket-Accept: " +
-                             http::websocket_accept(request.fields.find("Sec-WebSocket-Key").value_or("")) + "\r\n\r\n";
+        auto const request = parser.release();
+        auto const first = std::string{"HTTP/1.1 150 Interim\r\nContent-Length: 4\r\n\r\nab"};
+        auto const then = "cdHTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                          "Connection: Upgrade\r\nSec-WebSocket-Accept: " +
+                          http::websocket_accept(request.fields.find("Sec-WebSocket-Key").value_or("")) + "\r\n\r\n";
 
-                         (void)co_await io::write(stream, std::as_bytes(std::span{first}));
-                         co_await quoll::async::yield();
-                         (void)co_await io::write(stream, std::as_bytes(std::span{then}));
-                       },
-                       0,
-                       {},
-                       {}};
+        (void)co_await io::write(stream, std::as_bytes(std::span{first}));
+        co_await quoll::async::yield();
+        (void)co_await io::write(stream, std::as_bytes(std::span{then}));
+      },
+      0,
+      {},
+      {}
+  };
 
   auto const connecting = [&]() -> task<http::status> {
     auto connected = co_await http::connect_websocket(memory_connector{server}, "ws://h/");
@@ -1451,12 +1501,16 @@ TEST_CASE("connect_websocket: an interim answer with a body is read whole before
 
 TEST_CASE("connect_websocket: a 101 whose one Upgrade names another protocol is refused", "[client][websocket]") {
   quoll::async::run_loop loop;
-  memory_server server{loop.get_executor(),
-                       answering_with_accept({}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: h2c\r\n"
-                                                 "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"),
-                       0,
-                       {},
-                       {}};
+  memory_server server{
+      loop.get_executor(),
+      answering_with_accept(
+          {}, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: h2c\r\n"
+              "Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
+      ),
+      0,
+      {},
+      {}
+  };
 
   REQUIRE(refusal(server, loop, "ws://h/") == "101");
 }
@@ -1502,8 +1556,9 @@ TEST_CASE("connect_websocket: its receive() takes a server that answers no ping 
   options.websocket.ping_interval = 1s;
 
   auto const quiet = [&]() -> task<std::pair<std::error_code, std::chrono::nanoseconds>> {
-    auto connected = co_await http::connect_websocket(spawning_connector{quoll::test::serving(router)}, "ws://h/",
-                                                      std::move(options));
+    auto connected = co_await http::connect_websocket(
+        spawning_connector{quoll::test::serving(router)}, "ws://h/", std::move(options)
+    );
     auto const switched_at = time.now();
     auto const code = co_await quoll::test::code_thrown_by(connected.socket.receive());
 

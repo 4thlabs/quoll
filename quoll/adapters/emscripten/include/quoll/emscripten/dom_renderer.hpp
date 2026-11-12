@@ -134,10 +134,13 @@ public:
    * @throws std::invalid_argument when the registry has no module of that path.
    */
   void mount_widget(ui::node_id id, std::string_view module, std::string_view props) {
-    if (detail::quoll_emscripten_ui_mount_widget(instance_, id, module.data(), module.size(), props.data(),
-                                                 props.size()) != 0) {
-      throw std::invalid_argument{"quoll::emscripten: no widget module " + std::string{module} +
-                                  " in the page's registry, which the Vite plugin makes from its sources"};
+    if (detail::quoll_emscripten_ui_mount_widget(
+            instance_, id, module.data(), module.size(), props.data(), props.size()
+        ) != 0) {
+      throw std::invalid_argument{
+          "quoll::emscripten: no widget module " + std::string{module} +
+          " in the page's registry, which the Vite plugin makes from its sources"
+      };
     }
   }
 

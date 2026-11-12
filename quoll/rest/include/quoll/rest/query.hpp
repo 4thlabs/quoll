@@ -54,8 +54,10 @@ namespace quoll::rest {
 template <fixed_string Name, class T>
 struct query {
   static_assert(!Name.view().empty(), "quoll::rest::query: the name is empty");
-  static_assert(detail::is_parameter_value<T>::value,
-                "quoll::rest::query: the type is not a Parameter, nor an std::optional or std::vector of one");
+  static_assert(
+      detail::is_parameter_value<T>::value,
+      "quoll::rest::query: the type is not a Parameter, nor an std::optional or std::vector of one"
+  );
 
   using part_category = detail::argument_part;
   using argument_type = T;

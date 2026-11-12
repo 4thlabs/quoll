@@ -55,8 +55,8 @@ inline constexpr std::string_view default_listen_address = "127.0.0.1";
  *
  * Throws std::system_error when the address cannot be bound, std::logic_error if the executor offers no network.
  */
-[[nodiscard]] async::task<any_listener> listen(std::uint16_t port,
-                                               std::string address = std::string{default_listen_address});
+[[nodiscard]] async::task<any_listener>
+listen(std::uint16_t port, std::string address = std::string{default_listen_address});
 
 } // namespace quoll::io
 

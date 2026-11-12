@@ -95,8 +95,10 @@ struct outcome {
 void check_written_again(http::server_sent_event const &event, outcome const &read) {
   http::event_parser parser{max_event_size * 8};
 
-  parser.feed(http::format_comment(event.type) + (read.retry ? http::format_retry(*read.retry) : std::string{}) +
-              http::format_event(event));
+  parser.feed(
+      http::format_comment(event.type) + (read.retry ? http::format_retry(*read.retry) : std::string{}) +
+      http::format_event(event)
+  );
 
   auto const again = parser.next();
 

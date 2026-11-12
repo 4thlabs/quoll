@@ -156,8 +156,9 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). CI (`.github/workflows/ci.yml`): GCC 13, Clang 19
 and Emscripten build + tests, GCC 13 with TSan and with ASan / UBSan, and a clang-format check, on every PR and push to
 `main`, and Apple Clang on macOS; fuzzing (`.github/workflows/fuzz.yml`), a load under the sanitizers (`load.yml`), the interop runs (`interop.yml`) and `clang-tidy` with its analyzer on the tests too (`clang-tidy.yml`) run every night, and on a PR touching their targets or rules; the header checks run on GCC 13, Emscripten and macOS, the `compile_fail` ctests on GCC 13 and Clang 19, `clang-tidy`
-(`.clang-tidy`) on Clang 19, and the jobs keep their compilations in ccache. Formatting: `clang-format -i <file>` with the repo `.clang-format`; format only
-the files you touch.
+(`.clang-tidy`) on Clang 19, and the jobs keep their compilations in ccache. Formatting: `clang-format-18 -i <file>` with the repo `.clang-format`; format only
+the files you touch, but for a change to `.clang-format`, which formats the whole repository in a commit of its own, listed in
+`.git-blame-ignore-revs`.
 
 `main` is protected: everything goes through a PR, with every required CI job and the status `Codex` green, up to date with
 `main` and its threads resolved, with no bypass for admins.

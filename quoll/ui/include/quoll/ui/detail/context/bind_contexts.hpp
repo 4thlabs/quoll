@@ -87,7 +87,8 @@ template <class C>
 
         return (
             found(std::type_identity<std::remove_cvref_t<decltype(glz::get<Index>(std::declval<members &>()))>>{}) &&
-            ...);
+            ...
+        );
       }(std::make_index_sequence<glz::tuple_size_v<members>>{});
     };
   } else {

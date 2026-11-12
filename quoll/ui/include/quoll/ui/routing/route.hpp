@@ -78,15 +78,16 @@ struct flatten<Prefix, route_node<Path, Page, Children...>, N> {
 
     auto const index = at++;
 
-    entries[index] = {.kind = route_kind::page,
-                      .path = full.view(),
-                      .target = {},
-                      .page = async::detail::type_id_of<Page>(),
-                      .parent = parent,
-                      .leaf = sizeof...(Children) == 0,
-                      .show = &show_page<Page>,
-                      .accepts = &accepts_page<Page>,
-                      .href = &href_of<full, Page>};
+    entries[index] =
+        {.kind = route_kind::page,
+         .path = full.view(),
+         .target = {},
+         .page = async::detail::type_id_of<Page>(),
+         .parent = parent,
+         .leaf = sizeof...(Children) == 0,
+         .show = &show_page<Page>,
+         .accepts = &accepts_page<Page>,
+         .href = &href_of<full, Page>};
 
     (flatten<full, Children, N>::into(entries, at, index), ...);
   }
@@ -97,11 +98,15 @@ struct flatten<Prefix, redirect_node<From, To>, N> {
   static constexpr auto const &full = joined<Prefix, From>::value;
 
   static consteval void into(std::array<route_entry, N> &entries, std::size_t &at, std::size_t parent) {
-    static_assert(http::detail::parse_template(full.view()).error == http::detail::template_error::none &&
-                      http::detail::parse_template(To.view()).error == http::detail::template_error::none,
-                  "quoll::ui: a redirect goes from a valid template to a valid template");
-    static_assert((full.view() == "/" || full.view().back() != '/') && (To.view() == "/" || To.view().back() != '/'),
-                  "quoll::ui: a redirect's paths do not end with '/', which an address loses as it is matched");
+    static_assert(
+        http::detail::parse_template(full.view()).error == http::detail::template_error::none &&
+            http::detail::parse_template(To.view()).error == http::detail::template_error::none,
+        "quoll::ui: a redirect goes from a valid template to a valid template"
+    );
+    static_assert(
+        (full.view() == "/" || full.view().back() != '/') && (To.view() == "/" || To.view().back() != '/'),
+        "quoll::ui: a redirect's paths do not end with '/', which an address loses as it is matched"
+    );
     static_assert(
         [] {
           for (auto const name : template_params(To.view())) {
@@ -118,17 +123,20 @@ struct flatten<Prefix, redirect_node<From, To>, N> {
 
           return true;
         }(),
-        "quoll::ui: each parameter of a redirect's target is one of its path's");
+        "quoll::ui: each parameter of a redirect's target is one of its path's"
+    );
 
-    entries[at++] = {.kind = route_kind::redirect,
-                     .path = full.view(),
-                     .target = stored<To>::value.view(),
-                     .page = nullptr,
-                     .parent = parent,
-                     .leaf = true,
-                     .show = nullptr,
-                     .accepts = nullptr,
-                     .href = nullptr};
+    entries[at++] = {
+        .kind = route_kind::redirect,
+        .path = full.view(),
+        .target = stored<To>::value.view(),
+        .page = nullptr,
+        .parent = parent,
+        .leaf = true,
+        .show = nullptr,
+        .accepts = nullptr,
+        .href = nullptr
+    };
   }
 };
 
@@ -137,15 +145,17 @@ struct flatten<Prefix, not_found_node<Page>, N> {
   static consteval void into(std::array<route_entry, N> &entries, std::size_t &at, std::size_t parent) {
     static_assert(Prefix.view().empty(), "quoll::ui: a not_found route is of the top level");
 
-    entries[at++] = {.kind = route_kind::not_found,
-                     .path = {},
-                     .target = {},
-                     .page = async::detail::type_id_of<Page>(),
-                     .parent = parent,
-                     .leaf = true,
-                     .show = &show_page<Page>,
-                     .accepts = &accepts_page<Page>,
-                     .href = nullptr};
+    entries[at++] = {
+        .kind = route_kind::not_found,
+        .path = {},
+        .target = {},
+        .page = async::detail::type_id_of<Page>(),
+        .parent = parent,
+        .leaf = true,
+        .show = &show_page<Page>,
+        .accepts = &accepts_page<Page>,
+        .href = nullptr
+    };
   }
 };
 

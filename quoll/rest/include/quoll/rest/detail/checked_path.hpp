@@ -49,18 +49,24 @@ struct checked_path {
 
   static_assert(parsed.error != path_error::no_leading_slash, "quoll::rest: a path starts with '/'");
   static_assert(parsed.error != path_error::unbalanced_brace, "quoll::rest: unbalanced brace in a path");
-  static_assert(parsed.error != path_error::invalid_name,
-                "quoll::rest: a path parameter name is empty or not made of letters, digits and '_'");
-  static_assert(parsed.error != path_error::unknown_type,
-                "quoll::rest: unknown path parameter type (int, int64, uint, uint64, double, bool, string, path)");
+  static_assert(
+      parsed.error != path_error::invalid_name,
+      "quoll::rest: a path parameter name is empty or not made of letters, digits and '_'"
+  );
+  static_assert(
+      parsed.error != path_error::unknown_type,
+      "quoll::rest: unknown path parameter type (int, int64, uint, uint64, double, bool, string, path)"
+  );
   static_assert(parsed.error != path_error::not_whole_segment, "quoll::rest: a path parameter is a whole segment");
   static_assert(parsed.error != path_error::rest_not_last, "quoll::rest: nothing follows a {name:path} parameter");
   static_assert(parsed.error != path_error::duplicate_name, "quoll::rest: two path parameters have the same name");
   static_assert(parsed.error != path_error::invalid_escape, "quoll::rest: invalid %-escape in a path");
   static_assert(parsed.error != path_error::dot_segment, "quoll::rest: no request can reach a dot segment or a NUL");
-  static_assert(parsed.error != path_error::invalid_character,
-                "quoll::rest: a path holds a character RFC 3986 does not allow in a segment (a space, '?', '#', "
-                "'|'...): percent-encode it");
+  static_assert(
+      parsed.error != path_error::invalid_character,
+      "quoll::rest: a path holds a character RFC 3986 does not allow in a segment (a space, '?', '#', "
+      "'|'...): percent-encode it"
+  );
   static_assert(parsed.error != path_error::too_many_parameters, "quoll::rest: too many path parameters");
 
   static constexpr bool valid = parsed.error == path_error::none;

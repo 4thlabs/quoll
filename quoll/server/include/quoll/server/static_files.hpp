@@ -97,8 +97,8 @@ struct static_files_options {
  * @throws std::invalid_argument for a `prefix` that does not start with a slash or a `root` that is no directory, and
  * std::filesystem::filesystem_error for a `root` that does not exist.
  */
-[[nodiscard]] http::router::middleware static_files(std::string_view prefix, std::filesystem::path const &root,
-                                                    static_files_options options = {});
+[[nodiscard]] http::router::middleware
+static_files(std::string_view prefix, std::filesystem::path const &root, static_files_options options = {});
 
 } // namespace quoll::http
 

@@ -90,18 +90,22 @@ TEST_CASE("is_websocket_upgrade: what asks for one, and what does not", "[http][
   REQUIRE_FALSE(without([](http::request &message) { message.fields.set("Sec-WebSocket-Version", "8"); }));
   REQUIRE_FALSE(without([](http::request &message) { message.fields.erase("Sec-WebSocket-Key"); }));
   REQUIRE_FALSE(without([](http::request &message) { message.fields.set("Sec-WebSocket-Key", "short"); }));
-  REQUIRE_FALSE(
-      without([](http::request &message) { message.fields.set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=!"); }));
+  REQUIRE_FALSE(without([](http::request &message) {
+    message.fields.set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=!");
+  }));
   REQUIRE_FALSE(without([](http::request &message) { message.fields.erase("Host"); }));
-  REQUIRE_FALSE(
-      without([](http::request &message) { message.fields.add("Sec-WebSocket-Key", "AAAAAAAAAAAAAAAAAAAAAA=="); }));
+  REQUIRE_FALSE(without([](http::request &message) {
+    message.fields.add("Sec-WebSocket-Key", "AAAAAAAAAAAAAAAAAAAAAA==");
+  }));
   REQUIRE_FALSE(without([](http::request &message) { message.fields.add("Sec-WebSocket-Version", "8"); }));
   // Padding bits set in the last digit: no key of 16 bytes.
-  REQUIRE_FALSE(
-      without([](http::request &message) { message.fields.set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZR=="); }));
+  REQUIRE_FALSE(without([](http::request &message) {
+    message.fields.set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZR==");
+  }));
   // A digit that is no base64 among the first 22, with the right end.
-  REQUIRE_FALSE(
-      without([](http::request &message) { message.fields.set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25j!Q=="); }));
+  REQUIRE_FALSE(without([](http::request &message) {
+    message.fields.set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25j!Q==");
+  }));
 }
 
 TEST_CASE("websocket handshake: spaces around the key and the version are no part of them", "[http][websocket]") {

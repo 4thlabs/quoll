@@ -557,8 +557,9 @@ TEST_CASE("ui::app: what a handler throws before its task goes to on_error", "[u
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<direct_handlers> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }}};
+  test_app<direct_handlers> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
+                                       failure = std::move(error);
+                                     }}};
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "focus");
@@ -614,8 +615,13 @@ TEST_CASE("ui::app: keyed children keep their nodes when they move", "[ui]") {
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(pages == std::vector<std::string>{"<ul><li>3</li><li>1</li><li>2</li></ul>", "<ul><li>2</li><li>3</li></ul>",
-                                            "<ul><li>2</li><li>3</li><li>4</li></ul>", "<ul></ul>"});
+  REQUIRE(
+      pages ==
+      std::vector<std::string>{
+          "<ul><li>3</li><li>1</li><li>2</li></ul>", "<ul><li>2</li><li>3</li></ul>",
+          "<ul><li>2</li><li>3</li><li>4</li></ul>", "<ul></ul>"
+      }
+  );
   REQUIRE(operations.at(0) == 1); // Only 3 moves.
   REQUIRE(two_before == two_after);
 }
@@ -667,8 +673,9 @@ TEST_CASE("ui::app: stop() from one of its handlers fails rather than wait for i
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<stopping_handler> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }}};
+  test_app<stopping_handler> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
+                                        failure = std::move(error);
+                                      }}};
   std::function<task<>()> stop = [&] { return instance.stop(); };
 
   instance.component().stop = &stop;
@@ -793,8 +800,9 @@ TEST_CASE("ui::app: what a handler throws goes to on_error", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<failing_handler> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }}};
+  test_app<failing_handler> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
+                                       failure = std::move(error);
+                                     }}};
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
@@ -809,8 +817,9 @@ TEST_CASE("ui::app: a handler ending on a stop is no failure: on_error does not 
   virtual_time time;
   memory_renderer const shown;
   auto told = 0;
-  test_app<handler_ending_on_a_stop> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr) { ++told; }}};
+  test_app<handler_ending_on_a_stop> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr) {
+                                                ++told;
+                                              }}};
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
@@ -822,8 +831,9 @@ TEST_CASE("ui::app: a handler ending on a stop is no failure: on_error does not 
   REQUIRE(told == 0);
 }
 
-TEST_CASE("ui::app: a handler catching all around a sleep does not see the app's stop, which ends it",
-          "[ui][stopped]") {
+TEST_CASE(
+    "ui::app: a handler catching all around a sleep does not see the app's stop, which ends it", "[ui][stopped]"
+) {
   virtual_time time;
   memory_renderer const shown;
   auto caught = 0;
@@ -1003,10 +1013,14 @@ TEST_CASE("ui::app: the base decorators set their attributes, and their events r
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(first == R"(<form><input aria-label="note" placeholder="A note" required="" value="tea"></input>)"
-                 R"(<p hidden="" role="note">hint</p></form>)");
-  CHECK(locked == R"(<form><input aria-label="note" placeholder="A note" readonly="" required="" value="tea"></input>)"
-                  R"(<p role="note">hint</p></form>)");
+  CHECK(
+      first == R"(<form><input aria-label="note" placeholder="A note" required="" value="tea"></input>)"
+               R"(<p hidden="" role="note">hint</p></form>)"
+  );
+  CHECK(
+      locked == R"(<form><input aria-label="note" placeholder="A note" readonly="" required="" value="tea"></input>)"
+                R"(<p role="note">hint</p></form>)"
+  );
   CHECK(*instance.component().heard == std::vector<std::string>{"change green tea", "key Enter", "submit "});
 }
 
@@ -1121,9 +1135,12 @@ TEST_CASE("ui::app: a select is given its value once its options are placed, and
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   // Its option made, its text in it and it in the select, then its value, then the select placed in the page.
-  CHECK(std::ranges::search(first,
-                            std::vector<std::string>{"create select", "create option", "insert", "insert", "value b"})
-            .begin() != first.end());
+  CHECK(
+      std::ranges::search(
+          first, std::vector<std::string>{"create select", "create option", "insert", "insert", "value b"}
+      )
+          .begin() != first.end()
+  );
   CHECK(changed.back() == "value b");
   CHECK(std::ranges::find(asked, "value b") == asked.end());
 }

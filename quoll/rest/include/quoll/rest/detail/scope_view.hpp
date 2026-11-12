@@ -109,8 +109,9 @@ struct scope_view {
 
   static constexpr bool nested = Scope::routes::size != 0 && nested_in<Api>(typename Scope::routes{});
 
-  static_assert(Scope::routes::size == 0 || nested,
-                "quoll::rest::client::scope: the api is not nested in the client's");
+  static_assert(
+      Scope::routes::size == 0 || nested, "quoll::rest::client::scope: the api is not nested in the client's"
+  );
 
   static constexpr std::size_t arity = scope_prefix<nested, Api, Scope>::arity;
 

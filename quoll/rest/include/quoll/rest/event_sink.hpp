@@ -78,12 +78,12 @@ struct event_sink_state {
 // The operations, run in their turn: the writer is made, and the stream started, when the first one runs. What one
 // refuses is refused before the stream starts, rather than once its writer has taken the response.
 [[nodiscard]] async::task<> sink_open(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn);
-[[nodiscard]] async::task<> sink_send(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn,
-                                      http::server_sent_event event);
-[[nodiscard]] async::task<> sink_comment(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn,
-                                         std::string text);
-[[nodiscard]] async::task<> sink_retry(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn,
-                                       std::chrono::milliseconds delay);
+[[nodiscard]] async::task<>
+sink_send(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn, http::server_sent_event event);
+[[nodiscard]] async::task<>
+sink_comment(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn, std::string text);
+[[nodiscard]] async::task<>
+sink_retry(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn, std::chrono::milliseconds delay);
 
 // The answer to an http_error thrown before the stream started.
 [[nodiscard]] async::task<> sink_answer(std::shared_ptr<event_sink_state> state, http::response refusal);
@@ -172,7 +172,8 @@ public:
    */
   [[nodiscard]] async::task<> send(T const &value, event_options options = {}) {
     http::server_sent_event event{
-        .type = std::move(options.type), .data = EventCodec{}.encode(value), .id = std::move(options.id)};
+        .type = std::move(options.type), .data = EventCodec{}.encode(value), .id = std::move(options.id)
+    };
 
     return detail::sink_send(state_, detail::sink_turn(state_), std::move(event));
   }

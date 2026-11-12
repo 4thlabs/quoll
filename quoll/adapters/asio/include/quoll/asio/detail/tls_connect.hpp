@@ -63,8 +63,9 @@ namespace quoll::asio::detail {
 // TLS 1.2 at least: the versions before are broken.
 inline void require_modern_tls(::asio::ssl::context &context) {
   if (SSL_CTX_set_min_proto_version(context.native_handle(), TLS1_2_VERSION) != 1) {
-    throw std::system_error{std::make_error_code(std::errc::protocol_not_supported),
-                            "quoll::asio: cannot require TLS 1.2"};
+    throw std::system_error{
+        std::make_error_code(std::errc::protocol_not_supported), "quoll::asio: cannot require TLS 1.2"
+    };
   }
 }
 
@@ -91,8 +92,8 @@ inline void require_modern_tls(::asio::ssl::context &context) {
 
 // The TCP connection, then the session on it, under the awaiter's stop token all along. A context per connection: what
 // it holds is loaded in a moment next to the handshake, and connections are kept once opened.
-inline async::task<io::any_stream> connect_tls(::asio::any_io_executor executor, std::string host, std::uint16_t port,
-                                               io::tls_client_options options) {
+inline async::task<io::any_stream>
+connect_tls(::asio::any_io_executor executor, std::string host, std::uint16_t port, io::tls_client_options options) {
   auto context = client_context(options);
   tls_stream stream{tls_stream::session_type{co_await connect_socket(std::move(executor), host, port), context}};
   auto &session = stream.session();
@@ -107,8 +108,9 @@ inline async::task<io::any_stream> connect_tls(::asio::any_io_executor executor,
   static_cast<void>(::asio::ip::make_address(host, not_an_address));
 
   if (not_an_address && SSL_set_tlsext_host_name(session.native_handle(), host.c_str()) != 1) {
-    throw std::system_error{std::make_error_code(std::errc::invalid_argument),
-                            "quoll::asio: cannot send the server's name: " + host};
+    throw std::system_error{
+        std::make_error_code(std::errc::invalid_argument), "quoll::asio: cannot send the server's name: " + host
+    };
   }
 
   if (auto const error = co_await stream.handshake(tls_stream::session_type::client)) {

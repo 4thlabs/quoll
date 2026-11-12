@@ -79,9 +79,13 @@ std::future<T> spawn(::asio::thread_pool &pool, task<T> work) {
   auto promise = std::make_shared<std::promise<T>>();
   auto future = promise->get_future();
 
-  co_spawn(quoll::asio::executor{pool.get_executor()}, std::move(work),
-           overloaded{[promise](T value) { promise->set_value(std::move(value)); },
-                      [promise](std::exception_ptr error) { promise->set_exception(std::move(error)); }});
+  co_spawn(
+      quoll::asio::executor{pool.get_executor()}, std::move(work),
+      overloaded{
+          [promise](T value) { promise->set_value(std::move(value)); },
+          [promise](std::exception_ptr error) { promise->set_exception(std::move(error)); }
+      }
+  );
   return future;
 }
 
@@ -185,9 +189,13 @@ TEST_CASE("threads: co_spawn(this_executor) runs on a worker, past the coroutine
   ::asio::thread_pool pool{2};
 
   auto const parent = [&]() -> task<int> {
-    co_await quoll::async::co_spawn(quoll::async::this_executor, thread_id(),
-                                    overloaded{[&](std::thread::id id) { spawned.set_value(id); },
-                                               [&](std::exception_ptr const &error) { spawned.set_exception(error); }});
+    co_await quoll::async::co_spawn(
+        quoll::async::this_executor, thread_id(),
+        overloaded{
+            [&](std::thread::id id) { spawned.set_value(id); },
+            [&](std::exception_ptr const &error) { spawned.set_exception(error); }
+        }
+    );
     co_return 0;
   };
 
@@ -240,8 +248,9 @@ TEST_CASE("threads: when_all joins children resumed on different workers", "[asi
   REQUIRE(result == std::tuple{50, 70});
 }
 
-TEST_CASE("threads: a stop from another thread unwinds the chain on a worker, its frames with it",
-          "[asio][threads][stopped]") {
+TEST_CASE(
+    "threads: a stop from another thread unwinds the chain on a worker, its frames with it", "[asio][threads][stopped]"
+) {
   ::asio::thread_pool pool{4};
   // After the pool: its threads are joined first, as one may still be in the pool's post().
   stopping_threads threads;
@@ -253,10 +262,14 @@ TEST_CASE("threads: a stop from another thread unwinds the chain on a worker, it
     auto promise = std::make_shared<std::promise<bool>>();
 
     ended.push_back(promise->get_future());
-    co_spawn(quoll::asio::executor{pool.get_executor()}, stops_from_another_thread(unwound, threads),
-             overloaded{[promise](int) { promise->set_value(false); },
-                        [promise](std::exception_ptr error) { promise->set_exception(std::move(error)); },
-                        [promise](quoll::async::stopped_t) { promise->set_value(true); }});
+    co_spawn(
+        quoll::asio::executor{pool.get_executor()}, stops_from_another_thread(unwound, threads),
+        overloaded{
+            [promise](int) { promise->set_value(false); },
+            [promise](std::exception_ptr error) { promise->set_exception(std::move(error)); },
+            [promise](quoll::async::stopped_t) { promise->set_value(true); }
+        }
+    );
   }
 
   for (auto &one : ended) {

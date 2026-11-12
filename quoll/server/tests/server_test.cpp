@@ -361,8 +361,10 @@ TEST_CASE("serve: a stop request lets the request under way finish, and closes i
   bool served = false;
 
   listener.streams.emplace_back(std::move(server));
-  quoll::async::co_spawn(time.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
-                         overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(
+      time.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
+      overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token()
+  );
   quoll::async::co_spawn(time.get_executor(), ask(client), store(answer));
   quoll::async::co_spawn(time.get_executor(), stop_after(100ms, source), ignored());
   time.run();
@@ -385,8 +387,10 @@ TEST_CASE("serve: a stop request closes an idle connection at once", "[server]")
   bool served = false;
 
   listener.streams.emplace_back(std::move(server));
-  quoll::async::co_spawn(time.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
-                         overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(
+      time.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
+      overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token()
+  );
   quoll::async::co_spawn(time.get_executor(), stop_after(100ms, source), ignored());
   time.run();
 
@@ -407,9 +411,10 @@ TEST_CASE("serve: past shutdown_timeout, the requests under way are stopped", "[
   bool served = false;
 
   listener.streams.emplace_back(std::move(server));
-  quoll::async::co_spawn(time.get_executor(),
-                         quoll::http::server{router, {.shutdown_timeout = 5s}}.serve(std::move(listener)),
-                         overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(
+      time.get_executor(), quoll::http::server{router, {.shutdown_timeout = 5s}}.serve(std::move(listener)),
+      overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token()
+  );
   quoll::async::co_spawn(time.get_executor(), ask(client), store(answer));
   quoll::async::co_spawn(time.get_executor(), stop_after(100ms, source), ignored());
   time.run();
@@ -430,9 +435,10 @@ TEST_CASE("serve: without a shutdown_timeout, a stop request stops the requests 
   bool served = false;
 
   listener.streams.emplace_back(std::move(server));
-  quoll::async::co_spawn(time.get_executor(),
-                         quoll::http::server{router, {.shutdown_timeout = 0s}}.serve(std::move(listener)),
-                         overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(
+      time.get_executor(), quoll::http::server{router, {.shutdown_timeout = 0s}}.serve(std::move(listener)),
+      overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token()
+  );
   quoll::async::co_spawn(time.get_executor(), ask(client), store(answer));
   quoll::async::co_spawn(time.get_executor(), stop_after(100ms, source), ignored());
   time.run();
@@ -455,9 +461,10 @@ TEST_CASE("serve: past max_connections, a new connection is closed, and the othe
 
   listener.streams.emplace_back(std::move(kept_server));
   listener.streams.emplace_back(std::move(refused_server));
-  quoll::async::co_spawn(time.get_executor(),
-                         quoll::http::server{router, {.max_connections = 1}}.serve(std::move(listener)), ignored(),
-                         source.get_token());
+  quoll::async::co_spawn(
+      time.get_executor(), quoll::http::server{router, {.max_connections = 1}}.serve(std::move(listener)), ignored(),
+      source.get_token()
+  );
   quoll::async::co_spawn(time.get_executor(), ask(kept_client), store(kept));
   quoll::async::co_spawn(time.get_executor(), ask(refused_client), store(refused));
   quoll::async::co_spawn(time.get_executor(), stop_after(2s, source), ignored());
@@ -480,14 +487,19 @@ TEST_CASE("serve: running out of file descriptors waits, then accepts again", "[
 
   listener.failures.emplace_back(std::make_error_code(std::errc::too_many_files_open));
   listener.streams.emplace_back(std::move(server));
-  quoll::async::co_spawn(time.get_executor(), quoll::http::server{router}.serve(std::move(listener)), ignored(),
-                         source.get_token());
-  quoll::async::co_spawn(time.get_executor(), ask(client),
-                         overloaded{[&](std::optional<http::response> value) {
-                                      answer = std::move(value);
-                                      answered_at = time.now();
-                                    },
-                                    [](std::exception_ptr) {}});
+  quoll::async::co_spawn(
+      time.get_executor(), quoll::http::server{router}.serve(std::move(listener)), ignored(), source.get_token()
+  );
+  quoll::async::co_spawn(
+      time.get_executor(), ask(client),
+      overloaded{
+          [&](std::optional<http::response> value) {
+            answer = std::move(value);
+            answered_at = time.now();
+          },
+          [](std::exception_ptr) {}
+      }
+  );
   quoll::async::co_spawn(time.get_executor(), stop_after(2s, source), ignored());
   time.run();
 
@@ -510,9 +522,10 @@ TEST_CASE("serve: without a limit, every connection is served", "[server]") {
 
   listener.streams.emplace_back(std::move(first_server));
   listener.streams.emplace_back(std::move(second_server));
-  quoll::async::co_spawn(time.get_executor(),
-                         quoll::http::server{router, {.max_connections = 0}}.serve(std::move(listener)), ignored(),
-                         source.get_token());
+  quoll::async::co_spawn(
+      time.get_executor(), quoll::http::server{router, {.max_connections = 0}}.serve(std::move(listener)), ignored(),
+      source.get_token()
+  );
   quoll::async::co_spawn(time.get_executor(), ask(first_client), store(first));
   quoll::async::co_spawn(time.get_executor(), ask(second_client), store(second));
   quoll::async::co_spawn(time.get_executor(), stop_after(2s, source), ignored());
@@ -537,9 +550,10 @@ TEST_CASE("serve: a connection that ends frees its place under the limit", "[ser
 
   listener.streams.emplace_back(std::move(first_server));
   listener.streams.emplace_back(std::move(second_server));
-  quoll::async::co_spawn(time.get_executor(),
-                         quoll::http::server{router, {.max_connections = 1}}.serve(std::move(listener)), ignored(),
-                         source.get_token());
+  quoll::async::co_spawn(
+      time.get_executor(), quoll::http::server{router, {.max_connections = 1}}.serve(std::move(listener)), ignored(),
+      source.get_token()
+  );
   // The first client closes its end, once answered, which ends its connection; the second comes after.
   quoll::async::co_spawn(time.get_executor(), get(std::move(first_client), "/one", first_done), ignored_body());
   quoll::async::co_spawn(time.get_executor(), get(std::move(second_client), "/two", second_done), store(second));
@@ -563,8 +577,10 @@ TEST_CASE("serve: an accept failure ends the loop, and lets the request under wa
   listener.stream.emplace(std::move(server));
   listener.failure =
       std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::permission_denied), "broken"});
-  quoll::async::co_spawn(time.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
-                         overloaded{[] {}, [&](std::exception_ptr thrown) { failure = std::move(thrown); }});
+  quoll::async::co_spawn(
+      time.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
+      overloaded{[] {}, [&](std::exception_ptr thrown) { failure = std::move(thrown); }}
+  );
   quoll::async::co_spawn(time.get_executor(), ask(client), store(answer));
   time.run();
 
@@ -591,15 +607,21 @@ TEST_CASE("serve: connections are served concurrently", "[server]") {
   std::optional<std::string> first;
   std::optional<std::string> second;
 
-  quoll::async::co_spawn(loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
-                         overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
-  quoll::async::co_spawn(loop.get_executor(), get_after(std::move(first_client), "/one", second_done, first_done),
-                         overloaded{[&](std::string body) {
-                                      second_first = second_done;
-                                      first = std::move(body);
-                                      source.request_stop();
-                                    },
-                                    [](std::exception_ptr) {}});
+  quoll::async::co_spawn(
+      loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
+      overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token()
+  );
+  quoll::async::co_spawn(
+      loop.get_executor(), get_after(std::move(first_client), "/one", second_done, first_done),
+      overloaded{
+          [&](std::string body) {
+            second_first = second_done;
+            first = std::move(body);
+            source.request_stop();
+          },
+          [](std::exception_ptr) {}
+      }
+  );
   quoll::async::co_spawn(loop.get_executor(), get(std::move(second_client), "/two", second_done), store(second));
   loop.run();
 
@@ -617,8 +639,10 @@ TEST_CASE("serve: a stop request ends the accept loop and cancels idle connectio
   bool served = false;
 
   listener.streams.emplace_back(std::move(idle_server));
-  quoll::async::co_spawn(loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
-                         overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(
+      loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
+      overloaded{[&] { served = true; }, [](std::exception_ptr) {}}, source.get_token()
+  );
   quoll::async::co_spawn(loop.get_executor(), request_stop_soon(source), overloaded{[] {}, [](std::exception_ptr) {}});
   loop.run();
 
@@ -636,17 +660,24 @@ TEST_CASE("serve: an accept failing for one connection is skipped, another is re
   std::optional<std::string> body;
   bool done = false;
 
-  listener.failures = {std::make_error_code(std::errc::connection_aborted),
-                       std::make_error_code(std::errc::connection_reset)};
+  listener.failures = {
+      std::make_error_code(std::errc::connection_aborted), std::make_error_code(std::errc::connection_reset)
+  };
   listener.streams.emplace_back(std::move(server));
-  quoll::async::co_spawn(loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
-                         overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
-  quoll::async::co_spawn(loop.get_executor(), get(std::move(client), "/after", done),
-                         overloaded{[&](std::string received) {
-                                      body = std::move(received);
-                                      source.request_stop();
-                                    },
-                                    [](std::exception_ptr) {}});
+  quoll::async::co_spawn(
+      loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
+      overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token()
+  );
+  quoll::async::co_spawn(
+      loop.get_executor(), get(std::move(client), "/after", done),
+      overloaded{
+          [&](std::string received) {
+            body = std::move(received);
+            source.request_stop();
+          },
+          [](std::exception_ptr) {}
+      }
+  );
   loop.run();
 
   REQUIRE(body == "after");
@@ -666,15 +697,20 @@ TEST_CASE("serve: an accept failing for one connection is skipped, another is re
     seen.push_back(error);
     co_return true;
   };
-  quoll::async::co_spawn(loop.get_executor(),
-                         quoll::http::server{router, std::move(patient)}.serve(std::move(retrying)),
-                         overloaded{[] {}, [](std::exception_ptr) {}}, retry_source.get_token());
-  quoll::async::co_spawn(loop.get_executor(), get(std::move(retried_client), "/retried", retried_done),
-                         overloaded{[&](std::string received) {
-                                      retried = std::move(received);
-                                      retry_source.request_stop();
-                                    },
-                                    [](std::exception_ptr) {}});
+  quoll::async::co_spawn(
+      loop.get_executor(), quoll::http::server{router, std::move(patient)}.serve(std::move(retrying)),
+      overloaded{[] {}, [](std::exception_ptr) {}}, retry_source.get_token()
+  );
+  quoll::async::co_spawn(
+      loop.get_executor(), get(std::move(retried_client), "/retried", retried_done),
+      overloaded{
+          [&](std::string received) {
+            retried = std::move(received);
+            retry_source.request_stop();
+          },
+          [](std::exception_ptr) {}
+      }
+  );
   loop.run();
 
   REQUIRE(seen == std::vector{std::make_error_code(std::errc::too_many_files_open)});
@@ -684,8 +720,10 @@ TEST_CASE("serve: an accept failing for one connection is skipped, another is re
   std::exception_ptr failure;
 
   failing.failures = {std::make_error_code(std::errc::too_many_files_open)};
-  quoll::async::co_spawn(loop.get_executor(), quoll::http::server{router}.serve(std::move(failing)),
-                         overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }});
+  quoll::async::co_spawn(
+      loop.get_executor(), quoll::http::server{router}.serve(std::move(failing)),
+      overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }}
+  );
   loop.run();
 
   REQUIRE(failure);
@@ -713,9 +751,10 @@ TEST_CASE("serve: a connection's failure goes to on_connection_error", "[server]
     source.request_stop();
   };
 
-  quoll::async::co_spawn(loop.get_executor(),
-                         quoll::http::server{router, std::move(options)}.serve(std::move(listener)),
-                         overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(
+      loop.get_executor(), quoll::http::server{router, std::move(options)}.serve(std::move(listener)),
+      overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token()
+  );
   loop.run();
 
   REQUIRE(reported == "broken stream");
@@ -735,14 +774,20 @@ TEST_CASE("serve: with no callback, a handler that throws and a connection that 
   });
   listener.streams.emplace_back(broken_stream{});
   listener.streams.emplace_back(std::move(server));
-  quoll::async::co_spawn(loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
-                         overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
-  quoll::async::co_spawn(loop.get_executor(), get(std::move(client), "/fault/throws", done),
-                         overloaded{[&](std::string received) {
-                                      body = std::move(received);
-                                      source.request_stop();
-                                    },
-                                    [](std::exception_ptr) {}});
+  quoll::async::co_spawn(
+      loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
+      overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token()
+  );
+  quoll::async::co_spawn(
+      loop.get_executor(), get(std::move(client), "/fault/throws", done),
+      overloaded{
+          [&](std::string received) {
+            body = std::move(received);
+            source.request_stop();
+          },
+          [](std::exception_ptr) {}
+      }
+  );
   loop.run();
 
   REQUIRE(done);
@@ -751,8 +796,9 @@ TEST_CASE("serve: with no callback, a handler that throws and a connection that 
 
   REQUIRE(reported.size() == 2);
   REQUIRE(std::ranges::count(reported, "quoll: a connection ended on an exception: broken stream\n") == 1);
-  REQUIRE(std::ranges::count(reported,
-                             "quoll: a handler or a middleware threw, answered 500: a bug of the handler\n") == 1);
+  REQUIRE(
+      std::ranges::count(reported, "quoll: a handler or a middleware threw, answered 500: a bug of the handler\n") == 1
+  );
 }
 
 TEST_CASE("serve: a connection ending on a stop is no failure: no callback hears of it", "[server][stopped]") {
@@ -772,9 +818,10 @@ TEST_CASE("serve: a connection ending on a stop is no failure: no callback hears
   options.on_connection_error = [&](std::exception_ptr) { ++told; };
   options.connection.on_handler_error = [&](std::exception_ptr) { ++told; };
   listener.streams.emplace_back(std::move(server));
-  quoll::async::co_spawn(loop.get_executor(),
-                         quoll::http::server{router, std::move(options)}.serve(std::move(listener)),
-                         overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
+  quoll::async::co_spawn(
+      loop.get_executor(), quoll::http::server{router, std::move(options)}.serve(std::move(listener)),
+      overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token()
+  );
   // The connection goes with its frames: the client reads the end of the stream, with no answer.
   auto const ask = [](io::memory_stream stream) -> task<std::string> {
     http::request request;
@@ -785,12 +832,16 @@ TEST_CASE("serve: a connection ending on a stop is no failure: no callback hears
     co_return co_await quoll::test::read_until_closed(stream);
   };
 
-  quoll::async::co_spawn(loop.get_executor(), ask(std::move(client)),
-                         overloaded{[&](std::string answer) {
-                                      received = std::move(answer);
-                                      source.request_stop();
-                                    },
-                                    [&](std::exception_ptr) { source.request_stop(); }});
+  quoll::async::co_spawn(
+      loop.get_executor(), ask(std::move(client)),
+      overloaded{
+          [&](std::string answer) {
+            received = std::move(answer);
+            source.request_stop();
+          },
+          [&](std::exception_ptr) { source.request_stop(); }
+      }
+  );
   loop.run();
 
   REQUIRE(received == "");
@@ -798,8 +849,10 @@ TEST_CASE("serve: a connection ending on a stop is no failure: no callback hears
   REQUIRE(quoll::test::reports().empty());
 }
 
-TEST_CASE("serve: a handler catching all around a sleep does not see the server's stop, which ends it",
-          "[server][stopped][timer]") {
+TEST_CASE(
+    "serve: a handler catching all around a sleep does not see the server's stop, which ends it",
+    "[server][stopped][timer]"
+) {
   auto router = make_router();
   quoll::test::virtual_time time;
   auto [client, server] = io::make_memory_stream_pair();
@@ -810,20 +863,22 @@ TEST_CASE("serve: a handler catching all around a sleep does not see the server'
   auto served = false;
 
   // Bounded, so that the trap #151 closes, a handler catching the stop and sleeping again at once, ends the test.
-  router.add(verb::get, "/retries", "retries",
-             [&caught, &turns](http::request, http::route_match) -> task<http::response> {
-               while (turns < 1000) {
-                 ++turns;
+  router.add(
+      verb::get, "/retries", "retries",
+      [&caught, &turns](http::request, http::route_match) -> task<http::response> {
+        while (turns < 1000) {
+          ++turns;
 
-                 try {
-                   co_await quoll::async::sleep_for(std::chrono::hours{1});
-                 } catch (std::exception const &) {
-                   ++caught;
-                 }
-               }
+          try {
+            co_await quoll::async::sleep_for(std::chrono::hours{1});
+          } catch (std::exception const &) {
+            ++caught;
+          }
+        }
 
-               co_return http::response{};
-             });
+        co_return http::response{};
+      }
+  );
   listener.streams.emplace_back(std::move(server));
 
   auto const ask = [](io::memory_stream stream) -> task<std::string> {
@@ -839,10 +894,13 @@ TEST_CASE("serve: a handler catching all around a sleep does not see the server'
     source.request_stop();
   };
 
-  quoll::async::co_spawn(time.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
-                         overloaded{[&served] { served = true; }, [](std::exception_ptr) {}}, source.get_token());
-  quoll::async::co_spawn(time.get_executor(), ask(std::move(client)),
-                         overloaded{[](std::string) {}, [](std::exception_ptr) {}});
+  quoll::async::co_spawn(
+      time.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
+      overloaded{[&served] { served = true; }, [](std::exception_ptr) {}}, source.get_token()
+  );
+  quoll::async::co_spawn(
+      time.get_executor(), ask(std::move(client)), overloaded{[](std::string) {}, [](std::exception_ptr) {}}
+  );
   quoll::async::co_spawn(time.get_executor(), stopping(), overloaded{[] {}, [](std::exception_ptr) {}});
   time.run();
 
@@ -869,11 +927,14 @@ TEST_CASE("serve: with callbacks, nothing is reported", "[server]") {
   options.connection.on_handler_error = [&](std::exception_ptr) { ++told; };
   listener.streams.emplace_back(broken_stream{});
   listener.streams.emplace_back(std::move(server));
-  quoll::async::co_spawn(loop.get_executor(),
-                         quoll::http::server{router, std::move(options)}.serve(std::move(listener)),
-                         overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
-  quoll::async::co_spawn(loop.get_executor(), get(std::move(client), "/fault/throws", done),
-                         overloaded{[&](std::string) { source.request_stop(); }, [](std::exception_ptr) {}});
+  quoll::async::co_spawn(
+      loop.get_executor(), quoll::http::server{router, std::move(options)}.serve(std::move(listener)),
+      overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token()
+  );
+  quoll::async::co_spawn(
+      loop.get_executor(), get(std::move(client), "/fault/throws", done),
+      overloaded{[&](std::string) { source.request_stop(); }, [](std::exception_ptr) {}}
+  );
   loop.run();
 
   REQUIRE(done);
@@ -891,8 +952,9 @@ TEST_CASE("serve: with no callback, accepts tried again are reported once, until
   // Twice out of descriptors, a connection, then out of them again: one report a streak.
   auto [client, server] = io::make_memory_stream_pair();
 
-  listener.failures = {std::make_error_code(std::errc::too_many_files_open),
-                       std::make_error_code(std::errc::too_many_files_open)};
+  listener.failures = {
+      std::make_error_code(std::errc::too_many_files_open), std::make_error_code(std::errc::too_many_files_open)
+  };
   listener.streams.emplace_back(std::move(server));
 
   struct then_failing {
@@ -909,17 +971,22 @@ TEST_CASE("serve: with no callback, accepts tried again are reported once, until
     }
   };
 
-  quoll::async::co_spawn(time.get_executor(), quoll::http::server{router}.serve(then_failing{&listener}),
-                         overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token());
-  quoll::async::co_spawn(time.get_executor(), get(std::move(client), "/through", done),
-                         overloaded{[&](std::string) {}, [](std::exception_ptr) {}});
+  quoll::async::co_spawn(
+      time.get_executor(), quoll::http::server{router}.serve(then_failing{&listener}),
+      overloaded{[] {}, [](std::exception_ptr) {}}, source.get_token()
+  );
+  quoll::async::co_spawn(
+      time.get_executor(), get(std::move(client), "/through", done),
+      overloaded{[&](std::string) {}, [](std::exception_ptr) {}}
+  );
   quoll::async::co_spawn(
       time.get_executor(),
       [](std::stop_source &stopping) -> task<> {
         co_await quoll::async::sleep_for(std::chrono::seconds{1});
         stopping.request_stop();
       }(source),
-      overloaded{[] {}, [](std::exception_ptr) {}});
+      overloaded{[] {}, [](std::exception_ptr) {}}
+  );
   time.run();
 
   REQUIRE(done);
@@ -944,12 +1011,16 @@ TEST_CASE("serve: completes once its connections have ended, and rethrows an acc
   std::optional<std::string> body;
 
   // The accept failure comes at once, while the connection is still to be served: serve() waits for it.
-  quoll::async::co_spawn(loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
-                         overloaded{[] {},
-                                    [&](std::exception_ptr error) {
-                                      failure = std::move(error);
-                                      failed_after_answer = answered;
-                                    }});
+  quoll::async::co_spawn(
+      loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
+      overloaded{
+          [] {},
+          [&](std::exception_ptr error) {
+            failure = std::move(error);
+            failed_after_answer = answered;
+          }
+      }
+  );
   quoll::async::co_spawn(loop.get_executor(), get(std::move(client), "/served", answered), store(body));
   loop.run();
 
@@ -965,8 +1036,10 @@ TEST_CASE("serve: a failure of its accept loop stops the connections, then reach
   std::exception_ptr failure;
 
   // The connection waits for a request that never comes: only a stop request ends it.
-  quoll::async::co_spawn(loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
-                         overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }});
+  quoll::async::co_spawn(
+      loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
+      overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }}
+  );
   loop.run();
 
   REQUIRE(failure);
@@ -979,7 +1052,8 @@ TEST_CASE("serve: an exception from on_accept_error stops the connections, then 
   // A failure of one connection, which on_accept_error is asked about, after an idle connection.
   one_then_broken listener{
       io::any_stream{idle_stream{}},
-      std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::connection_reset), "reset"})};
+      std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::connection_reset), "reset"})
+  };
   quoll::http::serve_options options;
   std::exception_ptr failure;
 
@@ -987,9 +1061,10 @@ TEST_CASE("serve: an exception from on_accept_error stops the connections, then 
     throw std::runtime_error{"on_accept_error"};
     co_return false;
   };
-  quoll::async::co_spawn(loop.get_executor(),
-                         quoll::http::server{router, std::move(options)}.serve(std::move(listener)),
-                         overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }});
+  quoll::async::co_spawn(
+      loop.get_executor(), quoll::http::server{router, std::move(options)}.serve(std::move(listener)),
+      overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }}
+  );
   loop.run();
 
   REQUIRE(failure);
@@ -1002,8 +1077,10 @@ TEST_CASE("serve: an accept that throws something else stops the connections, th
   one_then_broken listener{io::any_stream{idle_stream{}}, std::make_exception_ptr(std::logic_error{"accept"})};
   std::exception_ptr failure;
 
-  quoll::async::co_spawn(loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
-                         overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }});
+  quoll::async::co_spawn(
+      loop.get_executor(), quoll::http::server{router}.serve(std::move(listener)),
+      overloaded{[] {}, [&](std::exception_ptr error) { failure = std::move(error); }}
+  );
   loop.run();
 
   REQUIRE(failure);
@@ -1072,8 +1149,10 @@ TEST_CASE("http::server: routes are closed once it serves, not before", "[server
     co_await quoll::async::sleep_for(1s);
     REQUIRE_THROWS_AS(server.get("/late", handler), std::logic_error);
     REQUIRE_THROWS_AS(copy.post("/late", handler), std::logic_error);
-    REQUIRE_THROWS_AS(copy.use([](http::request request, http::next const &next) { return next(std::move(request)); }),
-                      std::logic_error);
+    REQUIRE_THROWS_AS(
+        copy.use([](http::request request, http::next const &next) { return next(std::move(request)); }),
+        std::logic_error
+    );
     REQUIRE_THROWS_AS(copy.edit_routes([](http::router &) {}), std::logic_error);
     REQUIRE_NOTHROW((void)std::as_const(copy).routes());
     closed = true;
@@ -1219,11 +1298,14 @@ TEST_CASE("serve: a stop closes the listener at once, with a request still under
     }
   };
 
-  quoll::async::co_spawn(time.get_executor(), http::server{router}.serve(std::move(listener)),
-                         overloaded{[] {}, [](std::exception_ptr) {}}, stop.get_token());
+  quoll::async::co_spawn(
+      time.get_executor(), http::server{router}.serve(std::move(listener)),
+      overloaded{[] {}, [](std::exception_ptr) {}}, stop.get_token()
+  );
   quoll::async::co_spawn(time.get_executor(), stopping(), overloaded{[](int) {}, [](std::exception_ptr) {}});
-  quoll::async::co_spawn(time.get_executor(), peer(std::move(client)),
-                         overloaded{[](int) {}, [](std::exception_ptr) {}});
+  quoll::async::co_spawn(
+      time.get_executor(), peer(std::move(client)), overloaded{[](int) {}, [](std::exception_ptr) {}}
+  );
   time.run();
 
   REQUIRE(closed_while_under_way == true);
@@ -1233,8 +1315,10 @@ TEST_CASE("serve: a stop closes the listener at once, with a request still under
 TEST_CASE("serve: what the network says of one connection does not end a server, nor spin", "[server][timer]") {
   using namespace std::chrono_literals;
 
-  auto const failure = GENERATE(std::errc::network_down, std::errc::network_unreachable, std::errc::host_unreachable,
-                                std::errc::protocol_error, std::errc::operation_not_permitted);
+  auto const failure = GENERATE(
+      std::errc::network_down, std::errc::network_unreachable, std::errc::host_unreachable, std::errc::protocol_error,
+      std::errc::operation_not_permitted
+  );
 
   quoll::test::virtual_time time;
   http::router router;
@@ -1254,15 +1338,21 @@ TEST_CASE("serve: what the network says of one connection does not end a server,
 
   listener.failures = {std::make_error_code(failure)};
   listener.streams.emplace_back(std::move(ours));
-  quoll::async::co_spawn(time.get_executor(), http::server{router}.serve(std::move(listener)),
-                         overloaded{[] {}, [](std::exception_ptr) {}}, stop.get_token());
-  quoll::async::co_spawn(time.get_executor(), get(std::move(client), "/after", done),
-                         overloaded{[&](std::string answer) {
-                                      received = std::move(answer);
-                                      received_at = time.get_executor().now();
-                                      stop.request_stop();
-                                    },
-                                    [](std::exception_ptr) {}});
+  quoll::async::co_spawn(
+      time.get_executor(), http::server{router}.serve(std::move(listener)),
+      overloaded{[] {}, [](std::exception_ptr) {}}, stop.get_token()
+  );
+  quoll::async::co_spawn(
+      time.get_executor(), get(std::move(client), "/after", done),
+      overloaded{
+          [&](std::string answer) {
+            received = std::move(answer);
+            received_at = time.get_executor().now();
+            stop.request_stop();
+          },
+          [](std::exception_ptr) {}
+      }
+  );
   time.run();
 
   REQUIRE(received == "after");
@@ -1296,7 +1386,8 @@ TEST_CASE("serve: a stop during the wait of on_accept_error is no failure", "[se
   quoll::async::co_spawn(
       time.get_executor(), http::server{router, std::move(options)}.serve(std::move(listener)),
       overloaded{[&ended] { ended = true; }, [&failure](std::exception_ptr error) { failure = error; }},
-      stop.get_token());
+      stop.get_token()
+  );
   quoll::async::co_spawn(time.get_executor(), stopping(), overloaded{[](int) {}, [](std::exception_ptr) {}});
   time.run();
 

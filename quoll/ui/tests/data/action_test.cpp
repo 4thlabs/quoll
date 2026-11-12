@@ -404,8 +404,12 @@ TEST_CASE("action: a run that fails holds why, gone as the next starts", "[ui][a
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(failed_after_second);
   CHECK(cleared_on_third);
-  CHECK(runs.lines == std::vector<std::string>{"start 1", "end 1", "gave 1 yes", "start 2", "gave 2 no", "start 3",
-                                               "end 3", "gave 3 yes"});
+  CHECK(
+      runs.lines ==
+      std::vector<std::string>{
+          "start 1", "end 1", "gave 1 yes", "start 2", "gave 2 no", "start 3", "end 3", "gave 3 yes"
+      }
+  );
 }
 
 TEST_CASE("action: it holds a copy of what its caller is given", "[ui][action]") {
@@ -532,8 +536,9 @@ TEST_CASE("effect: destroyed while a run is under way is asserted", "[.assert]")
   });
 }
 
-TEST_CASE("action: a run its caller stops once a later one took its place leaves the later one under way",
-          "[ui][action]") {
+TEST_CASE(
+    "action: a run its caller stops once a later one took its place leaves the later one under way", "[ui][action]"
+) {
   runs = {};
 
   virtual_time time;
@@ -661,8 +666,9 @@ TEST_CASE("action: a component that goes stops its runs", "[ui][action]") {
   CHECK(runs.lines == std::vector<std::string>{"start 1"});
 }
 
-TEST_CASE("action: a lack of memory at any step of a run is its failure, given to its caller and held",
-          "[ui][action]") {
+TEST_CASE(
+    "action: a lack of memory at any step of a run is its failure, given to its caller and held", "[ui][action]"
+) {
   // Each allocation the run makes, in turn, fails: whichever it is, the run's await gives a std::expected, and a run
   // that failed is loading no more.
   bool clean = false;
@@ -764,8 +770,9 @@ TEST_CASE("action: of a member function of its component, run on it", "[ui][acti
   CHECK_THROWS_WITH(std::rethrow_exception(instance.component().run->error), "no work");
 }
 
-TEST_CASE("action: with()'s failure is its error and the app's on_error's, and a click refused is no failure",
-          "[ui][action]") {
+TEST_CASE(
+    "action: with()'s failure is its error and the app's on_error's, and a click refused is no failure", "[ui][action]"
+) {
   runs = {};
   runs.failing = {4};
 
@@ -819,8 +826,9 @@ TEST_CASE("action: what follows a success throws to run()'s caller, holding the 
   CHECK(instance.component().run->error == nullptr);
 }
 
-TEST_CASE("action: with() under a lack of memory at any step holds why, and throws it from its handler",
-          "[ui][action]") {
+TEST_CASE(
+    "action: with() under a lack of memory at any step holds why, and throws it from its handler", "[ui][action]"
+) {
   // Each allocation the handler's run makes, in turn, fails: the run succeeds, or it holds why not, or the
   // handler throws, which the event gives to the app's on_error.
   bool clean = false;

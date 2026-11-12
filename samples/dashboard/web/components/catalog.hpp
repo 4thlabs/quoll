@@ -64,7 +64,13 @@ struct catalog {
   // is to settle (docs/PLAN.md, step 6, Contexts).
   quoll::async::task<products::product> save(products::product edited) {
     auto saved = co_await products_client::update(
-        edited.id, {.name = std::move(edited.name), .price = edited.price, .stock = edited.stock});
+        edited.id,
+        {
+            .name = std::move(edited.name),
+            .price = edited.price,
+            .stock = edited.stock,
+        }
+    );
 
     replace(saved);
     co_return saved;

@@ -101,8 +101,8 @@ public:
       return vtable_->ready(awaitable_);
     }
 
-    [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle,
-                                                        async::await_context const &context) {
+    [[nodiscard]] std::coroutine_handle<>
+    await_suspend(std::coroutine_handle<> handle, async::await_context const &context) {
       return vtable_->suspend(awaitable_, handle, context);
     }
 
@@ -139,8 +139,9 @@ public:
 
     static constexpr std::size_t not_a_read = static_cast<std::size_t>(-1);
 
-    awaitable(void *wrapped, detail::awaitable_vtable const &vtable, bool &pending,
-              std::size_t asked = not_a_read) noexcept
+    awaitable(
+        void *wrapped, detail::awaitable_vtable const &vtable, bool &pending, std::size_t asked = not_a_read
+    ) noexcept
         : awaitable_(wrapped), vtable_(&vtable), pending_(&pending), asked_(asked) {}
 
     void *awaitable_;
@@ -152,8 +153,7 @@ public:
   /** @brief Takes `stream` over. */
   // The exclusion comes first: it stops ByteStream<any_stream> from checking this constructor against itself.
   template <class S>
-    requires(!std::same_as<std::remove_cvref_t<S>, any_stream> && !std::is_lvalue_reference_v<S> &&
-             detail::ErasableStream<S> && std::move_constructible<S>)
+    requires(!std::same_as<std::remove_cvref_t<S>, any_stream> && !std::is_lvalue_reference_v<S> && detail::ErasableStream<S> && std::move_constructible<S>)
   explicit any_stream(S &&stream) {
     using block = detail::stream_block<S>;
 

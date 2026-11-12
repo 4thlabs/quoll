@@ -52,8 +52,10 @@ namespace quoll::rest {
 template <fixed_string Name, class T>
 struct header {
   static_assert(http::detail::is_token(Name.view()), "quoll::rest::header: the name is not a valid field name");
-  static_assert(detail::is_parameter_value<T>::value,
-                "quoll::rest::header: the type is not a Parameter, nor an std::optional or std::vector of one");
+  static_assert(
+      detail::is_parameter_value<T>::value,
+      "quoll::rest::header: the type is not a Parameter, nor an std::optional or std::vector of one"
+  );
 
   using part_category = detail::argument_part;
   using argument_type = T;

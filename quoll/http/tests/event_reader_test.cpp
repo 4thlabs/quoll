@@ -124,8 +124,10 @@ TEST_CASE("event_reader: events read a byte a piece, cut in a field and in a CRL
   auto const got = quoll::test::run(events_of(http::response_body{source}));
 
   REQUIRE(got);
-  REQUIRE(got->events ==
-          std::vector<http::server_sent_event>{{.type = "add", .data = "a", .id = "7"}, {.data = "b", .id = "7"}});
+  REQUIRE(
+      got->events ==
+      std::vector<http::server_sent_event>{{.type = "add", .data = "a", .id = "7"}, {.data = "b", .id = "7"}}
+  );
   REQUIRE(got->last_event_id == "7");
   // A piece a byte, and the end.
   REQUIRE(source->reads() == text.size() + 1);
@@ -177,13 +179,16 @@ TEST_CASE("event_reader: a stop request ends the reading, and lets the body go",
 
   stop.request_stop();
 
-  REQUIRE(quoll::test::run(loop, quoll::test::code_thrown_by(events.next()), stop.get_token()) ==
-          std::errc::operation_canceled);
+  REQUIRE(
+      quoll::test::run(loop, quoll::test::code_thrown_by(events.next()), stop.get_token()) ==
+      std::errc::operation_canceled
+  );
   REQUIRE(source.use_count() == 1);
 }
 
-TEST_CASE("event_reader: a next() asked while another is, not yet awaited, is refused; one dropped frees it",
-          "[http][sse]") {
+TEST_CASE(
+    "event_reader: a next() asked while another is, not yet awaited, is refused; one dropped frees it", "[http][sse]"
+) {
   auto source = std::make_shared<byte_source>("data: a\n\ndata: b\n\n");
   http::event_reader events{http::response_body{source}};
 

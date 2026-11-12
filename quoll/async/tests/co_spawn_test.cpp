@@ -180,9 +180,10 @@ TEST_CASE("co_spawn without an executor: the tag is the default", "[async]") {
   auto const parent = [&]() -> task<int> {
     log.emplace_back("before");
     co_await co_spawn(note(log, "spawned"), async::detached);
-    co_await co_spawn(can_stop(),
-                      overloaded{[&](bool possible) { can_be_stopped = possible; }, [](std::exception_ptr const &) {}},
-                      source.get_token());
+    co_await co_spawn(
+        can_stop(), overloaded{[&](bool possible) { can_be_stopped = possible; }, [](std::exception_ptr const &) {}},
+        source.get_token()
+    );
     log.emplace_back("after");
     co_return 0;
   };
@@ -246,9 +247,10 @@ TEST_CASE("co_spawn(this_executor): without the co_await, nothing runs, and the 
   };
 
   {
-    auto const dropped =
-        co_spawn(this_executor, holding(log, kept),
-                 overloaded{[&] { handled = true; }, [&](std::exception_ptr const &) { handled = true; }});
+    auto const dropped = co_spawn(
+        this_executor, holding(log, kept),
+        overloaded{[&] { handled = true; }, [&](std::exception_ptr const &) { handled = true; }}
+    );
 
     REQUIRE(kept.use_count() == 2);
   }
@@ -272,8 +274,10 @@ TEST_CASE("co_spawn(this_executor): a post that throws reaches the coroutine, an
 
   auto const parent = [&]() -> task<> {
     try {
-      co_await co_spawn(this_executor, holding(log, kept),
-                        overloaded{[&] { handled = true; }, [&](std::exception_ptr const &) { handled = true; }});
+      co_await co_spawn(
+          this_executor, holding(log, kept),
+          overloaded{[&] { handled = true; }, [&](std::exception_ptr const &) { handled = true; }}
+      );
     } catch (std::runtime_error const &failure) {
       caught = failure.what();
     }
@@ -295,17 +299,22 @@ TEST_CASE("co_spawn(this_executor): the handler gets the value or the exception"
   std::string failure;
 
   auto const parent = [&]() -> task<int> {
-    co_await co_spawn(this_executor, answer(),
-                      overloaded{[&](int result) { value = result; }, [](std::exception_ptr const &) {}});
-    co_await co_spawn(this_executor, fail(),
-                      overloaded{[](int) {},
-                                 [&](std::exception_ptr const &error) {
-                                   try {
-                                     std::rethrow_exception(error);
-                                   } catch (std::runtime_error const &thrown) {
-                                     failure = thrown.what();
-                                   }
-                                 }});
+    co_await co_spawn(
+        this_executor, answer(), overloaded{[&](int result) { value = result; }, [](std::exception_ptr const &) {}}
+    );
+    co_await co_spawn(
+        this_executor, fail(),
+        overloaded{
+            [](int) {},
+            [&](std::exception_ptr const &error) {
+              try {
+                std::rethrow_exception(error);
+              } catch (std::runtime_error const &thrown) {
+                failure = thrown.what();
+              }
+            }
+        }
+    );
     co_return 0;
   };
 
@@ -321,11 +330,15 @@ TEST_CASE("co_spawn(this_executor): the stop token of the coroutine is not taken
   auto passed = false;
 
   auto const parent = [&]() -> task<int> {
-    co_await co_spawn(this_executor, can_stop(),
-                      overloaded{[&](bool possible) { alone = possible; }, [](std::exception_ptr const &) {}});
-    co_await co_spawn(this_executor, can_stop(),
-                      overloaded{[&](bool possible) { passed = possible; }, [](std::exception_ptr const &) {}},
-                      co_await async::current_stop_token());
+    co_await co_spawn(
+        this_executor, can_stop(),
+        overloaded{[&](bool possible) { alone = possible; }, [](std::exception_ptr const &) {}}
+    );
+    co_await co_spawn(
+        this_executor, can_stop(),
+        overloaded{[&](bool possible) { passed = possible; }, [](std::exception_ptr const &) {}},
+        co_await async::current_stop_token()
+    );
     co_return 0;
   };
 
@@ -404,8 +417,10 @@ TEST_CASE("co_spawn: a handler that throws ends the program", "[async]") {
 
     async::co_spawn(
         loop.get_executor(), []() -> task<int> { co_return 1; }(),
-        quoll::test::overloaded{[](int) { throw std::runtime_error{"from the handler"}; },
-                                [](std::exception_ptr const &) {}});
+        quoll::test::overloaded{
+            [](int) { throw std::runtime_error{"from the handler"}; }, [](std::exception_ptr const &) {}
+        }
+    );
     loop.run();
     ::_exit(0);
   }
@@ -454,15 +469,17 @@ TEST_CASE("co_spawn: what the task holds is gone before its handler runs", "[asy
   std::optional<bool> alive_in_handler;
 
   SECTION("with a value") {
-    async::co_spawn(loop.get_executor(), holding_a_value(std::move(held)),
-                    quoll::test::overloaded{[&](int) { alive_in_handler = !watching.expired(); },
-                                            [](std::exception_ptr const &) {}});
+    async::co_spawn(
+        loop.get_executor(), holding_a_value(std::move(held)),
+        quoll::test::overloaded{[&](int) { alive_in_handler = !watching.expired(); }, [](std::exception_ptr const &) {}}
+    );
   }
 
   SECTION("without") {
     async::co_spawn(
         loop.get_executor(), holding_nothing_to_return(std::move(held)),
-        quoll::test::overloaded{[&] { alive_in_handler = !watching.expired(); }, [](std::exception_ptr const &) {}});
+        quoll::test::overloaded{[&] { alive_in_handler = !watching.expired(); }, [](std::exception_ptr const &) {}}
+    );
   }
 
   loop.run();

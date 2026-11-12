@@ -96,11 +96,15 @@ cmake --build build-interop-bin --target quoll_interop_server quoll_interop_clie
 QUOLL_CONTAINER=quoll-work tests/interop/run.sh "$PWD/build-interop-bin/tests/interop"
 ```
 
-Format what you touch, and only that, with the repository's `.clang-format`:
+Format what you touch, and only that, with the repository's `.clang-format` and clang-format 18, which CI runs and the
+dev container has (other versions lay some breaks out differently):
 
 ```bash
-clang-format -i <file>
+clang-format-18 -i <file>
 ```
+
+A braced list keeps one element per line once its last one has a trailing comma. A change to `.clang-format` formats the
+whole repository, in a commit of its own, listed in `.git-blame-ignore-revs` so that `git blame` passes over it.
 
 ## Layout
 

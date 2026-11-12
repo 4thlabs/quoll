@@ -163,11 +163,13 @@ struct list_page {
           items.update([this](auto &all) { all.push_back(*draft); });
           draft.set({});
         }),
-        ul({list(items,
-                 [this](std::string const &item) {
-                   return li(item) | key(item) |
-                          on_click([this, item] { items.update([&item](auto &all) { std::erase(all, item); }); });
-                 })}),
+        ul({list(
+            items,
+            [this](std::string const &item) {
+              return li(item) | key(item) |
+                     on_click([this, item] { items.update([&item](auto &all) { std::erase(all, item); }); });
+            }
+        )}),
     });
   }
 };
@@ -290,17 +292,20 @@ TEST_CASE("mount: inputs, lists and removed nodes in the page", "[emscripten][ui
 
   REQUIRE(
       page() ==
-      R"(<div><input placeholder="note" value=""></input><button>Add</button><ul><li>milk</li><li>tea</li></ul></div>)");
+      R"(<div><input placeholder="note" value=""></input><button>Add</button><ul><li>milk</li><li>tea</li></ul></div>)"
+  );
 
   quoll_test_dom_click("milk");
   settle();
 
-  REQUIRE(page() ==
-          R"(<div><input placeholder="note" value=""></input><button>Add</button><ul><li>tea</li></ul></div>)");
+  REQUIRE(
+      page() == R"(<div><input placeholder="note" value=""></input><button>Add</button><ul><li>tea</li></ul></div>)"
+  );
 }
 
-TEST_CASE("mount: a key pressed reaches on_key_down with its name, a form sent on_submit, the page kept",
-          "[emscripten][ui]") {
+TEST_CASE(
+    "mount: a key pressed reaches on_key_down with its name, a form sent on_submit, the page kept", "[emscripten][ui]"
+) {
   quoll_test_dom_reset();
 
   auto &shown = quoll::emscripten::mount<sending_form>();
@@ -343,8 +348,9 @@ TEST_CASE("mount: a radio chosen gives its value, and a form with no on_submit s
   CHECK(quoll_test_dom_submit() == 1);
 }
 
-TEST_CASE("mount: a key reaches on_key_down after the modifiers held, but none an input method composes",
-          "[emscripten][ui]") {
+TEST_CASE(
+    "mount: a key reaches on_key_down after the modifiers held, but none an input method composes", "[emscripten][ui]"
+) {
   quoll_test_dom_reset();
 
   auto &shown = quoll::emscripten::mount<key_input>();
@@ -401,8 +407,9 @@ TEST_CASE("mount: a failed first view can be tried again, a second mount cannot"
   REQUIRE_THROWS_AS(quoll::emscripten::mount<failing_at_first>(), std::logic_error);
 }
 
-TEST_CASE("mount: a widget's module, from the page's registry, is mounted, updated and unmounted",
-          "[emscripten][ui][widget]") {
+TEST_CASE(
+    "mount: a widget's module, from the page's registry, is mounted, updated and unmounted", "[emscripten][ui][widget]"
+) {
   quoll_test_dom_reset();
   quoll_test_widgets_install();
   quoll::emscripten::mount<dom_widgets::charting>();
@@ -488,12 +495,16 @@ struct canvas_renderer {
     renderer.create_element(1, "canvas");
     renderer.insert(0, 1, 0);
 
-    renderer.on_event([](void *owner, quoll::ui::node_id, char const *,
-                         char const *) { ++static_cast<canvas_renderer *>(owner)->events; },
-                      this);
+    renderer.on_event(
+        [](void *owner, quoll::ui::node_id, char const *, char const *) {
+          ++static_cast<canvas_renderer *>(owner)->events;
+        },
+        this
+    );
     renderer.on_failure(
         [](void *owner, char const *message) { static_cast<canvas_renderer *>(owner)->failures.emplace_back(message); },
-        this);
+        this
+    );
   }
 
   canvas_renderer(canvas_renderer const &) = delete;
@@ -551,8 +562,10 @@ TEST_CASE("dom_renderer: one unmounted while its mount awaits has what it made u
   REQUIRE(widget_log() == "mount canvas {\"values\":[1]}\nunmount");
 }
 
-TEST_CASE("dom_renderer: a node removed takes the widgets within it out, and one mounted again its first",
-          "[emscripten][ui][widget]") {
+TEST_CASE(
+    "dom_renderer: a node removed takes the widgets within it out, and one mounted again its first",
+    "[emscripten][ui][widget]"
+) {
   quoll_test_dom_reset();
   quoll_test_widgets_install();
 
@@ -569,8 +582,10 @@ TEST_CASE("dom_renderer: a node removed takes the widgets within it out, and one
   settle();
   shown.renderer.remove(2);
 
-  REQUIRE(widget_log() == "mount canvas {\"values\":[3]}\nmount canvas {\"values\":[1]}\nunmount\n"
-                          "mount canvas {\"values\":[2]}\nunmount");
+  REQUIRE(
+      widget_log() == "mount canvas {\"values\":[3]}\nmount canvas {\"values\":[1]}\nunmount\n"
+                      "mount canvas {\"values\":[2]}\nunmount"
+  );
 }
 
 TEST_CASE("dom_renderer: a mount that fails is told to on_failure", "[emscripten][ui][widget]") {
@@ -626,8 +641,10 @@ TEST_CASE("mount: a widget's module missing, or failing to mount, reaches on_err
   REQUIRE(failures[1].find("no canvas here") != std::string::npos);
 }
 
-TEST_CASE("dom_renderer: an unmount failing once a mount it waited for is done is told to on_failure",
-          "[emscripten][ui][widget]") {
+TEST_CASE(
+    "dom_renderer: an unmount failing once a mount it waited for is done is told to on_failure",
+    "[emscripten][ui][widget]"
+) {
   quoll_test_dom_reset();
   quoll_test_widgets_install();
 
@@ -652,7 +669,8 @@ TEST_CASE("dom_renderer: once closed, a mount still running calls its owner no m
 
   renderer.on_failure(
       [](void *owner, char const *message) { static_cast<std::vector<std::string> *>(owner)->emplace_back(message); },
-      &failures);
+      &failures
+  );
   renderer.create_element(1, "canvas");
   renderer.insert(0, 1, 0);
   renderer.mount_widget(1, "./async_throwing_chart.js", "{}");
@@ -701,15 +719,17 @@ struct routed_shell {
 
 } // namespace dom_routes
 
-TEST_CASE("browser_history: a link goes through the browser's history, and its back button comes back",
-          "[emscripten][ui]") {
+TEST_CASE(
+    "browser_history: a link goes through the browser's history, and its back button comes back", "[emscripten][ui]"
+) {
   using namespace dom_routes;
 
   quoll_test_dom_reset();
   quoll_test_history_install("/");
 
   quoll::emscripten::mount<routed_shell>(
-      "#app", {.contexts = {quoll::ui::routing<both>(quoll::emscripten::browser_history())}});
+      "#app", {.contexts = {quoll::ui::routing<both>(quoll::emscripten::browser_history())}}
+  );
   settle();
   REQUIRE(page().contains("<p>first</p>"));
   CHECK(quoll_test_history_listeners() == 1);

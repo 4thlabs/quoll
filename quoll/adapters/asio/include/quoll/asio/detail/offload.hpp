@@ -105,17 +105,19 @@ public:
     auto &threads = ::asio::use_service<offload_threads>(executor_.context());
 
     // A failure to post the coroutine back calls std::terminate (see async::Executor).
-    ::asio::post(threads.pool(),
-                 [this, &context,
-                  keep_running = ::asio::prefer(executor_, ::asio::execution::outstanding_work.tracked)]() noexcept {
-                   if (context.stop_token.stop_requested()) {
-                     canceled_ = true;
-                   } else {
-                     work_(argument_);
-                   }
+    ::asio::post(
+        threads.pool(),
+        [this, &context,
+         keep_running = ::asio::prefer(executor_, ::asio::execution::outstanding_work.tracked)]() noexcept {
+          if (context.stop_token.stop_requested()) {
+            canceled_ = true;
+          } else {
+            work_(argument_);
+          }
 
-                   context.executor.post(item_);
-                 });
+          context.executor.post(item_);
+        }
+    );
     return true;
   }
 
@@ -136,8 +138,8 @@ private:
 static_assert(async::ContextAwaitable<offload_operation>);
 
 // See async::Offloader.
-[[nodiscard]] inline async::task<> offload(::asio::any_io_executor executor, void (*work)(void *) noexcept,
-                                           void *argument) {
+[[nodiscard]] inline async::task<>
+offload(::asio::any_io_executor executor, void (*work)(void *) noexcept, void *argument) {
   co_await offload_operation{std::move(executor), work, argument};
 }
 

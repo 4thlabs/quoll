@@ -120,19 +120,21 @@ task<int> above(std::vector<std::string> &log) {
 }
 
 auto ending_handler(ending &ended) {
-  return overloaded{[&ended](int value) {
-                      ended.completed = true;
-                      ended.value = value;
-                    },
-                    [&ended] { ended.completed = true; },
-                    [&ended](std::exception_ptr failure) {
-                      ended.completed = true;
-                      ended.failure = std::move(failure);
-                    },
-                    [&ended](quoll::async::stopped_t) {
-                      ended.completed = true;
-                      ended.stopped = true;
-                    }};
+  return overloaded{
+      [&ended](int value) {
+        ended.completed = true;
+        ended.value = value;
+      },
+      [&ended] { ended.completed = true; },
+      [&ended](std::exception_ptr failure) {
+        ended.completed = true;
+        ended.failure = std::move(failure);
+      },
+      [&ended](quoll::async::stopped_t) {
+        ended.completed = true;
+        ended.stopped = true;
+      }
+  };
 }
 
 } // namespace

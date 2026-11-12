@@ -88,17 +88,21 @@ attempt try_it(Make &make, long failing_at) {
   quoll::test::allocations_before_failing = failing_at;
 
   try {
-    async::co_spawn(time.get_executor(), make(),
-                    quoll::test::overloaded{[&](int) { result.outcome = ended::with_a_value; },
-                                            [&](std::exception_ptr const &failure) {
-                                              try {
-                                                std::rethrow_exception(failure);
-                                              } catch (std::bad_alloc const &) {
-                                                result.outcome = ended::with_bad_alloc;
-                                              } catch (...) {
-                                                result.outcome = ended::otherwise;
-                                              }
-                                            }});
+    async::co_spawn(
+        time.get_executor(), make(),
+        quoll::test::overloaded{
+            [&](int) { result.outcome = ended::with_a_value; },
+            [&](std::exception_ptr const &failure) {
+              try {
+                std::rethrow_exception(failure);
+              } catch (std::bad_alloc const &) {
+                result.outcome = ended::with_bad_alloc;
+              } catch (...) {
+                result.outcome = ended::otherwise;
+              }
+            }
+        }
+    );
     time.run();
   } catch (std::bad_alloc const &) {
     result.outcome = ended::with_bad_alloc;

@@ -168,23 +168,30 @@ struct route {
   // The endpoint checks its own parts; these hold with the parts inherited from with<> too, but for HEAD: what with<>
   // adds is the server's answers, never decoded as a body.
   static_assert(count_bodies(parts{}) <= 1, "quoll::rest::with: the endpoint gets more than one body<>");
-  static_assert(count_bodies(parts{}) == 0 ||
-                    (Endpoint::method != http::verb::get && Endpoint::method != http::verb::head),
-                "quoll::rest::with: a GET or HEAD endpoint gets a body<> (fetch rejects one)");
-  static_assert(count_bodies(parts{}) == 0 || Endpoint::method != http::verb::trace,
-                "quoll::rest::with: a TRACE endpoint gets a body<> (RFC 9110, 9.3.8)");
+  static_assert(
+      count_bodies(parts{}) == 0 || (Endpoint::method != http::verb::get && Endpoint::method != http::verb::head),
+      "quoll::rest::with: a GET or HEAD endpoint gets a body<> (fetch rejects one)"
+  );
+  static_assert(
+      count_bodies(parts{}) == 0 || Endpoint::method != http::verb::trace,
+      "quoll::rest::with: a TRACE endpoint gets a body<> (RFC 9110, 9.3.8)"
+  );
   static_assert(distinct_statuses(parts{}), "quoll::rest::with: the endpoint gets two returns<> with the same status");
-  static_assert(count_events(parts{}) == 0 || !any_success_response(parts{}),
-                "quoll::rest::with: an endpoint with events<> gets another success, where only errors may come");
+  static_assert(
+      count_events(parts{}) == 0 || !any_success_response(parts{}),
+      "quoll::rest::with: an endpoint with events<> gets another success, where only errors may come"
+  );
 
   // The arguments of a call and of the service: path parameters, then argument parts in order.
-  using arguments = as_tuple_t<concat_t<typename path_argument_types<Path>::type,
-                                        typename part_argument_types<filter_t<is_argument_part, parts>>::type>>;
+  using arguments = as_tuple_t<concat_t<
+      typename path_argument_types<Path>::type, typename part_argument_types<filter_t<is_argument_part, parts>>::type>>;
   using responses = filter_t<is_response_part, parts>;
   using schemes = typename security_schemes<filter_t<is_security_part, parts>>::type;
 
-  static_assert(distinct_places(filter_t<is_argument_part, parts>{}, schemes{}),
-                "quoll::rest::endpoint: it gets the same field or query parameter twice");
+  static_assert(
+      distinct_places(filter_t<is_argument_part, parts>{}, schemes{}),
+      "quoll::rest::endpoint: it gets the same field or query parameter twice"
+  );
 
   static constexpr auto path_value = Path;
   static constexpr std::string_view path = path_value.view();
@@ -223,13 +230,15 @@ struct route {
 
 // Whether two operations would be routed alike, from their shapes: the same method, and the same decoded literals and
 // kind of parameter in each place, whatever the names: `/a` and `/%61` are one, `{name}` and `{name:path}` two.
-[[nodiscard]] consteval bool same_shape(http::verb first_method, std::optional<std::string> const &first,
-                                        http::verb second_method, std::optional<std::string> const &second) {
+[[nodiscard]] consteval bool same_shape(
+    http::verb first_method, std::optional<std::string> const &first, http::verb second_method,
+    std::optional<std::string> const &second
+) {
   return first_method == second_method && first && second && *first == *second;
 }
 
-[[nodiscard]] consteval bool same_operation(http::verb first_method, std::string_view first, http::verb second_method,
-                                            std::string_view second) {
+[[nodiscard]] consteval bool
+same_operation(http::verb first_method, std::string_view first, http::verb second_method, std::string_view second) {
   return same_shape(first_method, route_shape(first), second_method, route_shape(second));
 }
 

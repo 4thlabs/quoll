@@ -90,17 +90,21 @@ TEST_CASE("detached: an exception a task lets escape is reported, and the others
   loop.run();
 
   REQUIRE(turns == 3);
-  REQUIRE(quoll::test::reports() ==
-          std::vector<std::string>{"quoll: a task spawned with async::detached ended on an exception: boom\n"});
+  REQUIRE(
+      quoll::test::reports() ==
+      std::vector<std::string>{"quoll: a task spawned with async::detached ended on an exception: boom\n"}
+  );
 }
 
 TEST_CASE("detached: a stop is no failure, and an exception of any type is reported", "[async]") {
   async::run_loop loop;
 
-  async::co_spawn(loop.get_executor(),
-                  throwing(std::make_exception_ptr(
-                      std::system_error{std::make_error_code(std::errc::operation_canceled), "stopped"})),
-                  async::detached);
+  async::co_spawn(
+      loop.get_executor(),
+      throwing(std::make_exception_ptr(std::system_error{std::make_error_code(std::errc::operation_canceled), "stopped"}
+      )),
+      async::detached
+  );
   loop.run();
 
   REQUIRE(quoll::test::reports().empty());
@@ -111,7 +115,8 @@ TEST_CASE("detached: a stop is no failure, and an exception of any type is repor
   REQUIRE(
       quoll::test::reports() ==
       std::vector<std::string>{"quoll: a task spawned with async::detached ended on an exception: an exception of a "
-                               "type that is no std::exception\n"});
+                               "type that is no std::exception\n"}
+  );
 }
 
 TEST_CASE("report: to the sink set, and to stderr with none", "[async]") {
@@ -151,8 +156,9 @@ TEST_CASE("report: to the sink set, and to stderr with none", "[async]") {
   auto const got = ::read(pipe_ends[0], read_back.data(), read_back.size());
 
   ::close(pipe_ends[0]);
-  REQUIRE(std::string_view{read_back.data(), static_cast<std::size_t>(got)} ==
-          "quoll: a test of report(): on stderr\n");
+  REQUIRE(
+      std::string_view{read_back.data(), static_cast<std::size_t>(got)} == "quoll: a test of report(): on stderr\n"
+  );
 #endif
 
   REQUIRE(quoll::async::set_report_sink(&quoll::test::keep_report) == nullptr);

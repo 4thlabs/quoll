@@ -98,12 +98,13 @@ namespace issues {
 using namespace quoll::rest;
 
 // The name of the state the server got, as it got it.
-using open_one = endpoint<"issues.open", verb::get, "/open", query<"state", open_enum<state>>,
-                          returns<std::string, status::ok, text_codec>>;
-using strict_one = endpoint<"issues.strict", verb::get, "/strict", query<"state", state>,
-                            returns<std::string, status::ok, text_codec>>;
-using in_header = endpoint<"issues.header", verb::get, "/header", header<"X-State", open_enum<state>>,
-                           returns<std::string, status::ok, text_codec>>;
+using open_one = endpoint<
+    "issues.open", verb::get, "/open", query<"state", open_enum<state>>, returns<std::string, status::ok, text_codec>>;
+using strict_one = endpoint<
+    "issues.strict", verb::get, "/strict", query<"state", state>, returns<std::string, status::ok, text_codec>>;
+using in_header = endpoint<
+    "issues.header", verb::get, "/header", header<"X-State", open_enum<state>>,
+    returns<std::string, status::ok, text_codec>>;
 
 using api = rest::api<"/issues", open_one, strict_one, in_header>;
 } // namespace issues
@@ -133,8 +134,9 @@ namespace http = quoll::http;
 } // namespace
 
 TEST_CASE("open_enum: a name the enum has reads as its enumerator, another is kept as it came", "[rest][codec]") {
-  for (auto const &decoded : {rest::json_codec{}.decode<issue>(R"({"title":"a","status":"merged"})"),
-                              rest::lenient_json_codec{}.decode<issue>(R"({"title":"a","status":"merged"})")}) {
+  for (auto const &decoded :
+       {rest::json_codec{}.decode<issue>(R"({"title":"a","status":"merged"})"),
+        rest::lenient_json_codec{}.decode<issue>(R"({"title":"a","status":"merged"})")}) {
     REQUIRE(decoded.value().status.name() == "merged");
     REQUIRE_FALSE(decoded.value().status.known());
     REQUIRE(decoded.value().status != state::open);
@@ -150,10 +152,14 @@ TEST_CASE("open_enum: a name the enum has reads as its enumerator, another is ke
 TEST_CASE("open_enum: written by its name, an unknown one as it came", "[rest][codec]") {
   rest::json_codec const codec;
 
-  REQUIRE(codec.encode(issue{.title = "a", .status = rest::open_enum<state>{state::closed}}) ==
-          R"({"title":"a","status":"closed"})");
-  REQUIRE(codec.encode(issue{.title = "a", .status = rest::open_enum<state>::named("merged")}) ==
-          R"({"title":"a","status":"merged"})");
+  REQUIRE(
+      codec.encode(issue{.title = "a", .status = rest::open_enum<state>{state::closed}}) ==
+      R"({"title":"a","status":"closed"})"
+  );
+  REQUIRE(
+      codec.encode(issue{.title = "a", .status = rest::open_enum<state>::named("merged")}) ==
+      R"({"title":"a","status":"merged"})"
+  );
 
   // Read, then sent again: unchanged.
   auto const read = codec.decode<issue>(R"({"title":"a","status":"merged"})").value();
@@ -177,8 +183,9 @@ TEST_CASE("open_enum: the enum itself stays strict, a map key included", "[rest]
   REQUIRE(codec.decode<std::map<state, int>>(R"({"open":2,"closed":1})").value() == counted);
 }
 
-TEST_CASE("open_enum: as a parameter, any name, and the enum alone still refuses one it does not know",
-          "[rest][codec]") {
+TEST_CASE(
+    "open_enum: as a parameter, any name, and the enum alone still refuses one it does not know", "[rest][codec]"
+) {
   REQUIRE(rest::param_traits<rest::open_enum<state>>::from_text("merged")->name() == "merged");
   REQUIRE(rest::param_traits<rest::open_enum<state>>::to_text(rest::open_enum<state>::named("merged")) == "merged");
 
@@ -188,14 +195,20 @@ TEST_CASE("open_enum: as a parameter, any name, and the enum alone still refuses
 
   rest::client<issues::api, http::local_transport> const client{http::local_transport{router}};
 
-  REQUIRE(quoll::test::run(client.call<issues::open_one>(rest::open_enum<state>::named("merged"))).value() ==
-          "merged unknown");
-  REQUIRE(quoll::test::run(client.call<issues::open_one>(rest::open_enum<state>{state::closed})).value() ==
-          "closed known");
-  REQUIRE(quoll::test::run(client.call<issues::in_header>(rest::open_enum<state>::named("merged"))).value() ==
-          "merged unknown");
-  REQUIRE(quoll::test::run(client.call<issues::in_header>(rest::open_enum<state>{state::open})).value() ==
-          "open known");
+  REQUIRE(
+      quoll::test::run(client.call<issues::open_one>(rest::open_enum<state>::named("merged"))).value() ==
+      "merged unknown"
+  );
+  REQUIRE(
+      quoll::test::run(client.call<issues::open_one>(rest::open_enum<state>{state::closed})).value() == "closed known"
+  );
+  REQUIRE(
+      quoll::test::run(client.call<issues::in_header>(rest::open_enum<state>::named("merged"))).value() ==
+      "merged unknown"
+  );
+  REQUIRE(
+      quoll::test::run(client.call<issues::in_header>(rest::open_enum<state>{state::open})).value() == "open known"
+  );
 
   http::request strict;
 
@@ -255,8 +268,9 @@ TEST_CASE("open_enum: a name that JSON escapes reads and writes as text", "[rest
 TEST_CASE("open_enum: in a form, by its name", "[rest][codec]") {
   rest::form_codec const codec;
 
-  REQUIRE(codec.encode(issue{.title = "a", .status = rest::open_enum<state>::named("merged")}) ==
-          "title=a&status=merged");
+  REQUIRE(
+      codec.encode(issue{.title = "a", .status = rest::open_enum<state>::named("merged")}) == "title=a&status=merged"
+  );
 
   auto const decoded = codec.decode<issue>("title=a&status=merged").value();
 

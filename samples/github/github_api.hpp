@@ -101,9 +101,10 @@ struct me {
 template <>
 struct glz::meta<github::repository> {
   using T = github::repository;
-  static constexpr auto value =
-      glz::object("full_name", &T::full_name, "description", &T::description, "stargazers_count", &T::stars,
-                  "open_issues_count", &T::open_issues_count, "html_url", &T::html_url);
+  static constexpr auto value = glz::object(
+      "full_name", &T::full_name, "description", &T::description, "stargazers_count", &T::stars, "open_issues_count",
+      &T::open_issues_count, "html_url", &T::html_url
+  );
 };
 
 namespace github {
@@ -118,11 +119,12 @@ using answers = rest::returns<T, Status, rest::lenient_json_codec>;
 namespace repos {
 
 // 403: a token without access, or the rate limit of a caller without one (60 requests an hour).
-using get = rest::endpoint<"repos.get", http::verb::get, "/", answers<repository>,
-                           answers<error, http::status::not_found>, answers<error, http::status::forbidden>>;
-using issues = rest::endpoint<"repos.issues", http::verb::get, "/issues", rest::query_params<issue_filter>,
-                              answers<std::vector<issue>>, answers<error, http::status::not_found>,
-                              answers<error, http::status::forbidden>>;
+using get = rest::endpoint<
+    "repos.get", http::verb::get, "/", answers<repository>, answers<error, http::status::not_found>,
+    answers<error, http::status::forbidden>>;
+using issues = rest::endpoint<
+    "repos.issues", http::verb::get, "/issues", rest::query_params<issue_filter>, answers<std::vector<issue>>,
+    answers<error, http::status::not_found>, answers<error, http::status::forbidden>>;
 
 using api = rest::api<"/repos/{owner}/{repo}", get, issues>;
 
@@ -131,8 +133,9 @@ using api = rest::api<"/repos/{owner}/{repo}", get, issues>;
 namespace users {
 
 // The account the token belongs to.
-using me = rest::endpoint<"users.me", http::verb::get, "/user", rest::security<rest::bearer_auth>, answers<github::me>,
-                          answers<error, http::status::unauthorized>, answers<error, http::status::forbidden>>;
+using me = rest::endpoint<
+    "users.me", http::verb::get, "/user", rest::security<rest::bearer_auth>, answers<github::me>,
+    answers<error, http::status::unauthorized>, answers<error, http::status::forbidden>>;
 
 } // namespace users
 

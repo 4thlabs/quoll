@@ -91,8 +91,9 @@ private:
 // What a write to HEAD throws, told apart from a stop, which is no answer.
 struct head_has_no_body : std::system_error {
   head_has_no_body()
-      : std::system_error{std::make_error_code(std::errc::operation_canceled),
-                          "quoll::http::response_writer: HEAD has no body"} {}
+      : std::system_error{
+            std::make_error_code(std::errc::operation_canceled), "quoll::http::response_writer: HEAD has no body"
+        } {}
 };
 
 // What a handler writing through an http::response_writer writes through. To HEAD, its first write throws: the head is

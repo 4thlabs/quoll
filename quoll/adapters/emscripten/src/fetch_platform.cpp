@@ -85,8 +85,9 @@ constexpr std::array<std::string_view, 3> fetch_decoded_fields{
 };
 
 [[nodiscard]] bool is_one_of(std::string_view name, std::span<std::string_view const> names) noexcept {
-  return std::ranges::any_of(names,
-                             [name](std::string_view candidate) { return http::detail::iequals(name, candidate); });
+  return std::ranges::any_of(names, [name](std::string_view candidate) {
+    return http::detail::iequals(name, candidate);
+  });
 }
 
 // The fields of a request, one "name:value\n" line each, for quoll_emscripten_fetch_start. Checked as by
@@ -168,8 +169,8 @@ struct aborter {
 }
 
 // What an aborted or failed fetch throws. `message`: why it failed, as JavaScript tells.
-[[nodiscard]] std::system_error fetch_failure(fetch_outcome outcome, std::string const &url,
-                                              std::string const &message) {
+[[nodiscard]] std::system_error
+fetch_failure(fetch_outcome outcome, std::string const &url, std::string const &message) {
   if (outcome == fetch_outcome::aborted) {
     return std::system_error{std::make_error_code(std::errc::operation_canceled), "quoll::http::client: " + url};
   }
@@ -221,9 +222,10 @@ public:
     item_.handle = handle;
     context_ = &context;
 
-    auto const id =
-        quoll_emscripten_fetch_start(url_.c_str(), method.data(), method.size(), fields_.data(), fields_.size(),
-                                     request_->body.data(), request_->body.size(), &complete, this);
+    auto const id = quoll_emscripten_fetch_start(
+        url_.c_str(), method.data(), method.size(), fields_.data(), fields_.size(), request_->body.data(),
+        request_->body.size(), &complete, this
+    );
 
     stop_callback_.emplace(context.stop_token, aborter{id});
     return true;
@@ -436,18 +438,20 @@ private:
 };
 
 // `fields`: the request's fields, packed by pack_fields().
-[[nodiscard]] async::task<http::streamed_response> fetch_in_pieces(std::string url, std::string fields,
-                                                                   http::request request) {
+[[nodiscard]] async::task<http::streamed_response>
+fetch_in_pieces(std::string url, std::string fields, http::request request) {
   auto result = co_await fetch_operation{std::move(url), std::move(fields), request};
   auto stream = std::make_shared<fetch_stream>(std::move(result.entry), std::move(result.url));
   auto &response = result.response;
 
-  co_return http::streamed_response{response.status,
-                                    std::move(response.reason),
-                                    response.version,
-                                    std::move(response.fields),
-                                    http::response_body{stream},
-                                    std::make_shared<http::fields const>()};
+  co_return http::streamed_response{
+      response.status,
+      std::move(response.reason),
+      response.version,
+      std::move(response.fields),
+      http::response_body{stream},
+      std::make_shared<http::fields const>()
+  };
 }
 
 } // namespace

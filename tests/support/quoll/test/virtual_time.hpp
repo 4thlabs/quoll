@@ -118,9 +118,10 @@ private:
   class sleeper {
   public:
     sleeper(virtual_time &time, std::chrono::nanoseconds duration) noexcept
-        : time_(&time),
-          deadline_(duration > std::chrono::nanoseconds::max() - time.now_ ? std::chrono::nanoseconds::max()
-                                                                           : time.now_ + duration) {}
+        : time_(&time), deadline_(
+                            duration > std::chrono::nanoseconds::max() - time.now_ ? std::chrono::nanoseconds::max()
+                                                                                   : time.now_ + duration
+                        ) {}
 
     // Only moved before it suspends: nothing is pending yet.
     sleeper(sleeper &&other) noexcept : time_(other.time_), deadline_(other.deadline_) {}

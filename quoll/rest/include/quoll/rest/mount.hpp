@@ -95,7 +95,8 @@ template <class... Args>
   auto validators = [&] {
     if constexpr (layout::validator_count == 1) {
       return std::forward<std::tuple_element_t<layout::validator_position, decltype(all)>>(
-          std::get<layout::validator_position>(all));
+          std::get<layout::validator_position>(all)
+      );
     } else {
       return validator_set<>{};
     }
@@ -107,7 +108,9 @@ template <class... Args>
     return std::make_shared<state>(
         std::move(validators),
         std::tuple{std::forward<std::tuple_element_t<layout::service_positions[Index], decltype(all)>>(
-            std::get<layout::service_positions[Index]>(all))...});
+            std::get<layout::service_positions[Index]>(all)
+        )...}
+    );
   }(std::make_index_sequence<layout::service_count>{});
 }
 
@@ -151,10 +154,12 @@ void mount(http::router &router, Args &&...args) {
   auto staged = router;
 
   [&]<class... Routes>(detail::type_list<Routes...>) {
-    (staged.add(Routes::endpoint::method, Routes::path, std::string{Routes::endpoint::name},
-                [state](http::request request, http::route_match match) {
-                  return detail::serve<Routes>(state, std::move(request), std::move(match));
-                }),
+    (staged.add(
+         Routes::endpoint::method, Routes::path, std::string{Routes::endpoint::name},
+         [state](http::request request, http::route_match match) {
+           return detail::serve<Routes>(state, std::move(request), std::move(match));
+         }
+     ),
      ...);
   }(typename Api::routes{});
 

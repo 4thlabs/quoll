@@ -108,8 +108,9 @@ task<> remove(std::int64_t id) {
 
 } // namespace notes_client
 
-TEST_CASE("notes web: the page shows the server's notes, adds what is typed once, and removes a note",
-          "[samples][notes]") {
+TEST_CASE(
+    "notes web: the page shows the server's notes, adds what is typed once, and removes a note", "[samples][notes]"
+) {
   server = {.notes = {{.id = 1, .text = "buy milk"}}, .next_id = 2};
 
   virtual_time time;

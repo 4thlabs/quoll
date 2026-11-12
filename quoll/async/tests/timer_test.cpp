@@ -174,8 +174,10 @@ TEST_CASE("sleep_for: a stop request ends the sleep, and its awaiter, on a stop"
   std::stop_source source;
 
   // Ended on the stop, not on an exception: what awaits it ends on it too, and test::run says so.
-  REQUIRE_THROWS_WITH(run(time, when_all(nothing_after(1h), stop_after(source, 1s)), source.get_token()),
-                      "quoll::test::run: the task ended on a stop");
+  REQUIRE_THROWS_WITH(
+      run(time, when_all(nothing_after(1h), stop_after(source, 1s)), source.get_token()),
+      "quoll::test::run: the task ended on a stop"
+  );
   REQUIRE(time.now() == 1s);
 }
 
@@ -213,8 +215,9 @@ TEST_CASE("sleep_for: a stop requested before does not wait", "[async][timer]") 
 
   source.request_stop();
 
-  REQUIRE_THROWS_WITH(run(time, when_all(nothing_after(1h)), source.get_token()),
-                      "quoll::test::run: the task ended on a stop");
+  REQUIRE_THROWS_WITH(
+      run(time, when_all(nothing_after(1h)), source.get_token()), "quoll::test::run: the task ended on a stop"
+  );
   REQUIRE(time.now() == 0s);
 }
 
@@ -340,7 +343,8 @@ TEST_CASE("with_timeout: a stop request of the awaiter ends it on a stop, no tim
 
   REQUIRE_THROWS_WITH(
       run(time, when_all(with_timeout(1h, value_after(1h, 42)), stop_after(source, 1s)), source.get_token()),
-      "quoll::test::run: the task ended on a stop");
+      "quoll::test::run: the task ended on a stop"
+  );
   REQUIRE(time.now() == 1s);
 }
 
@@ -356,8 +360,9 @@ TEST_CASE("with_timeout: a stop of the awaiter wins over its timeout expired mea
     co_return 1;
   };
 
-  REQUIRE_THROWS_WITH(run(time, with_timeout(1s, work()), outer.get_token()),
-                      "quoll::test::run: the task ended on a stop");
+  REQUIRE_THROWS_WITH(
+      run(time, with_timeout(1s, work()), outer.get_token()), "quoll::test::run: the task ended on a stop"
+  );
   REQUIRE(time.now() == 1s);
 }
 
@@ -367,8 +372,9 @@ TEST_CASE("with_timeout: a stop requested before stops the task at once", "[asyn
 
   source.request_stop();
 
-  REQUIRE_THROWS_WITH(run(time, with_timeout(1h, value_after(1h, 42)), source.get_token()),
-                      "quoll::test::run: the task ended on a stop");
+  REQUIRE_THROWS_WITH(
+      run(time, with_timeout(1h, value_after(1h, 42)), source.get_token()), "quoll::test::run: the task ended on a stop"
+  );
   REQUIRE(time.now() == 0s);
 }
 
@@ -399,8 +405,10 @@ TEST_CASE("timer: a duration too long for nanoseconds is no timeout that has exp
   static_assert(saturated(nanoseconds::max()) == nanoseconds::max());
   // Its own common type would overflow, or round up past the end.
   REQUIRE(saturated(duration<float>{9223371776.F}) > nanoseconds::zero());
-  REQUIRE(saturated(duration<long long, std::ratio<3, 2'000'000'000>>{4'000'000'000'000'000'000}) >
-          nanoseconds{5'999'999'000'000'000'000});
+  REQUIRE(
+      saturated(duration<long long, std::ratio<3, 2'000'000'000>>{4'000'000'000'000'000'000}) >
+      nanoseconds{5'999'999'000'000'000'000}
+  );
   REQUIRE(saturated(duration<double>{std::numeric_limits<double>::quiet_NaN()}) == nanoseconds::min());
 
   quoll::test::virtual_time time;

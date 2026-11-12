@@ -108,14 +108,20 @@ namespace quoll::ui {
  */
 template <class R, class... Args>
 class callback<R(Args...)> {
-  static_assert(((!std::is_lvalue_reference_v<Args> || std::is_const_v<std::remove_reference_t<Args>>) && ...),
-                "quoll::ui: a callback's arguments are copied into its task: none can be a reference to write to");
-  static_assert((!detail::holds_view<std::remove_cvref_t<Args>> && ...),
-                "quoll::ui: a callback's arguments are copied into its task: a view would still refer to the caller's "
-                "object, which may go first");
-  static_assert(!detail::holds_view<R>,
-                "quoll::ui: a callback's result reaches its caller once its work has ended: it cannot refer to what "
-                "the work held");
+  static_assert(
+      ((!std::is_lvalue_reference_v<Args> || std::is_const_v<std::remove_reference_t<Args>>) && ...),
+      "quoll::ui: a callback's arguments are copied into its task: none can be a reference to write to"
+  );
+  static_assert(
+      (!detail::holds_view<std::remove_cvref_t<Args>> && ...),
+      "quoll::ui: a callback's arguments are copied into its task: a view would still refer to the caller's "
+      "object, which may go first"
+  );
+  static_assert(
+      !detail::holds_view<R>,
+      "quoll::ui: a callback's result reaches its caller once its work has ended: it cannot refer to what "
+      "the work held"
+  );
 
   // Given the task's own copies, as rvalues: a function taking one by reference refers to the task's copy, which lives
   // as long as the task, and one taking it by value moves it.

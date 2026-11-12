@@ -358,8 +358,12 @@ TEST_CASE("widget: told of other props only, and unmounted before its node goes"
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(shown.widget_log() == std::vector<std::string>{mounted_line, R"(update {"labels":["a","b"],"values":[3]})",
-                                                         "unmount ./widgets/line_chart.js"});
+  REQUIRE(
+      shown.widget_log() ==
+      std::vector<std::string>{
+          mounted_line, R"(update {"labels":["a","b"],"values":[3]})", "unmount ./widgets/line_chart.js"
+      }
+  );
   REQUIRE(shown.html() == "<div><p>1</p></div>");
 }
 
@@ -374,18 +378,22 @@ TEST_CASE("widget: another module at its place is another node", "[ui][widget]")
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(shown.widget_log() ==
-          std::vector<std::string>{mounted_line, "unmount ./widgets/line_chart.js",
-                                   R"(mount ./widgets/bar_chart.js {"labels":["a","b"],"values":[1,2]})",
-                                   "unmount ./widgets/bar_chart.js"});
+  REQUIRE(
+      shown.widget_log() ==
+      std::vector<std::string>{
+          mounted_line, "unmount ./widgets/line_chart.js",
+          R"(mount ./widgets/bar_chart.js {"labels":["a","b"],"values":[1,2]})", "unmount ./widgets/bar_chart.js"
+      }
+  );
 }
 
 TEST_CASE("widget: what it emits reaches its function, read from JSON", "[ui][widget]") {
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<chart_page> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }}};
+  test_app<chart_page> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
+                                  failure = std::move(error);
+                                }}};
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("canvas"), "point_selected", R"({"index":1})");
@@ -430,9 +438,12 @@ TEST_CASE("widget: one of a component goes with it, and moves with its key", "[u
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(shown.widget_log() ==
-          std::vector<std::string>{R"(mount ./widgets/line_chart.js {"labels":["a"],"values":[1]})",
-                                   "unmount ./widgets/line_chart.js"});
+  REQUIRE(
+      shown.widget_log() ==
+      std::vector<std::string>{
+          R"(mount ./widgets/line_chart.js {"labels":["a"],"values":[1]})", "unmount ./widgets/line_chart.js"
+      }
+  );
 
   virtual_time keyed_time;
   memory_renderer const keyed_shown;
@@ -462,14 +473,18 @@ TEST_CASE("widget: one that fails to mount is told to on_error, and the others m
   virtual_time time;
   hooked_renderer const shown;
   int failures = 0;
-  app<two_charts, hooked_renderer> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr) { ++failures; }}};
+  app<two_charts, hooked_renderer> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr) {
+                                              ++failures;
+                                            }}};
 
   REQUIRE(quoll::test::run(time, session(instance, [] { return settle(); })) == 0);
   REQUIRE(failures == 1);
-  REQUIRE(shown.shown.widget_log() ==
-          std::vector<std::string>{R"(mount ./widgets/line_chart.js {"labels":[],"values":[]})",
-                                   "unmount ./widgets/line_chart.js"});
+  REQUIRE(
+      shown.shown.widget_log() ==
+      std::vector<std::string>{
+          R"(mount ./widgets/line_chart.js {"labels":[],"values":[]})", "unmount ./widgets/line_chart.js"
+      }
+  );
 }
 
 TEST_CASE("widget: what it emits as it mounts reaches its function", "[ui][widget]") {
@@ -507,8 +522,12 @@ TEST_CASE("widget: unmounted as a start that fails stops the app", "[ui][widget]
   app<starting_page, memory_renderer> instance{refusing_executor{time.get_executor(), &fail}, shown};
 
   REQUIRE_THROWS_AS(instance.start(), std::runtime_error);
-  REQUIRE(shown.widget_log() == std::vector<std::string>{R"(mount ./widgets/line_chart.js {"labels":[],"values":[]})",
-                                                         "unmount ./widgets/line_chart.js"});
+  REQUIRE(
+      shown.widget_log() ==
+      std::vector<std::string>{
+          R"(mount ./widgets/line_chart.js {"labels":[],"values":[]})", "unmount ./widgets/line_chart.js"
+      }
+  );
 
   fail = false;
 
@@ -525,8 +544,9 @@ TEST_CASE("widget: given children in a later view, the render is refused, and no
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<crowding_later> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }}};
+  test_app<crowding_later> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
+                                      failure = std::move(error);
+                                    }}};
 
   auto const act = [&]() -> task<> {
     instance.component().crowded = true;
@@ -536,8 +556,12 @@ TEST_CASE("widget: given children in a later view, the render is refused, and no
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::logic_error);
   REQUIRE(shown.html() == "<div><canvas></canvas></div>");
-  REQUIRE(shown.widget_log() == std::vector<std::string>{R"(mount ./widgets/line_chart.js {"labels":[],"values":[]})",
-                                                         "unmount ./widgets/line_chart.js"});
+  REQUIRE(
+      shown.widget_log() ==
+      std::vector<std::string>{
+          R"(mount ./widgets/line_chart.js {"labels":[],"values":[]})", "unmount ./widgets/line_chart.js"
+      }
+  );
 }
 
 TEST_CASE("widget: an update or an unmount that fails is told to on_error, and the render goes on", "[ui][widget]") {
@@ -546,8 +570,9 @@ TEST_CASE("widget: an update or an unmount that fails is told to on_error, and t
   bool fails_unmounts = false;
   hooked_renderer const shown{.fails_updates = &fails_updates, .fails_unmounts = &fails_unmounts};
   int failures = 0;
-  app<changing_charts, hooked_renderer> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr) { ++failures; }}};
+  app<changing_charts, hooked_renderer> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr) {
+                                                   ++failures;
+                                                 }}};
 
   auto const act = [&]() -> task<> {
     // The first update asked fails; the other chart is updated all the same.

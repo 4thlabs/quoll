@@ -64,11 +64,14 @@ std::optional<T> run(Context &context, async::task<T> work, std::stop_token stop
   std::exception_ptr failure;
   auto stopped = false;
 
-  co_spawn(context.get_executor(), std::move(work),
-           overloaded{[&](T value) { result = std::move(value); },
-                      [&](std::exception_ptr error) { failure = std::move(error); },
-                      [&](async::stopped_t) { stopped = true; }},
-           std::move(stop_token));
+  co_spawn(
+      context.get_executor(), std::move(work),
+      overloaded{
+          [&](T value) { result = std::move(value); }, [&](std::exception_ptr error) { failure = std::move(error); },
+          [&](async::stopped_t) { stopped = true; }
+      },
+      std::move(stop_token)
+  );
   context.run();
 
   // Rethrown here: the handler itself must not throw.

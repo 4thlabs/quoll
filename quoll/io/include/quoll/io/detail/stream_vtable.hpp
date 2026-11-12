@@ -83,8 +83,9 @@ struct stream_block {
 // awaiter itself when the awaitable declines to suspend, noop_coroutine() when nothing is to be resumed.
 struct awaitable_vtable {
   bool (*ready)(void *awaitable);
-  std::coroutine_handle<> (*suspend)(void *awaitable, std::coroutine_handle<> handle,
-                                     async::await_context const &context);
+  std::coroutine_handle<> (*suspend)(
+      void *awaitable, std::coroutine_handle<> handle, async::await_context const &context
+  );
   io_result (*resume)(void *awaitable);
   void (*destroy)(void *awaitable) noexcept;
 };
@@ -92,8 +93,8 @@ struct awaitable_vtable {
 // Through Quoll's own awaiting, as a co_await is: a stream's awaitable may be a task, whose await_suspend only that
 // reaches.
 template <class A>
-[[nodiscard]] std::coroutine_handle<> suspend(A &awaitable, std::coroutine_handle<> handle,
-                                              async::await_context const &context) {
+[[nodiscard]] std::coroutine_handle<>
+suspend(A &awaitable, std::coroutine_handle<> handle, async::await_context const &context) {
   using async::detail::awaiting;
   using result = decltype(awaiting::suspend(awaitable, handle, context));
 

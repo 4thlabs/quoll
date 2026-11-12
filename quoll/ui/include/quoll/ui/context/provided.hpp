@@ -76,8 +76,10 @@ namespace quoll::ui {
  */
 template <class T>
 class provided {
-  static_assert(std::is_aggregate_v<T> && !std::is_const_v<T>,
-                "quoll::ui: a context is an aggregate, as a component: public members and no constructor");
+  static_assert(
+      std::is_aggregate_v<T> && !std::is_const_v<T>,
+      "quoll::ui: a context is an aggregate, as a component: public members and no constructor"
+  );
 
 public:
   using provided_type = T;

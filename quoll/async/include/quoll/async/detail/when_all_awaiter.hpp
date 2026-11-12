@@ -68,7 +68,8 @@ public:
     // Every frame is allocated before any child runs: if an allocation throws, nothing has started.
     auto runners = [this]<std::size_t... I>(std::index_sequence<I...>) {
       return std::array<when_all_runner, sizeof...(Ts)>{
-          run_when_all_child(std::move(std::get<I>(children_)), std::get<I>(slots_), state_)...};
+          run_when_all_child(std::move(std::get<I>(children_)), std::get<I>(slots_), state_)...
+      };
     }(std::index_sequence_for<Ts...>{});
 
     // Children run on the parent's executor with the stop token of the when_all, linked to the parent's. Each owns its

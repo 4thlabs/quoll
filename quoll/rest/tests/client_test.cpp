@@ -108,13 +108,15 @@ namespace files {
 using namespace quoll::rest;
 
 // Echo what reached the server: parameters with characters a URL escapes.
-using one = endpoint<"files.one", verb::get, "/one/{name}", query<"q", std::optional<std::string>>,
-                     header<"X-Tags", std::vector<std::string>>, returns<std::string, status::ok, text_codec>>;
+using one = endpoint<
+    "files.one", verb::get, "/one/{name}", query<"q", std::optional<std::string>>,
+    header<"X-Tags", std::vector<std::string>>, returns<std::string, status::ok, text_codec>>;
 using rest_of = endpoint<"files.rest", verb::get, "/rest/{rest:path}", returns<std::string, status::ok, text_codec>>;
 
 // Required parameters of a type that is no class.
-using paged = endpoint<"files.paged", verb::get, "/paged", query<"page", std::int64_t>, query<"all", bool>,
-                       header<"X-Limit", std::int64_t>, returns<std::string, status::ok, text_codec>>;
+using paged = endpoint<
+    "files.paged", verb::get, "/paged", query<"page", std::int64_t>, query<"all", bool>,
+    header<"X-Limit", std::int64_t>, returns<std::string, status::ok, text_codec>>;
 
 using api = rest::api<"/files", one, rest_of, paged>;
 } // namespace files
@@ -122,8 +124,8 @@ using api = rest::api<"/files", one, rest_of, paged>;
 namespace keys {
 using namespace quoll::rest;
 
-using ping = endpoint<"keys.ping", verb::get, "/ping", security<api_key_query<"key">>,
-                      returns<std::string, status::ok, text_codec>>;
+using ping = endpoint<
+    "keys.ping", verb::get, "/ping", security<api_key_query<"key">>, returns<std::string, status::ok, text_codec>>;
 
 using api = rest::api<"/keys", ping>;
 } // namespace keys
@@ -163,8 +165,8 @@ struct files_service {
     return std::to_string(page) + (all ? " all " : " some ") + std::to_string(limit);
   }
 
-  std::string operator()(files::one, std::string name, std::optional<std::string> query,
-                         std::vector<std::string> tags) const {
+  std::string
+  operator()(files::one, std::string name, std::optional<std::string> query, std::vector<std::string> tags) const {
     std::string echoed = name + "|" + query.value_or("-");
 
     for (auto const &tag : tags) {
@@ -198,7 +200,9 @@ http::router make_router() {
       router, users_service{}, files_service{}, keys_service{},
       rest::validators(
           [](rest::credential<rest::bearer_auth> const &given) { return given.value == "valid"; },
-          [](rest::credential<rest::api_key_query<"key">> const &given) { return given.value == "k e/y"; }));
+          [](rest::credential<rest::api_key_query<"key">> const &given) { return given.value == "k e/y"; }
+      )
+  );
   return router;
 }
 
@@ -236,8 +240,8 @@ struct recording_transport {
 
   [[nodiscard]] task<http::response> send(http::request request) const { return recording(sent, std::move(request)); }
 
-  [[nodiscard]] static task<http::response> recording(std::shared_ptr<std::vector<http::request>> to,
-                                                      http::request request) {
+  [[nodiscard]] static task<http::response>
+  recording(std::shared_ptr<std::vector<http::request>> to, http::request request) {
     to->push_back(std::move(request));
 
     http::response answer;
@@ -387,7 +391,8 @@ TEST_CASE("client: what the server would refuse or read otherwise is refused at 
   using query_keyed = endpoint<"query", http::verb::get, "/k", security<api_key_query<"key">>>;
 
   rest::client<api<"", numbered, named, closed_one, header_keyed, query_keyed>, recording_transport> client{
-      recording_transport{}};
+      recording_transport{}
+  };
 
   REQUIRE_THROWS_AS((void)client.call<numbered>(std::numeric_limits<double>::quiet_NaN()), std::invalid_argument);
   REQUIRE_THROWS_AS((void)client.call<numbered>(std::numeric_limits<double>::infinity()), std::invalid_argument);
@@ -441,8 +446,9 @@ TEST_CASE("client: a base URL reads as for http::client", "[rest][client]") {
   REQUIRE_NOTHROW(rest::client<v1>{"http://example.com/base/"});
 }
 
-static_assert(std::is_nothrow_copy_constructible_v<rest::call_error>,
-              "an exception does not throw on its way to a handler");
+static_assert(
+    std::is_nothrow_copy_constructible_v<rest::call_error>, "an exception does not throw on its way to a handler"
+);
 
 TEST_CASE("client: credentials are sent to the endpoints that require them", "[rest][client]") {
   auto const router = make_router();
@@ -548,8 +554,10 @@ TEST_CASE("client: a response declared by a with<> is not held by reply<Endpoint
   auto const removed = run(client.try_call<users::remove>(42));
 
   REQUIRE_FALSE(removed.has_value());
-  REQUIRE(removed.error().reason ==
-          "status 409 is declared by a with<> around the endpoint: reply<Endpoint> does not hold it");
+  REQUIRE(
+      removed.error().reason ==
+      "status 409 is declared by a with<> around the endpoint: reply<Endpoint> does not hold it"
+  );
 }
 
 namespace client_test {
@@ -559,8 +567,9 @@ namespace hub {
 using namespace quoll::rest;
 
 namespace issues {
-using list = endpoint<"issues.list", verb::get, "/issues", query<"state", std::optional<std::string>>,
-                      returns<std::string, status::ok, text_codec>>;
+using list = endpoint<
+    "issues.list", verb::get, "/issues", query<"state", std::optional<std::string>>,
+    returns<std::string, status::ok, text_codec>>;
 using one = endpoint<"issues.one", verb::get, "/issues/{number:int}", returns<std::string, status::ok, text_codec>>;
 
 using api = rest::api<"/{repo}", list, one>;
@@ -572,8 +581,8 @@ using api = rest::api<"/repos/{owner}", issues::api>;
 using hub_v1 = rest::api<"/hub", hub::api>;
 
 struct hub_service {
-  std::string operator()(hub::issues::list, std::string owner, std::string repo,
-                         std::optional<std::string> state) const {
+  std::string
+  operator()(hub::issues::list, std::string owner, std::string repo, std::optional<std::string> state) const {
     return owner + "/" + repo + " " + state.value_or("all");
   }
 
@@ -735,8 +744,9 @@ TEST_CASE("retry: up to its attempts, then the last answer stands", "[rest][clie
   rest::client<v1, scripted_transport> client{transport};
 
   client.use(rest::retry{.attempts = 2, .delay = std::chrono::milliseconds::zero()});
-  transport.shared->script = {http::status::service_unavailable, http::status::service_unavailable,
-                              http::status::service_unavailable};
+  transport.shared->script = {
+      http::status::service_unavailable, http::status::service_unavailable, http::status::service_unavailable
+  };
 
   REQUIRE_THROWS_AS(run(completes(client.call<users::remove>(1))), rest::call_error);
   REQUIRE(transport.shared->sent == 2);
@@ -796,8 +806,9 @@ TEST_CASE("retry: an error of the message itself is not sent again", "[rest][cli
   REQUIRE(transport.shared->sent == 2);
 }
 
-TEST_CASE("retry: a stop request ends the call between attempts, whatever the transport makes of it",
-          "[rest][client]") {
+TEST_CASE(
+    "retry: a stop request ends the call between attempts, whatever the transport makes of it", "[rest][client]"
+) {
   scripted_transport const transport;
   rest::client<v1, scripted_transport> client{transport};
   quoll::async::run_loop loop;
@@ -808,8 +819,10 @@ TEST_CASE("retry: a stop request ends the call between attempts, whatever the tr
   stop.request_stop();
 
   // The transport answers 503 even so: retry sees the stop before sending again, and the call ends on it.
-  REQUIRE_THROWS_WITH(quoll::test::run(loop, completes(client.call<users::remove>(1)), stop.get_token()),
-                      "quoll::test::run: the task ended on a stop");
+  REQUIRE_THROWS_WITH(
+      quoll::test::run(loop, completes(client.call<users::remove>(1)), stop.get_token()),
+      "quoll::test::run: the task ended on a stop"
+  );
   REQUIRE(transport.shared->sent == 1);
 }
 

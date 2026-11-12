@@ -170,8 +170,9 @@ constexpr std::string_view base64_digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij
 bool is_websocket_upgrade(request const &message) noexcept {
   // One key and one version: two would leave which one counts to whoever reads them.
   auto const once = [&message](std::string_view name) {
-    return std::ranges::count_if(message.fields,
-                                 [name](auto const &entry) { return detail::iequals(entry.name, name); }) == 1;
+    return std::ranges::count_if(message.fields, [name](auto const &entry) {
+             return detail::iequals(entry.name, name);
+           }) == 1;
   };
 
   return message.method == verb::get && message.version == version::http_1_1 && message.fields.contains("Host") &&

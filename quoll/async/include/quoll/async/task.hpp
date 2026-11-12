@@ -113,8 +113,8 @@ private:
 
   // Starts the task on `context`, which resumes `continuation` when it ends. Private: only Quoll's own awaiting starts
   // a task, so that a program cannot start one and drop it while it runs (see detail::awaiting).
-  [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> continuation,
-                                                      await_context const &context) noexcept {
+  [[nodiscard]] std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> continuation, await_context const &context) noexcept {
     handle_.promise().start(continuation, context);
     return handle_;
   }

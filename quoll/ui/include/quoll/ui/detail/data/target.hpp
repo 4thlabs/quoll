@@ -224,11 +224,14 @@ inline constexpr bool values_writable = [] {
     return false;
   } else {
     return []<std::size_t... Index>(std::index_sequence<Index...>) {
-      return ((std::same_as<std::remove_cv_t<std::tuple_element_t<Index, typename roles::values_type>>,
-                            std::remove_cv_t<std::tuple_element_t<Index, given>>> &&
-               (!Copied || std::copy_constructible<std::tuple_element_t<Index, given>>) &&
-               std::is_nothrow_move_assignable_v<std::tuple_element_t<Index, typename roles::values_type>>) &&
-              ...);
+      return (
+          (std::same_as<
+               std::remove_cv_t<std::tuple_element_t<Index, typename roles::values_type>>,
+               std::remove_cv_t<std::tuple_element_t<Index, given>>> &&
+           (!Copied || std::copy_constructible<std::tuple_element_t<Index, given>>) &&
+           std::is_nothrow_move_assignable_v<std::tuple_element_t<Index, typename roles::values_type>>) &&
+          ...
+      );
     }(std::make_index_sequence<roles::values>{});
   }
 }();
@@ -243,21 +246,30 @@ consteval void check_target() {
   using given = typename given_values<T, R>::type;
 
   static_assert(in::count(role::loading) <= 1, "quoll::ui: a target state holds one bool at most, its loading flag");
-  static_assert(in::count(role::error) <= 1,
-                "quoll::ui: a target state holds one std::exception_ptr at most, its error");
-  static_assert(std::is_void_v<R> || std::is_nothrow_move_constructible_v<R>,
-                "quoll::ui: what a run gives moves without throwing, once its target holds it, so that the run ends "
-                "on what its target holds");
+  static_assert(
+      in::count(role::error) <= 1, "quoll::ui: a target state holds one std::exception_ptr at most, its error"
+  );
+  static_assert(
+      std::is_void_v<R> || std::is_nothrow_move_constructible_v<R>,
+      "quoll::ui: what a run gives moves without throwing, once its target holds it, so that the run ends "
+      "on what its target holds"
+  );
 
   if constexpr (!Copied || target_roles<T>::values > 0) {
-    static_assert(is_async_value<T> || roles_in<given>::count(role::value) == std::tuple_size_v<given>,
-                  "quoll::ui: a function's values cannot be a bool or a std::exception_ptr, which a target state "
-                  "reads as its loading flag or its error");
-    static_assert(target_roles<T>::values == std::tuple_size_v<given>,
-                  "quoll::ui: a target state holds as many values as its function gives, in order");
-    static_assert(values_writable<T, R, Copied>,
-                  "quoll::ui: each value of a target state is of the type its function gives, in order, and moved "
-                  "in without throwing");
+    static_assert(
+        is_async_value<T> || roles_in<given>::count(role::value) == std::tuple_size_v<given>,
+        "quoll::ui: a function's values cannot be a bool or a std::exception_ptr, which a target state "
+        "reads as its loading flag or its error"
+    );
+    static_assert(
+        target_roles<T>::values == std::tuple_size_v<given>,
+        "quoll::ui: a target state holds as many values as its function gives, in order"
+    );
+    static_assert(
+        values_writable<T, R, Copied>,
+        "quoll::ui: each value of a target state is of the type its function gives, in order, and moved "
+        "in without throwing"
+    );
   }
 }
 
@@ -335,8 +347,9 @@ void abandon_target(void *target) noexcept {
     auto &held = *static_cast<state<T> *>(target);
 
     if (roles::template element<roles::in::index(role::loading)>(*held)) {
-      write_quietly(held,
-                    [](T &value) noexcept { roles::template element<roles::in::index(role::loading)>(value) = false; });
+      write_quietly(held, [](T &value) noexcept {
+        roles::template element<roles::in::index(role::loading)>(value) = false;
+      });
     }
   }
 }
@@ -370,8 +383,8 @@ template <class T, std::size_t Index, class R>
 
 // The values of a target holding T, made from what a run gave: copied, or moved.
 template <class T, class R, bool Copied, std::size_t... Index>
-[[nodiscard]] typename target_roles<T>::values_type made_values(std::expected<R, std::exception_ptr> &given,
-                                                                std::index_sequence<Index...>) {
+[[nodiscard]] typename target_roles<T>::values_type
+made_values(std::expected<R, std::exception_ptr> &given, std::index_sequence<Index...>) {
   using values = typename target_roles<T>::values_type;
 
   if constexpr (Copied) {

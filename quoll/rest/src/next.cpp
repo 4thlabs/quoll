@@ -55,8 +55,8 @@ async::task<http::response> next::operator()(http::request message) const {
   return send_from(through_, position_, std::move(message));
 }
 
-async::task<http::response> next::send_from(std::shared_ptr<detail::interception const> through, std::size_t position,
-                                            http::request message) {
+async::task<http::response>
+next::send_from(std::shared_ptr<detail::interception const> through, std::size_t position, http::request message) {
   // In this frame, as the interceptor may take both by reference: they live until its task ends.
   next const following{through, position + 1};
   auto const &wrapping = *through->interceptors[position];

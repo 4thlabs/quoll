@@ -114,24 +114,30 @@ template <class Scheme>
 template <class Scheme, class... Validators>
 [[nodiscard]] consteval std::size_t validator_index(type_list<Validators...>) {
   return first_true(
-      std::array<bool, sizeof...(Validators)>{std::is_invocable_v<Validators &, credential<Scheme> const &>...});
+      std::array<bool, sizeof...(Validators)>{std::is_invocable_v<Validators &, credential<Scheme> const &>...}
+  );
 }
 
 template <class Scheme, class... Validators>
 [[nodiscard]] consteval std::size_t validator_count(type_list<Validators...>) {
   return count_true(
-      std::array<bool, sizeof...(Validators)>{std::is_invocable_v<Validators &, credential<Scheme> const &>...});
+      std::array<bool, sizeof...(Validators)>{std::is_invocable_v<Validators &, credential<Scheme> const &>...}
+  );
 }
 
 template <class Scheme, class... Validators>
 async::task<bool> accepts(validator_set<Validators...> &set, credential<Scheme> const value) {
   constexpr auto index = validator_index<Scheme>(type_list<Validators...>{});
 
-  static_assert(index < sizeof...(Validators),
-                "quoll::rest::mount: no validator takes the credential<Scheme> of a scheme the api uses");
+  static_assert(
+      index < sizeof...(Validators),
+      "quoll::rest::mount: no validator takes the credential<Scheme> of a scheme the api uses"
+  );
   // Whichever came first would decide who gets in, a generic one in the place of the one written for the scheme.
-  static_assert(validator_count<Scheme>(type_list<Validators...>{}) == 1,
-                "quoll::rest::mount: more than one validator takes the credential<Scheme> of a scheme the api uses");
+  static_assert(
+      validator_count<Scheme>(type_list<Validators...>{}) == 1,
+      "quoll::rest::mount: more than one validator takes the credential<Scheme> of a scheme the api uses"
+  );
 
   auto &validator = std::get<index>(set.validators);
 
@@ -149,8 +155,8 @@ async::task<std::optional<http::response>> check_security(type_list<>, Validator
 }
 
 template <class Scheme, class... Rest, class Validators>
-async::task<std::optional<http::response>> check_security(type_list<Scheme, Rest...>, Validators &validators,
-                                                          request_input const &input) {
+async::task<std::optional<http::response>>
+check_security(type_list<Scheme, Rest...>, Validators &validators, request_input const &input) {
   auto value = scheme_traits<Scheme>::find(input.request.fields, input.query);
 
   if (!value) {
@@ -199,13 +205,16 @@ template <class Endpoint, class T>
   } else {
     using responses = own_responses<Endpoint>;
 
-    static_assert(responses::size > 0,
-                  "quoll::rest::mount: a service returns a value for an endpoint without returns<>");
+    static_assert(
+        responses::size > 0, "quoll::rest::mount: a service returns a value for an endpoint without returns<>"
+    );
 
     using first = typename front<responses>::type;
 
-    static_assert(std::same_as<T, typename first::type>, "quoll::rest::mount: a service returns the type of its "
-                                                         "endpoint's first returns<>, or a reply<Endpoint>");
+    static_assert(
+        std::same_as<T, typename first::type>, "quoll::rest::mount: a service returns the type of its "
+                                               "endpoint's first returns<>, or a reply<Endpoint>"
+    );
 
     return make_response<first>(value);
   }
@@ -224,8 +233,10 @@ template <class Endpoint>
   } else {
     using first = typename front<responses>::type;
 
-    static_assert(std::is_void_v<typename first::type>,
-                  "quoll::rest::mount: a service returns nothing for an endpoint whose first returns<> has a body");
+    static_assert(
+        std::is_void_v<typename first::type>,
+        "quoll::rest::mount: a service returns nothing for an endpoint whose first returns<> has a body"
+    );
 
     return make_response<first>();
   }
@@ -247,13 +258,15 @@ struct exactly {
 template <class Endpoint, class... Extra, class... Arguments, class... Services>
 [[nodiscard]] consteval std::size_t service_index(std::tuple<Arguments...> const *, type_list<Services...>) {
   return first_true(std::array<bool, sizeof...(Services)>{
-      std::is_invocable_v<Services &, Endpoint, exactly<Arguments>..., Extra...>...});
+      std::is_invocable_v<Services &, Endpoint, exactly<Arguments>..., Extra...>...
+  });
 }
 
 template <class Endpoint, class... Extra, class... Arguments, class... Services>
 [[nodiscard]] consteval std::size_t service_count(std::tuple<Arguments...> const *, type_list<Services...>) {
   return count_true(std::array<bool, sizeof...(Services)>{
-      std::is_invocable_v<Services &, Endpoint, exactly<Arguments>..., Extra...>...});
+      std::is_invocable_v<Services &, Endpoint, exactly<Arguments>..., Extra...>...
+  });
 }
 
 template <class Route, class Validators, class... Services>
@@ -264,10 +277,14 @@ async::task<http::response> answer(mounted<Validators, Services...> &state, type
   constexpr arguments_type const *signature = nullptr;
   constexpr auto index = service_index<endpoint>(signature, type_list<Services...>{});
 
-  static_assert(index < sizeof...(Services),
-                "quoll::rest::mount: no service has an operator()(Endpoint, arguments...) for an endpoint of the api");
-  static_assert(service_count<endpoint>(signature, type_list<Services...>{}) == 1,
-                "quoll::rest::mount: more than one service takes an endpoint of the api");
+  static_assert(
+      index < sizeof...(Services),
+      "quoll::rest::mount: no service has an operator()(Endpoint, arguments...) for an endpoint of the api"
+  );
+  static_assert(
+      service_count<endpoint>(signature, type_list<Services...>{}) == 1,
+      "quoll::rest::mount: more than one service takes an endpoint of the api"
+  );
 
   auto &service = std::get<index>(state.services);
   auto call = [&] {
@@ -310,8 +327,9 @@ template <class Route>
 
   if constexpr (Route::schemes::size > 0) {
     if (error.status() == http::status::unauthorized) {
-      response.fields.add("WWW-Authenticate",
-                          scheme_traits<typename front<typename Route::schemes>::type>::challenge());
+      response.fields.add(
+          "WWW-Authenticate", scheme_traits<typename front<typename Route::schemes>::type>::challenge()
+      );
     }
   }
 
@@ -329,9 +347,11 @@ struct served_input {
 // What an events<> service can answer: an error (4xx or 5xx), as an http_error, its body a problem or none.
 template <class... Responses>
 [[nodiscard]] consteval bool errors_are_problems(type_list<Responses...>) {
-  return ((static_cast<int>(Responses::status) >= 400 &&
-           (std::is_void_v<typename Responses::type> || std::same_as<typename Responses::type, problem>)) &&
-          ...);
+  return (
+      (static_cast<int>(Responses::status) >= 400 &&
+       (std::is_void_v<typename Responses::type> || std::same_as<typename Responses::type, problem>)) &&
+      ...
+  );
 }
 
 // The services taking an endpoint's arguments with no `Sink`, and not with one: those a stream would never call.
@@ -339,7 +359,8 @@ template <class Endpoint, class Sink, class... Arguments, class... Services>
 [[nodiscard]] consteval std::size_t services_without_sink(std::tuple<Arguments...> const *, type_list<Services...>) {
   return count_true(std::array<bool, sizeof...(Services)>{
       (std::is_invocable_v<Services &, Endpoint, exactly<Arguments>...> &&
-       !std::is_invocable_v<Services &, Endpoint, exactly<Arguments>..., Sink>)...});
+       !std::is_invocable_v<Services &, Endpoint, exactly<Arguments>..., Sink>)...
+  });
 }
 
 // The arguments of a stream, and whether it has run: it runs once, as a handler writing its response does.
@@ -355,9 +376,10 @@ struct held_arguments {
 // after the router has answered. An http_error before the stream starts answers as from any service; after, it cuts the
 // stream, as any failure of a writer does. What it reads is held here: the arguments, and the state of the services.
 template <class Route, class Validators, class... Services>
-[[nodiscard]] async::task<> stream_events(std::shared_ptr<mounted<Validators, Services...>> state,
-                                          std::shared_ptr<held_arguments<typename Route::arguments>> held,
-                                          http::body_stream out) {
+[[nodiscard]] async::task<> stream_events(
+    std::shared_ptr<mounted<Validators, Services...>> state,
+    std::shared_ptr<held_arguments<typename Route::arguments>> held, http::body_stream out
+) {
   if (held->started.test_and_set()) {
     throw std::logic_error{"quoll::rest::mount: the stream of a response run again"};
   }
@@ -368,13 +390,17 @@ template <class Route, class Validators, class... Services>
   constexpr arguments_type const *signature = nullptr;
   constexpr auto index = service_index<endpoint, sink_type &>(signature, type_list<Services...>{});
 
-  static_assert(index < sizeof...(Services), "quoll::rest::mount: no service has an operator()(Endpoint, arguments..., "
-                                             "event_sink<T> &) for an endpoint of the api with events<>");
+  static_assert(
+      index < sizeof...(Services), "quoll::rest::mount: no service has an operator()(Endpoint, arguments..., "
+                                   "event_sink<T> &) for an endpoint of the api with events<>"
+  );
   // One service: a second one taking no sink counts too, which would never be called, but not the same one twice.
-  static_assert(service_count<endpoint, sink_type &>(signature, type_list<Services...>{}) +
-                        services_without_sink<endpoint, sink_type &>(signature, type_list<Services...>{}) ==
-                    1,
-                "quoll::rest::mount: more than one service takes an endpoint of the api");
+  static_assert(
+      service_count<endpoint, sink_type &>(signature, type_list<Services...>{}) +
+              services_without_sink<endpoint, sink_type &>(signature, type_list<Services...>{}) ==
+          1,
+      "quoll::rest::mount: more than one service takes an endpoint of the api"
+  );
 
   auto &service = std::get<index>(state->services);
   sink_type sink{http::response_writer{out}};
@@ -382,16 +408,20 @@ template <class Route, class Validators, class... Services>
   // or dropped later, never reaches it.
   auto const closing = event_sink_access::closing(sink);
   auto call = [&] {
-    return std::apply([&](auto &...each) { return std::invoke(service, endpoint{}, std::move(each)..., sink); },
-                      held->values);
+    return std::apply(
+        [&](auto &...each) { return std::invoke(service, endpoint{}, std::move(each)..., sink); }, held->values
+    );
   };
 
-  static_assert(std::same_as<decltype(call()), async::task<>>,
-                "quoll::rest::mount: the service of an endpoint with events<> returns a task<>");
+  static_assert(
+      std::same_as<decltype(call()), async::task<>>,
+      "quoll::rest::mount: the service of an endpoint with events<> returns a task<>"
+  );
   // Its errors are thrown, as http_error, which answers a problem: a body of another type it could not send.
   static_assert(
       errors_are_problems(typename Route::responses{}),
-      "quoll::rest::mount: an endpoint with events<> declares its errors as 4xx or 5xx, a problem or no body");
+      "quoll::rest::mount: an endpoint with events<> declares its errors as 4xx or 5xx, a problem or no body"
+  );
 
   std::optional<http::response> refused;
   std::exception_ptr failure;
@@ -433,8 +463,9 @@ template <class Route, class Validators, class... Services>
 
 // The answer of an endpoint with events<>: its stream, run once the router has answered.
 template <class Route, class State>
-[[nodiscard]] http::response events_response(std::shared_ptr<State> state, std::shared_ptr<served_input const> input,
-                                             typename Route::arguments arguments) {
+[[nodiscard]] http::response events_response(
+    std::shared_ptr<State> state, std::shared_ptr<served_input const> input, typename Route::arguments arguments
+) {
   auto held = std::make_shared<held_arguments<typename Route::arguments>>(std::move(input), std::move(arguments));
   http::response response;
 
@@ -521,11 +552,12 @@ template <class Route, class State, class Input>
 // throwing http_error with an error status answers it. Anything else goes on, as from any handler: a connection answers
 // 500 and tells on_handler_error, and a stop or a timeout reaches what waits for it.
 template <class Route, class State>
-[[nodiscard]] async::task<http::response> serve(std::shared_ptr<State> state, http::request request,
-                                                http::route_match match) {
+[[nodiscard]] async::task<http::response>
+serve(std::shared_ptr<State> state, http::request request, http::route_match match) {
   if constexpr (has_events<typename Route::endpoint>) {
-    return serve_from<Route>(std::move(state),
-                             std::make_shared<served_input>(std::move(request), std::move(match), std::nullopt));
+    return serve_from<Route>(
+        std::move(state), std::make_shared<served_input>(std::move(request), std::move(match), std::nullopt)
+    );
   } else {
     return serve_from<Route>(std::move(state), served_input{std::move(request), std::move(match), std::nullopt});
   }

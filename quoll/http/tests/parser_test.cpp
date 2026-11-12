@@ -448,8 +448,10 @@ TEST_CASE("Parser: a request announcing too large a body is refused at its head"
 
   http::request_parser parser{limits};
 
-  REQUIRE(parser.feed(bytes(std::string_view{"POST /a HTTP/1.1\r\nContent-Length: 4\r\n\r\n"})).error ==
-          http::error::body_too_large);
+  REQUIRE(
+      parser.feed(bytes(std::string_view{"POST /a HTTP/1.1\r\nContent-Length: 4\r\n\r\n"})).error ==
+      http::error::body_too_large
+  );
 }
 
 TEST_CASE("Parser: a response to HEAD may announce more than the limit, as nothing comes", "[http][parser]") {
@@ -506,9 +508,10 @@ auto const always = [](auto const &) { return true; };
 TEST_CASE("Parser: a body in pieces comes as it is fed, past the limit of a whole one", "[http][parser]") {
   auto const size = GENERATE(std::size_t{1}, std::size_t{7}, std::size_t{4096});
   std::string const body(std::size_t{1000}, 'x');
-  auto const wire =
-      GENERATE_COPY("POST /a HTTP/1.1\r\nContent-Length: 1000\r\n\r\n" + body,
-                    "POST /a HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n3e8\r\n" + body + "\r\n0\r\n\r\n");
+  auto const wire = GENERATE_COPY(
+      "POST /a HTTP/1.1\r\nContent-Length: 1000\r\n\r\n" + body,
+      "POST /a HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n3e8\r\n" + body + "\r\n0\r\n\r\n"
+  );
 
   http::request_parser parser{{.max_body_size = 10}};
 
@@ -563,8 +566,10 @@ TEST_CASE("Parser: the limit of a body in pieces holds, at its head and as it co
   http::request_parser announced{{.max_streamed_body_size = 10}};
 
   announced.set_body_streaming(always);
-  REQUIRE(take_in_pieces(announced, "POST / HTTP/1.1\r\nContent-Length: 11\r\n\r\n", 4096).error ==
-          http::error::body_too_large);
+  REQUIRE(
+      take_in_pieces(announced, "POST / HTTP/1.1\r\nContent-Length: 11\r\n\r\n", 4096).error ==
+      http::error::body_too_large
+  );
 
   http::request_parser chunked{{.max_streamed_body_size = 10}};
 
@@ -581,8 +586,10 @@ TEST_CASE("Parser: the limit of a body in pieces holds, at its head and as it co
   http::response_parser response{{.max_streamed_body_size = 10}};
 
   response.set_body_streaming(always);
-  REQUIRE(take_in_pieces(response, "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n", 4096).error ==
-          http::error::body_too_large);
+  REQUIRE(
+      take_in_pieces(response, "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n", 4096).error ==
+      http::error::body_too_large
+  );
 
   http::request_parser exact{{.max_streamed_body_size = 10}};
 
@@ -822,8 +829,10 @@ TEST_CASE("What goes around a value and in a chunk's extension counts against th
   }
 
   SECTION("whitespace before a first piece, and around the version") {
-    auto const wire = GENERATE(as<std::string>{}, "GET" + std::string(5000, ' ') + "/ HTTP/1.1\r\nHost: x\r\n\r\n",
-                               "GET /" + std::string(5000, ' ') + "HTTP/1.0\r\n\r\n");
+    auto const wire = GENERATE(
+        as<std::string>{}, "GET" + std::string(5000, ' ') + "/ HTTP/1.1\r\nHost: x\r\n\r\n",
+        "GET /" + std::string(5000, ' ') + "HTTP/1.0\r\n\r\n"
+    );
     http::request_parser parser{limits};
 
     REQUIRE(parser.feed(bytes(wire)).error == http::error::header_too_large);

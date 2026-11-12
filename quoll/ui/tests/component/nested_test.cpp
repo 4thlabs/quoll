@@ -113,7 +113,8 @@ struct rows {
         p("views") | on_click([this] { views = *views + 1; }),
         ul({list(
             labels,
-            [this](std::string const &label) { return component<row>({.label = label, .log = &log}) | key(label); })}),
+            [this](std::string const &label) { return component<row>({.label = label, .log = &log}) | key(label); }
+        )}),
     });
   }
 };
@@ -308,8 +309,9 @@ struct grumpy_and_row {
   journal log;
 
   element view() {
-    return div(
-        {when(*shows, [this] { return div({component<grumpy>({}), component<row>({.label = "a", .log = &log})}); })});
+    return div({when(*shows, [this] {
+      return div({component<grumpy>({}), component<row>({.label = "a", .log = &log})});
+    })});
   }
 };
 
@@ -342,8 +344,9 @@ struct cell_pair {
   };
 
   element view(props const &given) {
-    return list(std::vector<std::string>{given.label + "1", given.label + "2"},
-                [](std::string const &cell) { return li(cell); });
+    return list(std::vector<std::string>{given.label + "1", given.label + "2"}, [](std::string const &cell) {
+      return li(cell);
+    });
   }
 };
 
@@ -351,8 +354,8 @@ struct cell_pairs {
   state<std::vector<std::string>> order{std::vector<std::string>{"a", "b"}};
 
   element view() {
-    return ul(
-        {list(order, [](std::string const &label) { return component<cell_pair>({.label = label}) | key(label); })});
+    return ul({list(order, [](std::string const &label) { return component<cell_pair>({.label = label}) | key(label); })
+    });
   }
 };
 
@@ -427,11 +430,13 @@ struct colliding {
   state<int> views;
 
   element view() {
-    return ul({component<headed>({}) | key("k"), component<counter>() | key("k"), component<plain>() | key("k"),
-               component<tagged>({.own = "b"}) | key("a"),
-               component<tagged>({}) | key("a\x1f"
-                                           "b"),
-               component<keyed_item>(), component<keyed_item>()});
+    return ul(
+        {component<headed>({}) | key("k"), component<counter>() | key("k"), component<plain>() | key("k"),
+         component<tagged>({.own = "b"}) | key("a"),
+         component<tagged>({}) | key("a\x1f"
+                                     "b"),
+         component<keyed_item>(), component<keyed_item>()}
+    );
   }
 };
 
@@ -598,8 +603,9 @@ struct maybe_keeper {
   journal log;
 
   element view() {
-    return div({when(
-        *shows, [this] { return component<keeper>({.label = "a label, too long for a short string", .log = &log}); })});
+    return div({when(*shows, [this] {
+      return component<keeper>({.label = "a label, too long for a short string", .log = &log});
+    })});
   }
 };
 
@@ -766,8 +772,9 @@ struct guarding {
   };
 
   element view(props const &given) {
-    return component<guarded_child>(
-        {.guard = std::shared_ptr<void>{nullptr, [&given](void * /*nothing*/) { given.read->push_back(given.text); }}});
+    return component<guarded_child>({.guard = std::shared_ptr<void>{nullptr, [&given](void * /*nothing*/) {
+                                                                      given.read->push_back(given.text);
+                                                                    }}});
   }
 };
 
@@ -807,12 +814,14 @@ struct watching {
 
     if (!armed) {
       armed = true;
-      gone = std::shared_ptr<void>{
-          nullptr, [lines = &given.log->lines](void * /*nothing*/) { lines->emplace_back("panel gone"); }};
+      gone = std::shared_ptr<void>{nullptr, [lines = &given.log->lines](void * /*nothing*/) {
+                                     lines->emplace_back("panel gone");
+                                   }};
     }
 
-    return component<watched_row>(
-        {.guard = std::shared_ptr<void>{nullptr, [this](void * /*nothing*/) { log->lines.push_back(name); }}});
+    return component<watched_row>({.guard = std::shared_ptr<void>{nullptr, [this](void * /*nothing*/) {
+                                                                    log->lines.push_back(name);
+                                                                  }}});
   }
 };
 
@@ -843,8 +852,9 @@ struct bare_panel {
   element view(props const &given) {
     if (!armed) {
       armed = true;
-      gone = std::shared_ptr<void>{
-          nullptr, [lines = &given.log->lines](void * /*nothing*/) { lines->emplace_back("panel gone"); }};
+      gone = std::shared_ptr<void>{nullptr, [lines = &given.log->lines](void * /*nothing*/) {
+                                     lines->emplace_back("panel gone");
+                                   }};
     }
 
     return component<bare_slow_row>();
@@ -871,8 +881,10 @@ static_assert(!UnmountedComponent<counter>);
 
 } // namespace
 
-TEST_CASE("component: a component of the view gets its props, and keeps its states as its parent views again",
-          "[ui][components]") {
+TEST_CASE(
+    "component: a component of the view gets its props, and keeps its states as its parent views again",
+    "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<rows> instance{time.get_executor(), shown};
@@ -890,8 +902,9 @@ TEST_CASE("component: a component of the view gets its props, and keeps its stat
   REQUIRE(shown.html() == "<div><p>views</p><ul><button>a:1</button><button>b:0</button></ul></div>");
 }
 
-TEST_CASE("component: a keyed component of a list keeps its states with its item as the list moves",
-          "[ui][components]") {
+TEST_CASE(
+    "component: a keyed component of a list keeps its states with its item as the list moves", "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<rows> instance{time.get_executor(), shown};
@@ -905,8 +918,9 @@ TEST_CASE("component: a keyed component of a list keeps its states with its item
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(shown.html() ==
-          "<div><p>views</p><ul><button>b:1</button><button>c:0</button><button>a:0</button></ul></div>");
+  REQUIRE(
+      shown.html() == "<div><p>views</p><ul><button>b:1</button><button>c:0</button><button>a:0</button></ul></div>"
+  );
 }
 
 TEST_CASE("component: mounted() runs once a component first shows, unmounted() as it goes", "[ui][components]") {
@@ -971,16 +985,19 @@ TEST_CASE("component: one decorated otherwise than with a key is refused", "[ui]
   REQUIRE_THROWS_AS(to_html(retagged), std::logic_error);
 }
 
-TEST_CASE("component: components in components, of several types, keep their states, and go after their children",
-          "[ui][components]") {
+TEST_CASE(
+    "component: components in components, of several types, keep their states, and go after their children",
+    "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<mixed> instance{time.get_executor(), shown};
   auto const &log = instance.component().log.lines;
 
   auto const act = [&]() -> task<> {
-    REQUIRE(shown.html() ==
-            "<div><p>views</p><button>x:0</button><p>count:0</p><button>y:0</button><p>1</p><p>2</p></div>");
+    REQUIRE(
+        shown.html() == "<div><p>views</p><button>x:0</button><p>count:0</p><button>y:0</button><p>1</p><p>2</p></div>"
+    );
 
     instance.dispatch(shown.find_text("x:0"), "click");
     instance.dispatch(shown.find_text("count:0"), "click");
@@ -992,8 +1009,9 @@ TEST_CASE("component: components in components, of several types, keep their sta
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(shown.html() ==
-          "<div><p>views</p><button>x:1</button><p>count:2</p><button>y:0</button><p>1</p><p>2</p></div>");
+  REQUIRE(
+      shown.html() == "<div><p>views</p><button>x:1</button><p>count:2</p><button>y:0</button><p>1</p><p>2</p></div>"
+  );
   REQUIRE(log == std::vector<std::string>{"mounted x", "mounted y", "unmounted x", "unmounted panel", "unmounted y"});
 }
 
@@ -1017,13 +1035,15 @@ TEST_CASE("component: an unkeyed component keeps its place by rank among those o
   REQUIRE(log == std::vector<std::string>{"mounted a", "mounted b", "unmounted b", "unmounted b"});
 }
 
-TEST_CASE("component: a view that throws changes nothing, and the next one starts from the last shown",
-          "[ui][components]") {
+TEST_CASE(
+    "component: a view that throws changes nothing, and the next one starts from the last shown", "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<rows> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }}};
+  test_app<rows> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
+                            failure = std::move(error);
+                          }}};
   auto const &log = instance.component().log.lines;
 
   auto const act = [&]() -> task<> {
@@ -1042,16 +1062,19 @@ TEST_CASE("component: a view that throws changes nothing, and the next one start
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::runtime_error);
   REQUIRE(shown.html() == "<div><p>views</p><ul><button>a:1</button><button>c:0</button></ul></div>");
-  REQUIRE(log ==
-          std::vector<std::string>{"mounted a", "mounted b", "unmounted b", "mounted c", "unmounted a", "unmounted c"});
+  REQUIRE(
+      log ==
+      std::vector<std::string>{"mounted a", "mounted b", "unmounted b", "mounted c", "unmounted a", "unmounted c"}
+  );
 }
 
 TEST_CASE("component: stop() from the task of a component fails rather than wait for itself", "[ui][components]") {
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<stopping_parent> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }}};
+  test_app<stopping_parent> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
+                                       failure = std::move(error);
+                                     }}};
   std::function<task<>()> stop = [&] { return instance.stop(); };
 
   instance.component().stop = &stop;
@@ -1065,8 +1088,9 @@ TEST_CASE("component: stop() from the task of a component fails rather than wait
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::logic_error);
 }
 
-TEST_CASE("component: one that goes stays, with its parent, until the tasks of its children have ended",
-          "[ui][components]") {
+TEST_CASE(
+    "component: one that goes stays, with its parent, until the tasks of its children have ended", "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<maybe_panel> instance{time.get_executor(), shown};
@@ -1085,8 +1109,10 @@ TEST_CASE("component: one that goes stays, with its parent, until the tasks of i
   REQUIRE(shown.html() == "<div></div>");
 }
 
-TEST_CASE("component: the app's own unmounted() runs as it stops, after those of the components of its view",
-          "[ui][components]") {
+TEST_CASE(
+    "component: the app's own unmounted() runs as it stops, after those of the components of its view",
+    "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<page_with_row> instance{time.get_executor(), shown};
@@ -1096,13 +1122,15 @@ TEST_CASE("component: the app's own unmounted() runs as it stops, after those of
   REQUIRE(log == std::vector<std::string>{"mounted a", "unmounted a", "unmounted page"});
 }
 
-TEST_CASE("component: what an unmounted() throws goes to on_error, and the others go all the same",
-          "[ui][components]") {
+TEST_CASE(
+    "component: what an unmounted() throws goes to on_error, and the others go all the same", "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<grumpy_and_row> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }}};
+  test_app<grumpy_and_row> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
+                                      failure = std::move(error);
+                                    }}};
   auto const &log = instance.component().log.lines;
 
   auto const act = [&]() -> task<> {
@@ -1156,14 +1184,17 @@ TEST_CASE("component: the nodes of a keyed component whose view is a fragment mo
   REQUIRE(before == after);
 }
 
-TEST_CASE("component: a render failing past the views changes no component, and the next one makes them again",
-          "[ui][components]") {
+TEST_CASE(
+    "component: a render failing past the views changes no component, and the next one makes them again",
+    "[ui][components]"
+) {
   virtual_time time;
   bool fails = false;
   failing_renderer const shown{.fails = &fails};
   std::exception_ptr failure;
-  app<rows, failing_renderer> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }}};
+  app<rows, failing_renderer> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
+                                         failure = std::move(error);
+                                       }}};
   auto const &log = instance.component().log.lines;
 
   auto const act = [&]() -> task<> {
@@ -1179,12 +1210,16 @@ TEST_CASE("component: a render failing past the views changes no component, and 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::runtime_error);
   REQUIRE(shown.shown.html() == "<div><p>views</p><ul><button>a:0</button><button>c:0</button></ul></div>");
-  REQUIRE(log ==
-          std::vector<std::string>{"mounted a", "mounted b", "unmounted b", "mounted c", "unmounted a", "unmounted c"});
+  REQUIRE(
+      log ==
+      std::vector<std::string>{"mounted a", "mounted b", "unmounted b", "mounted c", "unmounted a", "unmounted c"}
+  );
 }
 
-TEST_CASE("component: the keys of the views of components never meet those of their siblings, nor positions",
-          "[ui][components]") {
+TEST_CASE(
+    "component: the keys of the views of components never meet those of their siblings, nor positions",
+    "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<colliding> instance{time.get_executor(), shown};
@@ -1195,12 +1230,15 @@ TEST_CASE("component: the keys of the views of components never meet those of th
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(shown.html() == "<ul><p>header</p><li>first</li><p>count:0</p><p>plain</p><li>tagged</li><li>tagged</"
-                          "li><li>item</li><li>item</li></ul>");
+  REQUIRE(
+      shown.html() == "<ul><p>header</p><li>first</li><p>count:0</p><p>plain</p><li>tagged</li><li>tagged</"
+                      "li><li>item</li><li>item</li></ul>"
+  );
 }
 
-TEST_CASE("component: a pointer into the props of its parent stays good for a handler of a component",
-          "[ui][components]") {
+TEST_CASE(
+    "component: a pointer into the props of its parent stays good for a handler of a component", "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<quoted> instance{time.get_executor(), shown};
@@ -1246,11 +1284,11 @@ TEST_CASE("component: a mounted() that cannot start is told to on_error, and the
   memory_renderer const shown;
   bool fail = false;
   std::exception_ptr failure;
-  app<refusing_page, memory_renderer> instance{
-      refusing_executor{time.get_executor(), &fail}, shown, {.on_error = [&](std::exception_ptr error) {
-        fail = false;
-        failure = std::move(error);
-      }}};
+  app<refusing_page, memory_renderer>
+      instance{refusing_executor{time.get_executor(), &fail}, shown, {.on_error = [&](std::exception_ptr error) {
+                 fail = false;
+                 failure = std::move(error);
+               }}};
   auto const &log = instance.component().log.lines;
 
   instance.component().fail = &fail;
@@ -1260,8 +1298,9 @@ TEST_CASE("component: a mounted() that cannot start is told to on_error, and the
   REQUIRE(log == std::vector<std::string>{"mounted a", "unmounted a"});
 }
 
-TEST_CASE("component: what its handlers hold goes before the component and its props, as its view goes",
-          "[ui][components]") {
+TEST_CASE(
+    "component: what its handlers hold goes before the component and its props, as its view goes", "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<maybe_touched> instance{time.get_executor(), shown};
@@ -1310,14 +1349,17 @@ TEST_CASE("component: mounted() keeps the props of the first view until it ends"
   REQUIRE(shown.html() == "<div><p>a new id</p></div>");
 }
 
-TEST_CASE("component: a render failing past the views leaves a kept component the props its view was given",
-          "[ui][components]") {
+TEST_CASE(
+    "component: a render failing past the views leaves a kept component the props its view was given",
+    "[ui][components]"
+) {
   virtual_time time;
   bool fails = false;
   failing_renderer const shown{.fails = &fails};
   std::exception_ptr failure;
-  app<keeping, failing_renderer> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }}};
+  app<keeping, failing_renderer> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
+                                            failure = std::move(error);
+                                          }}};
   auto const &log = instance.component().log.lines;
 
   auto const act = [&]() -> task<> {
@@ -1336,16 +1378,21 @@ TEST_CASE("component: a render failing past the views leaves a kept component th
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(log == std::vector<std::string>{"the first label, too long for a short string",
-                                          "the second label, too long for a short string"});
+  REQUIRE(
+      log ==
+      std::vector<std::string>{
+          "the first label, too long for a short string", "the second label, too long for a short string"
+      }
+  );
 }
 
 TEST_CASE("component: one whose view throws keeps the props of its last view", "[ui][components]") {
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<picky_page> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }}};
+  test_app<picky_page> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
+                                  failure = std::move(error);
+                                }}};
   auto const &log = instance.component().log.lines;
 
   auto const act = [&]() -> task<> {
@@ -1362,14 +1409,16 @@ TEST_CASE("component: one whose view throws keeps the props of its last view", "
   REQUIRE(log == std::vector<std::string>{"a label, too long for a short string"});
 }
 
-TEST_CASE("component: one whose view throws after a render that failed keeps the props of both views",
-          "[ui][components]") {
+TEST_CASE(
+    "component: one whose view throws after a render that failed keeps the props of both views", "[ui][components]"
+) {
   virtual_time time;
   bool fails = false;
   failing_renderer const shown{.fails = &fails};
   int failures = 0;
-  app<picky_page, failing_renderer> instance{
-      time.get_executor(), shown, {.on_error = [&](std::exception_ptr) { ++failures; }}};
+  app<picky_page, failing_renderer> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr) {
+                                               ++failures;
+                                             }}};
   auto const &log = instance.component().log.lines;
 
   auto const act = [&]() -> task<> {
@@ -1391,8 +1440,10 @@ TEST_CASE("component: one whose view throws after a render that failed keeps the
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE(failures == 2);
-  REQUIRE(log == std::vector<std::string>{"a label, too long for a short string",
-                                          "another label, too long for a short string"});
+  REQUIRE(
+      log ==
+      std::vector<std::string>{"a label, too long for a short string", "another label, too long for a short string"}
+  );
 }
 
 TEST_CASE("component: two of one type with one key in a view are refused, even in two lists", "[ui][components]") {
@@ -1436,8 +1487,9 @@ TEST_CASE("component: mounted() does not start once its component went before it
   REQUIRE(log == std::vector<std::string>{"unmounted a", "unmounted b"});
 }
 
-TEST_CASE("component: the mounted() of a view's components run before their parent's, the app's own last",
-          "[ui][components]") {
+TEST_CASE(
+    "component: the mounted() of a view's components run before their parent's, the app's own last", "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<mounted_page> instance{time.get_executor(), shown};
@@ -1447,8 +1499,9 @@ TEST_CASE("component: the mounted() of a view's components run before their pare
   REQUIRE(log == std::vector<std::string>{"mounted inner", "mounted panel", "mounted page", "unmounted inner"});
 }
 
-TEST_CASE("component: the app's own mounted() does not start once the app stopped before it could",
-          "[ui][components]") {
+TEST_CASE(
+    "component: the app's own mounted() does not start once the app stopped before it could", "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<mounted_page> instance{time.get_executor(), shown};
@@ -1464,8 +1517,9 @@ TEST_CASE("component: the app's own mounted() does not start once the app stoppe
   REQUIRE(log == std::vector<std::string>{"unmounted inner"});
 }
 
-TEST_CASE("component: its props go before those of the view that placed it, which they may refer to",
-          "[ui][components]") {
+TEST_CASE(
+    "component: its props go before those of the view that placed it, which they may refer to", "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<guarded> instance{time.get_executor(), shown};
@@ -1477,13 +1531,18 @@ TEST_CASE("component: its props go before those of the view that placed it, whic
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().read ==
-          std::vector<std::string>{"the first text, too long for a short string", "props gone",
-                                   "the second text, too long for a short string", "props gone"});
+  REQUIRE(
+      instance.component().read ==
+      std::vector<std::string>{
+          "the first text, too long for a short string", "props gone", "the second text, too long for a short string",
+          "props gone"
+      }
+  );
 }
 
-TEST_CASE("component: the props of a component keep the one that placed it, which they may refer to",
-          "[ui][components]") {
+TEST_CASE(
+    "component: the props of a component keep the one that placed it, which they may refer to", "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<maybe_watching> instance{time.get_executor(), shown};
@@ -1502,8 +1561,9 @@ TEST_CASE("component: the props of a component keep the one that placed it, whic
   REQUIRE(log == std::vector<std::string>{"the watching panel, too long for a short string", "panel gone"});
 }
 
-TEST_CASE("component: one without props keeps nothing of its parent, which goes before its tasks end",
-          "[ui][components]") {
+TEST_CASE(
+    "component: one without props keeps nothing of its parent, which goes before its tasks end", "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<maybe_bare_panel> instance{time.get_executor(), shown};

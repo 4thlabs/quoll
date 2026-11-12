@@ -346,8 +346,10 @@ router_core::~router_core() {
   }
 }
 
-void router_core::start(std::span<route_entry const> routes, history_ref history, std::unique_ptr<memory_history> owned,
-                        state<location> &where) {
+void router_core::start(
+    std::span<route_entry const> routes, history_ref history, std::unique_ptr<memory_history> owned,
+    state<location> &where
+) {
   routes_ = routes;
   owned_ = std::move(owned);
   history_.emplace(history);

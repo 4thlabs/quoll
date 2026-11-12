@@ -282,13 +282,15 @@ private:
 
       // Asked rather than caught: anything else that fails to set TLS up is a failure.
       if ((co_await async::current_executor()).query<io::tls_network_ref>()) {
-        secure_listener.emplace(
-            co_await io::listen_tls(0, {.certificate_file = std::string{QUOLL_LOAD_TLS_DIR} + "/server.pem",
-                                        .private_key_file = std::string{QUOLL_LOAD_TLS_DIR} + "/server-key.pem"}));
+        secure_listener.emplace(co_await io::listen_tls(
+            0, {.certificate_file = std::string{QUOLL_LOAD_TLS_DIR} + "/server.pem",
+                .private_key_file = std::string{QUOLL_LOAD_TLS_DIR} + "/server-key.pem"}
+        ));
       }
 
-      ports = {listener->local_port().value(),
-               secure_listener ? secure_listener->local_port().value() : std::uint16_t{0}};
+      ports = {
+          listener->local_port().value(), secure_listener ? secure_listener->local_port().value() : std::uint16_t{0}
+      };
     } catch (...) {
       ports_promise_.set_exception(std::current_exception());
       co_return;
@@ -339,10 +341,13 @@ enum class scenario : std::uint8_t {
 constexpr std::array<std::string_view, 12> scenario_names{
     "GET, kept alive", "POST, 100-continue", "streamed both ways", "handler throws",
     "stopped mid-way", "peer gone mid-way",  "header too large",   "body too large",
-    "no HTTP",         "peer stalls",        "TLS, kept alive",    "no TLS on TLS"};
+    "no HTTP",         "peer stalls",        "TLS, kept alive",    "no TLS on TLS"
+};
 
-static_assert(scenario_names.size() == static_cast<std::size_t>(scenario::secure_garbage) + 1,
-              "quoll_load: a name for each scenario");
+static_assert(
+    scenario_names.size() == static_cast<std::size_t>(scenario::secure_garbage) + 1,
+    "quoll_load: a name for each scenario"
+);
 
 [[nodiscard]] constexpr bool needs_tls(scenario which) noexcept {
   return which == scenario::secure || which == scenario::secure_garbage;
@@ -516,22 +521,30 @@ task<bool> run_scenario(scenario which, peers const &to QUOLL_LIFETIMEBOUND) {
   case scenario::cut: {
     auto const answer = co_await send_raw(
         to.port, "POST /echo HTTP/1.1\r\nHost: load\r\nContent-Length: 100000\r\n\r\n" + std::string(1000, 'c'), 0ms,
-        false);
+        false
+    );
 
     co_return answer.received.empty();
   }
   case scenario::oversized_header:
-    co_return refused(co_await send_raw(to.port,
-                                        "GET /hello HTTP/1.1\r\nHost: load\r\nX-Large: " +
-                                            std::string(std::size_t{16} * 1024, 'h') + "\r\n\r\n",
-                                        0ms, true),
-                      "431");
+    co_return refused(
+        co_await send_raw(
+            to.port,
+            "GET /hello HTTP/1.1\r\nHost: load\r\nX-Large: " + std::string(std::size_t{16} * 1024, 'h') + "\r\n\r\n",
+            0ms, true
+        ),
+        "431"
+    );
   case scenario::oversized_body:
-    co_return refused(co_await send_raw(to.port,
-                                        "POST /echo HTTP/1.1\r\nHost: load\r\nContent-Length: 10485760\r\n\r\n" +
-                                            std::string(std::size_t{64} * 1024, 'b'),
-                                        0ms, true),
-                      "413");
+    co_return refused(
+        co_await send_raw(
+            to.port,
+            "POST /echo HTTP/1.1\r\nHost: load\r\nContent-Length: 10485760\r\n\r\n" +
+                std::string(std::size_t{64} * 1024, 'b'),
+            0ms, true
+        ),
+        "413"
+    );
   case scenario::malformed:
     co_return refused(co_await send_raw(to.port, "NOT HTTP AT ALL\r\n\r\n", 0ms, true), "400");
   case scenario::stalled: {
@@ -557,8 +570,10 @@ task<bool> run_scenario(scenario which, peers const &to QUOLL_LIFETIMEBOUND) {
 
 // Runs the scenarios in turn, from `first`, until `deadline`, each within 10 s, over clients kept for the well-formed
 // requests. Without TLS in this build, its scenarios are left out.
-task<> client_loop(std::uint16_t port, std::uint16_t secure_port, std::size_t first, steady_clock::time_point deadline,
-                   tally &counted QUOLL_LIFETIMEBOUND, reporter &report QUOLL_LIFETIMEBOUND) {
+task<> client_loop(
+    std::uint16_t port, std::uint16_t secure_port, std::size_t first, steady_clock::time_point deadline,
+    tally &counted QUOLL_LIFETIMEBOUND, reporter &report QUOLL_LIFETIMEBOUND
+) {
   // Well below the server's idle time, 2 s: a POST would fail on a connection it closes as the POST goes, and the
   // check before using one again cannot see that coming.
   http::client_options kept;
@@ -670,18 +685,21 @@ int main(int argc, char **argv) {
       with_tls = server.secure_port() != 0;
 
       for (std::size_t client = 0; client < clients; ++client) {
-        co_spawn(runtime.get_executor(),
-                 client_loop(server.port(), server.secure_port(), client, deadline, counted, report),
-                 quoll::test::overloaded{[] {},
-                                         [&client_failures, &report](std::exception_ptr const &error) {
-                                           ++client_failures;
-                                           report("a client", describe(error));
-                                         },
-                                         // Nothing stops a client: a stop came from something else.
-                                         [&client_failures, &report](async::stopped_t) {
-                                           ++client_failures;
-                                           report("a client", "ended on a stop");
-                                         }});
+        co_spawn(
+            runtime.get_executor(), client_loop(server.port(), server.secure_port(), client, deadline, counted, report),
+            quoll::test::overloaded{
+                [] {},
+                [&client_failures, &report](std::exception_ptr const &error) {
+                  ++client_failures;
+                  report("a client", describe(error));
+                },
+                // Nothing stops a client: a stop came from something else.
+                [&client_failures, &report](async::stopped_t) {
+                  ++client_failures;
+                  report("a client", "ended on a stop");
+                }
+            }
+        );
       }
 
       watchdog const watching{deadline + 1min, counted, with_tls};

@@ -168,21 +168,30 @@ consteval void check_route() {
     return false;
   }();
 
-  static_assert(Top == (!Path.view().empty() && Path.view().front() == '/'),
-                "quoll::ui: a route of the top level starts with '/', one under another does not");
-  static_assert(parsed_error == http::detail::template_error::none,
-                "quoll::ui: a route's path is a valid template: whole segments, {name} parameters, balanced braces");
-  static_assert(!typed,
-                "quoll::ui: a route parameter takes its type from its page's props: write {id}, not {id:int64}");
-  static_assert(Full.view() == "/" || Full.view().back() != '/',
-                "quoll::ui: a route's path does not end with '/', which an address loses as it is matched");
+  static_assert(
+      Top == (!Path.view().empty() && Path.view().front() == '/'),
+      "quoll::ui: a route of the top level starts with '/', one under another does not"
+  );
+  static_assert(
+      parsed_error == http::detail::template_error::none,
+      "quoll::ui: a route's path is a valid template: whole segments, {name} parameters, balanced braces"
+  );
+  static_assert(
+      !typed, "quoll::ui: a route parameter takes its type from its page's props: write {id}, not {id:int64}"
+  );
+  static_assert(
+      Full.view() == "/" || Full.view().back() != '/',
+      "quoll::ui: a route's path does not end with '/', which an address loses as it is matched"
+  );
 
   if constexpr (ComponentWithProps<Page>) {
     using props = typename Page::props;
 
-    static_assert(route_fields_only<props>(),
-                  "quoll::ui: a page's props come from its route: each field is a number, a bool, a string, or an "
-                  "optional of one");
+    static_assert(
+        route_fields_only<props>(),
+        "quoll::ui: a page's props come from its route: each field is a number, a bool, a string, or an "
+        "optional of one"
+    );
     static_assert(
         [] {
           for (auto const name : template_params(Full.view())) {
@@ -193,7 +202,8 @@ consteval void check_route() {
 
           return true;
         }(),
-        "quoll::ui: each parameter of a route's path is a field of its page's props, of the same name");
+        "quoll::ui: each parameter of a route's path is a field of its page's props, of the same name"
+    );
   } else {
     static_assert(template_params(Full.view()).empty(), "quoll::ui: a page with parameters in its route has props");
   }
@@ -267,9 +277,10 @@ template <http::fixed_string Full, class Page>
       if (segment.kind == http::detail::segment_kind::literal) {
         href += segment.text;
       } else {
-        href += http::detail::percent_encode(value_of(segment.text), segment.kind == http::detail::segment_kind::rest
-                                                                         ? std::string_view{"/"}
-                                                                         : std::string_view{});
+        href += http::detail::percent_encode(
+            value_of(segment.text),
+            segment.kind == http::detail::segment_kind::rest ? std::string_view{"/"} : std::string_view{}
+        );
       }
     }
 

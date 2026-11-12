@@ -221,8 +221,8 @@ struct framing {
 
 // Every framing the peer could read differently from what is sent is rejected: it would desync the connection, or
 // smuggle a request. Nothing is written before this passes, so that what is refused leaves nothing behind.
-[[nodiscard]] framing check_framing(fields const &entries, std::string const &body, fields const &trailers,
-                                    framing_rules const &rules) {
+[[nodiscard]] framing
+check_framing(fields const &entries, std::string const &body, fields const &trailers, framing_rules const &rules) {
   check_fields(entries);
   check_fields(trailers);
 
@@ -264,8 +264,9 @@ struct framing {
 }
 
 // Fields, then the body framed by Content-Length or by chunked coding with the trailers.
-void serialize_framing(fields const &entries, std::string const &body, fields const &trailers, framing const &checked,
-                       std::string &out) {
+void serialize_framing(
+    fields const &entries, std::string const &body, fields const &trailers, framing const &checked, std::string &out
+) {
   serialize_fields(entries, out);
 
   if (checked.chunked) {

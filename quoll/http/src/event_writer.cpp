@@ -100,8 +100,10 @@ void event_writer::check_writable() const {
 
 // What asks has checked the writer.
 async::task<> event_writer::ask(std::string text) {
-  detail::one_at_a_time turn{std::shared_ptr<std::atomic<bool>>{state_, &state_->busy},
-                             "quoll::http::event_writer: an operation while another is pending"};
+  detail::one_at_a_time turn{
+      std::shared_ptr<std::atomic<bool>>{state_, &state_->busy},
+      "quoll::http::event_writer: an operation while another is pending"
+  };
 
   return write(state_, std::move(turn), std::move(text));
 }

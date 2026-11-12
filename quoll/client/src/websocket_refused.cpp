@@ -43,8 +43,8 @@
 namespace quoll::http {
 
 websocket_refused::websocket_refused(http::response answer)
-    : std::runtime_error{"quoll::http::connect_websocket: the server answered " +
-                         std::to_string(static_cast<int>(answer.status)) + ", not the WebSocket asked for"},
+    : std::
+          runtime_error{"quoll::http::connect_websocket: the server answered " + std::to_string(static_cast<int>(answer.status)) + ", not the WebSocket asked for"},
       response_(std::make_shared<http::response const>(std::move(answer))) {}
 
 } // namespace quoll::http

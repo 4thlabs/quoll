@@ -55,8 +55,10 @@ async::task<std::optional<server_sent_event>> event_reader::next() {
     throw std::logic_error{"quoll::http::event_reader: next() once moved from"};
   }
 
-  detail::one_at_a_time turn{std::shared_ptr<std::atomic<bool>>{state_, &state_->busy},
-                             "quoll::http::event_reader: next() while another is pending"};
+  detail::one_at_a_time turn{
+      std::shared_ptr<std::atomic<bool>>{state_, &state_->busy},
+      "quoll::http::event_reader: next() while another is pending"
+  };
 
   return read_next(state_, std::move(turn));
 }
@@ -67,8 +69,8 @@ std::optional<std::chrono::milliseconds> event_reader::retry() const noexcept {
   return state_ ? state_->parser.retry() : std::nullopt;
 }
 
-async::task<std::optional<server_sent_event>> event_reader::read_next(std::shared_ptr<state> reading,
-                                                                      detail::one_at_a_time turn) {
+async::task<std::optional<server_sent_event>>
+event_reader::read_next(std::shared_ptr<state> reading, detail::one_at_a_time turn) {
   // Given back when the operation is over, not when its task goes, which a caller may keep: the parameter covers a task
   // dropped unrun.
   auto const held = std::move(turn);
@@ -87,8 +89,9 @@ async::task<std::optional<server_sent_event>> event_reader::read_next(std::share
 
       // Stopped: reading ends here too, as for a failure, and the reader ends on the stop.
       if (!read) {
-        reading->failure = std::make_exception_ptr(std::system_error{
-            std::make_error_code(std::errc::operation_canceled), "quoll::http::event_reader: stopped"});
+        reading->failure = std::make_exception_ptr(
+            std::system_error{std::make_error_code(std::errc::operation_canceled), "quoll::http::event_reader: stopped"}
+        );
         reading->body = response_body{};
         co_await async::detail::end_stopped{};
       }

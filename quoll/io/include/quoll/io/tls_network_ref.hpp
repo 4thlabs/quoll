@@ -76,14 +76,14 @@ public:
   explicit tls_network_ref(N const &&network) = delete;
 
   /** @brief Opens an encrypted connection to `host` (a name or an address) on `port`. */
-  [[nodiscard]] async::task<any_stream> connect_tls(std::string host, std::uint16_t port,
-                                                    tls_client_options const &options) const {
+  [[nodiscard]] async::task<any_stream>
+  connect_tls(std::string host, std::uint16_t port, tls_client_options const &options) const {
     return vtable_->connect_tls(network_, std::move(host), port, options);
   }
 
   /** @brief Listens on `address` (an IP address) and `port` (0 for any free port), for encrypted connections. */
-  [[nodiscard]] any_listener listen_tls(std::string address, std::uint16_t port,
-                                        tls_server_options const &options) const {
+  [[nodiscard]] any_listener
+  listen_tls(std::string address, std::uint16_t port, tls_server_options const &options) const {
     return vtable_->listen_tls(network_, std::move(address), port, options);
   }
 
@@ -100,10 +100,12 @@ private:
   };
 
   struct vtable {
-    async::task<any_stream> (*connect_tls)(void const *network, std::string host, std::uint16_t port,
-                                           tls_client_options const &options);
-    any_listener (*listen_tls)(void const *network, std::string address, std::uint16_t port,
-                               tls_server_options const &options);
+    async::task<any_stream> (*connect_tls)(
+        void const *network, std::string host, std::uint16_t port, tls_client_options const &options
+    );
+    any_listener (*listen_tls)(
+        void const *network, std::string address, std::uint16_t port, tls_server_options const &options
+    );
     async::detail::type_id type;
   };
 

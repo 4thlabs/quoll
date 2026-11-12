@@ -71,8 +71,8 @@ template <>
 struct scheme_traits<bearer_auth> {
   static constexpr auto key = fixed_string{"bearer"};
 
-  [[nodiscard]] static std::optional<std::string> find(http::fields const &fields,
-                                                       std::vector<query_entry> const &query);
+  [[nodiscard]] static std::optional<std::string>
+  find(http::fields const &fields, std::vector<query_entry> const &query);
 
   [[nodiscard]] static std::string challenge();
 

@@ -60,13 +60,15 @@ struct query_entry {
 [[nodiscard]] std::optional<std::vector<query_entry>> parse_query(std::string_view query);
 
 // The values of the parameter `name`, in order.
-[[nodiscard]] std::vector<std::string_view> query_texts(std::vector<query_entry> const &query QUOLL_LIFETIMEBOUND,
-                                                        std::string_view name);
+[[nodiscard]] std::vector<std::string_view>
+query_texts(std::vector<query_entry> const &query QUOLL_LIFETIMEBOUND, std::string_view name);
 
 // Appends `name=value` to a query string or a form under construction, both percent-encoded. A value holding a NUL
 // throws std::invalid_argument, saying `what` it is.
-void append_query(std::string &query, std::string_view name, std::string_view value,
-                  std::string_view what = "quoll::rest::client: query parameter");
+void append_query(
+    std::string &query, std::string_view name, std::string_view value,
+    std::string_view what = "quoll::rest::client: query parameter"
+);
 
 } // namespace quoll::rest::detail
 

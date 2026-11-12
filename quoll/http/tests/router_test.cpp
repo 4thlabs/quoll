@@ -170,8 +170,9 @@ TEST_CASE("router: what a handler throws comes out of the task", "[http][router]
   http::router router;
 
   // Throws when called, before it returns a task.
-  router.add(verb::get, "/fails", "fails",
-             [](http::request, http::route_match) -> task<http::response> { throw std::runtime_error{"refused"}; });
+  router.add(verb::get, "/fails", "fails", [](http::request, http::route_match) -> task<http::response> {
+    throw std::runtime_error{"refused"};
+  });
 
   http::request message;
 
@@ -393,8 +394,8 @@ TEST_CASE("local_transport: a body_writer making nothing of a stop runs no handl
     };
 
     try {
-      static_cast<void>(
-          co_await quoll::async::with_timeout(std::chrono::seconds{3}, transport.send(std::move(request))));
+      static_cast<void>(co_await quoll::async::with_timeout(std::chrono::seconds{3}, transport.send(std::move(request)))
+      );
     } catch (std::system_error const &thrown) {
       co_return thrown.code();
     }
@@ -432,8 +433,8 @@ TEST_CASE("local_transport: a stop request ends a body_writer at its next write"
     };
 
     try {
-      static_cast<void>(
-          co_await quoll::async::with_timeout(std::chrono::seconds{3}, transport.send(std::move(request))));
+      static_cast<void>(co_await quoll::async::with_timeout(std::chrono::seconds{3}, transport.send(std::move(request)))
+      );
     } catch (std::system_error const &thrown) {
       co_return thrown.code();
     }
@@ -521,8 +522,9 @@ TEST_CASE("router: a middleware sees what the router answers by itself", "[http]
   REQUIRE(dispatch(router, verb::get, "/nothing").status == http::status::not_found);
   REQUIRE(dispatch(router, verb::post, "/a").status == http::status::method_not_allowed);
   REQUIRE(dispatch(router, verb::get, "bad").status == http::status::bad_request);
-  REQUIRE(statuses ==
-          std::vector{http::status::not_found, http::status::method_not_allowed, http::status::bad_request});
+  REQUIRE(
+      statuses == std::vector{http::status::not_found, http::status::method_not_allowed, http::status::bad_request}
+  );
 }
 
 TEST_CASE("router: a middleware may answer in place of what comes next", "[http][router]") {
@@ -588,8 +590,9 @@ TEST_CASE("router: what a handler throws goes through the middlewares, which may
   SECTION("thrown by a handler before its task: out of next's task, not its call") {
     http::router other;
 
-    other.add(verb::get, "/a", "a",
-              [](http::request, http::route_match) -> task<http::response> { throw std::runtime_error{"before"}; });
+    other.add(verb::get, "/a", "a", [](http::request, http::route_match) -> task<http::response> {
+      throw std::runtime_error{"before"};
+    });
     other.use([](http::request message, http::next next) -> task<http::response> {
       auto pending = next(std::move(message));
 
@@ -617,11 +620,13 @@ TEST_CASE("router: what a middleware changes reaches the handler, on the route a
   http::router router;
   std::string target_seen;
 
-  router.add(verb::get, "/old", "old",
-             [&target_seen](http::request message, http::route_match) -> task<http::response> {
-               target_seen = message.target;
-               co_return http::response{};
-             });
+  router.add(
+      verb::get, "/old", "old",
+      [&target_seen](http::request message, http::route_match) -> task<http::response> {
+        target_seen = message.target;
+        co_return http::response{};
+      }
+  );
   router.add(verb::get, "/new", "new", echo);
   router.use([](http::request message, http::next next) -> task<http::response> {
     message.target = "/new";
@@ -802,15 +807,17 @@ TEST_CASE("router: what a coroutine takes by reference lives until its task ends
   std::string const long_text(100, 'x');
   auto const wait = []() -> task<> { co_await quoll::async::sleep_for(1s); };
 
-  router.add(verb::get, "/{name}", "name",
-             [&wait](http::request const &message, http::route_match const &match) -> task<http::response> {
-               co_await wait();
+  router.add(
+      verb::get, "/{name}", "name",
+      [&wait](http::request const &message, http::route_match const &match) -> task<http::response> {
+        co_await wait();
 
-               http::response answer;
+        http::response answer;
 
-               answer.body = message.target + " " + match.params.at(0);
-               co_return answer;
-             });
+        answer.body = message.target + " " + match.params.at(0);
+        co_return answer;
+      }
+  );
 
   auto expected = "/" + long_text + " " + long_text;
   auto waited = 1s;
@@ -889,8 +896,9 @@ TEST_CASE("local_transport: what a middleware throws comes out, and so does a st
   quoll::test::virtual_time time;
 
   // The time out reaches the caller, rather than a response.
-  REQUIRE_THROWS_AS(quoll::test::run(time, quoll::async::with_timeout(1s, transport.send(request_of("/waits")))),
-                    std::system_error);
+  REQUIRE_THROWS_AS(
+      quoll::test::run(time, quoll::async::with_timeout(1s, transport.send(request_of("/waits")))), std::system_error
+  );
 }
 
 TEST_CASE("router: a route is served again when a middleware calls next twice", "[http][router]") {
@@ -1019,11 +1027,13 @@ TEST_CASE("router: references and views stay valid in a coroutine, until its tas
   quoll::test::virtual_time time;
   http::router router;
 
-  router.get("/a/{name}/{other}",
-             [](http::request const &message, std::string const &name, std::string_view other) -> task<http::response> {
-               co_await quoll::async::sleep_for(1s);
-               co_return with_text(message.target + " " + name + " " + std::string{other});
-             });
+  router.get(
+      "/a/{name}/{other}",
+      [](http::request const &message, std::string const &name, std::string_view other) -> task<http::response> {
+        co_await quoll::async::sleep_for(1s);
+        co_return with_text(message.target + " " + name + " " + std::string{other});
+      }
+  );
 
   http::request message;
 
@@ -1031,8 +1041,10 @@ TEST_CASE("router: references and views stay valid in a coroutine, until its tas
 
   auto const answer = quoll::test::run(time, router.dispatch(std::move(message))).value();
 
-  REQUIRE(answer.body == "/a/" + std::string(100, 'x') + "/" + std::string(100, 'y') + " " + std::string(100, 'x') +
-                             " " + std::string(100, 'y'));
+  REQUIRE(
+      answer.body == "/a/" + std::string(100, 'x') + "/" + std::string(100, 'y') + " " + std::string(100, 'x') + " " +
+                         std::string(100, 'y')
+  );
 }
 
 TEST_CASE("router: a handler may keep a state of its own", "[http][router]") {
@@ -1100,19 +1112,21 @@ TEST_CASE("router: the name of such a route is what a middleware counts by", "[h
 TEST_CASE("router: a handler taking a body_reader reads the body of a request already whole", "[http][router]") {
   http::router router;
 
-  router.post("/up/{name}",
-              [](http::request request, std::string name, http::body_reader body) -> task<http::response> {
-                http::response response;
+  router.post(
+      "/up/{name}",
+      [](http::request request, std::string name, http::body_reader body) -> task<http::response> {
+        http::response response;
 
-                response.body = name + ":" + std::to_string(request.body.size()) + ":";
+        response.body = name + ":" + std::to_string(request.body.size()) + ":";
 
-                while (auto const piece = co_await body.read()) {
-                  response.body += *piece;
-                }
+        while (auto const piece = co_await body.read()) {
+          response.body += *piece;
+        }
 
-                REQUIRE_FALSE(co_await body.read());
-                co_return response;
-              });
+        REQUIRE_FALSE(co_await body.read());
+        co_return response;
+      }
+  );
   router.post("/whole", [](http::request request) {
     http::response response;
 

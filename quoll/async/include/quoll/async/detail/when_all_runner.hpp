@@ -126,8 +126,9 @@ private:
 
 // Owns the chain of its child: a child ending on a stop ends here, and is reported to the state.
 template <class T>
-when_all_runner run_when_all_child(task<T> child, std::optional<non_void_t<T>> &slot QUOLL_LIFETIMEBOUND,
-                                   when_all_state &state QUOLL_LIFETIMEBOUND) {
+when_all_runner run_when_all_child(
+    task<T> child, std::optional<non_void_t<T>> &slot QUOLL_LIFETIMEBOUND, when_all_state &state QUOLL_LIFETIMEBOUND
+) {
   try {
     if (auto result = co_await owned_chain<T>{std::move(child)}) {
       slot.emplace(std::move(*result));

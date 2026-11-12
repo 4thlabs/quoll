@@ -294,13 +294,16 @@ task<exchanged> exchange(io::memory_stream client, std::string raw, std::vector<
   co_return result;
 }
 
-exchanged serve(std::string raw, std::vector<verb> methods, bool expect_close = false,
-                quoll::http::connection_options const &options = {}) {
+exchanged serve(
+    std::string raw, std::vector<verb> methods, bool expect_close = false,
+    quoll::http::connection_options const &options = {}
+) {
   auto const router = make_router();
   auto [client, server] = io::make_memory_stream_pair();
-  auto outcome = quoll::test::run(
-      quoll::async::when_all(quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
-                             exchange(std::move(client), std::move(raw), std::move(methods), expect_close)));
+  auto outcome = quoll::test::run(quoll::async::when_all(
+      quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
+      exchange(std::move(client), std::move(raw), std::move(methods), expect_close)
+  ));
 
   return std::move(std::get<1>(outcome.value()));
 }
@@ -313,8 +316,8 @@ using quoll::test::virtual_time;
 using quoll::test::read_until_closed;
 
 // Sends `first` and `second` with `delay` between them, then reads until the server closes. Empty parts are not sent.
-task<std::string> peer(io::memory_stream client, std::string first, std::chrono::nanoseconds delay,
-                       std::string second) {
+task<std::string>
+peer(io::memory_stream client, std::string first, std::chrono::nanoseconds delay, std::string second) {
   if (!first.empty()) {
     (void)co_await io::write(client, std::as_bytes(std::span{first}));
   }
@@ -349,9 +352,11 @@ std::string session(virtual_time &time, connection_options const &options, MakeP
   auto const router = make_router();
   auto [client, server] = io::make_memory_stream_pair();
   auto outcome = quoll::test::run(
-      time,
-      quoll::async::when_all(quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
-                             make_peer(std::move(client))));
+      time, quoll::async::when_all(
+                quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
+                make_peer(std::move(client))
+            )
+  );
 
   return std::move(std::get<1>(outcome.value()));
 }
@@ -458,9 +463,9 @@ private:
 static_assert(io::ByteStream<failing_reads>);
 
 // serve_connection() with a peer that sends `raw` and no longer reads: its time on the clock.
-std::chrono::nanoseconds
-time_until_stuck_writes_end(connection_options const &options,
-                            std::string const &raw = "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n") {
+std::chrono::nanoseconds time_until_stuck_writes_end(
+    connection_options const &options, std::string const &raw = "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n"
+) {
   virtual_time time;
   auto const router = make_router();
   auto [client, server] = io::make_memory_stream_pair();
@@ -495,9 +500,11 @@ std::chrono::nanoseconds time_until_stuck_shutdown_ends(connection_options const
 } // namespace
 
 TEST_CASE("serve_connection: requests get their responses, on a connection kept alive", "[server]") {
-  auto const result = serve("GET /hello HTTP/1.1\r\nHost: x\r\n\r\n"
-                            "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nping",
-                            {verb::get, verb::post});
+  auto const result = serve(
+      "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n"
+      "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nping",
+      {verb::get, verb::post}
+  );
 
   REQUIRE(result.responses.size() == 2);
   REQUIRE(result.responses[0].status == http::status::ok);
@@ -546,9 +553,10 @@ task<answers> send_body_after_answer(io::memory_stream client, std::string head,
 answers answers_to(std::string head, std::string body, connection_options const &options = {}) {
   auto const router = make_router();
   auto [client, server] = io::make_memory_stream_pair();
-  auto outcome = quoll::test::run(
-      quoll::async::when_all(quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
-                             send_body_after_answer(std::move(client), std::move(head), std::move(body))));
+  auto outcome = quoll::test::run(quoll::async::when_all(
+      quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
+      send_body_after_answer(std::move(client), std::move(head), std::move(body))
+  ));
 
   return std::move(std::get<1>(outcome.value()));
 }
@@ -582,9 +590,10 @@ TEST_CASE("serve_connection: Expect: 100-continue gets its answer, then the body
   }
 
   SECTION("with a chunked body") {
-    auto const got =
-        answers_to("POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n",
-                   "4\r\nping\r\n0\r\n\r\n");
+    auto const got = answers_to(
+        "POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n",
+        "4\r\nping\r\n0\r\n\r\n"
+    );
 
     REQUIRE(got.statuses == asked_then_answered);
     REQUIRE(got.body == "ping");
@@ -592,7 +601,8 @@ TEST_CASE("serve_connection: Expect: 100-continue gets its answer, then the body
 
   SECTION("as a list, which may name it twice") {
     auto const got = answers_to(
-        "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue, 100-continue,\r\n\r\n", "ping");
+        "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue, 100-continue,\r\n\r\n", "ping"
+    );
 
     REQUIRE(got.statuses == asked_then_answered);
     REQUIRE(got.body == "ping");
@@ -600,8 +610,9 @@ TEST_CASE("serve_connection: Expect: 100-continue gets its answer, then the body
 
   SECTION("refused for its size: the final answer comes instead") {
     connection_options const small{.limits = {.max_body_size = 2}, .on_handler_error = {}};
-    auto const got = answers_to("POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n",
-                                "ping", small);
+    auto const got = answers_to(
+        "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n", "ping", small
+    );
 
     REQUIRE(got.statuses == std::vector{http::status::content_too_large});
   }
@@ -672,7 +683,9 @@ TEST_CASE("serve_connection: a middleware's response goes out, and what it throw
       exchange(
           std::move(client),
           "GET /hello HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\nGET /broken HTTP/1.1\r\nHost: x\r\n\r\n",
-          {verb::get, verb::get}, false)));
+          {verb::get, verb::get}, false
+      )
+  ));
   auto const &responses = std::get<1>(outcome.value()).responses;
 
   REQUIRE(responses.at(0).fields.find("X-Frame-Options") == "DENY");
@@ -692,9 +705,10 @@ TEST_CASE("serve_connection: a request refused as it is read reaches no middlewa
   });
 
   auto [client, server] = io::make_memory_stream_pair();
-  auto outcome =
-      quoll::test::run(quoll::async::when_all(quoll::http::server{router}.serve_connection(std::move(server)),
-                                              exchange(std::move(client), "NOT HTTP\r\n\r\n", {verb::get}, true)));
+  auto outcome = quoll::test::run(quoll::async::when_all(
+      quoll::http::server{router}.serve_connection(std::move(server)),
+      exchange(std::move(client), "NOT HTTP\r\n\r\n", {verb::get}, true)
+  ));
 
   REQUIRE(std::get<1>(outcome.value()).responses.at(0).status == http::status::bad_request);
   REQUIRE(seen == 0);
@@ -713,7 +727,8 @@ TEST_CASE("serve_connection: HEAD through a middleware still has no body", "[ser
   auto [client, server] = io::make_memory_stream_pair();
   auto outcome = quoll::test::run(quoll::async::when_all(
       quoll::http::server{router}.serve_connection(std::move(server)),
-      exchange(std::move(client), "HEAD /hello HTTP/1.1\r\nHost: x\r\n\r\n", {verb::head}, false)));
+      exchange(std::move(client), "HEAD /hello HTTP/1.1\r\nHost: x\r\n\r\n", {verb::head}, false)
+  ));
   auto const &answer = std::get<1>(outcome.value()).responses.at(0);
 
   REQUIRE(answer.fields.find("X-Seen") == "yes");
@@ -749,26 +764,34 @@ TEST_CASE("serve_connection: what cannot be read answers its status and ends the
   REQUIRE(garbage.responses.front().status == http::status::bad_request);
   REQUIRE(garbage.responses.front().fields.find("Connection") == "close");
   REQUIRE(garbage.closed);
-  REQUIRE(serve("PROPFIND /x HTTP/1.1\r\nHost: x\r\n\r\n", {verb::get}, true).responses.front().status ==
-          http::status::not_implemented);
+  REQUIRE(
+      serve("PROPFIND /x HTTP/1.1\r\nHost: x\r\n\r\n", {verb::get}, true).responses.front().status ==
+      http::status::not_implemented
+  );
 
-  quoll::http::connection_options const small{.limits = {.max_header_size = 64, .max_body_size = 4},
-                                              .on_handler_error = {}};
-  auto const long_header = serve("GET /hello HTTP/1.1\r\nHost: x\r\nX-Long: " + std::string(100, 'a') + "\r\n\r\n",
-                                 {verb::get}, true, small);
+  quoll::http::connection_options const small{
+      .limits = {.max_header_size = 64, .max_body_size = 4}, .on_handler_error = {}
+  };
+  auto const long_header = serve(
+      "GET /hello HTTP/1.1\r\nHost: x\r\nX-Long: " + std::string(100, 'a') + "\r\n\r\n", {verb::get}, true, small
+  );
 
   REQUIRE(long_header.responses.front().status == http::status::request_header_fields_too_large);
   REQUIRE(long_header.responses.front().reason == "Request Header Fields Too Large");
-  REQUIRE(serve("POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\n0123456789", {verb::post}, true, small)
-              .responses.front()
-              .status == http::status::content_too_large);
+  REQUIRE(
+      serve("POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\n0123456789", {verb::post}, true, small)
+          .responses.front()
+          .status == http::status::content_too_large
+  );
 }
 
 TEST_CASE("serve_connection: a handler that fails answers 500, and the connection goes on", "[server]") {
-  auto const result = serve("GET /fail HTTP/1.1\r\nHost: x\r\n\r\n"
-                            "GET /invalid HTTP/1.1\r\nHost: x\r\n\r\n"
-                            "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
-                            {verb::get, verb::get, verb::get});
+  auto const result = serve(
+      "GET /fail HTTP/1.1\r\nHost: x\r\n\r\n"
+      "GET /invalid HTTP/1.1\r\nHost: x\r\n\r\n"
+      "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
+      {verb::get, verb::get, verb::get}
+  );
 
   REQUIRE(result.responses[0].status == http::status::internal_server_error);
   REQUIRE(result.responses[1].status == http::status::internal_server_error);
@@ -776,8 +799,9 @@ TEST_CASE("serve_connection: a handler that fails answers 500, and the connectio
 }
 
 TEST_CASE("serve_connection: the router's own answers go out like any response", "[server]") {
-  auto const result = serve("DELETE /hello HTTP/1.1\r\nHost: x\r\n\r\nGET /nowhere HTTP/1.1\r\nHost: x\r\n\r\n",
-                            {verb::delete_, verb::get});
+  auto const result = serve(
+      "DELETE /hello HTTP/1.1\r\nHost: x\r\n\r\nGET /nowhere HTTP/1.1\r\nHost: x\r\n\r\n", {verb::delete_, verb::get}
+  );
 
   REQUIRE(result.responses[0].status == http::status::method_not_allowed);
   REQUIRE(result.responses[0].fields.find("Allow") == "GET, HEAD");
@@ -813,16 +837,19 @@ TEST_CASE("serve_connection: what a handler throws goes to on_handler_error", "[
     }
   };
 
-  REQUIRE(serve("GET /fail HTTP/1.1\r\nHost: x\r\n\r\n", {verb::get}, false, options).responses.front().status ==
-          http::status::internal_server_error);
+  REQUIRE(
+      serve("GET /fail HTTP/1.1\r\nHost: x\r\n\r\n", {verb::get}, false, options).responses.front().status ==
+      http::status::internal_server_error
+  );
   REQUIRE(reported == "handler failure");
 }
 
 TEST_CASE("serve_connection: a connection waiting for its first request closes silently", "[server][timer]") {
   virtual_time time;
 
-  auto const received = session(time, connection_options{.idle_timeout = 5s},
-                                [](auto client) { return peer(std::move(client), "", 0s, ""); });
+  auto const received = session(time, connection_options{.idle_timeout = 5s}, [](auto client) {
+    return peer(std::move(client), "", 0s, "");
+  });
 
   REQUIRE(received.empty());
   REQUIRE(time.now() == 5s);
@@ -881,8 +908,9 @@ TEST_CASE("serve_connection: a pipelined request is not idle", "[server][timer]"
   virtual_time time;
 
   auto const received = session(time, connection_options{.idle_timeout = 2s}, [](auto client) {
-    return peer(std::move(client), "GET /hello HTTP/1.1\r\nHost: h\r\n\r\nGET /hello HTTP/1.1\r\nHost: h\r\n\r\n", 0s,
-                "");
+    return peer(
+        std::move(client), "GET /hello HTTP/1.1\r\nHost: h\r\n\r\nGET /hello HTTP/1.1\r\nHost: h\r\n\r\n", 0s, ""
+    );
   });
 
   REQUIRE(received.find("HTTP/1.1 200") != received.rfind("HTTP/1.1 200"));
@@ -909,8 +937,9 @@ TEST_CASE("serve_connection: empty lines after a request are no request", "[serv
 TEST_CASE("serve_connection: a peer sending only empty lines stays idle", "[server][timer]") {
   virtual_time time;
 
-  auto const received = session(time, connection_options{.idle_timeout = 5s, .read_timeout = 0s},
-                                [](auto client) { return peer(std::move(client), "\r\n\r\n", 1s, "\r\n"); });
+  auto const received = session(time, connection_options{.idle_timeout = 5s, .read_timeout = 0s}, [](auto client) {
+    return peer(std::move(client), "\r\n\r\n", 1s, "\r\n");
+  });
 
   REQUIRE(received.empty());
   REQUIRE(time.now() == 5s);
@@ -959,8 +988,9 @@ TEST_CASE("serve_connection: the default timeouts apply", "[server][timer]") {
 TEST_CASE("serve_connection: a negative timeout has expired, rather than lifting the limit", "[server][timer]") {
   virtual_time time;
 
-  auto const received = session(time, connection_options{.idle_timeout = -1s},
-                                [](auto client) { return peer(std::move(client), "", 0s, ""); });
+  auto const received = session(time, connection_options{.idle_timeout = -1s}, [](auto client) {
+    return peer(std::move(client), "", 0s, "");
+  });
 
   REQUIRE(received.empty());
   REQUIRE(time.now() == 0s);
@@ -970,8 +1000,9 @@ TEST_CASE("serve_connection: a timeout of zero does not apply", "[server][timer]
   virtual_time time;
 
   // The peer's own departure ends the connection, long after the defaults.
-  auto const received = session(time, connection_options{.idle_timeout = 0s, .read_timeout = 0s},
-                                [](auto client) { return leave_after(std::move(client), 5h); });
+  auto const received = session(time, connection_options{.idle_timeout = 0s, .read_timeout = 0s}, [](auto client) {
+    return leave_after(std::move(client), 5h);
+  });
 
   REQUIRE(received.empty());
   REQUIRE(time.now() == 5h);
@@ -995,9 +1026,11 @@ TEST_CASE("serve_connection: a handler takes the time it needs", "[server][timer
       time,
       quoll::async::when_all(
           quoll::http::server{
-              router, {.connection = connection_options{.idle_timeout = 1s, .read_timeout = 1s, .write_timeout = 1s}}}
-              .serve_connection(std::move(server)),
-          peer(std::move(client), "GET /slow HTTP/1.1\r\nHost: h\r\n\r\n", 0s, "")));
+              router, {.connection = connection_options{.idle_timeout = 1s, .read_timeout = 1s, .write_timeout = 1s}}
+          }.serve_connection(std::move(server)),
+          peer(std::move(client), "GET /slow HTTP/1.1\r\nHost: h\r\n\r\n", 0s, "")
+      )
+  );
 
   REQUIRE(std::get<1>(outcome.value()).ends_with("done"));
   REQUIRE(time.now() == 1h + 1s);
@@ -1029,9 +1062,12 @@ TEST_CASE("serve_connection: a stop request is no timeout", "[server][timer]") {
   // A request under way: no 408 for it.
   auto outcome = quoll::test::run(
       time,
-      quoll::async::when_all(quietly_stopped(quoll::http::server{router}.serve_connection(std::move(server))),
-                             what_came(peer(std::move(client), "GET /hello HTTP/1.1\r\nHo", 0s, "")), stop_soon()),
-      source.get_token());
+      quoll::async::when_all(
+          quietly_stopped(quoll::http::server{router}.serve_connection(std::move(server))),
+          what_came(peer(std::move(client), "GET /hello HTTP/1.1\r\nHo", 0s, "")), stop_soon()
+      ),
+      source.get_token()
+  );
 
   REQUIRE(std::get<1>(outcome.value()).empty());
   REQUIRE(time.now() == 1s);
@@ -1059,8 +1095,9 @@ TEST_CASE("serve_connection: the read timeout covers a head and a body together"
 
   // The head ends at 2 s and the body at 4 s: each is in time, but not both.
   auto const received = session(time, connection_options{.read_timeout = 3s}, [](auto client) {
-    return pieces_two_seconds_apart(std::move(client),
-                                    {"POST /echo HTTP/1.1\r\nHost: h\r\n", "Content-Length: 4\r\n\r\n", "ping"});
+    return pieces_two_seconds_apart(
+        std::move(client), {"POST /echo HTTP/1.1\r\nHost: h\r\n", "Content-Length: 4\r\n\r\n", "ping"}
+    );
   });
 
   REQUIRE(received.starts_with("HTTP/1.1 408"));
@@ -1071,8 +1108,10 @@ TEST_CASE("serve_connection: only 100 Continue starts the read timeout again", "
 
   // The same, but for what the client waits for: the body has its own time after the answer.
   auto const received = session(time, connection_options{.read_timeout = 3s}, [](auto client) {
-    return pieces_two_seconds_apart(std::move(client), {"POST /echo HTTP/1.1\r\nHost: h\r\n",
-                                                        "Content-Length: 4\r\nExpect: 100-continue\r\n\r\n", "ping"});
+    return pieces_two_seconds_apart(
+        std::move(client),
+        {"POST /echo HTTP/1.1\r\nHost: h\r\n", "Content-Length: 4\r\nExpect: 100-continue\r\n\r\n", "ping"}
+    );
   });
 
   REQUIRE(received.starts_with("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200"));
@@ -1081,8 +1120,9 @@ TEST_CASE("serve_connection: only 100 Continue starts the read timeout again", "
 TEST_CASE("serve_connection: a body that never comes after 100 Continue gets a 408", "[server][timer]") {
   virtual_time time;
 
-  auto const received = session(time, connection_options{.read_timeout = 3s},
-                                [](auto client) { return peer(std::move(client), expecting, {}, {}); });
+  auto const received = session(time, connection_options{.read_timeout = 3s}, [](auto client) {
+    return peer(std::move(client), expecting, {}, {});
+  });
 
   REQUIRE(received.starts_with("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 408"));
   REQUIRE(time.now() == 3s);
@@ -1092,8 +1132,10 @@ TEST_CASE("serve_connection: HTTP/1.0 waits for no 100 Continue", "[server][time
   virtual_time time;
 
   auto const received = session(time, connection_options{.read_timeout = 3s}, [](auto client) {
-    return peer(std::move(client),
-                "POST /echo HTTP/1.0\r\nHost: h\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n", 1s, "ping");
+    return peer(
+        std::move(client), "POST /echo HTTP/1.0\r\nHost: h\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n", 1s,
+        "ping"
+    );
   });
 
   REQUIRE(received.starts_with("HTTP/1.1 200"));
@@ -1222,7 +1264,8 @@ TEST_CASE("serve_connection: a drain or a stop request ends the lingering", "[se
   auto const serving = [&](io::memory_stream stream) -> task<int> {
     static_cast<void>(co_await quoll::async::detail::owned_chain<void>{
         quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)),
-        stop_with_drain ? std::stop_token{} : stopping.get_token()});
+        stop_with_drain ? std::stop_token{} : stopping.get_token()
+    });
     server_gone = time.now();
     co_return 1;
   };
@@ -1298,7 +1341,8 @@ TEST_CASE("serve_connection: without a timer to end it, nothing lingers", "[serv
   };
 
   auto outcome = quoll::test::run(
-      quoll::async::when_all(quoll::http::server{router}.serve_connection(std::move(server)), peering()));
+      quoll::async::when_all(quoll::http::server{router}.serve_connection(std::move(server)), peering())
+  );
 
   REQUIRE(outcome);
   REQUIRE(std::get<1>(*outcome).starts_with("HTTP/1.1 400"));
@@ -1328,9 +1372,11 @@ TEST_CASE("serve_connection: a handler reads a body in pieces, and the connectio
   auto const size = std::to_string(body.size());
 
   SECTION("with a length") {
-    auto const got = serve("POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: " + size + "\r\n\r\n" + body +
-                               "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
-                           {verb::post, verb::get}, false, options);
+    auto const got = serve(
+        "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: " + size + "\r\n\r\n" + body +
+            "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
+        {verb::post, verb::get}, false, options
+    );
 
     REQUIRE(got.responses.size() == 2);
     REQUIRE(got.responses[0].body == body);
@@ -1338,9 +1384,11 @@ TEST_CASE("serve_connection: a handler reads a body in pieces, and the connectio
   }
 
   SECTION("chunked, with a parameter of the path") {
-    auto const got = serve("PUT /upload/a%20b HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
-                           "4\r\nping\r\n4\r\npong\r\n0\r\n\r\nGET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
-                           {verb::put, verb::get}, false, options);
+    auto const got = serve(
+        "PUT /upload/a%20b HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+        "4\r\nping\r\n4\r\npong\r\n0\r\n\r\nGET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
+        {verb::put, verb::get}, false, options
+    );
 
     REQUIRE(got.responses.size() == 2);
     REQUIRE(got.responses[0].body == "a b:pingpong");
@@ -1348,9 +1396,11 @@ TEST_CASE("serve_connection: a handler reads a body in pieces, and the connectio
   }
 
   SECTION("empty") {
-    auto const got = serve("POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n"
-                           "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
-                           {verb::post, verb::get}, false, options);
+    auto const got = serve(
+        "POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n"
+        "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
+        {verb::post, verb::get}, false, options
+    );
 
     REQUIRE(got.responses.at(0).body.empty());
     REQUIRE(got.responses.at(1).body == "hello");
@@ -1379,9 +1429,11 @@ TEST_CASE("serve_connection: what a handler leaves unread ends the connection af
 }
 
 TEST_CASE("serve_connection: all of a body came with its head, unread: the connection goes on", "[server]") {
-  auto const got = serve("POST /refuse HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhi"
-                         "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
-                         {verb::post, verb::get});
+  auto const got = serve(
+      "POST /refuse HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhi"
+      "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
+      {verb::post, verb::get}
+  );
 
   REQUIRE(got.responses.at(0).status == http::status::forbidden);
   REQUIRE(got.responses.at(1).body == "hello");
@@ -1447,8 +1499,11 @@ TEST_CASE("serve_connection: what stops the reading of a body is no failure of t
     auto [client, server] = io::make_memory_stream_pair();
     auto const outcome = quoll::test::run(quoll::async::when_all(
         quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
-        send_in_two(std::move(client), "POST /reading HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
-                    std::move(rest))));
+        send_in_two(
+            std::move(client), "POST /reading HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
+            std::move(rest)
+        )
+    ));
 
     REQUIRE(started);
     return std::get<1>(outcome.value()).status;
@@ -1479,9 +1534,10 @@ TEST_CASE("serve_connection: what stops the reading of a body is no failure of t
       co_return !(co_await io::write(stream, std::as_bytes(std::span{sent}))).error;
     };
 
-    auto const outcome = quoll::test::run(
-        quoll::async::when_all(quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
-                               peer(std::move(client))));
+    auto const outcome = quoll::test::run(quoll::async::when_all(
+        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
+        peer(std::move(client))
+    ));
 
     REQUIRE(outcome);
     REQUIRE(std::get<1>(*outcome));
@@ -1499,8 +1555,9 @@ TEST_CASE("serve_connection: Expect: 100-continue waits for the handler to ask f
   }
 
   SECTION("refused: the client does not have to send it") {
-    auto const got = serve("POST /refuse HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n",
-                           {verb::post}, true);
+    auto const got = serve(
+        "POST /refuse HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n", {verb::post}, true
+    );
 
     REQUIRE(got.responses.at(0).status == http::status::forbidden);
     REQUIRE(got.closed);
@@ -1538,9 +1595,11 @@ TEST_CASE("serve_connection: with no minimum rate, a body in pieces has a read t
   };
 
   auto outcome = quoll::test::run(
-      time,
-      quoll::async::when_all(quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
-                             peer(std::move(client))));
+      time, quoll::async::when_all(
+                quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
+                peer(std::move(client))
+            )
+  );
 
   REQUIRE(std::get<1>(outcome.value()).status == http::status::request_timeout);
   // Three pieces two seconds apart, and the timeout after the last.
@@ -1577,9 +1636,10 @@ TEST_CASE("serve_connection: a handler giving up on a body answers, and the conn
     co_return parser.release();
   };
 
-  auto outcome =
-      quoll::test::run(time, quoll::async::when_all(quoll::http::server{router}.serve_connection(std::move(server)),
-                                                    peer(std::move(client))));
+  auto outcome = quoll::test::run(
+      time,
+      quoll::async::when_all(quoll::http::server{router}.serve_connection(std::move(server)), peer(std::move(client)))
+  );
   auto const &response = std::get<1>(outcome.value());
 
   REQUIRE(response.status == http::status::gateway_timeout);
@@ -1616,8 +1676,11 @@ TEST_CASE("serve_connection: a read that fails goes on failing, after what came 
   auto const outcome = quoll::test::run(quoll::async::when_all(
       quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
       // In one read: a chunk that fits, and one past the limit.
-      send_in_two(std::move(client), "POST /stubborn HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
-                  "4\r\nping\r\n1\r\nx\r\n0\r\n\r\n")));
+      send_in_two(
+          std::move(client), "POST /stubborn HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
+          "4\r\nping\r\n1\r\nx\r\n0\r\n\r\n"
+      )
+  ));
 
   REQUIRE(outcome);
 
@@ -1645,9 +1708,9 @@ TEST_CASE("serve_connection: a peer gone when the body is asked for", "[server]"
     co_return !(co_await io::write(stream, std::as_bytes(std::span{sent}))).error;
   };
 
-  auto const outcome = quoll::test::run(
-      quoll::async::when_all(quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
-                             peer(std::move(client))));
+  auto const outcome = quoll::test::run(quoll::async::when_all(
+      quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)), peer(std::move(client))
+  ));
 
   REQUIRE(outcome);
   REQUIRE(failures == 0);
@@ -1678,8 +1741,8 @@ TEST_CASE("serve_connection: a stop during the reading of a body is no failure o
 
   auto const serving = [&](io::memory_stream stream) -> task<bool> {
     static_cast<void>(co_await quoll::async::detail::owned_chain<void>{
-        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)),
-        stopping.get_token()});
+        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stopping.get_token()
+    });
     co_return true;
   };
 
@@ -1728,8 +1791,9 @@ TEST_CASE("serve_connection: a response written in pieces", "[server]") {
   }
 
   SECTION("to HEAD: the writer does not run, and a length it announces stays") {
-    auto const got = serve("HEAD /in-chunks HTTP/1.1\r\nHost: x\r\n\r\nHEAD /sized HTTP/1.1\r\nHost: x\r\n\r\n",
-                           {verb::head, verb::head});
+    auto const got = serve(
+        "HEAD /in-chunks HTTP/1.1\r\nHost: x\r\n\r\nHEAD /sized HTTP/1.1\r\nHost: x\r\n\r\n", {verb::head, verb::head}
+    );
 
     REQUIRE(got.responses.at(0).status == http::status::ok);
     REQUIRE_FALSE(got.responses.at(0).fields.contains("Transfer-Encoding"));
@@ -1783,8 +1847,10 @@ TEST_CASE("serve_connection: a writer failing before its first byte answers 500"
 
   options.on_handler_error = [&](std::exception_ptr const &) { ++failures; };
 
-  auto const got = serve("GET /writer-fails-first HTTP/1.1\r\nHost: x\r\n\r\nGET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
-                         {verb::get, verb::get}, false, options);
+  auto const got = serve(
+      "GET /writer-fails-first HTTP/1.1\r\nHost: x\r\n\r\nGET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
+      {verb::get, verb::get}, false, options
+  );
 
   REQUIRE(got.responses.at(0).status == http::status::internal_server_error);
   REQUIRE(got.responses.at(1).body == "hello");
@@ -1801,9 +1867,11 @@ TEST_CASE("serve_connection: to HTTP/1.0, a body in pieces has no chunks and no 
 }
 
 TEST_CASE("serve_connection: to HEAD, a writer announces no length it does not say", "[server]") {
-  auto const got = serve("HEAD /in-chunks HTTP/1.1\r\nHost: x\r\n\r\nHEAD /two-bodies HTTP/1.1\r\nHost: x\r\n\r\n"
-                         "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
-                         {verb::head, verb::head, verb::get});
+  auto const got = serve(
+      "HEAD /in-chunks HTTP/1.1\r\nHost: x\r\n\r\nHEAD /two-bodies HTTP/1.1\r\nHost: x\r\n\r\n"
+      "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n",
+      {verb::head, verb::head, verb::get}
+  );
 
   REQUIRE_FALSE(got.responses.at(0).fields.contains("Content-Length"));
   REQUIRE_FALSE(got.responses.at(0).fields.contains("Transfer-Encoding"));
@@ -1828,8 +1896,10 @@ TEST_CASE("serve_connection: a writer reads the request as it writes the respons
   auto [client, server] = io::make_memory_stream_pair();
   auto const outcome = quoll::test::run(quoll::async::when_all(
       quoll::http::server{router}.serve_connection(std::move(server)),
-      send_in_two(std::move(client), "POST /echo-in-pieces HTTP/1.1\r\nHost: x\r\nContent-Length: 8\r\n\r\n",
-                  "pingpong")));
+      send_in_two(
+          std::move(client), "POST /echo-in-pieces HTTP/1.1\r\nHost: x\r\nContent-Length: 8\r\n\r\n", "pingpong"
+      )
+  ));
 
   REQUIRE(outcome);
 
@@ -1864,8 +1934,8 @@ TEST_CASE("serve_connection: a stop in a writer is no failure of the writer", "[
 
   auto const serving = [&](io::memory_stream stream) -> task<bool> {
     static_cast<void>(co_await quoll::async::detail::owned_chain<void>{
-        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)),
-        stopping.get_token()});
+        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stopping.get_token()
+    });
     co_return true;
   };
 
@@ -1920,9 +1990,11 @@ TEST_CASE("serve_connection: a response in pieces has a write timeout, not its w
     };
 
     auto outcome = quoll::test::run(
-        time,
-        quoll::async::when_all(quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
-                               peer(std::move(client))));
+        time, quoll::async::when_all(
+                  quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
+                  peer(std::move(client))
+              )
+    );
 
     REQUIRE(std::get<1>(outcome.value()).body == "partpartpart");
   }
@@ -1977,9 +2049,10 @@ TEST_CASE("serve_connection: 100 Continue leaves before a writer, which may read
   auto const target = GENERATE(as<std::string>{}, "/writer", "/handler");
   auto const head = "POST " + target + " HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n";
   auto [client, server] = io::make_memory_stream_pair();
-  auto const outcome =
-      quoll::test::run(quoll::async::when_all(quoll::http::server{router}.serve_connection(std::move(server)),
-                                              send_body_after_answer(std::move(client), head, "ping")));
+  auto const outcome = quoll::test::run(quoll::async::when_all(
+      quoll::http::server{router}.serve_connection(std::move(server)),
+      send_body_after_answer(std::move(client), head, "ping")
+  ));
 
   REQUIRE(outcome);
 
@@ -2024,8 +2097,10 @@ TEST_CASE("serve_connection: a writer finding the request at fault before it sta
   auto [client, server] = io::make_memory_stream_pair();
   auto const outcome = quoll::test::run(quoll::async::when_all(
       quoll::http::server{router, {.connection = options}}.serve_connection(std::move(server)),
-      send_in_two(std::move(client), "POST /echo-in-pieces HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
-                  "ZZ\r\n")));
+      send_in_two(
+          std::move(client), "POST /echo-in-pieces HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n", "ZZ\r\n"
+      )
+  ));
 
   REQUIRE(outcome);
   REQUIRE(std::get<1>(*outcome).status == http::status::bad_request);
@@ -2060,8 +2135,10 @@ TEST_CASE("serve_connection: a writer making nothing of a failed request does no
   auto [client, server] = io::make_memory_stream_pair();
   auto const outcome = quoll::test::run(quoll::async::when_all(
       quoll::http::server{router}.serve_connection(std::move(server)),
-      send_in_two(std::move(client), "POST /swallowing HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
-                  "ZZ\r\n")));
+      send_in_two(
+          std::move(client), "POST /swallowing HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n", "ZZ\r\n"
+      )
+  ));
 
   REQUIRE(outcome);
   REQUIRE(std::get<1>(*outcome).status == http::status::bad_request);
@@ -2100,8 +2177,8 @@ TEST_CASE("serve_connection: a writer that a stop ends early has no whole body t
 
   auto const serving = [&](io::memory_stream stream) -> task<bool> {
     static_cast<void>(co_await quoll::async::detail::owned_chain<void>{
-        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)),
-        stopping.get_token()});
+        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stopping.get_token()
+    });
     co_return true;
   };
 
@@ -2164,9 +2241,10 @@ TEST_CASE("serve_connection: an empty piece sends the head at once", "[server][t
     co_return parser.release().body;
   };
 
-  auto const outcome =
-      quoll::test::run(time, quoll::async::when_all(quoll::http::server{router}.serve_connection(std::move(server)),
-                                                    peer(std::move(client))));
+  auto const outcome = quoll::test::run(
+      time,
+      quoll::async::when_all(quoll::http::server{router}.serve_connection(std::move(server)), peer(std::move(client)))
+  );
 
   REQUIRE(outcome);
   REQUIRE(head_at == 0s);
@@ -2180,16 +2258,20 @@ TEST_CASE("serve_connection: a framing refused at the end of its head reaches no
   REQUIRE(got.responses.at(0).status == http::status::bad_request);
 }
 
-TEST_CASE("serve_connection: what is at fault after a good piece is refused, if the handler reads no more",
-          "[server]") {
+TEST_CASE(
+    "serve_connection: what is at fault after a good piece is refused, if the handler reads no more", "[server]"
+) {
   auto const router = make_router();
   auto [client, server] = io::make_memory_stream_pair();
 
   // It reads a piece, and answers: the rest of what came with that piece is no HTTP.
   auto const outcome = quoll::test::run(quoll::async::when_all(
       quoll::http::server{router}.serve_connection(std::move(server)),
-      send_in_two(std::move(client), "POST /first HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
-                  "4\r\nping\r\nZ\r\n")));
+      send_in_two(
+          std::move(client), "POST /first HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
+          "4\r\nping\r\nZ\r\n"
+      )
+  ));
 
   REQUIRE(outcome);
   REQUIRE(std::get<1>(*outcome).status == http::status::bad_request);
@@ -2199,8 +2281,10 @@ namespace {
 
 // `body` a part at a time, one `pace` apart, as a POST to `target` of the length it says, or of more if `whole` is
 // false: what the server answered, up to its end.
-task<std::string> send_in_parts(io::memory_stream client, std::string target, std::size_t size, std::size_t part,
-                                std::chrono::nanoseconds pace, bool whole = true) {
+task<std::string> send_in_parts(
+    io::memory_stream client, std::string target, std::size_t size, std::size_t part, std::chrono::nanoseconds pace,
+    bool whole = true
+) {
   auto const head = "POST " + target +
                     " HTTP/1.1\r\nHost: h\r\nContent-Length: " + std::to_string(whole ? size : size * 2) + "\r\n\r\n";
   auto const [received, sent] = co_await quoll::async::when_all(read_until_closed(client), [&]() -> task<> {
@@ -2334,8 +2418,10 @@ paced_outcome paced_session(virtual_time &time, connection_options options, Make
 // A peer that takes what is written `part` bytes at a time, one a second.
 class slow_reader {
 public:
-  slow_reader(io::memory_stream inner, std::size_t part, std::size_t &taken, std::chrono::nanoseconds pause = 1s,
-              std::chrono::nanoseconds stall = {}, int every = 0) noexcept
+  slow_reader(
+      io::memory_stream inner, std::size_t part, std::size_t &taken, std::chrono::nanoseconds pause = 1s,
+      std::chrono::nanoseconds stall = {}, int every = 0
+  ) noexcept
       : inner_(std::move(inner)), part_(part), taken_(&taken), pause_(pause), stall_(stall), every_(every) {}
 
   [[nodiscard]] auto read_some(std::span<std::byte> buffer) { return inner_.read_some(buffer); }
@@ -2378,8 +2464,9 @@ written written_to_a_slow_reader(connection_options const &options, std::string 
 
   auto const answer = [&]() -> task<int> {
     (void)co_await io::write(client, std::as_bytes(std::span{raw}));
-    co_await quoll::http::server{router, {.connection = options}}.serve_connection(
-        slow_reader{std::move(server), 2000, out.taken});
+    co_await quoll::http::server{
+        router, {.connection = options}
+    }.serve_connection(slow_reader{std::move(server), 2000, out.taken});
     co_return 1;
   };
 
@@ -2401,8 +2488,9 @@ TEST_CASE("serve_connection: a request has as long as it keeps coming at the min
   SECTION("above it, far past the timeout") {
     virtual_time time;
 
-    auto const got = paced_session(
-        time, options, [&](auto client) { return send_in_parts(std::move(client), target, 20000, 2000, 1s); });
+    auto const got = paced_session(time, options, [&](auto client) {
+      return send_in_parts(std::move(client), target, 20000, 2000, 1s);
+    });
 
     REQUIRE(got.received.starts_with("HTTP/1.1 200"));
     REQUIRE(got.ended >= 9s);
@@ -2411,8 +2499,9 @@ TEST_CASE("serve_connection: a request has as long as it keeps coming at the min
   SECTION("below it, it runs out of time, whichever way the body is read") {
     virtual_time time;
 
-    auto const got = paced_session(
-        time, options, [&](auto client) { return send_in_parts(std::move(client), target, 20000, 100, 1s); });
+    auto const got = paced_session(time, options, [&](auto client) {
+      return send_in_parts(std::move(client), target, 20000, 100, 1s);
+    });
 
     REQUIRE(got.received.starts_with("HTTP/1.1 408"));
     REQUIRE(got.ended >= 3s);
@@ -2422,8 +2511,9 @@ TEST_CASE("serve_connection: a request has as long as it keeps coming at the min
   SECTION("a silence ends it within the timeout, whatever came before it") {
     virtual_time time;
 
-    auto const got = paced_session(
-        time, options, [&](auto client) { return send_in_parts(std::move(client), target, 20000, 20000, 1h, false); });
+    auto const got = paced_session(time, options, [&](auto client) {
+      return send_in_parts(std::move(client), target, 20000, 20000, 1h, false);
+    });
 
     REQUIRE(got.received.starts_with("HTTP/1.1 408"));
     REQUIRE(got.ended == 3s);
@@ -2439,8 +2529,9 @@ TEST_CASE("serve_connection: what came in several bursts does not pay for a sile
   options.min_read_rate = 1000;
 
   // Each part earns less than the timeout, and more than any of them does together.
-  auto const got = paced_session(
-      time, options, [&](auto client) { return send_in_parts(std::move(client), target, 10000, 2000, 1ms, false); });
+  auto const got = paced_session(time, options, [&](auto client) {
+    return send_in_parts(std::move(client), target, 10000, 2000, 1ms, false);
+  });
 
   REQUIRE(got.received.starts_with("HTTP/1.1 408"));
   REQUIRE(got.ended >= 3s);
@@ -2454,23 +2545,26 @@ TEST_CASE("serve_connection: with no minimum rate, a request has its read timeou
   options.read_timeout = 3s;
   options.min_read_rate = 0;
 
-  auto const got = paced_session(
-      time, options, [&](auto client) { return send_in_parts(std::move(client), "/echo", 20000, 2000, 1s); });
+  auto const got = paced_session(time, options, [&](auto client) {
+    return send_in_parts(std::move(client), "/echo", 20000, 2000, 1s);
+  });
 
   REQUIRE(got.received.starts_with("HTTP/1.1 408"));
   REQUIRE(got.ended == 3s);
 }
 
-TEST_CASE("serve_connection: the time a handler takes between two reads does not count against its peer",
-          "[server][timer]") {
+TEST_CASE(
+    "serve_connection: the time a handler takes between two reads does not count against its peer", "[server][timer]"
+) {
   virtual_time time;
   connection_options options;
 
   options.read_timeout = 3s;
   options.min_read_rate = 1000;
 
-  auto const got = paced_session(
-      time, options, [&](auto client) { return send_in_parts(std::move(client), "/thinking", 4000, 2000, 11s); });
+  auto const got = paced_session(time, options, [&](auto client) {
+    return send_in_parts(std::move(client), "/thinking", 4000, 2000, 11s);
+  });
 
   REQUIRE(got.received.starts_with("HTTP/1.1 200"));
   REQUIRE(got.ended >= 10s);
@@ -2523,8 +2617,10 @@ TEST_CASE("serve_connection: with no minimum rate, a response has its write time
   }
 }
 
-TEST_CASE("serve_connection: the time a body_writer takes between two writes does not count against its peer",
-          "[server][timer]") {
+TEST_CASE(
+    "serve_connection: the time a body_writer takes between two writes does not count against its peer",
+    "[server][timer]"
+) {
   connection_options options;
 
   options.write_timeout = 3s;
@@ -2581,8 +2677,9 @@ TEST_CASE("serve_connection: each response of a connection has all of its time",
 
   auto const answer = [&]() -> task<int> {
     (void)co_await io::write(client, std::as_bytes(std::span{raw}));
-    co_await quoll::http::server{router, {.connection = options}}.serve_connection(
-        slow_reader{std::move(server), 2000, taken});
+    co_await quoll::http::server{
+        router, {.connection = options}
+    }.serve_connection(slow_reader{std::move(server), 2000, taken});
     co_return 1;
   };
 
@@ -2597,8 +2694,9 @@ TEST_CASE("serve_connection: a timeout near all that nanoseconds can hold is one
   options.read_timeout = std::chrono::nanoseconds::max();
   options.min_read_rate = 1000;
 
-  auto const got = paced_session(
-      time, options, [&](auto client) { return send_in_parts(std::move(client), "/pieces", 20000, 2000, 1ms); });
+  auto const got = paced_session(time, options, [&](auto client) {
+    return send_in_parts(std::move(client), "/pieces", 20000, 2000, 1ms);
+  });
 
   REQUIRE(got.received.starts_with("HTTP/1.1 200"));
 }
@@ -2721,8 +2819,9 @@ TEST_CASE("serve_connection: a head has its read timeout as a whole, whatever th
   options.min_read_rate = 1;
 
   auto const got = paced_session(time, options, [](io::memory_stream client) {
-    return trickle(std::move(client),
-                   "GET /hello HTTP/1.1\r\nX-Slowly: " + std::string(std::size_t{100}, 'a') + "\r\n\r\n", 1s);
+    return trickle(
+        std::move(client), "GET /hello HTTP/1.1\r\nX-Slowly: " + std::string(std::size_t{100}, 'a') + "\r\n\r\n", 1s
+    );
   });
 
   REQUIRE(got.received.starts_with("HTTP/1.1 408"));
@@ -2744,8 +2843,9 @@ TEST_CASE("serve_connection: a long stream of small writes to a peer that takes 
 
   auto const answer = [&]() -> task<int> {
     (void)co_await io::write(client, std::as_bytes(std::span{raw}));
-    co_await quoll::http::server{router, {.connection = options}}.serve_connection(
-        slow_reader{std::move(server), 2000, taken, 5ms});
+    co_await quoll::http::server{
+        router, {.connection = options}
+    }.serve_connection(slow_reader{std::move(server), 2000, taken, 5ms});
     co_return 1;
   };
 
@@ -2785,8 +2885,9 @@ TEST_CASE("serve_connection: 100 Continue gives a body all of the time again, at
   REQUIRE(got.received.find("HTTP/1.1 200") != std::string::npos);
 }
 
-TEST_CASE("serve_connection: a stall of the loop or of a peer is forgiven by the writes it takes at once",
-          "[server][timer]") {
+TEST_CASE(
+    "serve_connection: a stall of the loop or of a peer is forgiven by the writes it takes at once", "[server][timer]"
+) {
   virtual_time time;
   auto const router = make_paced_router();
   auto [client, server] = io::make_memory_stream_pair();
@@ -2801,8 +2902,9 @@ TEST_CASE("serve_connection: a stall of the loop or of a peer is forgiven by the
 
   auto const answer = [&]() -> task<int> {
     (void)co_await io::write(client, std::as_bytes(std::span{raw}));
-    co_await quoll::http::server{router, {.connection = options}}.serve_connection(
-        slow_reader{std::move(server), 2000, taken, 1ms, 2500ms, 500});
+    co_await quoll::http::server{
+        router, {.connection = options}
+    }.serve_connection(slow_reader{std::move(server), 2000, taken, 1ms, 2500ms, 500});
     co_return 1;
   };
 
@@ -2810,8 +2912,10 @@ TEST_CASE("serve_connection: a stall of the loop or of a peer is forgiven by the
   REQUIRE(taken > std::size_t{2000} * 20);
 }
 
-TEST_CASE("serve_connection: the body of a request earns from its first byte, after another on a connection",
-          "[server][timer]") {
+TEST_CASE(
+    "serve_connection: the body of a request earns from its first byte, after another on a connection",
+    "[server][timer]"
+) {
   auto const target = GENERATE(std::string{"/echo"}, std::string{"/pieces"});
   virtual_time time;
   connection_options options;
@@ -2874,11 +2978,12 @@ TEST_CASE("serve_connection: what a stop throws through a handler is no failure 
 
   auto const serving = [&](io::memory_stream stream) -> task<> {
     static_cast<void>(co_await quoll::async::detail::owned_chain<void>{
-        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stop.get_token()});
+        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stop.get_token()
+    });
   };
 
-  static_cast<void>(
-      quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peer(std::move(client)))));
+  static_cast<void>(quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peer(std::move(client))))
+  );
 
   REQUIRE(reported == 0);
 }
@@ -2910,11 +3015,12 @@ TEST_CASE("serve_connection: what goes wrong during a stop is still told", "[ser
 
   auto const serving = [&](io::memory_stream stream) -> task<> {
     static_cast<void>(co_await quoll::async::detail::owned_chain<void>{
-        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stop.get_token()});
+        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stop.get_token()
+    });
   };
 
-  static_cast<void>(
-      quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peer(std::move(client)))));
+  static_cast<void>(quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peer(std::move(client))))
+  );
 
   REQUIRE(reported == 1);
 }
@@ -2951,11 +3057,12 @@ TEST_CASE("serve_connection: what goes wrong in a body_writer during a stop is s
 
   auto const serving = [&](io::memory_stream stream) -> task<> {
     static_cast<void>(co_await quoll::async::detail::owned_chain<void>{
-        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stop.get_token()});
+        quoll::http::server{router, {.connection = options}}.serve_connection(std::move(stream)), stop.get_token()
+    });
   };
 
-  static_cast<void>(
-      quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peer(std::move(client)))));
+  static_cast<void>(quoll::test::run(time, quoll::async::when_all(serving(std::move(server)), peer(std::move(client))))
+  );
 
   REQUIRE(reported == 1);
 }
@@ -2993,8 +3100,9 @@ TEST_CASE("http::server: its tasks need neither the router it was given nor the 
 
     router.get("/fails", []() -> http::response { throw std::runtime_error{"on purpose"}; });
 
-    return http::server{router, {.connection = {.on_handler_error = [&told](std::exception_ptr) { told = true; }}}}
-        .serve_connection(std::move(stream));
+    return http::server{
+        router, {.connection = {.on_handler_error = [&told](std::exception_ptr) { told = true; }}}
+    }.serve_connection(std::move(stream));
   };
 
   auto const answer = answer_to("/fails", start);
@@ -3129,11 +3237,13 @@ TEST_CASE("serve_connection: a length with no body answers 500, and the connecti
   http::server const server{router};
   auto const start = [&server](io::memory_stream stream) { return server.serve_connection(std::move(stream)); };
 
-  auto const answer = answer_to_raw("GET /short HTTP/1.1\r\nHost: x\r\n\r\n"
-                                    "GET /modified HTTP/1.1\r\nHost: x\r\n\r\n"
-                                    "HEAD /short HTTP/1.1\r\nHost: x\r\n\r\n"
-                                    "GET /next HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
-                                    start);
+  auto const answer = answer_to_raw(
+      "GET /short HTTP/1.1\r\nHost: x\r\n\r\n"
+      "GET /modified HTTP/1.1\r\nHost: x\r\n\r\n"
+      "HEAD /short HTTP/1.1\r\nHost: x\r\n\r\n"
+      "GET /next HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+      start
+  );
 
   auto const failed = answer.find("HTTP/1.1 500");
   auto const modified = answer.find("HTTP/1.1 304", failed);
@@ -3229,7 +3339,8 @@ TEST_CASE("serve_connection: what would mislead its peer goes as a handler's mis
 
   SECTION("a length of zero is no missing body, and an invalid one still answers 500") {
     auto const answer = answer_to_raw(
-        get("/empty") + get("/invalid") + "GET /next HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", start);
+        get("/empty") + get("/invalid") + "GET /next HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", start
+    );
 
     REQUIRE(answer.starts_with("HTTP/1.1 200"));
     REQUIRE(answer.find("HTTP/1.1 500") != std::string::npos);
@@ -3282,10 +3393,11 @@ TEST_CASE("serve_connection: Host as RFC 9112 says, or 400", "[server]") {
       co_return co_await read_until_closed(to);
     };
 
-    return std::get<1>(
-        quoll::test::run(quoll::async::when_all(quoll::http::server{router}.serve_connection(std::move(server)),
-                                                peer(std::move(client), std::move(sent))))
-            .value());
+    return std::get<1>(quoll::test::run(quoll::async::when_all(
+                                            quoll::http::server{router}.serve_connection(std::move(server)),
+                                            peer(std::move(client), std::move(sent))
+                                        ))
+                           .value());
   };
 
   REQUIRE(answer_to("GET / HTTP/1.1\r\nConnection: close\r\n\r\n").starts_with("HTTP/1.1 400"));

@@ -100,9 +100,10 @@ int open_beneath(std::filesystem::path const &root, std::filesystem::path const 
   for (auto component = relative.begin(); component != relative.end(); ++component) {
     // Only the last may be anything but a directory.
     auto const last = std::next(component) == relative.end();
-    auto const next =
-        ::openat(current, component->c_str(),
-                 O_CLOEXEC | O_NOFOLLOW | (last ? O_RDONLY | O_NONBLOCK | O_NOCTTY : search_only | O_DIRECTORY));
+    auto const next = ::openat(
+        current, component->c_str(),
+        O_CLOEXEC | O_NOFOLLOW | (last ? O_RDONLY | O_NONBLOCK | O_NOCTTY : search_only | O_DIRECTORY)
+    );
     auto const failure = errno;
 
     ::close(current);
@@ -403,10 +404,11 @@ struct looked_up {
 
   ::gmtime_r(&time, &parts);
 
-  auto const size = std::snprintf(text.data(), text.size(), "%s, %02d %s %04d %02d:%02d:%02d GMT",
-                                  days.at(static_cast<std::size_t>(parts.tm_wday)), parts.tm_mday,
-                                  months.at(static_cast<std::size_t>(parts.tm_mon)), parts.tm_year + 1900,
-                                  parts.tm_hour, parts.tm_min, parts.tm_sec);
+  auto const size = std::snprintf(
+      text.data(), text.size(), "%s, %02d %s %04d %02d:%02d:%02d GMT", days.at(static_cast<std::size_t>(parts.tm_wday)),
+      parts.tm_mday, months.at(static_cast<std::size_t>(parts.tm_mon)), parts.tm_year + 1900, parts.tm_hour,
+      parts.tm_min, parts.tm_sec
+  );
 
   return std::string(text.data(), static_cast<std::size_t>(size));
 }
@@ -481,7 +483,8 @@ struct date_parts {
 
     return year ? time_of(
                       {text.substr(0, 3), text.substr(5, 2), text.substr(8, 3), text.substr(12, 4), text.substr(17, 8)},
-                      *year)
+                      *year
+                  )
                 : std::nullopt;
   }
 
@@ -491,7 +494,8 @@ struct date_parts {
 
     return year ? time_of(
                       {text.substr(0, 3), text.substr(8, 2), text.substr(4, 3), text.substr(20, 4), text.substr(11, 8)},
-                      *year)
+                      *year
+                  )
                 : std::nullopt;
   }
 
@@ -527,8 +531,9 @@ struct date_parts {
     year -= 100;
   }
 
-  return time_of({text.substr(0, comma), rest.substr(0, 2), rest.substr(3, 3), rest.substr(7, 2), rest.substr(10, 8)},
-                 year);
+  return time_of(
+      {text.substr(0, comma), rest.substr(0, 2), rest.substr(3, 3), rest.substr(7, 2), rest.substr(10, 8)}, year
+  );
 }
 
 // RFC 9110, 13.1.2: the weak comparison, over a list, or `*`.
@@ -797,15 +802,17 @@ void forget_its_content(http::response &answer) {
   answer.body_writer = nullptr;
   answer.late_head_writer = nullptr;
 
-  for (auto const name : {"Content-Type", "Content-Length", "Content-Encoding", "Content-Range", "Content-Language",
-                          "Content-Disposition", "Content-Location", "Transfer-Encoding", "Trailer"}) {
+  for (auto const name :
+       {"Content-Type", "Content-Length", "Content-Encoding", "Content-Range", "Content-Language",
+        "Content-Disposition", "Content-Location", "Transfer-Encoding", "Trailer"}) {
     answer.fields.erase(name);
   }
 }
 
 // The response for `found`, on what the routes answered.
-[[nodiscard]] http::response answer_with(http::response answer, found_file found, fs::path const &name,
-                                         conditions const &asked, served const &state) {
+[[nodiscard]] http::response answer_with(
+    http::response answer, found_file found, fs::path const &name, conditions const &asked, served const &state
+) {
   // RFC 9110, 8.8.2: never in the future, from where it would answer 304 to every later version of the file.
   found.modified = std::min(found.modified, std::time(nullptr));
 
@@ -843,9 +850,10 @@ void forget_its_content(http::response &answer) {
 
   if (outcome == range_outcome::part) {
     answer.status = http::status::partial_content;
-    answer.fields.set("Content-Range", "bytes " + std::to_string(range.first) + "-" +
-                                           std::to_string(range.first + range.length - 1) + "/" +
-                                           std::to_string(found.size));
+    answer.fields.set(
+        "Content-Range", "bytes " + std::to_string(range.first) + "-" + std::to_string(range.first + range.length - 1) +
+                             "/" + std::to_string(found.size)
+    );
   } else {
     answer.status = http::status::ok;
   }
@@ -902,12 +910,14 @@ async::task<http::response> serve_file(std::shared_ptr<served const> state, http
 
   // Range is only for a GET: RFC 9110, 14.2.
   auto const is_get = message.method == http::verb::get;
-  conditions const asked{copy_of(message.fields, "If-Match"),
-                         copy_of(message.fields, "If-Unmodified-Since"),
-                         copy_of(message.fields, "If-None-Match"),
-                         copy_of(message.fields, "If-Modified-Since"),
-                         is_get ? copy_of(message.fields, "Range") : std::nullopt,
-                         is_get ? copy_of(message.fields, "If-Range") : std::nullopt};
+  conditions const asked{
+      copy_of(message.fields, "If-Match"),
+      copy_of(message.fields, "If-Unmodified-Since"),
+      copy_of(message.fields, "If-None-Match"),
+      copy_of(message.fields, "If-Modified-Since"),
+      is_get ? copy_of(message.fields, "Range") : std::nullopt,
+      is_get ? copy_of(message.fields, "If-Range") : std::nullopt
+  };
   auto const question = message.target.find('?');
   auto const query = question == std::string::npos ? std::string{} : message.target.substr(question);
   auto answer = co_await next(std::move(message));

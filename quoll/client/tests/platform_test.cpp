@@ -114,12 +114,14 @@ struct canned_platform {
       co_await async::sleep_for(1h);
     }
 
-    co_return http::streamed_response{http::status::ok,
-                                      reason,
-                                      http::version::http_1_1,
-                                      fields,
-                                      http::response_body{std::make_shared<canned_body>(pieces, &gone)},
-                                      std::make_shared<http::fields const>()};
+    co_return http::streamed_response{
+        http::status::ok,
+        reason,
+        http::version::http_1_1,
+        fields,
+        http::response_body{std::make_shared<canned_body>(pieces, &gone)},
+        std::make_shared<http::fields const>()
+    };
   }
 };
 
@@ -154,9 +156,12 @@ T run_on(canned_platform const &platform, task<T> work) {
   std::optional<T> result;
   std::exception_ptr failure;
 
-  async::co_spawn(platform_executor{time, platform}, std::move(work),
-                  quoll::test::overloaded{[&](T value) { result = std::move(value); },
-                                          [&](std::exception_ptr thrown) { failure = std::move(thrown); }});
+  async::co_spawn(
+      platform_executor{time, platform}, std::move(work),
+      quoll::test::overloaded{
+          [&](T value) { result = std::move(value); }, [&](std::exception_ptr thrown) { failure = std::move(thrown); }
+      }
+  );
   time.run();
 
   if (failure) {
@@ -240,8 +245,9 @@ TEST_CASE("platform: a request is refused as a connection would, before any task
   REQUIRE_THROWS_AS((void)backend.operations->send(backend.state, get_of("no-slash")), std::invalid_argument);
   REQUIRE_THROWS_AS((void)backend.operations->send(backend.state, get_of("/with a space")), std::invalid_argument);
   REQUIRE_THROWS_AS((void)backend.operations->send(backend.state, std::move(split)), std::invalid_argument);
-  REQUIRE_THROWS_AS((void)backend.operations->send(backend.state, get_of(std::string{"/a\0b", 4})),
-                    std::invalid_argument);
+  REQUIRE_THROWS_AS(
+      (void)backend.operations->send(backend.state, get_of(std::string{"/a\0b", 4})), std::invalid_argument
+  );
 }
 
 TEST_CASE("platform: a whole body comes in pieces, with its head", "[client]") {
@@ -267,8 +273,9 @@ TEST_CASE("platform: a whole body past its limit lets the fetch go", "[client]")
 
   auto const backend = http::detail::make_platform_backend("", {.limits = {.max_body_size = 5}});
 
-  REQUIRE(code_of([&] { (void)run_on(platform, backend.operations->send(backend.state, get_of("/"))); }) ==
-          http::error::body_too_large);
+  REQUIRE(code_of([&] {
+            (void)run_on(platform, backend.operations->send(backend.state, get_of("/")));
+          }) == http::error::body_too_large);
   REQUIRE(platform.gone);
 }
 
@@ -348,9 +355,12 @@ TEST_CASE("platform: an executor that does not offer one is refused", "[client]"
   async::run_loop loop;
   std::exception_ptr failure;
 
-  async::co_spawn(loop.get_executor(), backend.operations->send(backend.state, get_of("/")),
-                  quoll::test::overloaded{[](http::response const &) {},
-                                          [&](std::exception_ptr thrown) { failure = std::move(thrown); }});
+  async::co_spawn(
+      loop.get_executor(), backend.operations->send(backend.state, get_of("/")),
+      quoll::test::overloaded{
+          [](http::response const &) {}, [&](std::exception_ptr thrown) { failure = std::move(thrown); }
+      }
+  );
   loop.run();
 
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::logic_error);
@@ -408,8 +418,9 @@ TEST_CASE("platform: a response that does not come times out", "[client][timer]"
     co_return 1;
   };
 
-  REQUIRE(code_of([&] { (void)run_on(platform, backend.operations->send(backend.state, get_of("/"))); }) ==
-          std::errc::timed_out);
+  REQUIRE(code_of([&] {
+            (void)run_on(platform, backend.operations->send(backend.state, get_of("/")));
+          }) == std::errc::timed_out);
   REQUIRE(code_of([&] { (void)run_on(platform, open()); }) == std::errc::timed_out);
 }
 
@@ -422,8 +433,9 @@ TEST_CASE("platform: a whole body that stops coming times out, and lets the fetc
 
   auto const backend = http::detail::make_platform_backend("", {.response_timeout = 5s});
 
-  REQUIRE(code_of([&] { (void)run_on(platform, backend.operations->send(backend.state, get_of("/"))); }) ==
-          std::errc::timed_out);
+  REQUIRE(code_of([&] {
+            (void)run_on(platform, backend.operations->send(backend.state, get_of("/")));
+          }) == std::errc::timed_out);
   REQUIRE(platform.gone);
 }
 

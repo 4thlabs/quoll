@@ -83,14 +83,17 @@ inline constexpr context_table context_table_of{
  */
 template <class T>
 [[nodiscard]] constexpr context_spec provide() noexcept {
-  static_assert(std::is_aggregate_v<T> && !std::is_const_v<T>,
-                "quoll::ui: a context is an aggregate, as a component: public members and no constructor");
+  static_assert(
+      std::is_aggregate_v<T> && !std::is_const_v<T>,
+      "quoll::ui: a context is an aggregate, as a component: public members and no constructor"
+  );
   static_assert(!std::is_same_v<T, router>, "quoll::ui: an app's router is made by routing(), with its routes");
   static_assert(
       !MountedComponent<T> && !UnmountedComponent<T> && !ComponentWithProps<T> &&
           !requires(T &context) { context.view(); },
       "quoll::ui: a context has no view, mounted() nor unmounted(), which would never run: its effects do "
-      "what a component's mounted() would");
+      "what a component's mounted() would"
+  );
 
   return context_spec{detail::context_table_of<T>};
 }

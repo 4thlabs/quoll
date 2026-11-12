@@ -172,8 +172,9 @@ TEST_CASE("form_state: its fields show the value of the props, and what is typed
   CHECK_FALSE(shown.html().contains("not numbers"));
 }
 
-TEST_CASE("form_state: a field typed wrong is kept as typed, the form not valid, a click with it refused",
-          "[ui][form]") {
+TEST_CASE(
+    "form_state: a field typed wrong is kept as typed, the form not valid, a click with it refused", "[ui][form]"
+) {
   sent = {};
 
   virtual_time time;
@@ -218,8 +219,9 @@ TEST_CASE("form_state: a field typed wrong is kept as typed, the form not valid,
   CHECK_FALSE(shown.html().contains("not numbers"));
 }
 
-TEST_CASE("form_state: saved, a field holding what came back is typed in no more, one typed meanwhile stays",
-          "[ui][form]") {
+TEST_CASE(
+    "form_state: saved, a field holding what came back is typed in no more, one typed meanwhile stays", "[ui][form]"
+) {
   sent = {};
 
   virtual_time time;
@@ -361,8 +363,9 @@ struct plain_page {
 
 } // namespace
 
-TEST_CASE("form_state: what is typed stays as typed while it reads as the value shown, as 2.50 for a 2.5",
-          "[ui][form]") {
+TEST_CASE(
+    "form_state: what is typed stays as typed while it reads as the value shown, as 2.50 for a 2.5", "[ui][form]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app<plain_page> instance{time.get_executor(), shown};

@@ -81,8 +81,8 @@ namespace quoll::http {
  * drawn, as each send may later for its mask.
  */
 template <io::Connector Connector>
-[[nodiscard]] async::task<connected_websocket> connect_websocket(Connector connector, std::string_view url,
-                                                                 websocket_connect_options options = {}) {
+[[nodiscard]] async::task<connected_websocket>
+connect_websocket(Connector connector, std::string_view url, websocket_connect_options options = {}) {
   auto where = detail::parse_websocket_url(url);
 
   if (where.server.secure && !io::TlsConnector<Connector>) {
@@ -92,8 +92,10 @@ template <io::Connector Connector>
   // Before any connection: what would not serialize is refused here.
   auto handshake = detail::prepare_websocket_handshake(where, std::move(options.fields));
 
-  return detail::connect_websocket_through(detail::make_connector_handle(std::move(connector)), std::move(where.server),
-                                           std::move(handshake), std::move(options));
+  return detail::connect_websocket_through(
+      detail::make_connector_handle(std::move(connector)), std::move(where.server), std::move(handshake),
+      std::move(options)
+  );
 }
 
 /**
@@ -101,8 +103,8 @@ template <io::Connector Connector>
  * quoll::runtime provides it natively. In a browser, which offers no network, it throws std::logic_error as it
  * connects: a browser's WebSocket is not there yet.
  */
-[[nodiscard]] async::task<connected_websocket> connect_websocket(std::string_view url,
-                                                                 websocket_connect_options options = {});
+[[nodiscard]] async::task<connected_websocket>
+connect_websocket(std::string_view url, websocket_connect_options options = {});
 
 } // namespace quoll::http
 

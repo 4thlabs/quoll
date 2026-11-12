@@ -471,8 +471,9 @@ struct using_and_providing_root {
 
 } // namespace
 
-TEST_CASE("context: its effects start after the app's first view, and its components show what it holds",
-          "[ui][context]") {
+TEST_CASE(
+    "context: its effects start after the app's first view, and its components show what it holds", "[ui][context]"
+) {
   lines.clear();
 
   virtual_time time;
@@ -492,8 +493,9 @@ TEST_CASE("context: its effects start after the app's first view, and its compon
   CHECK(lines == std::vector<std::string>{"loaded"});
 }
 
-TEST_CASE("context: a change of its states shows again a component using it, whose own states did not change",
-          "[ui][context]") {
+TEST_CASE(
+    "context: a change of its states shows again a component using it, whose own states did not change", "[ui][context]"
+) {
   lines.clear();
 
   virtual_time time;
@@ -510,8 +512,9 @@ TEST_CASE("context: a change of its states shows again a component using it, who
   CHECK(shown.html().contains("<p>tea;coffee;mate;</p>"));
 }
 
-TEST_CASE("context: run() gives what the context's work gave, and the work goes on as its caller goes",
-          "[ui][context]") {
+TEST_CASE(
+    "context: run() gives what the context's work gave, and the work goes on as its caller goes", "[ui][context]"
+) {
   lines.clear();
 
   virtual_time time;
@@ -540,8 +543,12 @@ TEST_CASE("context: run() gives what the context's work gave, and the work goes 
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(given.contains("<p>renamer green tea</p>"));
-  CHECK(lines == std::vector<std::string>{"loaded", "rename green tea", "renamed green tea", "rename green tea",
-                                          "renamed green tea"});
+  CHECK(
+      lines ==
+      std::vector<std::string>{
+          "loaded", "rename green tea", "renamed green tea", "rename green tea", "renamed green tea"
+      }
+  );
   CHECK(shown.html().contains("<p>green tea;coffee;</p>"));
   CHECK_FALSE(shown.html().contains("renamer"));
 }
@@ -570,17 +577,19 @@ TEST_CASE("context: what its work throws once its caller went goes to on_error",
   virtual_time time;
   memory_renderer const shown;
   std::vector<std::string> failures;
-  test_app<failing_page> instance{time.get_executor(),
-                                  shown,
-                                  {.on_error =
-                                       [&failures](std::exception_ptr failure) {
-                                         try {
-                                           std::rethrow_exception(failure);
-                                         } catch (std::exception const &error) {
-                                           failures.emplace_back(error.what());
-                                         }
-                                       },
-                                   .contexts = {provide<names>()}}};
+  test_app<failing_page> instance{
+      time.get_executor(),
+      shown,
+      {.on_error =
+           [&failures](std::exception_ptr failure) {
+             try {
+               std::rethrow_exception(failure);
+             } catch (std::exception const &error) {
+               failures.emplace_back(error.what());
+             }
+           },
+       .contexts = {provide<names>()}}
+  };
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -622,7 +631,8 @@ TEST_CASE("context: two of one type are refused", "[ui][context]") {
 
   CHECK_THROWS_AS(
       (test_app<names_page>{time.get_executor(), shown, {.contexts = {provide<names>(), provide<names>()}}}),
-      std::logic_error);
+      std::logic_error
+  );
 }
 
 TEST_CASE("context: one may use another given before it, whose changes show where it is read", "[ui][context]") {
@@ -631,7 +641,8 @@ TEST_CASE("context: one may use another given before it, whose changes show wher
   virtual_time time;
   memory_renderer const shown;
   test_app<greeting_child_page> instance{
-      time.get_executor(), shown, {.contexts = {provide<names>(), provide<greeting>()}}};
+      time.get_executor(), shown, {.contexts = {provide<names>(), provide<greeting>()}}
+  };
   std::string before;
 
   auto const act = [&]() -> task<> {
@@ -651,7 +662,8 @@ TEST_CASE("context: one using another given after it is refused, so that none us
 
   CHECK_THROWS_AS(
       (test_app<greeter_page>{time.get_executor(), shown, {.contexts = {provide<greeting>(), provide<names>()}}}),
-      std::logic_error);
+      std::logic_error
+  );
 }
 
 TEST_CASE("context: a component a view written once shows, with no app, cannot use one", "[ui][context]") {
@@ -665,7 +677,8 @@ TEST_CASE("context: one using another goes before it, which it may still read", 
     virtual_time time;
     memory_renderer const shown;
     test_app<greeter_page> instance{
-        time.get_executor(), shown, {.contexts = {provide<names>(), provide<greeting>(), provide<last_word>()}}};
+        time.get_executor(), shown, {.contexts = {provide<names>(), provide<greeting>(), provide<last_word>()}}
+    };
 
     auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
 
@@ -684,14 +697,16 @@ TEST_CASE("context: the contexts go the last given first, telling their app of n
 
     // Never started: what the second writes to the first as it goes reaches no app.
     test_app<counting_page> instance{
-        time.get_executor(), shown, {.contexts = {provide<first_gone>(), provide<second_gone>()}}};
+        time.get_executor(), shown, {.contexts = {provide<first_gone>(), provide<second_gone>()}}
+    };
   }
 
   CHECK(lines == std::vector<std::string>{"second gone", "first gone"});
 }
 
-TEST_CASE("context: a component that only runs on its context does not show again as the context changes",
-          "[ui][context]") {
+TEST_CASE(
+    "context: a component that only runs on its context does not show again as the context changes", "[ui][context]"
+) {
   lines.clear();
   runner_views = 0;
 
@@ -725,8 +740,9 @@ TEST_CASE("context: run() once its app stopped runs nothing, and ends its caller
     instance.start();
     co_await instance.stop();
 
-    auto const given = co_await quoll::async::stopped_as_optional(
-        instance.component().data.run(&names::rename, 0, std::string{"late"}));
+    auto const given =
+        co_await quoll::async::stopped_as_optional(instance.component().data.run(&names::rename, 0, std::string{"late"})
+        );
 
     co_return given ? 1 : 0;
   };
@@ -736,26 +752,34 @@ TEST_CASE("context: run() once its app stopped runs nothing, and ends its caller
   CHECK(std::get<0>(*std::as_const(instance).context<names>().all).empty());
 }
 
-TEST_CASE("context: one that cannot find those it uses fails the app's making, never made, and tells it of nothing",
-          "[ui][context]") {
+TEST_CASE(
+    "context: one that cannot find those it uses fails the app's making, never made, and tells it of nothing",
+    "[ui][context]"
+) {
   lines.clear();
 
   virtual_time time;
   memory_renderer const shown;
   int posts = 0;
 
-  CHECK_THROWS_AS((test_app<counting_page>{counting_executor{time.get_executor(), &posts},
-                                           shown,
-                                           {.contexts = {provide<first_gone>(), provide<broken_user>()}}}),
-                  std::logic_error);
+  CHECK_THROWS_AS(
+      (test_app<counting_page>{
+          counting_executor{time.get_executor(), &posts},
+          shown,
+          {.contexts = {provide<first_gone>(), provide<broken_user>()}}
+      }),
+      std::logic_error
+  );
 
   // The broken one never made, the app, half made, was asked for no render.
   CHECK(posts == 0);
   CHECK(lines == std::vector<std::string>{"first gone"});
 }
 
-TEST_CASE("context: the app's own component missing one fails its making, never made, and tells it of nothing",
-          "[ui][context]") {
+TEST_CASE(
+    "context: the app's own component missing one fails its making, never made, and tells it of nothing",
+    "[ui][context]"
+) {
   lines.clear();
 
   virtual_time time;
@@ -763,9 +787,12 @@ TEST_CASE("context: the app's own component missing one fails its making, never 
   int posts = 0;
 
   // Its context not found: it is never made, and the app, half made, hears of nothing.
-  CHECK_THROWS_AS((test_app<broken_component>{
-                      counting_executor{time.get_executor(), &posts}, shown, {.contexts = {provide<first_gone>()}}}),
-                  std::logic_error);
+  CHECK_THROWS_AS(
+      (test_app<broken_component>{
+          counting_executor{time.get_executor(), &posts}, shown, {.contexts = {provide<first_gone>()}}
+      }),
+      std::logic_error
+  );
   CHECK(posts == 0);
   CHECK(lines == std::vector<std::string>{"first gone"});
 }
@@ -794,8 +821,9 @@ TEST_CASE("context: a component of a view missing one is refused before it is ma
   CHECK(lines.empty());
 }
 
-TEST_CASE("context: what a component writes to one as its app goes, never started, asks for no render",
-          "[ui][context]") {
+TEST_CASE(
+    "context: what a component writes to one as its app goes, never started, asks for no render", "[ui][context]"
+) {
   lines.clear();
 
   virtual_time time;
@@ -804,7 +832,8 @@ TEST_CASE("context: what a component writes to one as its app goes, never starte
 
   {
     test_app<leaving_page> instance{
-        counting_executor{time.get_executor(), &posts}, shown, {.contexts = {provide<first_gone>()}}};
+        counting_executor{time.get_executor(), &posts}, shown, {.contexts = {provide<first_gone>()}}
+    };
   }
 
   CHECK(posts == 0);
@@ -845,25 +874,28 @@ TEST_CASE("context: a view that changes the context it reads shows again", "[ui]
   CHECK(counting_views == 2);
 }
 
-TEST_CASE("context: a component whose view threw after its context changed views again in the next render",
-          "[ui][context]") {
+TEST_CASE(
+    "context: a component whose view threw after its context changed views again in the next render", "[ui][context]"
+) {
   lines.clear();
   child_throws = false;
 
   virtual_time time;
   memory_renderer const shown;
   std::vector<std::string> failures;
-  test_app<throwing_child_page> instance{time.get_executor(),
-                                         shown,
-                                         {.on_error =
-                                              [&failures](std::exception_ptr failure) {
-                                                try {
-                                                  std::rethrow_exception(failure);
-                                                } catch (std::exception const &error) {
-                                                  failures.emplace_back(error.what());
-                                                }
-                                              },
-                                          .contexts = {provide<first_gone>()}}};
+  test_app<throwing_child_page> instance{
+      time.get_executor(),
+      shown,
+      {.on_error =
+           [&failures](std::exception_ptr failure) {
+             try {
+               std::rethrow_exception(failure);
+             } catch (std::exception const &error) {
+               failures.emplace_back(error.what());
+             }
+           },
+       .contexts = {provide<first_gone>()}}
+  };
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -884,8 +916,10 @@ TEST_CASE("context: a component whose view threw after its context changed views
   CHECK(shown.html().contains("<p>count 5</p>"));
 }
 
-TEST_CASE("context: the app's own component, or a context, missing one is never made, as its destructor may read it",
-          "[ui][context]") {
+TEST_CASE(
+    "context: the app's own component, or a context, missing one is never made, as its destructor may read it",
+    "[ui][context]"
+) {
   lines.clear();
 
   virtual_time time;
@@ -893,13 +927,16 @@ TEST_CASE("context: the app's own component, or a context, missing one is never 
 
   // Their destructors read what they would have found: a throw there would end the program.
   CHECK_THROWS_AS((test_app<broken_component>{time.get_executor(), shown}), std::logic_error);
-  CHECK_THROWS_AS((test_app<counting_page>{time.get_executor(), shown, {.contexts = {provide<broken_user>()}}}),
-                  std::logic_error);
+  CHECK_THROWS_AS(
+      (test_app<counting_page>{time.get_executor(), shown, {.contexts = {provide<broken_user>()}}}), std::logic_error
+  );
   CHECK(lines.empty());
 }
 
-TEST_CASE("context: one a component provides is found by those of its view before the app's, and shows their changes",
-          "[ui][context]") {
+TEST_CASE(
+    "context: one a component provides is found by those of its view before the app's, and shows their changes",
+    "[ui][context]"
+) {
   lines.clear();
 
   virtual_time time;
@@ -971,7 +1008,8 @@ TEST_CASE("context: the app's contexts are made before its own component, which 
   memory_renderer const shown;
   // The app's own component provides a draft too, made after the app's contexts: the user finds the app's.
   test_app<providing_root> instance{
-      time.get_executor(), shown, {.contexts = {provide<draft>(), provide<draft_user>()}}};
+      time.get_executor(), shown, {.contexts = {provide<draft>(), provide<draft_user>()}}
+  };
 
   auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
 
@@ -998,8 +1036,10 @@ TEST_CASE("context: a component shows again as a context what it provides uses c
   CHECK(shown.html().contains("<p>holder tea</p>"));
 }
 
-TEST_CASE("context: the app's own component finds the app's contexts, what it provides being for those of its view",
-          "[ui][context]") {
+TEST_CASE(
+    "context: the app's own component finds the app's contexts, what it provides being for those of its view",
+    "[ui][context]"
+) {
   lines.clear();
 
   virtual_time time;
@@ -1013,8 +1053,10 @@ TEST_CASE("context: the app's own component finds the app's contexts, what it pr
   CHECK(&*instance.component().app_draft != &*instance.component().mine);
 }
 
-TEST_CASE("context: an action of one of its member functions runs it on the context, which goes on as its caller goes",
-          "[ui][context]") {
+TEST_CASE(
+    "context: an action of one of its member functions runs it on the context, which goes on as its caller goes",
+    "[ui][context]"
+) {
   lines.clear();
 
   virtual_time time;
@@ -1049,8 +1091,9 @@ TEST_CASE("context: an action of one of its member functions runs it on the cont
   CHECK_FALSE(shown.html().contains("renamed"));
 }
 
-TEST_CASE("context: the targets of its effects are loading in the app's first view, before their run",
-          "[ui][context]") {
+TEST_CASE(
+    "context: the targets of its effects are loading in the app's first view, before their run", "[ui][context]"
+) {
   lines.clear();
 
   virtual_time time;

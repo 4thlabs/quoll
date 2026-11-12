@@ -67,8 +67,8 @@ struct awaiting {
     requires requires(A &awaitable, std::coroutine_handle<> handle, await_context const &context) {
       { awaitable.await_suspend(handle, context) } -> not_void;
     }
-  [[nodiscard]] static decltype(auto) suspend(A &awaitable, std::coroutine_handle<> handle,
-                                              await_context const &context) {
+  [[nodiscard]] static decltype(auto)
+  suspend(A &awaitable, std::coroutine_handle<> handle, await_context const &context) {
     return awaitable.await_suspend(handle, context);
   }
 };

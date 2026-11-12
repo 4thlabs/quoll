@@ -80,8 +80,10 @@ struct bearer_auth {
  */
 template <class... Schemes>
 struct security {
-  static_assert((std::same_as<typename Schemes::scheme_category, detail::security_scheme> && ...),
-                "quoll::rest::security: a scheme is not api_key<>, api_key_query<> or bearer_auth");
+  static_assert(
+      (std::same_as<typename Schemes::scheme_category, detail::security_scheme> && ...),
+      "quoll::rest::security: a scheme is not api_key<>, api_key_query<> or bearer_auth"
+  );
 
   using part_category = detail::security_part;
   using schemes = detail::type_list<Schemes...>;

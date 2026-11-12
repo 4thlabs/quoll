@@ -93,8 +93,8 @@ public:
    * @brief Reads what the peer sent, after the handshake for the first read; a failed handshake is its error.
    * @throws std::logic_error while a handshake is pending.
    */
-  [[nodiscard]] async::task<io::io_result>
-  read_some(std::span<std::byte> buffer QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+  [[nodiscard]] async::task<io::io_result> read_some(std::span<std::byte> buffer QUOLL_LIFETIMEBOUND
+  ) QUOLL_LIFETIMEBOUND {
     return read(checked_state(), buffer);
   }
 
@@ -103,8 +103,8 @@ public:
    * @throws std::logic_error before it has; std::system_error with its error once it has failed: a server answers
    * what it has read.
    */
-  [[nodiscard]] tls_stream::write_awaitable
-  write_some(std::span<std::byte const> data QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+  [[nodiscard]] tls_stream::write_awaitable write_some(std::span<std::byte const> data QUOLL_LIFETIMEBOUND
+  ) QUOLL_LIFETIMEBOUND {
     auto &current = checked_state();
 
     if (current.at != phase::done) {

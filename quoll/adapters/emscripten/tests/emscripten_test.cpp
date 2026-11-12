@@ -124,21 +124,25 @@ T run_on(quoll::async::Executor auto executor, task<T> work, std::stop_source so
   std::exception_ptr failure;
   bool done = false;
 
-  co_spawn(std::move(executor), std::move(work),
-           overloaded{[&](T value) {
-                        result = std::move(value);
-                        done = true;
-                      },
-                      [&](std::exception_ptr error) {
-                        failure = std::move(error);
-                        done = true;
-                      },
-                      // Said as a failure, which the test reports.
-                      [&](quoll::async::stopped_t) {
-                        failure = std::make_exception_ptr(std::runtime_error{"quoll test: the task ended on a stop"});
-                        done = true;
-                      }},
-           source.get_token());
+  co_spawn(
+      std::move(executor), std::move(work),
+      overloaded{
+          [&](T value) {
+            result = std::move(value);
+            done = true;
+          },
+          [&](std::exception_ptr error) {
+            failure = std::move(error);
+            done = true;
+          },
+          // Said as a failure, which the test reports.
+          [&](quoll::async::stopped_t) {
+            failure = std::make_exception_ptr(std::runtime_error{"quoll test: the task ended on a stop"});
+            done = true;
+          }
+      },
+      source.get_token()
+  );
 
   auto const start = emscripten_get_now();
   bool timed_out = false;
@@ -292,8 +296,8 @@ task<std::error_code> fetch_with_timeout(http::client transport, std::chrono::na
 
   request.target = "/hang";
 
-  co_return co_await quoll::test::code_thrown_by(
-      quoll::async::with_timeout(timeout, transport.send(std::move(request))));
+  co_return co_await quoll::test::code_thrown_by(quoll::async::with_timeout(timeout, transport.send(std::move(request)))
+  );
 }
 
 } // namespace
@@ -350,8 +354,9 @@ TEST_CASE("http::client through fetch: a client GET, end to end", "[emscripten][
   REQUIRE(response.fields.find("X-Test") == "from quoll");
 }
 
-TEST_CASE("http::client through fetch: a body goes out and an error status comes back as a response",
-          "[emscripten][http]") {
+TEST_CASE(
+    "http::client through fetch: a body goes out and an error status comes back as a response", "[emscripten][http]"
+) {
   test_server const server;
   auto const response = run(post(http::client{server.url()}, "/status/404", "a body"));
 
@@ -389,8 +394,9 @@ TEST_CASE("http::client through fetch: a stop request made before fetching", "[e
   REQUIRE(run(send_error(http::client{server.url()}, "/"), source) == std::errc::operation_canceled);
 }
 
-TEST_CASE("http::client through fetch: a field that would split into others is rejected before fetching",
-          "[emscripten]") {
+TEST_CASE(
+    "http::client through fetch: a field that would split into others is rejected before fetching", "[emscripten]"
+) {
   http::client const transport{"http://127.0.0.1"};
   http::request injected_value;
   http::request injected_name;
@@ -402,8 +408,9 @@ TEST_CASE("http::client through fetch: a field that would split into others is r
   REQUIRE_THROWS_AS((void)transport.send(std::move(injected_name)), std::invalid_argument);
 }
 
-TEST_CASE("http::client through fetch: a target that could leave the origin is rejected before fetching",
-          "[emscripten]") {
+TEST_CASE(
+    "http::client through fetch: a target that could leave the origin is rejected before fetching", "[emscripten]"
+) {
   http::client const transport{"http://127.0.0.1"};
   http::request other_host;
   http::request with_space;
@@ -415,8 +422,9 @@ TEST_CASE("http::client through fetch: a target that could leave the origin is r
   REQUIRE_THROWS_AS((void)transport.send(std::move(with_space)), std::invalid_argument);
 }
 
-TEST_CASE("http::client through fetch: a compressed body comes decoded, without the fields of the wire",
-          "[emscripten][http]") {
+TEST_CASE(
+    "http::client through fetch: a compressed body comes decoded, without the fields of the wire", "[emscripten][http]"
+) {
   test_server const server;
   auto const response = run(get_target(http::client{server.url()}, "/gzip"));
 
@@ -443,8 +451,9 @@ namespace {
 namespace node_server_api {
 using namespace quoll::rest;
 
-using echo = endpoint<"echo", http::verb::post, "/echo/{name}", header<"X-Test", std::string>,
-                      body<std::string, text_codec>, returns<std::string, http::status::ok, text_codec>>;
+using echo = endpoint<
+    "echo", http::verb::post, "/echo/{name}", header<"X-Test", std::string>, body<std::string, text_codec>,
+    returns<std::string, http::status::ok, text_codec>>;
 using missing = endpoint<"missing", http::verb::get, "/status/404", returns<std::string, http::status::ok, text_codec>>;
 
 // The events the test writes on the server's /events, as they come.
@@ -536,8 +545,9 @@ task<std::string> read_unstopped(http::response_body const &body QUOLL_LIFETIMEB
 
 } // namespace
 
-TEST_CASE("http::client through fetch: a stop just after a response has come leaves it whole",
-          "[emscripten][http][stream]") {
+TEST_CASE(
+    "http::client through fetch: a stop just after a response has come leaves it whole", "[emscripten][http][stream]"
+) {
   test_server const server;
   http::client const transport{server.url()};
   std::stop_source source;
@@ -561,8 +571,9 @@ TEST_CASE("http::client through fetch: a stop just after a response has come lea
   REQUIRE(source.stop_requested());
 }
 
-TEST_CASE("http::client through fetch: a stop just after a piece has come leaves the body whole",
-          "[emscripten][http][stream]") {
+TEST_CASE(
+    "http::client through fetch: a stop just after a piece has come leaves the body whole", "[emscripten][http][stream]"
+) {
   test_server const server;
   http::client const transport{server.url()};
   std::stop_source source;
@@ -595,8 +606,9 @@ TEST_CASE("http::client through fetch: a stop just after a piece has come leaves
   REQUIRE(source.stop_requested());
 }
 
-TEST_CASE("http::client through fetch: stream() takes a body_writer too, gathered first",
-          "[emscripten][http][stream]") {
+TEST_CASE(
+    "http::client through fetch: stream() takes a body_writer too, gathered first", "[emscripten][http][stream]"
+) {
   test_server const server;
   http::client const transport{server.url()};
   http::request request;
@@ -655,7 +667,8 @@ TEST_CASE("http::client through fetch: stream() takes a body_writer too, gathere
   auto const timing_out = [&]() -> quoll::async::task<std::error_code> {
     try {
       static_cast<void>(
-          co_await quoll::async::with_timeout(std::chrono::milliseconds{20}, transport.stream(std::move(endless))));
+          co_await quoll::async::with_timeout(std::chrono::milliseconds{20}, transport.stream(std::move(endless)))
+      );
     } catch (std::system_error const &thrown) {
       co_return thrown.code();
     }
@@ -689,7 +702,8 @@ TEST_CASE("http::client through fetch: a timeout ends a body_writer at its next 
   auto const timing_out = [&]() -> quoll::async::task<std::error_code> {
     try {
       static_cast<void>(
-          co_await quoll::async::with_timeout(std::chrono::milliseconds{20}, transport.send(std::move(request))));
+          co_await quoll::async::with_timeout(std::chrono::milliseconds{20}, transport.send(std::move(request)))
+      );
     } catch (std::system_error const &thrown) {
       co_return thrown.code();
     }
@@ -715,8 +729,8 @@ TEST_CASE("rest::client over http::client calls an API that only has a contract"
 
 namespace {
 
-task<http::streamed_response> stream_target(http::client transport, std::string target,
-                                            http::verb method = http::verb::get, std::string body = {}) {
+task<http::streamed_response>
+stream_target(http::client transport, std::string target, http::verb method = http::verb::get, std::string body = {}) {
   http::request request;
 
   request.method = method;
@@ -797,8 +811,10 @@ void let_the_event_loop_run() { emscripten_sleep(50); }
 
 } // namespace
 
-TEST_CASE("http::client through fetch: stream completes before the body, and hands it over as it comes",
-          "[emscripten][stream]") {
+TEST_CASE(
+    "http::client through fetch: stream completes before the body, and hands it over as it comes",
+    "[emscripten][stream]"
+) {
   test_server const server;
   // The server has written nothing of the body: waiting for it would never end, and fail by the time limit of run().
   auto const response = run(stream_target(http::client{server.url()}, "/open"));
@@ -818,8 +834,10 @@ TEST_CASE("http::client through fetch: stream completes before the body, and han
   REQUIRE(run(next_piece(response.body)) == std::nullopt);
 }
 
-TEST_CASE("event_reader through fetch: events as they come, written in the middle of a field and of a CRLF",
-          "[emscripten][stream][sse]") {
+TEST_CASE(
+    "event_reader through fetch: events as they come, written in the middle of a field and of a CRLF",
+    "[emscripten][stream][sse]"
+) {
   test_server const server;
   auto const response = run(stream_target(http::client{server.url()}, "/open"));
   http::event_reader events{response.body};
@@ -842,8 +860,9 @@ TEST_CASE("event_reader through fetch: events as they come, written in the middl
   REQUIRE(events.last_event_id() == "1");
 }
 
-TEST_CASE("rest::client through fetch: subscribe reads the events as the server writes them",
-          "[emscripten][rest][sse]") {
+TEST_CASE(
+    "rest::client through fetch: subscribe reads the events as the server writes them", "[emscripten][rest][sse]"
+) {
   test_server const server;
   quoll::rest::client<node_server_api::api> const client{server.url()};
   auto stream = run(client.subscribe<node_server_api::events>());
@@ -861,8 +880,10 @@ TEST_CASE("rest::client through fetch: subscribe reads the events as the server 
   REQUIRE(stream.last_event_id() == "1");
 }
 
-TEST_CASE("http::client through fetch: stream gives several pieces, none larger than what was written at once",
-          "[emscripten][stream]") {
+TEST_CASE(
+    "http::client through fetch: stream gives several pieces, none larger than what was written at once",
+    "[emscripten][stream]"
+) {
   test_server const server;
   auto const response = run(stream_target(http::client{server.url()}, "/open"));
   std::vector<std::string> const writes{"one", "two", "three", std::string(1 << 20, 'x')};
@@ -893,8 +914,9 @@ TEST_CASE("http::client through fetch: stream gives several pieces, none larger 
   REQUIRE(run(next_piece(response.body)) == std::nullopt);
 }
 
-TEST_CASE("http::client through fetch: stream gives the status, status text and fields of send",
-          "[emscripten][stream]") {
+TEST_CASE(
+    "http::client through fetch: stream gives the status, status text and fields of send", "[emscripten][stream]"
+) {
   test_server const server;
   auto const response = run(stream_target(http::client{server.url()}, "/status/404", http::verb::post, "a body"));
 
@@ -944,8 +966,9 @@ TEST_CASE("http::client through fetch: stream with no body at all ends at once",
   REQUIRE(run(next_piece(response.body)) == std::nullopt);
 }
 
-TEST_CASE("http::client through fetch: a body cut by the server fails with io_error, after what came",
-          "[emscripten][stream]") {
+TEST_CASE(
+    "http::client through fetch: a body cut by the server fails with io_error, after what came", "[emscripten][stream]"
+) {
   test_server const server;
   auto const response = run(stream_target(http::client{server.url()}, "/open"));
 
@@ -1026,8 +1049,9 @@ TEST_CASE("http::client through fetch: dropping a response before the end aborts
   REQUIRE(server_sees_close());
 }
 
-TEST_CASE("http::client through fetch: copies of a body share the reading, and the last to go aborts",
-          "[emscripten][stream]") {
+TEST_CASE(
+    "http::client through fetch: copies of a body share the reading, and the last to go aborts", "[emscripten][stream]"
+) {
   test_server const server;
   std::optional<http::streamed_response> response{run(stream_target(http::client{server.url()}, "/open"))};
   std::optional<http::response_body> copy{response->body};
@@ -1151,8 +1175,10 @@ TEST_CASE("http::client through fetch: its options still count where they can", 
     co_return std::error_code{};
   };
 
-  REQUIRE(run(error_of(http::client{server.url(), {.limits = {.max_body_size = 2}}}, "/accounts/42")) ==
-          http::error::body_too_large);
+  REQUIRE(
+      run(error_of(http::client{server.url(), {.limits = {.max_body_size = 2}}}, "/accounts/42")) ==
+      http::error::body_too_large
+  );
   REQUIRE(run(error_of(http::client{server.url(), {.response_timeout = 20ms}}, "/hang")) == std::errc::timed_out);
   // What the browser decides has no effect, rather than refusing to run.
   REQUIRE_FALSE(run(error_of(http::client{server.url(), {.max_connections = 1, .max_redirects = 3}}, "/accounts/42")));
@@ -1178,8 +1204,10 @@ TEST_CASE("http::client through fetch: a streamed body keeps to its limit", "[em
     co_return std::error_code{};
   };
 
-  REQUIRE(run(read_all(http::client{server.url(), {.limits = {.max_streamed_body_size = 2}}})) ==
-          http::error::body_too_large);
+  REQUIRE(
+      run(read_all(http::client{server.url(), {.limits = {.max_streamed_body_size = 2}}})) ==
+      http::error::body_too_large
+  );
 }
 
 TEST_CASE("http::client through fetch: a URL relative to the page is taken", "[emscripten][http]") {
@@ -1344,10 +1372,12 @@ TEST_CASE("http::client through fetch: the head has its limits too", "[emscripte
     co_return std::error_code{};
   };
 
-  REQUIRE(run(error_of(http::client{server.url(), {.limits = {.max_field_count = 1}}})) ==
-          http::error::header_too_large);
-  REQUIRE(run(error_of(http::client{server.url(), {.limits = {.max_header_size = 4}}})) ==
-          http::error::header_too_large);
+  REQUIRE(
+      run(error_of(http::client{server.url(), {.limits = {.max_field_count = 1}}})) == http::error::header_too_large
+  );
+  REQUIRE(
+      run(error_of(http::client{server.url(), {.limits = {.max_header_size = 4}}})) == http::error::header_too_large
+  );
 }
 
 namespace {
@@ -1399,8 +1429,10 @@ TEST_CASE("http::client through fetch: the status text counts toward the head's 
   auto const fields = run(head_size(http::client{server.url()}));
 
   REQUIRE_FALSE(run(error_of(http::client{server.url(), {.limits = {.max_header_size = fields + 2}}})));
-  REQUIRE(run(error_of(http::client{server.url(), {.limits = {.max_header_size = fields + 1}}})) ==
-          http::error::header_too_large);
+  REQUIRE(
+      run(error_of(http::client{server.url(), {.limits = {.max_header_size = fields + 1}}})) ==
+      http::error::header_too_large
+  );
 }
 
 TEST_CASE("emscripten::runtime: run(task) reports what the task let escape, and fails a Node process", "[emscripten]") {
@@ -1423,8 +1455,10 @@ TEST_CASE("emscripten::runtime: run(task) reports what the task let escape, and 
 
   // Given back, or this test binary would end failing.
   quoll::emscripten::detail::quoll_emscripten_set_exit_code(0);
-  REQUIRE(quoll::test::reports() ==
-          std::vector<std::string>{"quoll: the program's main task ended on an exception: no server\n"});
+  REQUIRE(
+      quoll::test::reports() ==
+      std::vector<std::string>{"quoll: the program's main task ended on an exception: no server\n"}
+  );
   REQUIRE(failed == EXIT_FAILURE);
 }
 
@@ -1438,8 +1472,9 @@ TEST_CASE("emscripten::runtime takes the options of every runtime, and runs its 
 
   std::optional<int> result;
 
-  co_spawn(runtime.get_executor(), answer(),
-           overloaded{[&result](int value) { result = value; }, [](std::exception_ptr) {}});
+  co_spawn(
+      runtime.get_executor(), answer(), overloaded{[&result](int value) { result = value; }, [](std::exception_ptr) {}}
+  );
   runtime.run();
 
   // run() returns at once, and the browser's loop runs the task from then on.

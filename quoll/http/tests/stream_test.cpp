@@ -128,8 +128,8 @@ task<> fail_to_serve(io::memory_stream &stream) {
   throw std::runtime_error{"server failed"};
 }
 
-task<std::tuple<http::response, std::monostate>> get_from_failing_server(io::memory_stream &client,
-                                                                         io::memory_stream &server) {
+task<std::tuple<http::response, std::monostate>>
+get_from_failing_server(io::memory_stream &client, io::memory_stream &server) {
   co_return co_await quoll::async::when_all(get(client, "/accounts/42"), fail_to_serve(server));
 }
 
@@ -175,8 +175,8 @@ struct read_outcome {
 };
 
 template <class Message>
-task<read_outcome<Message>> read_message(io::memory_stream &stream, std::string &buffer,
-                                         http::parser<Message> &parser) {
+task<read_outcome<Message>>
+read_message(io::memory_stream &stream, std::string &buffer, http::parser<Message> &parser) {
   auto const error = co_await http::read(stream, buffer, parser);
 
   if (error || !parser.done()) {
@@ -265,11 +265,13 @@ TEST_CASE("http over a stream: a failing server stops the client's read", "[http
 TEST_CASE("http over a stream: no HTTP is read past a protocol switch", "[http][stream]") {
   auto [client, server] = io::make_memory_stream_pair();
 
-  REQUIRE(!run(io::write(server, bytes("HTTP/1.1 101 Switching Protocols\r\n"
-                                       "Connection: Upgrade\r\n"
-                                       "Upgrade: websocket\r\n"
-                                       "\r\n"
-                                       "\x81\x05")))
+  REQUIRE(!run(io::write(
+                   server, bytes("HTTP/1.1 101 Switching Protocols\r\n"
+                                 "Connection: Upgrade\r\n"
+                                 "Upgrade: websocket\r\n"
+                                 "\r\n"
+                                 "\x81\x05")
+               ))
                ->error);
 
   auto const result = run(read_past_upgrade(client));
@@ -343,8 +345,10 @@ TEST_CASE("http over a stream: a stream closed between messages is the end of th
 TEST_CASE("http over a stream: pipelined requests are read one at a time", "[http][stream]") {
   auto [client, server] = io::make_memory_stream_pair();
 
-  REQUIRE(!run(io::write(client, bytes("GET /first HTTP/1.1\r\nHost: a\r\n\r\n"
-                                       "GET /second HTTP/1.1\r\nHost: a\r\n\r\n")))
+  REQUIRE(!run(io::write(
+                   client, bytes("GET /first HTTP/1.1\r\nHost: a\r\n\r\n"
+                                 "GET /second HTTP/1.1\r\nHost: a\r\n\r\n")
+               ))
                ->error);
   client.close();
 
@@ -482,8 +486,9 @@ TEST_CASE("http over a stream: a body far past any limit of a whole one, a piece
   parser.set_body_streaming([](http::response const &) { return true; });
 
   auto const wire = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
-  auto const result = run(quoll::async::when_all(read_body_from(client, parser),
-                                                 send_then_close(std::move(server), wire, std::size_t{64} * 1024)));
+  auto const result = run(quoll::async::when_all(
+      read_body_from(client, parser), send_then_close(std::move(server), wire, std::size_t{64} * 1024)
+  ));
 
   REQUIRE(result);
 
@@ -497,8 +502,9 @@ TEST_CASE("http over a stream: a body far past any limit of a whole one, a piece
   REQUIRE(parser.release().body.empty());
 }
 
-TEST_CASE("http over a stream: a body in pieces cut short is an error, and what came before is not lost",
-          "[http][stream]") {
+TEST_CASE(
+    "http over a stream: a body in pieces cut short is an error, and what came before is not lost", "[http][stream]"
+) {
   auto [client, server] = io::make_memory_stream_pair();
   http::response_parser parser;
 
@@ -506,7 +512,8 @@ TEST_CASE("http over a stream: a body in pieces cut short is an error, and what 
 
   auto const result = run(quoll::async::when_all(
       read_body_from(client, parser),
-      send_then_close(std::move(server), "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nhello", 5)));
+      send_then_close(std::move(server), "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nhello", 5)
+  ));
 
   REQUIRE(result);
 
@@ -523,7 +530,8 @@ TEST_CASE("http over a stream: a body in pieces ended by the stream is whole", "
   parser.set_body_streaming([](http::response const &) { return true; });
 
   auto const result = run(quoll::async::when_all(
-      read_body_from(client, parser), send_then_close(std::move(server), "HTTP/1.1 200 OK\r\n\r\nhello", 4)));
+      read_body_from(client, parser), send_then_close(std::move(server), "HTTP/1.1 200 OK\r\n\r\nhello", 4)
+  ));
 
   REQUIRE(result);
   REQUIRE(!std::get<0>(*result).error);
@@ -574,8 +582,10 @@ TEST_CASE("http over a stream: a body in pieces fails like read()", "[http][stre
 
     auto const result = run(quoll::async::when_all(
         read_body_from(client, parser),
-        send_then_close(std::move(server),
-                        "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n", 8)));
+        send_then_close(
+            std::move(server), "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n", 8
+        )
+    ));
 
     REQUIRE(result);
     REQUIRE(std::get<0>(*result).error == http::error::body_too_large);
@@ -620,7 +630,8 @@ TEST_CASE("http over a stream: a message whose body came with its head, and the 
     std::vector<std::string> seen;
 
     check((co_await io::write(
-               server, bytes("POST /in-pieces HTTP/1.1\r\nContent-Length: 2\r\n\r\nhiGET /next HTTP/1.1\r\n\r\n")))
+               server, bytes("POST /in-pieces HTTP/1.1\r\nContent-Length: 2\r\n\r\nhiGET /next HTTP/1.1\r\n\r\n")
+           ))
               .error);
     check(co_await http::read_head(client, buffer, parser));
     REQUIRE(parser.done());
@@ -697,8 +708,9 @@ struct misreporting_stream {
 
 } // namespace
 
-TEST_CASE("http::read: a stream reporting what it did not do fails, rather than loop or read past its buffer",
-          "[http]") {
+TEST_CASE(
+    "http::read: a stream reporting what it did not do fails, rather than loop or read past its buffer", "[http]"
+) {
   auto const size = GENERATE(std::size_t{0}, std::size_t{1} << 30U);
   misreporting_stream stream{{{}, size}};
   std::string buffer;

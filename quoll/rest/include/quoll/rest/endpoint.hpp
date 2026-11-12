@@ -65,29 +65,47 @@ template <fixed_string Name, http::verb Method, fixed_string Path, class... Part
 struct endpoint {
   static_assert(!Name.view().empty(), "quoll::rest::endpoint: the name is empty");
   static_assert(detail::checked_path<Path>::valid);
-  static_assert((detail::Part<Parts> && ...), "quoll::rest::endpoint: a part is not query<>, query_params<>, "
-                                              "header<>, body<>, returns<>, events<> or security<>");
-  static_assert(detail::count_bodies(detail::type_list<Parts...>{}) <= 1,
-                "quoll::rest::endpoint: more than one body<>");
-  static_assert(detail::count_bodies(detail::type_list<Parts...>{}) == 0 ||
-                    (Method != http::verb::get && Method != http::verb::head),
-                "quoll::rest::endpoint: a GET or HEAD endpoint has no body<> (fetch rejects one)");
-  static_assert(detail::count_bodies(detail::type_list<Parts...>{}) == 0 || Method != http::verb::trace,
-                "quoll::rest::endpoint: a TRACE endpoint has no body<> (RFC 9110, 9.3.8)");
-  static_assert(detail::distinct_statuses(detail::type_list<Parts...>{}),
-                "quoll::rest::endpoint: two returns<> have the same status");
-  static_assert(Method != http::verb::connect,
-                "quoll::rest::endpoint: CONNECT is no operation of an API (what follows its head is a tunnel)");
-  static_assert(Method != http::verb::head || !detail::any_body_response(detail::type_list<Parts...>{}),
-                "quoll::rest::endpoint: a response to HEAD has no body");
+  static_assert(
+      (detail::Part<Parts> && ...), "quoll::rest::endpoint: a part is not query<>, query_params<>, "
+                                    "header<>, body<>, returns<>, events<> or security<>"
+  );
+  static_assert(
+      detail::count_bodies(detail::type_list<Parts...>{}) <= 1, "quoll::rest::endpoint: more than one body<>"
+  );
+  static_assert(
+      detail::count_bodies(detail::type_list<Parts...>{}) == 0 ||
+          (Method != http::verb::get && Method != http::verb::head),
+      "quoll::rest::endpoint: a GET or HEAD endpoint has no body<> (fetch rejects one)"
+  );
+  static_assert(
+      detail::count_bodies(detail::type_list<Parts...>{}) == 0 || Method != http::verb::trace,
+      "quoll::rest::endpoint: a TRACE endpoint has no body<> (RFC 9110, 9.3.8)"
+  );
+  static_assert(
+      detail::distinct_statuses(detail::type_list<Parts...>{}),
+      "quoll::rest::endpoint: two returns<> have the same status"
+  );
+  static_assert(
+      Method != http::verb::connect,
+      "quoll::rest::endpoint: CONNECT is no operation of an API (what follows its head is a tunnel)"
+  );
+  static_assert(
+      Method != http::verb::head || !detail::any_body_response(detail::type_list<Parts...>{}),
+      "quoll::rest::endpoint: a response to HEAD has no body"
+  );
 
-  static_assert(detail::count_events(detail::type_list<Parts...>{}) <= 1,
-                "quoll::rest::endpoint: more than one events<>");
-  static_assert(detail::count_events(detail::type_list<Parts...>{}) == 0 ||
-                    !detail::any_success_response(detail::type_list<Parts...>{}),
-                "quoll::rest::endpoint: an endpoint with events<> declares no other success, only error responses");
-  static_assert(detail::count_events(detail::type_list<Parts...>{}) == 0 || Method != http::verb::head,
-                "quoll::rest::endpoint: a response to HEAD has no events");
+  static_assert(
+      detail::count_events(detail::type_list<Parts...>{}) <= 1, "quoll::rest::endpoint: more than one events<>"
+  );
+  static_assert(
+      detail::count_events(detail::type_list<Parts...>{}) == 0 ||
+          !detail::any_success_response(detail::type_list<Parts...>{}),
+      "quoll::rest::endpoint: an endpoint with events<> declares no other success, only error responses"
+  );
+  static_assert(
+      detail::count_events(detail::type_list<Parts...>{}) == 0 || Method != http::verb::head,
+      "quoll::rest::endpoint: a response to HEAD has no events"
+  );
 
   using contract_category = detail::endpoint_category;
   using parts = detail::type_list<Parts...>;

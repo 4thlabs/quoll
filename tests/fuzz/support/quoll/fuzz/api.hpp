@@ -97,25 +97,26 @@ struct filter {
 };
 
 using list = rest::endpoint<"list", verb::get, "/", rest::query_params<filter>, rest::returns<std::vector<note>>>;
-using get = rest::endpoint<"get", verb::get, "/{id:int64}", rest::returns<note>,
-                           rest::returns<missing, http::status::not_found>>;
+using get = rest::endpoint<
+    "get", verb::get, "/{id:int64}", rest::returns<note>, rest::returns<missing, http::status::not_found>>;
 using create =
     rest::endpoint<"create", verb::post, "/", rest::body<new_note>, rest::returns<note, http::status::created>>;
-using scale = rest::endpoint<"scale", verb::get, "/scale/{by:double}", rest::query<"flag", bool>,
-                             rest::header<"X-Tags", std::vector<std::string>>, rest::returns<std::string>>;
+using scale = rest::endpoint<
+    "scale", verb::get, "/scale/{by:double}", rest::query<"flag", bool>,
+    rest::header<"X-Tags", std::vector<std::string>>, rest::returns<std::string>>;
 using file = rest::endpoint<"file", verb::get, "/file/{name:path}", rest::returns<std::string>>;
 
-using kinds = rest::endpoint<"kinds", verb::get, "/kinds/{a:int}/{b:uint}/{c:uint64}/{d:bool}/{e:string}",
-                             rest::returns<std::string>>;
-using tinted = rest::endpoint<"tinted", verb::get, "/tinted", rest::query<"color", color>,
-                              rest::query<"other", std::optional<color>>,
-                              rest::header<"X-Count", std::optional<std::int64_t>>, rest::returns<std::string>>;
+using kinds = rest::endpoint<
+    "kinds", verb::get, "/kinds/{a:int}/{b:uint}/{c:uint64}/{d:bool}/{e:string}", rest::returns<std::string>>;
+using tinted = rest::endpoint<
+    "tinted", verb::get, "/tinted", rest::query<"color", color>, rest::query<"other", std::optional<color>>,
+    rest::header<"X-Count", std::optional<std::int64_t>>, rest::returns<std::string>>;
 using bearer =
     rest::endpoint<"bearer", verb::get, "/bearer", rest::security<rest::bearer_auth>, rest::returns<std::string>>;
-using keyed = rest::endpoint<"keyed", verb::get, "/keyed", rest::security<rest::api_key<"X-Api-Key">>,
-                             rest::returns<std::string>>;
-using queried = rest::endpoint<"queried", verb::get, "/queried", rest::security<rest::api_key_query<"key">>,
-                               rest::returns<std::string>>;
+using keyed = rest::endpoint<
+    "keyed", verb::get, "/keyed", rest::security<rest::api_key<"X-Api-Key">>, rest::returns<std::string>>;
+using queried = rest::endpoint<
+    "queried", verb::get, "/queried", rest::security<rest::api_key_query<"key">>, rest::returns<std::string>>;
 
 using api = rest::api<"/notes", list, get, create, scale, file, kinds, tinted, bearer, keyed, queried>;
 
@@ -153,10 +154,14 @@ struct service {
   static http::router const shared = [] {
     http::router router;
 
-    rest::mount<api>(router, service{},
-                     rest::validators([](rest::credential<rest::bearer_auth> const &) { return true; },
-                                      [](rest::credential<rest::api_key<"X-Api-Key">> const &) { return true; },
-                                      [](rest::credential<rest::api_key_query<"key">> const &) { return true; }));
+    rest::mount<api>(
+        router, service{},
+        rest::validators(
+            [](rest::credential<rest::bearer_auth> const &) { return true; },
+            [](rest::credential<rest::api_key<"X-Api-Key">> const &) { return true; },
+            [](rest::credential<rest::api_key_query<"key">> const &) { return true; }
+        )
+    );
     // A response in pieces, of a length it keeps to, or in chunks. A wrong length answers 500, which is no bug.
     router.get("/out-pieces/{framing}", [](std::string_view framing) {
       http::response response;

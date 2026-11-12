@@ -54,15 +54,16 @@ void quoll_emscripten_set_exit_code(int code);
 // The DOM of an interface. Texts are UTF-8, with their size. `create` returns the instance the others take, or 0 when
 // no element matches `selector`.
 int quoll_emscripten_ui_create(char const *selector);
-void quoll_emscripten_ui_on_event(int instance,
-                                  void (*function)(void *owner, std::uint32_t id, char const *name, char const *value),
-                                  void *owner);
+void quoll_emscripten_ui_on_event(
+    int instance, void (*function)(void *owner, std::uint32_t id, char const *name, char const *value), void *owner
+);
 void quoll_emscripten_ui_create_element(int instance, std::uint32_t id, char const *tag, std::size_t size);
 void quoll_emscripten_ui_create_text(int instance, std::uint32_t id, char const *content, std::size_t size);
 void quoll_emscripten_ui_set_text(int instance, std::uint32_t id, char const *content, std::size_t size);
 void quoll_emscripten_ui_set_class(int instance, std::uint32_t id, char const *classes, std::size_t size);
-void quoll_emscripten_ui_set_attribute(int instance, std::uint32_t id, char const *name, std::size_t name_size,
-                                       char const *value, std::size_t value_size);
+void quoll_emscripten_ui_set_attribute(
+    int instance, std::uint32_t id, char const *name, std::size_t name_size, char const *value, std::size_t value_size
+);
 void quoll_emscripten_ui_remove_attribute(int instance, std::uint32_t id, char const *name, std::size_t size);
 void quoll_emscripten_ui_set_value(int instance, std::uint32_t id, char const *value, std::size_t size);
 void quoll_emscripten_ui_set_checked(int instance, std::uint32_t id, int checked);
@@ -74,14 +75,17 @@ void quoll_emscripten_ui_close(int instance);
 // What a widget's failure after its call calls: a module failing to load or to mount, with a message.
 void quoll_emscripten_ui_on_failure(int instance, void (*function)(void *owner, char const *message), void *owner);
 // A widget of `module` in the node `id`, with its props as JSON: 1 when no module of the page's registry has that path.
-int quoll_emscripten_ui_mount_widget(int instance, std::uint32_t id, char const *module, std::size_t module_size,
-                                     char const *props, std::size_t props_size);
+int quoll_emscripten_ui_mount_widget(
+    int instance, std::uint32_t id, char const *module, std::size_t module_size, char const *props,
+    std::size_t props_size
+);
 // 1 when the module's update, or its unmount, threw, which the console shows.
 int quoll_emscripten_ui_update_widget(int instance, std::uint32_t id, char const *props, std::size_t size);
 int quoll_emscripten_ui_unmount_widget(int instance, std::uint32_t id);
 // For hot reload: makes `replace` what the development server's messages call.
-void quoll_emscripten_ui_hot_install(void (*replace)(char const *file, unsigned line, unsigned column,
-                                                     char const *value));
+void quoll_emscripten_ui_hot_install(
+    void (*replace)(char const *file, unsigned line, unsigned column, char const *value)
+);
 
 // `complete` always runs, from the event loop, with `elapsed` false once cancelled.
 char *quoll_emscripten_history_location();
@@ -96,9 +100,10 @@ void quoll_emscripten_timer_cancel(int id);
 
 // `url` is null-terminated UTF-8; `method` and `headers` are bytes, one per character of the JavaScript string. It
 // settles with the head of the response: the body is for quoll_emscripten_fetch_read, not a part.
-int quoll_emscripten_fetch_start(char const *url, char const *method, std::size_t method_size, char const *headers,
-                                 std::size_t headers_size, void const *body, std::size_t body_size,
-                                 void (*complete)(void *operation, int id, int outcome), void *operation);
+int quoll_emscripten_fetch_start(
+    char const *url, char const *method, std::size_t method_size, char const *headers, std::size_t headers_size,
+    void const *body, std::size_t body_size, void (*complete)(void *operation, int id, int outcome), void *operation
+);
 int quoll_emscripten_fetch_has_body(int id);
 void quoll_emscripten_fetch_read(int id, void (*complete)(void *operation, int outcome), void *operation);
 void quoll_emscripten_fetch_abort(int id);

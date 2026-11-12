@@ -62,8 +62,10 @@ struct client_backend {
   client_operations const *operations;
 };
 
-[[nodiscard]] client_backend make_client_backend(connector_handle connector, std::string host, std::uint16_t port,
-                                                 bool secure, std::string prefix, client_options const &options);
+[[nodiscard]] client_backend make_client_backend(
+    connector_handle connector, std::string host, std::uint16_t port, bool secure, std::string prefix,
+    client_options const &options
+);
 
 // A client from `url` through the executor's http::platform_ref: what a client from a URL is in a build for Emscripten.
 // Compiled in every build, in a source of its own, so that it runs in the native sanitizers' tests too.

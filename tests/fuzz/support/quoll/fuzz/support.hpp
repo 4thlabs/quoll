@@ -66,7 +66,8 @@ namespace quoll::fuzz {
 
 // libFuzzer's inputs stay under 4 KB: with the default limits, what a parser does past them would never run.
 inline constexpr http::parse_limits low_limits{
-    .max_header_size = 1024, .max_field_count = 16, .max_body_size = 1024, .max_streamed_body_size = 2048};
+    .max_header_size = 1024, .max_field_count = 16, .max_body_size = 1024, .max_streamed_body_size = 2048
+};
 
 // What must hold whatever the input: a libFuzzer crash, reported with the input that broke it.
 inline void require(bool condition) {
@@ -195,8 +196,10 @@ template <class Message>
   }
 
   // Serializing may add a field, Content-Length, so that a message at a limit leaves past it: not what is checked here.
-  http::parser<Message> again{{.max_header_size = std::numeric_limits<std::size_t>::max(),
-                               .max_field_count = std::numeric_limits<std::size_t>::max()}};
+  http::parser<Message> again{
+      {.max_header_size = std::numeric_limits<std::size_t>::max(),
+       .max_field_count = std::numeric_limits<std::size_t>::max()}
+  };
   auto const reparsed = again.feed(std::span{wire->data(), wire->size()});
 
   require(!reparsed.error);
@@ -215,8 +218,8 @@ template <class Message>
 // A stream whose peer sends `input` in pieces of `chunk` bytes, or at once for 0, then closes; what is written to it is
 // dropped. Nothing suspends, so that a task runs to its end on the input alone, and a server cannot wait for more.
 // Hands out the start of `input`, as much as `buffer` holds and at most `limit` bytes, as a stream's read gives it.
-[[nodiscard]] inline std::size_t take_input(std::string_view &input, std::span<std::byte> buffer,
-                                            std::size_t limit) noexcept {
+[[nodiscard]] inline std::size_t
+take_input(std::string_view &input, std::span<std::byte> buffer, std::size_t limit) noexcept {
   auto const count = std::min({buffer.size(), input.size(), limit});
 
   std::memcpy(buffer.data(), input.data(), count);

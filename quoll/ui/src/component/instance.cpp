@@ -56,8 +56,10 @@ namespace {
 
 } // namespace
 
-instance::instance(component_table const &table, std::shared_ptr<void const> props, std::string key,
-                   std::stop_token const &app_stop, context_finder const &contexts)
+instance::instance(
+    component_table const &table, std::shared_ptr<void const> props, std::string key, std::stop_token const &app_stop,
+    context_finder const &contexts
+)
     : table_(&table), props_(std::move(props)), component_(made_finding(table, contexts)), key_(std::move(key)),
       follow_app_(app_stop, async::detail::stop_waker{&stop_}),
       parent_(std::static_pointer_cast<instance const>(contexts.from)) {
@@ -79,9 +81,10 @@ void instance::tried(std::shared_ptr<void const> props) noexcept {
   placed_by_.reset();
 }
 
-void instance::viewed(std::shared_ptr<void const> props, std::shared_ptr<void const> own,
-                      std::shared_ptr<void const> placed_by, element view, std::uint64_t version,
-                      std::uint64_t epoch) noexcept {
+void instance::viewed(
+    std::shared_ptr<void const> props, std::shared_ptr<void const> own, std::shared_ptr<void const> placed_by,
+    element view, std::uint64_t version, std::uint64_t epoch
+) noexcept {
   // The view first, whose handlers may refer to the props it replaces.
   last_view_.reset();
   props_ = std::move(props);

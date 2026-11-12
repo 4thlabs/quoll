@@ -53,11 +53,11 @@ namespace notes {
 namespace http = quoll::http;
 namespace rest = quoll::rest;
 
-using list = rest::endpoint<"notes.list", http::verb::get, "/", rest::query_params<note_filter>,
-                            rest::returns<std::vector<note>>>;
+using list = rest::endpoint<
+    "notes.list", http::verb::get, "/", rest::query_params<note_filter>, rest::returns<std::vector<note>>>;
 using get = rest::endpoint<"notes.get", http::verb::get, "/{id:int64}", rest::returns<note>>;
-using create = rest::endpoint<"notes.create", http::verb::post, "/", rest::body<new_note>,
-                              rest::returns<note, http::status::created>>;
+using create = rest::endpoint<
+    "notes.create", http::verb::post, "/", rest::body<new_note>, rest::returns<note, http::status::created>>;
 using remove = rest::endpoint<"notes.remove", http::verb::delete_, "/{id:int64}">;
 
 using api = rest::api<"/api/notes", list, get, create, remove>;

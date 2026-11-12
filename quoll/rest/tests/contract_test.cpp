@@ -116,8 +116,9 @@ using api = rest::api<"/users", list, get, create, remove>;
 namespace cards {
 using namespace quoll::rest;
 
-using list = endpoint<"cards.list", verb::get, "/", query<"status", std::optional<std::string>>,
-                      header<"X-Request-Id", std::string>, returns<std::vector<card>>>;
+using list = endpoint<
+    "cards.list", verb::get, "/", query<"status", std::optional<std::string>>, header<"X-Request-Id", std::string>,
+    returns<std::vector<card>>>;
 using remove = endpoint<"cards.remove", verb::delete_, "/{id:int64}">;
 
 using api = rest::api<"/users/{user_id:int64}/cards", list, remove>;
@@ -147,10 +148,11 @@ static_assert(std::same_as<v1::route<auth::login>::arguments, std::tuple<credent
 static_assert(std::same_as<v1::route<users::list>::arguments, std::tuple<user_filter, std::optional<bool>>>);
 static_assert(std::same_as<v1::route<users::get>::arguments, std::tuple<std::int64_t, std::optional<bool>>>);
 static_assert(std::same_as<v1::route<users::create>::arguments, std::tuple<new_user, std::optional<bool>>>);
-static_assert(std::same_as<v1::route<cards::list>::arguments,
-                           std::tuple<std::int64_t, std::optional<std::string>, std::string, std::optional<bool>>>);
-static_assert(
-    std::same_as<v1::route<cards::remove>::arguments, std::tuple<std::int64_t, std::int64_t, std::optional<bool>>>);
+static_assert(std::same_as<
+              v1::route<cards::list>::arguments,
+              std::tuple<std::int64_t, std::optional<std::string>, std::string, std::optional<bool>>>);
+static_assert(std::same_as<
+              v1::route<cards::remove>::arguments, std::tuple<std::int64_t, std::int64_t, std::optional<bool>>>);
 
 // Responses, in order; none means 204.
 static_assert(v1::route<users::get>::responses::size == 2);
@@ -167,12 +169,16 @@ static_assert(std::same_as<users::api::route<users::get>::arguments, std::tuple<
 
 // What endpoint<> and route (with the parts inherited from with<>) reject, checked on the predicates of their
 // static_asserts.
-static_assert(quoll::rest::detail::count_bodies(
-                  type_list<quoll::rest::body<new_user>, quoll::rest::query<"q", int>, quoll::rest::body<user>>{}) ==
-              2);
+static_assert(
+    quoll::rest::detail::count_bodies(
+        type_list<quoll::rest::body<new_user>, quoll::rest::query<"q", int>, quoll::rest::body<user>>{}
+    ) == 2
+);
 static_assert(!quoll::rest::detail::distinct_statuses(
-    type_list<quoll::rest::returns<user>, quoll::rest::returns<not_found, status::not_found>,
-              quoll::rest::returns<card, status::not_found>>{}));
+    type_list<
+        quoll::rest::returns<user>, quoll::rest::returns<not_found, status::not_found>,
+        quoll::rest::returns<card, status::not_found>>{}
+));
 static_assert(quoll::rest::detail::distinct_statuses(v1::route<users::get>::parts{}));
 
 // What api<> rejects, checked on the predicates its static_asserts use.
@@ -182,9 +188,11 @@ using same_route = quoll::rest::endpoint<"users.find", verb::get, "/{uid:int64}"
 static_assert(quoll::rest::detail::distinct_names(v1::routes{}));
 static_assert(quoll::rest::detail::distinct_operations(v1::routes{}));
 static_assert(!quoll::rest::detail::distinct_names(
-    type_list<users::api::route<users::get>, quoll::rest::api<"", clash>::route<clash>>{}));
+    type_list<users::api::route<users::get>, quoll::rest::api<"", clash>::route<clash>>{}
+));
 static_assert(!quoll::rest::detail::distinct_operations(
-    type_list<users::api::route<users::get>, quoll::rest::api<"/users", same_route>::route<same_route>>{}));
+    type_list<users::api::route<users::get>, quoll::rest::api<"/users", same_route>::route<same_route>>{}
+));
 
 } // namespace
 
@@ -231,15 +239,16 @@ static_assert(Codec<marked_codec, std::string>);
 using one = endpoint<"one", verb::get, "/x/{a}", returns<std::string, status::ok, text_codec>>;
 using rest_of = endpoint<"rest_of", verb::get, "/x/{b:path}", returns<std::string, status::ok, text_codec>>;
 // The same status twice is refused; two responses of one type tell theirs with respond<>.
-using made = endpoint<"made", verb::post, "/made", body<std::string, text_codec>,
-                      returns<std::string, status::ok, text_codec>, returns<std::string, status::created, text_codec>>;
+using made = endpoint<
+    "made", verb::post, "/made", body<std::string, text_codec>, returns<std::string, status::ok, text_codec>,
+    returns<std::string, status::created, text_codec>>;
 // A first response with no body.
 using accepted = endpoint<"accepted", verb::post, "/accepted", returns<void, status::accepted>>;
 // A prefix with a parameter: its argument comes first.
 using owned = endpoint<"owned", verb::get, "/items/{item:int}", returns<std::string, status::ok, text_codec>>;
 // Bodies both ways through that codec.
-using marked = endpoint<"marked", verb::post, "/marked", body<std::string, marked_codec>,
-                        returns<std::string, status::ok, marked_codec>>;
+using marked = endpoint<
+    "marked", verb::post, "/marked", body<std::string, marked_codec>, returns<std::string, status::ok, marked_codec>>;
 
 using api = quoll::rest::api<"", one, rest_of, made, accepted, marked, quoll::rest::api<"/orgs/{org}", owned>>;
 
@@ -334,8 +343,9 @@ using e29 = rest::endpoint<"e29", verb::get, "/resources29/{id:int64}/children/{
 using e30 = rest::endpoint<"e30", verb::get, "/resources30/{id:int64}/children/{child}/details">;
 using e31 = rest::endpoint<"e31", verb::get, "/resources31/{id:int64}/children/{child}/details">;
 
-using large = rest::api<"/api/v1", e0, e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, e15, e16, e17, e18,
-                        e19, e20, e21, e22, e23, e24, e25, e26, e27, e28, e29, e30, e31>;
+using large = rest::api<
+    "/api/v1", e0, e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, e15, e16, e17, e18, e19, e20, e21, e22,
+    e23, e24, e25, e26, e27, e28, e29, e30, e31>;
 
 static_assert(large::routes::size == 32);
 

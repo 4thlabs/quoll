@@ -61,8 +61,10 @@ void give_props(C &component, P const &given) {
     using held = std::remove_cvref_t<decltype(member)>;
 
     if constexpr (PropsMember<held>) {
-      static_assert(std::same_as<typename held::props_type, P>,
-                    "quoll::ui::form_state: of a field of the props of its own component");
+      static_assert(
+          std::same_as<typename held::props_type, P>,
+          "quoll::ui::form_state: of a field of the props of its own component"
+      );
       member.before_view(given);
     }
   });

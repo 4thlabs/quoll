@@ -61,9 +61,9 @@ struct websocket_handshake {
 [[nodiscard]] websocket_handshake prepare_websocket_handshake(websocket_target const &where, http::fields fields);
 
 // The rest of connect_websocket(), through `connector` to `server`, compiled once.
-[[nodiscard]] async::task<connected_websocket> connect_websocket_through(connector_handle connector, origin server,
-                                                                         websocket_handshake handshake,
-                                                                         websocket_connect_options options);
+[[nodiscard]] async::task<connected_websocket> connect_websocket_through(
+    connector_handle connector, origin server, websocket_handshake handshake, websocket_connect_options options
+);
 
 } // namespace quoll::http::detail
 

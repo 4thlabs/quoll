@@ -135,8 +135,8 @@ struct flaky_executor {
   [[nodiscard]] bool operator==(flaky_executor const &) const noexcept = default;
 };
 
-task<std::tuple<received, std::monostate>> read_while_peer_closes(io::memory_stream &reader,
-                                                                  io::memory_stream &writer) {
+task<std::tuple<received, std::monostate>>
+read_while_peer_closes(io::memory_stream &reader, io::memory_stream &writer) {
   co_return co_await quoll::async::when_all(read_once(reader), close_later(writer));
 }
 
@@ -265,10 +265,14 @@ TEST_CASE("memory_stream: a stop request ends a waiting read", "[io][memory_stre
   std::optional<received> read;
   auto stopped = false;
 
-  co_spawn(loop.get_executor(), read_once(left),
-           overloaded{[&](received value) { read = std::move(value); }, [](std::exception_ptr) {},
-                      [&stopped](quoll::async::stopped_t) { stopped = true; }},
-           source.get_token());
+  co_spawn(
+      loop.get_executor(), read_once(left),
+      overloaded{
+          [&](received value) { read = std::move(value); }, [](std::exception_ptr) {},
+          [&stopped](quoll::async::stopped_t) { stopped = true; }
+      },
+      source.get_token()
+  );
   loop.run();
 
   REQUIRE_FALSE(read);
@@ -291,8 +295,10 @@ TEST_CASE("memory_stream: a stop request after the bytes arrived loses nothing",
   std::stop_source source;
   std::optional<received> read;
 
-  co_spawn(loop.get_executor(), read_once(left),
-           overloaded{[&](received value) { read = std::move(value); }, [](std::exception_ptr) {}}, source.get_token());
+  co_spawn(
+      loop.get_executor(), read_once(left),
+      overloaded{[&](received value) { read = std::move(value); }, [](std::exception_ptr) {}}, source.get_token()
+  );
   loop.run();
 
   // The write wakes the read; the stop request comes before it resumes.
@@ -317,8 +323,10 @@ TEST_CASE("memory_stream: a write that throws sends nothing", "[io][memory_strea
   bool failing = false;
   std::optional<received> read;
 
-  co_spawn(flaky_executor{loop.get_executor(), &failing}, read_once(left),
-           overloaded{[&](received value) { read = std::move(value); }, [](std::exception_ptr) {}});
+  co_spawn(
+      flaky_executor{loop.get_executor(), &failing}, read_once(left),
+      overloaded{[&](received value) { read = std::move(value); }, [](std::exception_ptr) {}}
+  );
   loop.run();
 
   failing = true;
@@ -349,8 +357,9 @@ TEST_CASE("memory_stream: shutdown_send ends what the peer reads, and reading go
     auto const first = co_await client.read_some(std::as_writable_bytes(std::span{chunk}));
 
     REQUIRE(first.transferred == sent.size());
-    REQUIRE((co_await client.read_some(std::as_writable_bytes(std::span{chunk}))).error ==
-            quoll::io::error::end_of_stream);
+    REQUIRE(
+        (co_await client.read_some(std::as_writable_bytes(std::span{chunk}))).error == quoll::io::error::end_of_stream
+    );
 
     // The other direction is still open.
     (void)co_await quoll::io::write(client, std::as_bytes(std::span{answer}));
@@ -458,8 +467,10 @@ TEST_CASE("io::write: goes on until all has left, and counts what left before an
   }
 }
 
-TEST_CASE("memory_stream: a loop going on after an error code does not see a stop, which ends it",
-          "[io][memory_stream][stopped]") {
+TEST_CASE(
+    "memory_stream: a loop going on after an error code does not see a stop, which ends it",
+    "[io][memory_stream][stopped]"
+) {
   auto [left, right] = io::make_memory_stream_pair();
   quoll::async::run_loop loop;
   std::stop_source source;
@@ -482,9 +493,11 @@ TEST_CASE("memory_stream: a loop going on after an error code does not see a sto
     co_return turns;
   };
 
-  co_spawn(loop.get_executor(), retrying(),
-           overloaded{[](int) {}, [](std::exception_ptr) {}, [&stopped](quoll::async::stopped_t) { stopped = true; }},
-           source.get_token());
+  co_spawn(
+      loop.get_executor(), retrying(),
+      overloaded{[](int) {}, [](std::exception_ptr) {}, [&stopped](quoll::async::stopped_t) { stopped = true; }},
+      source.get_token()
+  );
   loop.run();
   source.request_stop();
   loop.run();
@@ -494,8 +507,10 @@ TEST_CASE("memory_stream: a loop going on after an error code does not see a sto
   REQUIRE(errors == 0);
 }
 
-TEST_CASE("memory_stream: a read stopped, then unwound once another waits, leaves that one waiting",
-          "[io][memory_stream][stopped]") {
+TEST_CASE(
+    "memory_stream: a read stopped, then unwound once another waits, leaves that one waiting",
+    "[io][memory_stream][stopped]"
+) {
   auto [left, right] = io::make_memory_stream_pair();
   quoll::async::run_loop loop;
   std::stop_source first_stop;
@@ -505,7 +520,8 @@ TEST_CASE("memory_stream: a read stopped, then unwound once another waits, leave
   co_spawn(
       loop.get_executor(), read_once(left),
       overloaded{[](received) {}, [](std::exception_ptr) {}, [&stopped](quoll::async::stopped_t) { stopped = true; }},
-      first_stop.get_token());
+      first_stop.get_token()
+  );
   loop.run();
 
   // Stops the first read, then waits at once on the same end, before the first is unwound.
@@ -514,8 +530,10 @@ TEST_CASE("memory_stream: a read stopped, then unwound once another waits, leave
     co_return (co_await read_once(left)).text;
   };
 
-  co_spawn(loop.get_executor(), next(),
-           overloaded{[&second](std::string text) { second = std::move(text); }, [](std::exception_ptr) {}});
+  co_spawn(
+      loop.get_executor(), next(),
+      overloaded{[&second](std::string text) { second = std::move(text); }, [](std::exception_ptr) {}}
+  );
   loop.run();
   REQUIRE(stopped);
   REQUIRE_FALSE(second);
@@ -533,10 +551,14 @@ TEST_CASE("memory_stream: a stop asked for already ends a read that would wait",
   auto stopped = false;
 
   source.request_stop();
-  co_spawn(loop.get_executor(), read_once(left),
-           overloaded{[&](received value) { read = std::move(value); }, [](std::exception_ptr) {},
-                      [&stopped](quoll::async::stopped_t) { stopped = true; }},
-           source.get_token());
+  co_spawn(
+      loop.get_executor(), read_once(left),
+      overloaded{
+          [&](received value) { read = std::move(value); }, [](std::exception_ptr) {},
+          [&stopped](quoll::async::stopped_t) { stopped = true; }
+      },
+      source.get_token()
+  );
   loop.run();
 
   REQUIRE(stopped);
@@ -568,8 +590,10 @@ TEST_CASE("memory_stream: a suspended read that goes leaves the peer nothing to 
     auto read = left.read_some(buffer);
 
     REQUIRE_FALSE(read.await_ready());
-    read.await_suspend(std::noop_coroutine(),
-                       quoll::async::await_context{.executor = quoll::async::executor_ref{executor}, .stop_token = {}});
+    read.await_suspend(
+        std::noop_coroutine(),
+        quoll::async::await_context{.executor = quoll::async::executor_ref{executor}, .stop_token = {}}
+    );
   }
 
   // It would otherwise post the read that went, and another could not start.

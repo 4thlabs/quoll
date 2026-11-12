@@ -99,11 +99,13 @@ http::router make_router() {
     };
     return response;
   });
-  router.add(http::verb::get, "/slow", "slow",
-             [](http::request, http::route_match) -> quoll::async::task<http::response> {
-               co_await quoll::async::sleep_for(2s);
-               co_return http::response{};
-             });
+  router.add(
+      http::verb::get, "/slow", "slow",
+      [](http::request, http::route_match) -> quoll::async::task<http::response> {
+        co_await quoll::async::sleep_for(2s);
+        co_return http::response{};
+      }
+  );
   router.get("/throws", []() -> http::response { throw std::runtime_error{"on purpose"}; });
 
   return router;
@@ -141,7 +143,8 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
   // A stop ends the connection on the stop, which is how it ends then.
   auto const serve = [&]() -> quoll::async::task<bool> {
     static_cast<void>(co_await quoll::async::stopped_as_optional(
-        server.serve_connection(quoll::io::any_stream{quoll::fuzz::unfolding_stream{steps, peer}})));
+        server.serve_connection(quoll::io::any_stream{quoll::fuzz::unfolding_stream{steps, peer}})
+    ));
     co_return true;
   };
 
