@@ -87,8 +87,8 @@ struct async_value<void> {
  * @endcode
  *
  * A state, as any: `*sales`, `sales->value`, `sales->loading`, `sales->error`. `async_state<>` holds no value, for an
- * action whose result goes to its caller alone. An effect's target is loading from the start when its first run will
- * start, as its component's first view comes before it; an action's, once a run starts.
+ * effect whose function gives nothing. An effect's target is loading from the start when its first run will start, as
+ * its component's first view comes before it. An action holds one of its own, read as `save->loading`.
  */
 template <class T = void>
 class async_state : public state<async_value<T>> {

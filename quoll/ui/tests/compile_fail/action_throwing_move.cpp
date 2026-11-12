@@ -37,13 +37,10 @@
 // expect: quoll::ui: what a run gives moves without throwing, once its target holds it, so that the run ends on what
 // its target holds
 //
-// An action whose result may throw as it moves: its target could hold what its caller never gets.
+// An action whose result may throw as it moves: it could hold what its caller never gets.
 
 #include <quoll/async/task.hpp>
 #include <quoll/ui/data/action.hpp>
-#include <quoll/ui/data/state.hpp>
-
-#include <tuple>
 
 struct heavy {
   heavy() = default;
@@ -59,8 +56,7 @@ struct heavy {
 quoll::async::task<heavy> make(int id);
 
 struct page {
-  quoll::ui::state<std::tuple<heavy, bool>> made;
-  quoll::ui::action<&make> run{made};
+  quoll::ui::action<&make> run;
 };
 
 page const shown{};

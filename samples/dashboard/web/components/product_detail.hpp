@@ -123,10 +123,9 @@ struct product_detail {
     }
   }
 
-  // Whether a save is on its way, and why the last one failed: once at a time, a click while one is on its way refused.
-  // The save is the catalog's: a detail left stops waiting for it, and it goes on.
-  async_state<products::product> saving;
-  action<&catalog::save> save{products, saving, [this](products::product const &saved) { forget_saved(saved); }};
+  // Once at a time: whether a save is on its way, and why the last one failed; the save is the catalog's, which goes on
+  // as the detail is left.
+  action<&catalog::save> save{products, [this](products::product const &saved) { forget_saved(saved); }};
 
   element view(props const &given) {
     auto const edit = [](state<std::optional<std::string>> &typed) {
@@ -136,11 +135,11 @@ struct product_detail {
     auto const update = changes(given.item);
 
     auto const not_numbers = [] { return error_text("The price and the stock are numbers"); };
-    auto const save_failed = [this] { return error_text("Not saved: " + told(saving->error, "the save failed")); };
+    auto const save_failed = [this] { return error_text("Not saved: " + told(save->error, "the save failed")); };
 
     // The fields stay open while a save is on its way: what is typed meanwhile is kept for the next. A click sends the
     // update, none while the fields are wrong; one while a save is on its way the action refuses.
-    auto save_button = button(saving->loading ? "Saving…" : "Save") | disabled(saving->loading || !update);
+    auto save_button = button(save->loading ? "Saving…" : "Save") | disabled(save->loading || !update);
 
     if (update) {
       save_button = std::move(save_button) | on_click(save.with(given.item.id, *update));
@@ -161,7 +160,7 @@ struct product_detail {
         }),
         // What is typed wrong first: the last save's failure is of what was sent then.
         when(!update, not_numbers),
-        when(update && saving->error != nullptr, save_failed),
+        when(update && save->error != nullptr, save_failed),
         save_button | tw("btn btn-primary self-start"),
     });
 

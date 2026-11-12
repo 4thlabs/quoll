@@ -77,7 +77,7 @@ struct notes_page {
 | Show a text            | `text("Hello")`, or `p("Hello")` for a tag holding it                                                                                          |
 | Style it               | `\| tw("flex gap-2")`, `\| tw_if(done, "line-through")`, classes written whole, as Tailwind reads them in the source                           |
 | Set an attribute       | `\| placeholder("A note")`, `\| role("alert")`, `\| aria("label", "Name")`, `\| attribute("id", "price")`                                      |
-| Set one while it holds | `\| disabled(saving->loading)`, `\| hidden(!*open)`, `\| required(true)`, `\| readonly(*locked)`                                               |
+| Set one while it holds | `\| disabled(save->loading)`, `\| hidden(!*open)`, `\| required(true)`, `\| readonly(*locked)`                                                 |
 | Show a value given     | `input() \| value(given.text) \| on_input(...)`, for a field showing a prop                                                                    |
 | Handle an event        | `\| on_click(...)`, `\| on_input(...)`, `\| on_change(...)`, `\| on_key_down(...)` given the key                                               |
 | Send a form            | `form({...}) \| on_submit(...)`, as Enter in one of its inputs does: the page stays, but for an `action`                                       |
@@ -245,8 +245,9 @@ points to what the caller gave.
 
 ## Effects and actions
 
-What a component loads as its states change, and what it runs on a click, are members of it. Both write what they
-give into a state of the component, their target, and the view reads only states. An `effect` is React's `useEffect`:
+What a component loads as its states change, and what it runs on a click, are members of it, which the view reads as
+states. An effect writes what it gives into a state of the component, its target; an action holds where its runs are,
+as React Query's `useMutation`. An `effect` is React's `useEffect`:
 it runs after a view in which one of its states changed. An `action<&function>` is what a handler runs, once at a
 time by default.
 
@@ -274,7 +275,7 @@ struct sales_panel {
 
 **An `async_state<T>`**, in `<quoll/ui/data/async_state.hpp>`, is the target most components want: a state of an
 `async_value<T>`, whose fields are `value`, `loading` and `error`, read as `sales->loading`. `async_state<>` has no
-`value`, for a run that gives nothing, as a save whose answer only the handler wants. It is a state like any other,
+`value`, for an effect whose function gives nothing. An action is read as one, holding its own. It is a state like any other,
 set and updated as one: `items.update([](auto &held) { held.value.push_back(...); })`.
 
 **What a target receives.** An `async_state<T>` receives by its fields: `value` is what the function gives, whole, a
@@ -344,13 +345,16 @@ effect search{query, [this](std::string text) -> task<> {
 
 **An action runs a function once at a time**, which its template argument names, and gives its signature:
 
-- a free function returning a task, as `action<&products_client::update> save{saving};`;
-- a member function of a context, given its `shared<C>`, as `action<&catalog::save> save{products, saving};`, which
-  runs as the context's `run()` does: its work goes on as the component goes;
-- a member function of the component itself, given `this`, as `action<&product_detail::send> save{this, saving};`
-  for its member `send`, declared before the action.
+- a free function returning a task, as `action<&products_client::update> save;`;
+- a member function of a context, given its `shared<C>`, as `action<&catalog::save> save{products};`, which runs as the
+  context's `run()` does: its work goes on as the component goes;
+- a member function of the component itself, given `this`, as `action<&product_detail::send> save{this};` for its
+  member `send`, declared before the action.
 
-What it gives goes to its target, and to what follows a success, given last, as React Query's `onSuccess`:
+It is read as an `async_state` is: `save->loading` while a run is under way, `save->error` why the last failed, and
+`save->value` what it gave, a copy, none for a value it cannot copy or make empty, as a move-only one, which only
+`run()`'s caller is given; a change of them shows its component again. What follows a success is given last,
+as React Query's `onSuccess`:
 
 ```cpp
 struct rename_form {
@@ -360,27 +364,27 @@ struct rename_form {
 
   state<std::optional<std::string>> name;
 
-  // Whether a save is on its way, and why the last one failed; saved, what is typed is forgotten.
-  async_state<products::product> saving;
-  action<&products_client::update> save{saving, [this](products::product const &) { name = std::nullopt; }};
+  // Saved, what is typed is forgotten.
+  action<&products_client::update> save{[this](products::product const &) { name = std::nullopt; }};
 
   element view(props const &given) {
     products::product_update const changes{.name = name->value_or(given.item.name)};
 
     // A click while a save is on its way would be refused: the button waits.
-    return button(saving->loading ? "Saving…" : "Save") | disabled(saving->loading) |
+    return button(save->loading ? "Saving…" : "Save") | disabled(save->loading) |
            on_click(save.with(given.item.id, changes));
   }
 };
 ```
 
-- `save.with(args...)` gives a handler that runs it with copies of the arguments, for `on_click`: what it gave goes to
-  its target and to what follows a success, and a failure its target has no place for, with no `std::exception_ptr`
-  or no target, to the app's `on_error`, as a handler's;
+- `save.with(args...)` gives a handler that runs it with copies of the arguments, for `on_click`: what it gave and why
+  it failed are what it holds, as React Query's `mutate()`, for the view to show; a handler going on with them awaits
+  `run()`;
 - `co_await save.run(args...)` gives what the function gave, or what it threw, as a `std::expected`, for a handler
   that goes on with it, after what follows a success, which throws to it what it throws;
 - both take the function's parameters, so that a braced argument builds one, as `save.with(id, {.name = "tea"})`;
-- a call while one is under way is refused, `run_refused` at once, its target left as it is;
+- every failure of a run is its `error`, a lack of memory before it began too; one making the run throws from the call;
+- a call while one is under way is refused, `run_refused` at once, the action left as it is;
 - with `overlap::restart` as its second parameter, a call stops the run under way instead, which gives `run_replaced`
   and writes nothing;
 - a run its caller stops, as a timeout does, is under way no more;
@@ -388,11 +392,13 @@ struct rename_form {
   call or a stopped one tell it nothing;
 - its runs are its component's tasks: a component that goes, as a detail keyed by its product once another is chosen,
   stops them, and what follows them. A save that must go on, as one the list of the page shows, is a context's: the
-  action runs a member function of it, whose work goes on as the detail stops waiting.
+  action runs a member function of it, whose work goes on as the detail stops waiting;
+- one action, one run at a time and one state: in a list, each row is a component with its own, so that each shows its
+  own, and two rows run theirs together.
 
-None is copied nor moved: a run under way refers to it, as a component stays where it was made. Its target and what
-it is given are members of the same component, declared before it. Arguments and values are copied into the run, the
-arguments given to the function as rvalues, so that none can be a view, which does not compile.
+None is copied nor moved: a run under way refers to it, as a component stays where it was made. What it is given is a
+member of the same component, declared before it. Arguments and values are copied into the run, the arguments given to
+the function as rvalues, so that none can be a view, which does not compile.
 
 ## Contexts
 
@@ -432,8 +438,7 @@ struct product_detail {
   shared<catalog> products;
 
   // The save is the catalog's: it goes on as the detail goes.
-  async_state<products::product> saving;
-  action<&catalog::save> save{products, saving};
+  action<&catalog::save> save{products};
 };
 
 int main() {

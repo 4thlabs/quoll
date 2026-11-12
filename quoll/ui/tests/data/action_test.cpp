@@ -55,6 +55,7 @@
 #include <quoll/ui/data/async_state.hpp>
 #include <quoll/ui/data/effect.hpp>
 #include <quoll/ui/data/run_error.hpp>
+#include <quoll/ui/detail/data/linked_member.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
@@ -63,6 +64,7 @@
 #include <coroutine>
 #include <cstdio>
 #include <exception>
+#include <memory>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -134,15 +136,11 @@ std::string told(Result const &result) {
   }
 }
 
-// Whether a run is under way, and why the last failed.
-using flags = std::tuple<bool, std::exception_ptr>;
-
 // Runs its action with the value it is given, on a click, and tells what each run gave.
 template <overlap Policy>
 struct running_page {
   state<int> next{1};
-  state<flags> running;
-  action<&doubled, Policy> run{running};
+  action<&doubled, Policy> run;
 
   element view() {
     auto const go = [this]() -> task<> {
@@ -152,18 +150,17 @@ struct running_page {
       runs.lines.push_back("gave " + std::to_string(value) + " " + told(result));
     };
 
-    auto const label = std::get<0>(*running) ? "waits" : "go";
+    auto const label = run->loading ? "waits" : "go";
 
     return div({button(label) | on_click(go)});
   }
 };
 
-// Its target holds what it gave too, a copy: its caller is given the run's own.
+// It holds what it gave too, a copy: its caller is given the run's own.
 struct valued_page {
-  state<std::tuple<int, bool, std::exception_ptr>> doubled_value;
-  action<&doubled> run{doubled_value};
+  action<&doubled> run;
 
-  element view() { return p(std::to_string(std::get<0>(*doubled_value))); }
+  element view() { return p(std::to_string(run->value)); }
 };
 
 // A result whose copy throws once asked to, as one that allocates may.
@@ -203,8 +200,7 @@ task<touchy> touchy_of(int value) {
 }
 
 struct touchy_page {
-  state<std::tuple<touchy, std::exception_ptr>> kept;
-  action<&touchy_of> run{kept};
+  action<&touchy_of> run;
 
   element view() { return div({}); }
 };
@@ -216,30 +212,26 @@ task<std::tuple<int, touchy>> pair_of(int value) {
 
 // Two values, the second's copy may throw: written both, or neither.
 struct pair_page {
-  state<std::tuple<int, touchy, std::exception_ptr>> kept;
-  action<&pair_of> run{kept};
+  action<&pair_of> run;
 
   element view() { return div({}); }
 };
 
 struct timed_page {
-  state<bool> busy;
-  action<&doubled> run{busy};
+  action<&doubled> run;
 
   element view() { return div({}); }
 };
 
 struct timed_restart_page {
-  state<bool> busy;
-  action<&doubled, overlap::restart> run{busy};
+  action<&doubled, overlap::restart> run;
 
   element view() { return div({}); }
 };
 
 // Runs its action as it first shows, and goes as its page asks.
 struct running_panel {
-  state<bool> busy;
-  action<&doubled> run{busy};
+  action<&doubled> run;
 
   task<> mounted() { static_cast<void>(co_await run.run(1)); }
 
@@ -256,15 +248,13 @@ struct panel_page {
   }
 };
 
-// Its action with() a value, on a click, its result in a named state, and what follows a success.
+// Its action with() a value, on a click, then what follows a success.
 struct with_page {
   state<int> next{3};
-  async_state<int> doubled_value;
   state<std::vector<int>> told;
-  action<&doubled> run{doubled_value,
-                       [this](int const &value) { told.update([value](auto &all) { all.push_back(value); }); }};
+  action<&doubled> run{[this](int const &value) { told.update([value](auto &all) { all.push_back(value); }); }};
 
-  element view() { return div({button("go") | on_click(run.with(*next)), p(std::to_string(doubled_value->value))}); }
+  element view() { return div({button("go") | on_click(run.with(*next)), p(std::to_string(run->value))}); }
 };
 
 // Its action runs a member function of the component itself, declared before it, then what follows a success.
@@ -287,9 +277,8 @@ struct self_page {
     calls += given.times;
   }
 
-  async_state<> working;
-  action<&self_page::work> run{this, working, [this] { ++successes; }};
-  // With no target: only its caller hears of it.
+  action<&self_page::work> run{this, [this] { ++successes; }};
+  // With nothing to follow a success.
   action<&self_page::work> bare{this};
 
   element view() {
@@ -301,32 +290,30 @@ struct self_page {
   }
 };
 
-// An action with no target from a click: its failure goes to the app's on_error, a click refused does not.
+// An action from a click: its failure is its error, not the app's on_error's, nor a click refused.
 struct untold_page {
   action<&doubled> run;
 
   element view() { return button("go") | on_click(run.with(4)); }
 };
 
-// Its action gives a word long enough that its copy into the target allocates, into a target with no error.
+// Its action gives a word long enough that its copy, into where its runs are, allocates.
 task<std::string> spelled(int times) {
   co_await quoll::async::sleep_for(1ms);
   co_return std::string(static_cast<std::size_t>(times), 'a');
 }
 
 struct word_page {
-  state<std::string> word;
-  action<&spelled> run{word};
+  action<&spelled> run;
 
-  element view() { return p(*word); }
+  element view() { return p(run->value); }
 };
 
 // What follows a success throws.
 struct throwing_success_page {
-  async_state<int> doubled_value;
-  action<&doubled> run{doubled_value, [](int const &) { throw std::runtime_error{"after"}; }};
+  action<&doubled> run{[](int const &) { throw std::runtime_error{"after"}; }};
 
-  element view() { return p(std::to_string(doubled_value->value)); }
+  element view() { return p(std::to_string(run->value)); }
 };
 
 struct void_page {
@@ -386,7 +373,7 @@ TEST_CASE("action: with overlap::restart, a call stops the run under way, which 
   CHECK(shown.html().contains("<button>go</button>"));
 }
 
-TEST_CASE("action: a run that fails leaves why in its target, gone as the next starts", "[ui][action]") {
+TEST_CASE("action: a run that fails holds why, gone as the next starts", "[ui][action]") {
   runs = {};
   runs.failing = {2};
 
@@ -397,7 +384,7 @@ TEST_CASE("action: a run that fails leaves why in its target, gone as the next s
   bool cleared_on_third = false;
 
   auto const act = [&]() -> task<> {
-    auto const &running = instance.component().running;
+    auto const &running = instance.component().run;
 
     instance.dispatch(shown.find("button"), "click");
     co_await quoll::async::sleep_for(20ms);
@@ -405,12 +392,12 @@ TEST_CASE("action: a run that fails leaves why in its target, gone as the next s
     instance.component().next = 2;
     instance.dispatch(shown.find("button"), "click");
     co_await quoll::async::sleep_for(20ms);
-    failed_after_second = !std::get<0>(*running) && std::get<1>(*running) != nullptr;
+    failed_after_second = !running->loading && running->error != nullptr;
 
     instance.component().next = 3;
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
-    cleared_on_third = std::get<0>(*running) && std::get<1>(*running) == nullptr;
+    cleared_on_third = running->loading && running->error == nullptr;
     co_await quoll::async::sleep_for(20ms);
   };
 
@@ -421,7 +408,7 @@ TEST_CASE("action: a run that fails leaves why in its target, gone as the next s
                                                "end 3", "gave 3 yes"});
 }
 
-TEST_CASE("action: a target with a value holds a copy of what its caller is given", "[ui][action]") {
+TEST_CASE("action: it holds a copy of what its caller is given", "[ui][action]") {
   runs = {};
 
   virtual_time time;
@@ -441,7 +428,7 @@ TEST_CASE("action: a target with a value holds a copy of what its caller is give
   CHECK(shown.html().contains("<p>4</p>"));
 }
 
-TEST_CASE("action: of nothing, with no target, gives whether it ended", "[ui][action]") {
+TEST_CASE("action: of nothing gives whether it ended", "[ui][action]") {
   runs = {};
   runs.failing = {2};
 
@@ -480,7 +467,7 @@ TEST_CASE("action: a run its caller stops, as a timeout does, is under way no mo
       timed_out = failure.code() == std::errc::timed_out;
     }
 
-    busy_after = *instance.component().busy;
+    busy_after = instance.component().run->loading;
     again = (co_await run.run(2)).has_value();
   };
 
@@ -488,7 +475,7 @@ TEST_CASE("action: a run its caller stops, as a timeout does, is under way no mo
   CHECK(timed_out);
   CHECK_FALSE(busy_after);
   CHECK(again);
-  CHECK_FALSE(*instance.component().busy);
+  CHECK_FALSE(instance.component().run->loading);
 }
 
 namespace {
@@ -578,7 +565,7 @@ TEST_CASE("action: a run its caller stops once a later one took its place leaves
 
     auto const watch = [&]() -> task<> {
       co_await quoll::async::sleep_for(5ms);
-      busy_meanwhile = *instance.component().busy;
+      busy_meanwhile = instance.component().run->loading;
     };
 
     co_await quoll::async::when_all(first(), second(), watch());
@@ -587,10 +574,10 @@ TEST_CASE("action: a run its caller stops once a later one took its place leaves
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(busy_meanwhile);
   CHECK(second_gave);
-  CHECK_FALSE(*instance.component().busy);
+  CHECK_FALSE(instance.component().run->loading);
 }
 
-TEST_CASE("action: a value its target cannot take is this run's failure, given rather than thrown", "[ui][action]") {
+TEST_CASE("action: a value it cannot hold is this run's failure, given rather than thrown", "[ui][action]") {
   runs = {};
   touchy_throws = false;
 
@@ -618,7 +605,8 @@ TEST_CASE("action: a value its target cannot take is this run's failure, given r
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
 
-  auto const &[kept, error] = *instance.component().kept;
+  auto const &kept = instance.component().run->value;
+  auto const &error = instance.component().run->error;
 
   CHECK(first);
   CHECK(second == "no");
@@ -647,7 +635,8 @@ TEST_CASE("action: a run whose second value cannot be made writes none of them",
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
 
-  auto const &[number, kept, error] = *instance.component().kept;
+  auto const &[number, kept] = instance.component().run->value;
+  auto const &error = instance.component().run->error;
 
   CHECK(second_failed);
   CHECK(number == 1);
@@ -672,10 +661,10 @@ TEST_CASE("action: a component that goes stops its runs", "[ui][action]") {
   CHECK(runs.lines == std::vector<std::string>{"start 1"});
 }
 
-TEST_CASE("action: a lack of memory at any step of a run is its failure, given to its caller and its target",
+TEST_CASE("action: a lack of memory at any step of a run is its failure, given to its caller and held",
           "[ui][action]") {
   // Each allocation the run makes, in turn, fails: whichever it is, the run's await gives a std::expected, and a run
-  // that failed leaves its target not loading.
+  // that failed is loading no more.
   bool clean = false;
 
   for (long before = 0; before < 40; ++before) {
@@ -710,7 +699,7 @@ TEST_CASE("action: a lack of memory at any step of a run is its failure, given t
     INFO("allocations before failing: " << before);
     REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
     CHECK_FALSE(escaped);
-    CHECK_FALSE(std::get<0>(*instance.component().running));
+    CHECK_FALSE(instance.component().run->loading);
 
     if (!injected) {
       clean = true;
@@ -722,7 +711,7 @@ TEST_CASE("action: a lack of memory at any step of a run is its failure, given t
   CHECK(clean);
 }
 
-TEST_CASE("action: with() runs it from a click, what it gave in a named state, then on_success", "[ui][action]") {
+TEST_CASE("action: with() runs it from a click, what it gave held, then on_success", "[ui][action]") {
   runs = {};
 
   virtual_time time;
@@ -734,14 +723,14 @@ TEST_CASE("action: with() runs it from a click, what it gave in a named state, t
     co_await settle();
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
-    loading_meanwhile = instance.component().doubled_value->loading;
+    loading_meanwhile = instance.component().run->loading;
     co_await quoll::async::sleep_for(20ms);
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(loading_meanwhile);
-  CHECK(instance.component().doubled_value->value == 6);
-  CHECK_FALSE(instance.component().doubled_value->loading);
+  CHECK(instance.component().run->value == 6);
+  CHECK_FALSE(instance.component().run->loading);
   CHECK(*instance.component().told == std::vector<int>{6});
   CHECK(shown.html().contains("<p>6</p>"));
 }
@@ -757,7 +746,7 @@ TEST_CASE("action: of a member function of its component, run on it", "[ui][acti
     co_await settle();
     instance.dispatch(shown.find_text("work"), "click");
     co_await quoll::async::sleep_for(5ms);
-    worked = instance.component().working->error == nullptr && !instance.component().working->loading;
+    worked = instance.component().run->error == nullptr && !instance.component().run->loading;
 
     // A failure tells nothing to what follows a success.
     instance.dispatch(shown.find_text("fail"), "click");
@@ -771,11 +760,11 @@ TEST_CASE("action: of a member function of its component, run on it", "[ui][acti
   CHECK(worked);
   CHECK(instance.component().calls == 5);
   CHECK(instance.component().successes == 1);
-  REQUIRE(instance.component().working->error != nullptr);
-  CHECK_THROWS_WITH(std::rethrow_exception(instance.component().working->error), "no work");
+  REQUIRE(instance.component().run->error != nullptr);
+  CHECK_THROWS_WITH(std::rethrow_exception(instance.component().run->error), "no work");
 }
 
-TEST_CASE("action: with() of one whose target cannot hold its failure tells the app's on_error, not of a refused click",
+TEST_CASE("action: with()'s failure is its error, not the app's on_error's, and a click refused is no failure",
           "[ui][action]") {
   runs = {};
   runs.failing = {4};
@@ -801,10 +790,12 @@ TEST_CASE("action: with() of one whose target cannot hold its failure tells the 
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(runs.lines == std::vector<std::string>{"start 4"});
-  CHECK(failures == std::vector<std::string>{"no 4"});
+  CHECK(failures.empty());
+  REQUIRE(instance.component().run->error != nullptr);
+  CHECK_THROWS_WITH(std::rethrow_exception(instance.component().run->error), "no 4");
 }
 
-TEST_CASE("action: what follows a success throws to run()'s caller, its target holding the success", "[ui][action]") {
+TEST_CASE("action: what follows a success throws to run()'s caller, holding the success", "[ui][action]") {
   runs = {};
 
   virtual_time time;
@@ -824,13 +815,13 @@ TEST_CASE("action: what follows a success throws to run()'s caller, its target h
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(thrown == "after");
-  CHECK(instance.component().doubled_value->value == 10);
-  CHECK(instance.component().doubled_value->error == nullptr);
+  CHECK(instance.component().run->value == 10);
+  CHECK(instance.component().run->error == nullptr);
 }
 
-TEST_CASE("action: with() under a lack of memory at any step tells its target, or throws from its handler, once",
+TEST_CASE("action: with() under a lack of memory at any step holds why, or throws from its handler, once",
           "[ui][action]") {
-  // Each allocation the handler's run makes, in turn, fails: the run succeeds, or its target says why not, or the
+  // Each allocation the handler's run makes, in turn, fails: the run succeeds, or it holds why not, or the
   // handler throws, which the event gives to the app's on_error.
   bool clean = false;
 
@@ -865,10 +856,10 @@ TEST_CASE("action: with() under a lack of memory at any step tells its target, o
     INFO("allocations before failing: " << before);
     REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
 
-    auto const &result = *instance.component().doubled_value;
+    auto const &result = *instance.component().run;
 
     CHECK((result.value == 6 || result.error != nullptr || thrown));
-    // Told once: a failure its target shows is not thrown as well.
+    // Told once: a failure it holds is not thrown as well.
     CHECK_FALSE((thrown && result.error != nullptr));
     CHECK_FALSE(result.loading);
 
@@ -882,10 +873,9 @@ TEST_CASE("action: with() under a lack of memory at any step tells its target, o
   CHECK(clean);
 }
 
-TEST_CASE("action: with() under a lack of memory, its target without an error, throws from its handler what fails",
-          "[ui][action]") {
-  // The copy of the word into the target allocates too: a failure there is the run's, thrown, as its target has no
-  // place for it.
+TEST_CASE("action: with() under a lack of memory, as the word it gave is copied, has it as its error", "[ui][action]") {
+  // The copy of the word into where its runs are allocates too: a failure there is the run's error, its word left as
+  // it was; only the making of the run throws from the handler's call.
   bool clean = false;
 
   for (long before = 0; before < 60; ++before) {
@@ -916,11 +906,14 @@ TEST_CASE("action: with() under a lack of memory, its target without an error, t
 
     INFO("allocations before failing: " << before);
     REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-    CHECK((*instance.component().word == std::string(64, 'a') || thrown));
+    auto const &run = *instance.component().run;
 
-    // A run that failed wrote nothing: the target holds the word whole, or what it held.
-    if (thrown) {
-      CHECK(instance.component().word->empty());
+    CHECK((run.value == std::string(64, 'a') || run.error != nullptr || thrown));
+    CHECK_FALSE(run.loading);
+
+    // A run that failed wrote nothing: the word whole, or what it held.
+    if (run.error != nullptr || thrown) {
+      CHECK(run.value.empty());
     }
 
     if (!injected) {
@@ -930,4 +923,45 @@ TEST_CASE("action: with() under a lack of memory, its target without an error, t
   }
 
   CHECK(clean);
+}
+
+namespace {
+
+// Its result only moves: it holds none, and run()'s caller is given it.
+task<std::unique_ptr<int>> boxed(int value) {
+  co_await quoll::async::sleep_for(1ms);
+  co_return std::make_unique<int>(value);
+}
+
+struct boxed_page {
+  action<&boxed> run;
+
+  element view() { return p(run->loading ? "boxing" : "boxed"); }
+};
+
+static_assert(quoll::ui::detail::LinkedMember<action<&doubled>>);
+static_assert(std::same_as<action<&boxed>::held_type, void>);
+
+} // namespace
+
+TEST_CASE("action: of a result that only moves, which it holds none of, its caller given it", "[ui][action]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<boxed_page> instance{time.get_executor(), shown};
+  int given = 0;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+
+    auto boxed_value = co_await instance.component().run.run(7);
+
+    given = boxed_value ? **boxed_value : 0;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(given == 7);
+  CHECK_FALSE(instance.component().run->loading);
+  CHECK(instance.component().run->error == nullptr);
+  CHECK(shown.html().contains("<p>boxed</p>"));
 }
