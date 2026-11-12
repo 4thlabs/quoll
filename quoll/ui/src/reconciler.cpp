@@ -53,8 +53,8 @@ namespace {
 bool same_content(std::vector<element> const &before, std::vector<element> const &after) {
   return std::ranges::equal(before, after, [](element const &one, element const &other) {
     return one.type == other.type && one.tag == other.tag && one.content == other.content &&
-           one.attributes == other.attributes && one.value == other.value && one.key == other.key &&
-           same_content(one.children, other.children);
+           one.attributes == other.attributes && one.value == other.value && one.checked == other.checked &&
+           one.key == other.key && same_content(one.children, other.children);
   });
 }
 

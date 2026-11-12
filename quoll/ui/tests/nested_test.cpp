@@ -961,6 +961,10 @@ TEST_CASE("component: one decorated otherwise than with a key is refused", "[ui]
 
   REQUIRE_THROWS_AS(to_html(decorated), std::logic_error);
 
+  // Checked or not, as a value given: either is a decoration.
+  REQUIRE_THROWS_AS(to_html(component<row>({.label = "a", .log = &log}) | checked(true)), std::logic_error);
+  REQUIRE_THROWS_AS(to_html(component<row>({.label = "a", .log = &log}) | checked(false)), std::logic_error);
+
   auto const retagged =
       component<row>({.label = "a", .log = &log}) | decorator([](element &target) { target.tag = "section"; });
 
