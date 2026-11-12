@@ -38,12 +38,14 @@ Two things make a contract heavy:
 - **Error responses repeated on every endpoint.** The GitHub sample declares two `returns<error, status>` on each
   endpoint.
 - **The name to write**, `"users.get"`. It is what tells apart two endpoints with the same parts, and the route's name in
-  the router.
+  the router, which a middleware reads through `next.route()`. A form that drops it changes that name, which such a
+  middleware compares as a string: the change is silent.
 
 The method (`verb::get`) is not a problem.
 
 Three choices follow, independent of each other: the errors, the shape of the contract, the shape of the service. Every
-example describes the contract `users` of `docs/rest.md`, without its declared 404, as the errors below propose. None is
+example describes the contract `users` of `docs/rest.md`, without its declared 404 for brevity: its body is read by the
+caller, so it stays a `returns<not_found, status::not_found>` on `find` in every form. None is
 implemented: they are sketches, whose points to check are listed.
 
 Every form but today's names endpoints after their method, `get`, `post`, `delete_`, in `quoll::rest`, which a contract
@@ -54,8 +56,9 @@ brings in with `using namespace quoll::rest`, in its own namespace:
   its class. In A, `using get = get<...>;` compiles, but every later `get<...>` in that namespace finds the alias. The
   guide's `users::get` becomes `users::find` in every example below.
 - **Where they are class or alias templates**, as in A and D, an unqualified `get<0>(pair)` in that namespace finds
-  `rest::get`, which stops argument-dependent lookup from finding `std::get`, and no longer compiles. Where they are
-  functions, as in B, C and E, argument-dependent lookup still runs and finds `std::get`.
+  `rest::get`, which stops argument-dependent lookup from finding `std::get`, and no longer compiles. In B, C and E
+  they may be functions or function templates, which leave argument-dependent lookup to find `std::get`; not function
+  objects (`inline constexpr get_fn get{}`), a variable, which stops it as a template does.
 
 Other names (`http_get`), or qualified ones, avoid both.
 
@@ -77,7 +80,8 @@ What [#176](https://github.com/4thlabs/quoll/issues/176) adds:
   `5XX` keys (not `default`, which also covers 2xx and 3xx), for an API with its own format, as GitHub's. Unlike a
   `returns<>` in a `with<>` today, a service answers it and the client decodes it.
 - **`errors<T, Statuses...>`**: the same, for some statuses only.
-- **`codec<C>`** in a `with<>`: the codec of a group, so that the GitHub sample needs no `answers` alias.
+- **`codec<C>`** in a `with<>`: the codec of a group, so that the GitHub sample needs no `answers` alias. Its name is to
+  choose: `codec` is already a member alias of `body<>`, `returns<>` and `events<>`, and `Codec` the concept.
 - **`returns<T, Status>`** stays, on its endpoint, for an error whose body the caller uses: a 409 with the current
   version, a 422 with the invalid fields.
 
@@ -226,7 +230,7 @@ struct users {
 } // namespace contract
 ```
 
-Use:
+Use, in `namespace contract` too:
 
 ```cpp
 user const found = co_await client.call<users::find>(42);
@@ -263,12 +267,16 @@ struct users {
   delete_<"/{id:int64}"> remove;
 };
 
+struct cards {
+  get<"/", returns<std::vector<std::string>>> list;
+};
+
 using v1 = rest::api<"/api/v1", with<security<bearer_auth>, rest::api<"/users", users>,
                                                rest::api<"/users/{user_id:int64}/cards", cards>>>;
 } // namespace contract
 ```
 
-Use:
+Use, in `namespace contract` too:
 
 ```cpp
 user const found = co_await client.call<&users::find>(42);
@@ -285,14 +293,16 @@ struct users_service {
     - **through Glaze**, as the contract layer already does: `detail/route.hpp` reads a `query_params` struct with
       `glz::reflect`, `detail/fields_of.hpp` ties it with `glz::to_tie`, and `design-decisions.md` says Glaze's
       reflection finds the members of a contract's types. It also gives the members' names
-      (`glz::reflect<users>::keys`), for the route names and the later operationId;
+      (`glz::reflect<users>::keys`) and of the struct (`glz::name_v<users>`), for the route names and the later
+      operationId: `users.list` and `cards.list`, as a member's name alone repeats across resources;
     - **without Glaze**, as Boost.PFR does, by probing the aggregate's initialization, then through structured bindings:
       the shape of a contract would not depend on the JSON library, at the price of a second enumeration beside Glaze's,
       and of route names from the method and the path.
 - **For:** a resource in one block, read as an interface. No `static constexpr auto`.
 - **Against:** commas instead of `|`, as a non-static member cannot be `auto`. The client writes `&users::find` and the
   service `rest::op<&users::find>`. Every template of `quoll::rest` keyed on an endpoint type is keyed on a member
-  pointer instead: the client's calls, `reply<>`, `result<>`, the routes.
+  pointer instead, among them the client's calls, `reply<>`, `result<>` and the routes, and `mount` finds a handler
+  through `rest::op`.
   A response other than the first reads `rest::reply<&users::find>`.
 - **To check:** the enumeration on GCC 13, Clang 19, Apple Clang 21 and Emscripten. One struct mounted under two
   prefixes would be ambiguous, so refused at compile time.
@@ -328,7 +338,8 @@ user const found = co_await client.call<^^users::api::find>(42);
 Its annotations meet the clashes of Context, and one more: a `rest::status(...)` annotation would hide `http::status`
 in the contract's namespace, so it needs another name.
 
-The most readable form, but no compiler Quoll targets has it, but for GCC:
+The most readable form, but only GCC 16 has what it needs; Clang, Apple Clang and Emscripten, which Quoll targets too,
+do not:
 
 | Compiler       | Reflection (P2996)             | Annotations (P3394)        | Parameters (P3096) |
 | -------------- | ------------------------------ | -------------------------- | ------------------ |
@@ -365,6 +376,7 @@ contract D, the tag is `rest::op<&users::find>`; the builder takes the member po
 `call<&users::find>` does:
 
 ```cpp
+// in namespace contract, as D's uses
 auto const service = rest::service<users>()
     .on<&users::list>([](user_filter filter) { return find_users(filter); })
     .on<&users::find>([](std::int64_t id) -> async::task<user> { co_return co_await load(id); })
