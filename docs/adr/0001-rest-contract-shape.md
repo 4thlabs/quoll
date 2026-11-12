@@ -47,9 +47,10 @@ example describes the contract `users` of `docs/rest.md`, without its declared 4
 implemented: they are sketches, whose points to check are listed.
 
 Every form but today's names endpoints after their method, `get`, `post`, `delete_`, in `quoll::rest`, which a contract
-brings in with `using namespace quoll::rest`. There, an unqualified `get<0>(pair)` would find `rest::get` rather than
-`std::get` through ADL, and stop compiling; an endpoint cannot be called `get` either. Other names (`http_get`), or
-qualified ones, avoid it.
+brings in with `using namespace quoll::rest`. Where they are class or alias templates, as in A and D, an unqualified
+`get<0>(pair)` there finds `rest::get`, which stops argument-dependent lookup from finding `std::get`, and no longer
+compiles; in A, an endpoint cannot be called `get` either. Other names (`http_get`), or qualified ones, avoid it. Where
+they are functions, as in B, C and E, argument-dependent lookup still runs and `get<0>(pair)` finds `std::get`.
 
 ## Errors
 
@@ -358,8 +359,8 @@ auto const service = rest::service<users>(users_reads{db})                      
 
 ## Comparison
 
-D is the shortest form that holds in C++23 without Glaze. C is the only one that keeps `|`, at the price of a
-`static constexpr auto` per line.
+D is the shortest form that holds in C++23 without Glaze. B and C keep `|`: B at the price of a struct and an
+`endpoint<...> {}` per endpoint, C of a `static constexpr auto` per line.
 
 | Form | An endpoint | Name written | Client | Service | What changes |
 | --- | --- | --- | --- | --- | --- |
