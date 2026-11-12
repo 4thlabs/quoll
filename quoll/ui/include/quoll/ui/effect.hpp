@@ -123,10 +123,11 @@ async::task<> run_effect(run_slot &slot, target_ref<V> target, Make make, std::s
  * loads, which go into the target, a state of the same component, declared before it: what each of its elements
  * receives goes by its type. A `bool` is whether a run is under way, a `std::exception_ptr` why the last failed, and
  * the others the values, in order; an `async_state` names them `loading`, `error` and `value`. A target holding no
- * tuple holds one of these. The target is loading from the start, as React's `useState(true)`: the first view of its
- * component comes before the first run. As a run starts, its target is loading and has no error, the values before
- * kept; as it ends, the target holds all it gave at once, or its failure, the
- * values before kept. A target with no error leaves a failure to the app's on_error, as a handler's, and an effect
+ * tuple holds one of these. The target is loading from the start, as React's `useState(true)`, when its first run
+ * will start, its states or the field of the props holding a value: the first view of its component comes before the
+ * run; a view written once, with to_html, which runs no effect, shows it loading. As a run starts, its target is
+ * loading and has no error, the values before kept; as it ends, the target holds all it gave at once, or its failure,
+ * the values before kept. A target with no error leaves a failure to the app's on_error, as a handler's, and an effect
  * with no target runs a function that gives nothing, such as a debounced search. The values of a target read by type
  * cannot be a bool or an error, which it would not tell apart from its flags; an async_state's value is what the
  * function gives, whole, whatever it is.
@@ -185,8 +186,6 @@ public:
     detail::check_target<T, value, false>();
     init<value, D...>(states_reader(dependencies), std::move(function),
                       detail::target_ref<value>{target, std::false_type{}}, nullptr);
-    // Loading from the start: its first view runs it.
-    target_.begin();
   }
 
   /**
@@ -220,8 +219,6 @@ public:
     detail::check_target<T, value, false>();
     init<value, D>(props_reader(member), std::move(function), detail::target_ref<value>{target, std::false_type{}},
                    async::detail::type_id_of<P>());
-    // Loading from the start: its first view runs it.
-    target_.begin();
   }
 
   effect(effect const &) = delete;
@@ -245,7 +242,9 @@ public:
   /**
    * @brief For the app of the component holding it, after each of its views: runs it if one of its states changed. What
    * fails on the way, as a copy or a start lacking memory, stops the run before all the same, and is its target's
-   * failure, or thrown for a target with no place for it; the effect then waits for reload().
+   * failure, or thrown for a target with no place for it; the effect then waits for reload(). One on a field of props
+   * its component does not have, a mistake of the program, goes to the app's on_error whatever its target, which it
+   * never set loading. Before the component's first view, it only says whether its target is loading.
    */
   void after_view(detail::effect_starter const &start);
 
@@ -292,12 +291,18 @@ private:
       }
 
       auto const now = read(props);
-      bool const differs = !last || !(*last == now);
       bool const holds = std::apply(
           [](auto const &...held) {
             return (detail::dependency_traits<std::remove_cvref_t<decltype(held)>>::holds(held) && ...);
           },
           now);
+
+      // Before the first view: whether its first run will start, nothing recorded.
+      if (asked == watching::peek) {
+        return std::optional<watched>{watched{.differs = false, .holds = holds}};
+      }
+
+      bool const differs = !last || !(*last == now);
 
       if (differs) {
         last.emplace(now);
@@ -325,7 +330,7 @@ private:
   // The run under way or queued stops, and writes nothing.
   void stop_before() noexcept;
 
-  enum class watching { record, forget };
+  enum class watching { record, forget, peek };
 
   struct watched {
     bool differs;

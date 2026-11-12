@@ -344,7 +344,7 @@ struct stray_panel {
   state<text_target> text;
   effect load{&keyed_panel::props::key, load_text, text};
 
-  // Loading from the start, then why it was refused.
+  // Never loading, its props wrong, then refused at its first view.
   element view(props const &) {
     auto const &[value, loading, error] = *text;
 
@@ -1137,7 +1137,7 @@ TEST_CASE("effect: on a field of its props, runs as that field changes, as useEf
   CHECK(loads.lines == std::vector<std::string>{"start 1", "end 1", "start 2", "end 2"});
 }
 
-TEST_CASE("effect: on a field of the props of another component is refused once, at its first view, in its target",
+TEST_CASE("effect: on a field of the props of another component is refused once, at its first view, to on_error",
           "[ui][effect]") {
   loads = {};
 
@@ -1156,12 +1156,13 @@ TEST_CASE("effect: on a field of the props of another component is refused once,
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(failures.empty());
-  CHECK(shown.html().contains("<p>quoll::ui::effect: it depends on a field of props its component does not have</p>"));
+  CHECK(failures ==
+        std::vector<std::string>{"quoll::ui::effect: it depends on a field of props its component does not have"});
+  CHECK(shown.html().contains("<p>stray</p>"));
   CHECK(loads.lines.empty());
 }
 
-TEST_CASE("effect: on a field of the props of an app's own component, which has none, is refused in its target",
+TEST_CASE("effect: on a field of the props of an app's own component, which has none, is refused to on_error",
           "[ui][effect]") {
   loads = {};
 
@@ -1175,10 +1176,9 @@ TEST_CASE("effect: on a field of the props of an app's own component, which has 
   auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(failures.empty());
+  CHECK(failures.size() == 1);
   CHECK_FALSE(std::get<1>(*instance.component().text));
-  CHECK(what_of(std::get<2>(*instance.component().text)) ==
-        "quoll::ui::effect: it depends on a field of props its component does not have");
+  CHECK(std::get<2>(*instance.component().text) == nullptr);
   CHECK(loads.lines.empty());
 }
 
@@ -1193,7 +1193,7 @@ struct async_text_page {
 
   element view() {
     views.push_back(text->loading ? "loading" : text->value);
-    return p(text->value);
+    return p(text->loading ? "loading" : text->value);
   }
 };
 
@@ -1300,4 +1300,97 @@ TEST_CASE("effect: a lack of memory at any step of a run leaves its async_state 
   }
 
   CHECK(clean);
+}
+
+namespace {
+
+// Loads only once a key is chosen, its views recorded: none chosen, its first view is not loading.
+struct choosing_views_page {
+  state<std::optional<int>> chosen;
+  async_state<std::string> text;
+  effect load{chosen, load_text, text};
+  std::vector<std::string> views;
+
+  element view() {
+    views.push_back(text->loading ? "loading" : "idle " + text->value);
+    return p(text->value);
+  }
+};
+
+} // namespace
+
+TEST_CASE("effect: its target is not loading at first while a state it depends on holds none", "[ui][effect]") {
+  loads = {};
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<choosing_views_page> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+    instance.component().chosen = std::optional<int>{1};
+    co_await quoll::async::sleep_for(5ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE_FALSE(instance.component().views.empty());
+  CHECK(instance.component().views.front() == "idle ");
+  CHECK(instance.component().views.back() == "idle text 1");
+}
+
+TEST_CASE("effect: a view written once, which runs no effect, shows its target loading if its run would start",
+          "[ui][effect]") {
+  // As React's server rendering shows useState(true): the page loads where it runs.
+  CHECK(to_html(component<async_text_page>()) == "<p>loading</p>");
+  CHECK(to_html(component<choosing_views_page>()) == "<p></p>");
+}
+
+namespace {
+
+// Loads the key its props give, an optional: its first view loading when one is given, not when none is.
+std::vector<std::string> optional_prop_views;
+
+struct optional_prop_panel {
+  struct props {
+    std::optional<int> key;
+
+    [[nodiscard]] bool operator==(props const &) const = default;
+  };
+
+  async_state<std::string> text;
+  effect load{&props::key, load_text, text};
+
+  element view(props const &given) {
+    optional_prop_views.push_back(std::to_string(given.key.value_or(0)) + (text->loading ? " loading" : " idle"));
+    return p(text->value);
+  }
+};
+
+struct optional_prop_page {
+  element view() {
+    return div({
+        component<optional_prop_panel>({.key = 1}) | key("given"),
+        component<optional_prop_panel>({.key = std::nullopt}) | key("none"),
+    });
+  }
+};
+
+} // namespace
+
+TEST_CASE("effect: on an optional field of the props, its target is loading at first when the field holds a value",
+          "[ui][effect]") {
+  loads = {};
+  optional_prop_views.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<optional_prop_page> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE(optional_prop_views.size() >= 2);
+  CHECK(optional_prop_views[0] == "1 loading");
+  CHECK(optional_prop_views[1] == "0 idle");
+  CHECK(shown.html().contains("<p>text 1</p>"));
 }

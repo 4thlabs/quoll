@@ -55,6 +55,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/action_not_a_task_function.cpp
     tests/compile_fail/action_optional_view_argument.cpp
     tests/compile_fail/action_throwing_move.cpp
+    tests/compile_fail/action_with_move_only_argument.cpp
     tests/compile_fail/callback_optional_view_argument.cpp
     tests/compile_fail/callback_optional_view_result.cpp
     tests/compile_fail/callback_reference_argument.cpp

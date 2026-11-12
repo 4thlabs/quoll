@@ -36,6 +36,7 @@
 
 #include <quoll/ui/context_spec.hpp>
 #include <quoll/ui/detail/context_entry.hpp>
+#include <quoll/ui/detail/run_effects.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -48,6 +49,7 @@ context_entry::context_entry(context_table const &table, state_link app) : conte
 context_entry::context_entry(context_table const &table, state_link app, held_component object)
     : table_(&table), app_(app), object_(std::move(object)) {
   table_->link(object_.get(), {this, &context_entry::changed_in});
+  first_effects(table_->effects, object_.get(), nullptr);
 }
 
 context_entry::~context_entry() { table_->link(object_.get(), {}); }

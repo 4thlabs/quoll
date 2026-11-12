@@ -923,3 +923,38 @@ TEST_CASE("ui::app: a view that could not be scheduled is tried again at the nex
   REQUIRE(thrown);
   REQUIRE(shown.html() == R"(<div class="flex">count: 2<button>Add</button></div>)");
 }
+
+namespace {
+
+// A button disabled while it waits.
+struct waiting_button {
+  state<bool> busy;
+
+  element view() { return button("Save") | disabled(*busy); }
+};
+
+} // namespace
+
+TEST_CASE("ui::app: disabled() sets the attribute while its condition holds, and takes it away after", "[ui]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<waiting_button> instance{time.get_executor(), shown};
+  std::string first;
+  std::string waiting;
+
+  auto const act = [&]() -> task<> {
+    first = shown.html();
+
+    instance.component().busy = true;
+    co_await settle();
+    waiting = shown.html();
+
+    instance.component().busy = false;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(first == "<button>Save</button>");
+  CHECK(waiting == R"(<button disabled="">Save</button>)");
+  CHECK(shown.html() == first);
+}
