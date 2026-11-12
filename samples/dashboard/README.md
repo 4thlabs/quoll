@@ -30,8 +30,8 @@ dashboard/
 | `web/components/catalog.hpp` | the products, a context the layout, the list, the product's page and its detail share: loaded by an `effect` on no state, saved by `save`, which the detail's `action` runs |
 | `web/components/product_list.hpp` | the filter, a state of its own, and the rows of the catalog's products it matches |
 | `web/components/product_row.hpp` | one product, a `link_to` its page |
-| `web/components/product_detail.hpp` | the fields of the product shown, what is typed kept until saved, and kept when typed while a save is on its way; what is typed checked as it is typed; its save, an `action` of the catalog's save, read as a state for whether it waits and why it failed, then forgetting the fields that hold what was saved |
-| `web/components/field.hpp` | a labelled input showing a value it is given, with an `on_change` callback |
+| `web/components/product_detail.hpp` | the product shown, edited through a `form_state` of its props: each field bound to one of the product's, what is typed kept until saved, and kept when typed while a save is on its way; its save, an `action` of the catalog's save run with the form, read as a state for whether it waits and why it failed |
+| `web/components/labelled.hpp` | a field of the form under its name |
 | `web/components/sales_chart.hpp`, `.cpp` | the `line_chart` widget, and the month of the point clicked; its view in a source of its own, as the widget's JSON goes through Glaze |
 | `web/widgets/line_chart.js` | the widget's module: `mount`, `update` and `unmount` over chart.js, a click emitting `point_selected` |
 | `web/products_client.hpp`, `.cpp` | the calls to the server, through a `rest::client` of the contract, in a source of their own |
@@ -68,19 +68,19 @@ the widget and no WebSocket. What took code of its own, for base components to g
 
 - **An input showing a value it is given.** `bind()` holds a `state<std::string>`; a prop first went in through a
   decorator of the page's own, which `value()` now gives, and what is typed through `on_input`.
-- **A labelled field, a number field.** `field.hpp` is the first base component the page wanted. The price and the stock
-  are parsed and formatted by hand (`std::from_chars`, `std::format`), and refused with a message of the detail's own.
-- **States that start from the props.** `mounted()` has no props, so the detail keeps what is typed as
-  `state<std::optional<std::string>>`, nothing until a field changes, and is keyed by the product so that another
-  starts empty.
+- **A labelled field, a number field.** `labelled()` is a function of the page's own, a base component to come. The
+  price and the stock first took parsing and formatting by hand, which `bind()` of a `form_state` now does.
+- **States that start from the props.** `mounted()` has no props, so the detail first kept what is typed as
+  `state<std::optional<std::string>>`, nothing until a field changed; `form_state` now starts from the product the
+  props give. It is keyed by the product so that another starts empty.
 - **Requests that overlap.** The sales of a product chosen before the last may answer, or fail, after it; two saves of a
   product may be answered out of order, or sent by a double click. The page first kept counters for these by hand, in
   which reviews kept finding bugs; `quoll::ui` now gives `effect`, React's `useEffect` on the product chosen, whose run
   stops the one before, and `action`, with which the detail saves its product once at a time; the view reads
   whether each is under way and why it failed, the effect's in its target, the action's in the action itself. The products are a context, the `catalog`, which the
   page, the list and the detail share, and which does the save: a detail left stops waiting for it, and the save goes
-  on, the list showing what the server saved. What is left: the detail compares what each field holds with what was
-  saved before forgetting it, for a draft of a form from the props to replace.
+  on, the list showing what the server saved. The detail first compared what each field held with what was saved
+  before forgetting it: the `form_state` now forgets a field that holds what its props give again.
 - **What a child tells, one task later.** A callback runs as a task of the component that wrote it: a field's change
-  reaches the detail after the event that made it, so that a save dispatched in the same turn, as a test does, reads the
-  value before it.
+  first reached the detail through one, after the event that made it, so that a save dispatched in the same turn, as a
+  test does, read the value before it. Bound to the form, a field now changes it in its event's own handler.

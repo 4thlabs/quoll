@@ -47,6 +47,7 @@
 #include <quoll/ui/detail/context/bind_contexts.hpp>
 #include <quoll/ui/detail/data/effect_starter.hpp>
 #include <quoll/ui/detail/data/link_states.hpp>
+#include <quoll/ui/detail/data/props_member.hpp>
 #include <quoll/ui/detail/data/run_effects.hpp>
 #include <quoll/ui/view/element.hpp>
 
@@ -134,7 +135,12 @@ inline constexpr component_table table_of{
     .effects = effects_of<C>(),
     .view = [](void *component, [[maybe_unused]] void const *props) -> element {
       if constexpr (ComponentWithProps<C>) {
-        return static_cast<C *>(component)->view(*static_cast<typename C::props const *>(props));
+        auto &self = *static_cast<C *>(component);
+        auto const &given = *static_cast<typename C::props const *>(props);
+
+        // What reads them first, as a form_state taking the value it edits: the view shows them already.
+        give_props(self, given);
+        return self.view(given);
       } else {
         return static_cast<C *>(component)->view();
       }

@@ -61,6 +61,9 @@ namespace quoll::ui {
 template <class T>
 class shared;
 
+template <auto Member>
+class form_state;
+
 /** @brief What a call of an action does while another is under way. */
 enum class overlap {
   /** @brief It is refused: it runs nothing, its result run_refused, as a second click on a button that waits. */
@@ -163,6 +166,19 @@ public:
     // Not a coroutine: each call copies the arguments into the frame of its own run, which outlives this lambda.
     return [action = &self(), given = std::tuple<Ts...>{std::move(args)...}] {
       return action->run_with(given, detail::failure_to::app);
+    };
+  }
+
+  /**
+   * @brief A handler running it with what `form` edits, its value() as it is at each click, for a function taking it:
+   * a button sends the form as it stands, as with() the values it is given. A click while the form is not valid is
+   * refused, as one while a run is under way: nothing runs, and its runs are left as they are.
+   */
+  template <auto Member>
+    requires(sizeof...(Ts) == 1 && (std::same_as<typename form_state<Member>::value_type, Ts> && ...))
+  [[nodiscard]] auto with(form_state<Member> const &form QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+    return [action = &self(), form = &form] {
+      return action->run_with(std::tuple<Ts...>{form->value()}, detail::failure_to::app, form->valid());
     };
   }
 
@@ -314,12 +330,13 @@ private:
   // Not a coroutine: run_in's frame, made by this call, holds the arguments, and every failure of the run goes through
   // tell_failure(), into what it holds, and to the app's on_error for `failure_to::app`, with()'s; a lack of memory
   // making it throws from the call, as any call's.
-  [[nodiscard]] async::task<result_type> run_with(arguments given, detail::failure_to failures) {
+  // A run not `allowed`, as of a form not valid, is refused, as one while another is under way with overlap::refuse.
+  [[nodiscard]] async::task<result_type> run_with(arguments given, detail::failure_to failures, bool allowed = true) {
     // Called once the run before is stopped, or not at all once refused: what it throws is this run's failure.
     auto make = [this, given = std::move(given)]() mutable { return call_(std::move(given)); };
 
-    auto ask = [this]() -> std::optional<std::stop_token> {
-      if (Policy == overlap::refuse && slot_.pending) {
+    auto ask = [this, allowed]() -> std::optional<std::stop_token> {
+      if (!allowed || (Policy == overlap::refuse && slot_.pending)) {
         return std::nullopt;
       }
 

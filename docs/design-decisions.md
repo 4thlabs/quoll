@@ -274,6 +274,23 @@ task of the component, a handler or `mounted()`: a call refused, or a run a late
 `run_refused` or `run_replaced`, and its caller goes on. A component that goes stops its runs; a save that must go on
 is a member function of a context, which the action runs, whose work goes on.
 
+### A form edits a value its props give
+
+**The question.** A detail edits what its props give, and saves it: what is typed has to be kept while the save is on
+its way, checked as it is typed, and forgotten once what was saved comes back. Who keeps that?
+
+**Taken.** Quoll, as React Hook Form's `defaultValues` with `keepDirtyValues`: a `form_state` of a field of the props
+takes the value before each view, keeps what is typed in each field as it is, and forgets a field typed in that holds
+what the props give again. `bind(form, &item::price)` reads the text by the field's type, `valid()` says whether it
+all reads, and `action::with(form)` sends the value as it is at the click, refused while it is not valid.
+
+**Set aside.** A state per field holding what is typed, compared by hand with what was saved, as the trial screen of
+step 6 first did: the maintainer found it hard to read. A reset to call after a save, or a callback of the action:
+the props bring what was saved anyway. The name `form`, which is the HTML tag.
+
+**For you.** Declare `form_state<&props::item> form;`, bind the inputs to its fields, and give `save.with(form)` to the
+button. Another value to edit from the start is another component, with a `key()`.
+
 ### Contexts given to the app, found by type
 
 **The question.** Several components show and change the same data, as a list and the detail of a product. Who holds

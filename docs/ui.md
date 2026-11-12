@@ -82,6 +82,7 @@ struct notes_page {
 | Handle an event        | `\| on_click(...)`, `\| on_input(...)`, `\| on_change(...)`, `\| on_key_down(...)` given the key                                               |
 | Send a form            | `form({...}) \| on_submit(...)`, as Enter in one of its inputs does: the page stays, but for an `action`                                       |
 | Edit a value           | `input() \| bind(draft)` for a `state<std::string>`, a checkbox `input() \| bind(done)` for a `state<bool>`, `\| checked(*done)` for one given |
+| Edit a prop            | `input() \| bind(form, &product::price)` for a [`form_state`](#forms) of the props                                                             |
 | Repeat, or show or not | `list(items, ...)` with a `key()` on each, `when(condition, ...)`                                                                              |
 | Read a state           | `*count`, `items->size()`                                                                                                                      |
 | Change a state         | `count = 1;`, `count.set(1);`, `items.update(...)`                                                                                             |
@@ -358,22 +359,19 @@ It is read as an `async_state` is: `save->loading` while a run is under way, `sa
 as React Query's `onSuccess`:
 
 ```cpp
-struct rename_form {
+struct like_button {
   struct props {
-    products::product item;
+    std::int64_t post = 0;
   };
 
-  state<std::optional<std::string>> name;
-
-  // Saved, what is typed is forgotten.
-  action<&products_client::update> save{[this](products::product const &) { name = std::nullopt; }};
+  // The likes the server counts once liked.
+  action<&posts_client::like> like;
 
   element view(props const &given) {
-    products::product_update const changes{.name = name->value_or(given.item.name)};
+    auto const said = like->value == 0 ? std::string{"Like"} : std::to_string(like->value) + " likes";
 
-    // A click while a save is on its way would be refused: the button waits.
-    return button(save->loading ? "Saving…" : "Save") | disabled(save->loading) |
-           on_click(save.with(given.item.id, changes));
+    // A click while a like is on its way would be refused: the button waits.
+    return button(like->loading ? "…" : said) | disabled(like->loading) | on_click(like.with(given.post));
   }
 };
 ```
@@ -390,8 +388,9 @@ struct rename_form {
 - with `overlap::restart` as its second parameter, a call stops the run under way instead, which gives `run_replaced`
   and writes nothing;
 - a run its caller stops, as a timeout does, is under way no more;
-- what follows a success is told what the run gave, `void()` for a function that gives nothing; a failure, a refused
-  call or a stopped one tell it nothing;
+- what follows a success is told what the run gave, as `action<&catalog::save> save{products, [this](product const
+  &saved) { ... }};`, `void()` for a function that gives nothing; a failure, a refused call or a stopped one tell it
+  nothing;
 - its runs are its component's tasks: a component that goes, as a detail keyed by its product once another is chosen,
   stops them, and what follows them. A save that must go on, as one the list of the page shows, is a context's: the
   action runs a member function of it, whose work goes on as the detail stops waiting;
@@ -401,6 +400,56 @@ struct rename_form {
 None is copied nor moved: a run under way refers to it, as a component stays where it was made. What it is given is a
 member of the same component, declared before it. Arguments and values are copied into the run, the arguments given to
 the function as rvalues, so that none can be a view, which does not compile.
+
+## Forms
+
+**A `form_state` edits a value its component's props give**, a field of them, as React Hook Form's `defaultValues`: each
+input bound to a field of it shows what the props hold, or what is typed in it. An action runs with it as it stands:
+
+```cpp
+struct product_detail {
+  struct props {
+    products::product item;
+  };
+
+  shared<catalog> products;
+
+  // The product edited: the one given, with what is typed.
+  form_state<&props::item> form;
+
+  action<&catalog::save> save{products};
+
+  element view(props const &given) {
+    auto const not_numbers = [] { return p("The price and the stock are numbers"); };
+
+    return section({
+        h2(given.item.name),
+        label({text("Name"), input() | bind(form, &products::product::name)}),
+        label({text("Price"), input() | bind(form, &products::product::price)}),
+        label({text("Stock"), input() | bind(form, &products::product::stock)}),
+        when(!form.valid(), not_numbers),
+        button(save->loading ? "Saving…" : "Save")
+            | disabled(save->loading || !form.valid())
+            | on_click(save.with(form)),
+    });
+  }
+};
+```
+
+- `bind(form, &product::price)` keeps an input and a field the same: a string or a number goes to an input, whose text
+  it reads, a `bool` to a checkbox;
+- what is typed is kept as it is, as `12,5` for a number, which does not read: `form.valid()` says whether every field
+  typed in reads as its type;
+- `form.value()` is what the props give, with each field typed in that reads;
+- `save.with(form)` runs the action with `form.value()` as it is at the click; a click while the form is not valid is
+  refused, as one while a save is on its way;
+- the value comes from the props before each view of the component: when they give another, as once what was saved
+  comes back, a field typed in whose text is what it would show of it is typed in no more, and one typed while the save
+  was on its way stays, as React Hook Form's `keepDirtyValues`, as does `2.50` typed for a `2.5`;
+- another value to edit from the start, as another product, is another component, placed with a `key()` of its own;
+- a `form_state` is a member of a component with props, of a field of its own props that is a struct, and a field
+  bound is a string, a number or a bool: anything else does not compile. It is neither copied nor moved, as the inputs
+  bound to it refer to it.
 
 ## Contexts
 

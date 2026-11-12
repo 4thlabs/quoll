@@ -37,16 +37,14 @@
 #ifndef QUOLL_UI_DETAIL_ROUTING_ROUTE_FIELD_HPP
 #define QUOLL_UI_DETAIL_ROUTING_ROUTE_FIELD_HPP
 
+#include <quoll/ui/detail/text_value.hpp>
+
 #include <glaze/core/reflect.hpp>
 
-#include <charconv>
-#include <cmath>
-#include <concepts>
 #include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <type_traits>
 #include <utility>
 
@@ -61,55 +59,16 @@ inline constexpr bool is_optional<std::optional<T>> = true;
 // What a field of a page's props may be, to come from its route's path or query: a number, a bool, a string, or an
 // optional of one.
 template <class T>
-inline constexpr bool route_value =
-    std::same_as<T, std::string> || std::same_as<T, bool> || std::integral<T> || std::floating_point<T>;
+inline constexpr bool route_field = text_value<T>;
 
 template <class T>
-inline constexpr bool route_field = route_value<T>;
-
-template <class T>
-inline constexpr bool route_field<std::optional<T>> = route_value<T>;
-
-// `text` read as a T, or none: a number written whole, `true` or `false`, a string as it is.
-template <class T>
-[[nodiscard]] std::optional<T> parse_route_value(std::string_view text) {
-  if constexpr (std::same_as<T, std::string>) {
-    return std::string{text};
-  } else if constexpr (std::same_as<T, bool>) {
-    if (text == "true") {
-      return true;
-    }
-
-    if (text == "false") {
-      return false;
-    }
-
-    return std::nullopt;
-  } else {
-    T value{};
-    auto const *const end = text.data() + text.size();
-    auto const [stop, error] = std::from_chars(text.data(), end, value);
-
-    if (error != std::errc{} || stop != end) {
-      return std::nullopt;
-    }
-
-    // Not a NaN, which no value equals, nor an infinity: what an address names is a number.
-    if constexpr (std::floating_point<T>) {
-      if (!std::isfinite(value)) {
-        return std::nullopt;
-      }
-    }
-
-    return value;
-  }
-}
+inline constexpr bool route_field<std::optional<T>> = text_value<T>;
 
 // Sets `field` from `text`: false when it is no such value, `field` left as it was.
 template <class T>
 [[nodiscard]] bool parse_route_field(std::string_view text, T &field) {
   if constexpr (is_optional<T>) {
-    auto value = parse_route_value<typename T::value_type>(text);
+    auto value = read_text<typename T::value_type>(text);
 
     if (!value) {
       return false;
@@ -117,7 +76,7 @@ template <class T>
 
     field = std::move(*value);
   } else {
-    auto value = parse_route_value<T>(text);
+    auto value = read_text<T>(text);
 
     if (!value) {
       return false;
@@ -133,16 +92,9 @@ template <class T>
 template <class T>
 [[nodiscard]] std::optional<std::string> format_route_field(T const &value) {
   if constexpr (is_optional<T>) {
-    return value ? format_route_field(*value) : std::nullopt;
-  } else if constexpr (std::same_as<T, std::string>) {
-    return value;
-  } else if constexpr (std::same_as<T, bool>) {
-    return std::string{value ? "true" : "false"};
+    return value ? write_text(*value) : std::nullopt;
   } else {
-    char buffer[64];
-    auto const [end, error] = std::to_chars(buffer, buffer + sizeof buffer, value);
-
-    return error == std::errc{} ? std::optional<std::string>{std::string{buffer, end}} : std::nullopt;
+    return write_text(value);
   }
 }
 

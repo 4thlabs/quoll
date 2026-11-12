@@ -151,8 +151,8 @@ struct page_driver {
     instance.dispatch(shown.children(label).back(), "input", std::move(text));
   }
 
-  // What is typed reaches the detail through the field's callback, a task of the detail: it has run by the next
-  // event, as in a browser, where a click comes after the input.
+  // What is typed shows once the detail has viewed again, as the form tells it: settled before the next event, as in
+  // a browser, where a click comes after the input.
   [[nodiscard]] task<> type_and_settle(std::string_view field, std::string text) const {
     type(field, std::move(text));
     co_await settle();
@@ -301,15 +301,14 @@ TEST_CASE("dashboard web: the detail saves what is typed, and refuses a price th
   page_driver const user{instance, shown};
   std::string refused;
   std::string infinite;
-  std::vector<std::string> refused_events;
 
   auto const act = [&]() -> task<> {
     co_await settle();
     user.choose("Grinder");
     co_await settle();
 
+    // A click on the button locked, as a script may send: refused, as the form is not valid.
     co_await user.type_and_settle("Price", "a lot");
-    refused_events = shown.events(shown.find_text("Save"));
     user.save();
     co_await settle();
     refused = shown.html();
@@ -330,8 +329,7 @@ TEST_CASE("dashboard web: the detail saves what is typed, and refuses a price th
   CHECK(refused.contains("The price and the stock are numbers"));
   CHECK(refused.contains(R"(<button class="btn btn-primary self-start" disabled="">Save</button>)"));
   CHECK(infinite.contains("The price and the stock are numbers"));
-  // No click while the fields are wrong: nothing is sent, nor shown as a failed save; the one save is the last.
-  CHECK(refused_events.empty());
+  // A click while the fields are wrong sends nothing, nor shows a failed save: the one save is the last.
   CHECK_FALSE(refused.contains("Not saved"));
   CHECK(server.updates == 1);
   CHECK(server.items[2] ==

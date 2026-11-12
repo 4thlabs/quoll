@@ -40,6 +40,7 @@ quoll_declare_tests(
     tests/context/context_test.cpp
     tests/data/action_test.cpp
     tests/data/effect_test.cpp
+    tests/data/form_state_test.cpp
     tests/routing/router_test.cpp
     tests/view/element_test.cpp
     tests/view/to_html_test.cpp
@@ -74,6 +75,9 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/effect_values_without_target.cpp
     tests/compile_fail/effect_view_value.cpp
     tests/compile_fail/event_function_signature.cpp
+    tests/compile_fail/form_state_bind_struct_field.cpp
+    tests/compile_fail/form_state_other_props.cpp
+    tests/compile_fail/form_state_without_props.cpp
     tests/compile_fail/redirect_trailing_slash.cpp
     tests/compile_fail/redirect_unknown_param.cpp
     tests/compile_fail/route_child_absolute.cpp

@@ -34,41 +34,30 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// A labelled input showing a value it is given, and telling what is typed: the parent keeps the value.
+// expect: quoll::ui::form_state: in a component with props, one of whose fields it edits
+//
+// A form in a component without props: nothing would give it the value it edits.
 
-#ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_FIELD_HPP
-#define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_FIELD_HPP
-
-#include <quoll/ui.hpp>
+#include <quoll/ui/component/child_component.hpp>
+#include <quoll/ui/data/form_state.hpp>
+#include <quoll/ui/view/element.hpp>
 
 #include <string>
-#include <utility>
 
-namespace dashboard_web {
-
-using namespace quoll::ui;
-
-struct field {
-  struct props {
-    std::string label;
-    std::string value;
-    callback<void(std::string)> on_change;
-
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  element view(props const &given) {
-    auto const change = [&given](std::string typed) { return given.on_change(std::move(typed)); };
-
-    auto const shown = label({
-        span(given.label) | tw("text-sm opacity-70"),
-        input() | value(given.value) | tw("input input-bordered w-full") | on_input(change),
-    });
-
-    return shown | tw("flex flex-col gap-1");
-  }
+struct item {
+  std::string name;
 };
 
-} // namespace dashboard_web
+struct other {
+  struct props {
+    item value;
+  };
+};
 
-#endif // QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_FIELD_HPP
+struct name_editor {
+  quoll::ui::form_state<&other::props::value> form;
+
+  quoll::ui::element view();
+};
+
+auto const placed = quoll::ui::component<name_editor>();
