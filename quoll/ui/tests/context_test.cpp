@@ -1049,3 +1049,22 @@ TEST_CASE("context: an action of one of its member functions runs it on the cont
   CHECK(shown.html().contains("<p>tea;mate;</p>"));
   CHECK_FALSE(shown.html().contains("renamed"));
 }
+
+TEST_CASE("context: the targets of its effects are loading in the app's first view, before their run",
+          "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<runner_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  std::string first;
+
+  auto const act = [&]() -> task<> {
+    first = shown.html();
+    co_await quoll::async::sleep_for(5ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(first.contains("<p>loading</p>"));
+  CHECK(shown.html().contains("<p>tea;coffee;</p>"));
+}

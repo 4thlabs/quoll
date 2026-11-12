@@ -301,6 +301,7 @@ TEST_CASE("dashboard web: the detail saves what is typed, and refuses a price th
   page_driver const user{instance, shown};
   std::string refused;
   std::string infinite;
+  std::vector<std::string> refused_events;
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -308,6 +309,7 @@ TEST_CASE("dashboard web: the detail saves what is typed, and refuses a price th
     co_await settle();
 
     co_await user.type_and_settle("Price", "a lot");
+    refused_events = shown.events(shown.find_text("Save"));
     user.save();
     co_await settle();
     refused = shown.html();
@@ -325,8 +327,13 @@ TEST_CASE("dashboard web: the detail saves what is typed, and refuses a price th
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(refused.contains("Not saved: the price and the stock are numbers"));
-  CHECK(infinite.contains("Not saved: the price and the stock are numbers"));
+  CHECK(refused.contains("The price and the stock are numbers"));
+  CHECK(refused.contains(R"(<button class="btn btn-primary self-start" disabled="">Save</button>)"));
+  CHECK(infinite.contains("The price and the stock are numbers"));
+  // No click while the fields are wrong: nothing is sent, nor shown as a failed save; the one save is the last.
+  CHECK(refused_events.empty());
+  CHECK_FALSE(refused.contains("Not saved"));
+  CHECK(server.updates == 1);
   CHECK(server.items[2] ==
         products::product{.id = 3, .name = "Grinder", .category = "Gear", .price = 45.5, .stock = 7});
   CHECK(instance.context<dashboard_web::catalog>().items->value.at(2) == server.items[2]);

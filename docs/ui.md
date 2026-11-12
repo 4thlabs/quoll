@@ -76,7 +76,7 @@ struct notes_page {
 | Show an element        | `div({...})`, `button("Add")`, `node("video", {...})`; `main_` for `<main>`                                          |
 | Show a text            | `text("Hello")`, or `p("Hello")` for a tag holding it                                                             |
 | Style it               | `\| tw("flex gap-2")`, `\| tw_if(done, "line-through")`, classes written whole, as Tailwind reads them in the source |
-| Set an attribute       | `\| attribute("placeholder", "A note")`                                                                              |
+| Set an attribute       | `\| attribute("placeholder", "A note")`, `\| disabled(saving)` while a condition holds                                |
 | Handle an event        | `\| on_click(...)`, `\| on_input(...)`, `\| on("submit", ...)`                                                       |
 | Edit a value           | `input() \| bind(draft)`, for a `state<std::string>`                                                                 |
 | Repeat, or show or not | `list(items, ...)` with a `key()` on each, `when(condition, ...)`                                                    |
@@ -280,8 +280,10 @@ of its elements:
 - every other element is one of the values the function gives, in order, a function giving a `std::tuple` for
   several.
 
-An effect's target is loading from the start, as React's `useState(true)`: the first view of its component comes
-before its first run, and a view written once, with `to_html`, which runs no effect, shows it loading. As a run
+An effect's target is loading from the start, as React's `useState(true)`, when its first run will start: the first
+view of its component comes before it, and a view written once with `to_html`, which runs no effect, shows it
+loading, as React's server rendering does. One that depends on an optional, of a state or of the props, holding none
+is not, as nothing runs. As a run
 starts, its target is loading and has no error, the values before kept, as a state keeps its value until it is set.
 As it ends, the target holds all it gave at once, in one render, or why it failed, the values before kept. Such a
 `state` holds one `bool` and one `std::exception_ptr` at most, and a function giving a `bool` or an error as a value
@@ -339,8 +341,8 @@ effect search{query, [this](std::string text) -> task<> {
 - a free function returning a task, as `action<&products_client::update> save{saving};`;
 - a member function of a context, given its `shared<C>`, as `action<&catalog::save> save{products, saving};`, which
   runs as the context's `run()` does: its work goes on as the component goes;
-- a member function of the component itself, given `this`, as `action<&product_detail::save> save{this, saving};`,
-  declared before the action.
+- a member function of the component itself, given `this`, as `action<&product_detail::send> save{this, saving};`
+  for its member `send`, declared before the action.
 
 What it gives goes to its target, and to what follows a success, given last, as React Query's `onSuccess`:
 
@@ -359,11 +361,9 @@ struct rename_form {
   element view(props const &given) {
     products::product_update const changes{.name = name->value_or(given.item.name)};
 
-    if (saving->loading) {
-      return button("Saving…") | attribute("disabled", "");
-    }
-
-    return button("Save") | on_click(save.with(given.item.id, changes));
+    // A click while a save is on its way would be refused: the button waits.
+    return button(saving->loading ? "Saving…" : "Save") | disabled(saving->loading) |
+           on_click(save.with(given.item.id, changes));
   }
 };
 ```
