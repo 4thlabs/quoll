@@ -46,6 +46,7 @@
 #include <quoll/ui/detail/component_table.hpp>
 #include <quoll/ui/detail/hot.hpp>
 #include <quoll/ui/detail/link_states.hpp>
+#include <quoll/ui/detail/run_effects.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/mounted_component.hpp>
 #include <quoll/ui/node_id.hpp>
@@ -80,8 +81,9 @@ class app {
 public:
   template <async::Executor E>
   app(E executor, R renderer, app_options options = {})
-      : renderer_(std::move(renderer)), core_(async::any_executor{executor}, renderer_ref{renderer_}, &view_of,
-                                              detail::unmounted_of<C>(), &component_, std::move(options)) {
+      : renderer_(std::move(renderer)),
+        core_(async::any_executor{executor}, renderer_ref{renderer_}, &view_of, detail::unmounted_of<C>(),
+              detail::effects_of<C>(), &component_, std::move(options)) {
     detail::link_states(component_, {&core_, &detail::app_core::state_changed});
 
 #if defined(QUOLL_UI_HOT)

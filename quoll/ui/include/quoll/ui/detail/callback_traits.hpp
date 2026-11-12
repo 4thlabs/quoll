@@ -37,11 +37,15 @@
 #ifndef QUOLL_UI_DETAIL_CALLBACK_TRAITS_HPP
 #define QUOLL_UI_DETAIL_CALLBACK_TRAITS_HPP
 
+#include <expected>
 #include <functional>
 #include <initializer_list>
 #include <optional>
 #include <ranges>
+#include <tuple>
 #include <type_traits>
+#include <utility>
+#include <variant>
 
 namespace quoll::ui {
 
@@ -88,6 +92,45 @@ inline constexpr bool is_view<std::reference_wrapper<T>> = true;
 
 template <class T>
 inline constexpr bool is_view<std::initializer_list<T>> = true;
+
+// What the standard types that hold others directly hold: none but these, as following a container's elements would
+// take a type yielding views of what it owns for one holding views, and loop on a type holding itself through one.
+template <class T>
+struct held_types {
+  static constexpr bool view = false;
+};
+
+// What refers to an object it does not hold, or holds such a thing in a std::optional, a std::pair, a std::tuple, a
+// std::variant or a std::expected: a copy does not make what they refer to its own. A view a container holds, as in a
+// std::vector<std::string_view>, or one inside a type of the program's, as a member of a struct, is not seen.
+template <class T>
+inline constexpr bool holds_view =
+    std::is_reference_v<T> || is_view<std::remove_cv_t<T>> || held_types<std::remove_cv_t<T>>::view;
+
+template <class V>
+struct held_types<std::optional<V>> {
+  static constexpr bool view = holds_view<V>;
+};
+
+template <class A, class B>
+struct held_types<std::pair<A, B>> {
+  static constexpr bool view = holds_view<A> || holds_view<B>;
+};
+
+template <class... E>
+struct held_types<std::tuple<E...>> {
+  static constexpr bool view = (holds_view<E> || ...);
+};
+
+template <class... E>
+struct held_types<std::variant<E...>> {
+  static constexpr bool view = (holds_view<E> || ...);
+};
+
+template <class V, class E>
+struct held_types<std::expected<V, E>> {
+  static constexpr bool view = holds_view<V> || holds_view<E>;
+};
 
 // What may hold no function, which a callback made of it holds none either.
 template <class T>

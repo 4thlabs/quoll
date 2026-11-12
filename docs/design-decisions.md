@@ -236,6 +236,35 @@ refreshed in a view not run again, one more mechanism to keep right.
 **For you.** A component not viewed again keeps the callbacks of its last view: capture only what does not change
 from a view to the next, as `this`, and pass the rest as props.
 
+### Effects as React's useEffect, and actions once at a time
+
+**The question.** A screen loads what a choice asks for and saves what is typed: answers that come after a later
+choice, saves answered out of order, a double click. Who keeps that right?
+
+**Taken.** Quoll, with React's model: an `effect` is `useEffect` with states of the component as its dependencies.
+After a view in which one changed, once shown, it runs, the run before stopped as its cleanup; as a stop resumes
+nothing, a stale answer writes nothing. An `action` runs what a handler asks for once at a time by default, a call while
+one is under way refused, where TanStack Query's mutations in a `scope` queue it; `overlap::restart` makes a call stop
+the one under way instead. Both write what they give into a state of the component, their target, as a React effect
+calls its setters: whether a run is under way, why the last failed and its values, by the type of the target's
+elements. The view reads states only. An effect runs one way, after a view: `reload()` asks for that view, as a change
+does, rather than run it from its caller.
+
+**Set aside.** Effects called in the view, as React's hooks, whose identity is the order of the calls: a member is
+named, and depends on the states it is given. An effect that tracks the states its function reads: Quoll tracks no
+reads. Queries named and cached, as React Query's: a component need not use the REST DSL, and a function returning a
+task is all an effect asks. An effect or an action holding its status and its result, which the view would read beside
+the states: two ways for the view to read data. Actions by key: a component of the view per item has its own. A
+home-made resource with a key and a loader, which the maintainer found less clear than React's model. Leaving it to each
+page, as the trial screen of step 6 first did: three rounds of review kept finding the same bugs in counters kept by
+hand.
+
+**For you.** Declare the target state, then the effect or the action that writes into it. Set the states an effect
+depends on, or call `reload()`, and its run follows. Await `run()` from a task of the component, a handler or
+`mounted()`: a call refused, or a run a later one took the place of, gives `run_refused` or `run_replaced`, and its
+caller goes on. A component that goes stops its runs; a save that must go on runs a callback of the component that
+owns what it changes, whose work goes on.
+
 ### JavaScript libraries as modules
 
 **The question.** How does a page use chart.js, a map or a terminal?

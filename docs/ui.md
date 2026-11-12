@@ -230,10 +230,142 @@ made it is replaced, a call throws `std::logic_error`, as what its function refe
 
 **Its arguments are copied into the task.** The function returns its value, or a task of it. A view (`std::string_view`,
 `std::span`, a range view), a reference to write to, or a result that would refer to what the work held does not
-compile. A pointer, or a view inside another type, still points to what the caller gave.
+compile, as does one inside an optional, a pair, a tuple, a variant or an expected. A pointer, or a view in a
+container, as a `std::vector<std::string_view>`, or inside a type of the program's, as a member of a struct, still
+points to what the caller gave.
 
 **Made outside a view**, in a handler or `mounted()`, a callback knows no component: it runs in the caller's task, as a
 `std::function` would, and what its function captures is the caller's to keep alive.
+
+## Effects and actions
+
+What a component loads as its states change, and what it runs on a click, are members of it. Both write what they
+give into a state of the component, their target, and the view reads only states. An `effect` is React's `useEffect`:
+it runs after a view in which one of its states changed. An `action<R(Args...)>` is what a handler runs, once at a
+time by default.
+
+```cpp
+struct sales_panel {
+  state<std::int64_t> id;
+
+  // The sales, whether they are loading, and why they did not load. Loading from the start, as React's
+  // useState(true): the first view comes before the first run.
+  state<std::tuple<products::monthly_sales, bool, std::exception_ptr>> sales{{{}, true, nullptr}};
+  effect load{id, products_client::sales, sales};
+
+  element view() {
+    auto const &[monthly, loading, error] = *sales;
+
+    if (loading) {
+      return p("Loading its sales");
+    }
+
+    if (error) {
+      return p("No sales for now");
+    }
+
+    return component<sales_chart>({.sales = monthly});
+  }
+};
+```
+
+**What a target receives goes by the type of its elements.** A target is a `state<T>`, or a `state<std::tuple<...>>`
+of several elements:
+
+- a `bool` is whether a run is under way;
+- a `std::exception_ptr` is why the last run failed;
+- every other element is one of the values the function gives, in order.
+
+As a run starts, its target is loading and has no error, the values before kept, as a state keeps its value until it
+is set. As it ends, the target holds all it gave at once, in one render, or why it failed, the values before kept. A
+target holds one `bool` and one `std::exception_ptr` at most, and a function giving a `bool` or an error as a value
+does not compile: the target could not tell it from its flags. Each value is of the type the function gives, with no
+conversion, which could make a view of what the run held, and moves without throwing, so that a run writes all it
+gave or nothing. A target needs neither flag:
+
+```cpp
+state<products::monthly_sales> sales;                          // the value alone
+state<std::tuple<products::monthly_sales, bool>> sales;        // and whether it is loading
+```
+
+**An effect runs as its states change**, as React's `useEffect(…, [states])`:
+
+- it depends on one state, on several as `std::tie(filter, page)`, or on none as `std::tie()`, which runs it once, as
+  its component first shows;
+- after a view of its component in which one changed, compared with `==`, once the view is shown, the function runs as
+  a task of the component with a copy of each value;
+- the run before is stopped, as React's cleanup: what it gives after the view of the change writes nothing, even an
+  answer that came anyway;
+- the view the change makes comes before the run, which starts once that view is shown, as in React: it still shows
+  the values before, not yet loading. A value that must match the state, as a product's sales, can be given with what
+  it is of, and the view compare them;
+- a state holding a `std::optional` gives what it holds; while one holds none, nothing runs, the run before stopped
+  and the target loading no more;
+- `reload()` runs it again after the view it asks for, as a change would: what a Try again button calls. An effect runs
+  one way, after a view, as React has it. One that cannot start, comparing or copying its states, or starting its run,
+  as for a lack of memory, stops the run before all the same and ends on that failure, which `reload()` tries again;
+- a target with no `std::exception_ptr` leaves a failure to the app's `on_error`, as a handler's.
+
+Several loads go in one function, which gives a `std::tuple`, and fail together:
+
+```cpp
+state<std::tuple<products::product, products::monthly_sales, bool, std::exception_ptr>> detail;
+
+effect load_detail{id, [](std::int64_t id) -> task<std::tuple<products::product, products::monthly_sales>> {
+  auto [item, sales] = co_await when_all(products_client::get(id), products_client::sales(id));
+
+  co_return {std::move(item), std::move(sales)};
+}, detail};
+```
+
+An effect with no target runs a function that gives nothing, as a search a while after what is typed:
+
+```cpp
+effect search{query, [this](std::string text) -> task<> {
+  co_await quoll::async::sleep_for(300ms);
+  co_await find(std::move(text));
+}};
+```
+
+**An action runs once at a time**:
+
+- `co_await save.run(args...)` gives what the function gave, or what it threw, as a `std::expected`, for the handler to
+  go on with; its target receives what an effect's does, the values copied;
+- a call while one is under way is refused, `run_refused` at once, its target left as it is;
+- with `overlap::restart` as its second parameter, a call stops the run under way instead, which gives `run_replaced`
+  and writes nothing;
+- a run its caller stops, as a timeout does, is under way no more;
+- a target holding no value, as `state<std::tuple<bool, std::exception_ptr>>`, leaves the value to the handler alone;
+  an action with no target tells only its caller;
+- its runs are its component's tasks: a component that goes, as a detail keyed by its product once another is chosen,
+  stops them. A save that must go on, as one the list of the page shows, is the page's: the action runs the page's
+  callback, whose work belongs to the page and goes on as the detail stops waiting.
+
+```cpp
+struct rename_form {
+  state<std::int64_t> id;
+  state<std::string> name;
+
+  // Whether a save is on its way, and why the last one failed: the product saved goes to the handler.
+  state<std::tuple<bool, std::exception_ptr>> saving;
+  action<products::product(std::int64_t, products::product_update)> save{products_client::update, saving};
+
+  task<> submit(products::product_update changes) {
+    changes.name = *name;
+
+    auto const saved = co_await save.run(*id, std::move(changes));
+
+    if (saved) {
+      name = saved->name;
+    }
+  }
+};
+```
+
+None is copied nor moved: a run under way refers to it, as a component stays where it was made. Its states and its
+target are members of the same component, declared before it. Arguments and values are copied into the run, so that
+none can be a reference or a view, which does not compile. A function given empty, as a null pointer, throws
+`std::invalid_argument` as the member is made.
 
 ## JavaScript widgets
 

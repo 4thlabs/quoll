@@ -40,7 +40,9 @@
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/component_with_props.hpp>
+#include <quoll/ui/detail/effect_starter.hpp>
 #include <quoll/ui/detail/link_states.hpp>
+#include <quoll/ui/detail/run_effects.hpp>
 #include <quoll/ui/element.hpp>
 #include <quoll/ui/mounted_component.hpp>
 #include <quoll/ui/state.hpp>
@@ -61,6 +63,8 @@ struct component_table {
   async::detail::type_id type;
   held_component (*make)();
   void (*link)(void *component, state_link to);
+  // After each of its views: its effects whose dependency changed start.
+  void (*effects)(void *component, effect_starter const &start);
   element (*view)(void *component, void const *props);
   // None for a component that has none.
   async::task<> (*mounted)(void *component);
@@ -116,6 +120,7 @@ inline constexpr component_table table_of{
                                 [](void *held) noexcept { std::unique_ptr<C>{static_cast<C *>(held)}.reset(); }};
         },
     .link = [](void *component, state_link to) { link_states(*static_cast<C *>(component), to); },
+    .effects = effects_of<C>(),
     .view = [](void *component, [[maybe_unused]] void const *props) -> element {
       if constexpr (ComponentWithProps<C>) {
         return static_cast<C *>(component)->view(*static_cast<typename C::props const *>(props));

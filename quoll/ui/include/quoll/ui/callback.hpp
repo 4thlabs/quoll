@@ -100,11 +100,11 @@ namespace quoll::ui {
  * the caller's task, as a std::function would, and what the function captures is the caller's to keep alive. What marks
  * the component is its view running. The function returns `R`, or a task of `R`;
  * the arguments are copied into the task, so that none can be a reference to write to or a view, refused at compile
- * time, as is a result that would refer to what the work held; a pointer, or a view inside another type, still
- * points to what the caller gave, which must outlive the work. Copies of a callback share its
- * function. Every callback of one signature
- * that calls something compares equal, whatever its function captures: it calls back a component, which stays the
- * same, so that props holding one compare by the rest.
+ * time, as is a result that would refer to what the work held; a view inside an optional, a pair, a tuple, a
+ * variant or an expected is refused too; a pointer, or a view in a container or inside a type of the program's, as a
+ * member of a struct, still points to what the caller gave, which must outlive the work. Copies of a
+ * callback share its function. Every callback of one signature that calls something compares equal, whatever its
+ * function captures: it calls back a component, which stays the same, so that props holding one compare by the rest.
  *
  * Thread safety: none, as its app: called from a task on the app's executor, whose stop is asked for there, as those of
  * the app's own tasks are.
@@ -113,10 +113,10 @@ template <class R, class... Args>
 class callback<R(Args...)> {
   static_assert(((!std::is_lvalue_reference_v<Args> || std::is_const_v<std::remove_reference_t<Args>>) && ...),
                 "quoll::ui: a callback's arguments are copied into its task: none can be a reference to write to");
-  static_assert((!detail::is_view<std::remove_cvref_t<Args>> && ...),
+  static_assert((!detail::holds_view<std::remove_cvref_t<Args>> && ...),
                 "quoll::ui: a callback's arguments are copied into its task: a view would still refer to the caller's "
                 "object, which may go first");
-  static_assert(!std::is_reference_v<R> && !detail::is_view<std::remove_cvref_t<R>>,
+  static_assert(!detail::holds_view<R>,
                 "quoll::ui: a callback's result reaches its caller once its work has ended: it cannot refer to what "
                 "the work held");
 
