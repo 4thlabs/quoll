@@ -37,11 +37,8 @@
 #ifndef QUOLL_UI_CALLBACK_HPP
 #define QUOLL_UI_CALLBACK_HPP
 
-#include <quoll/async/current_stop_token.hpp>
-#include <quoll/async/detail/end_stopped.hpp>
-#include <quoll/async/detail/is_a_stop.hpp>
 #include <quoll/async/task.hpp>
-#include <quoll/ui/detail/call_state.hpp>
+#include <quoll/ui/detail/call.hpp>
 #include <quoll/ui/detail/callback_traits.hpp>
 #include <quoll/ui/detail/ready.hpp>
 #include <quoll/ui/detail/view_context.hpp>
@@ -143,7 +140,7 @@ public:
 
   /** @brief Calls it back, with copies of `args`: see the class. */
   [[nodiscard]] async::task<R> operator()(Args... args) const {
-    return call(function_, target_, std::decay_t<Args>(std::forward<Args>(args))...);
+    return detail::call_in<R>(function_, target_, std::decay_t<Args>(std::forward<Args>(args))...);
   }
 
   /** @brief Whether it calls something. */
@@ -181,77 +178,6 @@ private:
         return detail::ready<R>(std::invoke(held, std::move(args)...));
       }
     };
-  }
-
-  // Owns what it needs: the callback may go before the task ends.
-  [[nodiscard]] static async::task<R> call(std::shared_ptr<function_type const> function, detail::call_target target,
-                                           std::decay_t<Args>... args) {
-    if (!function) {
-      throw std::bad_function_call{};
-    }
-
-    // Stopped already: it asks for nothing.
-    auto const caller_stop = co_await async::current_stop_token();
-
-    if (caller_stop.stop_requested()) {
-      co_await async::detail::end_stopped{};
-    }
-
-    if (!target.app) {
-      // Made in a component's view for to_html: the component is gone with the page.
-      if (target.of_component) {
-        co_await async::detail::end_stopped{};
-      }
-
-      if constexpr (std::is_void_v<R>) {
-        co_await (*function)(std::move(args)...);
-        co_return;
-      } else {
-        co_return co_await (*function)(std::move(args)...);
-      }
-    }
-
-    auto state = std::make_shared<detail::call_state<R>>();
-
-    if (!detail::spawn_in(target, work(std::move(function), state, std::move(args)...))) {
-      co_await async::detail::end_stopped{};
-    }
-
-    if constexpr (std::is_void_v<R>) {
-      co_await detail::call_wait<R>{std::move(state)};
-    } else {
-      co_return co_await detail::call_wait<R>{std::move(state)};
-    }
-  }
-
-  [[nodiscard]] static async::task<> work(std::shared_ptr<function_type const> function,
-                                          std::shared_ptr<detail::call_state<R>> state, std::decay_t<Args>... args) {
-    detail::call_end<R> end{std::move(state)};
-
-    // Its component stopped since the call was posted: it does not run, and the caller ends on the stop with it.
-    auto const component_stop = co_await async::current_stop_token();
-
-    if (component_stop.stop_requested()) {
-      co_return;
-    }
-
-    try {
-      if constexpr (std::is_void_v<R>) {
-        co_await (*function)(std::move(args)...);
-        end.give({});
-      } else {
-        end.give(co_await (*function)(std::move(args)...));
-      }
-    } catch (...) {
-      // A stop a function throws while its component stops is a stop: the caller ends on it, as no catch sees one.
-      if (component_stop.stop_requested() && async::detail::is_a_stop(std::current_exception())) {
-        co_return;
-      }
-
-      if (!end.fail(std::current_exception())) {
-        throw;
-      }
-    }
   }
 
   std::shared_ptr<function_type const> function_;

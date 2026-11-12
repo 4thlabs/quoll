@@ -300,7 +300,7 @@ void walk_component(element &value, matching &shown, std::vector<std::shared_ptr
           : spec.props;
 
   if (fresh) {
-    kept = std::make_shared<instance>(*spec.table, props, value.key, context.app_stop);
+    kept = std::make_shared<instance>(*spec.table, props, value.key, context.app_stop, context.contexts);
   }
 
   now.push_back(kept);

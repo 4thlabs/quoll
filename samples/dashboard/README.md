@@ -21,11 +21,12 @@ dashboard/
 
 | File | What it holds |
 |---|---|
-| `web/main.cpp` | `mount<dashboard_page>()`, in `#app` |
-| `web/components/dashboard_page.hpp` | the products, loaded by an `effect` on no state, and the sales of the one chosen, by an `effect` on it, each into a state with whether it is loading and why it failed |
-| `web/components/product_list.hpp` | the filter, a state of its own, and the rows of the products it matches |
+| `web/main.cpp` | `mount<dashboard_page>()`, in `#app`, with the catalog |
+| `web/components/dashboard_page.hpp` | the product chosen, and its sales, loaded by an `effect` on it into a state with whether they are loading and why they failed |
+| `web/components/catalog.hpp` | the products, a context the page, the list and the detail share: loaded by an `effect` on no state, saved by `save`, which `run()` calls from the detail |
+| `web/components/product_list.hpp` | the filter, a state of its own, and the rows of the catalog's products it matches |
 | `web/components/product_row.hpp` | one product, with its `on_select` callback |
-| `web/components/product_detail.hpp` | the fields of the product chosen, what is typed kept until saved, and kept when typed while a save is on its way; its save, an `action` writing whether it waits and why it failed, which runs the page's `on_save` callback |
+| `web/components/product_detail.hpp` | the fields of the product chosen, what is typed kept until saved, and kept when typed while a save is on its way; its save, an `action` writing whether it waits and why it failed, which runs the catalog's save |
 | `web/components/field.hpp` | a labelled input showing a value it is given, with an `on_change` callback |
 | `web/components/sales_chart.hpp`, `.cpp` | the `line_chart` widget, and the month of the point clicked; its view in a source of its own, as the widget's JSON goes through Glaze |
 | `web/widgets/line_chart.js` | the widget's module: `mount`, `update` and `unmount` over chart.js, a click emitting `point_selected` |
@@ -72,9 +73,10 @@ the widget and no WebSocket. What took code of its own, for base components to g
   product may be answered out of order, or sent by a double click. The page first kept counters for these by hand, in
   which reviews kept finding bugs; `quoll::ui` now gives `effect`, React's `useEffect` on the product chosen, whose run
   stops the one before, and `action`, with which the detail saves its product once at a time; both write whether they
-  are under way and why they failed into a state the view reads. The save itself is the page's, through a callback:
-  a detail left stops waiting for it, and the save goes on, the list showing what the server saved. What is left: the detail compares what each field holds with what it sent before
-  forgetting it, for a draft of a form from the props to replace.
+  are under way and why they failed into a state the view reads. The products are a context, the `catalog`, which the
+  page, the list and the detail share, and which does the save: a detail left stops waiting for it, and the save goes
+  on, the list showing what the server saved. What is left: the detail compares what each field holds with what it
+  sent before forgetting it, for a draft of a form from the props to replace.
 - **What a child tells, one task later.** A callback runs as a task of the component that wrote it: a field's change
   reaches the detail after the event that made it, so that a save dispatched in the same turn, as a test does, reads the
   value before it.

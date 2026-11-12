@@ -41,6 +41,7 @@
 #include <quoll/async/detail/task_group.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/app_options.hpp>
+#include <quoll/ui/detail/context_entry.hpp>
 #include <quoll/ui/detail/effect_starter.hpp>
 #include <quoll/ui/detail/held_view.hpp>
 #include <quoll/ui/detail/instance.hpp>
@@ -70,7 +71,9 @@ public:
   using effects_function = void (*)(void *component, effect_starter const &start);
 
   // `unmounted`, none for a component without it, runs as the app stops, once its view showed.
-  // `effects` start those of the component whose dependency changed, after each of its views.
+  // `effects` start those of the component whose dependency changed, after each of its views. The contexts of `options`
+  // are made here, in their order, each finding those it uses among those given before it.
+  // Throws std::logic_error for two contexts of one type, or one using a context not given before it.
   app_core(async::any_executor executor, renderer_ref renderer, view_function view, unmounted_function unmounted,
            effects_function effects, void *component, app_options options);
 
@@ -83,6 +86,12 @@ public:
   ~app_core();
 
   [[nodiscard]] bool stopped() const noexcept { return stopped_; }
+
+  // Where its components find its contexts.
+  [[nodiscard]] context_finder contexts() const noexcept;
+
+  // Its context of `type`, or none.
+  [[nodiscard]] context_entry *context(async::detail::type_id type) const noexcept;
 
   void render();
   // Under the stop of the component `held` names, kept with its props until it ends, or the app's for none.
@@ -118,6 +127,7 @@ private:
   void unmount_widgets(std::vector<element> const &shown) const noexcept;
   void failed(std::exception_ptr failure) const noexcept;
   static void failed_in(void *self, std::exception_ptr failure) noexcept;
+  static context_entry *find_context(void const *self, async::detail::type_id type) noexcept;
 
   async::any_executor executor_;
   renderer_ref renderer_;
@@ -128,6 +138,8 @@ private:
   effects_function effects_;
   void *component_;
   app_options options_;
+  // Before what may refer to them, the tasks and the components: destroyed after them.
+  std::vector<std::unique_ptr<context_entry>> contexts_;
   std::stop_source stop_;
   async::detail::task_group tasks_;
   std::vector<element> shown_;

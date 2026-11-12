@@ -62,6 +62,8 @@ struct expansion {
   std::stop_token app_stop;
   state_link link{};
   failure_sink sink{};
+  // Where the components it makes find their contexts: none for a view written once.
+  context_finder contexts{};
   std::vector<std::shared_ptr<instance>> made{};
   std::vector<std::shared_ptr<instance>> now{};
 

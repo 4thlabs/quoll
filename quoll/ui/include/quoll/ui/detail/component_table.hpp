@@ -40,7 +40,9 @@
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/component_with_props.hpp>
+#include <quoll/ui/detail/bind_contexts.hpp>
 #include <quoll/ui/detail/effect_starter.hpp>
+#include <quoll/ui/detail/held_component.hpp>
 #include <quoll/ui/detail/link_states.hpp>
 #include <quoll/ui/detail/run_effects.hpp>
 #include <quoll/ui/element.hpp>
@@ -49,20 +51,21 @@
 #include <quoll/ui/unmounted_component.hpp>
 
 #include <concepts>
+#include <cstdint>
 #include <memory>
 
 namespace quoll::ui::detail {
 
-// A component held without its type: what to make it with, link its states to, view it with its props, and run as it
-// comes and goes.
-using held_component = std::unique_ptr<void, void (*)(void *) noexcept>;
-
-// One per type, told apart by `type`: its address could be another type's too, as a linker may fold identical
-// constants.
+// A component held without its type: what to make it with, link its states to, find its contexts with, view it with its
+// props, and run as it comes and goes. One per type, told apart by `type`: its address could be another type's too, as
+// a linker may fold identical constants.
 struct component_table {
   async::detail::type_id type;
   held_component (*make)();
   void (*link)(void *component, state_link to);
+  // None for a component using no context: finds those it uses, then counts their changes.
+  void (*bind)(void *component, context_finder const &finder);
+  std::uint64_t (*contexts_version)(void *component);
   // After each of its views: its effects whose dependency changed start.
   void (*effects)(void *component, effect_starter const &start);
   element (*view)(void *component, void const *props);
@@ -114,12 +117,10 @@ template <class C>
 template <class C>
 inline constexpr component_table table_of{
     .type = async::detail::type_id_of<C>(),
-    .make =
-        [] {
-          return held_component{std::make_unique<C>().release(),
-                                [](void *held) noexcept { std::unique_ptr<C>{static_cast<C *>(held)}.reset(); }};
-        },
+    .make = &make_held<C>,
     .link = [](void *component, state_link to) { link_states(*static_cast<C *>(component), to); },
+    .bind = binds_of<C>(),
+    .contexts_version = contexts_version_of<C>(),
     .effects = effects_of<C>(),
     .view = [](void *component, [[maybe_unused]] void const *props) -> element {
       if constexpr (ComponentWithProps<C>) {

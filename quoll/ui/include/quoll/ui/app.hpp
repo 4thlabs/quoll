@@ -38,11 +38,14 @@
 #define QUOLL_UI_APP_HPP
 
 #include <quoll/async/any_executor.hpp>
+#include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/app_options.hpp>
 #include <quoll/ui/component.hpp>
+#include <quoll/ui/context_spec.hpp>
 #include <quoll/ui/detail/app_core.hpp>
+#include <quoll/ui/detail/bind_contexts.hpp>
 #include <quoll/ui/detail/component_table.hpp>
 #include <quoll/ui/detail/hot.hpp>
 #include <quoll/ui/detail/link_states.hpp>
@@ -55,6 +58,7 @@
 #include <quoll/ui/state.hpp>
 
 #include <exception>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -84,6 +88,10 @@ public:
       : renderer_(std::move(renderer)),
         core_(async::any_executor{executor}, renderer_ref{renderer_}, &view_of, detail::unmounted_of<C>(),
               detail::effects_of<C>(), &component_, std::move(options)) {
+    if constexpr (detail::binds_of<C>() != nullptr) {
+      detail::binds_of<C>()(&component_, core_.contexts());
+    }
+
     detail::link_states(component_, {&core_, &detail::app_core::state_changed});
 
 #if defined(QUOLL_UI_HOT)
@@ -146,6 +154,21 @@ public:
    */
   [[nodiscard]] async::task<> stop() { return core_.stop(); }
 
+  /**
+   * @brief Its context of type T, as provide<T>() gave it.
+   * @throws std::logic_error when it was given none.
+   */
+  template <class T>
+  [[nodiscard]] T &context() {
+    return *static_cast<T *>(context_of(async::detail::type_id_of<T>()));
+  }
+
+  /** @brief See context(). */
+  template <class T>
+  [[nodiscard]] T const &context() const {
+    return *static_cast<T const *>(context_of(async::detail::type_id_of<T>()));
+  }
+
   /** @brief The component. */
   [[nodiscard]] C &component() noexcept { return component_; }
 
@@ -154,6 +177,16 @@ public:
 
 private:
   static element view_of(void *component) { return static_cast<C *>(component)->view(); }
+
+  [[nodiscard]] void *context_of(async::detail::type_id type) const {
+    auto *const entry = core_.context(type);
+
+    if (entry == nullptr) {
+      throw std::logic_error{"quoll::ui::app: no context of this type was given"};
+    }
+
+    return entry->object();
+  }
 
   // The core outlives the component, whose states call it, even from the destructor of a member.
   R renderer_;

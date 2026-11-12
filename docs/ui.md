@@ -367,6 +367,69 @@ target are members of the same component, declared before it. Arguments and valu
 none can be a reference or a view, which does not compile. A function given empty, as a null pointer, throws
 `std::invalid_argument` as the member is made.
 
+## Contexts
+
+Data several components show and change, as the products a list and a detail share, is a context: an aggregate with
+no view, its states, its effects and member functions. The app makes it from its options and holds it as long as it
+lives, and a component finds it through a `shared<T>` member, by type.
+
+```cpp
+struct catalog {
+  // The products, whether they are loading, and why they did not load.
+  state<std::tuple<std::vector<products::product>, bool, std::exception_ptr>> items;
+  effect load{std::tie(), products_client::list, items};
+
+  task<products::product> save(std::int64_t id, products::product_update changes) {
+    auto saved = co_await products_client::update(id, std::move(changes));
+
+    items.update([&saved](auto &held) {
+      std::ranges::replace_if(std::get<0>(held), [&saved](auto const &item) { return item.id == saved.id; }, saved);
+    });
+    co_return saved;
+  }
+};
+
+struct product_list {
+  shared<catalog> products;
+
+  element view() {
+    auto const &[all, loading, error] = *products->items;
+    // ...
+  }
+};
+
+struct product_detail {
+  shared<catalog> products;
+  state<std::tuple<bool, std::exception_ptr>> saving;
+
+  action<products::product(std::int64_t, products::product_update)> save{
+      [this](std::int64_t id, products::product_update changes) {
+        return products.run(&catalog::save, id, std::move(changes));
+      },
+      saving};
+};
+
+int main() {
+  quoll::emscripten::mount<dashboard_page>("#app", {.contexts = {provide<catalog>()}});
+}
+```
+
+- `provide<T>()` gives the app a context, one of each type, which has no view, `mounted()` nor `unmounted()`: its
+  effects do what a component's `mounted()` would. The app makes them as it is made, in their order, and each finds
+  those it uses itself, as a `shared<U>` member, among those given before it, so that none uses one that uses it;
+- a `shared<T>` finds the app's context as the app makes its component: an app given none of that type throws
+  `std::logic_error` there;
+- `*shared` and `shared->` give the context; a change of its states, or of a context it uses, shows again every
+  component using it, whose view runs again even if its own states did not change. A `shared<T>` is a member of the
+  component itself, as a state is: one inside a member of it is not found;
+- its effects start after each view of the app, as a component's after its own;
+- `shared.run(&T::member, args...)` runs a member function of the context, or of a base of it, with copies of the arguments, as a task of
+  the app, and gives what it gave or throws what it threw: a component that goes stops waiting, and the work goes on,
+  what it changes showing wherever it is read; what it throws once nothing waits goes to the app's `on_error`;
+- `app.context<T>()` gives it from outside, as a test does;
+- a component a view written once shows, with `to_html`, has no app: using its `shared<T>` throws
+  `std::logic_error`.
+
 ## JavaScript widgets
 
 A JavaScript library, as chart.js, shows in a node of the view that the app leaves to it: a widget. It is declared

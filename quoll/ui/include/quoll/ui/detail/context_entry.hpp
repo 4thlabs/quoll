@@ -1,0 +1,115 @@
+//   ___              _ _
+//  / _ \ _   _  ___ | | |
+// | | | | | | |/ _ \| | |
+// | |_| | |_| | (_) | | |
+//  \__\_\\__,_|\___/|_|_|
+//
+// BSD 3-Clause License
+//
+// Copyright (c) 2026, Thomas Gourgues (thomas.gourgues@gmail.com)
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#ifndef QUOLL_UI_DETAIL_CONTEXT_ENTRY_HPP
+#define QUOLL_UI_DETAIL_CONTEXT_ENTRY_HPP
+
+#include <quoll/async/detail/type_id.hpp>
+#include <quoll/ui/detail/effect_starter.hpp>
+#include <quoll/ui/detail/held_component.hpp>
+#include <quoll/ui/detail/state_link.hpp>
+#include <quoll/ui/detail/view_context.hpp>
+
+#include <cstdint>
+#include <memory>
+
+namespace quoll::ui::detail {
+
+class context_entry;
+
+// Where a component finds the contexts of its app, by type: none for a view written once (to_html).
+struct context_finder {
+  std::shared_ptr<app_link> app{};
+  void const *owner = nullptr;
+  context_entry *(*find)(void const *owner, async::detail::type_id type) noexcept = nullptr;
+
+  // The context of that type, or none.
+  [[nodiscard]] context_entry *operator()(async::detail::type_id type) const noexcept {
+    return find == nullptr ? nullptr : find(owner, type);
+  }
+};
+
+// A context held without its type: what to make it with, link its states to, start its effects with, and find the
+// contexts it uses itself. One per type, told apart by `type`.
+struct context_table {
+  async::detail::type_id type;
+  held_component (*make)();
+  void (*link)(void *context, state_link to);
+  // None for a context without effects.
+  void (*effects)(void *context, effect_starter const &start);
+  // None for a context using none: finds those it uses, then counts their changes.
+  void (*bind)(void *context, context_finder const &finder);
+  std::uint64_t (*contexts_version)(void *context);
+};
+
+// A context of an app: the object, and how many times its states changed, which a component using it reads, as its
+// view runs again once one did. Neither copied nor moved: its states and the components using it refer to it.
+//
+// Thread safety: none, as its app.
+class context_entry {
+public:
+  // Made, its states telling `app` of their changes.
+  context_entry(context_table const &table, state_link app);
+
+  context_entry(context_entry const &) = delete;
+  context_entry(context_entry &&) = delete;
+  context_entry &operator=(context_entry const &) = delete;
+  context_entry &operator=(context_entry &&) = delete;
+
+  ~context_entry();
+
+  [[nodiscard]] context_table const &table() const noexcept { return *table_; }
+
+  [[nodiscard]] void *object() const noexcept { return object_.get(); }
+
+  // How many times its states, and those of the contexts it uses, changed.
+  [[nodiscard]] std::uint64_t version() const noexcept {
+    return version_ + (table_->contexts_version == nullptr ? 0 : table_->contexts_version(object_.get()));
+  }
+
+private:
+  static void changed_in(void *self);
+
+  context_table const *table_;
+  state_link app_;
+  std::uint64_t version_ = 0;
+  // Last, as it refers to what is above.
+  held_component object_;
+};
+
+} // namespace quoll::ui::detail
+
+#endif // QUOLL_UI_DETAIL_CONTEXT_ENTRY_HPP

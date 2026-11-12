@@ -41,9 +41,13 @@
 namespace quoll::ui::detail {
 
 instance::instance(component_table const &table, std::shared_ptr<void const> props, std::string key,
-                   std::stop_token const &app_stop)
+                   std::stop_token const &app_stop, context_finder const &contexts)
     : table_(&table), props_(std::move(props)), component_(table.make()), key_(std::move(key)),
       follow_app_(app_stop, async::detail::stop_waker{&stop_}) {
+  if (table_->bind != nullptr) {
+    table_->bind(component_.get(), contexts);
+  }
+
   // Counted from the start, its first view and what made it included, so that a change there views it again; its
   // app hears of changes once it shows.
   table_->link(component_.get(), {this, &instance::changed_in});
@@ -73,8 +77,12 @@ bool instance::made_of(void const *own, void const *placed_by) const noexcept {
   return last_view_ && own == own_.get() && placed_by == placed_by_.get();
 }
 
+std::uint64_t instance::version() const noexcept {
+  return version_ + (table_->contexts_version == nullptr ? 0 : table_->contexts_version(component_.get()));
+}
+
 element const *instance::unchanged_view(std::uint64_t epoch) const noexcept {
-  return last_view_ && version_ == viewed_ && epoch == viewed_epoch_ ? &*last_view_ : nullptr;
+  return last_view_ && version() == viewed_ && epoch == viewed_epoch_ ? &*last_view_ : nullptr;
 }
 
 void instance::link(state_link app) noexcept { app_link_ = app; }

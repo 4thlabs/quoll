@@ -249,33 +249,11 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
   overlap: three rounds of review found stale answers and saves out of order, handled by hand. The screen needed no
   handle on the widget, and no WebSocket. What takes the place of that bookkeeping was decided on 2026-11-11 (see
   [Decided](#decided)): `ui::effect` and `ui::action`, then a form's draft from the props.
-- **Contexts**, data the components of an app share, as React's contexts, Leptos's `provide_context` or Solid's stores,
-  one or several, agreed with the maintainer on 2026-11-11: a page cannot do the save of each of its components and pass
-  callbacks down. A context is a component without a view, its states showing again what reads them, found by its type,
-  and what a component runs on it is the context's task, which goes on as the component goes, as a callback's work
-  does: a save sent ends, and what it changed shows wherever it is read. In its own pull request, after #167. To
-  settle there: whether one is made at its first use or given to `mount`, one per app or nested as React's providers,
-  and what a context keeps per item, as a save of a product once at a time and its failure, for a detail chosen again.
-  Proposed:
-
-  ```cpp
-  struct catalog {
-    state<std::tuple<std::vector<products::product>, bool, std::exception_ptr>> items;
-    effect load{std::tie(), products_client::list, items};
-
-    task<products::product> save(std::int64_t id, products::product_update changes);
-  };
-
-  struct product_detail {
-    shared<catalog> products;
-    state<std::tuple<bool, std::exception_ptr>> saving;
-    action<products::product(std::int64_t, products::product_update)> save{
-        [this](std::int64_t id, products::product_update changes) { return products.run(&catalog::save, id, changes); },
-        saving};
-  };
-  ```
-
-  Until then, the dashboard's page saves for its detail, through a callback.
+- **Contexts**: done, data the components of an app share, as React's contexts, agreed with the maintainer on
+  2026-11-11 and 2026-11-12 (see [Decided](#decided)): `provide<T>()` in the app's options, `shared<T>` in a component,
+  `run()` for what goes on as the component goes. Left: a context a component provides to those of its view, as a
+  page under a router will, found before the app's, which `shared<T>` will find unchanged; and what a context keeps
+  per item, as a save of a product once at a time across its details, and the failure of a save whose detail went.
 - WebSocket in the browser and in the REST DSL, left from step 5, if that screen needs them; if it does not, the maintainer
   says where they go once the step ends, and step 5 is done.
 
@@ -441,6 +419,16 @@ changes only what the harness shows. Candidates:
   component per item has its own action, which runs a callback of the component owning what the save changes, so
   that the save goes on as the item goes. The debounce is to refine. A form's draft from
   the props comes in a pull request of its own.
+- **Contexts: data the components of an app share, given to the app, found by type** (2026-11-11 and 2026-11-12), as
+  a page cannot do the save of each of its components and pass callbacks down. A context is an aggregate with no view,
+  its states, its effects, and member functions; the app makes the contexts its options give, `provide<T>()`, as it is
+  made, and holds them as long as it lives, so that they serve every page. A component finds one through a
+  `shared<T>` member, by type, as the app makes it; a change of the context's states shows again the components using
+  it, its effects start after each view of the app, and `shared<T>::run()` runs a member function of it as a task of
+  the app, which goes on as the caller goes, as a callback's work does. Given to `mount` rather than made at a first
+  use: what exists shows in `main`, as FTXUI's data sit beside its screen, which the maintainer liked, though FTXUI
+  leaves lifetimes, stale answers and cancellation to the program. Nested contexts, as React's providers under a route,
+  come with several pages; `shared<T>` will find them first, unchanged.
 - **The interop tests close the protocol layer, and step 6 comes next** (2026-11-10), as the maintainer asked, tired of
   reimplementing HTTP, server-sent events and WebSocket: once Quoll's ends hold against third-party clients and servers
   (#150), the protocol code takes the fixes of its bugs, those the interop tests and reviews find included, of what touches

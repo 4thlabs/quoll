@@ -69,8 +69,9 @@ struct failure_sink {
 // Thread safety: none, as its app.
 class instance {
 public:
+  // Finds its contexts with `contexts`: throws std::logic_error for one its app was not given.
   instance(component_table const &table, std::shared_ptr<void const> props, std::string key,
-           std::stop_token const &app_stop);
+           std::stop_token const &app_stop, context_finder const &contexts);
 
   instance(instance const &) = delete;
   instance(instance &&) = delete;
@@ -105,8 +106,8 @@ public:
   // reloads: none otherwise.
   [[nodiscard]] element const *unchanged_view(std::uint64_t epoch) const noexcept;
 
-  // How many times its states changed: a view records what it saw.
-  [[nodiscard]] std::uint64_t version() const noexcept { return version_; }
+  // How many times its states, and those of the contexts it uses, changed: a view records what it saw.
+  [[nodiscard]] std::uint64_t version() const noexcept;
 
   // Links it to its app, which a change of its states tells once counted: its states count from its making.
   void link(state_link app) noexcept;
