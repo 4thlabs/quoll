@@ -255,7 +255,10 @@ template <EventFunction F>
   return on("change", std::move(function));
 }
 
-/** @brief on("submit") of a form, as Enter in one of its inputs sends it: the page stays, the app handles it. */
+/**
+ * @brief on("submit") of a form, as Enter in one of its inputs or a button in it sends it: the page stays, the app
+ * handles it. A form without it stays as well, but for one naming an `action`, which the browser sends there.
+ */
 template <EventFunction F>
 [[nodiscard]] auto on_submit(F function) {
   return on("submit", std::move(function));

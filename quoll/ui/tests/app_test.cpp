@@ -1087,11 +1087,12 @@ static_assert(Renderer<ordered_renderer>);
 // A select of the options its state holds, the second chosen.
 struct choosing_select {
   state<std::vector<std::string>> options{std::vector<std::string>{"a"}};
+  state<int> other;
 
   element view() {
     auto const option = [](std::string const &name) { return node("option", {text(name)}) | key(name); };
 
-    return node("select", {list(options, option)}) | value("b");
+    return div({node("select", {list(options, option)}) | value("b"), p(std::to_string(*other))});
   }
 };
 
@@ -1102,6 +1103,7 @@ TEST_CASE("ui::app: a select is given its value once its options are placed, and
   std::vector<std::string> asked;
   app<choosing_select, ordered_renderer> instance{time.get_executor(), ordered_renderer{&asked}};
   std::vector<std::string> first;
+  std::vector<std::string> changed;
 
   auto const act = [&]() -> task<> {
     first = asked;
@@ -1109,10 +1111,19 @@ TEST_CASE("ui::app: a select is given its value once its options are placed, and
 
     instance.component().options.update([](auto &all) { all.push_back("b"); });
     co_await settle();
+    changed = asked;
+    asked.clear();
+
+    // Its options the same: what the user chose stays.
+    instance.component().other = 1;
+    co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   // Its option made, its text in it and it in the select, then its value, then the select placed in the page.
-  CHECK(first == std::vector<std::string>{"create select", "create option", "insert", "insert", "value b", "insert"});
-  CHECK(asked.back() == "value b");
+  CHECK(std::ranges::search(first,
+                            std::vector<std::string>{"create select", "create option", "insert", "insert", "value b"})
+            .begin() != first.end());
+  CHECK(changed.back() == "value b");
+  CHECK(std::ranges::find(asked, "value b") == asked.end());
 }

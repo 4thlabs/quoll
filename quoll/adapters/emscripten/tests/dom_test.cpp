@@ -65,6 +65,7 @@ int quoll_test_dom_key_and_submit(char const *key);
 void quoll_test_dom_check();
 int quoll_test_dom_checked();
 int quoll_test_dom_submit();
+void quoll_test_dom_key(char const *key, int shift, int composing);
 void quoll_test_widgets_install();
 void quoll_test_widgets_log(char *out, std::size_t size);
 void quoll_test_widgets_emit(char const *name, char const *value);
@@ -192,6 +193,15 @@ struct box_page {
 
   element view() {
     return div({input() | bind(done), button("Reset") | on_click([this] { done = false; }), p(*done ? "yes" : "no")});
+  }
+};
+
+// The keys pressed in its input.
+struct key_input {
+  state<std::vector<std::string>> keys;
+
+  element view() {
+    return input() | on_key_down([this](std::string key) { keys.update([&key](auto &all) { all.push_back(key); }); });
   }
 };
 
@@ -331,6 +341,21 @@ TEST_CASE("mount: a radio chosen gives its value, and a form with no on_submit s
   settle();
   CHECK(page().find("<p>green</p>") != std::string::npos);
   CHECK(quoll_test_dom_submit() == 1);
+}
+
+TEST_CASE("mount: a key reaches on_key_down after the modifiers held, but none an input method composes",
+          "[emscripten][ui]") {
+  quoll_test_dom_reset();
+
+  auto &shown = quoll::emscripten::mount<key_input>();
+
+  quoll_test_dom_key("Enter", 1, 0);
+  quoll_test_dom_key("?", 1, 0);
+  quoll_test_dom_key("Enter", 0, 1);
+  quoll_test_dom_key("Shift", 1, 0);
+  settle();
+
+  CHECK(*shown.keys == std::vector<std::string>{"Shift+Enter", "?", "Shift"});
 }
 
 TEST_CASE("dom_renderer: nothing matching the selector is an error", "[emscripten][ui]") {
