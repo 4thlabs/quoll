@@ -80,6 +80,23 @@ struct counter_page {
   element view() { return component<counter>(); }
 };
 
+// The two models of CommittedHook: what a view writes takes effect once it shows.
+task<int> committed_model(int value) { co_return value; }
+
+static_assert(detail::CommittedHook<detail::effect_hook<task<int> (*)(int), int>>);
+static_assert(detail::CommittedHook<detail::action_hook<&committed_model, overlap::refuse>>);
+
+// What an app's on_error is given, in words.
+[[nodiscard]] auto collect(std::vector<std::string> &failures) {
+  return [&failures](std::exception_ptr failure) {
+    try {
+      std::rethrow_exception(failure);
+    } catch (std::exception const &error) {
+      failures.emplace_back(error.what());
+    }
+  };
+}
+
 // What `auto x = use_state()` would be: a copy, which does not compile.
 static_assert(!std::is_copy_constructible_v<std::remove_cvref_t<decltype(use_state(0))>>);
 
@@ -488,6 +505,192 @@ struct null_effect_page {
   element view() { return component<null_effect>(); }
 };
 
+// A debounced effect capturing its props by reference, which writes what it read into its target.
+task<std::string> name_after(std::string const &name) {
+  co_await quoll::async::sleep_for(10ms);
+  co_return name;
+}
+
+element debounced_named(named_props const &given) {
+  auto &read = use_async_state<std::string>();
+
+  use_effect(given.key, [&given](int) { return name_after(given.name); }, read, {.debounce = 20ms});
+  return p(read->value);
+}
+
+struct debounced_named_page {
+  state<int> key{1};
+  state<std::string> name{"the first name, long enough to be on the heap, not in a short string"};
+
+  element view() { return component<debounced_named>({.key = *key, .name = *name}); }
+};
+
+// An action whose success is told to a closure capturing the props by reference, the props changed during the run.
+std::vector<std::string> told_saved;
+
+task<int> slow_double(int value) {
+  co_await quoll::async::sleep_for(10ms);
+  co_return value * 2;
+}
+
+element saving_named(named_props const &given) {
+  auto &save = use_action<&slow_double>([&given](int const &) { told_saved.push_back(given.name); });
+
+  // A view that throws after writing what follows a success: it does not show, and writes nothing.
+  if (given.key == 99) {
+    throw std::runtime_error{"no view"};
+  }
+
+  return button(given.name) | on_click(save.with(given.key));
+}
+
+struct saving_named_page {
+  state<int> key{1};
+  state<std::string> name{"the first name, long enough to be on the heap, not in a short string"};
+
+  element view() { return component<saving_named>({.key = *key, .name = *name}); }
+};
+
+// A context it provides that uses one none gave, whose destructor reads it: refused before it is made.
+struct lacking_context {
+  shared<never_given> needed;
+
+  // NOLINTNEXTLINE(cppcoreguidelines-special-member-functions,hicpp-special-member-functions): an aggregate.
+  ~lacking_context() { static_cast<void>(*needed); }
+};
+
+// A handler of one view that waits, then runs a save while later views show: the save tells the closure shown as it
+// started, with that view's props, kept by the run.
+element waiting_saver(named_props const &given) {
+  auto &save = use_action<&slow_double>([&given](int const &) { told_saved.push_back(given.name); });
+  auto const later = [&save]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+    static_cast<void>(co_await save.run(1));
+  };
+
+  return button(given.name) | on_click(later);
+}
+
+struct waiting_saver_page {
+  state<std::string> name{"the first name, long enough to be on the heap, not in a short string"};
+
+  element view() { return component<waiting_saver>({.key = 1, .name = *name}); }
+};
+
+// An effect first made in a view that threw, then not called by the views that showed: it never runs.
+std::vector<int> never_ran;
+
+task<> note_run(int key) {
+  never_ran.push_back(key);
+  co_return;
+}
+
+element branching_effect() {
+  auto &branch = use_state(false);
+  auto &explode = use_state(false);
+  auto const open = [&branch, &explode] {
+    branch = true;
+    explode = true;
+  };
+  auto const calm = [&branch, &explode] {
+    branch = false;
+    explode = false;
+  };
+
+  if (*branch) {
+    use_effect(7, note_run);
+
+    if (*explode) {
+      throw std::runtime_error{"no view"};
+    }
+  }
+
+  return div({button("open") | on_click(open), button("calm") | on_click(calm)});
+}
+
+struct branching_page {
+  element view() { return component<branching_effect>(); }
+};
+
+// An effect whose dependency a view that threw gave, then a view that showed without calling it: it does not run.
+struct staged_props {
+  int key = 0;
+  bool calls = true;
+  bool explodes = false;
+
+  [[nodiscard]] bool operator==(staged_props const &) const = default;
+};
+
+element staged_effect(staged_props const &given) {
+  if (given.calls) {
+    use_effect(given.key, note_run);
+  }
+
+  if (given.explodes) {
+    throw std::runtime_error{"no view"};
+  }
+
+  return p("staged");
+}
+
+struct staged_page {
+  state<staged_props> given{staged_props{.key = 1}};
+
+  element view() { return component<staged_effect>(*given); }
+};
+
+// A dependency whose assignment throws for 2, as a lack of memory copying it would.
+struct touchy {
+  int value = 0;
+
+  explicit touchy(int given) : value(given) {}
+
+  touchy(touchy const &) = default;
+  touchy(touchy &&) = default;
+  ~touchy() = default;
+
+  touchy &operator=(touchy const &other) {
+    if (other.value == 2) {
+      throw std::runtime_error{"no touchy"};
+    }
+
+    value = other.value;
+    return *this;
+  }
+
+  touchy &operator=(touchy &&other) { return *this = static_cast<touchy const &>(other); }
+
+  [[nodiscard]] bool operator==(touchy const &) const = default;
+};
+
+std::vector<int> touched_with;
+
+task<int> touch(touchy given) {
+  touched_with.push_back(given.value);
+  co_return given.value;
+}
+
+struct touchy_props {
+  int key = 1;
+
+  [[nodiscard]] bool operator==(touchy_props const &) const = default;
+};
+
+element touchy_effect(touchy_props const &given) {
+  auto &touched = use_async_state<int>();
+  auto &run = use_effect(touchy{given.key}, touch, touched);
+  auto const again = [&run] { run.reload(); };
+
+  // Its target shows the failure, which asks for a view: one that would set the dependency again, without end.
+  return button(touched->error ? std::string{"failed"} : std::to_string(touched->value)) | on_click(again);
+}
+
+struct touchy_page {
+  state<int> key{1};
+
+  element view() { return component<touchy_effect>({.key = *key}); }
+};
+
 } // namespace
 
 TEST_CASE("function component: a state of its view, the same at each view", "[ui][function]") {
@@ -614,7 +817,9 @@ TEST_CASE("function component: an effect on several values, and one on none that
   CHECK(shown.html() == "<p>6 once</p>");
 }
 
-TEST_CASE("function component: the function an effect runs is the one of the last view", "[ui][function]") {
+TEST_CASE(
+    "function component: the function an effect runs is the one of the view that asked for the run", "[ui][function]"
+) {
   said.clear();
 
   virtual_time time;
@@ -717,13 +922,7 @@ TEST_CASE("function component: a hook of another type where one was called befor
   virtual_time time;
   memory_renderer const shown;
   std::vector<std::string> failures;
-  test_app<mismatched_page> instance{time.get_executor(), shown, {.on_error = [&failures](std::exception_ptr failure) {
-                                       try {
-                                         std::rethrow_exception(failure);
-                                       } catch (std::exception const &error) {
-                                         failures.emplace_back(error.what());
-                                       }
-                                     }}};
+  test_app<mismatched_page> instance{time.get_executor(), shown, {.on_error = collect(failures)}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -847,4 +1046,187 @@ TEST_CASE("function component: an effect given no function is refused", "[ui][fu
   test_app<null_effect_page> instance{time.get_executor(), shown};
 
   CHECK_THROWS_AS(instance.start(), std::invalid_argument);
+}
+
+TEST_CASE(
+    "function component: a debounced run calls the function of the view that asked for it, with its props",
+    "[ui][function]"
+) {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<debounced_named_page> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(20ms);
+    // The view that asks for the debounced run: its function and its props are the run's.
+    instance.component().key = 2;
+    instance.component().name = "the second name, long enough to be on the heap, not in a short string";
+    co_await quoll::async::sleep_for(5ms);
+    // During the pause, then during the run: a view shown then writes a function no run asked of it calls.
+    instance.component().name = "the third name, long enough to be on the heap, not in a short string";
+    co_await quoll::async::sleep_for(20ms);
+    instance.component().name = "the fourth name, long enough to be on the heap, not in a short string";
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html() == "<p>the second name, long enough to be on the heap, not in a short string</p>");
+}
+
+TEST_CASE(
+    "function component: an action's success is told to the closure of the view it started from, a view "
+    "that threw writing none",
+    "[ui][function]"
+) {
+  told_saved.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  std::vector<std::string> failures;
+  test_app<saving_named_page> instance{time.get_executor(), shown, {.on_error = collect(failures)}};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    // A view that throws, with other props, then a click on the button of the view still shown: the save tells what
+    // that view wrote, not what the one that threw did.
+    instance.component().key = 99;
+    instance.component().name = "the second name, long enough to be on the heap, not in a short string";
+    co_await settle();
+    instance.dispatch(shown.find("button"), "click");
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  // Each view after it throws, the one the save's end asks for too.
+  REQUIRE_FALSE(failures.empty());
+  CHECK(failures.front() == "no view");
+  CHECK(told_saved == std::vector<std::string>{"the first name, long enough to be on the heap, not in a short string"});
+}
+
+namespace {
+
+element lacking_area() {
+  static_cast<void>(provide_context<lacking_context>());
+  return p("never");
+}
+
+struct lacking_page {
+  element view() { return component<lacking_area>(); }
+};
+
+} // namespace
+
+TEST_CASE(
+    "function component: a context it provides that uses one not given is refused before it is made", "[ui][function]"
+) {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<lacking_page> instance{time.get_executor(), shown};
+
+  CHECK_THROWS_AS(instance.start(), std::logic_error);
+}
+
+TEST_CASE(
+    "function component: an action started from an older view's handler tells the closure shown as it started",
+    "[ui][function]"
+) {
+  told_saved.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<waiting_saver_page> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.dispatch(shown.find("button"), "click");
+    // Before the save starts: the closure shown then is this view's.
+    instance.component().name = "the second name, long enough to be on the heap, not in a short string";
+    co_await quoll::async::sleep_for(7ms);
+    // During the save: its closure and its props stay.
+    instance.component().name = "the third name, long enough to be on the heap, not in a short string";
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(
+      told_saved == std::vector<std::string>{"the second name, long enough to be on the heap, not in a short string"}
+  );
+}
+
+TEST_CASE(
+    "function component: an effect made in a view that threw, and called by none that showed, never runs",
+    "[ui][function]"
+) {
+  never_ran.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  std::vector<std::string> failures;
+  test_app<branching_page> instance{time.get_executor(), shown, {.on_error = collect(failures)}};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.dispatch(shown.find_text("open"), "click");
+    co_await settle();
+    instance.dispatch(shown.find_text("calm"), "click");
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  REQUIRE_FALSE(failures.empty());
+  CHECK(never_ran.empty());
+}
+
+TEST_CASE(
+    "function component: a dependency given by a view that threw is not one an effect runs with", "[ui][function]"
+) {
+  never_ran.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  std::vector<std::string> failures;
+  test_app<staged_page> instance{time.get_executor(), shown, {.on_error = collect(failures)}};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.component().given = staged_props{.key = 2, .explodes = true};
+    co_await settle();
+    instance.component().given = staged_props{.key = 2, .calls = false};
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(failures == std::vector<std::string>{"no view"});
+  CHECK(never_ran == std::vector<int>{1});
+}
+
+TEST_CASE(
+    "function component: a dependency that throws as it is set fails the effect once, as a struct's", "[ui][function]"
+) {
+  touched_with.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  std::vector<std::string> failures;
+  test_app<touchy_page> instance{time.get_executor(), shown, {.on_error = collect(failures)}};
+
+  std::string failed_shown;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.component().key = 2;
+    co_await settle();
+    co_await settle();
+    failed_shown = shown.html();
+    // Another value, then reload(): it runs again, with what the view that showed gave.
+    instance.component().key = 3;
+    co_await settle();
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(failed_shown == "<button>failed</button>");
+  CHECK(touched_with == std::vector<int>{1, 3});
+  CHECK(failures == std::vector<std::string>{"no touchy"});
 }

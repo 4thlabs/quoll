@@ -50,6 +50,7 @@
 #include <exception>
 #include <expected>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <stop_token>
 #include <tuple>
@@ -138,11 +139,12 @@ struct success_of<void> {
   using type = std::function<void()>;
 };
 
-// What a function component's use_action() reaches of an action: what follows its successes, given at each view.
+// What a function component's use_action() reaches of an action: what follows its successes, which each view that
+// shows writes, swapped in as it shows.
 struct action_access {
   template <class A>
-  static void follow_success(A &action, typename A::success_function on_success) {
-    action.on_success_ = std::move(on_success);
+  static void follow_success(A &action, std::shared_ptr<typename A::success_function> &on_success) noexcept {
+    action.on_success_.swap(on_success);
   }
 };
 
@@ -282,7 +284,7 @@ public:
   /** @brief Of a free function, telling `on_success` what it gave, before its caller. */
   explicit action(success_function on_success)
     requires free
-      : call_(free_call()), on_success_(std::move(on_success)) {}
+      : call_(free_call()), on_success_(shared_success(std::move(on_success))) {}
 
   /**
    * @brief Of a member function of the context `context`, a shared<C> of the same component, its work going on as the
@@ -291,13 +293,13 @@ public:
   template <class C>
     requires(!free && std::same_as<C, owner_type>)
   explicit action(shared<C> &context, success_function on_success = {})
-      : call_(context_call(context)), on_success_(std::move(on_success)) {}
+      : call_(context_call(context)), on_success_(shared_success(std::move(on_success))) {}
 
   /** @brief Of a member function of the component itself, `self`, declared before it; then telling `on_success`. */
   template <class C>
     requires(!free && std::same_as<C, owner_type>)
   explicit action(C *self, success_function on_success = {})
-      : call_(self_call(self)), on_success_(std::move(on_success)) {}
+      : call_(self_call(self)), on_success_(shared_success(std::move(on_success))) {}
 
   action(action const &) = delete;
   action(action &&) = delete;
@@ -321,6 +323,10 @@ public:
 private:
   friend class detail::action_calls<action, arguments>;
   friend struct detail::action_access;
+
+  [[nodiscard]] static std::shared_ptr<success_function> shared_success(success_function on_success) {
+    return on_success ? std::make_shared<success_function>(std::move(on_success)) : nullptr;
+  }
 
   [[nodiscard]] static call_type free_call() {
     return [](arguments &&given) {
@@ -363,21 +369,24 @@ private:
     };
 
     // What follows a success, before its caller: what it throws is thrown to the caller, as what a handler runs after
-    // the run would be.
-    auto follow_up = [this](auto const &...value) {
-      if (on_success_) {
-        on_success_(value...);
+    // the run would be. The one the action has as the run starts, shared: a function component's later view does not
+    // replace it for this run, and it keeps the props it may refer to.
+    auto follow_up = [on_success = on_success_](auto const &...value) {
+      if (on_success && *on_success) {
+        (*on_success)(value...);
       }
     };
 
-    return detail::run_in<value_type>(slot_, target_, std::move(make), std::move(ask), failures, follow_up);
+    return detail::run_in<value_type>(slot_, target_, std::move(make), std::move(ask), failures, std::move(follow_up));
   }
 
   // Where its runs are, before what writes into it.
   async_state<held_type> state_;
   call_type call_;
   detail::target_ref<value_type> target_{state_, std::true_type{}};
-  success_function on_success_{};
+  // Shared with the runs that tell it: one the component's struct gives is one object, whatever it changes in itself
+  // as it is told, and a run tells the one there as it started, which a function component's later view swaps.
+  std::shared_ptr<success_function> on_success_;
   detail::run_slot slot_;
 };
 

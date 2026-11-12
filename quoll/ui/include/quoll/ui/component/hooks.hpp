@@ -38,6 +38,7 @@
 #define QUOLL_UI_COMPONENT_HOOKS_HPP
 
 #include <quoll/async/task.hpp>
+#include <quoll/ui/context/provide.hpp>
 #include <quoll/ui/context/provided.hpp>
 #include <quoll/ui/context/shared.hpp>
 #include <quoll/ui/data/action.hpp>
@@ -46,11 +47,15 @@
 #include <quoll/ui/data/form_state.hpp>
 #include <quoll/ui/data/state.hpp>
 #include <quoll/ui/detail/component/hook_store.hpp>
+#include <quoll/ui/detail/context/bind_contexts.hpp>
 #include <quoll/ui/detail/context/context_member.hpp>
 #include <quoll/ui/detail/data/effect_function.hpp>
+#include <quoll/ui/detail/view/view_context.hpp>
 
+#include <exception>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <source_location>
 #include <stdexcept>
 #include <tuple>
@@ -85,20 +90,27 @@ inline constexpr bool is_tuple = false;
 template <class... T>
 inline constexpr bool is_tuple<std::tuple<T...>> = true;
 
-// Calls the function of the last view with `args`, kept alive by this frame as long as the task it gives runs: a view
-// that gives another destroys none that a run under way calls into, a coroutine lambda's captures included.
-template <class V, class F, class... A>
-async::task<V> call_kept(std::shared_ptr<F> function, A... args) {
-  if constexpr (std::is_void_v<V>) {
-    co_await std::invoke(*function, std::move(args)...);
-  } else {
-    co_return co_await std::invoke(*function, std::move(args)...);
-  }
+// A closure a view wrote, as an effect's function or what follows an action's success, and the props of that view,
+// which it may capture by reference: kept together, as the closure shown, and by each run that calls it.
+// Thread safety: none, as its app; shared by the runs of one app's executor.
+template <class F>
+struct written {
+  // First, so that it goes after the closure, which may refer to it as it goes.
+  std::shared_ptr<void const> props;
+  F function;
+};
+
+// What the view running now writes.
+template <class F>
+[[nodiscard]] std::shared_ptr<written<F>> write_now(F function) {
+  return std::make_shared<written<F>>(written<F>{current_props(), std::move(function)});
 }
 
 // An effect of a function component, its dependencies, states of its own that no app hears of, which each view sets to
-// what it gives, as the effect compares a struct's states after the view, and the function of the last view, which a
-// run calls as it starts, as React calls the effect of the last render.
+// what it gives, as the effect compares a struct's states after the view, and its function, which a view writes and
+// which takes effect once that view shows, as React's effects are those of the render committed. A run calls the
+// function shown as it is asked for, with its view's props: a view shown during the run changes nothing of it.
+// Thread safety: none, as its app.
 template <class F, class... D>
 class effect_hook {
 public:
@@ -106,9 +118,10 @@ public:
 
   template <class... Target>
   effect_hook(std::tuple<D...> given, F function, effect_options options, Target &...target)
-      : dependencies_(std::move(given)), function_(std::make_shared<F>(std::move(function))),
+      : dependencies_(std::move(given)), written_(write(std::move(function), std::nullopt)),
         run_(
-            std::apply([](auto &...each) { return std::tie(each...); }, dependencies_), forwarder(), target..., options
+            std::apply([](auto &...each) { return std::tie(each...); }, dependencies_), forwarder{this}, target...,
+            options
         ) {}
 
   effect_hook(effect_hook const &) = delete;
@@ -118,31 +131,148 @@ public:
 
   ~effect_hook() = default;
 
-  // A view after the first: its dependencies, which show nothing again, and its function.
-  void again(std::tuple<D...> given, F function) {
-    [&]<std::size_t... Index>(std::index_sequence<Index...>) {
-      (std::get<Index>(dependencies_).set(std::get<Index>(std::move(given))), ...);
-    }(std::index_sequence_for<D...>{});
-    function_ = std::make_shared<F>(std::move(function));
-  }
+  // A view after the first: its dependencies and the function it writes, which take effect once it shows.
+  void again(std::tuple<D...> given, F function) { written_ = write(std::move(function), std::move(given)); }
 
   [[nodiscard]] effect &run() noexcept { return run_; }
 
   // The effect only: its dependencies change as the view gives them.
   void link(state_link to) noexcept { run_.link(to); }
 
-  void after_view(effect_starter const &start) { run_.after_view(start); }
-
-private:
-  [[nodiscard]] auto forwarder() {
-    return [this](typename dependency_traits<D>::value_type... values) {
-      return call_kept<value_type>(function_, std::move(values)...);
-    };
+  // Its view showed: what it wrote, its function and its dependencies, is what runs asked from now on call and see;
+  // moved here as a pointer, which cannot throw. One that threw, or whose render failed, shows none.
+  void committed() noexcept {
+    if (written_) {
+      shown_ = std::move(written_);
+    }
   }
 
+  // A view starts: what one before it wrote and did not show goes.
+  void unwritten() noexcept { written_.reset(); }
+
+  // After a view: the dependencies the last view that showed gave are set into its states, where what throws is the
+  // effect's failure to start, as a struct's effect copying its states; then it runs if they changed. None runs before
+  // a view that wrote its function showed, as one made in a view that threw.
+  void after_view(effect_starter const &start) {
+    // None shown yet, or failed to start: it waits, as a struct's effect does, for a view that shows, or for reload().
+    if (!shown_ || effect_access::failed(run_)) {
+      return;
+    }
+
+    if (shown_->dependencies) {
+      try {
+        [&]<std::size_t... Index>(std::index_sequence<Index...>) {
+          (std::get<Index>(dependencies_).set(std::move(std::get<Index>(*shown_->dependencies))), ...);
+        }(std::index_sequence_for<D...>{});
+      } catch (...) {
+        shown_->dependencies.reset();
+        effect_access::fail(run_, std::current_exception());
+      }
+
+      shown_->dependencies.reset();
+    }
+
+    run_.after_view(start);
+  }
+
+private:
+  // What a view writes: its function with its props, and the dependencies it gives, none for the first, which the
+  // states hold already.
+  struct written_effect : written<F> {
+    std::optional<std::tuple<D...>> dependencies;
+  };
+
+  [[nodiscard]] static std::shared_ptr<written_effect> write(F function, std::optional<std::tuple<D...>> given) {
+    return std::make_shared<written_effect>(written_effect{{current_props(), std::move(function)}, std::move(given)});
+  }
+
+  // What the effect calls. The effect copies it once for each run it asks for, as its own: the copy takes what is shown
+  // then, and keeps it as it is moved on, so that a run calls the function of the view shown as it was asked for.
+  class forwarder {
+  public:
+    explicit forwarder(effect_hook const *hook) noexcept : hook_(hook) {}
+
+    forwarder(forwarder const &other) noexcept
+        : hook_(other.hook_), written_(other.written_ ? other.written_ : other.hook_->shown_) {}
+
+    forwarder(forwarder &&other) noexcept : hook_(other.hook_), written_(std::move(other.written_)) {}
+
+    forwarder &operator=(forwarder const &) = delete;
+    forwarder &operator=(forwarder &&) = delete;
+
+    ~forwarder() = default;
+
+    [[nodiscard]] async::task<value_type> operator()(typename dependency_traits<D>::value_type... values) const {
+      // A run's own copy, taken as it was asked for, once a view showed; were the effect's own called, it calls the one
+      // shown, which a run, started only once a view showed, is not without.
+      return call(written_ ? written_ : hook_->shown_, std::move(values)...);
+    }
+
+  private:
+    // Calls what `kept` holds, kept alive by this frame, with its view's props, as long as the task it gives runs.
+    template <class... A>
+    static async::task<value_type> call(std::shared_ptr<written_effect> kept, A... args) {
+      if constexpr (std::is_void_v<value_type>) {
+        co_await std::invoke(kept->function, std::move(args)...);
+      } else {
+        co_return co_await std::invoke(kept->function, std::move(args)...);
+      }
+    }
+
+    effect_hook const *hook_;
+    std::shared_ptr<written_effect> written_;
+  };
+
   std::tuple<state<D>...> dependencies_;
-  std::shared_ptr<F> function_;
+  // What the view under way wrote, none once it showed, and what the last view that showed wrote.
+  std::shared_ptr<written_effect> written_;
+  std::shared_ptr<written_effect> shown_;
   effect run_;
+};
+
+// An action of a function component, and what follows its successes as its view writes it, which takes effect once
+// that view shows, with that view's props, as an effect's function does: a run tells the one it started with.
+// Thread safety: none, as its app.
+template <auto Function, overlap Policy>
+class action_hook final : public action<Function, Policy> {
+  using base = action<Function, Policy>;
+
+public:
+  using success_function = typename base::success_function;
+  using base::base;
+
+  action_hook(action_hook const &) = delete;
+  action_hook(action_hook &&) = delete;
+  action_hook &operator=(action_hook const &) = delete;
+  action_hook &operator=(action_hook &&) = delete;
+
+  ~action_hook() = default;
+
+  // What the view under way writes, with its props, made here, where a lack of memory may throw, and taken as it shows.
+  void write(success_function on_success) {
+    if (on_success) {
+      // The closure, kept with its view's props by the same pointer.
+      auto kept = write_now(std::move(on_success));
+
+      written_.emplace(std::shared_ptr<success_function>{kept, &kept->function});
+    } else {
+      written_.emplace();
+    }
+  }
+
+  void committed() noexcept {
+    if (written_) {
+      action_access::follow_success(*this, *written_);
+      written_.reset();
+    }
+  }
+
+  // A view starts: what one before it wrote and did not show goes.
+  void unwritten() noexcept { written_.reset(); }
+
+private:
+  // What the view under way wrote, as it shows: none written, or what follows a success, which may be nothing.
+  std::optional<std::shared_ptr<success_function>> written_;
 };
 
 template <class F, class... D, class... Target>
@@ -213,8 +343,9 @@ use_async_state(std::source_location where = std::source_location::current()) {
 /**
  * @brief An effect of the function component whose view calls it, on `dependency`, a value its view gives, as React's
  * useEffect(…, [dependency]): after each view in which it changed, the run before stops and `function` runs with it,
- * what it gives written into `target`, a state of the component. As React's, the function a run calls is the one of the
- * last view, so that what it captures is never stale. The target is the one of its first view.
+ * what it gives written into `target`, a state of the component. As React's, a run calls the function of the view that
+ * asked for it, once shown, whose props it keeps: what it captures is never stale, nor gone. The target is the one of
+ * its first view.
  */
 template <class D, class F, class T>
   requires(!detail::is_tuple<D>) && detail::EffectFunction<F, D>
@@ -274,7 +405,7 @@ use_effect(F function, effect_options options = {}, std::source_location where =
 
 /**
  * @brief An action of the function component whose view calls it, of a free function: see action. `on_success`, if
- * any, is the one of the last view, as an effect's function.
+ * any, is the one of the last view that showed, as an effect's function: a run tells the one it started with.
  */
 template <auto Function, overlap Policy = overlap::refuse>
 [[nodiscard]] action<Function, Policy> &use_action(
@@ -283,13 +414,13 @@ template <auto Function, overlap Policy = overlap::refuse>
 )
   requires std::is_void_v<typename action<Function, Policy>::owner_type>
 {
-  using hook_type = action<Function, Policy>;
+  using hook_type = detail::action_hook<Function, Policy>;
 
   bool made = false;
   auto &found =
       detail::hook_store::current().find<hook_type>(where, [] { return std::make_unique<hook_type>(); }, made);
 
-  detail::action_access::follow_success(found, std::move(on_success));
+  found.write(std::move(on_success));
   return found;
 }
 
@@ -304,14 +435,14 @@ template <auto Function, overlap Policy = overlap::refuse, class C>
 )
   requires std::same_as<C, typename action<Function, Policy>::owner_type>
 {
-  using hook_type = action<Function, Policy>;
+  using hook_type = detail::action_hook<Function, Policy>;
 
   bool made = false;
   auto &found = detail::hook_store::current().find<hook_type>(
       where, [&context] { return std::make_unique<hook_type>(context); }, made
   );
 
-  detail::action_access::follow_success(found, std::move(on_success));
+  found.write(std::move(on_success));
   return found;
 }
 
@@ -373,9 +504,15 @@ template <class T>
   auto &found = store.find<detail::hooked<provided<T>>>(
       where,
       [&store] {
+        auto const finder = store.finder();
+
+        // What it uses is there before it is made, as for a struct's provided<T>: one refused is never made, so that
+        // its destructor, which may read what it found, does not run.
+        detail::refuse_missing(detail::context_table_of<T>.finds, finder);
+
         auto made_hook = std::make_unique<detail::hooked<provided<T>>>();
 
-        made_hook->bind(store.finder());
+        made_hook->bind(finder);
         return made_hook;
       },
       made

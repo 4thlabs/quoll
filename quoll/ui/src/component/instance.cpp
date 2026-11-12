@@ -35,9 +35,9 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/ui/detail/component/instance.hpp>
+#include <quoll/ui/detail/context/bind_contexts.hpp>
 #include <quoll/ui/detail/data/run_effects.hpp>
 
-#include <stdexcept>
 #include <utility>
 
 namespace quoll::ui::detail {
@@ -47,9 +47,7 @@ namespace {
 // Made once the contexts it uses are known to be there: one refused is never made, so that its destructor, which may
 // write to a context it found, does not run.
 [[nodiscard]] held_component made_finding(component_table const &table, context_finder const &contexts) {
-  if (table.finds != nullptr && !table.finds(contexts)) {
-    throw std::logic_error{missing_context};
-  }
+  refuse_missing(table.finds, contexts);
 
   return table.make();
 }

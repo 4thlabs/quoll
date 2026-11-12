@@ -86,6 +86,12 @@ void hook_store::link(state_link to) noexcept {
 void hook_store::begin_view() noexcept {
   calls_.clear();
   cursor_ = 0;
+
+  for (auto &hook : hooks_) {
+    if (hook.ops->unwritten != nullptr) {
+      hook.ops->unwritten(hook.object.get());
+    }
+  }
 }
 
 void hook_store::end_view() noexcept {

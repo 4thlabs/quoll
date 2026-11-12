@@ -74,6 +74,11 @@ struct call_target {
 // What a callback made now holds, of the view running on this thread: nothing outside one.
 [[nodiscard]] call_target current_target() noexcept;
 
+// The props of the view running on this thread, none outside one or for a component without them: what a closure the
+// view writes keeps once that view shows, as its component keeps them, so that what it captures of them by reference
+// lives as long as the closure is shown, and as long as a run calls it.
+[[nodiscard]] std::shared_ptr<void const> current_props() noexcept;
+
 // Makes `context` the current view's while it lives, then gives back the one before: views run one inside another.
 // Thread safety: on the thread of the view it sets, as the view it wraps.
 class view_scope {

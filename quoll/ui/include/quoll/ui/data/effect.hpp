@@ -64,7 +64,18 @@
 
 namespace quoll::ui {
 
+class effect;
+
 namespace detail {
+
+// What a function component's use_effect() reaches of an effect: failing as it does when what it starts with throws,
+// and whether it did, as it then waits for reload().
+struct effect_access {
+  // The run before stops, the target shows `failure`, and the effect waits for reload(); then thrown, for on_error.
+  [[noreturn]] static void fail(effect &run, std::exception_ptr const &failure);
+
+  [[nodiscard]] static bool failed(effect const &run) noexcept;
+};
 
 // Runs an effect as a task of its component, unless the component stopped since it was started, as one that went with
 // its app before its executor ran: an effect does nothing once unmounted() ran. Every failure goes where a handler's
@@ -284,6 +295,11 @@ public:
   void after_view(detail::effect_starter const &start);
 
 private:
+  friend struct detail::effect_access;
+
+  // Its failure to start, which its target shows, and the app's on_error hears of, thrown: then it waits for reload().
+  [[noreturn]] void fail_start(std::exception_ptr const &failure);
+
   // What reads its values, from its states, whatever the props are.
   template <class... D>
   [[nodiscard]] static auto states_reader(std::tuple<state<D> &...> dependencies) {
