@@ -39,6 +39,7 @@
 
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/ui/detail/bind_contexts.hpp>
 #include <quoll/ui/detail/call.hpp>
 #include <quoll/ui/detail/callback_traits.hpp>
 #include <quoll/ui/detail/context_entry.hpp>
@@ -153,7 +154,7 @@ public:
     auto *const found = finder(async::detail::type_id_of<T>());
 
     if (found == nullptr) {
-      throw std::logic_error{"quoll::ui::shared: the app was given no context of this type, as provide<T>() does"};
+      throw std::logic_error{detail::missing_context};
     }
 
     entry_ = found;

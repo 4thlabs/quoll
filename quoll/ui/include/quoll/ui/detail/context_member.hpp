@@ -48,6 +48,7 @@ namespace quoll::ui::detail {
 // What finds a context of its app, as a shared<T> does, and says how many times its states changed.
 template <class T>
 concept ContextMember = requires(T &member, T const &held, context_finder const &finder) {
+  typename T::element_type;
   member.bind(finder);
   { held.version() } noexcept -> std::same_as<std::uint64_t>;
 };

@@ -40,7 +40,4 @@
 
 #include <quoll/emscripten/mount.hpp>
 
-int main() {
-  quoll::emscripten::mount<dashboard_web::dashboard_page>("#app",
-                                                          {.contexts = {quoll::ui::provide<dashboard_web::catalog>()}});
-}
+int main() { quoll::emscripten::mount<dashboard_web::dashboard_page>("#app", dashboard_web::page_options()); }

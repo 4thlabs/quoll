@@ -106,8 +106,13 @@ public:
   // reloads: none otherwise.
   [[nodiscard]] element const *unchanged_view(std::uint64_t epoch) const noexcept;
 
-  // How many times its states, and those of the contexts it uses, changed: a view records what it saw.
-  [[nodiscard]] std::uint64_t version() const noexcept;
+  // How many times its states, and those of the contexts it read, changed: a view records what it saw, its own before
+  // it runs, so that a change it makes shows again, and its contexts' after, as reading one counts it from then on.
+  [[nodiscard]] std::uint64_t version() const noexcept { return own_version() + contexts_version(); }
+
+  [[nodiscard]] std::uint64_t own_version() const noexcept { return version_; }
+
+  [[nodiscard]] std::uint64_t contexts_version() const noexcept;
 
   // Links it to its app, which a change of its states tells once counted: its states count from its making.
   void link(state_link app) noexcept;

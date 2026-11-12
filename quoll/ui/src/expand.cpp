@@ -249,7 +249,7 @@ void scope_keys(element &view, std::string const &scope) {
 // Runs the view of `kept` with `props`, and records it for commit(): a view that threw records nothing.
 [[nodiscard]] element run_view(component_spec const &spec, std::shared_ptr<instance> const &kept,
                                std::shared_ptr<void const> const &props, made_by by, expansion &context) {
-  auto const version = kept->version();
+  auto const own = kept->own_version();
 
   // Room for its record, made once its view has returned: recording it then cannot fail.
   if (context.views.size() == context.views.capacity()) {
@@ -269,7 +269,7 @@ void scope_keys(element &view, std::string const &scope) {
                            .own = spec.props,
                            .placed_by = by.props,
                            .view = {},
-                           .version = version,
+                           .version = own + kept->contexts_version(),
                            .epoch = context.epoch});
   context.views.back().view = view;
   return view;

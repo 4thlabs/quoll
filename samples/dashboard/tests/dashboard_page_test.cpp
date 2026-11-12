@@ -76,11 +76,6 @@ using quoll::test::virtual_time;
 
 using dashboard_app = quoll::ui::app<dashboard_web::dashboard_page, memory_renderer>;
 
-// The options of the page's app, as its main gives them: the catalog its components share.
-[[nodiscard]] quoll::ui::app_options with_catalog() {
-  return {.contexts = {quoll::ui::provide<dashboard_web::catalog>()}};
-}
-
 // One call for sales: how long it takes, and whether it fails then.
 struct sales_call {
   std::chrono::milliseconds delay{0};
@@ -262,7 +257,7 @@ TEST_CASE("dashboard web: the list filters, a product chosen shows its sales in 
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string loaded;
   std::string filtered;
@@ -302,7 +297,7 @@ TEST_CASE("dashboard web: the detail saves what is typed, and refuses a price th
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string refused;
   std::string infinite;
@@ -345,7 +340,7 @@ TEST_CASE("dashboard web: a change the server refuses shows why, and stays typed
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string refused;
 
@@ -378,7 +373,7 @@ TEST_CASE("dashboard web: the sales of a product chosen before are not shown onc
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
   page_driver const user{instance, shown};
 
   auto const act = [&]() -> task<> {
@@ -403,7 +398,7 @@ TEST_CASE("dashboard web: the sales of the product chosen that fail show why, th
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string left;
   std::string failed;
@@ -436,7 +431,7 @@ TEST_CASE("dashboard web: a month without units, from sales that do not match, s
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string first;
   std::string third;
@@ -468,7 +463,7 @@ TEST_CASE("dashboard web: a field changed while a save is on its way keeps what 
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
   page_driver const user{instance, shown};
 
   auto const act = [&]() -> task<> {
@@ -501,7 +496,7 @@ TEST_CASE("dashboard web: sales that failed load again on Try again, a product c
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string failed;
   int asked_before = 0;
@@ -538,7 +533,7 @@ TEST_CASE("dashboard web: a failure of the sales and one of a save each stay, an
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string saved;
   std::string chosen;
@@ -590,7 +585,7 @@ TEST_CASE("dashboard web: a product saves once at a time, a click while it is on
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string waiting;
   int sent_meanwhile = 0;
@@ -630,7 +625,7 @@ TEST_CASE("dashboard web: a save goes on once its detail is left, and the list s
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
   page_driver const user{instance, shown};
 
   auto const act = [&]() -> task<> {
@@ -659,7 +654,7 @@ TEST_CASE("dashboard web: a save ending on what is no std::exception is over, an
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
   page_driver const user{instance, shown};
 
   auto const act = [&]() -> task<> {
@@ -684,7 +679,7 @@ TEST_CASE("dashboard web: a save tried again shows it waits, and a detail chosen
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string retrying;
   std::string reopened;
@@ -730,7 +725,7 @@ TEST_CASE("dashboard web: sales ending on what is no std::exception say they did
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
   page_driver const user{instance, shown};
 
   auto const act = [&]() -> task<> {
@@ -752,7 +747,7 @@ TEST_CASE("dashboard web: products that fail to load with nothing said still say
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, with_catalog()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
 
   auto const act = []() -> task<> { co_await settle(); };
 

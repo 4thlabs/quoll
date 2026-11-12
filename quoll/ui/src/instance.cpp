@@ -36,13 +36,28 @@
 
 #include <quoll/ui/detail/instance.hpp>
 
+#include <stdexcept>
 #include <utility>
 
 namespace quoll::ui::detail {
 
+namespace {
+
+// Made once the contexts it uses are known to be there: one refused is never made, so that its destructor, which may
+// write to a context it found, does not run.
+[[nodiscard]] held_component made_finding(component_table const &table, context_finder const &contexts) {
+  if (table.finds != nullptr && !table.finds(contexts)) {
+    throw std::logic_error{missing_context};
+  }
+
+  return table.make();
+}
+
+} // namespace
+
 instance::instance(component_table const &table, std::shared_ptr<void const> props, std::string key,
                    std::stop_token const &app_stop, context_finder const &contexts)
-    : table_(&table), props_(std::move(props)), component_(table.make()), key_(std::move(key)),
+    : table_(&table), props_(std::move(props)), component_(made_finding(table, contexts)), key_(std::move(key)),
       follow_app_(app_stop, async::detail::stop_waker{&stop_}) {
   if (table_->bind != nullptr) {
     table_->bind(component_.get(), contexts);
@@ -77,8 +92,8 @@ bool instance::made_of(void const *own, void const *placed_by) const noexcept {
   return last_view_ && own == own_.get() && placed_by == placed_by_.get();
 }
 
-std::uint64_t instance::version() const noexcept {
-  return version_ + (table_->contexts_version == nullptr ? 0 : table_->contexts_version(component_.get()));
+std::uint64_t instance::contexts_version() const noexcept {
+  return table_->contexts_version == nullptr ? 0 : table_->contexts_version(component_.get());
 }
 
 element const *instance::unchanged_view(std::uint64_t epoch) const noexcept {

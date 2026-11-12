@@ -416,10 +416,11 @@ int main() {
 
 - `provide<T>()`, in `<quoll/ui/provide.hpp>`, gives the app a context, one of each type, which has no view, `mounted()` nor `unmounted()`: its
   effects do what a component's `mounted()` would. The app makes them as it is made, in their order, and each finds
-  those it uses itself, as a `shared<U>` member, among those given before it, so that none uses one that uses it. They
-  go the last given first, telling the app of nothing as they go, so that one may still read those it uses as it goes;
+  those it uses itself, as a `shared<U>` member, among those given before it, so that none uses one that uses it. Their
+  changes reach the app once it is made, and they go the last given first, telling the app of nothing as they go, so
+  that one may still read those it uses as it goes;
 - a `shared<T>` finds the app's context as the app makes its component: an app given none of that type throws
-  `std::logic_error` there;
+  `std::logic_error` there, before making the component, whose destructor then never runs;
 - `*shared` and `shared->` give the context; once a component read it so, a change of its states, or of a context it
   uses, shows that component again, whose view runs again even if its own states did not change. A component that
   only runs on it does not show again as it changes. A `shared<T>` is a member of the component itself, as a state

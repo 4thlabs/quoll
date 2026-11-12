@@ -408,7 +408,7 @@ void app_core::reloaded(void *self) {
 void app_core::state_changed(void *self) {
   auto &owner = *static_cast<app_core *>(self);
 
-  if (owner.render_pending_ || owner.stopped_) {
+  if (!owner.made_ || owner.render_pending_ || owner.stopped_) {
     return;
   }
 

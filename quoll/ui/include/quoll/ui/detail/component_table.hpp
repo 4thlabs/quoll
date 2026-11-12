@@ -63,7 +63,9 @@ struct component_table {
   async::detail::type_id type;
   held_component (*make)();
   void (*link)(void *component, state_link to);
-  // None for a component using no context: finds those it uses, then counts their changes.
+  // None for a component using no context: whether those it uses are there, before it is made, then finds them, then
+  // counts their changes.
+  bool (*finds)(context_finder const &finder);
   void (*bind)(void *component, context_finder const &finder);
   std::uint64_t (*contexts_version)(void *component);
   // After each of its views: its effects whose dependency changed start.
@@ -119,6 +121,7 @@ inline constexpr component_table table_of{
     .type = async::detail::type_id_of<C>(),
     .make = &make_held<C>,
     .link = [](void *component, state_link to) { link_states(*static_cast<C *>(component), to); },
+    .finds = finds_of<C>(),
     .bind = binds_of<C>(),
     .contexts_version = contexts_version_of<C>(),
     .effects = effects_of<C>(),

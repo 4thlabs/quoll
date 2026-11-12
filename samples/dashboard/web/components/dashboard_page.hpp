@@ -173,6 +173,9 @@ struct dashboard_page {
   }
 };
 
+// What the page's app holds, which its main and its tests give alike: the catalog its components share.
+[[nodiscard]] inline quoll::ui::app_options page_options() { return {.contexts = {quoll::ui::provide<catalog>()}}; }
+
 } // namespace dashboard_web
 
 #endif // QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_DASHBOARD_PAGE_HPP

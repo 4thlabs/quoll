@@ -61,10 +61,6 @@ std::uint64_t context_entry::version() const noexcept {
 }
 
 context_list::~context_list() {
-  for (auto const &entry : entries_) {
-    entry->detach();
-  }
-
   while (!entries_.empty()) {
     entries_.pop_back();
   }

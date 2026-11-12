@@ -96,6 +96,8 @@ public:
 #if defined(QUOLL_UI_HOT)
     detail::hot_subscribe(&core_, &detail::app_core::reloaded);
 #endif
+
+    core_.made();
   }
 
   app(app const &) = delete;
@@ -104,6 +106,8 @@ public:
   app &operator=(app &&) = delete;
 
   ~app() {
+    core_.going();
+
 #if defined(QUOLL_UI_HOT)
     detail::hot_unsubscribe(&core_);
 #endif

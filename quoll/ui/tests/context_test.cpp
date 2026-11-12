@@ -37,6 +37,7 @@
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
+#include <quoll/async/work_item.hpp>
 #include <quoll/test/memory_renderer.hpp>
 #include <quoll/test/run.hpp>
 #include <quoll/test/ui_session.hpp>
@@ -98,10 +99,14 @@ struct names {
 };
 
 // Shows the names, through its context: no props, so that its view runs again only as what it reads changes.
+int list_views = 0;
+
 struct name_list {
   shared<names> shown;
 
   element view() {
+    ++list_views;
+
     auto const &[all, loading, error] = *shown->all;
     std::string text = loading ? "loading" : "";
 
@@ -190,6 +195,72 @@ struct second_gone {
   ~second_gone() {
     from->count = 1;
     lines.emplace_back("second gone");
+  }
+};
+
+// Uses the first, then a context no app is given: its making fails past the first, and it writes to it as it goes.
+struct context_never_given {};
+
+struct broken_user {
+  shared<first_gone> from;
+  shared<context_never_given> missing;
+
+  // NOLINTNEXTLINE(cppcoreguidelines-special-member-functions,hicpp-special-member-functions): an aggregate.
+  ~broken_user() {
+    from->count = 1;
+    lines.emplace_back("broken gone");
+  }
+};
+
+// An executor that counts what is posted to it.
+struct counting_executor {
+  virtual_time::executor inner;
+  int *posts;
+
+  void post(quoll::async::work_item &item) const {
+    ++*posts;
+    inner.post(item);
+  }
+
+  [[nodiscard]] bool operator==(counting_executor const &) const noexcept = default;
+};
+
+// Writes to the first as it goes, and uses a context no app is given: refused before it is made.
+struct broken_component {
+  shared<first_gone> from;
+  shared<context_never_given> missing;
+
+  // NOLINTNEXTLINE(cppcoreguidelines-special-member-functions,hicpp-special-member-functions): an aggregate.
+  ~broken_component() {
+    from->count = 1;
+    lines.emplace_back("component gone");
+  }
+
+  element view() { return p("broken"); }
+};
+
+struct broken_child_page {
+  element view() { return div({component<broken_component>()}); }
+};
+
+// Writes to its context as it goes, as its app goes too.
+struct leaving_page {
+  shared<first_gone> from;
+
+  // NOLINTNEXTLINE(cppcoreguidelines-special-member-functions,hicpp-special-member-functions): an aggregate.
+  ~leaving_page() { from->count = 2; }
+
+  element view() { return p("leaving"); }
+};
+
+// Shows the names once asked to, after they changed.
+struct later_list_page {
+  state<bool> shows;
+
+  element view() {
+    auto const names_shown = [] { return component<name_list>(); };
+
+    return div({when(*shows, names_shown)});
   }
 };
 
@@ -503,4 +574,97 @@ TEST_CASE("context: run() once its app stopped runs nothing, and ends its caller
   REQUIRE(quoll::test::run(time, act()) == 0);
   CHECK(std::ranges::find(lines, "rename late") == lines.end());
   CHECK(std::get<0>(*std::as_const(instance).context<names>().all).empty());
+}
+
+TEST_CASE("context: one that cannot find those it uses fails the app's making, telling it of nothing as it goes",
+          "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  int posts = 0;
+
+  CHECK_THROWS_AS((test_app<counting_page>{counting_executor{time.get_executor(), &posts},
+                                           shown,
+                                           {.contexts = {provide<first_gone>(), provide<broken_user>()}}}),
+                  std::logic_error);
+
+  // What the broken one wrote as it went asked the app, half made, for no render.
+  CHECK(posts == 0);
+  CHECK(lines == std::vector<std::string>{"broken gone", "first gone"});
+}
+
+TEST_CASE("context: the app's own component missing one fails its making, telling it of nothing as it goes",
+          "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  int posts = 0;
+
+  // Made, then its context not found: what its destructor writes reaches no app, half made.
+  CHECK_THROWS_AS((test_app<broken_component>{
+                      counting_executor{time.get_executor(), &posts}, shown, {.contexts = {provide<first_gone>()}}}),
+                  std::logic_error);
+  CHECK(posts == 0);
+  CHECK(lines == std::vector<std::string>{"component gone", "first gone"});
+}
+
+TEST_CASE("context: a component of a view missing one is refused before it is made", "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<broken_child_page> instance{time.get_executor(), shown, {.contexts = {provide<first_gone>()}}};
+
+  auto const act = [&]() -> task<int> {
+    bool refused = false;
+
+    try {
+      instance.start();
+    } catch (std::logic_error const &) {
+      refused = true;
+    }
+
+    co_await instance.stop();
+    co_return refused ? 0 : 1;
+  };
+
+  REQUIRE(quoll::test::run(time, act()) == 0);
+  CHECK(lines.empty());
+}
+
+TEST_CASE("context: what a component writes to one as its app, never started, goes asks for no render",
+          "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  int posts = 0;
+
+  {
+    test_app<leaving_page> instance{
+        counting_executor{time.get_executor(), &posts}, shown, {.contexts = {provide<first_gone>()}}};
+  }
+
+  CHECK(posts == 0);
+}
+
+TEST_CASE("context: a component shown after its context changed shows once", "[ui][context]") {
+  lines.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<later_list_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(5ms);
+    list_views = 0;
+    instance.component().shows = true;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html().contains("<p>tea;coffee;</p>"));
+  CHECK(list_views == 1);
 }

@@ -83,7 +83,7 @@ struct context_table {
 // Thread safety: none, as its app.
 class context_entry {
 public:
-  // Made, its states telling `app` of their changes.
+  // Made, its states telling `app` of their changes, which the app hears only while it is made and not going.
   context_entry(context_table const &table, state_link app);
 
   context_entry(context_entry const &) = delete;
@@ -100,22 +100,18 @@ public:
   // How many times its states, and those of the contexts it uses, changed.
   [[nodiscard]] std::uint64_t version() const noexcept;
 
-  // Its app tells nothing more of its changes: it is going.
-  void detach() noexcept { app_ = {}; }
-
 private:
   static void changed_in(void *self);
 
   context_table const *table_;
-  state_link app_;
+  state_link app_{};
   std::uint64_t version_ = 0;
   // Last, as it refers to what is above.
   held_component object_;
 };
 
-// The contexts of an app, destroyed the last made first, as one may use those made before it, in its destructor too,
-// and telling the app of nothing as they go: whatever destroys the list, the app, or its constructor failing past some
-// of them, which may be half destroyed.
+// The contexts of an app, destroyed the last made first, as one may use those made before it, in its destructor too:
+// whatever destroys the list, the app, or its constructor failing past some of them.
 class context_list {
 public:
   context_list() = default;
@@ -125,7 +121,6 @@ public:
   context_list &operator=(context_list const &) = delete;
   context_list &operator=(context_list &&) = delete;
 
-  // Each told first that its app hears of nothing more, as one going may change another, then the last made first.
   ~context_list();
 
   void push_back(std::unique_ptr<context_entry> entry);

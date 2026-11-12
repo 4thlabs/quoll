@@ -87,6 +87,13 @@ public:
 
   [[nodiscard]] bool stopped() const noexcept { return stopped_; }
 
+  // Made whole, its own component's contexts found and its states linked: until then, and from going(), as it is
+  // destroyed, a change asks for no render, so that what changes as a failed making unwinds, or as the app goes, as a
+  // component's destructor writing to a context, reaches nothing half made or half gone.
+  void made() noexcept { made_ = true; }
+
+  void going() noexcept { made_ = false; }
+
   // Where its components find its contexts.
   [[nodiscard]] context_finder contexts() const noexcept;
 
@@ -152,6 +159,8 @@ private:
   // Counts the hot reloads: a component's last view, from an epoch before, is not given again.
   std::uint64_t epoch_ = 0;
   bool stopped_ = false;
+  // Between made() and going().
+  bool made_ = false;
   // Its view showed, and its unmounted() has not run yet.
   bool shown_once_ = false;
 };

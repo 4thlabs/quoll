@@ -37,14 +37,55 @@
 #ifndef QUOLL_UI_DETAIL_BIND_CONTEXTS_HPP
 #define QUOLL_UI_DETAIL_BIND_CONTEXTS_HPP
 
+#include <quoll/async/detail/type_id.hpp>
 #include <quoll/ui/detail/context_entry.hpp>
 #include <quoll/ui/detail/context_member.hpp>
 #include <quoll/ui/detail/for_each_member.hpp>
 
+#include <glaze/reflection/to_tuple.hpp>
+
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
+#include <utility>
 
 namespace quoll::ui::detail {
+
+// What a component or a context told of a context it uses and does not find.
+inline constexpr char const *missing_context =
+    "quoll::ui::shared: no context of this type was found: the app was given none, or, for a context using it, none "
+    "before it";
+
+// What a table holds to tell, before making a `C`, whether the contexts its members use are there: none for one that
+// uses none, and true with no finder, for a view written once.
+template <class C>
+[[nodiscard]] constexpr auto finds_of() noexcept -> bool (*)(context_finder const &) {
+  if constexpr (any_member<C, is_context_member>) {
+    return [](context_finder const &finder) {
+      using members = decltype(glz::to_tie(std::declval<C &>()));
+
+      if (finder.find == nullptr) {
+        return true;
+      }
+
+      return [&finder]<std::size_t... Index>(std::index_sequence<Index...>) {
+        auto const found = [&finder]<class M>(std::type_identity<M>) {
+          if constexpr (ContextMember<M>) {
+            return finder(async::detail::type_id_of<typename M::element_type>()) != nullptr;
+          } else {
+            return true;
+          }
+        };
+
+        return (
+            found(std::type_identity<std::remove_cvref_t<decltype(glz::get<Index>(std::declval<members &>()))>>{}) &&
+            ...);
+      }(std::make_index_sequence<glz::tuple_size_v<members>>{});
+    };
+  } else {
+    return nullptr;
+  }
+}
 
 // What a table holds to find the contexts the members of `C` use: none for one that uses none.
 template <class C>
