@@ -67,7 +67,62 @@ constexpr std::size_t none = static_cast<std::size_t>(-1);
 // The most redirects one address follows: a loop of them ends there, on the last.
 constexpr int most_redirects = 8;
 
-// `href` split into its path, with no last '/' but for "/", and its query, its fragment dropped.
+// Whether `segment` is ".", or ".." for `two`, as a browser reads them in a path, percent-encoded or not.
+[[nodiscard]] bool is_dots(std::string_view segment, bool two) noexcept {
+  auto const dot = [](std::string_view part) { return part == "." || part == "%2e" || part == "%2E"; };
+
+  if (!two) {
+    return dot(segment);
+  }
+
+  for (std::size_t first = 1; first <= 3 && first < segment.size(); ++first) {
+    if (dot(segment.substr(0, first)) && dot(segment.substr(first))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// `path` in the one form an app's addresses have, as a browser keeps it: rooted, its "." and ".." segments resolved,
+// no last '/' but for "/". What is pushed onto a history and what is matched are both of this form.
+[[nodiscard]] std::string canonical_path(std::string_view path) {
+  std::vector<std::string_view> segments;
+
+  for (std::size_t start = path.empty() || path.front() != '/' ? 0 : 1; start <= path.size();) {
+    auto const slash = path.find('/', start);
+    auto const segment = path.substr(start, slash == std::string_view::npos ? std::string_view::npos : slash - start);
+
+    if (is_dots(segment, true)) {
+      if (!segments.empty()) {
+        segments.pop_back();
+      }
+    } else if (!is_dots(segment, false)) {
+      segments.push_back(segment);
+    }
+
+    if (slash == std::string_view::npos) {
+      break;
+    }
+
+    start = slash + 1;
+  }
+
+  while (!segments.empty() && segments.back().empty()) {
+    segments.pop_back();
+  }
+
+  std::string canonical;
+
+  for (auto const segment : segments) {
+    canonical += '/';
+    canonical += segment;
+  }
+
+  return canonical.empty() ? std::string{"/"} : canonical;
+}
+
+// `href` split into its path, in its one form, and its query, its fragment dropped.
 [[nodiscard]] location location_of(std::string_view href) {
   if (auto const hash = href.find('#'); hash != std::string_view::npos) {
     href = href.substr(0, hash);
@@ -76,18 +131,10 @@ constexpr int most_redirects = 8;
   location found;
   auto const question = href.find('?');
 
-  found.path = std::string{href.substr(0, question)};
+  found.path = canonical_path(href.substr(0, question));
 
   if (question != std::string_view::npos) {
     found.query = std::string{href.substr(question + 1)};
-  }
-
-  if (found.path.empty() || found.path.front() != '/') {
-    found.path.insert(found.path.begin(), '/');
-  }
-
-  while (found.path.size() > 1 && found.path.back() == '/') {
-    found.path.pop_back();
   }
 
   return found;
@@ -305,7 +352,7 @@ void router_core::start(std::span<route_entry const> routes, history_ref history
 }
 
 void router_core::go(std::string_view href, bool replace) {
-  // Rooted once, what the history holds and what is matched the same: "edit" is "/edit".
+  // In its one form, what the history holds and what is matched the same: "edit" is "/edit", "/a/./b/" is "/a/b".
   auto const where = location_of(href);
   auto const rooted = where.query.empty() ? where.path : where.path + "?" + where.query;
 

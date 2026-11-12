@@ -511,6 +511,9 @@ int main() {
   props, as an effect on that prop sees;
 - `redirect<From, To>()` goes on to `To`, the parameters of `From` given by name and its query kept, replacing the
   address in the history; `not_found<Page>()` shows when no route matches;
+- an address has one form, as a browser keeps it: rooted, its `.` and `..` segments resolved, no last '/' but for
+  `/`; what goes onto the history and what is matched are both of it, and a route's path, a redirect's too, is
+  written in it, which a path ending with '/' is not;
 - `routing<routes>(history)` is a context of the app, `shared<router>` in a component: `go(href)` and
   `go<Page>(props)` push an address onto the history, `replace(href)` takes the place of the one now, `back()` goes
   back, `href<Page>(props)` writes one, and `where` is the location, a state;

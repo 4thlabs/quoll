@@ -321,3 +321,20 @@ TEST_CASE("router: the rest of a path keeps its segments as they were, an empty 
   CHECK(href == "/files//docs/report.txt");
   CHECK(shown.html().contains("<p>file [/docs/report.txt]</p>"));
 }
+
+TEST_CASE("router: an address has one form, its dot segments resolved, pushed and matched alike", "[ui][router]") {
+  memory_history history;
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<shell> instance{time.get_executor(), shown, {.contexts = {routing<shop_routes>(history.ref())}}};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.context<router>().go("./products/./9/../5/");
+    co_await quoll::async::sleep_for(5ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(history.current() == "/products/5");
+  CHECK(shown.html().contains("<p>page 5: product 5</p>"));
+}

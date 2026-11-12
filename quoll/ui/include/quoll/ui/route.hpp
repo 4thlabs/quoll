@@ -100,6 +100,8 @@ struct flatten<Prefix, redirect_node<From, To>, N> {
     static_assert(http::detail::parse_template(full.view()).error == http::detail::template_error::none &&
                       http::detail::parse_template(To.view()).error == http::detail::template_error::none,
                   "quoll::ui: a redirect goes from a valid template to a valid template");
+    static_assert((full.view() == "/" || full.view().back() != '/') && (To.view() == "/" || To.view().back() != '/'),
+                  "quoll::ui: a redirect's paths do not end with '/', which an address loses as it is matched");
     static_assert(
         [] {
           for (auto const name : template_params(To.view())) {

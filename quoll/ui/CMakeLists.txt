@@ -68,6 +68,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/context_with_mounted.cpp
     tests/compile_fail/context_with_view.cpp
     tests/compile_fail/event_function_signature.cpp
+    tests/compile_fail/redirect_trailing_slash.cpp
     tests/compile_fail/redirect_unknown_param.cpp
     tests/compile_fail/route_child_absolute.cpp
     tests/compile_fail/route_param_not_in_props.cpp
