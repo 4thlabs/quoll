@@ -49,9 +49,10 @@ implemented: they are sketches, whose points to check are listed.
 Every form but today's names endpoints after their method, `get`, `post`, `delete_`, in `quoll::rest`, which a contract
 brings in with `using namespace quoll::rest`, in its own namespace:
 
-- **No endpoint can be called after a method**, in any of them: `struct get : endpoint<get(...)>`,
-  `inline constexpr auto get = get(...)`, a member `get<...> get;` all refer to themselves or change the name's meaning
-  in their class. The guide's `users::get` becomes `users::find` in every example below.
+- **An endpoint named after a method** hides it: `struct get : endpoint<get(...)>` and
+  `inline constexpr auto get = get(...)` refer to themselves, and a member `get<...> get;` changes the name's meaning in
+  its class. In A, `using get = get<...>;` compiles, but every later `get<...>` in that namespace finds the alias. The
+  guide's `users::get` becomes `users::find` in every example below.
 - **Where they are class or alias templates**, as in A and D, an unqualified `get<0>(pair)` in that namespace finds
   `rest::get`, which stops argument-dependent lookup from finding `std::get`, and no longer compiles. Where they are
   functions, as in B, C and E, argument-dependent lookup still runs and finds `std::get`.
@@ -65,15 +66,17 @@ No error is declared by default, which already works today. An undeclared status
 anything. Servant types only success, and Go's net/http types nothing; tRPC types one error shape per router, through
 its `errorFormatter`, which is what `errors<T>` would be.
 
-A `with<>` can already declare an error response once for a group, `with<returns<error, status::not_found>, ...>`, which
-the server answers and the client decodes, not a service. The GitHub sample does not use it yet.
+A `with<>` can already declare a response for a group, `with<returns<error, status::not_found>, ...>`, but for the
+server's own answers (credentials): a service cannot answer it, and the client does not decode it, as `reply<Endpoint>`
+holds only the endpoint's own responses, so `try_call` gives an `unexpected_response`. Today, an error a service answers
+and a caller reads is declared on each endpoint, which is why the GitHub sample repeats them.
 
 What [#176](https://github.com/4thlabs/quoll/issues/176) adds:
 
-- **`errors<T>`** in a `with<>`: the body of every 4xx and 5xx response not otherwise declared, as OpenAPI's `default`,
-  for an API with its own format, as GitHub's.
-- **`errors<T, Statuses...>`**: the same, for some statuses only: a shorter spelling of one `with<returns<T, Status>>`
-  per status, which it would replace.
+- **`errors<T>`** in a `with<>`: the body of every 4xx and 5xx response not otherwise declared, as OpenAPI's `4XX` and
+  `5XX` keys (not `default`, which also covers 2xx and 3xx), for an API with its own format, as GitHub's. Unlike a
+  `returns<>` in a `with<>` today, a service answers it and the client decodes it.
+- **`errors<T, Statuses...>`**: the same, for some statuses only.
 - **`codec<C>`** in a `with<>`: the codec of a group, so that the GitHub sample needs no `answers` alias.
 - **`returns<T, Status>`** stays, on its endpoint, for an error whose body the caller uses: a 409 with the current
   version, a 422 with the invalid fields.
@@ -93,26 +96,7 @@ using me = rest::endpoint<"users.me", http::verb::get, "/user", rest::security<r
                           answers<error, http::status::unauthorized>, answers<error, http::status::forbidden>>;
 ```
 
-With today's `with<>`, the errors are written once, still one per status:
-
-```cpp
-namespace repos {
-using get = rest::endpoint<"repos.get", http::verb::get, "/", answers<repository>>;
-using issues = rest::endpoint<"repos.issues", http::verb::get, "/issues", rest::query_params<issue_filter>,
-                              answers<std::vector<issue>>>;
-
-using api = rest::api<"/repos/{owner}/{repo}", get, issues>;
-} // namespace repos
-
-namespace users {
-using me = rest::endpoint<"users.me", http::verb::get, "/user", rest::security<rest::bearer_auth>, answers<github::me>>;
-} // namespace users
-
-using api = rest::api<"", rest::with<answers<error, http::status::unauthorized>, answers<error, http::status::forbidden>,
-                                     answers<error, http::status::not_found>, repos::api, users::me>>;
-```
-
-With #176, the same namespaces:
+After, with #176, in the same namespaces:
 
 ```cpp
 namespace repos {
@@ -135,11 +119,13 @@ Left to the issue:
 
 - how `call_error`, `reply<>` and `try_call` give the decoded body and its status;
 - how a service answers with an `errors<T>` body, which must say its status;
-- Quoll's own answers: a Quoll server answers 400, 401 and 415 with a `rest::problem`, and a 500 from an unknown
-  exception with no body. `errors<T>` must leave them out, for instance by decoding a `problem` when the response says
-  `application/problem+json`;
-- `codec<C>` needs `returns<>` to tell an inherited codec from a chosen one: its default, `json_codec`, would become a
-  placeholder resolved by the group, which changes the type of every `returns<>` and what reads its codec.
+- Quoll's own answers, which `errors<T>` must leave out: a Quoll server answers 400, 401 and 415 with a
+  `rest::problem`; its router 404 and 405, its connection 408, 413, 431 and 503, and a 500 from an unknown exception,
+  with no body. For instance, `errors<T>` decodes only a body of its codec's media type, and leaves the others to
+  `call_error` with their status;
+- `codec<C>` needs `returns<>` and `body<>` to tell an inherited codec from a chosen one: their default, `json_codec`,
+  would become a placeholder resolved by the group, which changes their types and what reads their codec; or request
+  bodies keep their own codec, which the issue must say.
 
 ## Contract options
 
@@ -199,9 +185,9 @@ using api = rest::api<"/users", list, find, create, remove>;
 - **Parts become values:** `|` composes expressions, so `query_params<user_filter>`, `body<new_user>` and
   `returns<user>` become variable templates. They cannot share a namespace with today's class templates of the same
   names, so both forms cannot live side by side during a migration without other names.
-- **The internals change:** `detail::endpoint_traits` is a partial specialization on `endpoint<Name, Method, Path,
-  Parts...>`, which a struct deriving from `endpoint<Chain>` does not match: `routes`, `mount` and the client read the
-  endpoint through a base instead.
+- **The internals change little:** `routes`, `mount` and the client read the endpoint's static members, which a derived
+  struct inherits; only `detail::endpoint_traits`, a partial specialization on `endpoint<Name, Method, Path, Parts...>`
+  that gives `routes_of` its path, reads it through the base instead.
 - **Without operators**, `struct find : endpoint<verb::get, "/{id:int64}", returns<user>> {};` works too, but under
   another template name: one class template cannot take both a chain and a method with a path.
 
@@ -294,16 +280,18 @@ struct users_service {
 - **Identity:** the member pointer. `&users::remove` and `&cards::remove` differ, and its type is enough to find the
   member: `api<>` already refuses two endpoints with one method and path, so each member of a resource has its own
   type, and `decltype(&users::find)` names it.
-- **Finding the members:** `api<>` counts and ties the members of the aggregate. Glaze's `glz::reflect` and
-  `glz::to_tie` do it, as `detail/fields_of.hpp` does for `query_params`; this form leaves Glaze out, so that the
-  contract's shape does not depend on the JSON library, and does it as Boost.PFR does, by probing the aggregate's
-  initialization, then through structured bindings.
-- **Route name:** from the method and the path. Glaze would give the members' names (`glz::reflect<users>::keys`), left
-  out for the same reason.
+- **Finding the members:** `api<>` counts and ties the members of the aggregate, in one of two ways, to decide:
+    - **through Glaze**, as the contract layer already does: `detail/route.hpp` reads a `query_params` struct with
+      `glz::reflect`, `detail/fields_of.hpp` ties it with `glz::to_tie`, and `design-decisions.md` says Glaze's
+      reflection finds the members of a contract's types. It also gives the members' names
+      (`glz::reflect<users>::keys`), for the route names and the later operationId;
+    - **without Glaze**, as Boost.PFR does, by probing the aggregate's initialization, then through structured bindings:
+      the shape of a contract would not depend on the JSON library, at the price of a second enumeration beside Glaze's,
+      and of route names from the method and the path.
 - **For:** a resource in one block, read as an interface. No `static constexpr auto`.
 - **Against:** commas instead of `|`, as a non-static member cannot be `auto`. The client writes `&users::find` and the
   service `rest::op<&users::find>`. Everything that takes an endpoint as a type takes a member pointer instead:
-  `mount`, the client and its `scope<>`, `reply<>`, `try_call`, `subscribe` and its `event_sink`, the interceptors.
+  `mount`, the client and its `scope<>`, `reply<>`, `respond`, `try_call` and `subscribe`.
   A response other than the first reads `rest::reply<&users::find>`.
 - **To check:** the enumeration on GCC 13, Clang 19, Apple Clang 21 and Emscripten. One struct mounted under two
   prefixes would be ambiguous, so refused at compile time.
@@ -395,16 +383,16 @@ rest::mount<rest::api<"/users", users>>(router, service);
 
 ## Comparison
 
-D is the shortest form that holds in C++23 without Glaze. B and C keep `|`, their parts becoming values: B at the price of a struct and an
+D is the shortest form that holds in C++23. B and C keep `|`, their parts becoming values: B at the price of a struct and an
 `endpoint<...> {}` per endpoint, C of a `static constexpr auto` per line.
 
 | Form | An endpoint | Name written | Client | Service | What changes |
 | --- | --- | --- | --- | --- | --- |
 | Today | `using find = endpoint<"users.get", verb::get, "/{id:int64}", returns<user>>;` | yes | `call<users::find>` | `operator()(users::find, ...)` | nothing |
 | A, lighter | `using find = get<"users.get", "/{id:int64}", returns<user>>;` | yes | `call<users::find>` | `operator()(users::find, ...)` | aliases |
-| B, struct per endpoint | `struct find : endpoint<get("/{id:int64}") \| returns<user>> {};` | no | `call<users::find>` | `operator()(users::find, ...)` | `endpoint<>`, how the internals read an endpoint |
+| B, struct per endpoint | `struct find : endpoint<get("/{id:int64}") \| returns<user>> {};` | no | `call<users::find>` | `operator()(users::find, ...)` | `endpoint<>`, and how `routes_of` reads the path |
 | C, operators | `static constexpr auto find = get("/{id:int64}") \| returns<user>;` | no | `call<users::find>` | `operator()(rest::op<users::find>, ...)` | `api` and groups become values, and all that takes an endpoint type |
-| D, members | `get<"/{id:int64}", returns<user>> find;` | no | `call<&users::find>` | `operator()(rest::op<&users::find>, ...)` | all that takes an endpoint type: `mount`, the client and its `scope<>`, `reply<>`, `try_call`, `subscribe` and its `event_sink`, the interceptors |
+| D, members | `get<"/{id:int64}", returns<user>> find;` | no | `call<&users::find>` | `operator()(rest::op<&users::find>, ...)` | all that takes an endpoint type: `mount`, the client and its `scope<>`, `reply<>`, `respond`, `try_call`, `subscribe` |
 | E, C++26 | `[[=get("/{id:int64}")]] user find(std::int64_t id);` | no | `call<^^users::api::find>` | a function of the same name | everything, and reflection everywhere |
 
 ## Decision
@@ -412,7 +400,7 @@ D is the shortest form that holds in C++23 without Glaze. B and C keep `|`, thei
 To be taken by the maintainer:
 
 - [ ] Errors: `errors<T>` per API and `codec<C>` per group (#176).
-- [ ] The contract's shape: A, B, C or D, keeping E for later.
+- [ ] The contract's shape: A, B, C or D, keeping E for later; for D, its members found through Glaze or without.
 - [ ] The service: a builder beside the tag parameter, or the tag alone.
 - [ ] The order: #176 first, independent of the contract, then a prototype of the chosen shape on the notes and GitHub
       samples, with the builder if it is kept.
