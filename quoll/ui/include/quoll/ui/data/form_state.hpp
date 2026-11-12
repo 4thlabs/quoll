@@ -38,21 +38,21 @@
 #define QUOLL_UI_DATA_FORM_STATE_HPP
 
 #include <quoll/ui/detail/data/state_link.hpp>
-#include <quoll/ui/detail/for_each_member.hpp>
 #include <quoll/ui/detail/text_value.hpp>
 #include <quoll/ui/view/decorators.hpp>
 #include <quoll/ui/view/element.hpp>
 
-#include <array>
-#include <cassert>
+#include <algorithm>
 #include <concepts>
-#include <cstddef>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace quoll::ui {
 
@@ -100,89 +100,57 @@ struct form_field<T P::*> {
  * };
  * @endcode
  *
- * A member of a component with props, `Member` the field of them it edits, a struct whose fields are given to inputs
- * with bind(): a field not typed in shows what the props hold, one typed in what is typed, kept as it is, even what
- * does not read as the field's type, as `12,5` for a number. value() is what the props give, with each field typed in
+ * A member of a component, or what use_form() gives a function component, whose fields are given to inputs with
+ * bind(): a field not typed in shows what its component gives, one typed in what is typed, kept as it is, even what
+ * does not read as the field's type, as `12,5` for a number. value() is what it is given, with each field typed in
  * that reads; valid() whether every field typed in reads; `action::with(form)` runs an action with value() as it is
- * at the click, a click refused while it is not valid. The value comes from the props before each view of its
- * component, as the view shows it: when they give another, as once what was saved comes back, a field typed in whose
+ * at the click, a click refused while it is not valid. The value comes before each view of its component, as the view
+ * shows it: when it is given another, as once what was saved comes back, a field typed in whose
  * text is what it would show of it is no longer typed in, and the others stay as they are, as typed while the save was
  * on its way, or `2.50` for a `2.5`, which stays as typed.
  * Another value to edit from the start, as another product, is another component, placed with a key of its own.
  *
  * Neither copied nor moved: the inputs bound to it refer to it. Thread safety: none, as a state.
  */
-template <auto Member>
-class form_state {
-  using traits = detail::form_field<decltype(Member)>;
-
-  static_assert(traits::valid, "quoll::ui::form_state: of a field of its component's props, as &props::item");
-
-public:
-  using value_type = typename traits::value_type;
-  using props_type = typename traits::props_type;
-
-private:
+template <class T>
+class basic_form_state {
   static_assert(
-      std::is_aggregate_v<value_type> && std::copyable<value_type> && std::default_initializable<value_type>,
-      "quoll::ui::form_state: what it edits is a struct, copied from the props"
+      std::copyable<T> && std::default_initializable<T>, "quoll::ui::form_state: what it edits is copied as it is given"
   );
 
-  static constexpr std::size_t count = detail::member_count<value_type>;
-
 public:
-  form_state() = default;
+  using value_type = T;
 
-  form_state(form_state const &) = delete;
-  form_state(form_state &&) = delete;
-  form_state &operator=(form_state const &) = delete;
-  form_state &operator=(form_state &&) = delete;
+  basic_form_state() = default;
 
-  ~form_state() = default;
+  basic_form_state(basic_form_state const &) = delete;
+  basic_form_state(basic_form_state &&) = delete;
+  basic_form_state &operator=(basic_form_state const &) = delete;
+  basic_form_state &operator=(basic_form_state &&) = delete;
 
-  /** @brief What the props give, with each field typed in that reads as its type. */
+  ~basic_form_state() = default;
+
+  /** @brief What it is given, with each field typed in that reads as its type. */
   [[nodiscard]] value_type value() const {
     auto edited = base_;
 
-    detail::for_each_member_at(edited, [this](std::size_t index, auto &field) {
-      using type = std::remove_cvref_t<decltype(field)>;
-
-      if constexpr (detail::text_value<type>) {
-        if (typed_[index]) {
-          if (auto read = detail::read_text<type>(*typed_[index])) {
-            field = std::move(*read);
-          }
-        }
-      }
-    });
+    for (auto const &field : typed_) {
+      field.write(edited, field.text);
+    }
 
     return edited;
   }
 
   /** @brief Whether each field typed in reads as its type, as a number for a number. */
   [[nodiscard]] bool valid() const {
-    bool reads = true;
-
-    detail::for_each_member_at(base_, [this, &reads](std::size_t index, auto const &field) {
-      using type = std::remove_cvref_t<decltype(field)>;
-
-      if constexpr (detail::text_value<type>) {
-        if (typed_[index] && !detail::read_text<type>(*typed_[index])) {
-          reads = false;
-        }
-      }
-    });
-
-    return reads;
+    return std::ranges::all_of(typed_, [](typed_field const &field) { return field.reads(field.text); });
   }
 
   /**
-   * @brief For its component, before each of its views: the value of `given` is what it edits now, and a field typed
-   * in whose text is the one it shows of that value is no longer typed in.
+   * @brief What it edits now, `now`, as its component's view is about to run: a field typed in whose text is the one it
+   * shows of that value is no longer typed in.
    */
-  void before_view(props_type const &given) {
-    auto const &now = given.*Member;
-
+  void take(value_type const &now) {
     if constexpr (std::equality_comparable<value_type>) {
       if (given_ && now == base_) {
         return;
@@ -192,16 +160,8 @@ public:
     base_ = now;
     given_ = true;
 
-    detail::for_each_member_at(base_, [this](std::size_t index, auto const &field) {
-      using type = std::remove_cvref_t<decltype(field)>;
-
-      if constexpr (detail::text_value<type>) {
-        // By the text, not the value read: `2.50` typed is not `2.5` shown, nor `3.0` on its way to `3.05` a `3`.
-        if (typed_[index] && *typed_[index] == detail::write_text(field)) {
-          typed_[index].reset();
-        }
-      }
-    });
+    // By the text, not the value read: `2.50` typed is not `2.5` shown, nor `3.0` on its way to `3.05` a `3`.
+    std::erase_if(typed_, [this](typed_field const &field) { return field.shown(base_, field.text); });
   }
 
   /** @brief For the app of the component holding it, as a state's: what is typed shows it again. */
@@ -214,59 +174,113 @@ public:
    * @throws std::invalid_argument for no field, a null pointer.
    */
   template <class F>
-  [[nodiscard]] friend auto bind(form_state &form, F value_type::*member) {
+  [[nodiscard]] friend auto bind(basic_form_state &form, F value_type::*member) {
     static_assert(detail::text_value<F>, "quoll::ui::bind: a field of a form is a string, a number or a bool");
 
-    auto const index = form.index_of(member);
+    if (member == nullptr) {
+      throw std::invalid_argument{"quoll::ui::bind: no field of the form"};
+    }
 
-    return decorator([&form, member, index](element &target) {
+    return decorator([&form, member](element &target) {
+      auto const *const typed = form.typed_text(member);
+
       if constexpr (std::same_as<F, bool>) {
         target.attributes.try_emplace("type", "checkbox");
-        target.checked = form.typed_[index] ? *form.typed_[index] == "true" : form.base_.*member;
-        target.events.push_back({.name = "change", .handler = form.typing(index)});
+        target.checked = typed != nullptr ? *typed == "true" : form.base_.*member;
+        target.events.push_back({.name = "change", .handler = form.typing(member)});
       } else {
-        target.value = form.typed_[index] ? *form.typed_[index] : detail::write_text(form.base_.*member).value_or("");
-        target.events.push_back({.name = "input", .handler = form.typing(index)});
+        target.value = typed != nullptr ? *typed : detail::write_text(form.base_.*member).value_or("");
+        target.events.push_back({.name = "input", .handler = form.typing(member)});
       }
     });
   }
 
 private:
-  // Where `member` is among the fields of what it edits, which it finds by their address in it.
+  // A field typed in: where it is in base_, which stays where it is as it is given another value, what is typed, and
+  // what reads that text, writes it into a value and tells whether a value shows it, for the field's own type.
+  struct typed_field {
+    void const *field;
+    std::string text;
+    bool (*reads)(std::string_view text);
+    std::function<void(value_type &, std::string_view)> write;
+    std::function<bool(value_type const &, std::string_view)> shown;
+  };
+
   template <class F>
-  [[nodiscard]] std::size_t index_of(F value_type::*member) const {
-    if (member == nullptr) {
-      throw std::invalid_argument{"quoll::ui::bind: no field of the form"};
-    }
-
+  [[nodiscard]] typed_field *find(F value_type::*member) noexcept {
     auto const *const address = static_cast<void const *>(std::addressof(base_.*member));
-    std::size_t found = count;
+    auto const found = std::ranges::find(typed_, address, &typed_field::field);
 
-    detail::for_each_member_at(base_, [address, &found](std::size_t index, auto const &field) {
-      if (static_cast<void const *>(std::addressof(field)) == address) {
-        found = index;
-      }
-    });
-
-    // A pointer to a member of value_type, which bind() takes, is one of its fields.
-    assert(found < count && "quoll::ui::form_state: a field of what it edits");
-    return found;
+    return found == typed_.end() ? nullptr : &*found;
   }
 
-  // What typing in the field `index` runs: it holds what is typed, and its component shows again.
-  [[nodiscard]] event_handler typing(std::size_t index) {
-    return detail::to_handler([this, index](std::string typed) {
-      typed_[index] = std::move(typed);
+  template <class F>
+  [[nodiscard]] std::string const *typed_text(F value_type::*member) noexcept {
+    auto const *const found = find(member);
+
+    return found == nullptr ? nullptr : &found->text;
+  }
+
+  // What typing in the field `member` runs: it holds what is typed, and its component shows again.
+  template <class F>
+  [[nodiscard]] event_handler typing(F value_type::*member) {
+    return detail::to_handler([this, member](std::string typed) {
+      if (auto *const found = find(member); found != nullptr) {
+        found->text = std::move(typed);
+      } else {
+        typed_.push_back({
+            .field = std::addressof(base_.*member),
+            .text = std::move(typed),
+            .reads = [](std::string_view text) { return detail::read_text<F>(text).has_value(); },
+            .write =
+                [member](value_type &into, std::string_view text) {
+                  if (auto read = detail::read_text<F>(text)) {
+                    into.*member = std::move(*read);
+                  }
+                },
+            .shown = [member](
+                         value_type const &from, std::string_view text
+                     ) { return text == detail::write_text(from.*member); },
+        });
+      }
+
       detail::tell(link_);
     });
   }
 
   value_type base_{};
-  // Whether its props were given once: before, base_ holds none of theirs.
+  // Whether it was given a value once: before, base_ holds none.
   bool given_ = false;
-  // What is typed in each field, none for one not typed in.
-  std::array<std::optional<std::string>, count> typed_{};
+  // The fields typed in, in the order they were first typed in.
+  std::vector<typed_field> typed_;
   detail::state_link link_{};
+};
+
+/**
+ * @brief A form of a struct component, of the field `Member` of its props, which it takes before each of its views:
+ * see basic_form_state, and use_form() in a function component.
+ */
+template <auto Member>
+class form_state : public basic_form_state<typename detail::form_field<decltype(Member)>::value_type> {
+  using traits = detail::form_field<decltype(Member)>;
+
+  static_assert(traits::valid, "quoll::ui::form_state: of a field of its component's props, as &props::item");
+
+public:
+  using value_type = typename traits::value_type;
+  using props_type = typename traits::props_type;
+
+  /** @brief For its component, before each of its views: the value of `given` is what it edits now. */
+  void before_view(props_type const &given) { this->take(given.*Member); }
+
+  /**
+   * @brief basic_form_state's bind(), found for a form_state as it is, which `std::bind` would be otherwise, as a
+   * conversion to its base would make a worse match.
+   */
+  template <class F>
+  [[nodiscard]] friend auto bind(form_state &form, F value_type::*member) {
+    return bind(static_cast<basic_form_state<value_type> &>(form), member);
+  }
 };
 
 } // namespace quoll::ui

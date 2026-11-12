@@ -244,6 +244,59 @@ points to what the caller gave.
 **Made outside a view**, in a handler or `mounted()`, a callback knows no component: it runs in the caller's task, as a
 `std::function` would, and what its function captures is the caller's to keep alive.
 
+## Function components
+
+**A component may be a function**, its state kept by the `use_` calls of its view, as React's hooks: they replace the
+struct components, which go once the samples are written this way.
+
+```cpp
+struct product_view_props {
+  std::int64_t id = 0;
+  products::product item;
+
+  bool operator==(product_view_props const &) const = default;
+};
+
+element product_view(product_view_props const &given) {
+  auto &sales = use_async_state<products::monthly_sales>();
+  auto &load_sales = use_effect(given.id, products_client::sales, sales);
+
+  if (sales->error) {
+    return button("Try again") | on_click([&load_sales] { load_sales.reload(); });
+  }
+
+  return div({component<product_detail>({.item = given.item}), sales_chart(sales)});
+}
+
+component<product_view>({.id = 1, .item = item})
+```
+
+| To                       | Write                                                                                         |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| Hold a value             | `auto &count = use_state(0);`, `auto &sales = use_async_state<T>();`                          |
+| Load as a value changes  | `use_effect(given.id, load, sales)`, `use_effect(std::tuple{a, b}, f, t)`, `{.debounce = 300ms}` last |
+| Run once, as it shows    | `use_effect(load, items)`: on nothing, it runs after the first view, stopped as the component goes |
+| Save once at a time      | `auto &save = use_action<&catalog::save>(products);`, `use_action<&free_function>()`         |
+| Edit what the props give | `auto &form = use_form(given.item);`, then `bind(form, &item::price)` and `save.with(form)`    |
+| Use a context            | `auto &api = use_context<products_api>();`                                                    |
+| Provide one to its view  | `auto &own = provide_context<draft>();`, found by the components of its view first          |
+
+- **What a `use_` call gives is the component's own**, found again at each view by where it is called, and how many
+  times that place was called before in the same view: a branch not taken shifts nothing written elsewhere, and keeps
+  what it holds, and a function calling hooks may be called twice in a view, each call with its own. Calls of one place
+  are told apart by their rank in the view: such a function called in a branch, or a loop whose number of turns
+  changes, shifts the later calls of that place, as React's.
+- **Write `auto &`**: `auto x = use_state(0)` does not compile, as a copy would be unlinked. What it refers to lives as
+  long as the component, so that a handler or an effect captures it by reference, as a struct's members through `this`.
+- **An effect's function is the one of the last view**, as React's, so that what it captures is never stale; its target
+  is the one of its first view. It runs after the view: it captures by reference what a `use_` call gives, and `given`,
+  the props of the view that started it, which its run keeps, but by value what the view computed, as a handler does.
+  In the component's first view, its target is loading if its first run will start; made in a later view, as in a
+  branch, as the run starts.
+- **A struct whose `element operator()(props const &) const`** gives the view keeps its props and helpers together; it
+  holds no member, as it is made for each view: what lasts is its hooks, and a struct with members does not compile.
+- A `use_` call outside the view of a function component throws `std::logic_error`.
+
 ## Effects and actions
 
 What a component loads as its states change, and what it runs on a click, are members of it, which the view reads as

@@ -61,8 +61,8 @@ namespace quoll::ui {
 template <class T>
 class shared;
 
-template <auto Member>
-class form_state;
+template <class T>
+class basic_form_state;
 
 /** @brief What a call of an action does while another is under way. */
 enum class overlap {
@@ -138,6 +138,14 @@ struct success_of<void> {
   using type = std::function<void()>;
 };
 
+// What a function component's use_action() reaches of an action: what follows its successes, given at each view.
+struct action_access {
+  template <class A>
+  static void follow_success(A &action, typename A::success_function on_success) {
+    action.on_success_ = std::move(on_success);
+  }
+};
+
 // run() and with() of an action, taking the function's parameters as they are, so that a braced argument, as
 // `{.name = "tea"}`, builds the parameter it is given for.
 template <class Action, class Arguments>
@@ -176,9 +184,9 @@ public:
    * a button sends the form as it stands, as with() the values it is given. A click while the form is not valid is
    * refused, as one while a run is under way: nothing runs, and its runs are left as they are.
    */
-  template <auto Member>
-    requires(sizeof...(Ts) == 1 && (std::same_as<typename form_state<Member>::value_type, Ts> && ...))
-  [[nodiscard]] auto with(form_state<Member> const &form QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+  template <class T>
+    requires(sizeof...(Ts) == 1 && (std::same_as<T, Ts> && ...))
+  [[nodiscard]] auto with(basic_form_state<T> const &form QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
     return [action = &self(), form = &form] {
       return action->run_with(std::tuple<Ts...>{form->value()}, detail::failure_to::app, form->valid());
     };
@@ -312,6 +320,7 @@ public:
 
 private:
   friend class detail::action_calls<action, arguments>;
+  friend struct detail::action_access;
 
   [[nodiscard]] static call_type free_call() {
     return [](arguments &&given) {

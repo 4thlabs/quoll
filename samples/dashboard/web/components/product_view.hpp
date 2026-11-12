@@ -54,29 +54,29 @@ namespace dashboard_web {
 
 using namespace quoll::ui;
 
-struct product_view {
-  struct props {
-    // The product, and its id, which its sales load for: a field of its own, as an effect watches a field of the
-    // props, and the product changes as it is saved, which would load them again.
-    std::int64_t id = 0;
-    products::product item;
+struct product_view_props {
+  // The product, and its id, which its sales load for: a field of its own, as an effect compares it, and the product
+  // changes as it is saved, which would load them again.
+  std::int64_t id = 0;
+  products::product item;
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
+  [[nodiscard]] bool operator==(product_view_props const &) const = default;
+};
 
-  // Its sales, whether they are loading, and why they did not load: loading from the start, its first load due.
-  async_state<products::monthly_sales> sales;
-  effect load_sales{&props::id, products_client::sales, sales};
+// A function component: its sales, whether they are loading, and why they did not load, are its hooks.
+inline element product_view(product_view_props const &given) {
+  auto &sales = use_async_state<products::monthly_sales>();
+  auto &load_sales = use_effect(given.id, products_client::sales, sales);
 
   // Loading, or why they did not load and a way to try again, or their chart.
-  [[nodiscard]] element sales_shown() {
+  auto const sales_shown = [&]() -> element {
     if (sales->loading) {
       return p("Loading its sales") | tw("opacity-70");
     }
 
     if (sales->error) {
       // As React runs an effect again: the product does not change.
-      auto const retry = [this] { load_sales.reload(); };
+      auto const retry = [&load_sales] { load_sales.reload(); };
 
       auto const failed = div({
           error_text(told(sales->error, "the sales did not load")),
@@ -87,17 +87,15 @@ struct product_view {
     }
 
     return component<sales_chart>({.sales = sales->value});
-  }
+  };
 
-  element view(props const &given) {
-    auto const shown = div({
-        component<product_detail>({.item = given.item}),
-        sales_shown(),
-    });
+  auto const shown = div({
+      component<product_detail>({.item = given.item}),
+      sales_shown(),
+  });
 
-    return shown | tw("flex flex-col gap-8");
-  }
-};
+  return shown | tw("flex flex-col gap-8");
+}
 
 } // namespace dashboard_web
 

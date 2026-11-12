@@ -440,6 +440,17 @@ changes only what the harness shows. Candidates:
   (`saving`, which said one of its three fields), the state of a save being the action's own. It changes #167's "no
   status on the members" only in form: the action is read as a state, so the view still reads states only. An effect
   keeps its target, which is the data it loads.
+- **Components are functions, their state their `use_` hooks** (2026-11-12), as React's function components: the
+  maintainer compared a prototype of function components with one of struct components whose members list themselves,
+  and chose the functions ("il y a pas photo"). A component of a state, an effect and a handler generates about 102
+  functions and 11 KB of code, against 318 and 36 KB as a struct, an effect depending on values rather than on a type
+  of props; the view reads from top to bottom; and no member is walked, so Glaze serves JSON only (#182). A hook is
+  found again by the place of its call and how many times that place was called before in the view, rather than by
+  the order of the calls, so that a branch shifts nothing; `use_state` gives a reference that cannot be copied; an
+  effect's function is the last view's, as React's. A struct with `operator()` is one too, for one who keeps a
+  component's props and helpers together. `use_context` and `provide_context` take Leptos's names; no `use_mounted`,
+  as an effect on nothing runs once and stops as the component goes. Next: the samples, the router's pages and the
+  app's own component as functions, then the struct components removed.
 - **A debounce is an option of the effect** (2026-11-12), as the maintainer chose over a `debounced<T>` value to
   declare beside the state, as React's `useDebounce`, and over a pause Quoll would add to any change made by typing:
   `effect search{query, f, found, {.debounce = 300ms}}`. A run that follows a change waits that long before it calls

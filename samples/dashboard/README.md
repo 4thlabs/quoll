@@ -26,7 +26,7 @@ dashboard/
 | `web/components/pages.hpp` | the routes, `/products` and `/products/{id}`, a redirect from `/` and a page for an unknown address, the app's own component and its options |
 | `web/components/products_layout.hpp` | the layout of `/products`: the heading, the list, and the page of the address in its `outlet()` |
 | `web/components/product_page.hpp` | the page of `/products/{id}`: the product the catalog holds, or why it is not shown |
-| `web/components/product_view.hpp` | a product's detail, and its sales, loaded by an `effect` on its `id` prop into an `async_state`: the sales, whether they are loading and why they failed |
+| `web/components/product_view.hpp` | a function component: a product's detail, and its sales, loaded by a `use_effect` on its `id` prop into a `use_async_state`: the sales, whether they are loading and why they failed |
 | `web/components/catalog.hpp` | the products, a context the layout, the list, the product's page and its detail share: loaded by an `effect` on no state, saved by `save`, which the detail's `action` runs |
 | `web/components/product_list.hpp` | the filter, a state of its own, and the rows of the catalog's products it matches |
 | `web/components/product_row.hpp` | one product, a `link_to` its page |
