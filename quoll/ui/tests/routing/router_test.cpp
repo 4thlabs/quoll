@@ -55,8 +55,6 @@
 #include <tuple>
 #include <vector>
 
-// Named, not unnamed: a route reads the names of its page's props, which Glaze, under Clang, cannot reflect in a type
-// without linkage.
 namespace router_test {
 
 using namespace quoll::ui;
@@ -135,9 +133,13 @@ constexpr component<> missing_page = [] { return p("missing"); };
 
 inline constexpr auto shop_routes = quoll::ui::routes(
     route<"/", home_page>(),
-    route<"/products", products_layout>(route<"", product_list>(), route<"{id}", product_page>()),
-    route<"/ratio/{x}", ratio_page>(), route<"/files/{path:path}", file_page>(),
-    redirect<"/items/{id}", "/products/{id}">(), not_found<missing_page>()
+    route<"/products", products_layout>(
+        route<"", product_list, from_query<"q", &product_list_props::q>>(),
+        route<"{id}", product_page, &product_page_props::id>()
+    ),
+    route<"/ratio/{x}", ratio_page, &ratio_page_props::x>(),
+    route<"/files/{path:path}", file_page, &file_page_props::path>(), redirect<"/items/{id}", "/products/{id}">(),
+    not_found<missing_page>()
 );
 
 constexpr component<product_page_props> product_page = [](product_page_props const &given) {
@@ -151,6 +153,98 @@ constexpr component<product_page_props> product_page = [](product_page_props con
 constexpr component<> shell = [] { return main_({link_to(home_page, "home"), outlet()}); };
 
 [[nodiscard]] app_options at(std::string start) { return {.contexts = {routing<shop_routes>(std::move(start))}}; }
+
+// A layout reading, by its name, the parameter of the page it shows, and a field of the query.
+struct shelf_props {
+  std::optional<std::int64_t> id;
+  std::string sort;
+
+  [[nodiscard]] bool operator==(shelf_props const &) const = default;
+};
+
+constexpr component<shelf_props> shelf = [](shelf_props const &given) {
+  auto const chosen = given.id ? std::to_string(*given.id) : std::string{"none"};
+
+  return section({p("shelf " + chosen + " " + given.sort), outlet()});
+};
+
+// A page whose `note` no route names: the query does not fill it.
+struct item_props {
+  std::int64_t id = 0;
+  std::string note;
+
+  [[nodiscard]] bool operator==(item_props const &) const = default;
+};
+
+constexpr component<item_props> item_page = [](item_props const &given) {
+  return p("item " + std::to_string(given.id) + " [" + given.note + "]");
+};
+
+constexpr component<> shelf_index = [] { return p("pick one"); };
+
+// A cell, from two parameters of its path, a field of the query named before them.
+struct cell_props {
+  std::int64_t row = 0;
+  std::int64_t col = 0;
+  std::int64_t zoom = 1;
+
+  [[nodiscard]] bool operator==(cell_props const &) const = default;
+};
+
+constexpr component<cell_props> cell_page = [](cell_props const &given) {
+  return p("cell " + std::to_string(given.row) + " " + std::to_string(given.col) + " " + std::to_string(given.zoom));
+};
+
+// The root, with a field of the query.
+struct start_props {
+  std::string tab;
+
+  [[nodiscard]] bool operator==(start_props const &) const = default;
+};
+
+constexpr component<start_props> start_page = [](start_props const &given) { return p("start " + given.tab); };
+
+// A layout taking as a number the parameter its page takes as a string.
+struct tagged_props {
+  std::int64_t count = 0;
+
+  [[nodiscard]] bool operator==(tagged_props const &) const = default;
+};
+
+constexpr component<tagged_props> tagged = [](tagged_props const &given) {
+  return section({p("tagged " + std::to_string(given.count)), outlet()});
+};
+
+struct tag_props {
+  std::string name;
+
+  [[nodiscard]] bool operator==(tag_props const &) const = default;
+};
+
+constexpr component<tag_props> tag_page = [](tag_props const &given) { return p("tag " + given.name); };
+
+// Shown at no route, where the address came from in its query.
+struct lost_props {
+  std::string from;
+
+  [[nodiscard]] bool operator==(lost_props const &) const = default;
+};
+
+constexpr component<lost_props> lost_page = [](lost_props const &given) { return p("lost " + given.from); };
+
+// clang-format off
+inline constexpr auto shelf_routes = quoll::ui::routes(
+    route<"/", start_page, from_query<"tab", &start_props::tab>>(),
+    route<"/shelf", shelf, from_path<"id", &shelf_props::id>, from_query<"sort", &shelf_props::sort>>(
+        route<"", shelf_index>(),
+        route<"{id}", item_page, &item_props::id>()),
+    route<"/grid/{row}/at/{col}", cell_page, from_query<"zoom", &cell_props::zoom>, &cell_props::row, &cell_props::col>(),
+    route<"/tagged", tagged, from_path<"name", &tagged_props::count>>(
+        route<"{name}", tag_page, &tag_props::name>()),
+    not_found<lost_page, from_query<"from", &lost_props::from>>());
+// clang-format on
+
+constexpr component<> shelf_root = [] { return main_({outlet()}); };
 
 } // namespace router_test
 
@@ -188,6 +282,55 @@ TEST_CASE("router: shows the page of the location, in the outlets of its layouts
     INFO(start << " shows " << shown.html());
     CHECK(shown.html().contains(shown_there));
   }
+}
+
+TEST_CASE(
+    "router: a route fills the fields it names, by the path's rank, or by name from the query and from the path "
+    "matched",
+    "[ui][router]"
+) {
+  struct seen {
+    std::string start;
+    std::string html;
+  };
+
+  std::vector<seen> const pages{
+      {"/shelf/7?sort=price&note=x", "<main><section><p>shelf 7 price</p><p>item 7 []</p></section></main>"},
+      {"/shelf", "<main><section><p>shelf none </p><p>pick one</p></section></main>"},
+      // Each parameter in the field of its rank, the query's named before them.
+      {"/grid/2/at/5?zoom=3", "<main><p>cell 2 5 3</p></main>"},
+      {"/?tab=news", "<main><p>start news</p></main>"},
+      // A parameter named from the path that is no such value matches no route, as one by rank.
+      {"/tagged/12", "<main><section><p>tagged 12</p><p>tag 12</p></section></main>"},
+      {"/tagged/abc?from=x", "<main><p>lost x</p></main>"},
+      {"/nowhere", "<main><p>lost </p></main>"},
+  };
+
+  for (auto const &[start, shown_there] : pages) {
+    virtual_time time;
+    memory_renderer const shown;
+    test_app instance{time.get_executor(), shown, shelf_root, {.contexts = {routing<shelf_routes>(start)}}};
+
+    auto const act = []() -> task<> { co_await settle(); };
+
+    REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+    CHECK(shown.html() == shown_there);
+  }
+}
+
+TEST_CASE("router: the address of a page has the fields its route names, and only those", "[ui][router]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app instance{time.get_executor(), shown, shelf_root, {.contexts = {routing<shelf_routes>("/")}}};
+  auto const &nav = instance.context<router>();
+
+  // A layout's field named from the path is the page's to write, and a field no route names is left out.
+  CHECK(nav.href(item_page, {.id = 3, .note = "kept out"}) == "/shelf/3");
+  CHECK(nav.href(shelf, {.id = 3, .sort = "name"}) == "/shelf?sort=name");
+  CHECK(nav.href(cell_page, {.row = 4, .col = 1}) == "/grid/4/at/1");
+  CHECK(nav.href(cell_page, {.row = 4, .col = 1, .zoom = 2}) == "/grid/4/at/1?zoom=2");
+  CHECK(nav.href(start_page, {.tab = "news"}) == "/?tab=news");
+  CHECK(nav.href(start_page, {}) == "/");
 }
 
 TEST_CASE("router: a link goes to its page, which the history goes back from", "[ui][router]") {
@@ -262,7 +405,9 @@ TEST_CASE("router: a redirect replaces its address in the history", "[ui][router
   CHECK(shown.html().contains("<p>home</p>"));
 }
 
-TEST_CASE("router: the address of a page, from its props, its other fields in the query", "[ui][router]") {
+TEST_CASE(
+    "router: the address of a page, from its props, the fields its route names from the query in it", "[ui][router]"
+) {
   virtual_time time;
   memory_renderer const shown;
   test_app instance{time.get_executor(), shown, shell, at("/")};

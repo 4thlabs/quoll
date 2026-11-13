@@ -248,8 +248,8 @@ React's JSX does, by the component itself? And how is one declared?
 depends only on its props, so that a header declares it, `extern component<props> const product_detail;`, and a source
 of its own defines it, which a change to it alone compiles again. One way to write it everywhere, its props always
 written, `constexpr component<props> name = ...`, `inline` in a header, `component<>` with none: one written without
-them does not compile. The routes name their pages so, `route<"{id}", product_page>()`, and the links too,
-`link_to(product_page, {.id = 7}, "Open")`. The app's root is one, with no props.
+them does not compile. The routes name their pages so, `route<"{id}", product_page, &product_page_props::id>()`,
+and the links too, `link_to(product_page, {.id = 7}, "Open")`. The app's root is one, with no props.
 
 **Set aside.** `component<product_detail>(...)` in the view, which the maintainer found out of place in a view. A type
 deduced from the lambda, which left two ways to write a component, as an extern declaration has to write its props.
@@ -374,8 +374,8 @@ reference, as FTXUI's: the lifetime would be the program's to keep, and a stale 
 they declared, and how does a link to one stay right?
 
 **Taken.** A table of routes, checked at compile time, as Dioxus's and TanStack Router's are typed: a route's path is
-a template whose parameters are fields of its page's props, which give their types, and the other fields come from the
-query. A link to a page takes its props, so that a page that changes its parameters breaks the links to it at compile
+a template whose parameters fill fields of its page's props, which give their types, each named by a member pointer
+in the order of the path, and the query's fields named, `from_query<"q", &props::q>`: no reflection finds them. A link to a page takes its props, so that a page that changes its parameters breaks the links to it at compile
 time. Layouts show the page under them in an outlet, as React Router's. The router is a context, its location a state,
 its history the browser's or one in memory.
 
@@ -383,9 +383,9 @@ its history the browser's or one in memory.
 in the template, `{id:int64}`: they would repeat the props', and could differ. Loaders run by the router: an effect on
 the page's props does it, as React does with `useEffect`.
 
-**For you.** Give each page props for its parameters, declare the routes, naming the pages' component objects, and put
-`outlet()` where pages show. Use `link_to(page, props, text)` for links, and `use_context<router>()` to go elsewhere
-from a handler.
+**For you.** Give each page props for its parameters, declare the routes, naming the pages' component objects and the
+fields their parameters fill, and put `outlet()` where pages show. Use `link_to(page, props, text)` for links, and
+`use_context<router>()` to go elsewhere from a handler.
 
 ### JavaScript libraries as modules
 

@@ -49,4 +49,5 @@ struct product_page_props {
 
 extern quoll::ui::component<product_page_props> const product_page;
 
-constexpr auto shop = quoll::ui::routes(quoll::ui::route<"/products/{id:int64}", product_page>());
+constexpr auto shop =
+    quoll::ui::routes(quoll::ui::route<"/products/{id:int64}", product_page, &product_page_props::id>());

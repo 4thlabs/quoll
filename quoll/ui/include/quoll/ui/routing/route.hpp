@@ -43,6 +43,7 @@
 
 #include <array>
 #include <cstddef>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 
@@ -50,7 +51,7 @@ namespace quoll::ui {
 
 namespace detail {
 
-template <http::fixed_string Path, auto const &Page, class... Children>
+template <http::fixed_string Path, auto const &Page, class Fields, class... Children>
 struct route_node {
   std::tuple<Children...> children;
 };
@@ -58,22 +59,63 @@ struct route_node {
 template <http::fixed_string From, http::fixed_string To>
 struct redirect_node {};
 
-template <auto const &Page>
+template <auto const &Page, class Fields>
 struct not_found_node {};
 
-template <http::fixed_string Path, auto const &Page, class... Children>
-struct route_count<route_node<Path, Page, Children...>>
+// Whether the whole template `Full`, or that of a route under it, has the parameter `name`.
+template <http::fixed_string Full, class Node>
+struct subtree_has {
+  static constexpr bool find(std::string_view /*name*/) { return false; }
+};
+
+template <http::fixed_string Full, http::fixed_string Path, auto const &Page, class Fields, class... Children>
+struct subtree_has<Full, route_node<Path, Page, Fields, Children...>> {
+  static constexpr auto const &full = joined<Full, Path>::value;
+
+  static constexpr bool find(std::string_view name) {
+    return has_param(full.view(), name) || (subtree_has<full, Children>::find(name) || ...);
+  }
+};
+
+// Whether each field the route of `Full` names from the path is a parameter of its path or of one under it.
+template <http::fixed_string Full, class... Children, auto... Fields>
+[[nodiscard]] consteval bool path_names_found(page_fields<Fields...> /*fields*/) {
+  auto const found = [](std::string_view name) {
+    return has_param(Full.view(), name) || (subtree_has<Full, Children>::find(name) || ...);
+  };
+
+  auto const check = [&]<auto Field>() {
+    if constexpr (named<Field>) {
+      using field_type = std::remove_cvref_t<decltype(Field)>;
+
+      return !field_type::in_path || found(field_type::name.view());
+    } else {
+      return true;
+    }
+  };
+
+  return (check.template operator()<Fields>() && ...);
+}
+
+template <http::fixed_string Path, auto const &Page, class Fields, class... Children>
+struct route_count<route_node<Path, Page, Fields, Children...>>
     : std::integral_constant<std::size_t, (1 + ... + route_count<Children>::value)> {};
 
 template <http::fixed_string Prefix, class Node, std::size_t N>
 struct flatten;
 
-template <http::fixed_string Prefix, http::fixed_string Path, auto const &Page, class... Children, std::size_t N>
-struct flatten<Prefix, route_node<Path, Page, Children...>, N> {
+template <
+    http::fixed_string Prefix, http::fixed_string Path, auto const &Page, class Fields, class... Children,
+    std::size_t N>
+struct flatten<Prefix, route_node<Path, Page, Fields, Children...>, N> {
   static constexpr auto const &full = joined<Prefix, Path>::value;
 
   static consteval void into(std::array<route_entry, N> &entries, std::size_t &at, std::size_t parent) {
-    check_route<Path, full, Page, Prefix.view().empty()>();
+    check_route<Path, full, Page, Prefix.view().empty(), Fields>();
+    static_assert(
+        path_names_found<full, Children...>(Fields{}),
+        "quoll::ui: a field named from the path names a parameter of its route's path, or of one under it"
+    );
 
     auto const index = at++;
 
@@ -84,9 +126,9 @@ struct flatten<Prefix, route_node<Path, Page, Children...>, N> {
          .page = &page_table<Page>,
          .parent = parent,
          .leaf = sizeof...(Children) == 0,
-         .show = &show_page<Page>,
-         .accepts = &accepts_page<Page>,
-         .href = &href_of<full, Page>};
+         .show = &show_page<full, Page, Fields>,
+         .accepts = &accepts_page<full, Page, Fields>,
+         .href = &href_of<full, Page, Fields>};
 
     (flatten<full, Children, N>::into(entries, at, index), ...);
   }
@@ -109,13 +151,7 @@ struct flatten<Prefix, redirect_node<From, To>, N> {
     static_assert(
         [] {
           for (auto const name : template_params(To.view())) {
-            bool found = false;
-
-            for (auto const from : template_params(full.view())) {
-              found = found || from == name;
-            }
-
-            if (!found) {
+            if (!has_param(full.view(), name)) {
               return false;
             }
           }
@@ -139,10 +175,14 @@ struct flatten<Prefix, redirect_node<From, To>, N> {
   }
 };
 
-template <http::fixed_string Prefix, auto const &Page, std::size_t N>
-struct flatten<Prefix, not_found_node<Page>, N> {
+template <http::fixed_string Prefix, auto const &Page, class Fields, std::size_t N>
+struct flatten<Prefix, not_found_node<Page, Fields>, N> {
   static consteval void into(std::array<route_entry, N> &entries, std::size_t &at, std::size_t parent) {
     static_assert(Prefix.view().empty(), "quoll::ui: a not_found route is of the top level");
+    check_fields<"", Page>(Fields{});
+    static_assert(
+        path_names_found<"">(Fields{}), "quoll::ui: a not_found route has no path, its fields come from the query"
+    );
 
     entries[at++] = {
         .kind = route_kind::not_found,
@@ -151,8 +191,8 @@ struct flatten<Prefix, not_found_node<Page>, N> {
         .page = &page_table<Page>,
         .parent = parent,
         .leaf = true,
-        .show = &show_page<Page>,
-        .accepts = &accepts_page<Page>,
+        .show = &show_page<"", Page, Fields>,
+        .accepts = &accepts_page<"", Page, Fields>,
         .href = nullptr
     };
   }
@@ -161,27 +201,44 @@ struct flatten<Prefix, not_found_node<Page>, N> {
 } // namespace detail
 
 /**
+ * @brief A field of a page's props that the query of its address fills, by its name: `from_query<"q",
+ * &list_props::q>` in a route, as `?q=tea`. See route.
+ */
+template <http::fixed_string Name, auto Member>
+inline constexpr detail::named_field<Name, Member, false> from_query{};
+
+/**
+ * @brief A field of a page's props that a parameter of the path matched fills, by its name, that of the route or of one
+ * under it: `from_path<"id", &layout_props::id>` gives a layout the `{id}` of the page it shows. See route.
+ */
+template <http::fixed_string Name, auto Member>
+inline constexpr detail::named_field<Name, Member, true> from_path{};
+
+/**
  * @brief A route: the page shown at the addresses its path matches, with the routes under it.
  *
  * @code
  * inline constexpr auto routes = ui::routes(
  *     ui::route<"/", home_page>(),
  *     ui::route<"/products", products_layout>(
- *         ui::route<"", product_list>(),
- *         ui::route<"{id}", product_page>()),
+ *         ui::route<"", product_list, ui::from_query<"q", &product_list_props::q>>(),
+ *         ui::route<"{id}", product_page, &product_page_props::id>()),
  *     ui::redirect<"/items/{id}", "/products/{id}">(),
  *     ui::not_found<missing_page>());
  * @endcode
  *
  * Its page is a component, named by the object, `component<props>` or `component<>`, as declared in a header. Its
  * path is a template, checked at compile time: a route of the top level starts with '/', one under another adds
- * its own segments, none for the index route of its parent. Each `{name}` is a field of its page's props, which gives
- * its type; `{name:path}` takes the rest of the path, a string. The other fields of the props come from the query,
- * `?q=tea`, as they are, or stay as made when it lacks them. A route with routes under it is a layout: its page
- * shows the one of the address in its outlet().
+ * its own segments, none for the index route of its parent. After its page, a route names the fields of its page's
+ * props the address fills: one member pointer for each `{parameter}` of its whole path, in order, whose type gives
+ * the parameter's (`{name:path}` takes the rest of the path, a string). Then, by name, `from_query<"q", &props::q>`
+ * for a field the query gives, `?q=tea`, and `from_path<"id", &props::id>` for one a parameter of the path matched
+ * gives, as a layout's of the page it shows; each left as made when the address lacks it. A field not named stays as
+ * made. A route with routes under it is a layout: its page shows the one of the address in its outlet().
  */
-template <http::fixed_string Path, auto const &Page, class... Children>
-[[nodiscard]] consteval detail::route_node<Path, Page, Children...> route(Children... children) {
+template <http::fixed_string Path, auto const &Page, auto... Fields, class... Children>
+[[nodiscard]] consteval detail::route_node<Path, Page, detail::page_fields<Fields...>, Children...>
+route(Children... children) {
   static_assert(detail::is_page<std::remove_cvref_t<decltype(Page)>>, "quoll::ui: a route's page is a component");
 
   return {.children = {children...}};
@@ -193,9 +250,12 @@ template <http::fixed_string From, http::fixed_string To>
   return {};
 }
 
-/** @brief The page shown when no route matches the address, of the top level. */
-template <auto const &Page>
-[[nodiscard]] consteval detail::not_found_node<Page> not_found() {
+/**
+ * @brief The page shown when no route matches the address, of the top level, the fields of its props named as a
+ * route's from its query: `not_found<missing_page, from_query<"from", &missing_props::from>>()`.
+ */
+template <auto const &Page, auto... Fields>
+[[nodiscard]] consteval detail::not_found_node<Page, detail::page_fields<Fields...>> not_found() {
   static_assert(detail::is_page<std::remove_cvref_t<decltype(Page)>>, "quoll::ui: a route's page is a component");
 
   return {};
