@@ -369,6 +369,37 @@ inline constexpr component<sales_panel_props> sales_panel = [](sales_panel_props
 `value`, for an effect whose function gives nothing. An action is read as one, holding its own. It is a state like any other,
 set and updated as one: `items.update([](auto &held) { held.value.push_back(...); })`.
 
+**A `resource<T>`**, in `<quoll/ui/data/resource.hpp>`, is a load read as one value: an `async_state` and the effect
+writing into it, a member of a component written as a struct, or of a context. It follows what its props give, as an
+effect does, a field or a function of them, or its states, `filter` or `std::tie(filter, page)`; its function returns a `task<T>`.
+`match` gives what to show while it loads, once it failed, and once it loaded:
+
+```cpp
+struct sales_panel : component<sales_panel> {
+  struct props {
+    std::int64_t id = 0;
+
+    bool operator==(props const &) const = default;
+  };
+
+  resource<products::monthly_sales> sales{&props::id, products_client::sales};
+
+  element view() {
+    return sales.match(
+        [] { return p("Loading its sales"); },
+        [this](std::exception_ptr const &) { return button("Try again") | on_click([this] { sales.reload(); }); },
+        [](products::monthly_sales const &loaded) { return sales_chart({.sales = loaded}); }
+    );
+  }
+};
+```
+
+The first function may take `std::optional<T> const &`, what the last load that ended well gave, none before the first,
+to keep it on screen while it loads again. With four functions, the first shows it before any load has started, and
+once what it follows is an optional holding none, which drops what was loaded; with three, the loading one does. `sales.loading()` is the flag
+alone, as a button's label needs, and `sales.reload()` loads again, the load before stopped. A failure reaches the
+app's `on_error` too, and a function giving another type than `T` does not compile.
+
 **What a target receives.** An `async_state<T>` receives by its fields: `value` is what the function gives, whole, a
 `bool` or a `std::tuple` too. A `state<T>`, or a `state<std::tuple<...>>` of several elements, receives by the type
 of its elements:

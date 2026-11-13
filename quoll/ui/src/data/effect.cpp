@@ -85,10 +85,10 @@ void effect::after_view(detail::effect_starter const &start) {
       return;
     }
 
-    // None held: the run before stops, and the target is loading no more.
+    // None held: the run before stops, and the target is loading no more, a resource's loading nothing.
     if (!now.holds) {
       stop_before();
-      target_.abandon();
+      target_.release();
       return;
     }
 
