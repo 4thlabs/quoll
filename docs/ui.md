@@ -764,7 +764,8 @@ quoll({
 ```
 
 `sources` names files, or folders, each of whose C++ files, at any depth, the plugin watches and reads for its widgets;
-one made in a folder later is watched as it appears.
+one made in a folder later is watched as it appears, and one removed from a folder leaves the page, which rebuilds
+without it; a file named in `sources` stays one of them.
 
 ## A page's folder
 
@@ -782,6 +783,14 @@ web/
     ├── components/        a header and a source for each component
     ├── ui/                functions giving a piece of view, with no state
     └── widgets/           the JavaScript modules of its widgets
+```
+
+The CMake that declares the page's components, the sample's beside `web/` in the samples, reads them from their
+folder, at any depth: one made or removed there is compiled, or no longer, at the next rebuild, which configures again
+as the folder changes. A source of another folder, as one of `client/`, is named there by hand.
+
+```cmake
+file(GLOB_RECURSE my_page_components CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/web/src/components/*.cpp)
 ```
 
 ## What it lacks

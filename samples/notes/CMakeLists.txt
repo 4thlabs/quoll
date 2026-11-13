@@ -8,7 +8,7 @@ target_link_libraries(quoll_notes_api INTERFACE quoll::rest)
 # The components of the page, a header and a source for each, whose sources are those of web/src/components/: one made
 # there is compiled at the next build, a change of one compiles again only it. The test of the page runs them natively,
 # in place of the calls of web/src/client/notes_client.cpp, which go through fetch.
-file(GLOB quoll_notes_components CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/web/src/components/*.cpp)
+file(GLOB_RECURSE quoll_notes_components CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/web/src/components/*.cpp)
 add_library(quoll_notes_web_components INTERFACE)
 target_sources(quoll_notes_web_components INTERFACE ${quoll_notes_components})
 target_include_directories(quoll_notes_web_components INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/web/src)

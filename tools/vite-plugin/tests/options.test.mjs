@@ -40,7 +40,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { developmentOptions, expandSources, inSources, quoll, within } from '../quoll-vite-plugin.js';
+import { developmentOptions, isSource, listSources, quoll, sourcePaths, within } from '../quoll-vite-plugin.js';
 
 test('a development build has line tables by default, and the debug information asked for', () => {
   assert.deepEqual(developmentOptions(), [
@@ -94,25 +94,59 @@ test('a directory of the sources gives its C++ files at any depth, in order, a f
 
     const builds = within([join(base, 'src', 'build')]);
 
-    assert.deepEqual(expandSources(base, ['src', 'api.hpp', 'gone.hpp'], builds), [
+    const paths = sourcePaths(base, ['src', 'api.hpp', 'gone.hpp']);
+
+    assert.deepEqual(paths, {
+      folders: [join(base, 'src')],
+      files: [join(base, 'api.hpp'), join(base, 'gone.hpp')],
+    });
+    assert.deepEqual(listSources(paths, builds), [
+      join(base, 'api.hpp'),
+      join(base, 'gone.hpp'),
       join(base, 'src', 'components', 'row.cpp'),
       join(base, 'src', 'components', 'row.hpp'),
       join(base, 'src', 'main.cpp'),
-      join(base, 'api.hpp'),
-      join(base, 'gone.hpp'),
     ]);
+    // A file named and in a folder named too, once.
+    assert.deepEqual(
+      listSources(sourcePaths(base, ['src/main.cpp', 'src']), builds).filter((file) => file.endsWith('main.cpp')),
+      [join(base, 'src', 'main.cpp')]
+    );
+
+    // A file named is one whatever its extension, there or not yet; a folder not there yet gives none, and says nothing.
+    writeFileSync(join(base, 'src', 'impl.inl'), '');
+
+    const warnings = [];
+    const named = sourcePaths(base, ['src/impl.inl', 'later', 'later.tpp']);
+
+    assert.deepEqual(named, {
+      folders: [join(base, 'later')],
+      files: [join(base, 'src', 'impl.inl'), join(base, 'later.tpp')],
+    });
+    assert.deepEqual(listSources(named, builds, (message) => warnings.push(message)), [
+      join(base, 'later.tpp'),
+      join(base, 'src', 'impl.inl'),
+    ]);
+    assert.deepEqual(warnings, []);
+    assert.ok(isSource(join(base, 'src', 'impl.inl'), named, builds));
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });
 
-test('a file made in a folder of the sources is one of them, but in a build directory or a node_modules', () => {
+test('a source is a file named, or a C++ file of a folder named, but in a build directory or a node_modules', () => {
   const builds = within(['/web/build']);
+  const paths = { folders: ['/web/src'], files: ['/web/api/notes.hpp'] };
+  const web = { folders: ['/web'], files: [] };
 
-  assert.ok(inSources('/web/src/components/card.cpp', ['/web/src'], builds));
-  assert.ok(inSources('/web/src/components/card.hpp', ['/web/src'], builds));
-  assert.ok(!inSources('/web/src/components/card.js', ['/web/src'], builds));
-  assert.ok(!inSources('/web/other/card.cpp', ['/web/src'], builds));
-  assert.ok(!inSources('/web/build/CMakeFiles/id.cpp', ['/web'], builds));
-  assert.ok(!inSources('/web/src/node_modules/native/addon.h', ['/web/src'], builds));
+  assert.ok(isSource('/web/src/components/card.cpp', paths, builds));
+  assert.ok(isSource('/web/src/components/card.hpp', paths, builds));
+  assert.ok(isSource('/web/api/notes.hpp', paths, builds));
+  assert.ok(!isSource('/web/api/other.hpp', paths, builds));
+  assert.ok(!isSource('/web/src/components/card.js', paths, builds));
+  assert.ok(!isSource('/web/other/card.cpp', paths, builds));
+  assert.ok(!isSource('/web/build/CMakeFiles/id.cpp', web, builds));
+  assert.ok(!isSource('/web/src/node_modules/native/addon.h', paths, builds));
+  // A page in a node_modules of its own, as a package's: only one under a folder of its sources is left out.
+  assert.ok(isSource('/x/node_modules/page/src/card.cpp', { folders: ['/x/node_modules/page/src'], files: [] }, builds));
 });
