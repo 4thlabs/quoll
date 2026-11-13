@@ -54,7 +54,8 @@ class member_registry {
 public:
   void add(registered_member member) { members_.push_back(member); }
 
-  // The member that joined by `join` leaves, as it goes before its context.
+  // The member that joined by `join` leaves, as it goes before its context: at once, or, while its effects start,
+  // whose reports may make a member go, once they have, never called meanwhile.
   void remove(void const *join) noexcept;
 
   // Each member that tells of its changes tells `to` from now on.
@@ -73,6 +74,8 @@ public:
 
 private:
   std::vector<registered_member> members_;
+  // Whether its effects are starting, which a member going does not disturb.
+  bool starting_ = false;
 };
 
 // Makes what is made in its scope the context whose members join `into`, finding through `finder`, as Quoll does as it

@@ -37,6 +37,7 @@
 #include <quoll/ui/detail/context/member_registry.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <exception>
 #include <functional>
 #include <iterator>
@@ -62,8 +63,15 @@ void member_registry::link(state_link to) noexcept {
 void member_registry::run_effects(effect_starter const &start) {
   std::exception_ptr first;
 
-  for (auto const &member : members_) {
-    if (member.after_view == nullptr) {
+  // By index, and the members gone meanwhile left in place, emptied: a report may make one go, as an optional reset.
+  bool const outer = !starting_;
+
+  starting_ = true;
+
+  for (std::size_t at = 0; at < members_.size(); ++at) {
+    auto const member = members_[at];
+
+    if (member.after_view == nullptr || member.object == nullptr) {
       continue;
     }
 
@@ -76,6 +84,11 @@ void member_registry::run_effects(effect_starter const &start) {
         first = std::current_exception();
       }
     }
+  }
+
+  if (outer) {
+    starting_ = false;
+    std::erase_if(members_, [](registered_member const &member) { return member.object == nullptr; });
   }
 
   if (first) {
@@ -109,7 +122,13 @@ void member_registry::remove(void const *join) noexcept {
   // From the back: members leave in the reverse order of their joining.
   auto const found = std::ranges::find(members_.rbegin(), members_.rend(), join, &registered_member::join);
 
-  if (found != members_.rend()) {
+  if (found == members_.rend()) {
+    return;
+  }
+
+  if (starting_) {
+    *found = {};
+  } else {
     members_.erase(std::next(found).base());
   }
 }

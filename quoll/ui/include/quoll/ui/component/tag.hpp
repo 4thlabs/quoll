@@ -98,6 +98,11 @@ public:
           { held.view() } -> std::same_as<element>;
         }, "quoll::ui: a component written as a struct has its view, `element view()`"
     );
+    static_assert(
+        !detail::holds_view_props<props_type>, "quoll::ui: a component keeps its props, which outlive its parent's "
+                                               "view: none is a view, as a std::string_view, "
+                                               "a std::span or a pointer, but owns what it holds, a std::string"
+    );
   }
 
   /** @brief Placed in a view, given its props. */
