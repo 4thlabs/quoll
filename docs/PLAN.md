@@ -467,10 +467,7 @@ changes only what the harness shows. Candidates:
   places them, as React's. Each component is a header, its props and `extern component<props> const name;`, and a
   source, `constexpr component<props> name = ...`, never `inline`: the maintainer chose it so that a change of props
   compiles again only that component and those placing it, not the whole page, and a page's folder keeps its tools' files at its root and its code in `src/` by role, `components/`,
-  `contexts/`, `client/`, `ui/`, `widgets/`, which the Vite plugin's `sources` names as folders. A component may be a
-  struct, as a class, which the maintainer wanted declared in the header and defined in the source: `name_view`, with
-  its `props` inside, made into `name`; a suffix rather than a namespace of the same names, which would find the struct
-  before the component in the structs' own functions. A rebuild of one component is to take a second at most, which the
+  `contexts/`, `client/`, `ui/`, `widgets/`, which the Vite plugin's `sources` names as folders. A rebuild of one component is to take a second at most, which the
   maintainer set: with Quoll's header and the app's contexts precompiled, under Clang, a view alone takes 0.6 s and one
   with a form and an action 1.4 s, the rest in instantiating `use_effect` and `use_action` in its source, about 0.6 s
   each, which the next pull request takes into Quoll's library behind type erasure, with a budget CI checks.

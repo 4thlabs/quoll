@@ -366,39 +366,6 @@ struct badge_view {
 
 constexpr component<badge_view::props> badge = badge_view{};
 
-// A struct declared as a class, with the component, as a header would, its operator() and its parts defined apart, and
-// the component made of it, as a source would.
-struct tally_view {
-  struct props {
-    std::string label;
-
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  element operator()(props const &given) const;
-
-private:
-  [[nodiscard]] static element count_of(state<int> &count);
-};
-
-extern component<tally_view::props> const tally;
-
-element tally_view::operator()(props const &given) const {
-  auto &count = use_state(0);
-
-  return div({p(given.label), count_of(count)});
-}
-
-element tally_view::count_of(state<int> &count) {
-  auto const add = [&count] { count = *count + 1; };
-
-  return button(std::to_string(*count)) | on_click(add);
-}
-
-constexpr component<tally_view::props> tally = tally_view{};
-
-constexpr component<> tally_page = [] { return tally({.label = "tally"}); };
-
 // A component is no source of another: one with props given where one without is taken does not convert.
 static_assert(!std::is_convertible_v<component<badge_view::props>, component<>>);
 static_assert(!std::is_convertible_v<component<>, component<badge_view::props>>);
@@ -1120,24 +1087,6 @@ TEST_CASE("function component: an effect's options, as a debounce, given to use_
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(waiting == std::vector<std::string>{"start 1"});
   CHECK(loads == std::vector<std::string>{"start 1", "start 3"});
-}
-
-TEST_CASE(
-    "function component: a struct declared with its extern component, its parts defined apart, its state its hooks",
-    "[ui][function]"
-) {
-  virtual_time time;
-  memory_renderer const shown;
-  test_app instance{time.get_executor(), shown, tally_page};
-
-  auto const act = [&]() -> task<> {
-    co_await settle();
-    instance.dispatch(shown.find("button"), "click");
-    co_await settle();
-  };
-
-  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(shown.html() == "<div><p>tally</p><button>1</button></div>");
 }
 
 TEST_CASE("function component: a struct one of no props", "[ui][function]") {

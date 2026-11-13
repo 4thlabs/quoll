@@ -117,59 +117,11 @@ constexpr component<note_row_props> note_row = [](note_row_props const &given) {
   it places: a change of a view compiles again only its source, and a change of props its source and those placing it;
 - the examples of this guide define a component in one block, as `inline constexpr component<props> name = ...` in a
   header would, which a program splits so;
-- made of a lambda capturing nothing, or of a struct with no data member but static ones, as below. It is made for each
-  view, and holds nothing: what lasts is its hooks. One capturing, or holding data members, does not compile; a static
-  data member would be shared by every instance of the component, as a global;
+- made of a lambda capturing nothing, or of an empty struct whose `element operator()(props const &) const` keeps the
+  props and their helpers together, as `constexpr component<badge::props> badge_shown = badge{};`. It is made for each
+  view, and holds nothing: what lasts is its hooks. One capturing, or holding members, does not compile;
 - its props by const reference, `element (props const &)`, or `element ()` for none: taken by value, they would be a
   copy that goes as the view returns, which a closure of the view may capture, and that does not compile either.
-
-**A component may be a struct**, whose call operator gives the view, to keep its props and the parts of its view
-together, as a class: the struct is declared in the header, named after the component with `_view`, its functions are
-defined in the source, and the component is made of it.
-
-```cpp
-// components/product_detail.hpp
-struct product_detail_view {
-  struct props {
-    products::product item;
-
-    bool operator==(props const &) const = default;
-  };
-
-  element operator()(props const &given) const;
-
-private:
-  [[nodiscard]] static element fields(form_state<products::product> &form);
-};
-
-extern component<product_detail_view::props> const product_detail;
-
-// components/product_detail.cpp
-#include "components/product_detail.hpp"
-
-element product_detail_view::operator()(props const &given) const {
-  auto &products = use_context<catalog>();
-  auto &form = use_form(given.item);
-  auto &save = use_action<&catalog::save>(products);
-
-  return section({h2(given.item.name), fields(form), button("Save") | on_click(save.with(form))});
-}
-
-element product_detail_view::fields(form_state<products::product> &form) {
-  return div({
-      label({text("Name"), input() | bind(form, &products::product::name)}),
-      label({text("Price"), input() | bind(form, &products::product::price)}),
-  });
-}
-
-constexpr component<product_detail_view::props> product_detail = product_detail_view{};
-```
-
-- its hooks are called in its call operator, and what they give passed to its parts by reference, which a handler
-  keeps as long as the component: the struct holds no data, as it is made for each view;
-- the views place the component, `product_detail({.item = item})`, never the struct;
-- a change of its parts' declarations, or of what they name, compiles again what places it, as its props do; a change
-  of their bodies its source only.
 
 **What a `use_` call gives is the component's own**, found again at each view by where it is called, and how many times
 that place was called before in the same view:
