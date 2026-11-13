@@ -41,6 +41,7 @@
 #include <quoll/ui/detail/callback_traits.hpp>
 #include <quoll/ui/detail/component/component_source.hpp>
 #include <quoll/ui/detail/component/hooks_table.hpp>
+#include <quoll/ui/detail/context/member_join.hpp>
 #include <quoll/ui/view/element.hpp>
 
 #include <concepts>
@@ -99,21 +100,56 @@ template <class Props, class F>
   }
 }
 
+// The props of a component written as a struct, `given->id`: those of its last view, kept by the app.
+template <class C>
+class given_props {
+public:
+  [[nodiscard]] auto operator->() const noexcept { return static_cast<typename C::props const *>(*slot_); }
+
+  [[nodiscard]] auto const &operator*() const noexcept { return *operator->(); }
+
+private:
+  template <class Props>
+  friend class quoll::ui::component;
+
+  void const *const *slot_ = nullptr;
+};
+
 template <class Props>
 class component_base {
 public:
   // Its identity: what the app keeps of a component placed, found again at the same place by it.
-  [[nodiscard]] constexpr component_table const &table() const noexcept { return *table_; }
+  [[nodiscard]] constexpr component_table const &table() const noexcept {
+    static_assert(
+        !std::derived_from<Props, quoll::ui::component<Props>>,
+        "quoll::ui: a component written as a struct is placed, routed, linked and mounted by its tag<name>"
+    );
+
+    return *table_;
+  }
 
 protected:
   template <class F>
   consteval explicit component_base(F) noexcept : table_(component_table_for<Props, F>()) {}
 
+  // That of a component written as a struct, given its table: what places it.
+  constexpr explicit component_base(component_table const &table) noexcept : table_(&table) {}
+
+  // The base of a component written as a struct, which places nothing.
+  constexpr component_base() noexcept = default;
+
 private:
-  component_table const *table_;
+  component_table const *table_ = nullptr;
 };
 
 } // namespace detail
+
+/**
+ * @brief What every component placed by its name is: one made of a lambda, `component<props>`, or the `tag<name>` of
+ * one written as a struct. Routes, links, `go` and the app's root take it, a component with props `P`, or none.
+ */
+template <class Props = void>
+using component_base = detail::component_base<Props>;
 
 /**
  * @brief A component: a piece of interface with its state, its view a function of its props, placed by calling it in
@@ -165,6 +201,16 @@ public:
 
   /** @brief Placed in a view, given `given`. */
   [[nodiscard]] element operator()(Props given) const { return detail::hooks_element(this->table(), std::move(given)); }
+
+protected:
+  /**
+   * @brief The base of a component written as a struct, `struct product_view : component<product_view>`, which the app
+   * makes as it first places one, and keeps while it stays there: see tag.
+   */
+  component() noexcept { given.slot_ = detail::making_props(); }
+
+  /** @brief Its props, `given->id`, those of its last view, as its members are made and in each of its views. */
+  detail::given_props<Props> given;
 };
 
 /** @brief A component with no props. */

@@ -84,7 +84,7 @@ template <http::fixed_string Full, class... Children, auto... Fields>
     return has_param(Full.view(), name) || (subtree_has<Full, Children>::find(name) || ...);
   };
 
-  auto const check = [&]<auto Field>() {
+  [[maybe_unused]] auto const check = [&]<auto Field>() {
     if constexpr (named<Field>) {
       using field_type = std::remove_cvref_t<decltype(Field)>;
 

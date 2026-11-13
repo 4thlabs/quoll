@@ -280,7 +280,7 @@ private:
 };
 
 // The entries of a function component's table that do not depend on the function: compiled once.
-[[nodiscard]] held_component make_hook_store();
+[[nodiscard]] held_component make_hook_store(void const *props);
 void link_hook_store(void *store, state_link to);
 void bind_hook_store(void *store, context_finder const &finder);
 void mark_hook_store(void *store);

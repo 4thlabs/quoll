@@ -473,6 +473,12 @@ changes only what the harness shows. Candidates:
   maintainer set: with Quoll's header and the app's contexts precompiled, under Clang, a view alone takes 0.6 s and one
   with a form and an action 1.4 s, the rest in instantiating `use_effect` and `use_action` in its source, about 0.6 s
   each, which the next pull request takes into Quoll's library behind type erasure, with a budget CI checks.
+- **Form S, a component written as a struct** (2026-11-13, [ADR 0002](adr/0002-ui-dsl-shape.md)): its first part done,
+  `struct note_counter : component<note_counter>` with `struct props` read through `given->`, states, effects, forms
+  and `shared<T>` as members that join it as the app makes it (`member_join`, no reflection), handlers as member
+  functions, `element view()` that may still call `use_context`, placed by `inline constexpr tag<note_counter>
+  note_counter;`, which routes, links, `go` and the root take. Next: an effect following a prop, `effect
+  load{given->id, ...}`, then `resource<T>` and `match`.
 - **Form D, a component's props its view's parameters** (2026-11-13, [ADR 0002](adr/0002-ui-dsl-shape.md)): done,
   `inline constexpr component note_row = [](notes::note const &item, bool const &selected) {...}` is a
   `component<parameters<notes::note, bool>>`, placed `note_row(item, true)`; one parameter is the props, as
@@ -485,7 +491,7 @@ changes only what the harness shows. Candidates:
   study of other frameworks and of a Rust rewrite of the samples, without reflection. Form S, `struct product_view :
   component<product_view>`, its `struct props` first, then its contexts, states, loads, effects and actions as members
   that join it as the app makes it, its handlers as member functions and `element view()`; placed by name through a
-  variable of the struct's name, `inline constexpr placer<product_view> product_view;`, which keeps today's calls,
+  variable of the struct's name, `inline constexpr tag<product_view> product_view;`, which keeps today's calls,
   `product_view({...})`, `link_to(product_page, {...}, ...)`, `mount(app_shell, ...)`. Form D, a lambda whose
   parameters are its props, `inline constexpr component product_view = [](products::product const &item) {...}`, with
   today's hooks. A load is one value, `resource<T>` or `use_resource`, read with `match(loading, failed, loaded)`;

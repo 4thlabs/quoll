@@ -86,8 +86,8 @@ template <Renderer R>
 class app {
 public:
   template <async::Executor E>
-  app(E executor, R renderer, component<> root, app_options options = {})
-      : renderer_(std::move(renderer)), root_(root),
+  app(E executor, R renderer, component_base<void> const &root, app_options options = {})
+      : renderer_(std::move(renderer)), root_(&root.table()),
         core_(async::any_executor{executor}, renderer_ref{renderer_}, &view_of, &root_, std::move(options)) {
 #if defined(QUOLL_UI_HOT)
     detail::hot_subscribe(&core_, &detail::app_core::reloaded);
@@ -168,7 +168,9 @@ public:
   [[nodiscard]] R &renderer() noexcept { return renderer_; }
 
 private:
-  static element view_of(void const *root) { return (*static_cast<component<> const *>(root))(); }
+  static element view_of(void const *root) {
+    return detail::hooks_element(**static_cast<detail::component_table const *const *>(root));
+  }
 
   [[nodiscard]] void *context_of(async::detail::type_id type) const {
     auto *const entry = core_.context(type);
@@ -181,7 +183,8 @@ private:
   }
 
   R renderer_;
-  component<> root_;
+  // The table of its root, a component with no props: one made of a lambda, or a struct's.
+  detail::component_table const *root_;
   // Its components, whose hooks call it, go with it.
   detail::app_core core_;
 };

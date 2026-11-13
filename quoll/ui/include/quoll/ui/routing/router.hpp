@@ -159,12 +159,12 @@ struct router {
 
   /** @brief Goes to the page `page`, the component a route names, for `props`, by its first route. */
   template <class P>
-  void go(component<P> const &page, std::type_identity_t<P> const &props) {
+  void go(component_base<P> const &page, std::type_identity_t<P> const &props) {
     core.go(href(page, props), false);
   }
 
   /** @brief Goes to the page `page`, without props. */
-  void go(component<> const &page) { core.go(href(page), false); }
+  void go(component_base<void> const &page) { core.go(href(page), false); }
 
   /** @brief Goes to `href` in place of the address now, which back() then does not come back to. */
   void replace(std::string_view href) { core.go(href, true); }
@@ -178,12 +178,12 @@ struct router {
    * @throws std::logic_error when no route shows it.
    */
   template <class P>
-  [[nodiscard]] std::string href(component<P> const &page, std::type_identity_t<P> const &props) const {
+  [[nodiscard]] std::string href(component_base<P> const &page, std::type_identity_t<P> const &props) const {
     return core.href(page.table(), &props);
   }
 
   /** @brief The address of the page `page`, without props. */
-  [[nodiscard]] std::string href(component<> const &page) const { return core.href(page.table(), nullptr); }
+  [[nodiscard]] std::string href(component_base<void> const &page) const { return core.href(page.table(), nullptr); }
 };
 
 /**
@@ -265,7 +265,7 @@ struct outlet_level {
  */
 template <class P>
 [[nodiscard]] element
-link_to(component<P> const &page, std::type_identity_t<P> const &props, detail::literal_text text) {
+link_to(component_base<P> const &page, std::type_identity_t<P> const &props, detail::literal_text text) {
   auto &nav = detail::router_in_view();
 
   return detail::linked(nav, nav.href(page, props), node("a", {ui::text(text)}));
@@ -273,18 +273,19 @@ link_to(component<P> const &page, std::type_identity_t<P> const &props, detail::
 
 /** @brief See link_to(). */
 template <class P>
-[[nodiscard]] element
-link_to(component<P> const &page, std::type_identity_t<P> const &props, std::initializer_list<detail::child> children) {
+[[nodiscard]] element link_to(
+    component_base<P> const &page, std::type_identity_t<P> const &props, std::initializer_list<detail::child> children
+) {
   auto &nav = detail::router_in_view();
 
   return detail::linked(nav, nav.href(page, props), node("a", children));
 }
 
 /** @brief A link to the page `page`, without props. */
-[[nodiscard]] element link_to(component<> const &page, std::initializer_list<detail::child> children);
+[[nodiscard]] element link_to(component_base<void> const &page, std::initializer_list<detail::child> children);
 
 /** @brief See link_to(), inline for its text, as the one to an address. */
-[[nodiscard]] inline element link_to(component<> const &page, detail::literal_text text) {
+[[nodiscard]] inline element link_to(component_base<void> const &page, detail::literal_text text) {
   return link_to(page, {ui::text(text)});
 }
 

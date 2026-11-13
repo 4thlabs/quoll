@@ -39,6 +39,7 @@
 
 #include <quoll/async/detail/type_id.hpp>
 #include <quoll/ui/detail/component/held_component.hpp>
+#include <quoll/ui/detail/context/context_finder.hpp>
 #include <quoll/ui/detail/data/effect_starter.hpp>
 #include <quoll/ui/detail/data/state_link.hpp>
 #include <quoll/ui/detail/view/view_context.hpp>
@@ -51,35 +52,6 @@
 namespace quoll::ui::detail {
 
 class context_entry;
-
-// A context found, and what holds what provides it, a component above, for as long as the one using it lives: none for
-// the app's, which outlives its components.
-struct found_context {
-  context_entry *entry = nullptr;
-  std::shared_ptr<void const> keeper{};
-};
-
-// Where a component finds its contexts, by type: those the components above it provide, nearest first, then those the
-// app's own component provides, then the app's; none for a view written once (to_html).
-struct context_finder {
-  std::shared_ptr<app_link> app{};
-  void const *owner = nullptr;
-  context_entry *(*find)(void const *owner, async::detail::type_id type) noexcept = nullptr;
-  // The component placing the one it finds for, from which those above are walked: none for the app's own.
-  std::shared_ptr<void const> from{};
-  found_context (*find_above)(std::shared_ptr<void const> const &from, async::detail::type_id type) noexcept = nullptr;
-
-  // The context of that type, or none.
-  [[nodiscard]] found_context operator()(async::detail::type_id type) const noexcept {
-    if (from && find_above != nullptr) {
-      if (auto found = find_above(from, type); found.entry != nullptr) {
-        return found;
-      }
-    }
-
-    return {.entry = find == nullptr ? nullptr : find(owner, type), .keeper = nullptr};
-  }
-};
 
 // A context held without its type: what to make it with, link its states to, start its effects with, and find the
 // contexts it uses itself. One per type, told apart by `type`.

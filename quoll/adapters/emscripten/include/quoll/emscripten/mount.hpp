@@ -89,7 +89,7 @@ void keep_mounted(ui::detail::component_table const &root, std::shared_ptr<void>
  * @throws what the first view throws: the page is left as it was, and a later mount can try again.
  */
 inline ui::app<dom_renderer> &
-mount(ui::component<> root, std::string_view selector = "#app", ui::app_options options = {}) {
+mount(ui::component_base<void> const &root, std::string_view selector = "#app", ui::app_options options = {}) {
   using app_type = ui::app<dom_renderer>;
 
   if (detail::is_mounted(root.table())) {
