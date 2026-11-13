@@ -57,6 +57,7 @@
 #include <concepts>
 #include <exception>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <stop_token>
@@ -248,6 +249,11 @@ public:
     using value = detail::effect_value_t<F, followed>;
 
     static_assert(
+        !std::is_pointer_v<followed>,
+        "quoll::ui::effect: what follows its props gives a value, not a pointer into them, which their next view frees"
+    );
+
+    static_assert(
         detail::kept_as_values<value>, "quoll::ui::effect: the values its function gives are kept, as values"
     );
     detail::check_target<T, value, false>();
@@ -262,6 +268,11 @@ public:
   effect(Follow follow, F function, effect_options options = {}) {
     using followed = typename detail::follow_traits<Follow>::value;
     using value = detail::effect_value_t<F, followed>;
+
+    static_assert(
+        !std::is_pointer_v<followed>,
+        "quoll::ui::effect: what follows its props gives a value, not a pointer into them, which their next view frees"
+    );
 
     static_assert(std::is_void_v<value>, "quoll::ui::effect: the values its function gives go into a target state");
 
@@ -358,11 +369,23 @@ private:
 
     target_ = target.hooks();
 
-    watch_ = [read, last = std::optional<std::tuple<D...>>{}](watching asked) mutable {
+    // What the last record took, which a run that follows it copies: what it follows is read once a view, a function
+    // of the props called once, and a run is given what was compared.
+    auto const last = std::make_shared<std::optional<std::tuple<D...>>>();
+
+    watch_ = [read, last](watching asked) {
       // Forgotten before any comparison, which may be what failed: reload() runs it whatever its states compare.
       if (asked == watching::forget) {
-        last.reset();
+        last->reset();
         return std::optional<watched>{};
+      }
+
+      // Before the first view, what holds a value always will: nothing read, which may throw where nothing may.
+      constexpr bool always_holds =
+          (std::same_as<typename detail::dependency_traits<D>::value_type, std::remove_cv_t<D>> && ...);
+
+      if (asked == watching::peek && always_holds) {
+        return std::optional<watched>{watched{.differs = false, .holds = true}};
       }
 
       auto const now = read();
@@ -378,23 +401,24 @@ private:
         return std::optional<watched>{watched{.differs = false, .holds = holds}};
       }
 
-      bool const differs = !last || !(*last == now);
+      bool const differs = !*last || !(**last == now);
 
       if (differs) {
-        last.emplace(now);
+        last->emplace(now);
       }
 
       return std::optional<watched>{watched{.differs = differs, .holds = holds}};
     };
 
-    run_ = [this, read, function = std::move(function), target,
+    // Called only after a record that found them changed, and took them.
+    run_ = [this, last, function = std::move(function), target,
             debounce = options.debounce](std::stop_token mine, bool waits) {
       // Its own copy of each value, given as rvalues: a function taking them by reference refers to the run's copy.
       auto copied = std::apply(
           [](auto const &...held) {
             return values{detail::dependency_traits<std::remove_cvref_t<decltype(held)>>::value(held)...};
           },
-          read()
+          **last
       );
 
       auto call = [function, copied = std::move(copied)]() mutable {

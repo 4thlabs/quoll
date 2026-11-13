@@ -79,6 +79,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/component_props_by_value.cpp
     tests/compile_fail/component_struct_props_by_value.cpp
     tests/compile_fail/component_view_parameter.cpp
+    tests/compile_fail/effect_follow_pointer.cpp
     tests/compile_fail/effect_optional_view_dependency.cpp
     tests/compile_fail/effect_pair_span_value.cpp
     tests/compile_fail/effect_values_without_target.cpp

@@ -501,8 +501,8 @@ changes only what the harness shows. Candidates:
   `route<"{id}", product_page>(&product_page::props::id)`. Header-only makes a page one unit: it fits the second's budget, up to about 30 components, once Glaze leaves the UI's
   headers and effects, actions, forms and loads are erased into the library, the next pull request; then the two forms
   on the real library, three components first, measured. Modules later, with GCC 15. Against the 2026-11-12 count
-  (a struct form generating three times the code of a function), form S's effects follow a reference rather than a
-  type of props, and its tables are erased: the pull request measures it, form D staying if it costs as much.
+  (a struct form generating three times the code of a function), form S's effects follow a field or a function of
+  their props, read from the props of each view, and its tables are erased: the pull request measures it, form D staying if it costs as much.
 - **A debounce is an option of the effect** (2026-11-12), as the maintainer chose over a `debounced<T>` value to
   declare beside the state, as React's `useDebounce`, and over a pause Quoll would add to any change made by typing:
   `effect search{query, f, found, {.debounce = 300ms}}`. A run that follows a change waits that long before it calls

@@ -60,7 +60,16 @@ void effect::after_view(detail::effect_starter const &start) {
 
   // Before the first view: loading if its first run will start.
   if (start.first) {
-    if (watch_(watching::peek)->holds) {
+    bool holds = false;
+
+    // What follows its props may throw, a function of them or a copy lacking memory: not here, where nothing may, but
+    // as it is read again after the view, which reports it. Its target is not loading meanwhile.
+    try {
+      holds = watch_(watching::peek)->holds;
+    } catch (...) { // NOLINT(bugprone-empty-catch): read again after the view, which reports it.
+    }
+
+    if (holds) {
       target_.begin();
     }
 
