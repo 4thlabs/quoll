@@ -84,7 +84,8 @@ class making_scope {
 public:
   // What is made in its scope is a component written as a struct, in the storage [begin, end), its props in `props`.
   making_scope(
-      member_registry &into, context_finder const &finder, void const *begin, void const *end, void const *const *props
+      member_registry &into, context_finder const &finder, void const *begin, void const *end, void const *const *props,
+      async::detail::type_id props_type
   ) noexcept;
 
   making_scope(making_scope const &) = delete;

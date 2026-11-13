@@ -93,7 +93,9 @@ public:
   void make(context_finder const &finder) {
     hooks_.bind(finder);
 
-    making_scope const scope{members_, finder, storage_, storage_ + sizeof(C), &props_};
+    making_scope const scope{members_, finder,
+                             storage_, storage_ + sizeof(C),
+                             &props_,  async::detail::type_id_of<struct_props_t<C>>()};
 
     std::construct_at(reinterpret_cast<C *>(storage_));
     made_ = true;

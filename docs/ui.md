@@ -165,6 +165,13 @@ note_counter({.label = "Notes"})
   each view of its parent, and destroys it as it goes. Its members are made once: its states, effects, forms and the
   contexts it uses as `shared<T>` join it as they are made, with no reflection, a `shared<T>` the app was not given
   refusing it with `std::logic_error`. A member made later, as one an `optional` makes, joins nothing;
+- an effect follows a state, or what its props give: a field of them, `effect load{&props::id, load_notes, notes};`,
+  or a function of them, `effect load{[](props const &given) { return given.item.id; }, load_notes, notes};`, taking
+  them by const reference or by value, not generic, for a nested field, one a base declares, or a value computed.
+  Read from the props of each view, it runs again as that value changes, the run before stopped, and not as another
+  prop does. Props equal to the last ones by their `==` give no view: a field their `==` leaves out is seen with the
+  next props that differ. One outside the making of a struct, or following the props of another, as `&props::size`
+  names a base's, throws `std::logic_error`;
 - its handlers are member functions, `[this] { add(); }`: the struct lives as long as the component;
 - its view may still call `use_context<T>()` and `provide_context<T>()`;
 - `tag<name>` is what places it, and what routes, links, `go` and the app's root take, as a component made of a lambda:

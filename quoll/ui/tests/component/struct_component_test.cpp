@@ -44,6 +44,7 @@
 #include <quoll/ui/detail/context/member_registry.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -52,6 +53,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace struct_component_test {
@@ -315,6 +317,144 @@ struct fragile_page : component<fragile_page> {
 
 inline constexpr tag<fragile_page> fragile_page;
 
+std::vector<std::int64_t> loads;
+
+// A later id loads faster: the load of an id left behind would end last, and show, unless stopped.
+task<std::string> load_for(std::int64_t id) {
+  loads.push_back(id);
+  co_await quoll::async::sleep_for(std::chrono::milliseconds{10 - id});
+  co_return "loaded " + std::to_string(id);
+}
+
+std::vector<std::string> followed;
+
+task<> note_followed(std::int64_t id) {
+  followed.push_back("id " + std::to_string(id));
+  co_return;
+}
+
+// What it loads follows a prop: read from the props of each view, the load before stopped as it changes.
+struct product_card : component<product_card> {
+  struct props {
+    std::int64_t id = 0;
+    std::string note;
+
+    bool operator==(props const &) const = default;
+  };
+
+  async_state<std::string> loaded;
+  effect load{&props::id, load_for, loaded};
+  effect note{&props::id, note_followed};
+
+  element view() { return p(loaded->loading ? std::string{"loading"} : loaded->value + " " + given->note); }
+};
+
+inline constexpr tag<product_card> product_card;
+
+struct product_card_data {
+  state<std::int64_t> id{1};
+  state<std::string> note{"a"};
+};
+
+struct product_card_page : component<product_card_page> {
+  element view() {
+    auto &self = use_context<product_card_data>();
+
+    return product_card({.id = *self->id, .note = *self->note});
+  }
+};
+
+inline constexpr tag<product_card_page> product_card_page;
+
+// What a function of its props gives: a nested field, a field of a base, a const one.
+struct sized {
+  std::int64_t size = 0;
+
+  bool operator==(sized const &) const = default;
+};
+
+struct shelf_item {
+  std::int64_t id = 0;
+};
+
+struct shelf_card : component<shelf_card> {
+  struct props : sized {
+    shelf_item item;
+    std::int64_t const rank = 0;
+
+    bool operator==(props const &other) const { return item.id == other.item.id && size == other.size; }
+  };
+
+  async_state<std::string> by_item;
+  async_state<std::string> by_size;
+  async_state<std::string> by_rank;
+  effect item_load{[](props const &given) noexcept { return given.item.id; }, load_for, by_item};
+  effect size_load{[](props given) static { return given.size; }, load_for, by_size};
+  effect rank_load{&props::rank, load_for, by_rank};
+
+  element view() { return p(by_item->value + ", " + by_size->value + ", " + by_rank->value); }
+};
+
+inline constexpr tag<shelf_card> shelf_card;
+
+struct shelf_data {
+  state<std::int64_t> id{1};
+  state<std::int64_t> size{2};
+  state<std::int64_t> rank{3};
+};
+
+struct shelf_page : component<shelf_page> {
+  element view() {
+    auto &self = use_context<shelf_data>();
+
+    return shelf_card({{.size = *self->size}, {.id = *self->id}, *self->rank});
+  }
+};
+
+inline constexpr tag<shelf_page> shelf_page;
+
+// An effect following the props of another struct: refused as it is made.
+struct mismatched : component<mismatched> {
+  struct props {
+    std::int64_t id = 0;
+
+    bool operator==(props const &) const = default;
+  };
+
+  async_state<std::string> loaded;
+  effect load{&product_card::props::id, load_for, loaded};
+
+  element view() { return p("never"); }
+};
+
+inline constexpr tag<mismatched> mismatched;
+
+struct mismatched_page : component<mismatched_page> {
+  element view() { return mismatched({.id = 1}); }
+};
+
+inline constexpr tag<mismatched_page> mismatched_page;
+
+// A field a base of its props declares, named by a member pointer: that of the base, refused as another's.
+struct base_field : component<base_field> {
+  struct props : sized {
+    bool operator==(props const &) const = default;
+  };
+
+  async_state<std::string> loaded;
+  effect load{&props::size, load_for, loaded};
+
+  element view() { return p("never"); }
+};
+
+inline constexpr tag<base_field> base_field;
+
+struct base_field_page : component<base_field_page> {
+  element view() { return base_field({{.size = 1}}); }
+};
+
+inline constexpr tag<base_field_page> base_field_page;
+
 } // namespace struct_component_test
 
 using namespace struct_component_test;
@@ -563,4 +703,132 @@ TEST_CASE("struct component: a member that goes ahead of those starting is not c
 
   registry.run_effects({});
   CHECK(calls == std::vector<std::string>{"first", "third"});
+}
+
+TEST_CASE(
+    "struct component: an effect on a prop runs as it is first viewed, and again only as that prop changes",
+    "[ui][struct]"
+) {
+  loads.clear();
+  followed.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app instance{time.get_executor(), shown, product_card_page, {.contexts = {provide<product_card_data>()}}};
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(10ms);
+    CHECK(shown.html() == "<p>loaded 1 a</p>");
+
+    // Another prop changed: no load.
+    instance.context<product_card_data>().note = "b";
+    co_await quoll::async::sleep_for(10ms);
+    CHECK(loads == std::vector<std::int64_t>{1});
+
+    // Its prop changed twice at once: the load of 2, slower, stopped, rather than end after that of 3 and show.
+    instance.context<product_card_data>().id = 2;
+    co_await settle();
+    instance.context<product_card_data>().id = 3;
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html() == "<p>loaded 3 b</p>");
+  CHECK(loads == std::vector<std::int64_t>{1, 2, 3});
+  CHECK(followed == std::vector<std::string>{"id 1", "id 2", "id 3"});
+}
+
+TEST_CASE(
+    "struct component: an effect on a prop outside the making of a struct, or on none, is refused", "[ui][struct]"
+) {
+  state<std::string> target;
+
+  using Catch::Matchers::ContainsSubstring;
+
+  CHECK_THROWS_WITH(
+      (effect{&product_card::props::id, load_for, target}), ContainsSubstring("is a member of a component written")
+  );
+  CHECK_THROWS_WITH(
+      (effect{static_cast<std::int64_t product_card::props::*>(nullptr), load_for, target}),
+      ContainsSubstring("no prop")
+  );
+  CHECK_THROWS_WITH(
+      (effect{static_cast<std::int64_t (*)(product_card::props const &)>(nullptr), load_for, target}),
+      ContainsSubstring("no prop")
+  );
+}
+
+TEST_CASE(
+    "struct component: an effect follows a function of its props, a nested field, a base's, a const one", "[ui][struct]"
+) {
+  loads.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app instance{time.get_executor(), shown, shelf_page, {.contexts = {provide<shelf_data>()}}};
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(20ms);
+    CHECK(shown.html() == "<p>loaded 1, loaded 2, loaded 3</p>");
+    CHECK(loads == std::vector<std::int64_t>{1, 2, 3});
+
+    // The nested field changed: its load alone, through a function of the props.
+    instance.context<shelf_data>().id = 4;
+    co_await quoll::async::sleep_for(20ms);
+    CHECK(shown.html() == "<p>loaded 4, loaded 2, loaded 3</p>");
+    CHECK(loads == std::vector<std::int64_t>{1, 2, 3, 4});
+
+    // A field the props' == leaves out: they compare equal, the last view is given again, and no effect sees it.
+    instance.context<shelf_data>().rank = 5;
+    co_await quoll::async::sleep_for(20ms);
+    CHECK(loads == std::vector<std::int64_t>{1, 2, 3, 4});
+
+    // The base's field changed: its load, and that of the field left out, seen with these props.
+    instance.context<shelf_data>().size = 6;
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html() == "<p>loaded 4, loaded 6, loaded 5</p>");
+  CHECK(loads == std::vector<std::int64_t>{1, 2, 3, 4, 6, 5});
+}
+
+TEST_CASE("struct component: an effect on the props of another struct is refused as it is made", "[ui][struct]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app instance{time.get_executor(), shown, mismatched_page};
+
+  auto const act = [&]() -> task<int> {
+    try {
+      instance.start();
+    } catch (std::logic_error const &error) {
+      co_return std::string_view{error.what()}.find("follows its own component's props") == std::string_view::npos ? 1
+                                                                                                                   : 0;
+    }
+
+    co_return 1;
+  };
+
+  CHECK(quoll::test::run(time, act()) == 0);
+}
+
+TEST_CASE(
+    "struct component: an effect on a base's field by a member pointer is refused as it is made", "[ui][struct]"
+) {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app instance{time.get_executor(), shown, base_field_page};
+
+  auto const act = [&]() -> task<int> {
+    try {
+      instance.start();
+    } catch (std::logic_error const &error) {
+      co_return std::string_view{error.what()}.find("a field a base of them declares") == std::string_view::npos ? 1
+                                                                                                                 : 0;
+    }
+
+    co_return 1;
+  };
+
+  CHECK(quoll::test::run(time, act()) == 0);
 }

@@ -37,6 +37,7 @@
 #ifndef QUOLL_UI_DETAIL_CONTEXT_MEMBER_JOIN_HPP
 #define QUOLL_UI_DETAIL_CONTEXT_MEMBER_JOIN_HPP
 
+#include <quoll/async/detail/type_id.hpp>
 #include <quoll/ui/detail/data/state_link.hpp>
 
 namespace quoll::ui::detail {
@@ -69,8 +70,10 @@ struct making_context {
   context_finder const *finder = nullptr;
   void const *begin = nullptr;
   void const *end = nullptr;
-  // Where a component written as a struct finds its props, as its base reads them: none for a context.
+  // Where a component written as a struct finds its props, as its base reads them, and their type: none for a
+  // context.
   void const *const *props = nullptr;
+  async::detail::type_id props_type = nullptr;
 
   // Whether `member` is in the context's storage, rather than a value its making uses for a moment.
   [[nodiscard]] bool holds(void const *member) const noexcept;
@@ -81,6 +84,10 @@ struct making_context {
 
 // Where the props of the component written as a struct being made are kept, none outside its making.
 [[nodiscard]] void const *const *making_props() noexcept;
+
+// Where the props of the struct being made are kept, for its member `member` reading them as props of `type`.
+// @throws std::logic_error outside the making of a struct, for what is no member of it, or for props of another type.
+[[nodiscard]] void const *const *making_props_of(async::detail::type_id type, void const *member);
 
 // `member` joins `into`, and leaves it by its join, as it goes before its context.
 void join(member_registry &into, registered_member member);

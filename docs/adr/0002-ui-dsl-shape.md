@@ -147,7 +147,7 @@ struct product_view : component<product_view> {
   };
 
   // State: its sales, loaded as it first shows and again as the id changes, the load before stopped.
-  resource<products::monthly_sales> sales{given->item.id, products_client::sales};
+  resource<products::monthly_sales> sales{[](props const &given) { return given.item.id; }, products_client::sales};
 
   // Handlers
   void retry() { sales.reload(); }
@@ -243,13 +243,12 @@ inline constexpr tag<product_detail> product_detail;
 - **`given`** is a member of the base whose `operator->` has a deduced return type, so the base never names
   `product_view::props` while the struct is incomplete. It is read in member functions and member initializers, where
   the struct is complete: no `using` line, and no constraint asked on an incomplete type.
-- **What an effect or a load follows** is named by reference, `given->item.id` or a state, and compared after each
-  view; a value made on the spot, `given->item.id + 1`, does not compile (a deleted overload). A function of values,
-  `[this] { return ...; }`, for what is computed.
+- **What an effect or a load follows** is a state, or what its props give, a field, `&props::id`, or a function of
+  them, `[](props const &given) { return given.item.id; }`, read from the props of each view and compared with what
+  the last run was given: a reference into the props, `given->id`, would dangle, as the props are replaced at each
+  view of the parent (found as it was built, 2026-11-13).
 - **A context** is the same struct without a view: `provide<catalog>()` makes it under the same scope, its members
-  joining it, and Glaze no longer walks it. One change to today's: `effect load{std::tie(), products_client::list,
-  items};` follows a value made on the spot, which the rule above refuses, so a load that follows nothing is
-  `resource<std::vector<products::product>> items{products_client::list};`, or an effect with no key.
+  joining it, and Glaze no longer walks it.
 - **A struct made by hand**, `struct product_view mine;`, compiles and throws `std::logic_error` as it runs: C++23
   cannot refuse it as it compiles.
 
