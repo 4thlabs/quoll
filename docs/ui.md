@@ -89,39 +89,40 @@ inline constexpr component<> notes_page = [] {
 | Call an API              | A `rest::client`, over [`fetch`](runtimes.md#httpclient-in-a-browser)                                                                          |
 | Make a decorator         | `decorator([](element &target) { target.classes += " card"; })`                                                                                |
 
-**A component is a header and a source**, one way everywhere, its props always written:
+**A component's props are the parameters of its view**, each by const reference, which give its type:
 
 ```cpp
-// components/note_row.hpp: its props, and the component declared
-struct note_row_props {
-  notes::note item;
-  callback<void(std::int64_t)> on_remove;
+// None: a component<>.
+inline constexpr component title = [] { return h1("Notes"); };
 
-  bool operator==(note_row_props const &) const = default;
+// One, or several, placed in order: note_row(item, remove).
+inline constexpr component note_row = [](notes::note const &item, callback<void(std::int64_t)> const &on_remove) {
+  auto const remove = [&item, &on_remove] { return on_remove(item.id); };
+
+  return li({span(item.text), button("Delete") | on_click(remove)});
 };
 
-extern component<note_row_props> const note_row;
-
-// components/note_row.cpp: its view
-#include "components/note_row.hpp"
-
-constexpr component<note_row_props> note_row = [](note_row_props const &given) {
-  auto const remove = [&given] { return given.on_remove(given.item.id); };
-
-  return li({span(given.item.text), button("Delete") | on_click(remove)});
-};
+// A struct of props, whose fields are named as it is placed: chart({.title = "Sales", .height = 64}).
+inline constexpr component chart = [](chart_props const &given) { ... };
 ```
 
-- `component<>` for one with no props; `component name = ...`, its props not written, does not compile;
-- the source includes its own header first, which gives the definition its linkage, then the headers of the components
-  it places: a change of a view compiles again only its source, and a change of props its source and those placing it;
-- the examples of this guide define a component in one block, as `inline constexpr component<props> name = ...` in a
-  header would, which a program splits so;
-- made of a lambda capturing nothing, or of an empty struct whose `element operator()(props const &) const` keeps the
-  props and their helpers together, as `constexpr component<badge::props> badge_shown = badge{};`. It is made for each
-  view, and holds nothing: what lasts is its hooks. One capturing, or holding members, does not compile;
-- its props by const reference, `element (props const &)`, or `element ()` for none: taken by value, they would be a
-  copy that goes as the view returns, which a closure of the view may capture, and that does not compile either.
+- several parameters are compared together, each with its `==`: a component whose props compare equal to the last
+  ones, and whose states did not change, is not viewed again. One of them without `==`, or one struct of props without
+  it, and the component is viewed again at each view of its parent;
+- its props are kept with it, past its parent's view: a parameter that is a view, as a `std::string_view` or a
+  `std::span`, does not compile, and one takes a `std::string`;
+- a component is `inline constexpr` in a header, or declared in a header with its props written,
+  `extern component<note_row_props> const note_row;`, or `component<parameters<notes::note, bool>>` for several, and
+  defined in a source of its own,
+  `constexpr component<note_row_props> note_row = ...`, which includes its own header first, which gives the definition
+  its linkage: a change of a view compiles again only its source, and a change of props its source and those placing
+  it;
+- made of a lambda capturing nothing, or of an empty struct whose call operator gives the view, as
+  `constexpr component<badge::props> badge_shown = badge{};`. It is made for each view, and holds nothing: what lasts
+  is its hooks. One capturing, or holding members, does not compile;
+- its props by const reference: taken by value, or by a reference that is not const, they would be a copy that goes as
+  the view returns, which a closure of the view may capture, or what its parent gave written into, and that does not
+  compile either.
 
 **What a `use_` call gives is the component's own**, found again at each view by where it is called, and how many times
 that place was called before in the same view:

@@ -40,40 +40,64 @@
 #include <quoll/ui/view/element.hpp>
 
 #include <concepts>
+#include <tuple>
 #include <type_traits>
 
 namespace quoll::ui {
 
+/**
+ * @brief The props of a component whose view takes several parameters: their values, in order, compared together when
+ * each has its `==`. Its type, as an `extern` declaration writes it: `extern component<parameters<note, bool>> const
+ * note_row;`.
+ */
+template <class... A>
+struct parameters {
+  std::tuple<A...> values;
+
+  bool operator==(parameters const &) const
+    requires(std::equality_comparable<A> && ...)
+  = default;
+};
+
 namespace detail {
 
-// What a call operator takes: its props by const reference, or nothing; props by value are told apart, to say so.
+// The props of a view taking `A...`: none, the one it takes, or its parameters together.
+template <class... A>
+struct props_of_parameters {
+  using type = parameters<A...>;
+};
+
+template <>
+struct props_of_parameters<> {
+  using type = void;
+};
+
+template <class A>
+struct props_of_parameters<A> {
+  using type = A;
+};
+
+// Whether a view takes `A` by const reference, as its props: not an array or a function, which a placement would take
+// as a pointer.
+template <class A>
+inline constexpr bool by_const_reference =
+    std::is_lvalue_reference_v<A> && std::is_const_v<std::remove_reference_t<A>> &&
+    !std::is_array_v<std::remove_cvref_t<A>> && !std::is_function_v<std::remove_cvref_t<A>>;
+
+// What a call operator takes: its props by const reference, each of its parameters, or nothing; one taken otherwise,
+// by value or by a reference not const, is told apart, to say so.
 template <class S>
 struct call_operator_traits {
   static constexpr bool valid = false;
-  static constexpr bool by_value = false;
+  static constexpr bool not_by_const_reference = false;
   using props = void;
 };
 
-template <class C>
-struct call_operator_traits<element (C::*)()> {
-  static constexpr bool valid = true;
-  static constexpr bool by_value = false;
-  using props = void;
-};
-
-template <class C, class P>
-struct call_operator_traits<element (C::*)(P const &)> {
-  static constexpr bool valid = true;
-  static constexpr bool by_value = false;
-  using props = P;
-};
-
-template <class C, class P>
-  requires(!std::is_reference_v<P>)
-struct call_operator_traits<element (C::*)(P)> {
-  static constexpr bool valid = false;
-  static constexpr bool by_value = true;
-  using props = P;
+template <class C, class... A>
+struct call_operator_traits<element (C::*)(A...)> {
+  static constexpr bool valid = (by_const_reference<A> && ...);
+  static constexpr bool not_by_const_reference = !valid;
+  using props = typename props_of_parameters<std::remove_cvref_t<A>...>::type;
 };
 
 template <class C, class... A>
@@ -100,8 +124,9 @@ struct component_view_model {
 
 /**
  * @brief What a component is made of: a lambda capturing nothing, or an empty struct, whose call operator gives the
- * view, `element (props const &)` or `element ()`. Made for each view, it holds nothing: what lasts is its `use_`
- * hooks. Its props by const reference, which what its view writes may capture, kept with it.
+ * view, `element (props const &)`, `element (a const &, b const &...)`, or `element ()`. Made for each view, it holds
+ * nothing: what lasts is its `use_` hooks. Its props by const reference, which what its view writes may capture, kept
+ * with it.
  */
 template <class F>
 concept ComponentView = detail::view_traits<F>::valid && std::is_empty_v<F> && std::default_initializable<F>;

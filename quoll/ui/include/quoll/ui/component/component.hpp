@@ -38,6 +38,7 @@
 #define QUOLL_UI_COMPONENT_COMPONENT_HPP
 
 #include <quoll/ui/component/component_view.hpp>
+#include <quoll/ui/detail/callback_traits.hpp>
 #include <quoll/ui/detail/component/component_source.hpp>
 #include <quoll/ui/detail/component/hooks_table.hpp>
 #include <quoll/ui/view/element.hpp>
@@ -50,15 +51,15 @@ namespace quoll::ui {
 
 namespace detail {
 
-// What a component written without its props stands for: refused, so that every component says them.
-template <class F>
-struct unwritten_props {};
-
+// Whether props refer to what they do not hold: each of several parameters, or the one.
 template <class P>
-inline constexpr bool is_unwritten = false;
+inline constexpr bool holds_view_props = holds_view<P>;
 
-template <class F>
-inline constexpr bool is_unwritten<unwritten_props<F>> = true;
+template <>
+inline constexpr bool holds_view_props<void> = false;
+
+template <class... A>
+inline constexpr bool holds_view_props<parameters<A...>> = (holds_view<A> || ...);
 
 // The table of components made of F, once it is checked: what a component is made of says what is wrong with it.
 template <class Props, class F>
@@ -66,28 +67,29 @@ template <class Props, class F>
   using traits = view_traits<F>;
 
   static_assert(
-      !is_unwritten<Props>, "quoll::ui: a component says its props: component<props>, or component<> for none"
+      traits::valid || traits::not_by_const_reference,
+      "quoll::ui: a component is made of a lambda or an empty struct whose call operator is `element (props const &)`, "
+      "`element (a const &, b const &...)` or `element ()`"
   );
   static_assert(
-      traits::valid || traits::by_value,
-      "quoll::ui: a component is made of a lambda or an empty struct whose call operator is `element (props const &)` "
-      "or `element ()`"
-  );
-  static_assert(
-      !traits::by_value, "quoll::ui: a component takes its props by const reference, `element (props const &)`, which "
-                         "what its view writes "
-                         "may capture"
+      !traits::not_by_const_reference,
+      "quoll::ui: a component takes its props by const reference, `element (props const &)`, which "
+      "what its view writes may capture"
   );
   static_assert(
       std::is_empty_v<F> && std::default_initializable<F>,
       "quoll::ui: a component captures nothing, made for each view: its state is its use_ hooks"
   );
   static_assert(
-      is_unwritten<Props> || std::same_as<typename traits::props, Props>,
-      "quoll::ui: a component<Props> is made of a view taking Props"
+      std::same_as<typename traits::props, Props>, "quoll::ui: a component<Props> is made of a view taking Props"
+  );
+  static_assert(
+      !holds_view_props<typename traits::props>,
+      "quoll::ui: a component keeps its props, which outlive its parent's view: none is a view, as a std::string_view, "
+      "a std::span or a pointer, but owns what it holds, a std::string"
   );
 
-  if constexpr (!is_unwritten<Props> && ComponentView<F> && std::same_as<typename traits::props, Props>) {
+  if constexpr (ComponentView<F> && std::same_as<typename traits::props, Props>) {
     return &view_table_of<F>;
   } else {
     return nullptr;
@@ -115,28 +117,29 @@ private:
  * the view of another, as React's.
  *
  * @code
- * struct product_detail_props {
- *   products::product item;
+ * // Its props, its parameters: a component<products::product>.
+ * inline constexpr component product_detail = [](products::product const &item) {
+ *   auto &form = use_form(item);
  *
- *   bool operator==(product_detail_props const &) const = default;
+ *   return section({h2(text(item.name)), input() | bind(form, &products::product::name)});
  * };
  *
- * inline constexpr component<product_detail_props> product_detail = [](product_detail_props const &given) {
- *   auto &form = use_form(given.item);
- *
- *   return section({h2(text(given.item.name)), input(form.bind(&products::product::name))});
- * };
+ * // Several, placed in order; or one struct, whose fields are named as it is placed.
+ * inline constexpr component product_row = [](products::product const &item, bool const &selected) { ... };
+ * inline constexpr component chart = [](chart_props const &given) { ... };
  *
  * // In the view of another:
- * return div({product_detail({.item = chosen})});
+ * return div({product_detail(chosen), product_row(item, true), chart({.title = "Sales"})});
  * @endcode
  *
- * Made of a lambda capturing nothing, or an empty struct, whose call operator gives the view: `element (props const
- * &)`, or `element ()` for one with no props, a `component<>`. Its state is the `use_` hooks its view calls, found
- * again at each view by where they are called. Always written with its props, `constexpr component<props>`, `inline`
- * in a header as any constant there; or declared in a header as `extern component<props> const product_detail;` and
- * defined in a source of its own as `constexpr component<props> product_detail = ...`, which a change to it alone
- * compiles again.
+ * Made of a lambda capturing nothing, or an empty struct, whose call operator gives the view, each of its parameters by
+ * const reference: `element (props const &)`, `element (a const &, b const &...)`, or `element ()` for one with none,
+ * a `component<>`. Its props are deduced from them, `component name = ...`, or written, `component<props>` or
+ * `component<parameters<a, b>>` for several, as an `extern` declaration needs. They are kept with the component, past
+ * its parent's view: a view, as a `std::string_view`, does not compile. Its state is the `use_` hooks its view calls,
+ * found again at each view by where they are called. `inline constexpr` in a header, or declared in a header as `extern
+ * component<props> const name;` and defined in a source of its own as `constexpr component<props> name = ...`, which a
+ * change to it alone compiles again.
  *
  * Placed, the app keeps its instance, its hooks with it, from one view of the parent to the next, while it stays at the
  * same place, and gives it its props, unless they compare equal to the last ones and none of its states changed: then
@@ -177,9 +180,30 @@ public:
   [[nodiscard]] element operator()() const { return detail::hooks_element(this->table()); }
 };
 
-// Refused as it is made: a component says its props.
+/**
+ * @brief A component of several props, its view taking each, placed with them in order: `product_row(item, true)`.
+ */
+template <class... A>
+class component<parameters<A...>> : public detail::component_base<parameters<A...>> {
+public:
+  using props_type = parameters<A...>;
+
+  /** @brief Made of `view`, at compile time. */
+  template <class F>
+    requires detail::ComponentSource<F>
+  // NOLINTNEXTLINE(google-explicit-constructor): it stands for its function, which a lambda makes.
+  consteval component(F view) noexcept : detail::component_base<props_type>(view) {}
+
+  /** @brief Placed in a view, given its props in the order of its parameters, kept with it. */
+  [[nodiscard]] element operator()(A... given) const {
+    return detail::hooks_element(this->table(), props_type{{std::move(given)...}});
+  }
+};
+
+// Its props, as its view takes them: `component badge = [](std::string const &label) {...}` is a
+// component<std::string>, one of none a component<>, one of several a component<parameters<...>>.
 template <class F>
-component(F) -> component<detail::unwritten_props<F>>;
+component(F) -> component<typename detail::view_traits<F>::props>;
 
 } // namespace quoll::ui
 

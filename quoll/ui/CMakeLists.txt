@@ -69,11 +69,13 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/callback_view_result.cpp
     tests/compile_fail/component_capturing.cpp
     tests/compile_fail/component_generic_lambda.cpp
+    tests/compile_fail/component_later_parameter_by_value.cpp
+    tests/compile_fail/component_mutable_parameter.cpp
     tests/compile_fail/component_not_a_view.cpp
     tests/compile_fail/component_other_props.cpp
     tests/compile_fail/component_props_by_value.cpp
     tests/compile_fail/component_struct_props_by_value.cpp
-    tests/compile_fail/component_without_props.cpp
+    tests/compile_fail/component_view_parameter.cpp
     tests/compile_fail/effect_optional_view_dependency.cpp
     tests/compile_fail/effect_pair_span_value.cpp
     tests/compile_fail/effect_values_without_target.cpp
@@ -89,6 +91,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/route_fields_without_props.cpp
     tests/compile_fail/route_member_twice.cpp
     tests/compile_fail/route_not_found_path_field.cpp
+    tests/compile_fail/route_page_of_parameters.cpp
     tests/compile_fail/route_param_without_field.cpp
     tests/compile_fail/route_parameter_read_twice.cpp
     tests/compile_fail/route_path_name_unknown.cpp
