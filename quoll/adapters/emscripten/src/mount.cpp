@@ -34,37 +34,39 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The sales of a product, in a chart.js chart, and the month of the point clicked. Its view is in sales_chart.cpp: the
-// widget writes its props and reads what it emits with Glaze, which a change in the rest of the page then does not
-// compile again.
+#include <quoll/emscripten/mount.hpp>
 
-#ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_SALES_CHART_HPP
-#define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_SALES_CHART_HPP
+#include <algorithm>
+#include <memory>
+#include <utility>
+#include <vector>
 
-#include "product.hpp"
+namespace quoll::emscripten::detail {
 
-#include <quoll/ui/data/state.hpp>
-#include <quoll/ui/view/element.hpp>
+namespace {
 
-#include <cstddef>
-#include <optional>
-
-namespace dashboard_web {
-
-using namespace quoll::ui;
-
-struct sales_chart {
-  struct props {
-    products::monthly_sales sales;
-
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  state<std::optional<std::size_t>> selected;
-
-  element view(props const &given);
+struct mounted {
+  ui::detail::component_table const *root;
+  std::shared_ptr<void> app;
 };
 
-} // namespace dashboard_web
+// For as long as the page: a page has no end to wait for.
+std::vector<mounted> &mounted_apps() {
+  static std::vector<mounted> apps;
 
-#endif // QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_SALES_CHART_HPP
+  return apps;
+}
+
+} // namespace
+
+bool is_mounted(ui::detail::component_table const &root) noexcept {
+  return std::ranges::any_of(mounted_apps(), [&root](mounted const &each) { return each.root == &root; });
+}
+
+void reserve_mounted() { mounted_apps().reserve(mounted_apps().size() + 1); }
+
+void keep_mounted(ui::detail::component_table const &root, std::shared_ptr<void> app) noexcept {
+  mounted_apps().push_back({.root = &root, .app = std::move(app)});
+}
+
+} // namespace quoll::emscripten::detail

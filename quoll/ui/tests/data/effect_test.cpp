@@ -77,8 +77,7 @@ using quoll::test::session;
 using quoll::test::settle;
 using quoll::test::virtual_time;
 
-template <class C>
-using test_app = app<C, memory_renderer>;
+using test_app = app<memory_renderer>;
 
 // The runs of the test running: how long each key takes, which fail or ignore their stop, and what happened.
 struct load_log {
@@ -160,43 +159,57 @@ std::string shown_of(text_target const &text) {
 }
 
 // Loads the text of the key it holds, as it changes; a click loads it again.
-struct loading_page {
+struct loading_page_data {
   state<int> next{1};
   state<text_target> text;
   effect load{next, load_text, text};
+};
 
-  element view() {
-    auto const again = [this] { load.reload(); };
+constexpr component<> loading_page = [] {
+  auto &self = use_context<loading_page_data>();
 
-    return div({button("again") | on_click(again), p(shown_of(*text))});
-  }
+  auto const again = [&self] { self->load.reload(); };
+
+  return div({button("again") | on_click(again), p(shown_of(*self->text))});
 };
 
 // Loads with a loader that may throw before its task.
-struct checked_page {
+struct checked_page_data {
   state<int> next{1};
   state<text_target> text;
   effect load{next, checked_text, text};
+};
 
-  element view() { return p(shown_of(*text)); }
+constexpr component<> checked_page = [] {
+  auto &self = use_context<checked_page_data>();
+
+  return p(shown_of(*self->text));
 };
 
 // Loads only once a key is chosen.
-struct choosing_page {
+struct choosing_page_data {
   state<std::optional<int>> chosen;
   state<text_target> text;
   effect load{chosen, load_text, text};
+};
 
-  element view() { return p(shown_of(*text)); }
+constexpr component<> choosing_page = [] {
+  auto &self = use_context<choosing_page_data>();
+
+  return p(shown_of(*self->text));
 };
 
 // Its target holds the value alone: a failure goes to the app's on_error.
-struct plain_page {
+struct plain_page_data {
   state<int> next{1};
   state<std::string> text;
   effect load{next, load_text, text};
+};
 
-  element view() { return p(*text); }
+constexpr component<> plain_page = [] {
+  auto &self = use_context<plain_page_data>();
+
+  return p(*self->text);
 };
 
 // Two loads, of `left` and of `left` + 100, the second given `right` too, written at once.
@@ -206,55 +219,64 @@ task<std::tuple<std::string, std::string>> load_both(int left, std::string right
   co_return {std::move(first), std::move(second) + " " + right};
 }
 
-struct both_page {
+struct both_page_data {
   state<int> left{1};
   state<std::string> right{"a"};
   state<std::tuple<std::string, std::string, bool, std::exception_ptr>> both;
   effect load{std::tie(left, right), load_both, both};
+};
 
-  element view() {
-    auto const &[first, second, loading, error] = *both;
+constexpr component<> both_page = [] {
+  auto &self = use_context<both_page_data>();
 
-    return p(first + "|" + second + (loading ? " running" : "") + (error ? " failed" : ""));
-  }
+  auto const &[first, second, loading, error] = *self->both;
+
+  return p(first + "|" + second + (loading ? " running" : "") + (error ? " failed" : ""));
 };
 
 // Loads once, as its first view shows: it depends on nothing.
-struct once_page {
+struct once_page_data {
   state<int> other;
   state<text_target> text;
   effect load{std::tie(), [] { return load_text(5); }, text};
+};
 
-  element view() { return p(shown_of(*text) + " " + std::to_string(*other)); }
+constexpr component<> once_page = [] {
+  auto &self = use_context<once_page_data>();
+
+  return p(shown_of(*self->text) + " " + std::to_string(*self->other));
 };
 
 // A panel loading as it shows, which its page may take away.
-struct loading_panel {
-  state<int> key{7};
-  state<text_target> text;
-  effect load{key, load_text, text};
+constexpr component<> loading_panel = [] {
+  auto &text = use_state<text_target>();
 
-  element view() { return p(shown_of(*text)); }
+  use_effect(7, load_text, text);
+  return p(shown_of(*text));
 };
 
-struct panel_page {
+struct panel_page_data {
   state<bool> shows{true};
+};
 
-  element view() {
-    auto const panel = [] { return component<loading_panel>(); };
+constexpr component<> panel_page = [] {
+  auto &self = use_context<panel_page_data>();
 
-    return div({when(*shows, panel)});
-  }
+  return div({when(*self->shows, [] { return loading_panel(); })});
 };
 
 // Loads as `next` changes; `other` changes nothing it depends on, but views it again.
-struct other_page {
+struct other_page_data {
   state<int> next{1};
   state<int> other;
   state<text_target> text;
   effect load{next, load_text, text};
+};
 
-  element view() { return p(shown_of(*text) + " " + std::to_string(*other)); }
+constexpr component<> other_page = [] {
+  auto &self = use_context<other_page_data>();
+
+  return p(shown_of(*self->text) + " " + std::to_string(*self->other));
 };
 
 // An executor that can be made to fail.
@@ -285,7 +307,7 @@ std::string what_of(std::exception_ptr const &failure) {
 // Searches for what is typed, once nothing has been typed for 300 ms: a debounce, of an effect with no target.
 std::vector<std::string> searched;
 
-struct searching_page {
+struct searching_page_data {
   state<std::string> query;
 
   effect search{
@@ -296,74 +318,96 @@ struct searching_page {
       },
       {.debounce = 300ms}
   };
+};
 
-  element view() { return input() | bind(query); }
+constexpr component<> searching_page = [] {
+  auto &self = use_context<searching_page_data>();
+
+  return input() | bind(self->query);
 };
 
 // Loads the text of the key it holds once it has stayed the same 50 ms: a debounce.
-struct debounced_page {
+struct debounced_page_data {
   state<int> next{1};
   state<text_target> text;
   effect load{next, load_text, text, {.debounce = 50ms}};
+};
 
-  element view() {
-    auto const again = [this] { load.reload(); };
+constexpr component<> debounced_page = [] {
+  auto &self = use_context<debounced_page_data>();
 
-    return div({button("again") | on_click(again), p(shown_of(*text))});
-  }
+  auto const again = [&self] { self->load.reload(); };
+
+  return div({button("again") | on_click(again), p(shown_of(*self->text))});
 };
 
 // Loads once the key, none at first, holds one: its first run that starts does not wait for the debounce.
-struct optional_debounced_page {
+struct optional_debounced_page_data {
   state<std::optional<int>> next;
   state<text_target> text;
   effect load{next, load_text, text, {.debounce = 50ms}};
+};
 
-  element view() { return p(shown_of(*text)); }
+constexpr component<> optional_debounced_page = [] {
+  auto &self = use_context<optional_debounced_page_data>();
+
+  return p(shown_of(*self->text));
 };
 
 // The debounce of an effect on two states, and of one on a field of its props.
-struct debounced_pair_page {
+struct debounced_pair_page_data {
   state<int> left{1};
   state<int> right{2};
   state<text_target> text;
   effect load{
       std::tie(left, right), [](int one, int two) { return load_text(one * 10 + two); }, text, {.debounce = 50ms}
   };
-
-  element view() { return p(shown_of(*text)); }
 };
 
-struct debounced_panel {
-  struct props {
-    int key = 0;
+constexpr component<> debounced_pair_page = [] {
+  auto &self = use_context<debounced_pair_page_data>();
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  state<text_target> text;
-  effect load{&props::key, load_text, text, {.debounce = 50ms}};
-
-  element view(props const &) { return p(shown_of(*text)); }
+  return p(shown_of(*self->text));
 };
 
-struct debounced_props_page {
+struct key_props {
+  int key = 0;
+
+  [[nodiscard]] bool operator==(key_props const &) const = default;
+};
+
+constexpr component<key_props> debounced_panel = [](key_props const &given) {
+  auto &text = use_state<text_target>();
+
+  use_effect(given.key, load_text, text, {.debounce = 50ms});
+  return p(shown_of(*text));
+};
+
+struct debounced_props_page_data {
   state<int> key{1};
+};
 
-  element view() { return component<debounced_panel>({.key = *key}); }
+constexpr component<> debounced_props_page = [] {
+  auto &self = use_context<debounced_props_page_data>();
+
+  return debounced_panel({.key = *self->key});
 };
 
 // A debounce of less than nothing.
-struct backwards_page {
+struct backwards_page_data {
   state<int> next{1};
   state<text_target> text;
   effect load{next, load_text, text, {.debounce = -1ms}};
+};
 
-  element view() { return p(shown_of(*text)); }
+constexpr component<> backwards_page = [] {
+  auto &self = use_context<backwards_page_data>();
+
+  return p(shown_of(*self->text));
 };
 
 // A function of nothing, its target the flags alone.
-struct flags_page {
+struct flags_page_data {
   state<int> next{1};
   state<std::tuple<bool, std::exception_ptr>> touched;
   effect touch{
@@ -377,70 +421,31 @@ struct flags_page {
       },
       touched
   };
+};
 
-  element view() { return p(std::get<0>(*touched) ? "touching" : std::get<1>(*touched) ? "failed" : "touched"); }
+constexpr component<> flags_page = [] {
+  auto &self = use_context<flags_page_data>();
+
+  return p(std::get<0>(*self->touched) ? "touching" : std::get<1>(*self->touched) ? "failed" : "touched");
 };
 
 // Loads the text of the key its page gives it, as a prop: an effect on a field of its props.
-struct keyed_panel {
-  struct props {
-    int key = 0;
+constexpr component<key_props> keyed_panel = [](key_props const &given) {
+  auto &text = use_state<text_target>();
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  state<text_target> text;
-  effect load{&props::key, load_text, text};
-
-  element view(props const &) { return p(shown_of(*text)); }
+  use_effect(given.key, load_text, text);
+  return p(shown_of(*text));
 };
 
-struct keyed_page {
+struct keyed_page_data {
   state<int> key{1};
   state<int> other;
-
-  element view() { return div({p(std::to_string(*other)), component<keyed_panel>({.key = *key})}); }
 };
 
-// An effect on the props of another component: refused at its first view.
-struct stray_panel {
-  struct props {
-    int other = 0;
+constexpr component<> keyed_page = [] {
+  auto &self = use_context<keyed_page_data>();
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  state<text_target> text;
-  effect load{&keyed_panel::props::key, load_text, text};
-
-  // Never loading, its props wrong, then refused at its first view.
-  element view(props const &) {
-    auto const &[value, loading, error] = *text;
-
-    return p(loading ? "loading" : error ? what_of(error) : "stray");
-  }
-};
-
-struct stray_page {
-  state<int> other{1};
-
-  element view() { return div({component<stray_panel>({.other = *other})}); }
-};
-
-// An app's own component that has props as a component of a view would: as the app's, it has none.
-struct two_view_page {
-  struct props {
-    int key = 0;
-
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  state<text_target> text;
-  effect load{&props::key, load_text, text};
-
-  element view() { return p("root"); }
-
-  element view(props const &) { return p("component"); }
+  return div({p(std::to_string(*self->other)), keyed_panel({.key = *self->key})});
 };
 
 // Keeps what an effect starts, as its app would after a view, for the test to run when it chooses.
@@ -542,7 +547,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<loading_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, loading_page, {.contexts = {provide<loading_page_data>()}}};
   std::string running;
 
   auto const act = [&]() -> task<> {
@@ -564,11 +569,11 @@ TEST_CASE("effect: a change of its state stops the run before, whose answer writ
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<loading_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, loading_page, {.contexts = {provide<loading_page_data>()}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().next = 2;
+    instance.context<loading_page_data>().next = 2;
     co_await quoll::async::sleep_for(20ms);
   };
 
@@ -586,13 +591,13 @@ TEST_CASE("effect: a run stopped by a later one that ends anyway writes nothing"
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<loading_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, loading_page, {.contexts = {provide<loading_page_data>()}}};
   std::string meanwhile;
 
   auto const act = [&]() -> task<> {
     // The first run waits on its yields; the change, rendered at once, starts the second during them.
     co_await quoll::async::yield();
-    instance.component().next = 2;
+    instance.context<loading_page_data>().next = 2;
     co_await settle();
     meanwhile = shown.html();
     co_await quoll::async::sleep_for(20ms);
@@ -693,9 +698,13 @@ TEST_CASE(
   virtual_time time;
   memory_renderer const shown;
   std::vector<std::string> failures;
-  test_app<loading_page> instance{time.get_executor(), shown, {.on_error = [&failures](std::exception_ptr failure) {
-                                    failures.push_back(what_of(failure));
-                                  }}};
+  test_app instance{
+      time.get_executor(),
+      shown,
+      loading_page,
+      {.on_error = [&failures](std::exception_ptr failure) { failures.push_back(what_of(failure)); },
+       .contexts = {provide<loading_page_data>()}}
+  };
   std::string failed;
   bool cleared = false;
 
@@ -707,7 +716,7 @@ TEST_CASE(
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
 
-    auto const &[value, loading, error] = *instance.component().text;
+    auto const &[value, loading, error] = *instance.context<loading_page_data>().text;
 
     cleared = loading && error == nullptr;
     co_await quoll::async::sleep_for(5ms);
@@ -729,13 +738,17 @@ TEST_CASE("effect: a target with no error leaves a failure to the app's on_error
   virtual_time time;
   memory_renderer const shown;
   std::vector<std::string> failures;
-  test_app<plain_page> instance{time.get_executor(), shown, {.on_error = [&failures](std::exception_ptr failure) {
-                                  failures.push_back(what_of(failure));
-                                }}};
+  test_app instance{
+      time.get_executor(),
+      shown,
+      plain_page,
+      {.on_error = [&failures](std::exception_ptr failure) { failures.push_back(what_of(failure)); },
+       .contexts = {provide<plain_page_data>()}}
+  };
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
-    instance.component().next = 2;
+    instance.context<plain_page_data>().next = 2;
     co_await quoll::async::sleep_for(5ms);
   };
 
@@ -752,15 +765,15 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<loading_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, loading_page, {.contexts = {provide<loading_page_data>()}}};
   bool kept = false;
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
-    instance.component().next = 2;
+    instance.context<loading_page_data>().next = 2;
     co_await settle();
 
-    auto const &[value, loading, error] = *instance.component().text;
+    auto const &[value, loading, error] = *instance.context<loading_page_data>().text;
 
     kept = loading && value == "text 1";
     co_await quoll::async::sleep_for(20ms);
@@ -776,11 +789,11 @@ TEST_CASE("effect: a reload after a change runs once, the view after it running 
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<loading_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, loading_page, {.contexts = {provide<loading_page_data>()}}};
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
-    instance.component().next = 2;
-    instance.component().load.reload();
+    instance.context<loading_page_data>().next = 2;
+    instance.context<loading_page_data>().load.reload();
     co_await quoll::async::sleep_for(5ms);
   };
 
@@ -794,7 +807,7 @@ TEST_CASE("effect: reload with a change in the same turn runs the latest only", 
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<loading_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, loading_page, {.contexts = {provide<loading_page_data>()}}};
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
@@ -803,7 +816,7 @@ TEST_CASE("effect: reload with a change in the same turn runs the latest only", 
     // A click on again, then a change before the view they ask for: one run, for the value the state holds then.
     instance.dispatch(shown.find("button"), "click");
     co_await quoll::async::yield();
-    instance.component().next = 2;
+    instance.context<loading_page_data>().next = 2;
     co_await quoll::async::sleep_for(5ms);
   };
 
@@ -817,17 +830,17 @@ TEST_CASE("effect: a function that throws before its task fails the run", "[ui][
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<checked_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, checked_page, {.contexts = {provide<checked_page_data>()}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().next = -1;
+    instance.context<checked_page_data>().next = -1;
     co_await quoll::async::sleep_for(5ms);
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
 
-  auto const &error = std::get<2>(*instance.component().text);
+  auto const &error = std::get<2>(*instance.context<checked_page_data>().text);
 
   CHECK(shown.html().contains("<p>failed</p>"));
   REQUIRE(error != nullptr);
@@ -840,7 +853,7 @@ TEST_CASE("effect: on an optional state, runs only while it holds a value", "[ui
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<choosing_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, choosing_page, {.contexts = {provide<choosing_page_data>()}}};
   std::string before;
   std::string chosen;
   std::string emptied;
@@ -849,14 +862,14 @@ TEST_CASE("effect: on an optional state, runs only while it holds a value", "[ui
     co_await settle();
     before = shown.html();
 
-    instance.component().chosen = std::optional<int>{1};
+    instance.context<choosing_page_data>().chosen = std::optional<int>{1};
     co_await quoll::async::sleep_for(5ms);
     chosen = shown.html();
 
     // Emptied while a run is under way: it is stopped, loading no more, what the target held before kept.
-    instance.component().chosen = std::optional<int>{2};
+    instance.context<choosing_page_data>().chosen = std::optional<int>{2};
     co_await settle();
-    instance.component().chosen = std::optional<int>{};
+    instance.context<choosing_page_data>().chosen = std::optional<int>{};
     co_await quoll::async::sleep_for(100ms);
     emptied = shown.html();
   };
@@ -874,7 +887,7 @@ TEST_CASE("effect: on several states, a change of either runs it, its loads writ
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<both_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, both_page, {.contexts = {provide<both_page_data>()}}};
   std::string first;
   std::string second;
   std::string failed;
@@ -883,13 +896,13 @@ TEST_CASE("effect: on several states, a change of either runs it, its loads writ
     co_await quoll::async::sleep_for(5ms);
     first = shown.html();
 
-    instance.component().right = std::string{"b"};
+    instance.context<both_page_data>().right = std::string{"b"};
     co_await quoll::async::sleep_for(5ms);
     second = shown.html();
 
     // One load of two fails: the run fails, the values before kept.
     loads.failing = {102};
-    instance.component().left = 2;
+    instance.context<both_page_data>().left = 2;
     co_await quoll::async::sleep_for(5ms);
     failed = shown.html();
   };
@@ -905,11 +918,11 @@ TEST_CASE("effect: on no state, runs once", "[ui][effect]") {
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<once_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, once_page, {.contexts = {provide<once_page_data>()}}};
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
-    instance.component().other = 1;
+    instance.context<once_page_data>().other = 1;
     co_await quoll::async::sleep_for(5ms);
   };
 
@@ -924,7 +937,7 @@ TEST_CASE("effect: one of a component of a view shows what it gave", "[ui][effec
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<panel_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, panel_page, {.contexts = {provide<panel_page_data>()}}};
   std::string running;
   std::string given;
 
@@ -946,11 +959,11 @@ TEST_CASE("effect: the run of a component that goes is stopped with it", "[ui][e
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<panel_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, panel_page, {.contexts = {provide<panel_page_data>()}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().shows = false;
+    instance.context<panel_page_data>().shows = false;
     co_await quoll::async::sleep_for(100ms);
   };
 
@@ -966,7 +979,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<searching_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, searching_page, {.contexts = {provide<searching_page_data>()}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -991,7 +1004,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<debounced_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, debounced_page, {.contexts = {provide<debounced_page_data>()}}};
   std::vector<std::string> first;
   std::vector<std::string> waiting;
   std::string shown_waiting;
@@ -1003,9 +1016,9 @@ TEST_CASE(
     co_await quoll::async::sleep_for(5ms);
 
     // Two changes 20 ms apart: the first one's run, still waiting, is stopped by the second, and calls nothing.
-    instance.component().next = 2;
+    instance.context<debounced_page_data>().next = 2;
     co_await quoll::async::sleep_for(20ms);
-    instance.component().next = 3;
+    instance.context<debounced_page_data>().next = 3;
     co_await quoll::async::sleep_for(40ms);
     waiting = loads.lines;
     shown_waiting = shown.html();
@@ -1030,7 +1043,7 @@ TEST_CASE("effect: debounced, a run reload() asks for does not wait", "[ui][effe
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<debounced_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, debounced_page, {.contexts = {provide<debounced_page_data>()}}};
   std::vector<std::string> reloaded;
 
   auto const act = [&]() -> task<> {
@@ -1052,12 +1065,14 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<optional_debounced_page> instance{time.get_executor(), shown};
+  test_app instance{
+      time.get_executor(), shown, optional_debounced_page, {.contexts = {provide<optional_debounced_page_data>()}}
+  };
   std::vector<std::string> at_once;
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().next = 4;
+    instance.context<optional_debounced_page_data>().next = 4;
     co_await settle();
     at_once = loads.lines;
     co_await quoll::async::sleep_for(5ms);
@@ -1072,12 +1087,14 @@ TEST_CASE("effect: debounced, on two states, a change waits", "[ui][effect]") {
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<debounced_pair_page> instance{time.get_executor(), shown};
+  test_app instance{
+      time.get_executor(), shown, debounced_pair_page, {.contexts = {provide<debounced_pair_page_data>()}}
+  };
   std::vector<std::string> waiting;
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
-    instance.component().right = 3;
+    instance.context<debounced_pair_page_data>().right = 3;
     co_await quoll::async::sleep_for(40ms);
     waiting = loads.lines;
     co_await quoll::async::sleep_for(20ms);
@@ -1093,12 +1110,14 @@ TEST_CASE("effect: debounced, on a field of its props, a change waits", "[ui][ef
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<debounced_props_page> instance{time.get_executor(), shown};
+  test_app instance{
+      time.get_executor(), shown, debounced_props_page, {.contexts = {provide<debounced_props_page_data>()}}
+  };
   std::vector<std::string> waiting;
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
-    instance.component().key = 2;
+    instance.context<debounced_props_page_data>().key = 2;
     co_await quoll::async::sleep_for(40ms);
     waiting = loads.lines;
     co_await quoll::async::sleep_for(20ms);
@@ -1113,7 +1132,10 @@ TEST_CASE("effect: a debounce of less than nothing is refused as it is made", "[
   virtual_time time;
   memory_renderer const shown;
 
-  CHECK_THROWS_AS((test_app<backwards_page>{time.get_executor(), shown}), std::invalid_argument);
+  CHECK_THROWS_AS(
+      (test_app{time.get_executor(), shown, backwards_page, {.contexts = {provide<backwards_page_data>()}}}),
+      std::invalid_argument
+  );
 }
 
 TEST_CASE("effect: no function is refused as it is made", "[ui][effect]") {
@@ -1130,9 +1152,9 @@ TEST_CASE("effect: one started as its app stops at once does not run", "[ui][eff
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<loading_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, loading_page, {.contexts = {provide<loading_page_data>()}}};
 
-  // Before the executor runs what the first view started: unmounted() has run, and the effect does nothing.
+  // Before the executor runs what the first view started: the app has stopped, and the effect does nothing.
   auto const start_then_stop = [&]() -> task<int> {
     instance.start();
     co_await instance.stop();
@@ -1152,10 +1174,12 @@ TEST_CASE("effect: one that could not start ends on that failure, which reload t
   memory_renderer const shown;
   bool fail = false;
   std::vector<std::string> failures;
-  test_app<other_page> instance{
+  test_app instance{
       failing_executor{time.get_executor(), &fail},
       shown,
-      {.on_error = [&failures](std::exception_ptr failure) { failures.push_back(what_of(failure)); }}
+      other_page,
+      {.on_error = [&failures](std::exception_ptr failure) { failures.push_back(what_of(failure)); },
+       .contexts = {provide<other_page_data>()}}
   };
   std::string failed_kept;
   std::string other;
@@ -1168,24 +1192,25 @@ TEST_CASE("effect: one that could not start ends on that failure, which reload t
 
     // Its target holds the failure, which a render to show could not be asked for either, as the executor refused that
     // too.
-    auto const &error = std::get<2>(*instance.component().text);
+    auto const &error = std::get<2>(*instance.context<other_page_data>().text);
 
     failed_kept = error ? what_of(error) : "";
 
     // A view for something else does not try it again, which would fail each time a lack lasts.
-    instance.component().other = 1;
+    instance.context<other_page_data>().other = 1;
     co_await quoll::async::sleep_for(1ms);
     other = shown.html();
 
-    instance.component().load.reload();
+    instance.context<other_page_data>().load.reload();
     co_await quoll::async::sleep_for(5ms);
     co_await instance.stop();
     co_return 0;
   };
 
   REQUIRE(quoll::test::run(time, act()) == 0);
-  // Shown in its target, and told to the app's on_error, as every failure.
-  CHECK(failures == std::vector<std::string>{"no more"});
+  // Shown in its target, and told to the app's on_error, as every failure: then the view its target's change asks for
+  // of the root, refused too.
+  CHECK(failures == std::vector<std::string>{"no more", "no more"});
   CHECK(failed_kept == "no more");
   CHECK(other.contains("failed 1"));
   CHECK(loads.lines == std::vector<std::string>{"start 1", "end 1"});
@@ -1281,7 +1306,7 @@ TEST_CASE(
 TEST_CASE("effect: of a function giving nothing, its target holds its flags alone", "[ui][effect]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<flags_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, flags_page, {.contexts = {provide<flags_page_data>()}}};
   std::string touching;
   std::string touched;
 
@@ -1291,7 +1316,7 @@ TEST_CASE("effect: of a function giving nothing, its target holds its flags alon
     co_await quoll::async::sleep_for(5ms);
     touched = shown.html();
 
-    instance.component().next = 2;
+    instance.context<flags_page_data>().next = 2;
     co_await quoll::async::sleep_for(5ms);
   };
 
@@ -1334,7 +1359,7 @@ TEST_CASE("effect: on a field of its props, runs as that field changes, as useEf
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<keyed_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, keyed_page, {.contexts = {provide<keyed_page_data>()}}};
   std::string first;
 
   auto const act = [&]() -> task<> {
@@ -1342,10 +1367,10 @@ TEST_CASE("effect: on a field of its props, runs as that field changes, as useEf
     first = shown.html();
 
     // Another field of the page: its props are the same, and nothing runs.
-    instance.component().other = 1;
+    instance.context<keyed_page_data>().other = 1;
     co_await quoll::async::sleep_for(5ms);
 
-    instance.component().key = 2;
+    instance.context<keyed_page_data>().key = 2;
     co_await quoll::async::sleep_for(5ms);
   };
 
@@ -1355,69 +1380,29 @@ TEST_CASE("effect: on a field of its props, runs as that field changes, as useEf
   CHECK(loads.lines == std::vector<std::string>{"start 1", "end 1", "start 2", "end 2"});
 }
 
-TEST_CASE(
-    "effect: on a field of the props of another component is refused once, at its first view, to on_error",
-    "[ui][effect]"
-) {
-  loads = {};
-
-  virtual_time time;
-  memory_renderer const shown;
-  std::vector<std::string> failures;
-  test_app<stray_page> instance{time.get_executor(), shown, {.on_error = [&failures](std::exception_ptr failure) {
-                                  failures.push_back(what_of(failure));
-                                }}};
-
-  // Viewed again, with other props: refused once, then waiting for reload().
-  auto const act = [&]() -> task<> {
-    co_await quoll::async::sleep_for(5ms);
-    instance.component().other = 2;
-    co_await quoll::async::sleep_for(5ms);
-  };
-
-  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(
-      failures ==
-      std::vector<std::string>{"quoll::ui::effect: it depends on a field of props its component does not have"}
-  );
-  CHECK(shown.html().contains("<p>stray</p>"));
-  CHECK(loads.lines.empty());
-}
-
-TEST_CASE(
-    "effect: on a field of the props of an app's own component, which has none, is refused to on_error", "[ui][effect]"
-) {
-  loads = {};
-
-  virtual_time time;
-  memory_renderer const shown;
-  std::vector<std::string> failures;
-  test_app<two_view_page> instance{time.get_executor(), shown, {.on_error = [&failures](std::exception_ptr failure) {
-                                     failures.push_back(what_of(failure));
-                                   }}};
-
-  auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
-
-  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(failures.size() == 1);
-  CHECK_FALSE(std::get<1>(*instance.component().text));
-  CHECK(std::get<2>(*instance.component().text) == nullptr);
-  CHECK(loads.lines.empty());
-}
-
 namespace {
 
 // Its text in an async_state, which its first view, before the first run, reads as loading.
-struct async_text_page {
+struct async_text_page_data {
   state<int> key{1};
   async_state<std::string> text;
   effect load{std::tie(key), load_text, text};
   std::vector<std::string> views;
+};
 
-  element view() {
-    views.push_back(text->loading ? "loading" : text->value);
-    return p(text->loading ? "loading" : text->value);
-  }
+constexpr component<> async_text_page = [] {
+  auto &self = use_context<async_text_page_data>();
+
+  self->views.push_back(self->text->loading ? "loading" : self->text->value);
+  return p(self->text->loading ? "loading" : self->text->value);
+};
+
+// The same, of hooks, for a view written once.
+constexpr component<> async_text_view = [] {
+  auto &text = use_async_state<std::string>();
+
+  use_effect(1, load_text, text);
+  return p(text->loading ? "loading" : text->value);
 };
 
 } // namespace
@@ -1429,13 +1414,13 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<async_text_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, async_text_page, {.contexts = {provide<async_text_page_data>()}}};
 
   auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(instance.component().views == std::vector<std::string>{"loading", "text 1"});
-  CHECK(instance.component().text->error == nullptr);
+  CHECK(instance.context<async_text_page_data>().views == std::vector<std::string>{"loading", "text 1"});
+  CHECK(instance.context<async_text_page_data>().text->error == nullptr);
   CHECK(shown.html().contains("<p>text 1</p>"));
 }
 
@@ -1452,13 +1437,17 @@ task<std::tuple<std::string, int>> name_and_count() {
 }
 
 // async_states of a bool and of a tuple, which its fields tell apart from its flags.
-struct named_fields_page {
+struct named_fields_page_data {
   async_state<bool> ready;
   effect check{std::tie(), is_ready, ready};
   async_state<std::tuple<std::string, int>> both;
   effect load{std::tie(), name_and_count, both};
+};
 
-  element view() { return p(ready->value ? "ready" : "waiting"); }
+constexpr component<> named_fields_page = [] {
+  auto &self = use_context<named_fields_page_data>();
+
+  return p(self->ready->value ? "ready" : "waiting");
 };
 
 } // namespace
@@ -1466,14 +1455,14 @@ struct named_fields_page {
 TEST_CASE("effect: an async_state of a bool, or of a tuple, holds it as its value", "[ui][effect]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<named_fields_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, named_fields_page, {.contexts = {provide<named_fields_page_data>()}}};
 
   auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(instance.component().ready->value);
-  CHECK_FALSE(instance.component().ready->loading);
-  CHECK(instance.component().both->value == std::tuple<std::string, int>{"tea", 2});
+  CHECK(instance.context<named_fields_page_data>().ready->value);
+  CHECK_FALSE(instance.context<named_fields_page_data>().ready->loading);
+  CHECK(instance.context<named_fields_page_data>().both->value == std::tuple<std::string, int>{"tea", 2});
   CHECK(shown.html().contains("<p>ready</p>"));
 }
 
@@ -1488,9 +1477,12 @@ TEST_CASE("effect: a lack of memory at any step of a run leaves its async_state 
     virtual_time time;
     memory_renderer const shown;
     int told = 0;
-    test_app<async_text_page> instance{time.get_executor(), shown, {.on_error = [&told](std::exception_ptr) {
-                                         ++told;
-                                       }}};
+    test_app instance{
+        time.get_executor(),
+        shown,
+        async_text_page,
+        {.on_error = [&told](std::exception_ptr) { ++told; }, .contexts = {provide<async_text_page_data>()}}
+    };
     bool injected = false;
 
     // From its first run, its target loading since it was made.
@@ -1511,7 +1503,7 @@ TEST_CASE("effect: a lack of memory at any step of a run leaves its async_state 
     INFO("allocations before failing: " << before);
     REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
 
-    auto const &text = *instance.component().text;
+    auto const &text = *instance.context<async_text_page_data>().text;
 
     CHECK_FALSE(text.loading);
     CHECK((text.value == "text 1" || text.error != nullptr || told > 0));
@@ -1530,16 +1522,26 @@ TEST_CASE("effect: a lack of memory at any step of a run leaves its async_state 
 namespace {
 
 // Loads only once a key is chosen, its views recorded: none chosen, its first view is not loading.
-struct choosing_views_page {
+struct choosing_views_page_data {
   state<std::optional<int>> chosen;
   async_state<std::string> text;
   effect load{chosen, load_text, text};
   std::vector<std::string> views;
+};
 
-  element view() {
-    views.push_back(text->loading ? "loading" : "idle " + text->value);
-    return p(text->value);
-  }
+constexpr component<> choosing_views_page = [] {
+  auto &self = use_context<choosing_views_page_data>();
+
+  self->views.push_back(self->text->loading ? "loading" : "idle " + self->text->value);
+  return p(self->text->value);
+};
+
+// The same, of hooks, for a view written once: none chosen, its effect does not run.
+constexpr component<> choosing_view = [] {
+  auto &text = use_async_state<std::string>();
+
+  use_effect(std::optional<int>{}, load_text, text);
+  return p(text->value);
 };
 
 } // namespace
@@ -1549,26 +1551,28 @@ TEST_CASE("effect: its target is not loading at first while a state it depends o
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<choosing_views_page> instance{time.get_executor(), shown};
+  test_app instance{
+      time.get_executor(), shown, choosing_views_page, {.contexts = {provide<choosing_views_page_data>()}}
+  };
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
-    instance.component().chosen = std::optional<int>{1};
+    instance.context<choosing_views_page_data>().chosen = std::optional<int>{1};
     co_await quoll::async::sleep_for(5ms);
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE_FALSE(instance.component().views.empty());
-  CHECK(instance.component().views.front() == "idle ");
-  CHECK(instance.component().views.back() == "idle text 1");
+  REQUIRE_FALSE(instance.context<choosing_views_page_data>().views.empty());
+  CHECK(instance.context<choosing_views_page_data>().views.front() == "idle ");
+  CHECK(instance.context<choosing_views_page_data>().views.back() == "idle text 1");
 }
 
 TEST_CASE(
     "effect: a view written once, which runs no effect, shows its target loading if its run would start", "[ui][effect]"
 ) {
   // As React's server rendering shows useState(true): the page loads where it runs.
-  CHECK(to_html(component<async_text_page>()) == "<p>loading</p>");
-  CHECK(to_html(component<choosing_views_page>()) == "<p></p>");
+  CHECK(to_html(async_text_view()) == "<p>loading</p>");
+  CHECK(to_html(choosing_view()) == "<p></p>");
 }
 
 namespace {
@@ -1576,29 +1580,25 @@ namespace {
 // Loads the key its props give, an optional: its first view loading when one is given, not when none is.
 std::vector<std::string> optional_prop_views;
 
-struct optional_prop_panel {
-  struct props {
-    std::optional<int> key;
+struct optional_key_props {
+  std::optional<int> key;
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  async_state<std::string> text;
-  effect load{&props::key, load_text, text};
-
-  element view(props const &given) {
-    optional_prop_views.push_back(std::to_string(given.key.value_or(0)) + (text->loading ? " loading" : " idle"));
-    return p(text->value);
-  }
+  [[nodiscard]] bool operator==(optional_key_props const &) const = default;
 };
 
-struct optional_prop_page {
-  element view() {
-    return div({
-        component<optional_prop_panel>({.key = 1}) | key("given"),
-        component<optional_prop_panel>({.key = std::nullopt}) | key("none"),
-    });
-  }
+constexpr component<optional_key_props> optional_prop_panel = [](optional_key_props const &given) {
+  auto &text = use_async_state<std::string>();
+
+  use_effect(given.key, load_text, text);
+  optional_prop_views.push_back(std::to_string(given.key.value_or(0)) + (text->loading ? " loading" : " idle"));
+  return p(text->value);
+};
+
+constexpr component<> optional_prop_page = [] {
+  return div({
+      optional_prop_panel({.key = 1}) | key("given"),
+      optional_prop_panel({.key = std::nullopt}) | key("none"),
+  });
 };
 
 } // namespace
@@ -1612,7 +1612,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<optional_prop_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, optional_prop_page};
 
   auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
 
@@ -1626,14 +1626,18 @@ TEST_CASE(
 namespace {
 
 // Two effects on one key, whose copies may throw: both fail to start in the same view.
-struct two_touchy_page {
+struct two_touchy_page_data {
   state<touchy_key> key{touchy_key{1}};
   state<text_target> first;
   effect load_first{key, load_key, first};
   state<text_target> second;
   effect load_second{key, load_key, second};
+};
 
-  element view() { return p("two"); }
+constexpr component<> two_touchy_page = [] {
+  auto &self = use_context<two_touchy_page_data>();
+
+  return p("two");
 };
 
 } // namespace
@@ -1644,9 +1648,13 @@ TEST_CASE("effect: two that fail to start in one view are both told to on_error"
   virtual_time time;
   memory_renderer const shown;
   std::vector<std::string> failures;
-  test_app<two_touchy_page> instance{time.get_executor(), shown, {.on_error = [&failures](std::exception_ptr failure) {
-                                       failures.push_back(what_of(failure));
-                                     }}};
+  test_app instance{
+      time.get_executor(),
+      shown,
+      two_touchy_page,
+      {.on_error = [&failures](std::exception_ptr failure) { failures.push_back(what_of(failure)); },
+       .contexts = {provide<two_touchy_page_data>()}}
+  };
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
@@ -1654,12 +1662,12 @@ TEST_CASE("effect: two that fail to start in one view are both told to on_error"
 
     throwing_keys const copies{key_copy_throws};
 
-    instance.component().key = touchy_key{2};
+    instance.context<two_touchy_page_data>().key = touchy_key{2};
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(failures == std::vector<std::string>{"no copy", "no copy"});
-  CHECK(std::get<2>(*instance.component().first) != nullptr);
-  CHECK(std::get<2>(*instance.component().second) != nullptr);
+  CHECK(std::get<2>(*instance.context<two_touchy_page_data>().first) != nullptr);
+  CHECK(std::get<2>(*instance.context<two_touchy_page_data>().second) != nullptr);
 }

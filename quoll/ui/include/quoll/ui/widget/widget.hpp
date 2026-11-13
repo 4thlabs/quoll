@@ -63,7 +63,7 @@ namespace quoll::ui {
  * inline constexpr auto line_chart = widget<chart_props>("./src/widgets/line_chart.js", "canvas");
  *
  * // In a view:
- * auto const select = [this](point_selected event) {
+ * auto const select = [&selected](point_selected event) {
  *   selected = event.index;
  * };
  *

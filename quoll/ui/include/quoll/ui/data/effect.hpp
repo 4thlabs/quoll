@@ -38,7 +38,6 @@
 #define QUOLL_UI_DATA_EFFECT_HPP
 
 #include <quoll/async/current_stop_token.hpp>
-#include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/data/state.hpp>
@@ -68,7 +67,7 @@ class effect;
 
 namespace detail {
 
-// What a function component's use_effect() reaches of an effect: failing as it does when what it starts with throws,
+// What a component's use_effect() reaches of an effect: failing as it does when what it starts with throws,
 // and whether it did, as it then waits for reload().
 struct effect_access {
   // The run before stops, the target shows `failure`, and the effect waits for reload(); then thrown, for on_error.
@@ -78,7 +77,7 @@ struct effect_access {
 };
 
 // Runs an effect as a task of its component, unless the component stopped since it was started, as one that went with
-// its app before its executor ran: an effect does nothing once unmounted() ran. Every failure goes where a handler's
+// its app before its executor ran: an effect does nothing once its component went. Every failure goes where a handler's
 // does, through tell_failure(), its target showing it, as a lack of memory making the run does. A coroutine of its own,
 // so that what it needs is in its frame.
 template <class V, class Make>
@@ -131,38 +130,37 @@ struct effect_options {
 };
 
 /**
- * @brief What a component runs as states of its change, as React's useEffect with them as its dependencies: after each
- * of its views in which one changed, the run before stopped, what the function gives written into a target state.
+ * @brief What runs as states change, as React's useEffect with them as its dependencies: after each view in which one
+ * changed, the run before stopped, what the function gives written into a target state. What use_effect() gives a
+ * component, or a member of a context, which loads what the app's components share.
  *
  * @code
- * struct sales_panel {
- *   state<std::int64_t> id;
- *   // The sales, whether they are loading, and why they did not load.
- *   async_state<products::monthly_sales> sales;
+ * struct catalog {
+ *   // The products, whether they are loading, and why they did not load.
+ *   async_state<std::vector<products::product>> items;
  *
- *   effect load{id, products_client::sales, sales};
- *
- *   element view() { return sales->loading ? p("Loading") : component<sales_chart>({.sales = sales->value}); }
+ *   effect load{std::tie(), products_client::list, items};
  * };
  * @endcode
  *
- * A member of a component, after the states it depends on: one, or several as `std::tie(filter, page)`, or none as
- * `std::tie()`, which runs it once. After a view of the component, once it is shown, as React runs its effects once a
+ * A member of a context, after the states it depends on: one, or several as `std::tie(filter, page)`, or none as
+ * `std::tie()`, which runs it once. After a view of the app, once it is shown, as React runs its effects once a
  * render is committed, the effect compares those states with their values at its last run, with `==`: one changed,
  * the run before is stopped, so that it writes nothing, even one that ignored the stop and came anyway, and the
- * function runs, as a task of the component, with a copy of each value, as rvalues. A state holding a `std::optional`
- * gives what it holds, and while one holds none, nothing runs, the run before stopped. reload() runs it again, after
- * the view it asks for, as a change would: one way to run it, as React has. Its options, last, may debounce it, as
+ * function runs, as a task of the app, or of the component whose hook it is, with a copy of each value, as rvalues. A
+ * state holding a `std::optional` gives what it holds, and while one holds none, nothing runs, the run before stopped.
+ * reload() runs it again, after the view it asks for, as a change would: one way to run it, as React has. Its options,
+ * last, may debounce it, as
  * `{.debounce = 300ms}` for a search on what is typed: a run that follows a change waits that long before it calls the
  * function, its target loading, and the next change stops it there, as any; the first run that starts, as once an
  * optional holds a value, and one reload() asks for do not wait.
  *
  * The function returns a task of nothing, of a value, or of a `std::tuple` of values, as `when_all` gives several
- * loads, which go into the target, a state of the same component, declared before it: what each of its elements
+ * loads, which go into the target, a state of the same context, declared before it: what each of its elements
  * receives goes by its type. A `bool` is whether a run is under way, a `std::exception_ptr` why the last failed, and
  * the others the values, in order; an `async_state` names them `loading`, `error` and `value`. A target holding no
  * tuple holds one of these. The target is loading from the start, as React's `useState(true)`, when its first run
- * will start, its states or the field of the props holding a value: the first view of its component comes before the
+ * will start, its states holding a value: the first view of the app comes before the
  * run; a view written once, with to_html, which runs no effect, shows it loading. As a run starts, its target is
  * loading and has no error, the values before kept; as it ends, the target holds all it gave at once, or its failure,
  * the values before kept. Every failure reaches the app's on_error too, shown or not, as a handler's, and an effect
@@ -207,7 +205,7 @@ public:
 
     static_assert(std::is_void_v<value>, "quoll::ui::effect: the values its function gives go into a target state");
 
-    init<value, D...>(states_reader(dependencies), std::move(function), detail::target_ref<value>{}, nullptr, options);
+    init<value, D...>(states_reader(dependencies), std::move(function), detail::target_ref<value>{}, options);
   }
 
   /**
@@ -225,45 +223,7 @@ public:
     );
     detail::check_target<T, value, false>();
     init<value, D...>(
-        states_reader(dependencies), std::move(function), detail::target_ref<value>{target, std::false_type{}}, nullptr,
-        options
-    );
-  }
-
-  /**
-   * @brief Runs `function` with what the field `member` of its component's props holds as it changes, as React's
-   * useEffect(…, [props.id]), for a function that gives nothing.
-   * @throws std::invalid_argument for no function, as a null pointer, rather than at each run.
-   */
-  template <class P, class D, class F>
-    requires(!std::is_function_v<D>) && detail::EffectFunction<F, D>
-  effect(D P::*member, F function, effect_options options = {}) {
-    using value = detail::effect_value_t<F, D>;
-
-    static_assert(std::is_void_v<value>, "quoll::ui::effect: the values its function gives go into a target state");
-
-    init<value, D>(
-        props_reader(member), std::move(function), detail::target_ref<value>{}, async::detail::type_id_of<P>(), options
-    );
-  }
-
-  /**
-   * @brief Runs `function` with what the field `member` of its component's props holds as it changes, what it gives
-   * written into `target`.
-   * @throws std::invalid_argument for no function, as a null pointer, rather than at each run.
-   */
-  template <class P, class D, class F, class T>
-    requires(!std::is_function_v<D>) && detail::EffectFunction<F, D>
-  effect(D P::*member, F function, state<T> &target, effect_options options = {}) {
-    using value = detail::effect_value_t<F, D>;
-
-    static_assert(
-        detail::kept_as_values<value>, "quoll::ui::effect: the values its function gives are kept, as values"
-    );
-    detail::check_target<T, value, false>();
-    init<value, D>(
-        props_reader(member), std::move(function), detail::target_ref<value>{target, std::false_type{}},
-        async::detail::type_id_of<P>(), options
+        states_reader(dependencies), std::move(function), detail::target_ref<value>{target, std::false_type{}}, options
     );
   }
 
@@ -282,15 +242,14 @@ public:
    */
   void reload();
 
-  /** @brief For the app of the component holding it, as a state's. */
+  /** @brief For the app, or the component of its hook, as a state's. */
   void link(detail::state_link to) noexcept { link_ = to; }
 
   /**
-   * @brief For the app of the component holding it, after each of its views: runs it if one of its states changed. What
+   * @brief For the app, or the component of its hook, after each view: runs it if one of its states changed. What
    * fails on the way, as a copy or a start lacking memory, stops the run before all the same, is its target's failure,
-   * and is thrown, for the app's on_error; the effect then waits for reload(). One on a field of props
-   * its component does not have, a mistake of the program, goes to the app's on_error whatever its target, which it
-   * never set loading. Before the component's first view, it only says whether its target is loading.
+   * and is thrown, for the app's on_error; the effect then waits for reload(). Before the first view, it only says
+   * whether its target is loading.
    */
   void after_view(detail::effect_starter const &start);
 
@@ -300,25 +259,15 @@ private:
   // Its failure to start, which its target shows, and the app's on_error hears of, thrown: then it waits for reload().
   [[noreturn]] void fail_start(std::exception_ptr const &failure);
 
-  // What reads its values, from its states, whatever the props are.
+  // What reads its values, from its states.
   template <class... D>
   [[nodiscard]] static auto states_reader(std::tuple<state<D> &...> dependencies) {
-    return [dependencies](void const *) {
-      return std::apply([](auto &...held) { return std::tie(*held...); }, dependencies);
-    };
+    return [dependencies] { return std::apply([](auto &...held) { return std::tie(*held...); }, dependencies); };
   }
 
-  // What reads its value, from the field `member` of the props of its component, which `props` points to.
-  template <class P, class D>
-  [[nodiscard]] static auto props_reader(D P::*member) {
-    return [member](void const *props) { return std::tie(static_cast<P const *>(props)->*member); };
-  }
-
-  // `read` gives what it depends on, from the props of its component, as a tuple of references to D...; `props_type`,
-  // none for an effect on states, is the type of the props it reads.
+  // `read` gives what it depends on, as a tuple of references to D....
   template <class V, class... D, class Read, class F>
-  void
-  init(Read read, F function, detail::target_ref<V> target, async::detail::type_id props_type, effect_options options) {
+  void init(Read read, F function, detail::target_ref<V> target, effect_options options) {
     static_assert(
         (!detail::holds_view<D> && ...),
         "quoll::ui::effect: its states' values are copied into the run, which a view would outlive"
@@ -341,16 +290,15 @@ private:
     }
 
     target_ = target.hooks();
-    props_type_ = props_type;
 
-    watch_ = [read, last = std::optional<std::tuple<D...>>{}](watching asked, void const *props) mutable {
+    watch_ = [read, last = std::optional<std::tuple<D...>>{}](watching asked) mutable {
       // Forgotten before any comparison, which may be what failed: reload() runs it whatever its states compare.
       if (asked == watching::forget) {
         last.reset();
         return std::optional<watched>{};
       }
 
-      auto const now = read(props);
+      auto const now = read();
       bool const holds = std::apply(
           [](auto const &...held) {
             return (detail::dependency_traits<std::remove_cvref_t<decltype(held)>>::holds(held) && ...);
@@ -373,13 +321,13 @@ private:
     };
 
     run_ = [this, read, function = std::move(function), target,
-            debounce = options.debounce](std::stop_token mine, void const *props, bool waits) {
+            debounce = options.debounce](std::stop_token mine, bool waits) {
       // Its own copy of each value, given as rvalues: a function taking them by reference refers to the run's copy.
       auto copied = std::apply(
           [](auto const &...held) {
             return values{detail::dependency_traits<std::remove_cvref_t<decltype(held)>>::value(held)...};
           },
-          read(props)
+          read()
       );
 
       auto call = [function, copied = std::move(copied)]() mutable {
@@ -414,11 +362,9 @@ private:
   // and the run, made
   // for their values now: erased, as their types are not the effect's.
   // What `record` saw, none for `forget`.
-  std::function<std::optional<watched>(watching, void const *)> watch_;
+  std::function<std::optional<watched>(watching)> watch_;
   // `waits` for a run its debounce waits for, one that follows a run started.
-  std::function<async::task<>(std::stop_token, void const *, bool waits)> run_;
-  // The type of the props it reads, none for an effect on states.
-  async::detail::type_id props_type_{};
+  std::function<async::task<>(std::stop_token, bool waits)> run_;
   detail::run_slot slot_;
   detail::target_hooks target_;
   detail::state_link link_{};

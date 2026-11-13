@@ -55,24 +55,23 @@ using namespace std::chrono_literals;
 using quoll::async::task;
 
 // The line of the literals below.
-unsigned const view_line = std::source_location::current().line() + 5;
+unsigned const view_line = std::source_location::current().line() + 8;
 
-struct page {
+struct page_data {
   state<int> count;
+};
 
-  element view() { return button("Add") | tw("btn"); }
+constexpr component<> page = [] {
+  static_cast<void>(*use_context<page_data>()->count);
+  return button("Add") | tw("btn");
 };
 
 // The line of the literal of a component of a view, which a hot reload changes while nothing else does.
-unsigned const child_line = std::source_location::current().line() + 3;
+unsigned const child_line = std::source_location::current().line() + 2;
 
-struct child {
-  element view() { return p("Child"); }
-};
+constexpr component<> child = [] { return p("Child"); };
 
-struct nested_page {
-  element view() { return div({component<child>()}); }
-};
+constexpr component<> nested_page = [] { return div({child()}); };
 
 int failures = 0;
 
@@ -88,7 +87,7 @@ void check(std::string const &actual, std::string const &expected) {
 int main() {
   quoll::test::virtual_time time;
   quoll::test::memory_renderer const shown;
-  app<page, quoll::test::memory_renderer> instance{time.get_executor(), shown};
+  app instance{time.get_executor(), shown, page, {.contexts = {provide<page_data>()}}};
 
   auto const *const file = std::source_location::current().file_name();
   auto const line = view_line;
@@ -105,17 +104,17 @@ int main() {
     // Clang, so Emscripten and the development server, places a literal at its opening quote; GCC, at the parenthesis
     // of the call.
 #if defined(__clang__)
-    detail::hot_replace(file, line, 34, "Ajouter");
-    detail::hot_replace(file, line, 46, "btn btn-primary");
+    detail::hot_replace(file, line, 17, "Ajouter");
+    detail::hot_replace(file, line, 29, "btn btn-primary");
 #else
-    detail::hot_replace(file, line, 33, "Ajouter");
-    detail::hot_replace(file, line, 45, "btn btn-primary");
+    detail::hot_replace(file, line, 16, "Ajouter");
+    detail::hot_replace(file, line, 28, "btn btn-primary");
 #endif
     co_await quoll::async::sleep_for(1ms);
     check(shown.html(), R"(<button class="btn btn-primary">Ajouter</button>)");
 
     // And it stays replaced, when the view runs for another reason.
-    instance.component().count = 1;
+    instance.context<page_data>().count = 1;
     co_await quoll::async::sleep_for(1ms);
     check(shown.html(), R"(<button class="btn btn-primary">Ajouter</button>)");
 
@@ -128,16 +127,16 @@ int main() {
   // A component of a view, its props unchanged and its states too: a hot reload views it again all the same.
   quoll::test::virtual_time nested_time;
   quoll::test::memory_renderer const nested_shown;
-  app<nested_page, quoll::test::memory_renderer> nested{nested_time.get_executor(), nested_shown};
+  app nested{nested_time.get_executor(), nested_shown, nested_page};
 
   auto const nested_session = [&]() -> task<int> {
     nested.start();
     check(nested_shown.html(), "<div><p>Child</p></div>");
 
 #if defined(__clang__)
-    detail::hot_replace(file, child_line, 29, "Enfant");
+    detail::hot_replace(file, child_line, 45, "Enfant");
 #else
-    detail::hot_replace(file, child_line, 28, "Enfant");
+    detail::hot_replace(file, child_line, 44, "Enfant");
 #endif
     co_await quoll::async::sleep_for(1ms);
     check(nested_shown.html(), "<div><p>Enfant</p></div>");

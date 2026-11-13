@@ -34,18 +34,15 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui: a component is an aggregate
+// expect: quoll::ui: a component captures nothing
 //
-// A component of a view, without props, with a constructor: its states could not be found by reflection.
+// A lambda capturing what its view reads: made again for each view, it would hold a copy of the first only.
 
-#include <quoll/ui.hpp>
+#include <quoll/ui/component/component.hpp>
+#include <quoll/ui/view/tags.hpp>
 
-using namespace quoll::ui;
+#include <string>
 
-struct with_constructor {
-  with_constructor() {}
+inline std::string const label = "badge";
 
-  element view() { return div(); }
-};
-
-element const placed = component<with_constructor>();
+constexpr quoll::ui::component<> badge = [&shown = label] { return quoll::ui::p(shown); };

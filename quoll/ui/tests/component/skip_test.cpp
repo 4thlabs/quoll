@@ -59,199 +59,207 @@ using quoll::test::session;
 using quoll::test::settle;
 using quoll::test::virtual_time;
 
-template <class C>
-using test_app = app<C, memory_renderer>;
+using test_app = app<memory_renderer>;
 
 // A row counting its views, with props comparable with ==.
-struct counted_row {
-  struct props {
-    std::string label;
-    int *views = nullptr;
+struct counted_row_props {
+  std::string label;
+  int *views = nullptr;
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  state<int> clicks;
-
-  element view(props const &given) {
-    ++*given.views;
-    return button(given.label + ":" + std::to_string(*clicks)) | on_click([this] { clicks = *clicks + 1; });
-  }
+  [[nodiscard]] bool operator==(counted_row_props const &) const = default;
 };
 
-struct skipping_page {
+constexpr component<counted_row_props> counted_row = [](counted_row_props const &given) {
+  auto &clicks = use_state<int>();
+
+  ++*given.views;
+  return button(given.label + ":" + std::to_string(*clicks)) | on_click([&clicks] { clicks = *clicks + 1; });
+};
+
+struct skipping_page_data {
   state<int> unrelated;
   state<std::string> label{std::string{"a"}};
   int views = 0;
+};
 
-  element view() {
-    return div({p(std::to_string(*unrelated)), component<counted_row>({.label = *label, .views = &views})});
-  }
+constexpr component<> skipping_page = [] {
+  auto &self = use_context<skipping_page_data>();
+
+  return div({p(std::to_string(*self->unrelated)), counted_row({.label = *self->label, .views = &self->views})});
 };
 
 // The same row, whose props have no ==.
-struct uncompared_row {
-  struct props {
-    int *views = nullptr;
-  };
-
-  element view(props const &given) {
-    ++*given.views;
-    return p("uncompared");
-  }
+struct uncompared_row_props {
+  int *views = nullptr;
 };
 
-struct uncompared_page {
+constexpr component<uncompared_row_props> uncompared_row = [](uncompared_row_props const &given) {
+  ++*given.views;
+  return p("uncompared");
+};
+
+struct uncompared_page_data {
   state<int> unrelated;
   int views = 0;
+};
 
-  element view() { return div({p(std::to_string(*unrelated)), component<uncompared_row>({.views = &views})}); }
+constexpr component<> uncompared_page = [] {
+  auto &self = use_context<uncompared_page_data>();
+
+  return div({p(std::to_string(*self->unrelated)), uncompared_row({.views = &self->views})});
 };
 
 // A panel, its props comparable, holding a row of its own: the row changes while the panel's view is given again.
-struct counted_panel {
-  struct props {
-    int *views = nullptr;
-    int *row_views = nullptr;
+struct counted_panel_props {
+  int *views = nullptr;
+  int *row_views = nullptr;
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  element view(props const &given) {
-    ++*given.views;
-    return div({component<counted_row>({.label = "inner", .views = given.row_views})});
-  }
+  [[nodiscard]] bool operator==(counted_panel_props const &) const = default;
 };
 
-struct panel_page {
+constexpr component<counted_panel_props> counted_panel = [](counted_panel_props const &given) {
+  ++*given.views;
+  return div({counted_row({.label = "inner", .views = given.row_views})});
+};
+
+struct panel_page_data {
   state<int> unrelated;
   int panel_views = 0;
   int row_views = 0;
+};
 
-  element view() {
-    return div(
-        {p(std::to_string(*unrelated)), component<counted_panel>({.views = &panel_views, .row_views = &row_views})}
-    );
-  }
+constexpr component<> panel_page = [] {
+  auto &self = use_context<panel_page_data>();
+
+  return div(
+      {p(std::to_string(*self->unrelated)), counted_panel({.views = &self->panel_views, .row_views = &self->row_views})}
+  );
 };
 
 // A row calling its page back, with what the page captured as it viewed.
-struct calling_row {
-  struct props {
-    callback<void()> on_go;
+struct calling_row_props {
+  callback<void()> on_go;
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  element view(props const &given) {
-    return button("go") | on_click([&given] { return given.on_go(); });
-  }
+  [[nodiscard]] bool operator==(calling_row_props const &) const = default;
 };
 
-struct calling_page {
+constexpr component<calling_row_props> calling_row = [](calling_row_props const &given) {
+  return button("go") | on_click([&given] { return given.on_go(); });
+};
+
+struct calling_page_data {
   state<int> count;
   std::vector<int> seen;
+};
 
-  element view() {
-    return div({p(std::to_string(*count)), component<calling_row>({.on_go = [this, n = *count] { seen.push_back(n); }})}
-    );
-  }
+constexpr component<> calling_page = [] {
+  auto &self = use_context<calling_page_data>();
+
+  return div(
+      {p(std::to_string(*self->count)), calling_row({.on_go = [&self, n = *self->count] { self->seen.push_back(n); }})}
+  );
 };
 
 // A panel of the page, with props of its own, giving its row a callback, and viewing again as its own count changes:
 // the row's props compare equal, and it keeps the callback of the panel's first view.
-struct calling_panel {
-  struct props {
-    std::vector<int> *seen = nullptr;
+struct calling_panel_props {
+  std::vector<int> *seen = nullptr;
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  state<int> count;
-
-  element view(props const &given) {
-    return div(
-        {p(std::to_string(*count)) | on_click([this] { count = *count + 1; }),
-         component<calling_row>({.on_go = [seen = given.seen] { seen->push_back(1); }})}
-    );
-  }
+  [[nodiscard]] bool operator==(calling_panel_props const &) const = default;
 };
 
-struct calling_panel_page {
-  std::vector<int> seen;
+constexpr component<calling_panel_props> calling_panel = [](calling_panel_props const &given) {
+  auto &count = use_state<int>();
 
-  element view() { return div({component<calling_panel>({.seen = &seen})}); }
+  return div(
+      {p(std::to_string(*count)) | on_click([&count] { count = *count + 1; }),
+       calling_row({.on_go = [seen = given.seen] { seen->push_back(1); }})}
+  );
+};
+
+struct calling_panel_page_data {
+  std::vector<int> seen;
+};
+
+constexpr component<> calling_panel_page = [] {
+  auto &self = use_context<calling_panel_page_data>();
+
+  return div({calling_panel({.seen = &self->seen})});
 };
 
 // A panel, its props comparable, holding a row whose props have none: as the panel's view is given again, so are
 // the row's props, and the row is not viewed again either.
-struct holding_panel {
-  struct props {
-    int *views = nullptr;
+struct holding_panel_props {
+  int *views = nullptr;
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  element view(props const &given) { return div({component<uncompared_row>({.views = given.views})}); }
+  [[nodiscard]] bool operator==(holding_panel_props const &) const = default;
 };
 
-struct holding_page {
+constexpr component<holding_panel_props> holding_panel = [](holding_panel_props const &given) {
+  return div({uncompared_row({.views = given.views})});
+};
+
+struct holding_page_data {
   state<int> unrelated;
   int views = 0;
+};
 
-  element view() { return div({p(std::to_string(*unrelated)), component<holding_panel>({.views = &views})}); }
+constexpr component<> holding_page = [] {
+  auto &self = use_context<holding_page_data>();
+
+  return div({p(std::to_string(*self->unrelated)), holding_panel({.views = &self->views})});
 };
 
 // A component without props, with a state of its own, placed by a page that views again.
-struct bare_counter {
-  state<int> count;
+constexpr component<> bare_counter = [] {
+  auto &count = use_state<int>();
 
-  element view() {
-    auto const add = [this] { count = *count + 1; };
+  auto const add = [&count] { count = *count + 1; };
 
-    return button("count:" + std::to_string(*count)) | on_click(add);
-  }
+  return button("count:" + std::to_string(*count)) | on_click(add);
 };
 
-struct bare_page {
+struct bare_page_data {
   state<int> unrelated;
+};
 
-  element view() { return div({p(std::to_string(*unrelated)), component<bare_counter>()}); }
+constexpr component<> bare_page = [] {
+  auto &self = use_context<bare_page_data>();
+
+  return div({p(std::to_string(*self->unrelated)), bare_counter()});
 };
 
 // Keyed rows, their props equal, reordered as their page views again.
-struct reordered_page {
+struct reordered_page_data {
   state<std::vector<std::string>> labels{std::vector<std::string>{"a", "b"}};
   int views = 0;
+};
 
-  element view() {
-    auto const row = [this](std::string const &label) {
-      return component<counted_row>({.label = label, .views = &views}) | key(label);
-    };
+constexpr component<> reordered_page = [] {
+  auto &self = use_context<reordered_page_data>();
 
-    return ul({list(labels, row)});
-  }
+  auto const row = [&self](std::string const &label) {
+    return counted_row({.label = label, .views = &self->views}) | key(label);
+  };
+
+  return ul({list(self->labels, row)});
 };
 
 // Changes a state of its own in its first view, before its app links it.
-struct readying {
-  state<bool> ready;
+constexpr component<> readying = [] {
+  auto &ready = use_state<bool>();
 
-  element view() {
-    auto const was = *ready;
+  auto const was = *ready;
 
-    // Shows only in another view.
-    if (!was) {
-      ready = true;
-    }
-
-    return p(was ? "ready" : "not yet");
+  // Shows only in another view.
+  if (!was) {
+    ready = true;
   }
+
+  return p(was ? "ready" : "not yet");
 };
 
-struct readying_page {
-  element view() { return div({component<readying>()}); }
-};
+constexpr component<> readying_page = [] { return div({readying()}); };
 
 // A renderer failing its next insert once told to.
 struct failing_renderer {
@@ -292,14 +300,18 @@ struct failing_renderer {
   void remove(node_id id) { shown.remove(id); }
 };
 
-struct failing_page {
+struct failing_page_data {
   state<std::string> label{std::string{"a"}};
   state<bool> extra{false};
   int views = 0;
+};
 
-  element view() {
-    return div({component<counted_row>({.label = *label, .views = &views}), when(*extra, [] { return p("extra"); })});
-  }
+constexpr component<> failing_page = [] {
+  auto &self = use_context<failing_page_data>();
+
+  return div({counted_row({.label = *self->label, .views = &self->views}), when(*self->extra, [] {
+                return p("extra");
+              })});
 };
 
 } // namespace
@@ -307,14 +319,14 @@ struct failing_page {
 TEST_CASE("skip: a component whose props are equal and whose states did not change is not viewed again", "[ui][skip]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<skipping_page> instance{time.get_executor(), shown};
-  auto const &views = instance.component().views;
+  test_app instance{time.get_executor(), shown, skipping_page, {.contexts = {provide<skipping_page_data>()}}};
+  auto const &views = instance.context<skipping_page_data>().views;
 
   auto const act = [&]() -> task<> {
     REQUIRE(views == 1);
 
     // The page views again: the row's props are the same.
-    instance.component().unrelated = 1;
+    instance.context<skipping_page_data>().unrelated = 1;
     co_await settle();
     REQUIRE(views == 1);
     REQUIRE(shown.html() == "<div><p>1</p><button>a:0</button></div>");
@@ -325,7 +337,7 @@ TEST_CASE("skip: a component whose props are equal and whose states did not chan
     REQUIRE(views == 2);
 
     // Other props view it again.
-    instance.component().label = std::string{"b"};
+    instance.context<skipping_page_data>().label = std::string{"b"};
     co_await settle();
     REQUIRE(views == 3);
   };
@@ -337,46 +349,46 @@ TEST_CASE("skip: a component whose props are equal and whose states did not chan
 TEST_CASE("skip: one whose props have no == is viewed again with its parent", "[ui][skip]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<uncompared_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, uncompared_page, {.contexts = {provide<uncompared_page_data>()}}};
 
   auto const act = [&]() -> task<> {
-    instance.component().unrelated = 1;
+    instance.context<uncompared_page_data>().unrelated = 1;
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().views == 2);
+  REQUIRE(instance.context<uncompared_page_data>().views == 2);
 }
 
 TEST_CASE("skip: a component of a view given again is viewed again as its states change", "[ui][skip]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<panel_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, panel_page, {.contexts = {provide<panel_page_data>()}}};
 
   auto const act = [&]() -> task<> {
-    instance.component().unrelated = 1;
+    instance.context<panel_page_data>().unrelated = 1;
     co_await settle();
-    REQUIRE(instance.component().panel_views == 1);
-    REQUIRE(instance.component().row_views == 1);
+    REQUIRE(instance.context<panel_page_data>().panel_views == 1);
+    REQUIRE(instance.context<panel_page_data>().row_views == 1);
 
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().panel_views == 1);
-  REQUIRE(instance.component().row_views == 2);
+  REQUIRE(instance.context<panel_page_data>().panel_views == 1);
+  REQUIRE(instance.context<panel_page_data>().row_views == 2);
   REQUIRE(shown.html() == "<div><p>1</p><div><button>inner:1</button></div></div>");
 }
 
 TEST_CASE("skip: a callback of a component not viewed again calls what its parent's last view gave it", "[ui][skip]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<calling_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, calling_page, {.contexts = {provide<calling_page_data>()}}};
 
   auto const act = [&]() -> task<> {
     // The page views again with another count; the row's props compare equal, as a callback does.
-    instance.component().count = 1;
+    instance.context<calling_page_data>().count = 1;
     co_await settle();
 
     instance.dispatch(shown.find("button"), "click");
@@ -385,31 +397,36 @@ TEST_CASE("skip: a callback of a component not viewed again calls what its paren
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   // What the callback captured as the row last viewed: capture only what does not change, or pass it as a prop.
-  REQUIRE(instance.component().seen == std::vector<int>{0});
+  REQUIRE(instance.context<calling_page_data>().seen == std::vector<int>{0});
 }
 
 TEST_CASE("skip: a component whose view ran in a render that failed is viewed again in the next", "[ui][skip]") {
   virtual_time time;
   bool fails = false;
   failing_renderer const shown{.fails = &fails};
-  app<failing_page, failing_renderer> instance{time.get_executor(), shown, {.on_error = [](std::exception_ptr) {}}};
+  app instance{
+      time.get_executor(),
+      shown,
+      failing_page,
+      {.on_error = [](std::exception_ptr) {}, .contexts = {provide<failing_page_data>()}}
+  };
 
   auto const act = [&]() -> task<> {
     co_await settle();
 
     // The row views with b, then the insert of the extra paragraph fails.
     fails = true;
-    instance.component().label = std::string{"b"};
-    instance.component().extra = true;
+    instance.context<failing_page_data>().label = std::string{"b"};
+    instance.context<failing_page_data>().extra = true;
     co_await settle();
 
     // Again, with the same props as the view that did not show: the row views again.
-    instance.component().extra = false;
+    instance.context<failing_page_data>().extra = false;
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().views == 3);
+  REQUIRE(instance.context<failing_page_data>().views == 3);
   REQUIRE(shown.shown.html() == "<div><button>b:0</button></div>");
 }
 
@@ -418,7 +435,7 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<calling_panel_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, calling_panel_page, {.contexts = {provide<calling_panel_page_data>()}}};
 
   auto const act = [&]() -> task<> {
     // The panel views again; the row, its props equal, keeps the callback of the panel's first view, which still works.
@@ -430,7 +447,7 @@ TEST_CASE(
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().seen == std::vector<int>{1});
+  REQUIRE(instance.context<calling_panel_page_data>().seen == std::vector<int>{1});
 }
 
 TEST_CASE(
@@ -438,24 +455,24 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<holding_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, holding_page, {.contexts = {provide<holding_page_data>()}}};
 
   auto const act = [&]() -> task<> {
-    instance.component().unrelated = 1;
+    instance.context<holding_page_data>().unrelated = 1;
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().views == 1);
+  REQUIRE(instance.context<holding_page_data>().views == 1);
 }
 
 TEST_CASE("skip: a component without props is viewed again only as its states change", "[ui][skip]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<bare_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, bare_page, {.contexts = {provide<bare_page_data>()}}};
 
   auto const act = [&]() -> task<> {
-    instance.component().unrelated = 1;
+    instance.context<bare_page_data>().unrelated = 1;
     co_await settle();
     REQUIRE(shown.html() == "<div><p>1</p><button>count:0</button></div>");
 
@@ -470,13 +487,13 @@ TEST_CASE("skip: a component without props is viewed again only as its states ch
 TEST_CASE("skip: keyed components not viewed again move with their items, their handlers with them", "[ui][skip]") {
   virtual_time time;
   memory_renderer shown;
-  test_app<reordered_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, reordered_page, {.contexts = {provide<reordered_page_data>()}}};
   quoll::ui::node_id before{};
   quoll::ui::node_id after{};
 
   auto const act = [&]() -> task<> {
     before = shown.find_text("b:0");
-    instance.component().labels = std::vector<std::string>{"b", "a"};
+    instance.context<reordered_page_data>().labels = std::vector<std::string>{"b", "a"};
     co_await settle();
     after = shown.find_text("b:0");
 
@@ -486,7 +503,7 @@ TEST_CASE("skip: keyed components not viewed again move with their items, their 
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().views == 3);
+  REQUIRE(instance.context<reordered_page_data>().views == 3);
   REQUIRE(before == after);
   REQUIRE(shown.html() == "<ul><button>b:1</button><button>a:0</button></ul>");
 }
@@ -494,7 +511,7 @@ TEST_CASE("skip: keyed components not viewed again move with their items, their 
 TEST_CASE("skip: a state a component changes in its first view views it again", "[ui][skip]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<readying_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, readying_page};
 
   REQUIRE(quoll::test::run(time, session(instance, [] { return settle(); })) == 0);
   REQUIRE(shown.html() == "<div><p>ready</p></div>");

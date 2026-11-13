@@ -37,8 +37,7 @@
 #ifndef QUOLL_UI_ROUTING_ROUTER_HPP
 #define QUOLL_UI_ROUTING_ROUTER_HPP
 
-#include <quoll/async/detail/type_id.hpp>
-#include <quoll/ui/component/component_with_props.hpp>
+#include <quoll/ui/component/component.hpp>
 #include <quoll/ui/context/context_spec.hpp>
 #include <quoll/ui/context/provide.hpp>
 #include <quoll/ui/data/state.hpp>
@@ -57,6 +56,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -104,8 +104,8 @@ public:
   // The page at `depth` under the routes the location matched, none past them.
   [[nodiscard]] element show(std::size_t depth);
 
-  // The address of the page of type `page` for `props`, by its first route.
-  [[nodiscard]] std::string href(async::detail::type_id page, void const *props) const;
+  // The address of the page of the table `page`, a component a route names, for `props`, by its first route.
+  [[nodiscard]] std::string href(component_table const &page, void const *props) const;
 
 private:
   static void changed(void *self, std::string_view href);
@@ -131,18 +131,15 @@ private:
 } // namespace detail
 
 /**
- * @brief The routing of an app, a context its components find through `shared<router>`: the location, the address
- * shown, and what goes elsewhere.
+ * @brief The routing of an app, a context its components find through `use_context<router>()`: the location, the
+ * address shown, and what goes elsewhere.
  *
  * @code
- * struct buy_button {
- *   shared<ui::router> nav;
+ * inline constexpr component<> buy_button = [] {
+ *   auto &nav = use_context<ui::router>();
+ *   auto const open = [&nav] { nav->go(product_page, {.id = 7}); };
  *
- *   element view() {
- *     auto const open = [this] { nav->go<product_page>({.id = 7}); };
- *
- *     return button("Open") | on_click(open);
- *   }
+ *   return button("Open") | on_click(open);
  * };
  * @endcode
  *
@@ -159,19 +156,14 @@ struct router {
   /** @brief Goes to `href`, an address of the app, as a link to it does: pushed, unless it is the one shown. */
   void go(std::string_view href) { core.go(href, false); }
 
-  /** @brief Goes to the page `Page` for `props`, by its first route. */
-  template <class Page>
-    requires ComponentWithProps<Page>
-  void go(typename Page::props const &props) {
-    core.go(href<Page>(props), false);
+  /** @brief Goes to the page `page`, the component a route names, for `props`, by its first route. */
+  template <class P>
+  void go(component<P> const &page, std::type_identity_t<P> const &props) {
+    core.go(href(page, props), false);
   }
 
-  /** @brief Goes to the page `Page`, without props. */
-  template <class Page>
-    requires(!ComponentWithProps<Page>)
-  void go() {
-    core.go(href<Page>(), false);
-  }
+  /** @brief Goes to the page `page`, without props. */
+  void go(component<> const &page) { core.go(href(page), false); }
 
   /** @brief Goes to `href` in place of the address now, which back() then does not come back to. */
   void replace(std::string_view href) { core.go(href, true); }
@@ -180,21 +172,16 @@ struct router {
   void back() const { core.back(); }
 
   /**
-   * @brief The address of the page `Page` for `props`, by its first route.
+   * @brief The address of the page `page`, the component a route names, for `props`, by its first route.
    * @throws std::logic_error when no route shows it.
    */
-  template <class Page>
-    requires ComponentWithProps<Page>
-  [[nodiscard]] std::string href(typename Page::props const &props) const {
-    return core.href(async::detail::type_id_of<Page>(), &props);
+  template <class P>
+  [[nodiscard]] std::string href(component<P> const &page, std::type_identity_t<P> const &props) const {
+    return core.href(page.table(), &props);
   }
 
-  /** @brief The address of the page `Page`, without props. */
-  template <class Page>
-    requires(!ComponentWithProps<Page>)
-  [[nodiscard]] std::string href() const {
-    return core.href(async::detail::type_id_of<Page>(), nullptr);
-  }
+  /** @brief The address of the page `page`, without props. */
+  [[nodiscard]] std::string href(component<> const &page) const { return core.href(page.table(), nullptr); }
 };
 
 /**
@@ -202,7 +189,7 @@ struct router {
  * memory starting at `start`, as a program with no browser and a test have.
  *
  * @code
- * mount<app_shell>("#app", {.contexts = {ui::routing<routes>(quoll::emscripten::browser_history())}});
+ * mount(app_shell, "#app", {.contexts = {ui::routing<routes>(quoll::emscripten::browser_history())}});
  * @endcode
  */
 template <auto const &Routes>
@@ -265,34 +252,32 @@ struct outlet_level {
 [[nodiscard]] element link_to(std::string_view href, std::initializer_list<detail::child> children);
 
 /**
- * @brief A link to the page `Page` for `props`, by its first route, its props checked at compile time.
+ * @brief A link to the page `page`, the component a route names, for `props`, by its first route, its props checked at
+ * compile time.
  * @throws std::logic_error when no route shows it.
  */
-template <class Page>
-  requires ComponentWithProps<Page>
-[[nodiscard]] element link_to(typename Page::props const &props, detail::literal_text text) {
+template <class P>
+[[nodiscard]] element
+link_to(component<P> const &page, std::type_identity_t<P> const &props, detail::literal_text text) {
   auto &nav = detail::router_in_view();
 
-  return detail::linked(nav, nav.href<Page>(props), node("a", {ui::text(text)}));
+  return detail::linked(nav, nav.href(page, props), node("a", {ui::text(text)}));
 }
 
 /** @brief See link_to(). */
-template <class Page>
-  requires ComponentWithProps<Page>
-[[nodiscard]] element link_to(typename Page::props const &props, std::initializer_list<detail::child> children) {
+template <class P>
+[[nodiscard]] element
+link_to(component<P> const &page, std::type_identity_t<P> const &props, std::initializer_list<detail::child> children) {
   auto &nav = detail::router_in_view();
 
-  return detail::linked(nav, nav.href<Page>(props), node("a", children));
+  return detail::linked(nav, nav.href(page, props), node("a", children));
 }
 
-/** @brief A link to the page `Page`, without props. */
-template <class Page>
-  requires(!ComponentWithProps<Page>)
-[[nodiscard]] element link_to(detail::literal_text text) {
-  auto &nav = detail::router_in_view();
+/** @brief A link to the page `page`, without props. */
+[[nodiscard]] element link_to(component<> const &page, detail::literal_text text);
 
-  return detail::linked(nav, nav.href<Page>(), node("a", {ui::text(text)}));
-}
+/** @brief See link_to(). */
+[[nodiscard]] element link_to(component<> const &page, std::initializer_list<detail::child> children);
 
 } // namespace quoll::ui
 

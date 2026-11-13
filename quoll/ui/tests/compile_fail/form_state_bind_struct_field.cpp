@@ -52,12 +52,6 @@ struct item {
   place where;
 };
 
-struct item_editor {
-  struct props {
-    item value;
-  };
-
-  quoll::ui::form_state<&props::value> form;
-
-  quoll::ui::element view(props const &) { return quoll::ui::input() | bind(form, &item::where); }
-};
+// A form of an item, as use_form() gives one.
+quoll::ui::form_state<item> form;
+auto const field = quoll::ui::input() | bind(form, &item::where);

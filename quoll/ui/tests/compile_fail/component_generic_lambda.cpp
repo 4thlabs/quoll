@@ -34,21 +34,17 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui: a context has no view, mounted() nor unmounted(), which would never run: its effects do what a
-// component's mounted() would
+// expect: quoll::ui: a component is made of a lambda or an empty struct whose call operator is
 //
-// A context with a mounted(), as a component has: it would never run, and its data never load.
+// A generic lambda: its props are of no type, which a component<props> needs to say.
 
-#include <quoll/async/task.hpp>
-#include <quoll/ui/context/provide.hpp>
-#include <quoll/ui/data/state.hpp>
+#include <quoll/ui/component/component.hpp>
+#include <quoll/ui/view/tags.hpp>
 
 #include <string>
 
-struct session {
-  quoll::ui::state<std::string> who;
-
-  quoll::async::task<> mounted();
+struct badge_props {
+  std::string label;
 };
 
-auto const given = quoll::ui::provide<session>();
+constexpr quoll::ui::component<badge_props> badge = [](auto const &given) { return quoll::ui::p(given.label); };

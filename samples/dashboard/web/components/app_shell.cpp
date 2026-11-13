@@ -34,21 +34,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_UI_COMPONENT_MOUNTED_COMPONENT_HPP
-#define QUOLL_UI_COMPONENT_MOUNTED_COMPONENT_HPP
+// The app's root: the page of the address.
 
-#include <quoll/async/task.hpp>
+#include "components.hpp"
 
-#include <concepts>
+#include <quoll/ui.hpp>
 
-namespace quoll::ui {
+namespace dashboard_web {
 
-/** @brief A component with `task<> mounted()`, run once it first shows. */
-template <class C>
-concept MountedComponent = requires(C &component) {
-  { component.mounted() } -> std::same_as<async::task<>>;
-};
+constexpr component<> app_shell = [] { return main_({outlet()}) | tw("mx-auto flex max-w-5xl flex-col gap-6 p-8"); };
 
-} // namespace quoll::ui
-
-#endif // QUOLL_UI_COMPONENT_MOUNTED_COMPONENT_HPP
+} // namespace dashboard_web

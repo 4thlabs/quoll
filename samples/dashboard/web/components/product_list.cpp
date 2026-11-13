@@ -34,32 +34,28 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The products, filtered by what is typed above them: the filter is the list's own state, the products the catalog's.
-
-#ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_LIST_HPP
-#define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_LIST_HPP
+// The products, filtered by what is typed above them: the filter is the list's own state, the products the
+// catalog's.
 
 #include "catalog.hpp"
+#include "components.hpp"
 #include "product.hpp"
-#include "product_row.hpp"
 
 #include <quoll/ui.hpp>
 
 #include <algorithm>
 #include <cctype>
-#include <cstdint>
 #include <iterator>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace dashboard_web {
 
-using namespace quoll::ui;
+namespace {
 
 // Whether `text` holds `part`, whatever the case of their ASCII letters.
-[[nodiscard]] inline bool holds(std::string_view text, std::string_view part) {
+[[nodiscard]] bool holds(std::string_view text, std::string_view part) {
   auto const same = [](char left, char right) {
     return std::tolower(static_cast<unsigned char>(left)) == std::tolower(static_cast<unsigned char>(right));
   };
@@ -67,47 +63,34 @@ using namespace quoll::ui;
   return part.empty() || !std::ranges::search(text, part, same).empty();
 }
 
-struct product_list {
-  struct props {
-    // The product of the address, shown chosen.
-    std::optional<std::int64_t> selected;
+} // namespace
 
-    [[nodiscard]] bool operator==(props const &) const = default;
+constexpr component<product_list_props> product_list = [](product_list_props const &given) {
+  auto &products = use_context<catalog>();
+  auto &query = use_state<std::string>();
+
+  // The products whose name or category holds what is typed.
+  auto const matches = [&query](products::product const &item) {
+    return holds(item.name, *query) || holds(item.category, *query);
   };
 
-  shared<catalog> products;
-  state<std::string> query;
+  std::vector<products::product> shown;
 
-  element view(props const &given) {
-    auto const matches = [this](products::product const &item) {
-      return holds(item.name, *query) || holds(item.category, *query);
-    };
+  std::ranges::copy_if(products->items->value, std::back_inserter(shown), matches);
 
-    std::vector<products::product> shown;
+  auto const row = [&given](products::product const &item) {
+    return product_row({.item = item, .selected = given.selected == item.id}) | key(item.id);
+  };
 
-    std::ranges::copy_if(products->items->value, std::back_inserter(shown), matches);
+  auto const nothing = [] { return p("No product matches") | tw("px-4 py-2 opacity-70"); };
 
-    auto const row = [&given](products::product const &item) {
-      auto const chosen = component<product_row>({
-          .item = item,
-          .selected = given.selected == item.id,
-      });
+  auto const panel = div({
+      input() | bind(query) | tw("input input-bordered w-full") | placeholder("Filter by name or category"),
+      when(shown.empty(), nothing),
+      ul({list(shown, row)}) | tw("flex flex-col gap-1"),
+  });
 
-      return chosen | key(item.id);
-    };
-
-    auto const nothing = [] { return p("No product matches") | tw("px-4 py-2 opacity-70"); };
-
-    auto const panel = div({
-        input() | bind(query) | tw("input input-bordered w-full") | placeholder("Filter by name or category"),
-        when(shown.empty(), nothing),
-        ul({list(shown, row)}) | tw("flex flex-col gap-1"),
-    });
-
-    return panel | tw("flex flex-col gap-3");
-  }
+  return panel | tw("flex flex-col gap-3");
 };
 
 } // namespace dashboard_web
-
-#endif // QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_LIST_HPP

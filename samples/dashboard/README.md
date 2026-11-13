@@ -22,17 +22,20 @@ dashboard/
 
 | File | What it holds |
 |---|---|
-| `web/main.cpp` | `mount<app_shell>()`, in `#app`, its addresses through the browser's history |
-| `web/components/pages.hpp` | the routes, `/products` and `/products/{id}`, a redirect from `/` and a page for an unknown address, the app's own component and its options |
-| `web/components/products_layout.hpp` | the layout of `/products`: the heading, the list, and the page of the address in its `outlet()` |
-| `web/components/product_page.hpp` | the page of `/products/{id}`: the product the catalog holds, or why it is not shown |
-| `web/components/product_view.hpp` | a function component: a product's detail, and its sales, loaded by a `use_effect` on its `id` prop into a `use_async_state`: the sales, whether they are loading and why they failed |
-| `web/components/catalog.hpp` | the products, a context the layout, the list, the product's page and its detail share: loaded by an `effect` on no state, saved by `save`, which the detail's `action` runs |
-| `web/components/product_list.hpp` | the filter, a state of its own, and the rows of the catalog's products it matches |
-| `web/components/product_row.hpp` | one product, a `link_to` its page |
-| `web/components/product_detail.hpp` | the product shown, edited through a `form_state` of its props: each field bound to one of the product's, what is typed kept until saved, and kept when typed while a save is on its way; its save, an `action` of the catalog's save run with the form, read as a state for whether it waits and why it failed |
+| `web/main.cpp` | `mount(app_shell, ...)`, in `#app`, its addresses through the browser's history |
+| `web/components/components.hpp` | each component of the page, declared with its props: `extern component<props> const name;`, defined in a source of its own, named after it, which a change to it alone compiles again |
+| `web/components/routes.hpp` | the routes, `/products` and `/products/{id}`, a redirect from `/` and a page for an unknown address, and the app's options |
+| `web/components/app_shell.cpp` | the app's root, the page of the address in its `outlet()` |
+| `web/components/products_layout.cpp` | the layout of `/products`: the heading, the list, and the page of the address in its `outlet()` |
+| `web/components/product_list.cpp` | the filter, a `use_state` of its own, and the rows of the catalog's products it matches |
+| `web/components/product_row.cpp` | one product, a `link_to` its page |
+| `web/components/choose_product.cpp`, `missing_page.cpp` | the page of `/products` when none is chosen, and the one of an unknown address |
+| `web/components/product_page.cpp` | the page of `/products/{id}`: the product the catalog holds, or why it is not shown |
+| `web/components/product_view.cpp` | a product's detail, and its sales, loaded by a `use_effect` on its `id` prop into a `use_async_state`: the sales, whether they are loading and why they failed |
+| `web/components/product_detail.cpp` | the product shown, edited through a `use_form` of its props: each field bound to one of the product's, what is typed kept until saved, and kept when typed while a save is on its way; its save, a `use_action` of the catalog's save run with the form, read as a state for whether it waits and why it failed |
+| `web/components/catalog.hpp` | the products, a context the layout, the list, the product's page and its detail share: loaded by an `effect` on no state, saved by `save`, which the detail's action runs |
 | `web/components/labelled.hpp` | a field of the form under its name |
-| `web/components/sales_chart.hpp`, `.cpp` | the `line_chart` widget, and the month of the point clicked; its view in a source of its own, as the widget's JSON goes through Glaze |
+| `web/components/sales_chart.cpp` | the `line_chart` widget, and the month of the point clicked |
 | `web/widgets/line_chart.js` | the widget's module: `mount`, `update` and `unmount` over chart.js, a click emitting `point_selected` |
 | `web/products_client.hpp`, `.cpp` | the calls to the server, through a `rest::client` of the contract, in a source of their own |
 
@@ -70,9 +73,9 @@ the widget and no WebSocket. What took code of its own, for base components to g
   decorator of the page's own, which `value()` now gives, and what is typed through `on_input`.
 - **A labelled field, a number field.** `labelled()` is a function of the page's own, a base component to come. The
   price and the stock first took parsing and formatting by hand, which `bind()` of a `form_state` now does.
-- **States that start from the props.** `mounted()` has no props, so the detail first kept what is typed as
-  `state<std::optional<std::string>>`, nothing until a field changed; `form_state` now starts from the product the
-  props give. It is keyed by the product so that another starts empty.
+- **States that start from the props.** A struct component's `mounted()` had no props, so the detail first kept what
+  is typed as `state<std::optional<std::string>>`, nothing until a field changed; `use_form` now starts from the
+  product the props give. It is keyed by the product so that another starts empty.
 - **Requests that overlap.** The sales of a product chosen before the last may answer, or fail, after it; two saves of a
   product may be answered out of order, or sent by a double click. The page first kept counters for these by hand, in
   which reviews kept finding bugs; `quoll::ui` now gives `effect`, React's `useEffect` on the product chosen, whose run

@@ -43,7 +43,6 @@
 #include <quoll/ui.hpp>
 #include <quoll/ui/data/form_state.hpp>
 #include <quoll/ui/detail/data/linked_member.hpp>
-#include <quoll/ui/detail/data/props_member.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -66,8 +65,7 @@ using quoll::test::session;
 using quoll::test::settle;
 using quoll::test::virtual_time;
 
-template <class C>
-using test_app = app<C, memory_renderer>;
+using test_app = app<memory_renderer>;
 
 struct item {
   std::int64_t id = 0;
@@ -94,37 +92,34 @@ struct shop {
   }
 };
 
-struct editor {
-  struct props {
-    item value;
+struct editor_props {
+  item value;
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  shared<shop> data;
-  form_state<&props::value> form;
-  action<&shop::save> save{data};
-
-  element view(props const &) {
-    return div({
-        label({text("Name"), input() | bind(form, &item::name)}),
-        label({text("Price"), input() | bind(form, &item::price)}),
-        label({text("Stock"), input() | bind(form, &item::stock)}),
-        label({text("Active"), input() | bind(form, &item::active)}),
-        when(!form.valid(), [] { return p("not numbers"); }),
-        button("Save") | disabled(save->loading || !form.valid()) | on_click(save.with(form)),
-    });
-  }
+  [[nodiscard]] bool operator==(editor_props const &) const = default;
 };
 
-struct shop_page {
-  shared<shop> data;
+constexpr component<editor_props> editor = [](editor_props const &given) {
+  auto &data = use_context<shop>();
+  auto &form = use_form(given.value);
+  auto &save = use_action<&shop::save>(data);
 
-  element view() { return component<editor>({.value = *data->current}); }
+  return div({
+      label({text("Name"), input() | bind(form, &item::name)}),
+      label({text("Price"), input() | bind(form, &item::price)}),
+      label({text("Stock"), input() | bind(form, &item::stock)}),
+      label({text("Active"), input() | bind(form, &item::active)}),
+      when(!form.valid(), [] { return p("not numbers"); }),
+      button("Save") | disabled(save->loading || !form.valid()) | on_click(save.with(form)),
+  });
 };
 
-static_assert(detail::LinkedMember<form_state<&editor::props::value>>);
-static_assert(detail::PropsMember<form_state<&editor::props::value>>);
+constexpr component<> shop_page = [] {
+  auto &data = use_context<shop>();
+
+  return editor({.value = *data->current});
+};
+
+static_assert(detail::LinkedMember<form_state<item>>);
 
 // The input of the field labelled `name`.
 [[nodiscard]] node_id field(memory_renderer const &shown, std::string_view name) {
@@ -153,7 +148,7 @@ TEST_CASE("form_state: its fields show the value of the props, and what is typed
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<shop_page> instance{time.get_executor(), shown, {.contexts = {provide<shop>()}}};
+  test_app instance{time.get_executor(), shown, shop_page, {.contexts = {provide<shop>()}}};
   std::vector<std::string> before;
   std::vector<std::string> after;
 
@@ -179,7 +174,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<shop_page> instance{time.get_executor(), shown, {.contexts = {provide<shop>()}}};
+  test_app instance{time.get_executor(), shown, shop_page, {.contexts = {provide<shop>()}}};
   std::string typed;
   bool told_wrong = false;
   bool locked = false;
@@ -226,7 +221,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<shop_page> instance{time.get_executor(), shown, {.contexts = {provide<shop>()}}};
+  test_app instance{time.get_executor(), shown, shop_page, {.contexts = {provide<shop>()}}};
   std::string name_after_save;
   std::string price_after_save;
 
@@ -263,7 +258,7 @@ TEST_CASE("form_state: with(form) sends the form as it stands at the click", "[u
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<shop_page> instance{time.get_executor(), shown, {.contexts = {provide<shop>()}}};
+  test_app instance{time.get_executor(), shown, shop_page, {.contexts = {provide<shop>()}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -286,7 +281,7 @@ TEST_CASE("form_state: a bool field is a checkbox, changed as it is clicked", "[
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<shop_page> instance{time.get_executor(), shown, {.contexts = {provide<shop>()}}};
+  test_app instance{time.get_executor(), shown, shop_page, {.contexts = {provide<shop>()}}};
   bool checked_before = true;
   bool checked_after = false;
 
@@ -310,18 +305,10 @@ TEST_CASE("form_state: a bool field is a checkbox, changed as it is clicked", "[
 
 namespace {
 
-struct nameless {
-  struct props {
-    item value;
-  };
+constexpr component<> nameless = [] {
+  auto &form = use_form(item{});
 
-  form_state<&props::value> form;
-
-  element view(props const &) { return input() | bind(form, static_cast<std::string item::*>(nullptr)); }
-};
-
-struct nameless_page {
-  element view() { return component<nameless>({}); }
+  return input() | bind(form, static_cast<std::string item::*>(nullptr));
 };
 
 } // namespace
@@ -329,7 +316,7 @@ struct nameless_page {
 TEST_CASE("form_state: bind() of no field throws", "[ui][form]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<nameless_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, nameless};
 
   CHECK_THROWS_AS(instance.start(), std::invalid_argument);
 }
@@ -342,24 +329,20 @@ struct plain_item {
   int stock = 0;
 };
 
-struct plain_editor {
-  struct props {
-    plain_item value;
-  };
-
-  form_state<&props::value> form;
-
-  element view(props const &) {
-    return div({
-        label({text("Price"), input() | bind(form, &plain_item::price)}),
-        label({text("Stock"), input() | bind(form, &plain_item::stock)}),
-    });
-  }
+struct plain_editor_props {
+  plain_item value;
 };
 
-struct plain_page {
-  element view() { return component<plain_editor>({.value = {.price = 2.5, .stock = 3}}); }
+constexpr component<plain_editor_props> plain_editor = [](plain_editor_props const &given) {
+  auto &form = use_form(given.value);
+
+  return div({
+      label({text("Price"), input() | bind(form, &plain_item::price)}),
+      label({text("Stock"), input() | bind(form, &plain_item::stock)}),
+  });
 };
+
+constexpr component<> plain_page = [] { return plain_editor({.value = {.price = 2.5, .stock = 3}}); };
 
 } // namespace
 
@@ -368,7 +351,7 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<plain_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, plain_page};
   std::vector<std::string> seen;
 
   auto const act = [&]() -> task<> {

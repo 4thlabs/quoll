@@ -38,17 +38,15 @@
 //
 // A route typing its parameter: its page's props already do, and the two could differ.
 
+#include <quoll/ui/component/component.hpp>
 #include <quoll/ui/routing/route.hpp>
-#include <quoll/ui/view/element.hpp>
 
 #include <cstdint>
 
-struct product_page {
-  struct props {
-    std::int64_t id = 0;
-  };
-
-  quoll::ui::element view(props const &given);
+struct product_page_props {
+  std::int64_t id = 0;
 };
+
+extern quoll::ui::component<product_page_props> const product_page;
 
 constexpr auto shop = quoll::ui::routes(quoll::ui::route<"/products/{id:int64}", product_page>());

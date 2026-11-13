@@ -37,7 +37,7 @@
 // The page of samples/dashboard/web, run natively: the calls to the server are defined here, over products in memory,
 // in place of products_client.cpp, which goes through fetch. The chart is a widget, which memory_renderer logs.
 
-#include "components/pages.hpp"
+#include "components/routes.hpp"
 #include "product.hpp"
 #include "products_client.hpp"
 
@@ -74,7 +74,7 @@ using quoll::test::session;
 using quoll::test::settle;
 using quoll::test::virtual_time;
 
-using dashboard_app = quoll::ui::app<dashboard_web::app_shell, memory_renderer>;
+using dashboard_app = quoll::ui::app<memory_renderer>;
 
 // One call for sales: how long it takes, and whether it fails then.
 struct sales_call {
@@ -261,7 +261,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string loaded;
   std::string filtered;
@@ -302,7 +302,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string refused;
   std::string infinite;
@@ -352,7 +352,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string refused;
 
@@ -385,7 +385,7 @@ TEST_CASE("dashboard web: the sales of a product chosen before are not shown onc
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
   page_driver const user{instance, shown};
 
   auto const act = [&]() -> task<> {
@@ -411,7 +411,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string left;
   std::string failed;
@@ -445,7 +445,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string first;
   std::string third;
@@ -477,7 +477,7 @@ TEST_CASE("dashboard web: a field changed while a save is on its way keeps what 
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
   page_driver const user{instance, shown};
 
   auto const act = [&]() -> task<> {
@@ -512,7 +512,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string failed;
   int asked_before = 0;
@@ -550,7 +550,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string saved;
   std::string chosen;
@@ -603,7 +603,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string waiting;
   int sent_meanwhile = 0;
@@ -643,7 +643,7 @@ TEST_CASE("dashboard web: a save goes on once its detail is left, and the list s
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
   page_driver const user{instance, shown};
 
   auto const act = [&]() -> task<> {
@@ -673,7 +673,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
   page_driver const user{instance, shown};
 
   auto const act = [&]() -> task<> {
@@ -700,7 +700,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
   page_driver const user{instance, shown};
   std::string retrying;
   std::string reopened;
@@ -746,7 +746,7 @@ TEST_CASE("dashboard web: sales ending on what is no std::exception say they did
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
   page_driver const user{instance, shown};
 
   auto const act = [&]() -> task<> {
@@ -769,7 +769,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options()};
+  dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options()};
 
   auto const act = []() -> task<> { co_await settle(); };
 
@@ -786,7 +786,9 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options("/products/2")};
+  dashboard_app instance{
+      time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options("/products/2")
+  };
   page_driver const user{instance, shown};
   std::string opened;
   std::string other;
@@ -836,7 +838,7 @@ TEST_CASE(
 
     virtual_time time;
     memory_renderer const shown;
-    dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options(start)};
+    dashboard_app instance{time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options(start)};
 
     auto const act = []() -> task<> { co_await settle(); };
 
@@ -856,7 +858,9 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options("/products")};
+  dashboard_app instance{
+      time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options("/products")
+  };
   page_driver const user{instance, shown};
   std::string first;
 
@@ -886,7 +890,9 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  dashboard_app instance{time.get_executor(), shown, dashboard_web::page_options("/products/2")};
+  dashboard_app instance{
+      time.get_executor(), shown, dashboard_web::app_shell, dashboard_web::page_options("/products/2")
+  };
   std::string first;
 
   // Its first view, before the catalog's load ran.

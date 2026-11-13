@@ -67,22 +67,14 @@ namespace quoll::ui::detail {
 // Thread safety: none. Its functions and the tasks it runs are on one executor, one thing at a time.
 class app_core {
 public:
-  using view_function = element (*)(void *component);
-  using unmounted_function = void (*)(void *component);
+  // The app's view: its root component, placed.
+  using view_function = element (*)(void const *root);
   using effects_function = void (*)(void *component, effect_starter const &start);
-  using finds_function = bool (*)(context_finder const &finder);
-  using provides_function = context_entry *(*)(void *component, async::detail::type_id type);
 
-  // `unmounted`, none for a component without it, runs as the app stops, once its view showed.
-  // `effects` start those of the component whose dependency changed, after each of its views. The contexts of `options`
-  // are made here, in their order, each finding those it uses among those given before it.
+  // The contexts of `options` are made here, in their order, each finding those it uses among those given before it.
   // Throws std::logic_error for two contexts of one type, or one using a context not given before it.
-  // `finds`, none for a component using no context, tells whether the contexts the app's own component uses are there,
-  // which is checked here, before the app makes it, as for each context before it is made: one refused is never made,
-  // so that its destructor, which may read what it found, does not run.
   app_core(
-      async::any_executor executor, renderer_ref renderer, view_function view, unmounted_function unmounted,
-      effects_function effects, finds_function finds, provides_function provides, void *component, app_options options
+      async::any_executor executor, renderer_ref renderer, view_function view, void const *root, app_options options
   );
 
   app_core(app_core const &) = delete;
@@ -95,14 +87,10 @@ public:
 
   [[nodiscard]] bool stopped() const noexcept { return stopped_; }
 
-  // Made whole, its own component's contexts found and its states linked: until then, and from going(), as it is
-  // destroyed, a change asks for no render, so that what changes as a failed making unwinds, or as the app goes, as a
-  // component's destructor writing to a context, reaches nothing half made or half gone.
+  // Made whole: until then, and from going(), as it is destroyed, a change asks for no render, so that what changes as
+  // a failed making unwinds, or as the app goes, as a component's destructor writing to a context, reaches nothing half
+  // made or half gone.
   void made() noexcept { made_ = true; }
-
-  // The app's own component is made and has found its contexts: what it provides is found from now on, by the
-  // components of its view, not by the app's contexts nor by itself.
-  void component_made() noexcept { component_made_ = true; }
 
   void going() noexcept { made_ = false; }
 
@@ -115,8 +103,6 @@ public:
   void render();
   // Under the stop of the component `held` names, kept with its props until it ends, or the app's for none.
   void spawn(async::task<> work, held_view held = {});
-  // spawn() for a mounted(), which does not start once its component, or the app, is stopped.
-  void mount(async::task<> work, held_view held = {});
   void dispatch(node_id id, std::string_view name, std::string value);
 
   // As a handler's failure: to on_error.
@@ -124,11 +110,11 @@ public:
 
   [[nodiscard]] async::task<> stop();
 
-  // A start that failed: what the view left pending, or the mounted() it spawned, must show nothing more. stop() still
+  // A start that failed: what the view left pending must show nothing more. stop() still
   // waits for them.
   void abandon() noexcept;
 
-  // What the view showed, and so the handlers it holds, which may refer to the component: gone before the component.
+  // What the view showed, and so the handlers it holds, which may refer to the components: gone before them.
   void forget_view() noexcept;
 
   static void state_changed(void *self);
@@ -145,7 +131,6 @@ private:
   // As the app stops: what a renderer throws goes to on_error, and the others are unmounted all the same.
   void unmount_widgets(std::vector<element> const &shown) const noexcept;
   void failed(std::exception_ptr failure) const noexcept;
-  static void failed_in(void *self, std::exception_ptr failure) noexcept;
   static context_entry *find_context(void const *self, async::detail::type_id type) noexcept;
 
   async::any_executor executor_;
@@ -153,11 +138,7 @@ private:
   // What callbacks hold of it, to start their work here, as long as it lives.
   std::shared_ptr<app_link> link_;
   view_function view_;
-  unmounted_function unmounted_;
-  effects_function effects_;
-  // What the app's own component provides to the components of its view, found before the app's contexts.
-  provides_function provides_;
-  void *component_;
+  void const *root_;
   app_options options_;
   // Before what may refer to them, the tasks and the components: destroyed after them.
   context_list contexts_;
@@ -175,9 +156,6 @@ private:
   bool stopped_ = false;
   // Between made() and going().
   bool made_ = false;
-  bool component_made_ = false;
-  // Its view showed, and its unmounted() has not run yet.
-  bool shown_once_ = false;
 };
 
 } // namespace quoll::ui::detail

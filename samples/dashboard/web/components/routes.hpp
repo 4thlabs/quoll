@@ -34,14 +34,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The pages of the app and their addresses: the products, with a product's page under them.
+// The addresses of the app, and what it holds: the products, with a product's page under them.
 
-#ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PAGES_HPP
-#define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PAGES_HPP
+#ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_ROUTES_HPP
+#define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_ROUTES_HPP
 
 #include "catalog.hpp"
-#include "product_page.hpp"
-#include "products_layout.hpp"
+#include "components.hpp"
 
 #include <quoll/ui.hpp>
 
@@ -51,21 +50,6 @@
 namespace dashboard_web {
 
 using namespace quoll::ui;
-
-// At /products, beside the list: none chosen yet.
-struct choose_product {
-  element view() { return p("Choose a product") | tw("opacity-70"); }
-};
-
-// At an address no route matches.
-struct missing_page {
-  element view() {
-    return div({
-        p("No such page"),
-        link_to<choose_product>("See the products") | tw("link"),
-    });
-  }
-};
 
 // The addresses of the app:
 //
@@ -85,11 +69,6 @@ inline constexpr auto app_routes = routes(
     not_found<missing_page>());
 // clang-format on
 
-// The app's own component: the page of the address.
-struct app_shell {
-  element view() { return main_({outlet()}) | tw("mx-auto flex max-w-5xl flex-col gap-6 p-8"); }
-};
-
 // What the app holds, through the browser's history in main.
 [[nodiscard]] inline app_options page_options(history_ref history) {
   return {.contexts = {routing<app_routes>(history), provide<catalog>()}};
@@ -102,4 +81,4 @@ struct app_shell {
 
 } // namespace dashboard_web
 
-#endif // QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PAGES_HPP
+#endif // QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_ROUTES_HPP

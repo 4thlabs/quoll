@@ -37,13 +37,10 @@
 #ifndef QUOLL_UI_DETAIL_ROUTING_ROUTE_TABLE_HPP
 #define QUOLL_UI_DETAIL_ROUTING_ROUTE_TABLE_HPP
 
-#include <quoll/async/detail/type_id.hpp>
 #include <quoll/http/detail/percent.hpp>
 #include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/fixed_string.hpp>
-#include <quoll/ui/component/child_component.hpp>
 #include <quoll/ui/component/component.hpp>
-#include <quoll/ui/component/component_with_props.hpp>
 #include <quoll/ui/detail/routing/route_field.hpp>
 #include <quoll/ui/view/element.hpp>
 
@@ -78,6 +75,26 @@ struct route_values {
 
 enum class route_kind : unsigned char { page, redirect, not_found };
 
+// What a route's page is: a component, `component<props>` or `component<>`, named by the object.
+template <class C>
+inline constexpr bool is_page = false;
+
+template <class P>
+inline constexpr bool is_page<component<P>> = true;
+
+template <auto const &Page>
+using page_props_t = typename std::remove_cvref_t<decltype(Page)>::props_type;
+
+template <auto const &Page>
+inline constexpr bool has_page_props = !std::is_void_v<page_props_t<Page>>;
+
+// What tells a route's page apart, read as the program runs: its table, which a copy of the component shares, and
+// which a component declared in a header and defined in a source only has once the program runs.
+template <auto const &Page>
+[[nodiscard]] component_table const *page_table() noexcept {
+  return &Page.table();
+}
+
 // A route of a table, its parents before it: its whole path template, its page, what shows it, what tells whether an
 // address's values suit its page, and the address of its page for props.
 struct route_entry {
@@ -85,7 +102,8 @@ struct route_entry {
   std::string_view path;
   // A redirect's target, a whole path template whose parameters are its own.
   std::string_view target;
-  async::detail::type_id page = nullptr;
+  // Its page's table, for the component the route names.
+  component_table const *(*page)() noexcept = nullptr;
   std::size_t parent = static_cast<std::size_t>(-1);
   bool leaf = true;
   element (*show)(route_values const &values) = nullptr;
@@ -155,7 +173,7 @@ struct joined {
 }
 
 // The checks of a route of `Path`, its own as written, whole as `Full`, for `Page`, one message a way to be wrong.
-template <http::fixed_string Path, http::fixed_string Full, class Page, bool Top>
+template <http::fixed_string Path, http::fixed_string Full, auto const &Page, bool Top>
 consteval void check_route() {
   constexpr auto parsed_error = http::detail::parse_template(Full.view()).error;
   constexpr bool typed = [] {
@@ -184,8 +202,8 @@ consteval void check_route() {
       "quoll::ui: a route's path does not end with '/', which an address loses as it is matched"
   );
 
-  if constexpr (ComponentWithProps<Page>) {
-    using props = typename Page::props;
+  if constexpr (has_page_props<Page>) {
+    using props = page_props_t<Page>;
 
     static_assert(
         route_fields_only<props>(),
@@ -211,8 +229,8 @@ consteval void check_route() {
 
 // The props of `Page` from what an address gives: the path's parameters first, then the query's, each field left as it
 // was made when neither has it; false when a path parameter is no such value.
-template <class Page>
-[[nodiscard]] bool fill_props(typename Page::props &props, route_values const &values) {
+template <auto const &Page>
+[[nodiscard]] bool fill_props(page_props_t<Page> &props, route_values const &values) {
   bool suits = true;
 
   for_each_route_field(props, [&](std::string_view name, auto &field) {
@@ -226,22 +244,22 @@ template <class Page>
   return suits;
 }
 
-template <class Page>
+template <auto const &Page>
 [[nodiscard]] element show_page(route_values const &values) {
-  if constexpr (ComponentWithProps<Page>) {
-    typename Page::props props{};
+  if constexpr (has_page_props<Page>) {
+    page_props_t<Page> props{};
 
     static_cast<void>(fill_props<Page>(props, values));
-    return component<Page>(std::move(props));
+    return Page(std::move(props));
   } else {
-    return component<Page>();
+    return Page();
   }
 }
 
-template <class Page>
+template <auto const &Page>
 [[nodiscard]] bool accepts_page(route_values const &values) {
-  if constexpr (ComponentWithProps<Page>) {
-    typename Page::props props{};
+  if constexpr (has_page_props<Page>) {
+    page_props_t<Page> props{};
 
     return fill_props<Page>(props, values);
   } else {
@@ -251,13 +269,13 @@ template <class Page>
 
 // The address of `Page` for `props`, by the whole template `Full`: its parameters from the fields of their names, the
 // other fields set otherwise than as a value-made props are in the query.
-template <http::fixed_string Full, class Page>
+template <http::fixed_string Full, auto const &Page>
 [[nodiscard]] std::string href_of(void const *given) {
   std::string href;
 
-  if constexpr (ComponentWithProps<Page>) {
-    auto const &props = *static_cast<typename Page::props const *>(given);
-    typename Page::props const made{};
+  if constexpr (has_page_props<Page>) {
+    auto const &props = *static_cast<page_props_t<Page> const *>(given);
+    page_props_t<Page> const made{};
     auto const params = template_params(Full.view());
     auto const value_of = [&props](std::string_view name) {
       std::optional<std::string> found;

@@ -34,18 +34,21 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui: a struct function component holds no member, made for each view: its state is its use_ hooks
+// expect: quoll::ui: a component takes its props by const reference
 //
-// A struct function component holding a state: made again at each view, it would lose it.
+// A struct taking its props by value: a copy that goes as the view returns, which what the view writes may capture.
 
-#include <quoll/ui/component/child_component.hpp>
-#include <quoll/ui/data/state.hpp>
+#include <quoll/ui/component/component.hpp>
 #include <quoll/ui/view/tags.hpp>
 
-struct counter {
-  quoll::ui::state<int> count;
+#include <string>
 
-  quoll::ui::element operator()() const { return quoll::ui::p("never"); }
+struct badge_props {
+  std::string label;
 };
 
-auto const placed = quoll::ui::component<counter>();
+struct badge_view {
+  quoll::ui::element operator()(badge_props given) const { return quoll::ui::p(given.label); }
+};
+
+constexpr quoll::ui::component<badge_props> badge = badge_view{};

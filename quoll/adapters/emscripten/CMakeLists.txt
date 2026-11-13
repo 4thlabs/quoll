@@ -10,6 +10,7 @@ quoll_declare_module(
     src/browser_history.cpp
     src/executor.cpp
     src/fetch_platform.cpp
+    src/mount.cpp
     src/runtime.cpp
   DEPS
     quoll::http

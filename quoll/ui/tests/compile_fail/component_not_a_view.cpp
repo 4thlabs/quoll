@@ -34,34 +34,10 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui::form_state: of a field of the props of its own component
+// expect: quoll::ui: a component is made of a lambda or an empty struct whose call operator is
 //
-// A form of the props of another component: its own would be given to it.
+// A lambda giving something else than an element.
 
-#include <quoll/ui/component/child_component.hpp>
-#include <quoll/ui/data/form_state.hpp>
-#include <quoll/ui/view/element.hpp>
+#include <quoll/ui/component/component.hpp>
 
-#include <string>
-
-struct item {
-  std::string name;
-};
-
-struct other {
-  struct props {
-    item value;
-  };
-};
-
-struct item_editor {
-  struct props {
-    item value;
-  };
-
-  quoll::ui::form_state<&other::props::value> form;
-
-  quoll::ui::element view(props const &given);
-};
-
-auto const placed = quoll::ui::component<item_editor>({});
+constexpr quoll::ui::component<> badge = [] { return 1; };

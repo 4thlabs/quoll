@@ -34,54 +34,19 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The products, at /products: their list, and beside it, in its outlet, the page of the address, a product's or none.
+// At an address no route matches.
 
-#ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCTS_LAYOUT_HPP
-#define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCTS_LAYOUT_HPP
-
-#include "catalog.hpp"
-#include "error_text.hpp"
-#include "product_list.hpp"
+#include "components.hpp"
 
 #include <quoll/ui.hpp>
 
-#include <cstdint>
-#include <optional>
-
 namespace dashboard_web {
 
-using namespace quoll::ui;
-
-struct products_layout {
-  struct props {
-    // The product of the address, /products/{id}, which the list shows chosen: none at /products.
-    std::optional<std::int64_t> id;
-
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  shared<catalog> products;
-
-  element view(props const &given) {
-    auto const &problem = products->items->error;
-
-    auto const alert = [&problem] {
-      return p(told(problem, "the products did not load")) | tw("alert alert-error") | role("alert");
-    };
-
-    auto const columns = div({
-        component<product_list>({.selected = given.id}),
-        outlet(),
-    });
-
-    return div({
-        h1("Products") | tw("text-4xl font-bold"),
-        when(problem != nullptr, alert),
-        columns | tw("grid gap-8 md:grid-cols-2"),
-    });
-  }
+constexpr component<> missing_page = [] {
+  return div({
+      p("No such page"),
+      link_to(choose_product, "See the products") | tw("link"),
+  });
 };
 
 } // namespace dashboard_web
-
-#endif // QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCTS_LAYOUT_HPP

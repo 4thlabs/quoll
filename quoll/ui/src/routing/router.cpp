@@ -38,8 +38,8 @@
 
 #include <quoll/http/detail/percent.hpp>
 #include <quoll/http/detail/route_template.hpp>
-#include <quoll/ui/component/child_component.hpp>
 #include <quoll/ui/component/component.hpp>
+#include <quoll/ui/component/hooks.hpp>
 #include <quoll/ui/context/provided.hpp>
 #include <quoll/ui/context/shared.hpp>
 #include <quoll/ui/detail/app/app_core.hpp>
@@ -317,25 +317,23 @@ constexpr int most_redirects = 8;
   return href;
 }
 
+struct outlet_props {
+  std::size_t depth = 0;
+
+  [[nodiscard]] bool operator==(outlet_props const &) const = default;
+};
+
 // Where an outlet shows the page of its depth, telling the outlets of that page's view theirs.
-struct outlet_view {
-  struct props {
-    std::size_t depth = 0;
+constexpr component<outlet_props> outlet_view = [](outlet_props const &given) {
+  auto &nav = use_context<router>();
+  auto &level = provide_context<outlet_level>();
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
+  level->depth = given.depth;
 
-  shared<router> nav;
-  provided<outlet_level> level;
+  // Read, so that it shows again as the location changes.
+  static_cast<void>(*nav->where);
 
-  element view(props const &given) {
-    level->depth = given.depth;
-
-    // Read, so that it shows again as the location changes.
-    static_cast<void>(*nav->where);
-
-    return nav->core.show(given.depth);
-  }
+  return nav->core.show(given.depth);
 };
 
 } // namespace
@@ -425,9 +423,9 @@ element router_core::show(std::size_t depth) {
   return route.show == nullptr ? node("div") : route.show(matched_.values);
 }
 
-std::string router_core::href(async::detail::type_id page, void const *props) const {
+std::string router_core::href(component_table const &page, void const *props) const {
   for (auto const &route : routes_) {
-    if (route.kind == route_kind::page && route.page == page) {
+    if (route.kind == route_kind::page && route.page() == &page) {
       return route.href(props);
     }
   }
@@ -468,7 +466,7 @@ element linked(router &nav, std::string href, element content) {
 
 } // namespace detail
 
-element outlet() { return component<detail::outlet_view>({.depth = detail::outlet_depth()}); }
+element outlet() { return detail::outlet_view({.depth = detail::outlet_depth()}); }
 
 element link_to(std::string_view href, detail::literal_text text) {
   return detail::linked(detail::router_in_view(), std::string{href}, node("a", {ui::text(text)}));
@@ -476,6 +474,18 @@ element link_to(std::string_view href, detail::literal_text text) {
 
 element link_to(std::string_view href, std::initializer_list<detail::child> children) {
   return detail::linked(detail::router_in_view(), std::string{href}, node("a", children));
+}
+
+element link_to(component<> const &page, detail::literal_text text) {
+  auto &nav = detail::router_in_view();
+
+  return detail::linked(nav, nav.href(page), node("a", {ui::text(text)}));
+}
+
+element link_to(component<> const &page, std::initializer_list<detail::child> children) {
+  auto &nav = detail::router_in_view();
+
+  return detail::linked(nav, nav.href(page), node("a", children));
 }
 
 } // namespace quoll::ui

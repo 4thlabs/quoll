@@ -68,8 +68,7 @@ using quoll::test::session;
 using quoll::test::settle;
 using quoll::test::virtual_time;
 
-template <class C>
-using test_app = app<C, memory_renderer>;
+using test_app = app<memory_renderer>;
 
 std::vector<std::string> loaded;
 
@@ -79,66 +78,60 @@ task<std::string> load_product(std::int64_t id) {
   co_return "product " + std::to_string(id);
 }
 
-struct product_page;
+// Its products, under the outlet of its layout: the query's `q` filters them.
+struct product_list_props {
+  std::optional<std::string> q;
 
-struct home_page {
-  element view();
+  [[nodiscard]] bool operator==(product_list_props const &) const = default;
 };
 
-// Its products, under the outlet of its layout: the query's `q` filters them.
-struct product_list {
-  struct props {
-    std::optional<std::string> q;
-
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  element view(props const &given) { return p("list " + given.q.value_or("all")); }
+constexpr component<product_list_props> product_list = [](product_list_props const &given) {
+  return p("list " + given.q.value_or("all"));
 };
 
 // A product, from its route's `{id}`, which loads as it changes.
-struct product_page {
-  struct props {
-    std::int64_t id = 0;
+struct product_page_props {
+  std::int64_t id = 0;
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  state<std::string> text;
-  effect load{&props::id, load_product, text};
-
-  element view(props const &given) { return p("page " + std::to_string(given.id) + ": " + *text); }
+  [[nodiscard]] bool operator==(product_page_props const &) const = default;
 };
 
-struct products_layout {
-  element view() { return section({h1("products"), outlet()}); }
+// Declared, as a header would, and defined below, as a source of its own would.
+extern component<product_page_props> const product_page;
+
+constexpr component<> home_page = [] {
+  return div({
+      p("home"),
+      link_to(product_page, {.id = 7}, "seven"),
+      link_to("/products?q=tea", "tea"),
+  });
 };
+
+constexpr component<> products_layout = [] { return section({h1("products"), outlet()}); };
 
 // A ratio, from its route: a NaN or an infinity is no number an address names.
-struct ratio_page {
-  struct props {
-    double x = 0;
+struct ratio_page_props {
+  double x = 0;
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
+  [[nodiscard]] bool operator==(ratio_page_props const &) const = default;
+};
 
-  element view(props const &given) { return p("ratio " + std::to_string(given.x)); }
+constexpr component<ratio_page_props> ratio_page = [](ratio_page_props const &given) {
+  return p("ratio " + std::to_string(given.x));
 };
 
 // A file, the rest of its route's path, which may start with '/'.
-struct file_page {
-  struct props {
-    std::string path;
+struct file_page_props {
+  std::string path;
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  element view(props const &given) { return p("file [" + given.path + "]"); }
+  [[nodiscard]] bool operator==(file_page_props const &) const = default;
 };
 
-struct missing_page {
-  element view() { return p("missing"); }
+constexpr component<file_page_props> file_page = [](file_page_props const &given) {
+  return p("file [" + given.path + "]");
 };
+
+constexpr component<> missing_page = [] { return p("missing"); };
 
 inline constexpr auto shop_routes = quoll::ui::routes(
     route<"/", home_page>(),
@@ -147,18 +140,15 @@ inline constexpr auto shop_routes = quoll::ui::routes(
     redirect<"/items/{id}", "/products/{id}">(), not_found<missing_page>()
 );
 
-element home_page::view() {
-  return div({
-      p("home"),
-      link_to<product_page>({.id = 7}, "seven"),
-      link_to("/products?q=tea", "tea"),
-  });
-}
+constexpr component<product_page_props> product_page = [](product_page_props const &given) {
+  auto &text = use_state<std::string>();
 
-// The app's own component: a link home, and the page of the location.
-struct shell {
-  element view() { return main_({link_to<home_page>("home"), outlet()}); }
+  use_effect(given.id, load_product, text);
+  return p("page " + std::to_string(given.id) + ": " + *text);
 };
+
+// The app's root: a link home, and the page of the location.
+constexpr component<> shell = [] { return main_({link_to(home_page, "home"), outlet()}); };
 
 [[nodiscard]] app_options at(std::string start) { return {.contexts = {routing<shop_routes>(std::move(start))}}; }
 
@@ -190,7 +180,7 @@ TEST_CASE("router: shows the page of the location, in the outlets of its layouts
 
     virtual_time time;
     memory_renderer const shown;
-    test_app<shell> instance{time.get_executor(), shown, at(start)};
+    test_app instance{time.get_executor(), shown, shell, at(start)};
 
     auto const act = []() -> task<> { co_await settle(); };
 
@@ -205,7 +195,7 @@ TEST_CASE("router: a link goes to its page, which the history goes back from", "
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<shell> instance{time.get_executor(), shown, at("/")};
+  test_app instance{time.get_executor(), shown, shell, at("/")};
   std::string opened;
   std::string back;
 
@@ -235,11 +225,11 @@ TEST_CASE("router: a page for another value of its route's parameter loads again
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<shell> instance{time.get_executor(), shown, at("/products/7")};
+  test_app instance{time.get_executor(), shown, shell, at("/products/7")};
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
-    instance.context<router>().go<product_page>({.id = 8});
+    instance.context<router>().go(product_page, {.id = 8});
     co_await quoll::async::sleep_for(5ms);
   };
 
@@ -253,7 +243,7 @@ TEST_CASE("router: a redirect replaces its address in the history", "[ui][router
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<shell> instance{time.get_executor(), shown, at("/")};
+  test_app instance{time.get_executor(), shown, shell, at("/")};
   std::string redirected;
 
   auto const act = [&]() -> task<> {
@@ -275,14 +265,31 @@ TEST_CASE("router: a redirect replaces its address in the history", "[ui][router
 TEST_CASE("router: the address of a page, from its props, its other fields in the query", "[ui][router]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<shell> instance{time.get_executor(), shown, at("/")};
+  test_app instance{time.get_executor(), shown, shell, at("/")};
   auto const &nav = instance.context<router>();
 
-  CHECK(nav.href<product_page>({.id = 42}) == "/products/42");
-  CHECK(nav.href<product_list>({.q = std::nullopt}) == "/products");
-  CHECK(nav.href<product_list>({.q = "tea & more"}) == "/products?q=tea%20%26%20more");
-  CHECK(nav.href<home_page>() == "/");
-  CHECK_THROWS_AS(nav.href<shell>(), std::logic_error);
+  CHECK(nav.href(product_page, {.id = 42}) == "/products/42");
+  CHECK(nav.href(product_list, {.q = std::nullopt}) == "/products");
+  CHECK(nav.href(product_list, {.q = "tea & more"}) == "/products?q=tea%20%26%20more");
+  CHECK(nav.href(home_page) == "/");
+  CHECK_THROWS_AS(nav.href(shell), std::logic_error);
+}
+
+TEST_CASE("router: a copy of a page, as a menu holds one, is the page its route names", "[ui][router]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app instance{time.get_executor(), shown, shell, at("/")};
+  auto const &nav = instance.context<router>();
+
+  struct menu_item {
+    component<product_page_props> page;
+    component<> home;
+  };
+
+  menu_item const item{.page = product_page, .home = home_page};
+
+  CHECK(nav.href(item.page, {.id = 7}) == "/products/7");
+  CHECK(nav.href(item.home) == "/");
 }
 
 TEST_CASE("router: an address written without its first '/' is the same, pushed and matched", "[ui][router]") {
@@ -290,7 +297,7 @@ TEST_CASE("router: an address written without its first '/' is the same, pushed 
   memory_history history;
   virtual_time time;
   memory_renderer const shown;
-  test_app<shell> instance{time.get_executor(), shown, {.contexts = {routing<shop_routes>(history.ref())}}};
+  test_app instance{time.get_executor(), shown, shell, {.contexts = {routing<shop_routes>(history.ref())}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -308,12 +315,12 @@ TEST_CASE("router: an address written without its first '/' is the same, pushed 
 TEST_CASE("router: the rest of a path keeps its segments as they were, an empty first one included", "[ui][router]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<shell> instance{time.get_executor(), shown, at("/")};
+  test_app instance{time.get_executor(), shown, shell, at("/")};
   std::string href;
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    href = instance.context<router>().href<file_page>({.path = "/docs/report.txt"});
+    href = instance.context<router>().href(file_page, {.path = "/docs/report.txt"});
     instance.context<router>().go(href);
     co_await settle();
   };
@@ -327,7 +334,7 @@ TEST_CASE("router: an address has one form, its dot segments resolved, pushed an
   memory_history history;
   virtual_time time;
   memory_renderer const shown;
-  test_app<shell> instance{time.get_executor(), shown, {.contexts = {routing<shop_routes>(history.ref())}}};
+  test_app instance{time.get_executor(), shown, shell, {.contexts = {routing<shop_routes>(history.ref())}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -344,12 +351,12 @@ TEST_CASE("router: going to the address shown, or to one that redirects there, p
   memory_history history{"/products/5"};
   virtual_time time;
   memory_renderer const shown;
-  test_app<shell> instance{time.get_executor(), shown, {.contexts = {routing<shop_routes>(history.ref())}}};
+  test_app instance{time.get_executor(), shown, shell, {.contexts = {routing<shop_routes>(history.ref())}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
     instance.context<router>().go("/products/5");
-    instance.context<router>().go<product_page>({.id = 5});
+    instance.context<router>().go(product_page, {.id = 5});
 
     // One that redirects to it, as /items/5.
     instance.context<router>().go("/items/5");

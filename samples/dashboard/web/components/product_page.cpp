@@ -34,20 +34,36 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui: a component is an aggregate
-//
-// A component of a view with a constructor: its states could not be found by reflection.
+// The page of a product, at /products/{id}: the product the catalog holds, or why it is not shown.
+
+#include "catalog.hpp"
+#include "components.hpp"
+#include "product.hpp"
 
 #include <quoll/ui.hpp>
 
-using namespace quoll::ui;
+#include <algorithm>
 
-struct with_constructor {
-  struct props {};
+namespace dashboard_web {
 
-  with_constructor() {}
+constexpr component<product_page_props> product_page = [](product_page_props const &given) -> element {
+  auto &products = use_context<catalog>();
 
-  element view(props const & /*given*/) { return div(); }
+  auto const &items = *products->items;
+  auto const found = std::ranges::find(items.value, given.id, &products::product::id);
+
+  // The layout tells why the products did not load.
+  if (items.error) {
+    return div({});
+  }
+
+  if (found == items.value.end()) {
+    return p(items.loading ? "Loading the product" : "No such product") | tw("opacity-70");
+  }
+
+  // Keyed by the product: another one is another view, with nothing typed and its own sales; a save on its way goes on
+  // in the catalog.
+  return product_view({.id = found->id, .item = *found}) | key(found->id);
 };
 
-element const placed = component<with_constructor>({});
+} // namespace dashboard_web

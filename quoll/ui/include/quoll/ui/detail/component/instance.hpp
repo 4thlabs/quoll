@@ -52,12 +52,6 @@
 
 namespace quoll::ui::detail {
 
-// Where what a component's unmounted() throws goes: the app's report of what a handler throws.
-struct failure_sink {
-  void *owner = nullptr;
-  void (*failed)(void *owner, std::exception_ptr failure) noexcept = nullptr;
-};
-
 // A component of a view, kept from one view to the next while its parent's view has it at the same place: its own
 // states, its props as the parent last gave them, the components of its own view, and a stop of its own, which the
 // app's stops too. Shared: the app holds it while it shows, and each of its tasks until it ends, so that a component
@@ -134,9 +128,9 @@ public:
   [[nodiscard]] static found_context
   provided_above(std::shared_ptr<void const> const &from, async::detail::type_id type) noexcept;
 
-  // It goes: its tasks are asked to stop, then the components of its view go, then its unmounted() runs; what one
-  // throws goes to `sink`, and the rest go all the same. Its tasks end on their own; what holds it then is them.
-  void unmount(failure_sink sink) noexcept;
+  // It goes: the components of its view go, each after those of its own, then its tasks are asked to stop. Its tasks
+  // end on their own; what holds it then is them.
+  void unmount() noexcept;
 
   // Lets go of the components of its view, and they of theirs, without running anything of them: for an app that is
   // gone, whose components have been unmounted, so that a child, whose props hold its parent, leaves no cycle.

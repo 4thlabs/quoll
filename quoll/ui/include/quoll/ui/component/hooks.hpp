@@ -82,6 +82,16 @@ public:
   ~hooked() = default;
 
   using H::operator=;
+
+  /**
+   * @brief bind() of what it is, found for a hook as it is given: `std::bind`, which a state of a standard type brings
+   * along, would take it as it is, a better match than a conversion to its base.
+   */
+  template <class... A>
+  [[nodiscard]] friend auto
+  bind(hooked &self, A &&...args) -> decltype(bind(std::declval<H &>(), std::forward<A>(args)...)) {
+    return bind(static_cast<H &>(self), std::forward<A>(args)...);
+  }
 };
 
 template <class T>
@@ -106,7 +116,7 @@ template <class F>
   return std::make_shared<written<F>>(written<F>{current_props(), std::move(function)});
 }
 
-// An effect of a function component, its dependencies, states of its own that no app hears of, which each view sets to
+// An effect of a component, its dependencies, states of its own that no app hears of, which each view sets to
 // what it gives, as the effect compares a struct's states after the view, and its function, which a view writes and
 // which takes effect once that view shows, as React's effects are those of the render committed. A run calls the
 // function shown as it is asked for, with its view's props: a view shown during the run changes nothing of it.
@@ -230,7 +240,7 @@ private:
   effect run_;
 };
 
-// An action of a function component, and what follows its successes as its view writes it, which takes effect once
+// An action of a component, and what follows its successes as its view writes it, which takes effect once
 // that view shows, with that view's props, as an effect's function does: a run tells the one it started with.
 // Thread safety: none, as its app.
 template <auto Function, overlap Policy>
@@ -317,7 +327,7 @@ effect &use_effect_at(
 } // namespace detail
 
 /**
- * @brief A state of the function component whose view calls it, `initial` its value the first time: the same state at
+ * @brief A state of the component whose view calls it, `initial` its value the first time: the same state at
  * each view, found by where it is called. Write `auto &count = use_state(0);`, and capture `&count`: it lives as long
  * as the component, as a member of a struct.
  */
@@ -331,7 +341,7 @@ use_state(T initial = T{}, std::source_location where = std::source_location::cu
   );
 }
 
-/** @brief An async_state of the function component whose view calls it, as use_state(). */
+/** @brief An async_state of the component whose view calls it, as use_state(). */
 template <class T = void>
 [[nodiscard]] detail::hooked<async_state<T>> &
 use_async_state(std::source_location where = std::source_location::current()) {
@@ -343,7 +353,7 @@ use_async_state(std::source_location where = std::source_location::current()) {
 }
 
 /**
- * @brief An effect of the function component whose view calls it, on `dependency`, a value its view gives, as React's
+ * @brief An effect of the component whose view calls it, on `dependency`, a value its view gives, as React's
  * useEffect(…, [dependency]): after each view in which it changed, the run before stops and `function` runs with it,
  * what it gives written into `target`, a state of the component. As React's, a run calls the function of the view that
  * asked for it, once shown, whose props it keeps: what it captures is never stale, nor gone. The target is the one of
@@ -406,7 +416,7 @@ use_effect(F function, effect_options options = {}, std::source_location where =
 }
 
 /**
- * @brief An action of the function component whose view calls it, of a free function: see action. `on_success`, if
+ * @brief An action of the component whose view calls it, of a free function: see action. `on_success`, if
  * any, is the one of the last view that showed, as an effect's function: a run tells the one it started with.
  */
 template <auto Function, overlap Policy = overlap::refuse>
@@ -427,7 +437,7 @@ template <auto Function, overlap Policy = overlap::refuse>
 }
 
 /**
- * @brief An action of the function component whose view calls it, of a member function of the context `context`, as
+ * @brief An action of the component whose view calls it, of a member function of the context `context`, as
  * use_context() gives it: its work goes on as the component goes. See action.
  */
 template <auto Function, overlap Policy = overlap::refuse, class C>
@@ -449,17 +459,15 @@ template <auto Function, overlap Policy = overlap::refuse, class C>
 }
 
 /**
- * @brief A form of the function component whose view calls it, editing `value`, what its view gives, at each view, as
- * a form_state takes a field of its struct's props: see basic_form_state. Write
+ * @brief A form of the component whose view calls it, editing `value`, what its view gives, at each view: see
+ * form_state. Write
  * `auto &form = use_form(given.item);`, and give `save.with(form)` to a button.
  */
 template <class T>
-[[nodiscard]] basic_form_state<T> &
-use_form(T const &value, std::source_location where = std::source_location::current()) {
+[[nodiscard]] form_state<T> &use_form(T const &value, std::source_location where = std::source_location::current()) {
   bool made = false;
-  auto &found = detail::hook_store::current().find<basic_form_state<T>>(
-      where, [] { return std::make_unique<basic_form_state<T>>(); }, made
-  );
+  auto &found =
+      detail::hook_store::current().find<form_state<T>>(where, [] { return std::make_unique<form_state<T>>(); }, made);
 
   found.take(value);
   return found;
@@ -495,7 +503,7 @@ template <class T>
 }
 
 /**
- * @brief A context of type T of the function component whose view calls it, made by it, which the components of its
+ * @brief A context of type T of the component whose view calls it, made by it, which the components of its
  * view find before those above, as a struct's `provided<T>`: as React's Context.Provider. The context finds those it
  * uses as its component would.
  */

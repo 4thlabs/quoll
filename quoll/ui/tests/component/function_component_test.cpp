@@ -41,7 +41,6 @@
 #include <quoll/test/ui_session.hpp>
 #include <quoll/test/virtual_time.hpp>
 #include <quoll/ui.hpp>
-#include <quoll/ui/component/child_component.hpp>
 #include <quoll/ui/component/hooks.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -65,20 +64,18 @@ using quoll::test::session;
 using quoll::test::settle;
 using quoll::test::virtual_time;
 
-template <class C>
-using test_app = app<C, memory_renderer>;
+using test_app = app<memory_renderer>;
 
 // A count, one more at each click.
-element counter() {
+constexpr component<> counter = [] {
   auto &count = use_state(0);
+
   auto const add = [&count] { count = *count + 1; };
 
   return button(std::to_string(*count)) | on_click(add);
-}
-
-struct counter_page {
-  element view() { return component<counter>(); }
 };
+
+constexpr component<> counter_page = [] { return counter(); };
 
 // The two models of CommittedHook: what a view writes takes effect once it shows.
 task<int> committed_model(int value) { co_return value; }
@@ -115,18 +112,31 @@ struct loader_props {
 };
 
 // Loads the text of the key its props give, as it changes.
-element loader(loader_props const &given) {
+constexpr component<loader_props> loader = [](loader_props const &given) {
   auto &text = use_async_state<std::string>();
 
   use_effect(given.key, load_text, text);
 
   return p(text->loading ? std::string{"loading"} : text->value);
-}
+};
 
-struct loader_page {
+// What the test changes of loader_page.
+struct loader_host {
   state<int> key{1};
+};
 
-  element view() { return component<loader>({.key = *key}); }
+constexpr component<> loader_page = [] {
+  auto &host = use_context<loader_host>();
+
+  return loader({.key = *host->key});
+};
+
+// An input bound to a state of a string, and one of a bool: bind() is Quoll's, not std::bind, which the string brings.
+constexpr component<> typing = [] {
+  auto &text = use_state<std::string>();
+  auto &ticked = use_state(false);
+
+  return div({input() | bind(text), input() | bind(ticked), p(*text + (*ticked ? " ticked" : ""))});
 };
 
 // A context, its name changed from outside.
@@ -134,33 +144,31 @@ struct names {
   state<std::string> name{"tea"};
 };
 
-element name_shown() {
+constexpr component<> name_shown = [] {
   auto &shown = use_context<names>();
 
   return p(*shown->name);
-}
-
-struct names_page {
-  element view() { return component<name_shown>(); }
 };
+
+constexpr component<> names_page = [] { return name_shown(); };
 
 // A function calling hooks, called twice by one view: each call its own state.
 element counted(std::string const &label) {
   auto &count = use_state(0);
+
   auto const add = [&count] { count = *count + 1; };
 
   return button(label + " " + std::to_string(*count)) | on_click(add);
 }
 
-element two_counters() { return div({counted("a"), counted("b")}); }
+constexpr component<> two_counters = [] { return div({counted("a"), counted("b")}); };
 
-struct two_counters_page {
-  element view() { return component<two_counters>(); }
-};
+constexpr component<> two_counters_page = [] { return two_counters(); };
 
 // A state in a branch: kept while the branch is not taken.
-element folding() {
+constexpr component<> folding = [] {
   auto &open = use_state(true);
+
   auto const toggle = [&open] { open = !*open; };
 
   if (!*open) {
@@ -168,22 +176,13 @@ element folding() {
   }
 
   auto &clicks = use_state(0);
+
   auto const click = [&clicks] { clicks = *clicks + 1; };
 
   return div({button("close") | on_click(toggle), button("clicks " + std::to_string(*clicks)) | on_click(click)});
-}
-
-struct folding_page {
-  element view() { return component<folding>(); }
 };
 
-// A struct's view calling a hook: refused.
-struct hooking_struct {
-  element view() {
-    static_cast<void>(use_state(1));
-    return p("never");
-  }
-};
+constexpr component<> folding_page = [] { return folding(); };
 
 // Loads the sum of two keys, as either changes, and runs once a function of nothing as it first shows.
 std::vector<std::string> ran;
@@ -206,7 +205,7 @@ struct pair_props {
   [[nodiscard]] bool operator==(pair_props const &) const = default;
 };
 
-element pair_loader(pair_props const &given) {
+constexpr component<pair_props> pair_loader = [](pair_props const &given) {
   auto &sum = use_async_state<std::string>();
   auto &once = use_async_state<std::string>();
 
@@ -214,13 +213,18 @@ element pair_loader(pair_props const &given) {
   use_effect(load_once, once);
 
   return p(sum->value + " " + once->value);
-}
+};
 
-struct pair_page {
+// What the test changes of pair_page.
+struct pair_host {
   state<int> left{1};
   state<int> right{2};
+};
 
-  element view() { return component<pair_loader>({.left = *left, .right = *right}); }
+constexpr component<> pair_page = [] {
+  auto &host = use_context<pair_host>();
+
+  return pair_loader({.left = *host->left, .right = *host->right});
 };
 
 // The function an effect runs is the one of the last view: what it captures is never stale.
@@ -233,20 +237,25 @@ struct greeter_props {
   [[nodiscard]] bool operator==(greeter_props const &) const = default;
 };
 
-element greeter(greeter_props const &given) {
+constexpr component<greeter_props> greeter = [](greeter_props const &given) {
   use_effect(given.key, [word = given.word](int key) -> task<> {
     said.push_back(word + " " + std::to_string(key));
     co_return;
   });
 
   return p(given.word);
-}
+};
 
-struct greeter_page {
+// What the test changes of greeter_page.
+struct greeter_host {
   state<int> key{1};
   state<std::string> word{"hello"};
+};
 
-  element view() { return component<greeter>({.key = *key, .word = *word}); }
+constexpr component<> greeter_page = [] {
+  auto &host = use_context<greeter_host>();
+
+  return greeter({.key = *host->key, .word = *host->word});
 };
 
 // An action of a free function, and one of a member function of a context.
@@ -268,7 +277,7 @@ struct counter_store {
   }
 };
 
-element actions() {
+constexpr component<> actions = [] {
   auto &store = use_context<counter_store>();
   auto &twice = use_action<&doubled>();
   auto &add = use_action<&counter_store::add>(store);
@@ -277,11 +286,9 @@ element actions() {
       button("twice " + std::to_string(twice->value)) | on_click(twice.with(21)),
       button("total " + std::to_string(*store->total)) | on_click(add.with(5)),
   });
-}
-
-struct actions_page {
-  element view() { return component<actions>(); }
 };
+
+constexpr component<> actions_page = [] { return actions(); };
 
 // A form of what the props give, saved by an action with the form as it stands.
 struct item {
@@ -304,7 +311,7 @@ struct item_props {
   [[nodiscard]] bool operator==(item_props const &) const = default;
 };
 
-element item_editor(item_props const &given) {
+constexpr component<item_props> item_editor = [](item_props const &given) {
   auto &form = use_form(given.value);
   auto &save = use_action<&save_item>();
 
@@ -313,35 +320,31 @@ element item_editor(item_props const &given) {
       when(!form.valid(), [] { return p("not a number"); }),
       button("Save") | disabled(!form.valid()) | on_click(save.with(form)),
   });
-}
-
-struct item_page {
-  element view() { return component<item_editor>({.value = {.name = "tea", .stock = 3}}); }
 };
+
+constexpr component<> item_page = [] { return item_editor({.value = {.name = "tea", .stock = 3}}); };
 
 // A context provided to the components of a view, found before the app's.
 struct theme {
   state<std::string> name{"light"};
 };
 
-element theme_shown() { return p(*use_context<theme>()->name); }
+constexpr component<> theme_shown = [] { return p(*use_context<theme>()->name); };
 
-element dark_area() {
+constexpr component<> dark_area = [] {
   auto &own = provide_context<theme>();
 
   // Set once: a state set at each view would ask for another without end.
   if (*own->name != "dark") {
     own->name.set("dark");
   }
-  return div({component<theme_shown>()});
-}
-
-struct themes_page {
-  element view() { return div({component<theme_shown>(), component<dark_area>()}); }
+  return div({theme_shown()});
 };
 
-// A struct function component: its props and helpers together, its state its hooks.
-struct badge {
+constexpr component<> themes_page = [] { return div({theme_shown(), dark_area()}); };
+
+// A component made of a struct: its props and helpers together, its state its hooks.
+struct badge_view {
   struct props {
     std::string label;
 
@@ -350,6 +353,7 @@ struct badge {
 
   element operator()(props const &given) const {
     auto &clicks = use_state(0);
+
     auto const add = [&clicks] { clicks = *clicks + 1; };
 
     return button(shown(given, *clicks)) | on_click(add);
@@ -360,13 +364,18 @@ struct badge {
   }
 };
 
-struct badge_page {
-  element view() { return component<badge>({.label = "badge"}); }
-};
+constexpr component<badge_view::props> badge = badge_view{};
+
+// A component is no source of another: one with props given where one without is taken does not convert.
+static_assert(!std::is_convertible_v<component<badge_view::props>, component<>>);
+static_assert(!std::is_convertible_v<component<>, component<badge_view::props>>);
+
+constexpr component<> badge_page = [] { return badge({.label = "badge"}); };
 
 // A place whose hook changes type: refused.
-element mismatched() {
+constexpr component<> mismatched = [] {
   auto &flip = use_state(false);
+
   auto const toggle = [&flip] { flip = !*flip; };
   auto const here = std::source_location::current();
 
@@ -377,23 +386,19 @@ element mismatched() {
   }
 
   return button("flip") | on_click(toggle);
-}
-
-struct mismatched_page {
-  element view() { return component<mismatched>(); }
 };
+
+constexpr component<> mismatched_page = [] { return mismatched(); };
 
 // A context nobody gave.
 struct never_given {};
 
-element missing_context() {
+constexpr component<> missing_context = [] {
   static_cast<void>(use_context<never_given>());
   return p("never");
-}
-
-struct missing_page {
-  element view() { return component<missing_context>(); }
 };
+
+constexpr component<> missing_page = [] { return missing_context(); };
 
 // An effect stopped as its component goes, and one debounced.
 std::vector<std::string> lasting;
@@ -411,34 +416,44 @@ struct slow_props {
   [[nodiscard]] bool operator==(slow_props const &) const = default;
 };
 
-element slow_loader(slow_props const &given) {
+constexpr component<slow_props> slow_loader = [](slow_props const &given) {
   auto &text = use_async_state<std::string>();
 
   use_effect(given.key, load_slow, text);
   return p("slow");
-}
-
-struct going_page {
-  state<bool> shows{true};
-
-  element view() { return *shows ? component<slow_loader>({.key = 1}) : p("gone"); }
 };
 
-element debounced_loader(loader_props const &given) {
+// What the test changes of going_page.
+struct going_host {
+  state<bool> shows{true};
+};
+
+constexpr component<> going_page = [] {
+  auto &host = use_context<going_host>();
+
+  return *host->shows ? slow_loader({.key = 1}) : p("gone");
+};
+
+constexpr component<loader_props> debounced_loader = [](loader_props const &given) {
   auto &text = use_async_state<std::string>();
 
   use_effect(given.key, load_text, text, {.debounce = 50ms});
   return p(text->value);
-}
-
-struct debounced_page {
-  state<int> key{1};
-
-  element view() { return component<debounced_loader>({.key = *key}); }
 };
 
-// A struct function component of no props.
-struct plain_badge {
+// What the test changes of debounced_page.
+struct debounced_host {
+  state<int> key{1};
+};
+
+constexpr component<> debounced_page = [] {
+  auto &host = use_context<debounced_host>();
+
+  return debounced_loader({.key = *host->key});
+};
+
+// A component made of a struct, of no props.
+struct plain_badge_view {
   element operator()() const {
     auto &clicks = use_state(0);
 
@@ -446,13 +461,14 @@ struct plain_badge {
   }
 };
 
-struct plain_badge_page {
-  element view() { return component<plain_badge>(); }
-};
+constexpr component<> plain_badge = plain_badge_view{};
+
+constexpr component<> plain_badge_page = [] { return plain_badge(); };
 
 // A function calling hooks called in a branch: the later calls of that place shift, as documented.
-element conditional_counters() {
+constexpr component<> conditional_counters = [] {
   auto &first_shown = use_state(true);
+
   auto const hide = [&first_shown] { first_shown = false; };
 
   return div({
@@ -460,11 +476,9 @@ element conditional_counters() {
       counted("b"),
       button("hide") | on_click(hide),
   });
-}
-
-struct conditional_page {
-  element view() { return component<conditional_counters>(); }
 };
+
+constexpr component<> conditional_page = [] { return conditional_counters(); };
 
 // An effect capturing `given` by reference, which its run keeps, read after the props changed.
 std::vector<std::string> read_after;
@@ -476,34 +490,37 @@ struct named_props {
   [[nodiscard]] bool operator==(named_props const &) const = default;
 };
 
-element named_loader(named_props const &given) {
+constexpr component<named_props> named_loader = [](named_props const &given) {
   use_effect(given.key, [&given](int) -> task<> {
     co_await quoll::async::sleep_for(10ms);
     read_after.push_back(given.name);
   });
 
   return p(given.name);
-}
+};
 
-struct named_page {
+// What the test changes of named_page.
+struct named_host {
   state<int> key{1};
   state<std::string> name{"a name long enough to be on the heap, not in a short string"};
+};
 
-  element view() { return component<named_loader>({.key = *key, .name = *name}); }
+constexpr component<> named_page = [] {
+  auto &host = use_context<named_host>();
+
+  return named_loader({.key = *host->key, .name = *host->name});
 };
 
 // A null function given to an effect.
-element null_effect() {
+constexpr component<> null_effect = [] {
   task<std::string> (*load)(int) = nullptr;
   auto &text = use_async_state<std::string>();
 
   use_effect(1, load, text);
   return p("never");
-}
-
-struct null_effect_page {
-  element view() { return component<null_effect>(); }
 };
+
+constexpr component<> null_effect_page = [] { return null_effect(); };
 
 // A debounced effect capturing its props by reference, which writes what it read into its target.
 task<std::string> name_after(std::string const &name) {
@@ -511,18 +528,23 @@ task<std::string> name_after(std::string const &name) {
   co_return name;
 }
 
-element debounced_named(named_props const &given) {
+constexpr component<named_props> debounced_named = [](named_props const &given) {
   auto &read = use_async_state<std::string>();
 
   use_effect(given.key, [&given](int) { return name_after(given.name); }, read, {.debounce = 20ms});
   return p(read->value);
-}
+};
 
-struct debounced_named_page {
+// What the test changes of debounced_named_page.
+struct debounced_named_host {
   state<int> key{1};
   state<std::string> name{"the first name, long enough to be on the heap, not in a short string"};
+};
 
-  element view() { return component<debounced_named>({.key = *key, .name = *name}); }
+constexpr component<> debounced_named_page = [] {
+  auto &host = use_context<debounced_named_host>();
+
+  return debounced_named({.key = *host->key, .name = *host->name});
 };
 
 // An action whose success is told to a closure capturing the props by reference, the props changed during the run.
@@ -533,7 +555,7 @@ task<int> slow_double(int value) {
   co_return value * 2;
 }
 
-element saving_named(named_props const &given) {
+constexpr component<named_props> saving_named = [](named_props const &given) {
   auto &save = use_action<&slow_double>([&given](int const &) { told_saved.push_back(given.name); });
 
   // A view that throws after writing what follows a success: it does not show, and writes nothing.
@@ -542,13 +564,18 @@ element saving_named(named_props const &given) {
   }
 
   return button(given.name) | on_click(save.with(given.key));
-}
+};
 
-struct saving_named_page {
+// What the test changes of saving_named_page.
+struct saving_named_host {
   state<int> key{1};
   state<std::string> name{"the first name, long enough to be on the heap, not in a short string"};
+};
 
-  element view() { return component<saving_named>({.key = *key, .name = *name}); }
+constexpr component<> saving_named_page = [] {
+  auto &host = use_context<saving_named_host>();
+
+  return saving_named({.key = *host->key, .name = *host->name});
 };
 
 // A context it provides that uses one none gave, whose destructor reads it: refused before it is made.
@@ -561,20 +588,26 @@ struct lacking_context {
 
 // A handler of one view that waits, then runs a save while later views show: the save tells the closure shown as it
 // started, with that view's props, kept by the run.
-element waiting_saver(named_props const &given) {
+constexpr component<named_props> waiting_saver = [](named_props const &given) {
   auto &save = use_action<&slow_double>([&given](int const &) { told_saved.push_back(given.name); });
+
   auto const later = [&save]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
     static_cast<void>(co_await save.run(1));
   };
 
   return button(given.name) | on_click(later);
-}
+};
 
-struct waiting_saver_page {
+// What the test changes of waiting_saver_page.
+struct waiting_saver_host {
   state<std::string> name{"the first name, long enough to be on the heap, not in a short string"};
+};
 
-  element view() { return component<waiting_saver>({.key = 1, .name = *name}); }
+constexpr component<> waiting_saver_page = [] {
+  auto &host = use_context<waiting_saver_host>();
+
+  return waiting_saver({.key = 1, .name = *host->name});
 };
 
 // An effect first made in a view that threw, then not called by the views that showed: it never runs.
@@ -585,13 +618,15 @@ task<> note_run(int key) {
   co_return;
 }
 
-element branching_effect() {
+constexpr component<> branching_effect = [] {
   auto &branch = use_state(false);
   auto &explode = use_state(false);
+
   auto const open = [&branch, &explode] {
     branch = true;
     explode = true;
   };
+
   auto const calm = [&branch, &explode] {
     branch = false;
     explode = false;
@@ -606,11 +641,9 @@ element branching_effect() {
   }
 
   return div({button("open") | on_click(open), button("calm") | on_click(calm)});
-}
-
-struct branching_page {
-  element view() { return component<branching_effect>(); }
 };
+
+constexpr component<> branching_page = [] { return branching_effect(); };
 
 // An effect whose dependency a view that threw gave, then a view that showed without calling it: it does not run.
 struct staged_props {
@@ -621,7 +654,7 @@ struct staged_props {
   [[nodiscard]] bool operator==(staged_props const &) const = default;
 };
 
-element staged_effect(staged_props const &given) {
+constexpr component<staged_props> staged_effect = [](staged_props const &given) {
   if (given.calls) {
     use_effect(given.key, note_run);
   }
@@ -631,12 +664,17 @@ element staged_effect(staged_props const &given) {
   }
 
   return p("staged");
-}
+};
 
-struct staged_page {
+// What the test changes of staged_page.
+struct staged_host {
   state<staged_props> given{staged_props{.key = 1}};
+};
 
-  element view() { return component<staged_effect>(*given); }
+constexpr component<> staged_page = [] {
+  auto &host = use_context<staged_host>();
+
+  return staged_effect(*host->given);
 };
 
 // A dependency whose assignment throws for 2, as a lack of memory copying it would.
@@ -676,24 +714,31 @@ struct touchy_props {
   [[nodiscard]] bool operator==(touchy_props const &) const = default;
 };
 
-element touchy_effect(touchy_props const &given) {
+constexpr component<touchy_props> touchy_effect = [](touchy_props const &given) {
   auto &touched = use_async_state<int>();
   auto &run = use_effect(touchy{given.key}, touch, touched);
+
   auto const again = [&run] { run.reload(); };
 
   // Its target shows the failure, which asks for a view: one that would set the dependency again, without end.
   return button(touched->error ? std::string{"failed"} : std::to_string(touched->value)) | on_click(again);
-}
+};
 
-struct touchy_page {
+// What the test changes of touchy_page.
+struct touchy_host {
   state<int> key{1};
+};
 
-  element view() { return component<touchy_effect>({.key = *key}); }
+constexpr component<> touchy_page = [] {
+  auto &host = use_context<touchy_host>();
+
+  return touchy_effect({.key = *host->key});
 };
 
 // A state its own first view sets, as a struct's readying: the view after shows what it set.
-element readying() {
+constexpr component<> readying = [] {
   auto &ready = use_state(false);
+
   bool const was = *ready;
 
   if (!was) {
@@ -701,15 +746,14 @@ element readying() {
   }
 
   return p(was ? "ready" : "not yet");
-}
-
-struct readying_page {
-  element view() { return component<readying>(); }
 };
 
+constexpr component<> readying_page = [] { return readying(); };
+
 // A state made in a branch of a later view, and set by that view: the view after shows what it set.
-element opening() {
+constexpr component<> opening = [] {
   auto &open = use_state(false);
+
   auto const toggle = [&open] { open = true; };
 
   if (!*open) {
@@ -717,6 +761,7 @@ element opening() {
   }
 
   auto &done = use_state(false);
+
   bool const was = *done;
 
   if (!was) {
@@ -724,31 +769,28 @@ element opening() {
   }
 
   return p(was ? "done" : "not yet");
-}
-
-struct opening_page {
-  element view() { return component<opening>(); }
 };
 
+constexpr component<> opening_page = [] { return opening(); };
+
 // A view that reads its effect's target before it calls use_effect: the view the first run's loading asks for shows it.
-element reading_first(loader_props const &given) {
+constexpr component<loader_props> reading_first = [](loader_props const &given) {
   auto &text = use_async_state<std::string>();
+
   bool const was_loading = text->loading;
 
   use_effect(given.key, load_text, text);
   return p(was_loading ? std::string{"loading"} : text->value);
-}
-
-struct reading_first_page {
-  element view() { return component<reading_first>({.key = 1}); }
 };
+
+constexpr component<> reading_first_page = [] { return reading_first({.key = 1}); };
 
 } // namespace
 
 TEST_CASE("function component: a state of its view, the same at each view", "[ui][function]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<counter_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, counter_page};
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -769,14 +811,14 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<loader_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, loader_page, {.contexts = {provide<loader_host>()}}};
   std::string first;
   std::string after_change;
 
   auto const act = [&]() -> task<> {
     first = shown.html();
     co_await quoll::async::sleep_for(20ms);
-    instance.component().key = 2;
+    instance.context<loader_host>().key = 2;
     co_await settle();
     after_change = shown.html();
     co_await quoll::async::sleep_for(20ms);
@@ -794,7 +836,7 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<names_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  test_app instance{time.get_executor(), shown, names_page, {.contexts = {provide<names>()}}};
   std::string before;
 
   auto const act = [&]() -> task<> {
@@ -812,7 +854,7 @@ TEST_CASE(
 TEST_CASE("function component: a function calling hooks, called twice in a view, has two of each", "[ui][function]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<two_counters_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, two_counters_page};
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -827,7 +869,7 @@ TEST_CASE("function component: a function calling hooks, called twice in a view,
 TEST_CASE("function component: a state in a branch not taken keeps what it holds", "[ui][function]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<folding_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, folding_page};
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -843,12 +885,24 @@ TEST_CASE("function component: a state in a branch not taken keeps what it holds
   CHECK(shown.html().contains("clicks 1"));
 }
 
-TEST_CASE("function component: a hook called outside the view of one is refused", "[ui][function]") {
+TEST_CASE("function component: bind() of a state of its view binds an input to it", "[ui][function]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<hooking_struct> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, typing};
 
-  CHECK_THROWS_AS(instance.start(), std::logic_error);
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.dispatch(shown.children(shown.find("div")).at(0), "input", "tea");
+    instance.dispatch(shown.children(shown.find("div")).at(1), "change", "true");
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html().contains("<p>tea ticked</p>"));
+}
+
+TEST_CASE("function component: a hook called outside the view of one is refused", "[ui][function]") {
+  CHECK_THROWS_AS(use_state(1), std::logic_error);
 }
 
 TEST_CASE("function component: an effect on several values, and one on none that runs once", "[ui][function]") {
@@ -856,11 +910,11 @@ TEST_CASE("function component: an effect on several values, and one on none that
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<pair_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, pair_page, {.contexts = {provide<pair_host>()}}};
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
-    instance.component().right = 5;
+    instance.context<pair_host>().right = 5;
     co_await quoll::async::sleep_for(5ms);
   };
 
@@ -876,13 +930,13 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<greeter_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, greeter_page, {.contexts = {provide<greeter_host>()}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().word = "bye";
+    instance.context<greeter_host>().word = "bye";
     co_await settle();
-    instance.component().key = 2;
+    instance.context<greeter_host>().key = 2;
     co_await settle();
   };
 
@@ -897,7 +951,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<actions_page> instance{time.get_executor(), shown, {.contexts = {provide<counter_store>()}}};
+  test_app instance{time.get_executor(), shown, actions_page, {.contexts = {provide<counter_store>()}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -919,7 +973,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<item_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, item_page};
   bool told_wrong = false;
 
   auto const act = [&]() -> task<> {
@@ -947,7 +1001,7 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<themes_page> instance{time.get_executor(), shown, {.contexts = {provide<theme>()}}};
+  test_app instance{time.get_executor(), shown, themes_page, {.contexts = {provide<theme>()}}};
 
   auto const act = [&]() -> task<> { co_await settle(); };
 
@@ -958,7 +1012,7 @@ TEST_CASE(
 TEST_CASE("function component: a struct whose operator() gives the view, its state its hooks", "[ui][function]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<badge_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, badge_page};
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -974,7 +1028,7 @@ TEST_CASE("function component: a hook of another type where one was called befor
   virtual_time time;
   memory_renderer const shown;
   std::vector<std::string> failures;
-  test_app<mismatched_page> instance{time.get_executor(), shown, {.on_error = collect(failures)}};
+  test_app instance{time.get_executor(), shown, mismatched_page, {.on_error = collect(failures)}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -990,7 +1044,7 @@ TEST_CASE("function component: a hook of another type where one was called befor
 TEST_CASE("function component: a context none provides is refused", "[ui][function]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<missing_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, missing_page};
 
   CHECK_THROWS_AS(instance.start(), std::logic_error);
 }
@@ -1000,11 +1054,11 @@ TEST_CASE("function component: an effect stops as its component goes", "[ui][fun
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<going_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, going_page, {.contexts = {provide<going_host>()}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().shows = false;
+    instance.context<going_host>().shows = false;
     co_await quoll::async::sleep_for(2min);
   };
 
@@ -1017,14 +1071,14 @@ TEST_CASE("function component: an effect's options, as a debounce, given to use_
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<debounced_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, debounced_page, {.contexts = {provide<debounced_host>()}}};
   std::vector<std::string> waiting;
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(20ms);
-    instance.component().key = 2;
+    instance.context<debounced_host>().key = 2;
     co_await quoll::async::sleep_for(20ms);
-    instance.component().key = 3;
+    instance.context<debounced_host>().key = 3;
     co_await quoll::async::sleep_for(40ms);
     waiting = loads;
     co_await quoll::async::sleep_for(30ms);
@@ -1038,7 +1092,7 @@ TEST_CASE("function component: an effect's options, as a debounce, given to use_
 TEST_CASE("function component: a struct one of no props", "[ui][function]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<plain_badge_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, plain_badge_page};
 
   auto const act = [&]() -> task<> { co_await settle(); };
 
@@ -1052,7 +1106,7 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<conditional_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, conditional_page};
   std::string before;
 
   auto const act = [&]() -> task<> {
@@ -1079,12 +1133,12 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<named_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, named_page, {.contexts = {provide<named_host>()}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
     // The props change while the run waits: it reads those of the view that started it.
-    instance.component().name = "another name long enough to be on the heap, not in a short string";
+    instance.context<named_host>().name = "another name long enough to be on the heap, not in a short string";
     co_await quoll::async::sleep_for(20ms);
   };
 
@@ -1095,7 +1149,7 @@ TEST_CASE(
 TEST_CASE("function component: an effect given no function is refused", "[ui][function]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<null_effect_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, null_effect_page};
 
   CHECK_THROWS_AS(instance.start(), std::invalid_argument);
 }
@@ -1106,18 +1160,21 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<debounced_named_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, debounced_named_page, {.contexts = {provide<debounced_named_host>()}}};
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(20ms);
     // The view that asks for the debounced run: its function and its props are the run's.
-    instance.component().key = 2;
-    instance.component().name = "the second name, long enough to be on the heap, not in a short string";
+    instance.context<debounced_named_host>().key = 2;
+    instance.context<debounced_named_host>().name =
+        "the second name, long enough to be on the heap, not in a short string";
     co_await quoll::async::sleep_for(5ms);
     // During the pause, then during the run: a view shown then writes a function no run asked of it calls.
-    instance.component().name = "the third name, long enough to be on the heap, not in a short string";
+    instance.context<debounced_named_host>().name =
+        "the third name, long enough to be on the heap, not in a short string";
     co_await quoll::async::sleep_for(20ms);
-    instance.component().name = "the fourth name, long enough to be on the heap, not in a short string";
+    instance.context<debounced_named_host>().name =
+        "the fourth name, long enough to be on the heap, not in a short string";
     co_await quoll::async::sleep_for(20ms);
   };
 
@@ -1135,14 +1192,20 @@ TEST_CASE(
   virtual_time time;
   memory_renderer const shown;
   std::vector<std::string> failures;
-  test_app<saving_named_page> instance{time.get_executor(), shown, {.on_error = collect(failures)}};
+  test_app instance{
+      time.get_executor(),
+      shown,
+      saving_named_page,
+      {.on_error = collect(failures), .contexts = {provide<saving_named_host>()}}
+  };
 
   auto const act = [&]() -> task<> {
     co_await settle();
     // A view that throws, with other props, then a click on the button of the view still shown: the save tells what
     // that view wrote, not what the one that threw did.
-    instance.component().key = 99;
-    instance.component().name = "the second name, long enough to be on the heap, not in a short string";
+    instance.context<saving_named_host>().key = 99;
+    instance.context<saving_named_host>().name =
+        "the second name, long enough to be on the heap, not in a short string";
     co_await settle();
     instance.dispatch(shown.find("button"), "click");
     co_await quoll::async::sleep_for(20ms);
@@ -1157,14 +1220,12 @@ TEST_CASE(
 
 namespace {
 
-element lacking_area() {
+constexpr component<> lacking_area = [] {
   static_cast<void>(provide_context<lacking_context>());
   return p("never");
-}
-
-struct lacking_page {
-  element view() { return component<lacking_area>(); }
 };
+
+constexpr component<> lacking_page = [] { return lacking_area(); };
 
 } // namespace
 
@@ -1173,7 +1234,7 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<lacking_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, lacking_page};
 
   CHECK_THROWS_AS(instance.start(), std::logic_error);
 }
@@ -1186,16 +1247,18 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<waiting_saver_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, waiting_saver_page, {.contexts = {provide<waiting_saver_host>()}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
     instance.dispatch(shown.find("button"), "click");
     // Before the save starts: the closure shown then is this view's.
-    instance.component().name = "the second name, long enough to be on the heap, not in a short string";
+    instance.context<waiting_saver_host>().name =
+        "the second name, long enough to be on the heap, not in a short string";
     co_await quoll::async::sleep_for(7ms);
     // During the save: its closure and its props stay.
-    instance.component().name = "the third name, long enough to be on the heap, not in a short string";
+    instance.context<waiting_saver_host>().name =
+        "the third name, long enough to be on the heap, not in a short string";
     co_await quoll::async::sleep_for(20ms);
   };
 
@@ -1214,7 +1277,7 @@ TEST_CASE(
   virtual_time time;
   memory_renderer const shown;
   std::vector<std::string> failures;
-  test_app<branching_page> instance{time.get_executor(), shown, {.on_error = collect(failures)}};
+  test_app instance{time.get_executor(), shown, branching_page, {.on_error = collect(failures)}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -1237,13 +1300,15 @@ TEST_CASE(
   virtual_time time;
   memory_renderer const shown;
   std::vector<std::string> failures;
-  test_app<staged_page> instance{time.get_executor(), shown, {.on_error = collect(failures)}};
+  test_app instance{
+      time.get_executor(), shown, staged_page, {.on_error = collect(failures), .contexts = {provide<staged_host>()}}
+  };
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().given = staged_props{.key = 2, .explodes = true};
+    instance.context<staged_host>().given = staged_props{.key = 2, .explodes = true};
     co_await settle();
-    instance.component().given = staged_props{.key = 2, .calls = false};
+    instance.context<staged_host>().given = staged_props{.key = 2, .calls = false};
     co_await settle();
   };
 
@@ -1260,18 +1325,20 @@ TEST_CASE(
   virtual_time time;
   memory_renderer const shown;
   std::vector<std::string> failures;
-  test_app<touchy_page> instance{time.get_executor(), shown, {.on_error = collect(failures)}};
+  test_app instance{
+      time.get_executor(), shown, touchy_page, {.on_error = collect(failures), .contexts = {provide<touchy_host>()}}
+  };
 
   std::string failed_shown;
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().key = 2;
+    instance.context<touchy_host>().key = 2;
     co_await settle();
     co_await settle();
     failed_shown = shown.html();
     // Another value, then reload(): it runs again, with what the view that showed gave.
-    instance.component().key = 3;
+    instance.context<touchy_host>().key = 3;
     co_await settle();
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
@@ -1286,7 +1353,7 @@ TEST_CASE(
 TEST_CASE("function component: a state its view sets, the view that made it included, shows again", "[ui][function]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<readying_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, readying_page};
 
   auto const act = [&]() -> task<> { co_await settle(); };
 
@@ -1299,7 +1366,7 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<opening_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, opening_page};
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -1318,7 +1385,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<reading_first_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, reading_first_page};
   std::string meanwhile;
 
   auto const act = [&]() -> task<> {

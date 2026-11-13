@@ -51,6 +51,7 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -65,298 +66,302 @@ using quoll::test::session;
 using quoll::test::settle;
 using quoll::test::virtual_time;
 
-template <class C>
-using test_app = app<C, memory_renderer>;
+using test_app = app<memory_renderer>;
 
 // Says what comes and goes: its props tell where.
 struct journal {
   std::vector<std::string> lines;
 };
 
-// A row with a count of its own, and the label its parent gives it.
-struct row {
-  struct props {
-    std::string label;
-    journal *log = nullptr;
-  };
+// Writes `line` into `log` as it is destroyed: what holds it says, as it goes, that it has.
+class telling {
+public:
+  telling(journal *log, std::string line) noexcept : log_(log), line_(std::move(line)) {}
 
-  state<int> clicks;
-  journal *log = nullptr;
-  std::string label;
+  telling(telling const &) = delete;
+  telling(telling &&) = delete;
+  telling &operator=(telling const &) = delete;
+  telling &operator=(telling &&) = delete;
 
-  element view(props const &given) {
-    if (given.label == "boom") {
-      throw std::runtime_error{"no such row"};
-    }
+  ~telling() { log_->lines.push_back(line_); }
 
-    log = given.log;
-    label = given.label;
-    return button(given.label + ":" + std::to_string(*clicks)) | on_click([this] { clicks = *clicks + 1; });
-  }
+private:
+  journal *log_;
+  std::string line_;
+};
 
-  task<> mounted() {
+// What comes and goes, as React's effects say it: an effect on nothing runs once its component first shows, and its
+// run, stopped as the component goes, says so as the stop unwinds it.
+void use_journal(journal *log, std::string const &label) {
+  use_effect([log, label]() -> task<> {
     log->lines.push_back("mounted " + label);
-    co_return;
+
+    telling const going{log, "unmounted " + label};
+
+    co_await quoll::async::sleep_for(24h);
+  });
+}
+
+// A row with a count of its own, and the label its parent gives it.
+struct row_props {
+  std::string label;
+  journal *log = nullptr;
+};
+
+constexpr component<row_props> row = [](row_props const &given) {
+  if (given.label == "boom") {
+    throw std::runtime_error{"no such row"};
   }
 
-  void unmounted() { log->lines.push_back("unmounted " + label); }
+  auto &clicks = use_state(0);
+
+  auto const add = [&clicks] { clicks = *clicks + 1; };
+
+  use_journal(given.log, given.label);
+  return button(given.label + ":" + std::to_string(*clicks)) | on_click(add);
 };
 
 // Rows by label, in the order it holds them, under a header that counts the views.
-struct rows {
+struct rows_data {
   state<std::vector<std::string>> labels{std::vector<std::string>{"a", "b"}};
   state<int> views;
   journal log;
+};
 
-  element view() {
-    return div({
-        p("views") | on_click([this] { views = *views + 1; }),
-        ul({list(
-            labels,
-            [this](std::string const &label) { return component<row>({.label = label, .log = &log}) | key(label); }
-        )}),
-    });
-  }
+constexpr component<> rows = [] {
+  auto &self = use_context<rows_data>();
+
+  auto const add = [&self] { self->views = *self->views + 1; };
+  auto const row_of = [&self](std::string const &label) {
+    return row({.label = label, .log = &self->log}) | key(label);
+  };
+
+  // Read, so that a change views it again.
+  static_cast<void>(*self->views);
+
+  return div({p("views") | on_click(add), ul({list(self->labels, row_of)})});
+};
+
+// Rows without a context, for a view written once.
+constexpr component<> plain_rows = [] {
+  return div({p("views"), ul({row({.label = "a"}) | key("a"), row({.label = "b"}) | key("b")})});
 };
 
 // A row whose click waits for an hour, so that it is still running as the row goes.
-struct slow_row {
-  struct props {
-    journal *log = nullptr;
-  };
-
+struct slow_row_props {
   journal *log = nullptr;
-
-  element view(props const &given) {
-    log = given.log;
-    return button("slow") | on_click([this]() -> task<> {
-             // Destroyed as the stop unwinds it: the row is still there then, kept by this task.
-             struct told {
-               journal *log;
-
-               explicit told(journal *to) noexcept : log(to) {}
-               told(told const &) = delete;
-               told(told &&) = delete;
-               told &operator=(told const &) = delete;
-               told &operator=(told &&) = delete;
-
-               ~told() { log->lines.emplace_back("handler ended"); }
-             } const ending{log};
-
-             co_await quoll::async::sleep_for(1h);
-           });
-  }
-
-  void unmounted() { log->lines.emplace_back("unmounted"); }
 };
 
-struct maybe_slow {
+constexpr component<slow_row_props> slow_row = [](slow_row_props const &given) {
+  auto const slow = [log = given.log]() -> task<> {
+    // Destroyed as the stop unwinds it: the row is still there then, kept by this task.
+    telling const ending{log, "handler ended"};
+
+    co_await quoll::async::sleep_for(1h);
+  };
+
+  return button("slow") | on_click(slow);
+};
+
+struct maybe_slow_data {
   state<bool> shows{true};
   journal log;
+};
 
-  element view() {
-    return div({when(*shows, [this] { return component<slow_row>({.log = &log}); })});
-  }
+constexpr component<> maybe_slow = [] {
+  auto &self = use_context<maybe_slow_data>();
+
+  return div({when(*self->shows, [&self] { return slow_row({.log = &self->log}); })});
 };
 
 // Its own journal, handed to a slow row: as the panel goes, it copies there what the row wrote, which only the row's
 // task can have ended.
-struct slow_panel {
-  struct props {
-    journal *log = nullptr;
-  };
+struct slow_panel_props {
+  journal *log = nullptr;
+};
 
-  struct witness {
-    journal *to = nullptr;
-    journal const *from = nullptr;
+// What the panel holds as long as it is there, made in its first view: as it goes, it copies `from` into `to`.
+struct witness {
+  journal *to = nullptr;
+  journal from;
 
-    witness() = default;
-    witness(witness const &) = delete;
-    witness(witness &&) = delete;
-    witness &operator=(witness const &) = delete;
-    witness &operator=(witness &&) = delete;
+  witness() = default;
+  witness(witness const &) = delete;
+  witness(witness &&) = delete;
+  witness &operator=(witness const &) = delete;
+  witness &operator=(witness &&) = delete;
 
-    ~witness() {
-      if (to == nullptr) {
-        return;
-      }
-
-      to->lines.insert(to->lines.end(), from->lines.begin(), from->lines.end());
-      to->lines.emplace_back("panel gone");
+  ~witness() {
+    if (to == nullptr) {
+      return;
     }
-  };
 
-  journal mine;
-  witness last;
-
-  element view(props const &given) {
-    last.to = given.log;
-    last.from = &mine;
-    return component<slow_row>({.log = &mine});
+    to->lines.insert(to->lines.end(), from.lines.begin(), from.lines.end());
+    to->lines.emplace_back("panel gone");
   }
 };
 
-struct maybe_panel {
+constexpr component<slow_panel_props> slow_panel = [](slow_panel_props const &given) {
+  // A state's value lives as long as its component: set once, which views it once more.
+  auto &last = use_state<std::shared_ptr<witness>>();
+
+  if (!*last) {
+    auto made = std::make_shared<witness>();
+
+    made->to = given.log;
+    last = std::move(made);
+  }
+
+  return slow_row({.log = &(*last)->from});
+};
+
+struct maybe_panel_data {
   state<bool> shows{true};
   journal log;
+};
 
-  element view() {
-    return div({when(*shows, [this] { return component<slow_panel>({.log = &log}); })});
-  }
+constexpr component<> maybe_panel = [] {
+  auto &self = use_context<maybe_panel_data>();
+
+  return div({when(*self->shows, [&self] { return slow_panel({.log = &self->log}); })});
 };
 
 // A count with no props.
-struct counter {
-  state<int> count;
+constexpr component<> counter = [] {
+  auto &count = use_state(0);
 
-  element view() {
-    return p("count:" + std::to_string(*count)) | on_click([this] { count = *count + 1; });
-  }
+  auto const add = [&count] { count = *count + 1; };
+
+  return p("count:" + std::to_string(*count)) | on_click(add);
 };
 
 // A row as its whole view.
-struct panel {
-  struct props {
-    std::string label;
-    journal *log = nullptr;
-  };
-
+struct panel_props {
+  std::string label;
   journal *log = nullptr;
+};
 
-  element view(props const &given) {
-    log = given.log;
-    return component<row>({.label = given.label, .log = given.log});
-  }
-
-  void unmounted() { log->lines.emplace_back("unmounted panel"); }
+constexpr component<panel_props> panel = [](panel_props const &given) {
+  use_journal(given.log, "panel");
+  return row({.label = given.label, .log = given.log});
 };
 
 // Two cells, side by side in the view of whoever places it.
-struct cells {
-  element view() {
-    return list(std::vector<std::string>{"1", "2"}, [](std::string const &cell) { return p(cell); });
-  }
+constexpr component<> cells = [] {
+  return list(std::vector<std::string>{"1", "2"}, [](std::string const &cell) { return p(cell); });
 };
 
 // Components of three types, none keyed, a row at the same rank in its view and in the panel's.
-struct mixed {
+struct mixed_data {
   state<int> views;
   journal log;
+};
 
-  element view() {
-    return div({
-        p("views") | on_click([this] { views = *views + 1; }),
-        component<panel>({.label = "x", .log = &log}),
-        component<counter>(),
-        component<row>({.label = "y", .log = &log}),
-        component<cells>(),
-    });
-  }
+constexpr component<> mixed = [] {
+  auto &self = use_context<mixed_data>();
+
+  auto const add = [&self] { self->views = *self->views + 1; };
+
+  // Read, so that a change views it again.
+  static_cast<void>(*self->views);
+
+  return div({
+      p("views") | on_click(add),
+      panel({.label = "x", .log = &self->log}),
+      counter(),
+      row({.label = "y", .log = &self->log}),
+      cells(),
+  });
 };
 
 // Two unkeyed rows, the first shown or not.
-struct two_rows {
+struct two_rows_data {
   state<bool> first{true};
   journal log;
-
-  element view() {
-    return div({
-        when(*first, [this] { return component<row>({.label = "a", .log = &log}); }),
-        component<row>({.label = "b", .log = &log}),
-    });
-  }
 };
 
-struct stopping_row {
-  struct props {
-    std::function<task<>()> *stop = nullptr;
-  };
+constexpr component<> two_rows = [] {
+  auto &self = use_context<two_rows_data>();
 
+  return div({
+      when(*self->first, [&self] { return row({.label = "a", .log = &self->log}); }),
+      row({.label = "b", .log = &self->log}),
+  });
+};
+
+struct stopping_row_props {
   std::function<task<>()> *stop = nullptr;
-
-  element view(props const &given) {
-    stop = given.stop;
-    return button("Stop") | on_click([this]() -> task<> { co_await (*stop)(); });
-  }
 };
 
-struct stopping_parent {
+constexpr component<stopping_row_props> stopping_row = [](stopping_row_props const &given) {
+  return button("Stop") | on_click([stop = given.stop]() -> task<> { co_await (*stop)(); });
+};
+
+struct stopping_parent_data {
   std::function<task<>()> *stop = nullptr;
-
-  element view() { return div({component<stopping_row>({.stop = stop})}); }
 };
 
-// Shows a component, and goes after it.
-struct page_with_row {
+constexpr component<> stopping_parent = [] {
+  auto &self = use_context<stopping_parent_data>();
+
+  return div({stopping_row({.stop = self->stop})});
+};
+
+// Shows a row, and says when it goes, after the row.
+struct page_with_row_data {
   journal log;
-
-  element view() { return div({component<row>({.label = "a", .log = &log})}); }
-
-  void unmounted() { log.lines.emplace_back("unmounted page"); }
 };
 
-// What its unmounted() throws is a failure of the app; the components beside it go all the same.
-struct grumpy {
-  struct props {};
+constexpr component<> page_with_row = [] {
+  auto &self = use_context<page_with_row_data>();
 
-  element view(props const & /*given*/) { return p("grumpy"); }
-
-  void unmounted() { throw std::runtime_error{"will not go"}; }
-};
-
-struct grumpy_and_row {
-  state<bool> shows{true};
-  journal log;
-
-  element view() {
-    return div({when(*shows, [this] {
-      return div({component<grumpy>({}), component<row>({.label = "a", .log = &log})});
-    })});
-  }
+  use_journal(&self->log, "page");
+  return div({row({.label = "a", .log = &self->log})});
 };
 
 // A handler reading its props by reference after a wait, while the parent gives others.
-struct reader {
-  struct props {
-    std::string label;
-    std::vector<std::string> *read = nullptr;
-  };
-
-  element view(props const &given) {
-    return button(given.label) | on_click([&given]() -> task<> {
-             co_await quoll::async::sleep_for(1min);
-             given.read->push_back(given.label);
-           });
-  }
+struct reader_props {
+  std::string label;
+  std::vector<std::string> *read = nullptr;
 };
 
-struct reading {
+constexpr component<reader_props> reader = [](reader_props const &given) {
+  return button(given.label) | on_click([&given]() -> task<> {
+           co_await quoll::async::sleep_for(1min);
+           given.read->push_back(given.label);
+         });
+};
+
+struct reading_data {
   state<std::string> label{std::string{"old"}};
   std::vector<std::string> read;
+};
 
-  element view() { return div({component<reader>({.label = *label, .read = &read})}); }
+constexpr component<> reading = [] {
+  auto &self = use_context<reading_data>();
+
+  return div({reader({.label = *self->label, .read = &self->read})});
 };
 
 // Its view is a fragment: the key of the component goes on each of its nodes.
-struct cell_pair {
-  struct props {
-    std::string label;
-  };
-
-  element view(props const &given) {
-    return list(std::vector<std::string>{given.label + "1", given.label + "2"}, [](std::string const &cell) {
-      return li(cell);
-    });
-  }
+struct cell_pair_props {
+  std::string label;
 };
 
-struct cell_pairs {
-  state<std::vector<std::string>> order{std::vector<std::string>{"a", "b"}};
+constexpr component<cell_pair_props> cell_pair = [](cell_pair_props const &given) {
+  return list(std::vector<std::string>{given.label + "1", given.label + "2"}, [](std::string const &cell) {
+    return li(cell);
+  });
+};
 
-  element view() {
-    return ul({list(order, [](std::string const &label) { return component<cell_pair>({.label = label}) | key(label); })
-    });
-  }
+struct cell_pairs_data {
+  state<std::vector<std::string>> order{std::vector<std::string>{"a", "b"}};
+};
+
+constexpr component<> cell_pairs = [] {
+  auto &self = use_context<cell_pairs_data>();
+
+  return ul({list(self->order, [](std::string const &label) { return cell_pair({.label = label}) | key(label); })});
 };
 
 // A renderer failing its next insert once told to: a render that fails past the views.
@@ -399,118 +404,114 @@ struct failing_renderer {
 };
 
 // Its view is a fragment with a node without a key, at position 0, and one with the key 0.
-struct headed {
-  struct props {};
-
-  element view(props const & /*given*/) {
-    return list(std::vector<int>{0, 1}, [](int item) { return item == 0 ? p("header") : li("first") | key(0); });
-  }
+constexpr component<> headed = [] {
+  return list(std::vector<int>{0, 1}, [](int item) { return item == 0 ? p("header") : li("first") | key(0); });
 };
 
 // Its view has the key it is given.
-struct tagged {
-  struct props {
-    std::string own;
-  };
-
-  element view(props const &given) { return given.own.empty() ? li("tagged") : li("tagged") | key(given.own); }
+struct tagged_props {
+  std::string own;
 };
 
-struct plain {
-  element view() { return p("plain"); }
+constexpr component<tagged_props> tagged = [](tagged_props const &given) {
+  return given.own.empty() ? li("tagged") : li("tagged") | key(given.own);
 };
+
+constexpr component<> plain = [] { return p("plain"); };
 
 // Its view has a key of its own, as its siblings' do.
-struct keyed_item {
-  element view() { return li("item") | key("1"); }
-};
+constexpr component<> keyed_item = [] { return li("item") | key("1"); };
 
 // Viewed twice: the reconciler then looks at the keys of the nodes it showed.
-struct colliding {
+struct colliding_data {
   state<int> views;
+};
 
-  element view() {
-    return ul(
-        {component<headed>({}) | key("k"), component<counter>() | key("k"), component<plain>() | key("k"),
-         component<tagged>({.own = "b"}) | key("a"),
-         component<tagged>({}) | key("a\x1f"
-                                     "b"),
-         component<keyed_item>(), component<keyed_item>()}
-    );
-  }
+constexpr component<> colliding = [] {
+  auto &self = use_context<colliding_data>();
+
+  // Read, so that a change views it again.
+  static_cast<void>(*self->views);
+
+  return ul({
+      headed() | key("k"),
+      counter() | key("k"),
+      plain() | key("k"),
+      tagged({.own = "b"}) | key("a"),
+      tagged({}) | key("a\x1f"
+                       "b"),
+      keyed_item(),
+      keyed_item(),
+  });
 };
 
 // Gives its child a pointer into its own props.
-struct quoting_child {
-  struct props {
-    std::string const *text = nullptr;
-    std::vector<std::string> *read = nullptr;
-  };
-
-  element view(props const &given) {
-    return button("quote") | on_click([&given]() -> task<> {
-             co_await quoll::async::sleep_for(1min);
-             given.read->push_back(*given.text);
-           });
-  }
+struct quoting_child_props {
+  std::string const *text = nullptr;
+  std::vector<std::string> *read = nullptr;
 };
 
-struct quoting {
-  struct props {
-    std::string text;
-    std::vector<std::string> *read = nullptr;
-  };
-
-  element view(props const &given) { return component<quoting_child>({.text = &given.text, .read = given.read}); }
+constexpr component<quoting_child_props> quoting_child = [](quoting_child_props const &given) {
+  return button("quote") | on_click([&given]() -> task<> {
+           co_await quoll::async::sleep_for(1min);
+           given.read->push_back(*given.text);
+         });
 };
 
-struct quoted {
+struct quoting_props {
+  std::string text;
+  std::vector<std::string> *read = nullptr;
+};
+
+constexpr component<quoting_props> quoting = [](quoting_props const &given) {
+  return quoting_child({.text = &given.text, .read = given.read});
+};
+
+struct quoted_data {
   state<std::string> label{std::string{"an old label, too long for a short string"}};
   std::vector<std::string> read;
-
-  element view() { return div({component<quoting>({.text = *label, .read = &read})}); }
 };
 
-// Says when it is destroyed.
-struct farewell {
-  journal *to = nullptr;
+constexpr component<> quoted = [] {
+  auto &self = use_context<quoted_data>();
 
-  farewell() = default;
-  farewell(farewell const &) = delete;
-  farewell(farewell &&) = delete;
-  farewell &operator=(farewell const &) = delete;
-  farewell &operator=(farewell &&) = delete;
-
-  ~farewell() {
-    if (to != nullptr) {
-      to->lines.emplace_back("gone");
-    }
-  }
+  return div({quoting({.text = *self->label, .read = &self->read})});
 };
 
-// A component with one of its own, which holds it.
-struct witnessed {
-  struct props {
-    journal *log = nullptr;
-  };
-
-  farewell bye;
-
-  element view(props const &given) {
-    bye.to = given.log;
-    return div({component<counter>()});
-  }
-};
-
-struct witnessing {
+// A component with one of its own, which holds it, and a state that says when the component goes.
+struct witnessed_props {
   journal *log = nullptr;
+};
 
-  element view() { return div({component<witnessed>({.log = log})}); }
+constexpr component<witnessed_props> witnessed = [](witnessed_props const &given) {
+  auto &bye = use_state<std::shared_ptr<telling>>();
+
+  if (!*bye) {
+    bye = std::make_shared<telling>(given.log, "gone");
+  }
+
+  return div({counter()});
+};
+
+struct witnessing_data {
+  journal *log = nullptr;
+};
+
+constexpr component<> witnessing = [] {
+  auto &self = use_context<witnessing_data>();
+
+  return div({witnessed({.log = self->log})});
 };
 
 struct refusing_executor {
+  using services = quoll::async::service_list<quoll::async::timer_ref>;
+
   virtual_time::executor inner;
   bool *fail;
+
+  [[nodiscard]] quoll::async::timer_ref query(quoll::async::service_tag<quoll::async::timer_ref> tag) const {
+    return inner.query(tag);
+  }
 
   void post(quoll::async::work_item &item) const {
     if (*fail) {
@@ -523,213 +524,184 @@ struct refusing_executor {
   [[nodiscard]] bool operator==(refusing_executor const &) const noexcept = default;
 };
 
-// Its view makes the executor refuse what comes next: its own mounted() cannot start.
-struct refuser {
-  struct props {
-    bool *fail = nullptr;
-    journal *log = nullptr;
-  };
-
+// Its view makes the executor refuse what comes next: its own effect cannot start.
+struct refuser_props {
+  bool *fail = nullptr;
   journal *log = nullptr;
-
-  element view(props const &given) {
-    log = given.log;
-    *given.fail = true;
-    return p("refuser");
-  }
-
-  task<> mounted() {
-    log->lines.emplace_back("mounted refuser");
-    co_return;
-  }
 };
 
-struct refusing_page {
+constexpr component<refuser_props> refuser = [](refuser_props const &given) {
+  use_journal(given.log, "refuser");
+  *given.fail = true;
+  return p("refuser");
+};
+
+struct refusing_page_data {
   bool *fail = nullptr;
   journal log;
-
-  element view() {
-    return div({component<refuser>({.fail = fail, .log = &log}), component<row>({.label = "a", .log = &log})});
-  }
 };
 
-// Its handler holds what reads the component and its props as the last copy of the handler goes.
-struct touched {
-  struct props {
-    journal *log = nullptr;
-  };
+constexpr component<> refusing_page = [] {
+  auto &self = use_context<refusing_page_data>();
 
+  return div({refuser({.fail = self->fail, .log = &self->log}), row({.label = "a", .log = &self->log})});
+};
+
+// Its handler holds what reads the component's props as the last copy of the handler goes.
+struct touched_props {
   journal *log = nullptr;
-
-  element view(props const &given) {
-    log = given.log;
-
-    std::shared_ptr<void> const guard{nullptr, [this, &given](void * /*nothing*/) {
-                                        if (log == given.log) {
-                                          log->lines.emplace_back("touched");
-                                        }
-                                      }};
-
-    return button("touch") | on_click([guard] {});
-  }
 };
 
-struct maybe_touched {
+constexpr component<touched_props> touched = [](touched_props const &given) {
+  std::shared_ptr<void> const guard{nullptr, [&given](void * /*nothing*/) {
+                                      if (given.log != nullptr) {
+                                        given.log->lines.emplace_back("touched");
+                                      }
+                                    }};
+
+  return button("touch") | on_click([guard] {});
+};
+
+struct maybe_touched_data {
   state<bool> shows{true};
   journal log;
-
-  element view() {
-    return div({when(*shows, [this] { return component<touched>({.log = &log}); })});
-  }
 };
 
-// Keeps, as a member, what reads its props as it goes.
-struct keeper {
-  struct props {
-    std::string label;
-    journal *log = nullptr;
-  };
+constexpr component<> maybe_touched = [] {
+  auto &self = use_context<maybe_touched_data>();
 
-  std::shared_ptr<void> guard;
-
-  element view(props const &given) {
-    guard = std::shared_ptr<void>{nullptr, [&given](void * /*nothing*/) { given.log->lines.push_back(given.label); }};
-    return p("keeper");
-  }
+  return div({when(*self->shows, [&self] { return touched({.log = &self->log}); })});
 };
 
-struct maybe_keeper {
+// Its handler holds what reads its props as the handler goes: the props are still there then, as the view goes.
+struct keeper_props {
+  std::string label;
+  journal *log = nullptr;
+};
+
+constexpr component<keeper_props> keeper = [](keeper_props const &given) {
+  std::shared_ptr<void> const guard{nullptr, [&given](void * /*nothing*/) { given.log->lines.push_back(given.label); }};
+
+  return p("keeper") | on_click([guard] {});
+};
+
+struct maybe_keeper_data {
   state<bool> shows{true};
   journal log;
-
-  element view() {
-    return div({when(*shows, [this] {
-      return component<keeper>({.label = "a label, too long for a short string", .log = &log});
-    })});
-  }
 };
 
-// Reads its props in its mounted(), after a wait.
-struct loader {
-  struct props {
-    std::string id;
-    std::vector<std::string> *read = nullptr;
-  };
+constexpr component<> maybe_keeper = [] {
+  auto &self = use_context<maybe_keeper_data>();
 
-  props const *given = nullptr;
+  return div({when(*self->shows, [&self] {
+    return keeper({.label = "a label, too long for a short string", .log = &self->log});
+  })});
+};
 
-  element view(props const &current) {
-    if (given == nullptr) {
-      given = &current;
-    }
+// Reads its props in an effect on nothing, after a wait.
+struct loader_props {
+  std::string id;
+  std::vector<std::string> *read = nullptr;
+};
 
-    return p(current.id);
-  }
-
-  task<> mounted() {
+constexpr component<loader_props> loader = [](loader_props const &given) {
+  use_effect([&given]() -> task<> {
     co_await quoll::async::sleep_for(1min);
-    given->read->push_back(given->id);
-  }
+    given.read->push_back(given.id);
+  });
+
+  return p(given.id);
 };
 
-struct loading {
+struct loading_data {
   state<std::string> id{std::string{"an old id, too long for a short string"}};
   std::vector<std::string> read;
-
-  element view() { return div({component<loader>({.id = *id, .read = &read})}); }
 };
 
-struct keeping {
+constexpr component<> loading = [] {
+  auto &self = use_context<loading_data>();
+
+  return div({loader({.id = *self->id, .read = &self->read})});
+};
+
+struct keeping_data {
   state<std::string> label{std::string{"the first label, too long for a short string"}};
   state<bool> shows{true};
   state<bool> extra{false};
   journal log;
-
-  element view() {
-    return div({
-        when(*shows, [this] { return component<keeper>({.label = *label, .log = &log}); }),
-        when(*extra, [] { return p("extra"); }),
-    });
-  }
 };
 
-// Throws for an empty label, before its guard moves on: the guard still reads the label of its last view.
-struct picky_keeper {
-  struct props {
-    std::string label;
-    journal *log = nullptr;
-  };
+constexpr component<> keeping = [] {
+  auto &self = use_context<keeping_data>();
 
-  std::shared_ptr<void> guard;
-
-  element view(props const &given) {
-    if (given.label.empty()) {
-      throw std::invalid_argument{"no label"};
-    }
-
-    guard = std::shared_ptr<void>{nullptr, [&given](void * /*nothing*/) { given.log->lines.push_back(given.label); }};
-    return p("picky");
-  }
+  return div({
+      when(*self->shows, [&self] { return keeper({.label = *self->label, .log = &self->log}); }),
+      when(*self->extra, [] { return p("extra"); }),
+  });
 };
 
-struct picky_page {
+// Throws for an empty label: the guard of its last view that showed still reads the label of that view.
+constexpr component<keeper_props> picky_keeper = [](keeper_props const &given) {
+  if (given.label.empty()) {
+    throw std::invalid_argument{"no label"};
+  }
+
+  std::shared_ptr<void> const guard{nullptr, [&given](void * /*nothing*/) { given.log->lines.push_back(given.label); }};
+
+  return p("picky") | on_click([guard] {});
+};
+
+struct picky_page_data {
   state<std::string> label{std::string{"a label, too long for a short string"}};
   state<bool> shows{true};
   state<bool> extra{false};
   journal log;
-
-  element view() {
-    return div({
-        when(*shows, [this] { return component<picky_keeper>({.label = *label, .log = &log}); }),
-        when(*extra, [] { return p("extra"); }),
-    });
-  }
 };
 
-// One key for two rows of one type, in two lists of a view: of the app's own, or of a component's.
-struct two_lists {
+constexpr component<> picky_page = [] {
+  auto &self = use_context<picky_page_data>();
+
+  return div({
+      when(*self->shows, [&self] { return picky_keeper({.label = *self->label, .log = &self->log}); }),
+      when(*self->extra, [] { return p("extra"); }),
+  });
+};
+
+// One key for two rows of one component, in two lists of a view: of the app's root, or of a component's.
+struct two_lists_data {
   journal log;
-
-  element view() {
-    return div({
-        ul({component<row>({.label = "a", .log = &log}) | key("1")}),
-        ul({component<row>({.label = "b", .log = &log}) | key("1")}),
-    });
-  }
 };
 
-struct two_lists_inside {
-  element view() { return div({component<two_lists>()}); }
+constexpr component<> two_lists = [] {
+  auto &self = use_context<two_lists_data>();
+
+  return div({
+      ul({row({.label = "a", .log = &self->log}) | key("1")}),
+      ul({row({.label = "b", .log = &self->log}) | key("1")}),
+  });
 };
 
-// A component with one of its own, each saying when its mounted() runs.
-struct mounted_panel {
-  struct props {
-    journal *log = nullptr;
-  };
+constexpr component<> two_lists_inside = [] { return div({two_lists()}); };
 
+// A component with one of its own, each saying when its effect runs.
+struct mounted_panel_props {
   journal *log = nullptr;
-
-  element view(props const &given) {
-    log = given.log;
-    return component<row>({.label = "inner", .log = given.log});
-  }
-
-  task<> mounted() {
-    log->lines.emplace_back("mounted panel");
-    co_return;
-  }
 };
 
-struct mounted_page {
+constexpr component<mounted_panel_props> mounted_panel = [](mounted_panel_props const &given) {
+  use_journal(given.log, "panel");
+  return row({.label = "inner", .log = given.log});
+};
+
+struct mounted_page_data {
   journal log;
+};
 
-  element view() { return div({component<mounted_panel>({.log = &log})}); }
+constexpr component<> mounted_page = [] {
+  auto &self = use_context<mounted_page_data>();
 
-  task<> mounted() {
-    log.lines.emplace_back("mounted page");
-    co_return;
-  }
+  use_journal(&self->log, "page");
+  return div({mounted_panel({.log = &self->log})});
 };
 
 // Writes `said` as it is destroyed, unless moved from: tells when what holds it goes.
@@ -756,128 +728,104 @@ private:
 };
 
 // Given, in its props, what reads the props of its parent as it goes.
-struct guarded_child {
-  struct props {
-    std::shared_ptr<void> guard;
-  };
-
-  element view(props const & /*given*/) { return p("guarded"); }
+struct guarded_child_props {
+  std::shared_ptr<void> guard;
 };
 
-struct guarding {
-  struct props {
-    std::string text;
-    std::vector<std::string> *read = nullptr;
-    parting gone;
-  };
-
-  element view(props const &given) {
-    return component<guarded_child>({.guard = std::shared_ptr<void>{nullptr, [&given](void * /*nothing*/) {
-                                                                      given.read->push_back(given.text);
-                                                                    }}});
-  }
+constexpr component<guarded_child_props> guarded_child = [](guarded_child_props const & /*given*/) {
+  return p("guarded");
 };
 
-struct guarded {
+struct guarding_props {
+  std::string text;
+  std::vector<std::string> *read = nullptr;
+  parting gone;
+};
+
+constexpr component<guarding_props> guarding = [](guarding_props const &given) {
+  auto const reads = [&given](void * /*nothing*/) { given.read->push_back(given.text); };
+
+  return guarded_child({.guard = std::shared_ptr<void>{nullptr, reads}});
+};
+
+struct guarded_data {
   state<std::string> text{std::string{"the first text, too long for a short string"}};
   std::vector<std::string> read;
+};
 
-  element view() {
-    return div({component<guarding>({.text = *text, .read = &read, .gone = parting{&read, "props gone"}})});
-  }
+constexpr component<> guarded = [] {
+  auto &self = use_context<guarded_data>();
+
+  return div({guarding({.text = *self->text, .read = &self->read, .gone = parting{&self->read, "props gone"}})});
 };
 
 // A slow row given, in its props, what reads its parent as it goes.
-struct watched_row {
-  struct props {
-    std::shared_ptr<void> guard;
-  };
-
-  element view(props const & /*given*/) {
-    return button("slow") | on_click([]() -> task<> { co_await quoll::async::sleep_for(1h); });
-  }
+struct watched_row_props {
+  std::shared_ptr<void> guard;
 };
 
-struct watching {
-  struct props {
-    journal *log = nullptr;
-  };
+constexpr component<watched_row_props> watched_row = [](watched_row_props const & /*given*/) {
+  return button("slow") | on_click([]() -> task<> { co_await quoll::async::sleep_for(1h); });
+};
 
+struct watching_props {
   journal *log = nullptr;
   std::string name{"the watching panel, too long for a short string"};
-  // Says when the panel goes: a member, destroyed with it.
-  std::shared_ptr<void> gone;
-  bool armed = false;
-
-  element view(props const &given) {
-    log = given.log;
-
-    if (!armed) {
-      armed = true;
-      gone = std::shared_ptr<void>{nullptr, [lines = &given.log->lines](void * /*nothing*/) {
-                                     lines->emplace_back("panel gone");
-                                   }};
-    }
-
-    return component<watched_row>({.guard = std::shared_ptr<void>{nullptr, [this](void * /*nothing*/) {
-                                                                    log->lines.push_back(name);
-                                                                  }}});
-  }
 };
 
-struct maybe_watching {
+constexpr component<watching_props> watching = [](watching_props const &given) {
+  // Says when the panel goes: a state's value, destroyed with it.
+  auto &gone = use_state<std::shared_ptr<telling>>();
+
+  if (!*gone) {
+    gone = std::make_shared<telling>(given.log, "panel gone");
+  }
+
+  auto const reads = [&given](void * /*nothing*/) { given.log->lines.push_back(given.name); };
+
+  return watched_row({.guard = std::shared_ptr<void>{nullptr, reads}});
+};
+
+struct maybe_watching_data {
   state<bool> shows{true};
   journal log;
+};
 
-  element view() {
-    return div({when(*shows, [this] { return component<watching>({.log = &log}); })});
-  }
+constexpr component<> maybe_watching = [] {
+  auto &self = use_context<maybe_watching_data>();
+
+  return div({when(*self->shows, [&self] { return watching({.log = &self->log}); })});
 };
 
 // A slow row with no props, under a panel that says when it goes: nothing of the panel waits for the row's task.
-struct bare_slow_row {
-  element view() {
-    return button("slow") | on_click([]() -> task<> { co_await quoll::async::sleep_for(1h); });
-  }
+constexpr component<> bare_slow_row = [] {
+  return button("slow") | on_click([]() -> task<> { co_await quoll::async::sleep_for(1h); });
 };
 
-struct bare_panel {
-  struct props {
-    journal *log = nullptr;
-  };
-
-  std::shared_ptr<void> gone;
-  bool armed = false;
-
-  element view(props const &given) {
-    if (!armed) {
-      armed = true;
-      gone = std::shared_ptr<void>{nullptr, [lines = &given.log->lines](void * /*nothing*/) {
-                                     lines->emplace_back("panel gone");
-                                   }};
-    }
-
-    return component<bare_slow_row>();
-  }
+struct bare_panel_props {
+  journal *log = nullptr;
 };
 
-struct maybe_bare_panel {
+constexpr component<bare_panel_props> bare_panel = [](bare_panel_props const &given) {
+  auto &gone = use_state<std::shared_ptr<telling>>();
+
+  if (!*gone) {
+    gone = std::make_shared<telling>(given.log, "panel gone");
+  }
+
+  return bare_slow_row();
+};
+
+struct maybe_bare_panel_data {
   state<bool> shows{true};
   journal log;
-
-  element view() {
-    return div({when(*shows, [this] { return component<bare_panel>({.log = &log}); })});
-  }
 };
 
-static_assert(ComponentWithProps<row>);
-static_assert(MountedComponent<row>);
-static_assert(UnmountedComponent<row>);
-static_assert(!Component<row>);
-static_assert(Component<counter>);
-static_assert(!ComponentWithProps<counter>);
-static_assert(!MountedComponent<counter>);
-static_assert(!UnmountedComponent<counter>);
+constexpr component<> maybe_bare_panel = [] {
+  auto &self = use_context<maybe_bare_panel_data>();
+
+  return div({when(*self->shows, [&self] { return bare_panel({.log = &self->log}); })});
+};
 
 } // namespace
 
@@ -887,7 +835,7 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<rows> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, rows, {.contexts = {provide<rows_data>()}}};
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find_text("a:0"), "click");
@@ -907,13 +855,13 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<rows> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, rows, {.contexts = {provide<rows_data>()}}};
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find_text("b:0"), "click");
     co_await settle();
 
-    instance.component().labels = std::vector<std::string>{"b", "c", "a"};
+    instance.context<rows_data>().labels = std::vector<std::string>{"b", "c", "a"};
     co_await settle();
   };
 
@@ -923,15 +871,17 @@ TEST_CASE(
   );
 }
 
-TEST_CASE("component: mounted() runs once a component first shows, unmounted() as it goes", "[ui][components]") {
+TEST_CASE(
+    "component: an effect on nothing runs once a component first shows, and is stopped as it goes", "[ui][components]"
+) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<rows> instance{time.get_executor(), shown};
-  auto const &log = instance.component().log.lines;
+  test_app instance{time.get_executor(), shown, rows, {.contexts = {provide<rows_data>()}}};
+  auto const &log = instance.context<rows_data>().log.lines;
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().labels = std::vector<std::string>{"b"};
+    instance.context<rows_data>().labels = std::vector<std::string>{"b"};
     co_await settle();
     // Viewed again with b still there: nothing comes or goes.
     instance.dispatch(shown.find("p"), "click");
@@ -946,53 +896,51 @@ TEST_CASE("component: mounted() runs once a component first shows, unmounted() a
 TEST_CASE("component: one that goes has its tasks stopped, and stays until they have ended", "[ui][components]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<maybe_slow> instance{time.get_executor(), shown};
-  auto const &log = instance.component().log.lines;
+  test_app instance{time.get_executor(), shown, maybe_slow, {.contexts = {provide<maybe_slow_data>()}}};
+  auto const &log = instance.context<maybe_slow_data>().log.lines;
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
 
-    instance.component().shows = false;
+    instance.context<maybe_slow_data>().shows = false;
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(log == std::vector<std::string>{"unmounted", "handler ended"});
+  REQUIRE(log == std::vector<std::string>{"handler ended"});
   REQUIRE(time.now() < 1h);
   REQUIRE(shown.html() == "<div></div>");
 }
 
 TEST_CASE("component: to_html writes the views of the components of a view", "[ui][components]") {
-  rows page;
-
-  REQUIRE(to_html(page.view()) == "<div><p>views</p><ul><button>a:0</button><button>b:0</button></ul></div>");
+  REQUIRE(to_html(plain_rows()) == "<div><p>views</p><ul><button>a:0</button><button>b:0</button></ul></div>");
 }
 
 TEST_CASE("component: one decorated otherwise than with a key is refused", "[ui][components]") {
   journal log;
-  auto const decorated = component<row>({.label = "a", .log = &log}) | tw("p-2");
+  auto const decorated = row({.label = "a", .log = &log}) | tw("p-2");
 
   REQUIRE_THROWS_AS(to_html(decorated), std::logic_error);
 
   // Checked or not, as a value given: either is a decoration.
-  REQUIRE_THROWS_AS(to_html(component<row>({.label = "a", .log = &log}) | checked(true)), std::logic_error);
-  REQUIRE_THROWS_AS(to_html(component<row>({.label = "a", .log = &log}) | checked(false)), std::logic_error);
+  REQUIRE_THROWS_AS(to_html(row({.label = "a", .log = &log}) | checked(true)), std::logic_error);
+  REQUIRE_THROWS_AS(to_html(row({.label = "a", .log = &log}) | checked(false)), std::logic_error);
 
-  auto const retagged =
-      component<row>({.label = "a", .log = &log}) | decorator([](element &target) { target.tag = "section"; });
+  auto const retagged = row({.label = "a", .log = &log}) | decorator([](element &target) { target.tag = "section"; });
 
   REQUIRE_THROWS_AS(to_html(retagged), std::logic_error);
 }
 
 TEST_CASE(
-    "component: components in components, of several types, keep their states, and go after their children",
+    "component: components in components, of several types, keep their states, their effects and stops after their "
+    "children's",
     "[ui][components]"
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<mixed> instance{time.get_executor(), shown};
-  auto const &log = instance.component().log.lines;
+  test_app instance{time.get_executor(), shown, mixed, {.contexts = {provide<mixed_data>()}}};
+  auto const &log = instance.context<mixed_data>().log.lines;
 
   auto const act = [&]() -> task<> {
     REQUIRE(
@@ -1012,27 +960,34 @@ TEST_CASE(
   REQUIRE(
       shown.html() == "<div><p>views</p><button>x:1</button><p>count:2</p><button>y:0</button><p>1</p><p>2</p></div>"
   );
-  REQUIRE(log == std::vector<std::string>{"mounted x", "mounted y", "unmounted x", "unmounted panel", "unmounted y"});
+  REQUIRE(
+      log ==
+      std::vector<std::string>{
+          "mounted x", "mounted panel", "mounted y", "unmounted x", "unmounted panel", "unmounted y"
+      }
+  );
 }
 
 TEST_CASE("component: an unkeyed component keeps its place by rank among those of its type", "[ui][components]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<two_rows> instance{time.get_executor(), shown};
-  auto const &log = instance.component().log.lines;
+  test_app instance{time.get_executor(), shown, two_rows, {.contexts = {provide<two_rows_data>()}}};
+  auto const &log = instance.context<two_rows_data>().log.lines;
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find_text("a:0"), "click");
     co_await settle();
 
     // b is first now: it takes the place, and the states, of the first row.
-    instance.component().first = false;
+    instance.context<two_rows_data>().first = false;
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE(shown.html() == "<div><button>b:1</button></div>");
-  REQUIRE(log == std::vector<std::string>{"mounted a", "mounted b", "unmounted b", "unmounted b"});
+  // b's row is the first's: what it holds, its effect included, is a's, which goes as the app stops, and the second
+  // goes.
+  REQUIRE(log == std::vector<std::string>{"mounted a", "mounted b", "unmounted b", "unmounted a"});
 }
 
 TEST_CASE(
@@ -1041,30 +996,34 @@ TEST_CASE(
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<rows> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
-                            failure = std::move(error);
-                          }}};
-  auto const &log = instance.component().log.lines;
+  test_app instance{
+      time.get_executor(),
+      shown,
+      rows,
+      {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }, .contexts = {provide<rows_data>()}}
+  };
+  auto const &log = instance.context<rows_data>().log.lines;
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find_text("a:0"), "click");
     co_await settle();
 
     // c is made, then boom throws: c never shows, and b stays.
-    instance.component().labels = std::vector<std::string>{"a", "c", "boom"};
+    instance.context<rows_data>().labels = std::vector<std::string>{"a", "c", "boom"};
     co_await settle();
     REQUIRE(shown.html() == "<div><p>views</p><ul><button>a:1</button><button>b:0</button></ul></div>");
 
-    instance.component().labels = std::vector<std::string>{"a", "c"};
+    instance.context<rows_data>().labels = std::vector<std::string>{"a", "c"};
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::runtime_error);
   REQUIRE(shown.html() == "<div><p>views</p><ul><button>a:1</button><button>c:0</button></ul></div>");
+  // b's run, stopped as b goes, unwinds once its stop reaches its frame, after c's first run started in that render.
   REQUIRE(
       log ==
-      std::vector<std::string>{"mounted a", "mounted b", "unmounted b", "mounted c", "unmounted a", "unmounted c"}
+      std::vector<std::string>{"mounted a", "mounted b", "mounted c", "unmounted b", "unmounted a", "unmounted c"}
   );
 }
 
@@ -1072,12 +1031,16 @@ TEST_CASE("component: stop() from the task of a component fails rather than wait
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<stopping_parent> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
-                                       failure = std::move(error);
-                                     }}};
+  test_app instance{
+      time.get_executor(),
+      shown,
+      stopping_parent,
+      {.on_error = [&](std::exception_ptr error) { failure = std::move(error); },
+       .contexts = {provide<stopping_parent_data>()}}
+  };
   std::function<task<>()> stop = [&] { return instance.stop(); };
 
-  instance.component().stop = &stop;
+  instance.context<stopping_parent_data>().stop = &stop;
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
@@ -1093,88 +1056,65 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<maybe_panel> instance{time.get_executor(), shown};
-  auto const &log = instance.component().log.lines;
+  test_app instance{time.get_executor(), shown, maybe_panel, {.contexts = {provide<maybe_panel_data>()}}};
+  auto const &log = instance.context<maybe_panel_data>().log.lines;
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
 
-    instance.component().shows = false;
+    instance.context<maybe_panel_data>().shows = false;
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(log == std::vector<std::string>{"unmounted", "handler ended", "panel gone"});
+  REQUIRE(log == std::vector<std::string>{"handler ended", "panel gone"});
   REQUIRE(shown.html() == "<div></div>");
 }
 
 TEST_CASE(
-    "component: the app's own unmounted() runs as it stops, after those of the components of its view",
+    "component: the effects of the app's root run after those of the components of its view, and stop after them",
     "[ui][components]"
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<page_with_row> instance{time.get_executor(), shown};
-  auto const &log = instance.component().log.lines;
+  test_app instance{time.get_executor(), shown, page_with_row, {.contexts = {provide<page_with_row_data>()}}};
+  auto const &log = instance.context<page_with_row_data>().log.lines;
 
   REQUIRE(quoll::test::run(time, session(instance, [] { return settle(); })) == 0);
-  REQUIRE(log == std::vector<std::string>{"mounted a", "unmounted a", "unmounted page"});
-}
-
-TEST_CASE(
-    "component: what an unmounted() throws goes to on_error, and the others go all the same", "[ui][components]"
-) {
-  virtual_time time;
-  memory_renderer const shown;
-  std::exception_ptr failure;
-  test_app<grumpy_and_row> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
-                                      failure = std::move(error);
-                                    }}};
-  auto const &log = instance.component().log.lines;
-
-  auto const act = [&]() -> task<> {
-    co_await settle();
-    instance.component().shows = false;
-    co_await settle();
-  };
-
-  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::runtime_error);
-  REQUIRE(log == std::vector<std::string>{"mounted a", "unmounted a"});
-  REQUIRE(shown.html() == "<div></div>");
+  REQUIRE(log == std::vector<std::string>{"mounted a", "mounted page", "unmounted a", "unmounted page"});
 }
 
 TEST_CASE("component: a handler keeps the props of the view that made it until its task ends", "[ui][components]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<reading> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, reading, {.contexts = {provide<reading_data>()}}};
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
 
     // The parent gives other props while the handler waits.
-    instance.component().label = std::string{"new"};
+    instance.context<reading_data>().label = std::string{"new"};
     co_await settle();
     co_await quoll::async::sleep_for(2min);
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().read == std::vector<std::string>{"old"});
+  REQUIRE(instance.context<reading_data>().read == std::vector<std::string>{"old"});
   REQUIRE(shown.html() == "<div><button>new</button></div>");
 }
 
 TEST_CASE("component: the nodes of a keyed component whose view is a fragment move with it", "[ui][components]") {
   virtual_time time;
   memory_renderer shown;
-  test_app<cell_pairs> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, cell_pairs, {.contexts = {provide<cell_pairs_data>()}}};
   node_id before{};
   node_id after{};
 
   auto const act = [&]() -> task<> {
     before = shown.find_text("a2");
-    instance.component().order = std::vector<std::string>{"b", "a"};
+    instance.context<cell_pairs_data>().order = std::vector<std::string>{"b", "a"};
     co_await settle();
     after = shown.find_text("a2");
   };
@@ -1192,27 +1132,31 @@ TEST_CASE(
   bool fails = false;
   failing_renderer const shown{.fails = &fails};
   std::exception_ptr failure;
-  app<rows, failing_renderer> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
-                                         failure = std::move(error);
-                                       }}};
-  auto const &log = instance.component().log.lines;
+  app instance{
+      time.get_executor(),
+      shown,
+      rows,
+      {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }, .contexts = {provide<rows_data>()}}
+  };
+  auto const &log = instance.context<rows_data>().log.lines;
 
   auto const act = [&]() -> task<> {
     co_await settle();
     fails = true;
-    instance.component().labels = std::vector<std::string>{"a", "c"};
+    instance.context<rows_data>().labels = std::vector<std::string>{"a", "c"};
     co_await settle();
 
-    instance.component().labels = std::vector<std::string>{"a", "c"};
+    instance.context<rows_data>().labels = std::vector<std::string>{"a", "c"};
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::runtime_error);
   REQUIRE(shown.shown.html() == "<div><p>views</p><ul><button>a:0</button><button>c:0</button></ul></div>");
+  // b's run, stopped as b goes, unwinds once its stop reaches its frame, after c's first run started in that render.
   REQUIRE(
       log ==
-      std::vector<std::string>{"mounted a", "mounted b", "unmounted b", "mounted c", "unmounted a", "unmounted c"}
+      std::vector<std::string>{"mounted a", "mounted b", "mounted c", "unmounted b", "unmounted a", "unmounted c"}
   );
 }
 
@@ -1222,10 +1166,10 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<colliding> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, colliding, {.contexts = {provide<colliding_data>()}}};
 
   auto const act = [&]() -> task<> {
-    instance.component().views = 1;
+    instance.context<colliding_data>().views = 1;
     co_await settle();
   };
 
@@ -1241,19 +1185,21 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<quoted> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, quoted, {.contexts = {provide<quoted_data>()}}};
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
 
-    instance.component().label = std::string{"a new label"};
+    instance.context<quoted_data>().label = std::string{"a new label"};
     co_await settle();
     co_await quoll::async::sleep_for(2min);
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().read == std::vector<std::string>{"an old label, too long for a short string"});
+  REQUIRE(
+      instance.context<quoted_data>().read == std::vector<std::string>{"an old label, too long for a short string"}
+  );
 }
 
 TEST_CASE("component: an app destroyed without its stop leaves no component behind", "[ui][components]") {
@@ -1262,9 +1208,9 @@ TEST_CASE("component: an app destroyed without its stop leaves no component behi
   journal log;
 
   {
-    test_app<witnessing> instance{time.get_executor(), shown};
+    test_app instance{time.get_executor(), shown, witnessing, {.contexts = {provide<witnessing_data>()}}};
 
-    instance.component().log = &log;
+    instance.context<witnessing_data>().log = &log;
 
     auto const start = [&]() -> task<int> {
       instance.start();
@@ -1279,19 +1225,25 @@ TEST_CASE("component: an app destroyed without its stop leaves no component behi
   REQUIRE(log.lines == std::vector<std::string>{"gone"});
 }
 
-TEST_CASE("component: a mounted() that cannot start is told to on_error, and the others start", "[ui][components]") {
+TEST_CASE("component: an effect that cannot start is told to on_error, and the others start", "[ui][components]") {
   virtual_time time;
   memory_renderer const shown;
   bool fail = false;
   std::exception_ptr failure;
-  app<refusing_page, memory_renderer>
-      instance{refusing_executor{time.get_executor(), &fail}, shown, {.on_error = [&](std::exception_ptr error) {
-                 fail = false;
-                 failure = std::move(error);
-               }}};
-  auto const &log = instance.component().log.lines;
+  app instance{
+      refusing_executor{time.get_executor(), &fail},
+      shown,
+      refusing_page,
+      {.on_error =
+           [&](std::exception_ptr error) {
+             fail = false;
+             failure = std::move(error);
+           },
+       .contexts = {provide<refusing_page_data>()}}
+  };
+  auto const &log = instance.context<refusing_page_data>().log.lines;
 
-  instance.component().fail = &fail;
+  instance.context<refusing_page_data>().fail = &fail;
 
   REQUIRE(quoll::test::run(time, session(instance, [] { return settle(); })) == 0);
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::runtime_error);
@@ -1303,12 +1255,12 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<maybe_touched> instance{time.get_executor(), shown};
-  auto const &log = instance.component().log.lines;
+  test_app instance{time.get_executor(), shown, maybe_touched, {.contexts = {provide<maybe_touched_data>()}}};
+  auto const &log = instance.context<maybe_touched_data>().log.lines;
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().shows = false;
+    instance.context<maybe_touched_data>().shows = false;
     co_await settle();
   };
 
@@ -1319,12 +1271,12 @@ TEST_CASE(
 TEST_CASE("component: its props are still there as it goes", "[ui][components]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<maybe_keeper> instance{time.get_executor(), shown};
-  auto const &log = instance.component().log.lines;
+  test_app instance{time.get_executor(), shown, maybe_keeper, {.contexts = {provide<maybe_keeper_data>()}}};
+  auto const &log = instance.context<maybe_keeper_data>().log.lines;
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().shows = false;
+    instance.context<maybe_keeper_data>().shows = false;
     co_await settle();
   };
 
@@ -1332,20 +1284,20 @@ TEST_CASE("component: its props are still there as it goes", "[ui][components]")
   REQUIRE(log == std::vector<std::string>{"a label, too long for a short string"});
 }
 
-TEST_CASE("component: mounted() keeps the props of the first view until it ends", "[ui][components]") {
+TEST_CASE("component: an effect on nothing keeps the props of the first view until it ends", "[ui][components]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<loading> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, loading, {.contexts = {provide<loading_data>()}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().id = std::string{"a new id"};
+    instance.context<loading_data>().id = std::string{"a new id"};
     co_await settle();
     co_await quoll::async::sleep_for(2min);
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().read == std::vector<std::string>{"an old id, too long for a short string"});
+  REQUIRE(instance.context<loading_data>().read == std::vector<std::string>{"an old id, too long for a short string"});
   REQUIRE(shown.html() == "<div><p>a new id</p></div>");
 }
 
@@ -1357,31 +1309,35 @@ TEST_CASE(
   bool fails = false;
   failing_renderer const shown{.fails = &fails};
   std::exception_ptr failure;
-  app<keeping, failing_renderer> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
-                                            failure = std::move(error);
-                                          }}};
-  auto const &log = instance.component().log.lines;
+  app instance{
+      time.get_executor(),
+      shown,
+      keeping,
+      {.on_error = [&](std::exception_ptr error) { failure = std::move(error); }, .contexts = {provide<keeping_data>()}}
+  };
+  auto const &log = instance.context<keeping_data>().log.lines;
 
   auto const act = [&]() -> task<> {
     co_await settle();
 
     // Viewed with the second label, then the insert of the extra paragraph fails.
     fails = true;
-    instance.component().label = std::string{"the second label, too long for a short string"};
-    instance.component().extra = true;
+    instance.context<keeping_data>().label = std::string{"the second label, too long for a short string"};
+    instance.context<keeping_data>().extra = true;
     co_await settle();
     REQUIRE(failure);
     REQUIRE(shown.shown.html() == "<div><p>keeper</p></div>");
 
-    instance.component().shows = false;
+    instance.context<keeping_data>().shows = false;
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  // The view that did not show goes first, then the one shown.
   REQUIRE(
       log ==
       std::vector<std::string>{
-          "the first label, too long for a short string", "the second label, too long for a short string"
+          "the second label, too long for a short string", "the first label, too long for a short string"
       }
   );
 }
@@ -1390,18 +1346,22 @@ TEST_CASE("component: one whose view throws keeps the props of its last view", "
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<picky_page> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
-                                  failure = std::move(error);
-                                }}};
-  auto const &log = instance.component().log.lines;
+  test_app instance{
+      time.get_executor(),
+      shown,
+      picky_page,
+      {.on_error = [&](std::exception_ptr error) { failure = std::move(error); },
+       .contexts = {provide<picky_page_data>()}}
+  };
+  auto const &log = instance.context<picky_page_data>().log.lines;
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().label = std::string{};
+    instance.context<picky_page_data>().label = std::string{};
     co_await settle();
     REQUIRE(failure);
 
-    instance.component().shows = false;
+    instance.context<picky_page_data>().shows = false;
     co_await settle();
   };
 
@@ -1416,40 +1376,44 @@ TEST_CASE(
   bool fails = false;
   failing_renderer const shown{.fails = &fails};
   int failures = 0;
-  app<picky_page, failing_renderer> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr) {
-                                               ++failures;
-                                             }}};
-  auto const &log = instance.component().log.lines;
+  app instance{
+      time.get_executor(),
+      shown,
+      picky_page,
+      {.on_error = [&](std::exception_ptr) { ++failures; }, .contexts = {provide<picky_page_data>()}}
+  };
+  auto const &log = instance.context<picky_page_data>().log.lines;
 
   auto const act = [&]() -> task<> {
     co_await settle();
 
     // Viewed with the second label, then the insert of the extra paragraph fails.
     fails = true;
-    instance.component().label = std::string{"another label, too long for a short string"};
-    instance.component().extra = true;
+    instance.context<picky_page_data>().label = std::string{"another label, too long for a short string"};
+    instance.context<picky_page_data>().extra = true;
     co_await settle();
 
     // Its view throws: its guard still reads the second label.
-    instance.component().label = std::string{};
+    instance.context<picky_page_data>().label = std::string{};
     co_await settle();
 
-    instance.component().shows = false;
+    instance.context<picky_page_data>().shows = false;
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE(failures == 2);
+  // The view that did not show goes first, then the one shown.
   REQUIRE(
       log ==
-      std::vector<std::string>{"a label, too long for a short string", "another label, too long for a short string"}
+      std::vector<std::string>{"another label, too long for a short string", "a label, too long for a short string"}
   );
 }
 
 TEST_CASE("component: two of one type with one key in a view are refused, even in two lists", "[ui][components]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<two_lists> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, two_lists, {.contexts = {provide<two_lists_data>()}}};
 
   auto const start_then_stop = [&]() -> task<int> {
     REQUIRE_THROWS_AS(instance.start(), std::logic_error);
@@ -1458,9 +1422,9 @@ TEST_CASE("component: two of one type with one key in a view are refused, even i
   };
 
   REQUIRE(quoll::test::run(time, start_then_stop()) == 0);
-  REQUIRE(instance.component().log.lines.empty());
+  REQUIRE(instance.context<two_lists_data>().log.lines.empty());
 
-  test_app<two_lists_inside> inside{time.get_executor(), shown};
+  test_app inside{time.get_executor(), shown, two_lists_inside};
 
   auto const inside_then_stop = [&]() -> task<int> {
     REQUIRE_THROWS_AS(inside.start(), std::logic_error);
@@ -1471,11 +1435,11 @@ TEST_CASE("component: two of one type with one key in a view are refused, even i
   REQUIRE(quoll::test::run(time, inside_then_stop()) == 0);
 }
 
-TEST_CASE("component: mounted() does not start once its component went before it could", "[ui][components]") {
+TEST_CASE("component: an effect does not start once its component went before it could", "[ui][components]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<rows> instance{time.get_executor(), shown};
-  auto const &log = instance.component().log.lines;
+  test_app instance{time.get_executor(), shown, rows, {.contexts = {provide<rows_data>()}}};
+  auto const &log = instance.context<rows_data>().log.lines;
 
   auto const start_then_stop = [&]() -> task<int> {
     instance.start();
@@ -1484,28 +1448,33 @@ TEST_CASE("component: mounted() does not start once its component went before it
   };
 
   REQUIRE(quoll::test::run(time, start_then_stop()) == 0);
-  REQUIRE(log == std::vector<std::string>{"unmounted a", "unmounted b"});
+  REQUIRE(log.empty());
 }
 
 TEST_CASE(
-    "component: the mounted() of a view's components run before their parent's, the app's own last", "[ui][components]"
+    "component: the effects of a view's components run before their parent's, the root's last", "[ui][components]"
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<mounted_page> instance{time.get_executor(), shown};
-  auto const &log = instance.component().log.lines;
+  test_app instance{time.get_executor(), shown, mounted_page, {.contexts = {provide<mounted_page_data>()}}};
+  auto const &log = instance.context<mounted_page_data>().log.lines;
 
   REQUIRE(quoll::test::run(time, session(instance, [] { return settle(); })) == 0);
-  REQUIRE(log == std::vector<std::string>{"mounted inner", "mounted panel", "mounted page", "unmounted inner"});
+  REQUIRE(
+      log ==
+      std::vector<std::string>{
+          "mounted inner", "mounted panel", "mounted page", "unmounted inner", "unmounted panel", "unmounted page"
+      }
+  );
 }
 
 TEST_CASE(
-    "component: the app's own mounted() does not start once the app stopped before it could", "[ui][components]"
+    "component: the effects of the root do not start once the app stopped before they could", "[ui][components]"
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<mounted_page> instance{time.get_executor(), shown};
-  auto const &log = instance.component().log.lines;
+  test_app instance{time.get_executor(), shown, mounted_page, {.contexts = {provide<mounted_page_data>()}}};
+  auto const &log = instance.context<mounted_page_data>().log.lines;
 
   auto const start_then_stop = [&]() -> task<int> {
     instance.start();
@@ -1514,7 +1483,7 @@ TEST_CASE(
   };
 
   REQUIRE(quoll::test::run(time, start_then_stop()) == 0);
-  REQUIRE(log == std::vector<std::string>{"unmounted inner"});
+  REQUIRE(log.empty());
 }
 
 TEST_CASE(
@@ -1522,17 +1491,17 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<guarded> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, guarded, {.contexts = {provide<guarded_data>()}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().text = std::string{"the second text, too long for a short string"};
+    instance.context<guarded_data>().text = std::string{"the second text, too long for a short string"};
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE(
-      instance.component().read ==
+      instance.context<guarded_data>().read ==
       std::vector<std::string>{
           "the first text, too long for a short string", "props gone", "the second text, too long for a short string",
           "props gone"
@@ -1545,20 +1514,28 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<maybe_watching> instance{time.get_executor(), shown};
-  auto const &log = instance.component().log.lines;
+  test_app instance{time.get_executor(), shown, maybe_watching, {.contexts = {provide<maybe_watching_data>()}}};
+  auto const &log = instance.context<maybe_watching_data>().log.lines;
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
 
     // The panel goes: the row's task, stopped, holds the last of the row's props, which hold the panel.
-    instance.component().shows = false;
+    instance.context<maybe_watching_data>().shows = false;
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(log == std::vector<std::string>{"the watching panel, too long for a short string", "panel gone"});
+  // Its first view sets the state that says when it goes, which views it again: the guard its first view gave goes
+  // then.
+  REQUIRE(
+      log ==
+      std::vector<std::string>{
+          "the watching panel, too long for a short string", "the watching panel, too long for a short string",
+          "panel gone"
+      }
+  );
 }
 
 TEST_CASE(
@@ -1566,15 +1543,15 @@ TEST_CASE(
 ) {
   virtual_time time;
   memory_renderer const shown;
-  test_app<maybe_bare_panel> instance{time.get_executor(), shown};
-  auto const &log = instance.component().log.lines;
+  test_app instance{time.get_executor(), shown, maybe_bare_panel, {.contexts = {provide<maybe_bare_panel_data>()}}};
+  auto const &log = instance.context<maybe_bare_panel_data>().log.lines;
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
 
     // The panel goes as its view no longer shows it, while the row's task, stopped, has yet to end.
-    instance.component().shows = false;
+    instance.context<maybe_bare_panel_data>().shows = false;
     co_await settle();
   };
 

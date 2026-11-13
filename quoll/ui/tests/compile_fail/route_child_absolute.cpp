@@ -38,16 +38,11 @@
 //
 // A route under another written as a whole path: it adds its own segments to its parent's.
 
+#include <quoll/ui/component/component.hpp>
 #include <quoll/ui/routing/route.hpp>
-#include <quoll/ui/view/element.hpp>
 
-struct products_layout {
-  quoll::ui::element view();
-};
-
-struct product_list {
-  quoll::ui::element view();
-};
+extern quoll::ui::component<> const products_layout;
+extern quoll::ui::component<> const product_list;
 
 constexpr auto shop =
     quoll::ui::routes(quoll::ui::route<"/products", products_layout>(quoll::ui::route<"/list", product_list>()));

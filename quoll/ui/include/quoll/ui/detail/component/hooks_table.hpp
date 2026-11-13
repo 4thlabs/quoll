@@ -38,8 +38,7 @@
 #define QUOLL_UI_DETAIL_COMPONENT_HOOKS_TABLE_HPP
 
 #include <quoll/async/detail/type_id.hpp>
-#include <quoll/ui/component/callable_component.hpp>
-#include <quoll/ui/component/function_component.hpp>
+#include <quoll/ui/component/component_view.hpp>
 #include <quoll/ui/detail/component/component_table.hpp>
 #include <quoll/ui/detail/component/hook_store.hpp>
 #include <quoll/ui/view/element.hpp>
@@ -51,29 +50,13 @@
 
 namespace quoll::ui::detail {
 
-template <auto F>
-struct function_tag {};
-
-template <auto F>
-element view_function(void *store, [[maybe_unused]] void const *props) {
-  using props_type = typename function_component_traits<decltype(F)>::props;
-
-  hook_scope const scope{*static_cast<hook_store *>(store)};
-
-  if constexpr (std::is_void_v<props_type>) {
-    return F();
-  } else {
-    return F(*static_cast<props_type const *>(props));
-  }
-}
-
-template <class C>
-element view_callable(void *store, [[maybe_unused]] void const *props) {
-  using props_type = typename callable_component_traits<C>::props;
+template <class F>
+element view_component(void *store, [[maybe_unused]] void const *props) {
+  using props_type = typename view_traits<F>::props;
 
   hook_scope const scope{*static_cast<hook_store *>(store)};
   // Made for its view: it holds nothing, so that an operator() that is not const may be called too.
-  C viewing{};
+  F viewing{};
 
   if constexpr (std::is_void_v<props_type>) {
     return viewing();
@@ -107,7 +90,6 @@ template <class P>
       .type = type,
       .make = &make_hook_store,
       .link = &link_hook_store,
-      .finds = nullptr,
       .provides = &hook_store_provides,
       .bind = &bind_hook_store,
       .mark_contexts = &mark_hook_store,
@@ -115,25 +97,16 @@ template <class P>
       .contexts_changed = &hook_store_changed,
       .effects = &hook_store_effects,
       .view = view,
-      .mounted = nullptr,
-      .unmounted = nullptr,
       .same_props = same_props,
   };
 }
 
-template <auto F>
-inline constexpr component_table function_table_of = hooks_table(
-    async::detail::type_id_of<function_tag<F>>(), &view_function<F>,
-    same_hooks_props_of<typename function_component_traits<decltype(F)>::props>()
+// One for each lambda or struct a component is made of: what tells two components apart.
+template <class F>
+inline constexpr component_table view_table_of = hooks_table(
+    async::detail::type_id_of<F>(), &view_component<F>, same_hooks_props_of<typename view_traits<F>::props>()
 );
 
-template <class C>
-inline constexpr component_table callable_table_of = hooks_table(
-    async::detail::type_id_of<C>(), &view_callable<C>,
-    same_hooks_props_of<typename callable_component_traits<C>::props>()
-);
-
-// An element of the component `table`, given `props`.
 template <class P>
 [[nodiscard]] element hooks_element(component_table const &table, P given) {
   element made;

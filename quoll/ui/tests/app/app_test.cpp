@@ -68,127 +68,146 @@ using quoll::test::session;
 using quoll::test::settle;
 using quoll::test::virtual_time;
 
-struct counter {
+struct counter_data {
   state<int> count;
   state<int> other;
-
-  element view() {
-    return div({
-               text("count: " + std::to_string(*count)),
-               button("Add") | on_click([this] { count = *count + 1; }),
-           }) |
-           tw("flex");
-  }
 };
 
-struct no_state {
-  element view() { return p("static"); }
+constexpr component<> counter = [] {
+  auto &self = use_context<counter_data>();
+
+  return div({
+             text("count: " + std::to_string(*self->count)),
+             button("Add") | on_click([&self] { self->count = *self->count + 1; }),
+         }) |
+         tw("flex");
 };
 
-struct form_page {
+constexpr component<> no_state = [] { return p("static"); };
+
+struct form_page_data {
   state<std::string> draft;
+};
 
-  element view() { return input() | bind(draft) | attribute("placeholder", "note"); }
+constexpr component<> form_page = [] {
+  auto &self = use_context<form_page_data>();
+
+  return input() | bind(self->draft) | attribute("placeholder", "note");
 };
 
 // Handlers borrowing what the event gave them, and reading it once they have waited.
-struct borrowing_handlers {
+struct borrowing_handlers_data {
   std::string viewed;
   std::string referred;
+};
 
-  element view() {
-    return input() |
-           on("input",
-              [this](std::string_view value) -> task<> {
-                co_await quoll::async::sleep_for(1s);
-                viewed = value;
-              }) |
-           on("change", [this](std::string const &value) -> task<> {
-             co_await quoll::async::sleep_for(1s);
-             referred = value;
-           });
-  }
+constexpr component<> borrowing_handlers = [] {
+  auto &self = use_context<borrowing_handlers_data>();
+
+  return input() |
+         on("input",
+            [&self](std::string_view value) -> task<> {
+              co_await quoll::async::sleep_for(1s);
+              self->viewed = value;
+            }) |
+         on("change", [&self](std::string const &value) -> task<> {
+           co_await quoll::async::sleep_for(1s);
+           self->referred = value;
+         });
 };
 
 // A handler whose task returns something.
-struct returning_handler {
+struct returning_handler_data {
   bool ran = false;
+};
 
-  element view() {
-    return button("Run") | on_click([this]() -> task<int> {
-             co_await quoll::async::sleep_for(1s);
-             ran = true;
-             co_return 1;
-           });
-  }
+constexpr component<> returning_handler = [] {
+  auto &self = use_context<returning_handler_data>();
+
+  return button("Run") | on_click([&self]() -> task<int> {
+           co_await quoll::async::sleep_for(1s);
+           self->ran = true;
+           co_return 1;
+         });
 };
 
 // Handlers added directly to the element, without on().
-struct direct_handlers {
+struct direct_handlers_data {
   state<int> renders;
   std::shared_ptr<int> value = std::make_shared<int>(7);
   int seen = 0;
+};
 
-  element view() {
-    return button(std::to_string(*renders)) | decorator([this](element &target) {
-             target.events.push_back({.name = "click", .handler = [this, held = value](std::string) -> task<> {
-                                        co_await quoll::async::sleep_for(1h);
-                                        seen = *held;
-                                      }});
-             target.events.push_back({.name = "focus", .handler = [](std::string) -> task<> {
-                                        throw std::runtime_error{"before any task"};
-                                      }});
-           });
-  }
+constexpr component<> direct_handlers = [] {
+  auto &self = use_context<direct_handlers_data>();
+
+  return button(std::to_string(*self->renders)) | decorator([&self](element &target) {
+           target.events.push_back({.name = "click", .handler = [&self, held = self->value](std::string) -> task<> {
+                                      co_await quoll::async::sleep_for(1h);
+                                      self->seen = *held;
+                                    }});
+           target.events.push_back({.name = "focus", .handler = [](std::string) -> task<> {
+                                      throw std::runtime_error{"before any task"};
+                                    }});
+         });
 };
 
 // An attribute set twice when a state says so.
-struct overriding_attribute {
+struct overriding_attribute_data {
   state<bool> overridden;
+};
 
-  element view() {
-    auto field = input() | attribute("placeholder", "default");
+constexpr component<> overriding_attribute = [] {
+  auto &self = use_context<overriding_attribute_data>();
 
-    return *overridden ? std::move(field) | attribute("placeholder", "custom") : std::move(field);
-  }
+  auto field = input() | attribute("placeholder", "default");
+
+  return *self->overridden ? std::move(field) | attribute("placeholder", "custom") : std::move(field);
 };
 
 // Two functions on one event of a node, the second depending on a state.
-struct two_on_one_event {
+struct two_on_one_event_data {
   state<std::string> draft;
   state<bool> watched{true};
   int seen = 0;
+};
 
-  element view() {
-    auto field = input() | bind(draft);
+constexpr component<> two_on_one_event = [] {
+  auto &self = use_context<two_on_one_event_data>();
 
-    return *watched ? std::move(field) | on_input([this](std::string const &) { ++seen; }) : std::move(field);
-  }
+  auto field = input() | bind(self->draft);
+
+  return *self->watched ? std::move(field) | on_input([&self](std::string const &) { ++self->seen; })
+                        : std::move(field);
 };
 
 // A handler stopping the app it runs in.
-struct stopping_handler {
+struct stopping_handler_data {
   std::function<task<>()> *stop = nullptr;
+};
 
-  element view() {
-    return button("Stop") | on_click([this]() -> task<> { co_await (*stop)(); });
-  }
+constexpr component<> stopping_handler = [] {
+  auto &self = use_context<stopping_handler_data>();
+
+  return button("Stop") | on_click([&self]() -> task<> { co_await (*self->stop)(); });
 };
 
 // A first view asking for another render, then failing.
-struct changing_then_failing {
+struct changing_then_failing_data {
   state<int> count;
   int views = 0;
+};
 
-  element view() {
-    ++views;
-    count = 1;
-    throw std::runtime_error{"not yet"};
-  }
+constexpr component<> changing_then_failing = [] -> element {
+  auto &self = use_context<changing_then_failing_data>();
+
+  ++self->views;
+  self->count = 1;
+  throw std::runtime_error{"not yet"};
 };
 
 // A handler holding what reads the component when the handler goes.
-struct handler_with_guard {
+struct handler_with_guard_data {
   struct guard {
     int *read = nullptr;
     int const *from = nullptr;
@@ -224,68 +243,83 @@ struct handler_with_guard {
 
   marker alive;
   int *read = nullptr;
+};
 
-  element view() {
-    return button("Go") | on_click([held = std::make_shared<guard>(read, &alive.value)] {});
-  }
+constexpr component<> handler_with_guard = [] {
+  auto &self = use_context<handler_with_guard_data>();
+
+  return button("Go") |
+         on_click([held = std::make_shared<handler_with_guard_data::guard>(self->read, &self->alive.value)] {});
 };
 
 // An input bound or not, depending on a state.
-struct optional_binding {
+struct optional_binding_data {
   state<bool> bound{true};
   state<std::string> draft;
-
-  element view() {
-    auto field = input();
-
-    return *bound ? std::move(field) | bind(draft) : std::move(field);
-  }
 };
 
-struct notes_page {
+constexpr component<> optional_binding = [] {
+  auto &self = use_context<optional_binding_data>();
+
+  auto field = input();
+
+  return *self->bound ? std::move(field) | bind(self->draft) : std::move(field);
+};
+
+struct notes_page_data {
   state<std::vector<std::string>> notes;
   state<std::string> status{std::string{"loading"}};
+};
 
-  task<> mounted() {
+constexpr component<> notes_page = [] {
+  auto &self = use_context<notes_page_data>();
+
+  use_effect([&self]() -> task<> {
     co_await quoll::async::sleep_for(1s);
-    notes = std::vector<std::string>{"a", "b"};
-    status = std::string{"ready"};
-  }
+    self->notes = std::vector<std::string>{"a", "b"};
+    self->status = std::string{"ready"};
+  });
 
-  element view() {
-    return div({
-        h1(*status),
-        ul({list(notes, [](std::string const &note) { return li(note) | key(note); })}),
-    });
-  }
+  return div({
+      h1(*self->status),
+      ul({list(self->notes, [](std::string const &note) { return li(note) | key(note); })}),
+  });
 };
 
-struct keyed_page {
+struct keyed_page_data {
   state<std::vector<int>> order{std::vector<int>{1, 2, 3}};
-
-  element view() {
-    return ul({list(order, [](int item) { return li(std::to_string(item)) | key(item); })});
-  }
 };
 
-struct changing_tag {
-  state<bool> flag;
+constexpr component<> keyed_page = [] {
+  auto &self = use_context<keyed_page_data>();
 
-  element view() { return *flag ? span("text") : div({p("text")}); }
+  return ul({list(self->order, [](int item) { return li(std::to_string(item)) | key(item); })});
 };
 
-struct changing_details {
+struct changing_tag_data {
   state<bool> flag;
+};
 
-  element view() {
-    auto shown = div() | tw_if(*flag, "on");
+constexpr component<> changing_tag = [] {
+  auto &self = use_context<changing_tag_data>();
 
-    if (*flag) {
-      return std::move(shown) | attribute("id", "x") | on_click([] {});
-    }
+  return *self->flag ? span("text") : div({p("text")});
+};
 
-    return std::move(shown) | attribute("title", "y");
+struct changing_details_data {
+  state<bool> flag;
+};
+
+constexpr component<> changing_details = [] {
+  auto &self = use_context<changing_details_data>();
+
+  auto shown = div() | tw_if(*self->flag, "on");
+
+  if (*self->flag) {
+    return std::move(shown) | attribute("id", "x") | on_click([] {});
   }
+
+  return std::move(shown) | attribute("title", "y");
 };
 
 // Says, as it is destroyed, whether what `held` points to is still what it was: a frame unwound on a stop destroys it.
@@ -305,58 +339,58 @@ private:
   std::shared_ptr<int> const *held_;
 };
 
-struct slow_handler {
+struct slow_handler_data {
   state<int> done;
   bool *stopped = nullptr;
   std::shared_ptr<int> *watched = nullptr;
+};
 
-  element view() {
-    return button(std::to_string(*done)) | on_click([this, held = *watched]() -> task<> {
-             // The lambda, and what it captures, is alive until the stop has unwound this frame.
-             held_until_the_end const told{*stopped, held};
+constexpr component<> slow_handler = [] {
+  auto &self = use_context<slow_handler_data>();
 
-             co_await quoll::async::sleep_for(1h);
-             done = 1;
-           });
-  }
+  return button(std::to_string(*self->done)) | on_click([&self, held = *self->watched]() -> task<> {
+           // The lambda, and what it captures, is alive until the stop has unwound this frame.
+           held_until_the_end const told{*self->stopped, held};
+
+           co_await quoll::async::sleep_for(1h);
+           self->done = 1;
+         });
 };
 
 // The trap #151 closes, bounded so as to end the test: a handler catching all around a sleep, and sleeping again.
-struct handler_catching_all {
+struct handler_catching_all_data {
   int *caught = nullptr;
   int *turns = nullptr;
+};
 
-  element view() {
-    return button("Retry") | on_click([this]() -> task<> {
-             while (*turns < 1000) {
-               ++*turns;
+constexpr component<> handler_catching_all = [] {
+  auto &self = use_context<handler_catching_all_data>();
 
-               try {
-                 co_await quoll::async::sleep_for(1h);
-               } catch (std::exception const &) {
-                 ++*caught;
-               }
+  return button("Retry") | on_click([&self]() -> task<> {
+           while (*self->turns < 1000) {
+             ++*self->turns;
+
+             try {
+               co_await quoll::async::sleep_for(1h);
+             } catch (std::exception const &) {
+               ++*self->caught;
              }
-           });
-  }
+           }
+         });
 };
 
-struct handler_ending_on_a_stop {
-  element view() {
-    return button("Stop") | on_click([]() -> task<> {
-             co_await quoll::async::sleep_for(1s);
-             co_await quoll::async::detail::end_stopped{};
-           });
-  }
+constexpr component<> handler_ending_on_a_stop = [] {
+  return button("Stop") | on_click([]() -> task<> {
+           co_await quoll::async::sleep_for(1s);
+           co_await quoll::async::detail::end_stopped{};
+         });
 };
 
-struct failing_handler {
-  element view() {
-    return button("Fail") | on_click([]() -> task<> {
-             co_await quoll::async::sleep_for(1s);
-             throw std::runtime_error{"boom"};
-           });
-  }
+constexpr component<> failing_handler = [] {
+  return button("Fail") | on_click([]() -> task<> {
+           co_await quoll::async::sleep_for(1s);
+           throw std::runtime_error{"boom"};
+         });
 };
 
 // An executor that can be made to fail.
@@ -375,8 +409,7 @@ struct failing_executor {
   [[nodiscard]] bool operator==(failing_executor const &) const noexcept = default;
 };
 
-template <class C>
-using test_app = app<C, memory_renderer>;
+using test_app = app<memory_renderer>;
 
 } // namespace
 
@@ -395,7 +428,7 @@ TEST_CASE("ui::renderer_ref forwards to its renderer, and gives it back", "[ui]"
 TEST_CASE("ui::app shows its component", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<counter> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, counter, {.contexts = {provide<counter_data>()}}};
 
   REQUIRE(quoll::test::run(time, session(instance, []() -> task<> { co_await settle(); })) == 0);
   REQUIRE(shown.html() == R"(<div class="flex">count: 0<button>Add</button></div>)");
@@ -404,7 +437,7 @@ TEST_CASE("ui::app shows its component", "[ui]") {
 TEST_CASE("ui::app takes a component without any state", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<no_state> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, no_state};
 
   REQUIRE(quoll::test::run(time, session(instance, []() -> task<> { co_await settle(); })) == 0);
   REQUIRE(shown.html() == "<p>static</p>");
@@ -413,7 +446,7 @@ TEST_CASE("ui::app takes a component without any state", "[ui]") {
 TEST_CASE("ui::app: an event changes a state, and only what differs reaches the renderer", "[ui]") {
   virtual_time time;
   memory_renderer shown;
-  test_app<counter> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, counter, {.contexts = {provide<counter_data>()}}};
 
   auto const act = [&]() -> task<> {
     shown.reset_operations();
@@ -429,16 +462,16 @@ TEST_CASE("ui::app: an event changes a state, and only what differs reaches the 
 TEST_CASE("ui::app: several changes show once", "[ui]") {
   virtual_time time;
   memory_renderer shown;
-  test_app<counter> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, counter, {.contexts = {provide<counter_data>()}}};
   int operations_of_first_view = 0;
 
   auto const act = [&]() -> task<> {
     operations_of_first_view = shown.operations();
     shown.reset_operations();
 
-    instance.component().count = 5;
-    instance.component().count = 6;
-    instance.component().other = 1;
+    instance.context<counter_data>().count = 5;
+    instance.context<counter_data>().count = 6;
+    instance.context<counter_data>().other = 1;
     co_await settle();
   };
 
@@ -451,11 +484,11 @@ TEST_CASE("ui::app: several changes show once", "[ui]") {
 TEST_CASE("ui::app: a view that does not change costs no operation", "[ui]") {
   virtual_time time;
   memory_renderer shown;
-  test_app<counter> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, counter, {.contexts = {provide<counter_data>()}}};
 
   auto const act = [&]() -> task<> {
     shown.reset_operations();
-    instance.component().other = 1;
+    instance.context<counter_data>().other = 1;
     co_await settle();
   };
 
@@ -463,10 +496,10 @@ TEST_CASE("ui::app: a view that does not change costs no operation", "[ui]") {
   REQUIRE(shown.operations() == 0);
 }
 
-TEST_CASE("ui::app runs mounted(), and shows what it loads", "[ui]") {
+TEST_CASE("ui::app: an effect on nothing runs once its view first shows, and shows what it loads", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<notes_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, notes_page, {.contexts = {provide<notes_page_data>()}}};
   std::string first;
 
   auto const act = [&]() -> task<> {
@@ -482,7 +515,7 @@ TEST_CASE("ui::app runs mounted(), and shows what it loads", "[ui]") {
 TEST_CASE("ui::app: bind() keeps an input and a state the same", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<form_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, form_page, {.contexts = {provide<form_page_data>()}}};
   std::string first;
   std::string typed;
 
@@ -493,7 +526,7 @@ TEST_CASE("ui::app: bind() keeps an input and a state the same", "[ui]") {
     co_await settle();
     typed = shown.html();
 
-    instance.component().draft = std::string{"reset"};
+    instance.context<form_page_data>().draft = std::string{"reset"};
     co_await settle();
   };
 
@@ -506,7 +539,7 @@ TEST_CASE("ui::app: bind() keeps an input and a state the same", "[ui]") {
 TEST_CASE("ui::app: a handler can borrow the value of its event until its task ends", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<borrowing_handlers> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, borrowing_handlers, {.contexts = {provide<borrowing_handlers_data>()}}};
   std::string const typed = "long enough not to fit in the string itself";
 
   auto const act = [&]() -> task<> {
@@ -516,14 +549,14 @@ TEST_CASE("ui::app: a handler can borrow the value of its event until its task e
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().viewed == typed);
-  REQUIRE(instance.component().referred == typed);
+  REQUIRE(instance.context<borrowing_handlers_data>().viewed == typed);
+  REQUIRE(instance.context<borrowing_handlers_data>().referred == typed);
 }
 
 TEST_CASE("ui::app: a handler returning a task of something runs too", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<returning_handler> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, returning_handler, {.contexts = {provide<returning_handler_data>()}}};
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
@@ -531,35 +564,36 @@ TEST_CASE("ui::app: a handler returning a task of something runs too", "[ui]") {
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().ran);
+  REQUIRE(instance.context<returning_handler_data>().ran);
 }
 
 TEST_CASE("ui::app: a handler added without on() stays alive until its task ends", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<direct_handlers> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, direct_handlers, {.contexts = {provide<direct_handlers_data>()}}};
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
 
     // Another view replaces the element, and the handler that was on it.
-    instance.component().renders = 1;
+    instance.context<direct_handlers_data>().renders = 1;
     co_await settle();
     co_await quoll::async::sleep_for(2h);
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().seen == 7);
+  REQUIRE(instance.context<direct_handlers_data>().seen == 7);
 }
 
 TEST_CASE("ui::app: what a handler throws before its task goes to on_error", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<direct_handlers> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
-                                       failure = std::move(error);
-                                     }}};
+  auto const told = [&](std::exception_ptr error) { failure = std::move(error); };
+  test_app instance{
+      time.get_executor(), shown, direct_handlers, {.on_error = told, .contexts = {provide<direct_handlers_data>()}}
+  };
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "focus");
@@ -573,13 +607,13 @@ TEST_CASE("ui::app: what a handler throws before its task goes to on_error", "[u
 TEST_CASE("ui::app: an event not started when stop() comes does not run", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<counter> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, counter, {.contexts = {provide<counter_data>()}}};
 
   auto const click_then_stop = [&]() -> task<int> {
     instance.start();
     instance.dispatch(shown.find("button"), "click");
     co_await instance.stop();
-    co_return *instance.component().count;
+    co_return *instance.context<counter_data>().count;
   };
 
   REQUIRE(quoll::test::run(time, click_then_stop()) == 0);
@@ -588,7 +622,7 @@ TEST_CASE("ui::app: an event not started when stop() comes does not run", "[ui]"
 TEST_CASE("ui::app: keyed children keep their nodes when they move", "[ui]") {
   virtual_time time;
   memory_renderer shown;
-  test_app<keyed_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, keyed_page, {.contexts = {provide<keyed_page_data>()}}};
   std::vector<std::string> pages;
   std::vector<int> operations;
   quoll::ui::node_id two_before{};
@@ -596,7 +630,7 @@ TEST_CASE("ui::app: keyed children keep their nodes when they move", "[ui]") {
 
   auto const change_to = [&](std::vector<int> order) -> task<> {
     shown.reset_operations();
-    instance.component().order = std::move(order);
+    instance.context<keyed_page_data>().order = std::move(order);
     co_await settle();
     pages.push_back(shown.html());
     operations.push_back(shown.operations());
@@ -629,15 +663,17 @@ TEST_CASE("ui::app: keyed children keep their nodes when they move", "[ui]") {
 TEST_CASE("ui::app: an attribute set twice takes its last value, and loses it with the second", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<overriding_attribute> instance{time.get_executor(), shown};
+  test_app instance{
+      time.get_executor(), shown, overriding_attribute, {.contexts = {provide<overriding_attribute_data>()}}
+  };
   std::string overridden;
 
   auto const act = [&]() -> task<> {
-    instance.component().overridden = true;
+    instance.context<overriding_attribute_data>().overridden = true;
     co_await settle();
     overridden = shown.html();
 
-    instance.component().overridden = false;
+    instance.context<overriding_attribute_data>().overridden = false;
     co_await settle();
   };
 
@@ -649,7 +685,7 @@ TEST_CASE("ui::app: an attribute set twice takes its last value, and loses it wi
 TEST_CASE("ui::app: two functions on one event listen once and each run once", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<two_on_one_event> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, two_on_one_event, {.contexts = {provide<two_on_one_event_data>()}}};
   std::vector<std::string> first;
 
   auto const act = [&]() -> task<> {
@@ -658,14 +694,14 @@ TEST_CASE("ui::app: two functions on one event listen once and each run once", "
     instance.dispatch(shown.find("input"), "input", "typed");
     co_await settle();
 
-    instance.component().watched = false;
+    instance.context<two_on_one_event_data>().watched = false;
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   REQUIRE(first == std::vector<std::string>{"input"});
-  REQUIRE(instance.component().seen == 1);
-  REQUIRE(*instance.component().draft == "typed");
+  REQUIRE(instance.context<two_on_one_event_data>().seen == 1);
+  REQUIRE(*instance.context<two_on_one_event_data>().draft == "typed");
   REQUIRE(shown.events(shown.find("input")) == std::vector<std::string>{"input"});
 }
 
@@ -673,12 +709,13 @@ TEST_CASE("ui::app: stop() from one of its handlers fails rather than wait for i
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<stopping_handler> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
-                                        failure = std::move(error);
-                                      }}};
+  auto const told = [&](std::exception_ptr error) { failure = std::move(error); };
+  test_app instance{
+      time.get_executor(), shown, stopping_handler, {.on_error = told, .contexts = {provide<stopping_handler_data>()}}
+  };
   std::function<task<>()> stop = [&] { return instance.stop(); };
 
-  instance.component().stop = &stop;
+  instance.context<stopping_handler_data>().stop = &stop;
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
@@ -692,7 +729,9 @@ TEST_CASE("ui::app: stop() from one of its handlers fails rather than wait for i
 TEST_CASE("ui::app: a start that fails stops the app, and what it left pending shows nothing", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<changing_then_failing> instance{time.get_executor(), shown};
+  test_app instance{
+      time.get_executor(), shown, changing_then_failing, {.contexts = {provide<changing_then_failing_data>()}}
+  };
   bool failed = false;
 
   auto const start_then_stop = [&]() -> task<int> {
@@ -704,7 +743,7 @@ TEST_CASE("ui::app: a start that fails stops the app, and what it left pending s
 
     co_await settle();
     co_await instance.stop();
-    co_return instance.component().views;
+    co_return instance.context<changing_then_failing_data>().views;
   };
 
   REQUIRE(quoll::test::run(time, start_then_stop()) == 1);
@@ -717,9 +756,11 @@ TEST_CASE("ui::app: the handlers of the view go before the component they may re
   int read = 0;
 
   {
-    test_app<handler_with_guard> instance{time.get_executor(), shown};
+    test_app instance{
+        time.get_executor(), shown, handler_with_guard, {.contexts = {provide<handler_with_guard_data>()}}
+    };
 
-    instance.component().read = &read;
+    instance.context<handler_with_guard_data>().read = &read;
     REQUIRE(quoll::test::run(time, session(instance, []() -> task<> { co_await settle(); })) == 0);
   }
 
@@ -729,10 +770,10 @@ TEST_CASE("ui::app: the handlers of the view go before the component they may re
 TEST_CASE("ui::app: another tag makes another node", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<changing_tag> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, changing_tag, {.contexts = {provide<changing_tag_data>()}}};
 
   auto const act = [&]() -> task<> {
-    instance.component().flag = true;
+    instance.context<changing_tag_data>().flag = true;
     co_await settle();
   };
 
@@ -743,7 +784,7 @@ TEST_CASE("ui::app: another tag makes another node", "[ui]") {
 TEST_CASE("ui::app: classes, attributes and events follow the view", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<changing_details> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, changing_details, {.contexts = {provide<changing_details_data>()}}};
   std::string first;
   std::string changed;
   std::vector<std::string> first_events;
@@ -753,12 +794,12 @@ TEST_CASE("ui::app: classes, attributes and events follow the view", "[ui]") {
     first = shown.html();
     first_events = shown.events(shown.find("div"));
 
-    instance.component().flag = true;
+    instance.context<changing_details_data>().flag = true;
     co_await settle();
     changed = shown.html();
     changed_events = shown.events(shown.find("div"));
 
-    instance.component().flag = false;
+    instance.context<changing_details_data>().flag = false;
     co_await settle();
   };
 
@@ -774,12 +815,12 @@ TEST_CASE("ui::app: classes, attributes and events follow the view", "[ui]") {
 TEST_CASE("ui::app: stop() stops a running handler, kept alive until it ends", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<slow_handler> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, slow_handler, {.contexts = {provide<slow_handler_data>()}}};
   bool stopped = false;
   auto watched = std::make_shared<int>(7);
 
-  instance.component().stopped = &stopped;
-  instance.component().watched = &watched;
+  instance.context<slow_handler_data>().stopped = &stopped;
+  instance.context<slow_handler_data>().watched = &watched;
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
@@ -787,7 +828,7 @@ TEST_CASE("ui::app: stop() stops a running handler, kept alive until it ends", "
 
     // Another view replaces the element, and the handler that was on it.
     watched = std::make_shared<int>(0);
-    instance.component().done = 2;
+    instance.context<slow_handler_data>().done = 2;
     co_await settle();
   };
 
@@ -800,9 +841,8 @@ TEST_CASE("ui::app: what a handler throws goes to on_error", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<failing_handler> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
-                                       failure = std::move(error);
-                                     }}};
+  auto const told = [&](std::exception_ptr error) { failure = std::move(error); };
+  test_app instance{time.get_executor(), shown, failing_handler, {.on_error = told}};
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
@@ -817,9 +857,9 @@ TEST_CASE("ui::app: a handler ending on a stop is no failure: on_error does not 
   virtual_time time;
   memory_renderer const shown;
   auto told = 0;
-  test_app<handler_ending_on_a_stop> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr) {
-                                                ++told;
-                                              }}};
+  test_app instance{time.get_executor(), shown, handler_ending_on_a_stop, {.on_error = [&](std::exception_ptr) {
+                      ++told;
+                    }}};
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
@@ -838,10 +878,12 @@ TEST_CASE(
   memory_renderer const shown;
   auto caught = 0;
   auto turns = 0;
-  test_app<handler_catching_all> instance{time.get_executor(), shown};
+  test_app instance{
+      time.get_executor(), shown, handler_catching_all, {.contexts = {provide<handler_catching_all_data>()}}
+  };
 
-  instance.component().caught = &caught;
-  instance.component().turns = &turns;
+  instance.context<handler_catching_all_data>().caught = &caught;
+  instance.context<handler_catching_all_data>().turns = &turns;
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
@@ -857,7 +899,7 @@ TEST_CASE(
 TEST_CASE("ui::app: an event for a node that is gone is ignored", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<counter> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, counter, {.contexts = {provide<counter_data>()}}};
 
   auto const act = [&]() -> task<> {
     instance.dispatch(9999, "click");
@@ -866,19 +908,19 @@ TEST_CASE("ui::app: an event for a node that is gone is ignored", "[ui]") {
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(*instance.component().count == 0);
+  REQUIRE(*instance.context<counter_data>().count == 0);
 }
 
 TEST_CASE("ui::app: an input no longer bound holds nothing", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<optional_binding> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, optional_binding, {.contexts = {provide<optional_binding_data>()}}};
 
   auto const act = [&]() -> task<> {
-    instance.component().draft = std::string{"kept"};
+    instance.context<optional_binding_data>().draft = std::string{"kept"};
     co_await settle();
 
-    instance.component().bound = false;
+    instance.context<optional_binding_data>().bound = false;
     co_await settle();
   };
 
@@ -889,7 +931,7 @@ TEST_CASE("ui::app: an input no longer bound holds nothing", "[ui]") {
 TEST_CASE("ui::app: nothing runs after stop()", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<counter> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, counter, {.contexts = {provide<counter_data>()}}};
 
   auto const stop_then_click = [&]() -> task<int> {
     instance.start();
@@ -902,7 +944,7 @@ TEST_CASE("ui::app: nothing runs after stop()", "[ui]") {
     instance.dispatch(add, "click");
     instance.start();
     co_await settle();
-    co_return *instance.component().count;
+    co_return *instance.context<counter_data>().count;
   };
 
   REQUIRE(quoll::test::run(time, stop_then_click()) == 0);
@@ -912,20 +954,22 @@ TEST_CASE("ui::app: a view that could not be scheduled is tried again at the nex
   virtual_time time;
   memory_renderer const shown;
   bool fail = false;
-  test_app<counter> instance{failing_executor{time.get_executor(), &fail}, shown};
+  test_app instance{
+      failing_executor{time.get_executor(), &fail}, shown, counter, {.contexts = {provide<counter_data>()}}
+  };
   bool thrown = false;
 
   auto const act = [&]() -> task<> {
     fail = true;
 
     try {
-      instance.component().count = 1;
+      instance.context<counter_data>().count = 1;
     } catch (std::runtime_error const &) {
       thrown = true;
     }
 
     fail = false;
-    instance.component().count = 2;
+    instance.context<counter_data>().count = 2;
     co_await settle();
   };
 
@@ -937,10 +981,14 @@ TEST_CASE("ui::app: a view that could not be scheduled is tried again at the nex
 namespace {
 
 // A button disabled while it waits.
-struct waiting_button {
+struct waiting_button_data {
   state<bool> busy;
+};
 
-  element view() { return button("Save") | disabled(*busy); }
+constexpr component<> waiting_button = [] {
+  auto &self = use_context<waiting_button_data>();
+
+  return button("Save") | disabled(*self->busy);
 };
 
 } // namespace
@@ -948,18 +996,18 @@ struct waiting_button {
 TEST_CASE("ui::app: disabled() sets the attribute while its condition holds, and takes it away after", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<waiting_button> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, waiting_button, {.contexts = {provide<waiting_button_data>()}}};
   std::string first;
   std::string waiting;
 
   auto const act = [&]() -> task<> {
     first = shown.html();
 
-    instance.component().busy = true;
+    instance.context<waiting_button_data>().busy = true;
     co_await settle();
     waiting = shown.html();
 
-    instance.component().busy = false;
+    instance.context<waiting_button_data>().busy = false;
     co_await settle();
   };
 
@@ -972,22 +1020,25 @@ TEST_CASE("ui::app: disabled() sets the attribute while its condition holds, and
 namespace {
 
 // The base decorators, set while their conditions hold, and the events they name.
-struct decorated_form {
+struct decorated_form_data {
   state<bool> locked;
   state<std::vector<std::string>> heard;
+};
 
-  element view() {
-    auto const told = [this](std::string what) {
-      return [this, what](std::string given) { heard.update([&](auto &all) { all.push_back(what + " " + given); }); };
-    };
+constexpr component<> decorated_form = [] {
+  auto &self = use_context<decorated_form_data>();
 
-    return form({
-               input() | placeholder("A note") | value("tea") | required(true) | readonly(*locked) |
-                   aria("label", "note") | on_change(told("change")) | on_key_down(told("key")),
-               p("hint") | role("note") | hidden(!*locked),
-           }) |
-           on_submit(told("submit"));
-  }
+  auto const told = [&self](std::string what) {
+    return
+        [&self, what](std::string given) { self->heard.update([&](auto &all) { all.push_back(what + " " + given); }); };
+  };
+
+  return form({
+             input() | placeholder("A note") | value("tea") | required(true) | readonly(*self->locked) |
+                 aria("label", "note") | on_change(told("change")) | on_key_down(told("key")),
+             p("hint") | role("note") | hidden(!*self->locked),
+         }) |
+         on_submit(told("submit"));
 };
 
 } // namespace
@@ -995,7 +1046,7 @@ struct decorated_form {
 TEST_CASE("ui::app: the base decorators set their attributes, and their events reach their functions", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<decorated_form> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, decorated_form, {.contexts = {provide<decorated_form_data>()}}};
   std::string first;
   std::string locked;
 
@@ -1007,7 +1058,7 @@ TEST_CASE("ui::app: the base decorators set their attributes, and their events r
     instance.dispatch(shown.find("form"), "submit");
     co_await settle();
 
-    instance.component().locked = true;
+    instance.context<decorated_form_data>().locked = true;
     co_await settle();
     locked = shown.html();
   };
@@ -1021,16 +1072,23 @@ TEST_CASE("ui::app: the base decorators set their attributes, and their events r
       locked == R"(<form><input aria-label="note" placeholder="A note" readonly="" required="" value="tea"></input>)"
                 R"(<p role="note">hint</p></form>)"
   );
-  CHECK(*instance.component().heard == std::vector<std::string>{"change green tea", "key Enter", "submit "});
+  CHECK(
+      *instance.context<decorated_form_data>().heard ==
+      std::vector<std::string>{"change green tea", "key Enter", "submit "}
+  );
 }
 
 namespace {
 
 // A box bound to a state, and another checked from it, given as a value.
-struct checked_boxes {
+struct checked_boxes_data {
   state<bool> done;
+};
 
-  element view() { return div({input() | bind(done), input() | attribute("type", "checkbox") | checked(!*done)}); }
+constexpr component<> checked_boxes = [] {
+  auto &self = use_context<checked_boxes_data>();
+
+  return div({input() | bind(self->done), input() | attribute("type", "checkbox") | checked(!*self->done)});
 };
 
 } // namespace
@@ -1038,7 +1096,7 @@ struct checked_boxes {
 TEST_CASE("ui::app: bind() keeps a checkbox and a bool the same, checked() shows one given", "[ui]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<checked_boxes> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, checked_boxes, {.contexts = {provide<checked_boxes_data>()}}};
   std::string first;
   std::string clicked;
 
@@ -1056,7 +1114,7 @@ TEST_CASE("ui::app: bind() keeps a checkbox and a bool the same, checked() shows
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(first == R"(<div><input type="checkbox"></input><input checked="" type="checkbox"></input></div>)");
   CHECK(clicked == R"(<div><input checked="" type="checkbox"></input><input type="checkbox"></input></div>)");
-  CHECK_FALSE(*instance.component().done);
+  CHECK_FALSE(*instance.context<checked_boxes_data>().done);
   CHECK(shown.html() == first);
 }
 
@@ -1099,15 +1157,17 @@ struct ordered_renderer {
 static_assert(Renderer<ordered_renderer>);
 
 // A select of the options its state holds, the second chosen.
-struct choosing_select {
+struct choosing_select_data {
   state<std::vector<std::string>> options{std::vector<std::string>{"a"}};
   state<int> other;
+};
 
-  element view() {
-    auto const option = [](std::string const &name) { return node("option", {text(name)}) | key(name); };
+constexpr component<> choosing_select = [] {
+  auto &self = use_context<choosing_select_data>();
 
-    return div({node("select", {list(options, option)}) | value("b"), p(std::to_string(*other))});
-  }
+  auto const option = [](std::string const &name) { return node("option", {text(name)}) | key(name); };
+
+  return div({node("select", {list(self->options, option)}) | value("b"), p(std::to_string(*self->other))});
 };
 
 } // namespace
@@ -1115,7 +1175,9 @@ struct choosing_select {
 TEST_CASE("ui::app: a select is given its value once its options are placed, and again as they change", "[ui]") {
   virtual_time time;
   std::vector<std::string> asked;
-  app<choosing_select, ordered_renderer> instance{time.get_executor(), ordered_renderer{&asked}};
+  app instance{
+      time.get_executor(), ordered_renderer{&asked}, choosing_select, {.contexts = {provide<choosing_select_data>()}}
+  };
   std::vector<std::string> first;
   std::vector<std::string> changed;
 
@@ -1123,13 +1185,13 @@ TEST_CASE("ui::app: a select is given its value once its options are placed, and
     first = asked;
     asked.clear();
 
-    instance.component().options.update([](auto &all) { all.push_back("b"); });
+    instance.context<choosing_select_data>().options.update([](auto &all) { all.push_back("b"); });
     co_await settle();
     changed = asked;
     asked.clear();
 
     // Its options the same: what the user chose stays.
-    instance.component().other = 1;
+    instance.context<choosing_select_data>().other = 1;
     co_await settle();
   };
 
@@ -1148,15 +1210,17 @@ TEST_CASE("ui::app: a select is given its value once its options are placed, and
 namespace {
 
 // A select of two options with no key, the second's text a state's, inside a group.
-struct relabelled_select {
+struct relabelled_select_data {
   state<std::string> second{std::string{"c"}};
   state<int> other;
+};
 
-  element view() {
-    auto const group = node("optgroup", {node("option", {text("a")}), node("option", {text(*second)})});
+constexpr component<> relabelled_select = [] {
+  auto &self = use_context<relabelled_select_data>();
 
-    return div({node("select", {group}) | value("b"), p(std::to_string(*other))});
-  }
+  auto const group = node("optgroup", {node("option", {text("a")}), node("option", {text(*self->second)})});
+
+  return div({node("select", {group}) | value("b"), p(std::to_string(*self->other))});
 };
 
 } // namespace
@@ -1164,18 +1228,23 @@ struct relabelled_select {
 TEST_CASE("ui::app: a select is given its value again as an option within it changes what it says", "[ui]") {
   virtual_time time;
   std::vector<std::string> asked;
-  app<relabelled_select, ordered_renderer> instance{time.get_executor(), ordered_renderer{&asked}};
+  app instance{
+      time.get_executor(),
+      ordered_renderer{&asked},
+      relabelled_select,
+      {.contexts = {provide<relabelled_select_data>()}}
+  };
   std::vector<std::string> relabelled;
 
   auto const act = [&]() -> task<> {
     asked.clear();
 
-    instance.component().second = std::string{"b"};
+    instance.context<relabelled_select_data>().second = std::string{"b"};
     co_await settle();
     relabelled = asked;
     asked.clear();
 
-    instance.component().other = 1;
+    instance.context<relabelled_select_data>().other = 1;
     co_await settle();
   };
 

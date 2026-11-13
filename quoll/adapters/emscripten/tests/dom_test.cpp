@@ -93,28 +93,22 @@ inline constexpr auto fake_chart = widget<chart_props>("./fake_chart.js", "canva
 inline constexpr auto missing_chart = widget<chart_props>("./missing.js", "canvas");
 inline constexpr auto failing_chart = widget<chart_props>("./failing_chart.js", "canvas");
 
-struct failing_charts {
-  element view() { return div({missing_chart({}), failing_chart({})}); }
-};
+inline constexpr component<> failing_charts = [] { return div({missing_chart({}), failing_chart({})}); };
+
+// What the chart emits.
+inline std::vector<int> picks{};
 
 // A chart, given more values or hidden by its buttons, and what it emits.
-struct charting {
-  static inline std::vector<int> picks{};
+inline constexpr component<> charting = [] {
+  auto &values = use_state(std::vector<int>{1});
+  auto &shows = use_state(true);
 
-  state<std::vector<int>> values{std::vector<int>{1}};
-  state<bool> shows{true};
+  auto const pick = [](picked event) { picks.push_back(event.index); };
+  auto const more = [&values] { values.update([](auto &all) { all.push_back(2); }); };
+  auto const hide = [&shows] { shows = false; };
+  auto const chart = [&] { return fake_chart({.values = *values}) | on("picked", pick); };
 
-  element view() {
-    auto const pick = [](picked event) { picks.push_back(event.index); };
-
-    auto const more = [this] { values.update([](auto &all) { all.push_back(2); }); };
-
-    auto const hide = [this] { shows = false; };
-
-    auto const chart = [&] { return fake_chart({.values = *values}) | on("picked", pick); };
-
-    return div({button("more") | on_click(more), button("hide") | on_click(hide), when(*shows, chart)});
-  }
+  return div({button("more") | on_click(more), button("hide") | on_click(hide), when(*shows, chart)});
 };
 
 } // namespace dom_widgets
@@ -140,134 +134,118 @@ std::string page() {
 // Lets what is pending on the event loop run: the tasks of the app, posted as microtasks.
 void settle() { emscripten_sleep(1); }
 
-struct counter {
-  state<int> count;
+constexpr component<> counter = [] {
+  auto &count = use_state(0);
 
-  element view() {
-    return div({
-               span("count: " + std::to_string(*count)) | tw("text-sm"),
-               button("Add") | on_click([this] { count = *count + 1; }),
-           }) |
-           tw("flex");
-  }
+  auto const add = [&count] { count = *count + 1; };
+
+  return div({
+             span("count: " + std::to_string(*count)) | tw("text-sm"),
+             button("Add") | on_click(add),
+         }) |
+         tw("flex");
 };
 
-struct list_page {
-  state<std::vector<std::string>> items;
-  state<std::string> draft;
+constexpr component<> list_page = [] {
+  auto &items = use_state<std::vector<std::string>>();
+  auto &draft = use_state<std::string>();
 
-  element view() {
-    return div({
-        input() | bind(draft) | attribute("placeholder", "note"),
-        button("Add") | on_click([this] {
-          items.update([this](auto &all) { all.push_back(*draft); });
-          draft.set({});
-        }),
-        ul({list(
-            items,
-            [this](std::string const &item) {
-              return li(item) | key(item) |
-                     on_click([this, item] { items.update([&item](auto &all) { std::erase(all, item); }); });
-            }
-        )}),
-    });
-  }
+  auto const add = [&items, &draft] {
+    items.update([&draft](auto &all) { all.push_back(*draft); });
+    draft.set({});
+  };
+
+  auto const row = [&items](std::string const &item) {
+    auto const remove = [&items, item] { items.update([&item](auto &all) { std::erase(all, item); }); };
+
+    return li(item) | key(item) | on_click(remove);
+  };
+
+  return div({
+      input() | bind(draft) | attribute("placeholder", "note"),
+      button("Add") | on_click(add),
+      ul({list(items, row)}),
+  });
 };
 
-// A form sent with Enter: the keys pressed in its input, and the note sent, the page kept.
-struct sending_form {
-  state<std::string> draft;
+// What the test reads of a form sent with Enter: the keys pressed in its input, and the notes sent.
+struct sending_form_data {
   state<std::vector<std::string>> keys;
   state<std::vector<std::string>> sent;
+};
 
-  element view() {
-    auto const pressed = [this](std::string key) { keys.update([&key](auto &all) { all.push_back(key); }); };
-    auto const send = [this] { sent.update([this](auto &all) { all.push_back(*draft); }); };
+// A form sent with Enter, the page kept.
+constexpr component<> sending_form = [] {
+  auto &self = use_context<sending_form_data>();
+  auto &draft = use_state<std::string>();
 
-    return form({input() | bind(draft) | placeholder("note") | on_key_down(pressed), p(std::to_string(sent->size()))}) |
-           on_submit(send);
-  }
+  auto const pressed = [&self](std::string key) { self->keys.update([&key](auto &all) { all.push_back(key); }); };
+  auto const send = [&self, &draft] { self->sent.update([&draft](auto &all) { all.push_back(*draft); }); };
+
+  return form({
+             input() | bind(draft) | placeholder("note") | on_key_down(pressed),
+             p(std::to_string(self->sent->size())),
+         }) |
+         on_submit(send);
 };
 
 // A box bound to a state, which a button also sets.
-struct box_page {
-  state<bool> done;
+constexpr component<> box_page = [] {
+  auto &done = use_state(false);
 
-  element view() {
-    return div({input() | bind(done), button("Reset") | on_click([this] { done = false; }), p(*done ? "yes" : "no")});
-  }
+  auto const reset = [&done] { done = false; };
+
+  return div({input() | bind(done), button("Reset") | on_click(reset), p(*done ? "yes" : "no")});
 };
 
 // The keys pressed in its input.
-struct key_input {
+struct key_input_data {
   state<std::vector<std::string>> keys;
+};
 
-  element view() {
-    return input() | on_key_down([this](std::string key) { keys.update([&key](auto &all) { all.push_back(key); }); });
-  }
+constexpr component<> key_input = [] {
+  auto &self = use_context<key_input_data>();
+
+  auto const pressed = [&self](std::string key) { self->keys.update([&key](auto &all) { all.push_back(key); }); };
+
+  return input() | on_key_down(pressed);
 };
 
 // A radio chosen gives its value; a form with no on_submit stays on the page.
-struct radio_page {
-  state<std::string> chosen;
+constexpr component<> radio_page = [] {
+  auto &chosen = use_state<std::string>();
 
-  element view() {
-    auto const pick = [this](std::string value) { chosen = value; };
+  auto const pick = [&chosen](std::string value) { chosen = value; };
 
-    return form({input() | attribute("type", "radio") | value("green") | on_change(pick), p(*chosen)});
-  }
-};
-
-// mounted() fails once the first view is in the page, its listeners with it.
-struct failing_after_view {
-  static inline bool fail = true;
-
-  state<int> count;
-
-  element view() {
-    return button("Add " + std::to_string(*count)) | on_click([this] { count = *count + 1; });
-  }
-
-  quoll::async::task<> mounted() {
-    if (fail) {
-      throw std::runtime_error{"not yet"};
-    }
-
-    return nothing();
-  }
-
-  static quoll::async::task<> nothing() { co_return; }
+  return form({input() | attribute("type", "radio") | value("green") | on_change(pick), p(*chosen)});
 };
 
 // The first view asks for another render, then fails: that render is pending on the event loop.
-struct changing_then_failing {
-  state<int> count;
-  static inline int views = 0;
+int changing_views = 0;
 
-  element view() {
-    ++views;
-    count = 1;
-    throw std::runtime_error{"not yet"};
-  }
+constexpr component<> changing_then_failing = []() -> element {
+  auto &count = use_state(0);
+
+  ++changing_views;
+  count = 1;
+  throw std::runtime_error{"not yet"};
 };
 
-struct failing_at_first {
-  static inline bool fail = true;
+bool fails_at_first = true;
 
-  element view() {
-    if (fail) {
-      throw std::runtime_error{"not yet"};
-    }
-
-    return p("shown");
+constexpr component<> failing_at_first = [] {
+  if (fails_at_first) {
+    throw std::runtime_error{"not yet"};
   }
+
+  return p("shown");
 };
 
 } // namespace
 
 TEST_CASE("mount shows a component in the page, and events reach it", "[emscripten][ui]") {
   quoll_test_dom_reset();
-  quoll::emscripten::mount<counter>();
+  quoll::emscripten::mount(counter);
 
   REQUIRE(page() == R"(<div class="flex"><span class="text-sm">count: 0</span><button>Add</button></div>)");
 
@@ -279,7 +257,7 @@ TEST_CASE("mount shows a component in the page, and events reach it", "[emscript
 
 TEST_CASE("mount: inputs, lists and removed nodes in the page", "[emscripten][ui]") {
   quoll_test_dom_reset();
-  quoll::emscripten::mount<list_page>();
+  quoll::emscripten::mount(list_page);
 
   quoll_test_dom_type("milk");
   settle();
@@ -308,7 +286,7 @@ TEST_CASE(
 ) {
   quoll_test_dom_reset();
 
-  auto &shown = quoll::emscripten::mount<sending_form>();
+  auto &shown = quoll::emscripten::mount(sending_form, "#app", {.contexts = {provide<sending_form_data>()}});
 
   quoll_test_dom_type("tea");
   settle();
@@ -316,14 +294,14 @@ TEST_CASE(
   REQUIRE(quoll_test_dom_key_and_submit("Enter") == 1);
   settle();
 
-  CHECK(*shown.keys == std::vector<std::string>{"Enter"});
-  CHECK(*shown.sent == std::vector<std::string>{"tea"});
+  CHECK(*shown.context<sending_form_data>().keys == std::vector<std::string>{"Enter"});
+  CHECK(*shown.context<sending_form_data>().sent == std::vector<std::string>{"tea"});
   CHECK(page() == R"(<form><input placeholder="note" value="tea"></input><p>1</p></form>)");
 }
 
 TEST_CASE("mount: a checkbox bound to a state, through its property both ways", "[emscripten][ui]") {
   quoll_test_dom_reset();
-  quoll::emscripten::mount<box_page>();
+  quoll::emscripten::mount(box_page);
 
   REQUIRE(quoll_test_dom_checked() == 0);
 
@@ -340,7 +318,7 @@ TEST_CASE("mount: a checkbox bound to a state, through its property both ways", 
 
 TEST_CASE("mount: a radio chosen gives its value, and a form with no on_submit stays on the page", "[emscripten][ui]") {
   quoll_test_dom_reset();
-  quoll::emscripten::mount<radio_page>();
+  quoll::emscripten::mount(radio_page);
 
   quoll_test_dom_check();
   settle();
@@ -353,7 +331,7 @@ TEST_CASE(
 ) {
   quoll_test_dom_reset();
 
-  auto &shown = quoll::emscripten::mount<key_input>();
+  auto &shown = quoll::emscripten::mount(key_input, "#app", {.contexts = {provide<key_input_data>()}});
 
   quoll_test_dom_key("Enter", 1, 0);
   quoll_test_dom_key("?", 1, 0);
@@ -361,7 +339,7 @@ TEST_CASE(
   quoll_test_dom_key("Shift", 1, 0);
   settle();
 
-  CHECK(*shown.keys == std::vector<std::string>{"Shift+Enter", "?", "Shift"});
+  CHECK(*shown.context<key_input_data>().keys == std::vector<std::string>{"Shift+Enter", "?", "Shift"});
 }
 
 TEST_CASE("dom_renderer: nothing matching the selector is an error", "[emscripten][ui]") {
@@ -370,41 +348,28 @@ TEST_CASE("dom_renderer: nothing matching the selector is an error", "[emscripte
   REQUIRE_THROWS_AS(quoll::emscripten::dom_renderer{"#missing"}, std::invalid_argument);
 }
 
-TEST_CASE("mount: a failed start leaves nothing in the page, and can be tried again", "[emscripten][ui]") {
-  quoll_test_dom_reset();
-
-  REQUIRE_THROWS_AS(quoll::emscripten::mount<failing_after_view>(), std::runtime_error);
-  // At once: a retry in the same tick shows one interface.
-  REQUIRE(page().empty());
-
-  failing_after_view::fail = false;
-  quoll::emscripten::mount<failing_after_view>();
-  REQUIRE(page() == "<button>Add 0</button>");
-
-  settle();
-  REQUIRE(page() == "<button>Add 0</button>");
-}
-
 TEST_CASE("mount: a render pending when the first view fails does not outlive the app", "[emscripten][ui]") {
   quoll_test_dom_reset();
 
-  REQUIRE_THROWS_AS(quoll::emscripten::mount<changing_then_failing>(), std::runtime_error);
+  REQUIRE_THROWS_AS(quoll::emscripten::mount(changing_then_failing), std::runtime_error);
   settle();
 
   REQUIRE(page().empty());
-  REQUIRE(changing_then_failing::views == 1);
+  REQUIRE(changing_views == 1);
 }
 
 TEST_CASE("mount: a failed first view can be tried again, a second mount cannot", "[emscripten][ui]") {
   quoll_test_dom_reset();
 
-  REQUIRE_THROWS_AS(quoll::emscripten::mount<failing_at_first>(), std::runtime_error);
+  REQUIRE_THROWS_AS(quoll::emscripten::mount(failing_at_first), std::runtime_error);
+  // At once: a retry in the same tick shows one interface.
+  REQUIRE(page().empty());
 
-  failing_at_first::fail = false;
-  quoll::emscripten::mount<failing_at_first>();
+  fails_at_first = false;
+  quoll::emscripten::mount(failing_at_first);
 
   REQUIRE(page() == "<p>shown</p>");
-  REQUIRE_THROWS_AS(quoll::emscripten::mount<failing_at_first>(), std::logic_error);
+  REQUIRE_THROWS_AS(quoll::emscripten::mount(failing_at_first), std::logic_error);
 }
 
 TEST_CASE(
@@ -412,7 +377,7 @@ TEST_CASE(
 ) {
   quoll_test_dom_reset();
   quoll_test_widgets_install();
-  quoll::emscripten::mount<dom_widgets::charting>();
+  quoll::emscripten::mount(dom_widgets::charting);
   settle();
 
   REQUIRE(widget_log() == R"(mount canvas {"values":[1]})");
@@ -420,7 +385,7 @@ TEST_CASE(
   // What it emits reaches its function, read from JSON, with a field it does not declare.
   quoll_test_widgets_emit("picked", R"({"index":2,"dataset":0})");
   settle();
-  REQUIRE(dom_widgets::charting::picks == std::vector<int>{2});
+  REQUIRE(dom_widgets::picks == std::vector<int>{2});
 
   quoll_test_dom_click("more");
   settle();
@@ -433,7 +398,7 @@ TEST_CASE(
   settle();
 
   REQUIRE(widget_log() == "mount canvas {\"values\":[1]}\nupdate {\"values\":[1,2]}\nunmount");
-  REQUIRE(dom_widgets::charting::picks == std::vector<int>{2});
+  REQUIRE(dom_widgets::picks == std::vector<int>{2});
   REQUIRE(page() == "<div><button>more</button><button>hide</button></div>");
 }
 
@@ -633,7 +598,7 @@ TEST_CASE("mount: a widget's module missing, or failing to mount, reaches on_err
     }
   }};
 
-  quoll::emscripten::mount<dom_widgets::failing_charts>("#app", std::move(options));
+  quoll::emscripten::mount(dom_widgets::failing_charts, "#app", std::move(options));
   settle();
 
   REQUIRE(failures.size() == 2);
@@ -688,27 +653,19 @@ namespace dom_routes {
 
 using namespace quoll::ui;
 
-struct first_page {
-  element view();
-};
+inline constexpr component<> second_page = [] { return p("second"); };
 
-struct second_page {
-  element view() { return p("second"); }
+inline constexpr component<> first_page = [] {
+  return div({
+      p("first"),
+      link_to(second_page, "go second"),
+      link_to(second_page, "open second") | attribute("target", "_blank"),
+  });
 };
 
 inline constexpr auto both = quoll::ui::routes(route<"/", first_page>(), route<"/second", second_page>());
 
-element first_page::view() {
-  return div({
-      p("first"),
-      link_to<second_page>("go second"),
-      link_to<second_page>("open second") | attribute("target", "_blank"),
-  });
-}
-
-struct routed_shell {
-  element view() { return main_({outlet()}); }
-};
+inline constexpr component<> routed_shell = [] { return main_({outlet()}); };
 
 [[nodiscard]] std::string location_now() {
   std::array<char, 256> out{};
@@ -727,8 +684,8 @@ TEST_CASE(
   quoll_test_dom_reset();
   quoll_test_history_install("/");
 
-  quoll::emscripten::mount<routed_shell>(
-      "#app", {.contexts = {quoll::ui::routing<both>(quoll::emscripten::browser_history())}}
+  quoll::emscripten::mount(
+      routed_shell, "#app", {.contexts = {quoll::ui::routing<both>(quoll::emscripten::browser_history())}}
   );
   settle();
   REQUIRE(page().contains("<p>first</p>"));

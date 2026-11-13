@@ -65,7 +65,7 @@ using quoll::test::session;
 using quoll::test::settle;
 using quoll::test::virtual_time;
 
-using notes_app = quoll::ui::app<notes_web::notes_page, memory_renderer>;
+using notes_app = quoll::ui::app<memory_renderer>;
 
 // What the server holds, for the test running.
 struct fake_server {
@@ -115,7 +115,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  notes_app instance{time.get_executor(), shown};
+  notes_app instance{time.get_executor(), shown, notes_web::notes_page};
   std::string loaded;
   std::string added;
 
@@ -143,8 +143,9 @@ TEST_CASE(
   CHECK(added.contains("buy coffee"));
   REQUIRE(server.notes.size() == 1);
   CHECK(server.notes.front().text == "buy coffee");
-  CHECK(*instance.component().items == server.notes);
-  CHECK(instance.component().problem->empty());
+  CHECK(shown.html().contains("buy coffee"));
+  CHECK_FALSE(shown.html().contains("buy milk"));
+  CHECK_FALSE(shown.html().contains("role=\"alert\""));
 }
 
 TEST_CASE("notes web: a note the server refuses shows why, and comes back in the input", "[samples][notes]") {
@@ -152,7 +153,7 @@ TEST_CASE("notes web: a note the server refuses shows why, and comes back in the
 
   virtual_time time;
   memory_renderer const shown;
-  notes_app instance{time.get_executor(), shown};
+  notes_app instance{time.get_executor(), shown, notes_web::notes_page};
   std::string refused;
 
   auto const act = [&]() -> task<> {
@@ -173,5 +174,5 @@ TEST_CASE("notes web: a note the server refuses shows why, and comes back in the
   CHECK(refused.contains("the server is gone"));
   REQUIRE(server.notes.size() == 1);
   CHECK(server.notes.front().text == "buy milk");
-  CHECK(instance.component().problem->empty());
+  CHECK_FALSE(shown.html().contains("role=\"alert\""));
 }

@@ -34,25 +34,29 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui: a context has no view, mounted() nor unmounted(), which would never run: its effects do what a
-// component's mounted() would
-//
-// A component given as a context: its view, with its props, would never run.
+#include "components.hpp"
 
-#include <quoll/ui/context/provide.hpp>
-#include <quoll/ui/data/state.hpp>
-#include <quoll/ui/view/element.hpp>
+#include <quoll/ui.hpp>
 
 #include <string>
 
-struct detail_panel {
-  struct props {
-    std::string name;
-  };
+namespace dashboard_web {
 
-  quoll::ui::state<std::string> typed;
+// One product of the list: a link to its page.
+constexpr component<product_row_props> product_row = [](product_row_props const &given) {
+  auto const stock =
+      given.item.stock == 0 ? std::string{"out of stock"} : std::to_string(given.item.stock) + " in stock";
+  auto const name = span(given.item.name) | tw("flex-1 text-left font-medium");
+  auto const category = span(given.item.category) | tw("badge badge-ghost");
+  auto const in_stock = span(stock) | tw("whitespace-nowrap text-right text-sm opacity-70");
 
-  quoll::ui::element view(props const &given);
+  // A link to its page: the address follows, and the back button comes back.
+  auto const row = link_to(product_page, {.id = given.item.id}, {name, category, in_stock});
+
+  auto const shown = row | tw("flex w-full items-center gap-3 rounded-box px-4 py-2 hover:bg-base-200") |
+                     tw_if(given.selected, "bg-base-200");
+
+  return li({shown});
 };
 
-auto const given = quoll::ui::provide<detail_panel>();
+} // namespace dashboard_web

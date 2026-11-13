@@ -37,7 +37,6 @@
 #ifndef QUOLL_UI_ROUTING_ROUTE_HPP
 #define QUOLL_UI_ROUTING_ROUTE_HPP
 
-#include <quoll/async/detail/type_id.hpp>
 #include <quoll/http/fixed_string.hpp>
 #include <quoll/ui/component/component.hpp>
 #include <quoll/ui/detail/routing/route_table.hpp>
@@ -51,7 +50,7 @@ namespace quoll::ui {
 
 namespace detail {
 
-template <http::fixed_string Path, class Page, class... Children>
+template <http::fixed_string Path, auto const &Page, class... Children>
 struct route_node {
   std::tuple<Children...> children;
 };
@@ -59,17 +58,17 @@ struct route_node {
 template <http::fixed_string From, http::fixed_string To>
 struct redirect_node {};
 
-template <class Page>
+template <auto const &Page>
 struct not_found_node {};
 
-template <http::fixed_string Path, class Page, class... Children>
+template <http::fixed_string Path, auto const &Page, class... Children>
 struct route_count<route_node<Path, Page, Children...>>
     : std::integral_constant<std::size_t, (1 + ... + route_count<Children>::value)> {};
 
 template <http::fixed_string Prefix, class Node, std::size_t N>
 struct flatten;
 
-template <http::fixed_string Prefix, http::fixed_string Path, class Page, class... Children, std::size_t N>
+template <http::fixed_string Prefix, http::fixed_string Path, auto const &Page, class... Children, std::size_t N>
 struct flatten<Prefix, route_node<Path, Page, Children...>, N> {
   static constexpr auto const &full = joined<Prefix, Path>::value;
 
@@ -82,7 +81,7 @@ struct flatten<Prefix, route_node<Path, Page, Children...>, N> {
         {.kind = route_kind::page,
          .path = full.view(),
          .target = {},
-         .page = async::detail::type_id_of<Page>(),
+         .page = &page_table<Page>,
          .parent = parent,
          .leaf = sizeof...(Children) == 0,
          .show = &show_page<Page>,
@@ -140,7 +139,7 @@ struct flatten<Prefix, redirect_node<From, To>, N> {
   }
 };
 
-template <http::fixed_string Prefix, class Page, std::size_t N>
+template <http::fixed_string Prefix, auto const &Page, std::size_t N>
 struct flatten<Prefix, not_found_node<Page>, N> {
   static consteval void into(std::array<route_entry, N> &entries, std::size_t &at, std::size_t parent) {
     static_assert(Prefix.view().empty(), "quoll::ui: a not_found route is of the top level");
@@ -149,7 +148,7 @@ struct flatten<Prefix, not_found_node<Page>, N> {
         .kind = route_kind::not_found,
         .path = {},
         .target = {},
-        .page = async::detail::type_id_of<Page>(),
+        .page = &page_table<Page>,
         .parent = parent,
         .leaf = true,
         .show = &show_page<Page>,
@@ -174,14 +173,17 @@ struct flatten<Prefix, not_found_node<Page>, N> {
  *     ui::not_found<missing_page>());
  * @endcode
  *
- * Its path is a template, checked at compile time: a route of the top level starts with '/', one under another adds
+ * Its page is a component, named by the object, `component<props>` or `component<>`, as declared in a header. Its
+ * path is a template, checked at compile time: a route of the top level starts with '/', one under another adds
  * its own segments, none for the index route of its parent. Each `{name}` is a field of its page's props, which gives
  * its type; `{name:path}` takes the rest of the path, a string. The other fields of the props come from the query,
  * `?q=tea`, as they are, or stay as made when it lacks them. A route with routes under it is a layout: its page
  * shows the one of the address in its outlet().
  */
-template <http::fixed_string Path, class Page, class... Children>
+template <http::fixed_string Path, auto const &Page, class... Children>
 [[nodiscard]] consteval detail::route_node<Path, Page, Children...> route(Children... children) {
+  static_assert(detail::is_page<std::remove_cvref_t<decltype(Page)>>, "quoll::ui: a route's page is a component");
+
   return {.children = {children...}};
 }
 
@@ -192,8 +194,10 @@ template <http::fixed_string From, http::fixed_string To>
 }
 
 /** @brief The page shown when no route matches the address, of the top level. */
-template <class Page>
+template <auto const &Page>
 [[nodiscard]] consteval detail::not_found_node<Page> not_found() {
+  static_assert(detail::is_page<std::remove_cvref_t<decltype(Page)>>, "quoll::ui: a route's page is a component");
+
   return {};
 }
 

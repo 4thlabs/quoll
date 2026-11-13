@@ -39,17 +39,15 @@
 //
 // A page whose props hold what no address can give.
 
+#include <quoll/ui/component/component.hpp>
 #include <quoll/ui/routing/route.hpp>
-#include <quoll/ui/view/element.hpp>
 
 #include <vector>
 
-struct list_page {
-  struct props {
-    std::vector<int> picked;
-  };
-
-  quoll::ui::element view(props const &given);
+struct list_page_props {
+  std::vector<int> picked;
 };
+
+extern quoll::ui::component<list_page_props> const list_page;
 
 constexpr auto shop = quoll::ui::routes(quoll::ui::route<"/list", list_page>());

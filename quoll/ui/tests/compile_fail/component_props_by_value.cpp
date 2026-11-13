@@ -34,53 +34,17 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The page of a product, at /products/{id}: the product the catalog holds, or why it is not shown.
+// expect: quoll::ui: a component takes its props by const reference
+//
+// Props taken by value: a copy that goes as the view returns, which what the view writes may capture.
 
-#ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_PAGE_HPP
-#define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_PAGE_HPP
+#include <quoll/ui/component/component.hpp>
+#include <quoll/ui/view/tags.hpp>
 
-#include "catalog.hpp"
-#include "product.hpp"
-#include "product_view.hpp"
+#include <string>
 
-#include <quoll/ui.hpp>
-
-#include <algorithm>
-#include <cstdint>
-
-namespace dashboard_web {
-
-using namespace quoll::ui;
-
-struct product_page {
-  struct props {
-    // The product of the address.
-    std::int64_t id = 0;
-
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  shared<catalog> products;
-
-  element view(props const &given) {
-    auto const &items = *products->items;
-    auto const found = std::ranges::find(items.value, given.id, &products::product::id);
-
-    // The layout tells why the products did not load.
-    if (items.error) {
-      return div({});
-    }
-
-    if (found == items.value.end()) {
-      return p(items.loading ? "Loading the product" : "No such product") | tw("opacity-70");
-    }
-
-    // Keyed by the product: another one is another view, with nothing typed and its own sales; a save on its way goes
-    // on in the catalog.
-    return component<product_view>({.id = found->id, .item = *found}) | key(found->id);
-  }
+struct badge_props {
+  std::string label;
 };
 
-} // namespace dashboard_web
-
-#endif // QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_PAGE_HPP
+constexpr quoll::ui::component<badge_props> badge = [](badge_props given) { return quoll::ui::p(given.label); };

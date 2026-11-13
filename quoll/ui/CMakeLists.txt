@@ -59,7 +59,6 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/action_optional_view_argument.cpp
     tests/compile_fail/action_throwing_move.cpp
     tests/compile_fail/action_with_move_only_argument.cpp
-    tests/compile_fail/callable_component_props_by_value.cpp
     tests/compile_fail/callback_optional_view_argument.cpp
     tests/compile_fail/callback_optional_view_result.cpp
     tests/compile_fail/callback_reference_argument.cpp
@@ -68,21 +67,19 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/callback_transform_view_argument.cpp
     tests/compile_fail/callback_view_argument.cpp
     tests/compile_fail/callback_view_result.cpp
-    tests/compile_fail/child_component_not_aggregate.cpp
-    tests/compile_fail/child_component_without_props_not_aggregate.cpp
-    tests/compile_fail/component_not_aggregate.cpp
-    tests/compile_fail/context_with_mounted.cpp
-    tests/compile_fail/context_with_view.cpp
+    tests/compile_fail/component_capturing.cpp
+    tests/compile_fail/component_generic_lambda.cpp
+    tests/compile_fail/component_not_a_view.cpp
+    tests/compile_fail/component_other_props.cpp
+    tests/compile_fail/component_props_by_value.cpp
+    tests/compile_fail/component_struct_props_by_value.cpp
+    tests/compile_fail/component_without_props.cpp
     tests/compile_fail/effect_optional_view_dependency.cpp
     tests/compile_fail/effect_pair_span_value.cpp
     tests/compile_fail/effect_values_without_target.cpp
     tests/compile_fail/effect_view_value.cpp
     tests/compile_fail/event_function_signature.cpp
     tests/compile_fail/form_state_bind_struct_field.cpp
-    tests/compile_fail/function_component_props_by_value.cpp
-    tests/compile_fail/function_component_with_member.cpp
-    tests/compile_fail/form_state_other_props.cpp
-    tests/compile_fail/form_state_without_props.cpp
     tests/compile_fail/redirect_trailing_slash.cpp
     tests/compile_fail/redirect_unknown_param.cpp
     tests/compile_fail/route_child_absolute.cpp

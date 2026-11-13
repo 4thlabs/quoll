@@ -34,37 +34,34 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui: a component is an aggregate
-//
-// A component with a constructor: its states could not be found by reflection.
+// The products, at /products: their list, and beside it, in its outlet, the page of the address, a product's or none.
 
-#include <quoll/async/run_loop.hpp>
+#include "catalog.hpp"
+#include "components.hpp"
+#include "error_text.hpp"
+
 #include <quoll/ui.hpp>
 
-#include <string_view>
+namespace dashboard_web {
 
-using namespace quoll::ui;
+constexpr component<products_layout_props> products_layout = [](products_layout_props const &given) {
+  auto &products = use_context<catalog>();
 
-struct silent_renderer {
-  void create_element(node_id, std::string_view);
-  void create_text(node_id, std::string_view);
-  void set_text(node_id, std::string_view);
-  void set_class(node_id, std::string_view);
-  void set_attribute(node_id, std::string_view, std::string_view);
-  void remove_attribute(node_id, std::string_view);
-  void set_value(node_id, std::string_view);
-  void set_checked(node_id, bool);
-  void listen(node_id, std::string_view);
-  void unlisten(node_id, std::string_view);
-  void insert(node_id, node_id, node_id);
-  void remove(node_id);
+  auto const &problem = products->items->error;
+  auto const alert = [&problem] {
+    return p(told(problem, "the products did not load")) | tw("alert alert-error") | role("alert");
+  };
+
+  auto const columns = div({
+      product_list({.selected = given.id}),
+      outlet(),
+  });
+
+  return div({
+      h1("Products") | tw("text-4xl font-bold"),
+      when(problem != nullptr, alert),
+      columns | tw("grid gap-8 md:grid-cols-2"),
+  });
 };
 
-struct with_constructor {
-  with_constructor() {}
-
-  element view() { return div(); }
-};
-
-quoll::async::run_loop loop;
-app<with_constructor, silent_renderer> instance{loop.get_executor(), silent_renderer{}};
+} // namespace dashboard_web
