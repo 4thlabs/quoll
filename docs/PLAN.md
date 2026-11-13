@@ -480,7 +480,9 @@ changes only what the harness shows. Candidates:
   note_counter;`, which routes, links, `go` and the root take. An effect follows a prop by its member pointer,
   `effect load{&props::id, products_client::sales, sales};`, or a function of the props for a nested field, a base's
   or a value computed, `[](props const &given) { return given.item.id; }`, read from the props of each view (a
-  reference, `given->id`, would dangle as the props are replaced). Next: `resource<T>` and `match`.
+  reference, `given->id`, would dangle as the props are replaced). `resource<T>`, an `async_state` and its effect,
+  read with `match(loading, failed, loaded)`, the first given the value before if it asks, and an optional `idle`
+  first. Next: Glaze only behind `json_codec` (#182), then `use_resource` for form D.
 - **Form D, a component's props its view's parameters** (2026-11-13, [ADR 0002](adr/0002-ui-dsl-shape.md)): done,
   `inline constexpr component note_row = [](notes::note const &item, bool const &selected) {...}` is a
   `component<parameters<notes::note, bool>>`, placed `note_row(item, true)`; one parameter is the props, as
