@@ -50,7 +50,10 @@
 // take, also records where it was written, which the development server knows from the source it watches.
 //
 // The functions are compiled once and are only linked into a program using them. The switch only changes what the
-// program's own sources compile.
+// program's own sources compile: the library is built without it. So no function of the library's sources takes a
+// `literal_text`, whose type differs on each side, and would be undefined in a program built with the switch: what
+// takes one is inline in a header, as tw(), text(), the tags and link_to() are, and forwards a `std::string_view` or
+// an element to the library.
 
 namespace quoll::ui::detail {
 

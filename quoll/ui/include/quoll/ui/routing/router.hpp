@@ -43,6 +43,7 @@
 #include <quoll/ui/data/state.hpp>
 #include <quoll/ui/detail/component/held_component.hpp>
 #include <quoll/ui/detail/routing/route_table.hpp>
+#include <quoll/ui/detail/view/hot.hpp>
 #include <quoll/ui/routing/history.hpp>
 #include <quoll/ui/view/element.hpp>
 #include <quoll/ui/view/tags.hpp>
@@ -246,10 +247,15 @@ struct outlet_level {
 [[nodiscard]] element outlet();
 
 /** @brief A link to `href`, an address of the app: a click goes there without leaving the page, as go() does. */
-[[nodiscard]] element link_to(std::string_view href, detail::literal_text text);
-
-/** @brief See link_to(). */
 [[nodiscard]] element link_to(std::string_view href, std::initializer_list<detail::child> children);
+
+/**
+ * @brief See link_to(). Inline, as a text's type is the program's, which a hot reload changes (`QUOLL_UI_HOT`), and
+ * not the library's.
+ */
+[[nodiscard]] inline element link_to(std::string_view href, detail::literal_text text) {
+  return link_to(href, {ui::text(text)});
+}
 
 /**
  * @brief A link to the page `page`, the component a route names, for `props`, by its first route, its props checked at
@@ -274,10 +280,12 @@ link_to(component<P> const &page, std::type_identity_t<P> const &props, std::ini
 }
 
 /** @brief A link to the page `page`, without props. */
-[[nodiscard]] element link_to(component<> const &page, detail::literal_text text);
-
-/** @brief See link_to(). */
 [[nodiscard]] element link_to(component<> const &page, std::initializer_list<detail::child> children);
+
+/** @brief See link_to(), inline for its text, as the one to an address. */
+[[nodiscard]] inline element link_to(component<> const &page, detail::literal_text text) {
+  return link_to(page, {ui::text(text)});
+}
 
 } // namespace quoll::ui
 

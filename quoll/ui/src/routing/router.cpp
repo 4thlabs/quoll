@@ -468,18 +468,8 @@ element linked(router &nav, std::string href, element content) {
 
 element outlet() { return detail::outlet_view({.depth = detail::outlet_depth()}); }
 
-element link_to(std::string_view href, detail::literal_text text) {
-  return detail::linked(detail::router_in_view(), std::string{href}, node("a", {ui::text(text)}));
-}
-
 element link_to(std::string_view href, std::initializer_list<detail::child> children) {
   return detail::linked(detail::router_in_view(), std::string{href}, node("a", children));
-}
-
-element link_to(component<> const &page, detail::literal_text text) {
-  auto &nav = detail::router_in_view();
-
-  return detail::linked(nav, nav.href(page), node("a", {ui::text(text)}));
 }
 
 element link_to(component<> const &page, std::initializer_list<detail::child> children) {
