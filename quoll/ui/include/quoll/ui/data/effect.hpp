@@ -365,8 +365,8 @@ private:
 
     target_ = target.hooks();
 
-    // What the last record took, which a run that follows it copies: what it follows is read once a view, a function
-    // of the props called once, and a run is given what was compared.
+    // What the last record took, which a run that follows it copies: what it follows is read once a view, and before
+    // the first only when it may hold none, and a run is given what was compared.
     auto const last = std::make_shared<std::optional<std::tuple<D...>>>();
 
     watch_ = [read, last](watching asked) {
@@ -384,7 +384,7 @@ private:
         return std::optional<watched>{watched{.differs = false, .holds = true}};
       }
 
-      auto const now = read();
+      auto now = read();
       bool const holds = std::apply(
           [](auto const &...held) {
             return (detail::dependency_traits<std::remove_cvref_t<decltype(held)>>::holds(held) && ...);
@@ -400,7 +400,7 @@ private:
       bool const differs = !*last || !(**last == now);
 
       if (differs) {
-        last->emplace(now);
+        last->emplace(std::move(now));
       }
 
       return std::optional<watched>{watched{.differs = differs, .holds = holds}};

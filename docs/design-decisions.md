@@ -199,7 +199,9 @@ cheap to rebuild?
 product_view : component<product_view>`, its props first, its contexts, states, loads, effects and actions as members
 that join it as the app makes it, its handlers as member functions and its view in `element view()`, placed by name
 through a variable of the struct's name. Or a lambda whose parameters are its props, with hooks, as before. A load is
-one value read with `match`; routes name the fields of their parameters by member pointers.
+one value read with `match`; routes name the fields of their parameters by member pointers. An effect of form S
+follows a field of its props, `&props::id`, or a function of them, read from the props of each view: a reference,
+`given->id`, would dangle once the next view replaces them. What it follows, as its props, holds no pointer nor view.
 
 **Set aside.** Sections in a nested struct, a life cycle as React's classes, a state and messages as Elm's, signals and
 a view run once, and the struct made where it is placed (the ADR's table): each read worse, or made members in the

@@ -166,8 +166,9 @@ void const *const *making_props_of(async::detail::type_id type, void const *memb
 
   if (current->props_type != type) {
     throw std::logic_error{
-        "quoll::ui: what follows a prop follows its own component's props: a field a base of them declares goes "
-        "through a function of them, `[](props const &given) { return given.size; }`"
+        "quoll::ui: what follows a prop follows its own component's props, of its struct's `props` type: a field a "
+        "base of them declares, or a function taking a base, goes through a function taking `props`, "
+        "`[](props const &given) { return given.size; }`"
     };
   }
 
