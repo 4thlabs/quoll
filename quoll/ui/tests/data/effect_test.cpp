@@ -1471,7 +1471,7 @@ TEST_CASE("effect: a lack of memory at any step of a run leaves its async_state 
   // ends loading no more, holding what the run gave, or why it failed, or the failure is the app's on_error's.
   bool clean = false;
 
-  for (long before = 0; before < 200; ++before) {
+  for (long before = 0; before < quoll::test::most_allocations; ++before) {
     loads = {};
 
     virtual_time time;

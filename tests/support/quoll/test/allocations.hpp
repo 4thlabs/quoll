@@ -49,6 +49,11 @@ inline constinit thread_local std::size_t allocations = 0;
 // How many allocations succeed before one throws std::bad_alloc, or below zero for none to fail.
 inline constinit thread_local long allocations_before_failing = -1;
 
+// More than a test making each allocation fail in turn meets: such a loop ends once none failed, so that this bounds a
+// runaway only. Frames are allocated each time where they are not recycled, as under TSan, MSan or HWASan (see
+// QUOLL_ASYNC_NO_FRAME_RECYCLING), which counts many more.
+inline constexpr long most_allocations = 1000;
+
 } // namespace quoll::test
 
 #endif // QUOLL_TEST_ALLOCATIONS_HPP

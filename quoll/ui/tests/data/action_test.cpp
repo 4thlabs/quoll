@@ -722,11 +722,12 @@ TEST_CASE("action: a component that goes stops its runs", "[ui][action]") {
 TEST_CASE(
     "action: a lack of memory at any step of a run is its failure, given to its caller and held", "[ui][action]"
 ) {
-  // Each allocation the run makes, in turn, fails: whichever it is, the run's await gives a std::expected, and a run
-  // that failed is loading no more.
+  // Each allocation made while the run is awaited fails in turn, the run's own or a view's it asks for meanwhile:
+  // whichever it is, the run's await gives a std::expected, and a run that failed is loading no more. A render that
+  // cannot be asked for is not told: the next change asks for it again.
   bool clean = false;
 
-  for (long before = 0; before < 40; ++before) {
+  for (long before = 0; before < quoll::test::most_allocations; ++before) {
     runs = {};
 
     virtual_time time;
@@ -933,7 +934,7 @@ TEST_CASE(
   // handler throws, which the event gives to the app's on_error.
   bool clean = false;
 
-  for (long before = 0; before < 60; ++before) {
+  for (long before = 0; before < quoll::test::most_allocations; ++before) {
     runs = {};
 
     virtual_time time;
@@ -986,7 +987,7 @@ TEST_CASE("action: with() under a lack of memory, as the word it gave is copied,
   // it was, thrown from the handler too, for the app's on_error.
   bool clean = false;
 
-  for (long before = 0; before < 60; ++before) {
+  for (long before = 0; before < quoll::test::most_allocations; ++before) {
     virtual_time time;
     memory_renderer const shown;
     test_app instance{time.get_executor(), shown, word_page, {.contexts = {provide<word_page_data>()}}};
