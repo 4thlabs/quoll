@@ -22,22 +22,24 @@ dashboard/
 
 | File | What it holds |
 |---|---|
-| `web/main.cpp` | `mount(app_shell, ...)`, in `#app`, its addresses through the browser's history |
-| `web/components/components.hpp` | each component of the page, declared with its props: `extern component<props> const name;`, defined in a source of its own, named after it, which a change to it alone compiles again |
-| `web/components/routes.hpp` | the routes, `/products` and `/products/{id}`, a redirect from `/` and a page for an unknown address, and the app's options |
-| `web/components/app_shell.cpp` | the app's root, the page of the address in its `outlet()` |
-| `web/components/products_layout.cpp` | the layout of `/products`: the heading, the list, and the page of the address in its `outlet()` |
-| `web/components/product_list.cpp` | the filter, a `use_state` of its own, and the rows of the catalog's products it matches |
-| `web/components/product_row.cpp` | one product, a `link_to` its page |
-| `web/components/choose_product.cpp`, `missing_page.cpp` | the page of `/products` when none is chosen, and the one of an unknown address |
-| `web/components/product_page.cpp` | the page of `/products/{id}`: the product the catalog holds, or why it is not shown |
-| `web/components/product_view.cpp` | a product's detail, and its sales, loaded by a `use_effect` on its `id` prop into a `use_async_state`: the sales, whether they are loading and why they failed |
-| `web/components/product_detail.cpp` | the product shown, edited through a `use_form` of its props: each field bound to one of the product's, what is typed kept until saved, and kept when typed while a save is on its way; its save, a `use_action` of the catalog's save run with the form, read as a state for whether it waits and why it failed |
-| `web/components/catalog.hpp` | the products, a context the layout, the list, the product's page and its detail share: loaded by an `effect` on no state, saved by `save`, which the detail's action runs |
-| `web/components/labelled.hpp` | a field of the form under its name |
-| `web/components/sales_chart.cpp` | the `line_chart` widget, and the month of the point clicked |
-| `web/widgets/line_chart.js` | the widget's module: `mount`, `update` and `unmount` over chart.js, a click emitting `point_selected` |
-| `web/products_client.hpp`, `.cpp` | the calls to the server, through a `rest::client` of the contract, in a source of their own |
+| `web/CMakeLists.txt`, `vite.config.js`, `package.json`, `index.html`, `dev.sh` | the build and the development server: all that is at the root, the code is in `web/src/` |
+| `web/src/main.cpp` | `mount(app_shell, ...)`, in `#app`, its addresses through the browser's history |
+| `web/src/main.js`, `style.css` | the page's script and its styles, Tailwind and daisyUI |
+| `web/src/routes.hpp` | the routes, `/products` and `/products/{id}`, a redirect from `/` and a page for an unknown address, and the app's options |
+| `web/src/components/` | a header and a source for each component: the header its props and `extern component<props> const name;`, the source its view, `constexpr component<props> name = ...`, so that a change of one compiles again only it and what places it |
+| `web/src/components/app_shell` | the app's root, the page of the address in its `outlet()` |
+| `web/src/components/products_layout` | the layout of `/products`: the heading, the list, and the page of the address in its `outlet()` |
+| `web/src/components/product_list` | the filter, a `use_state` of its own, and the rows of the catalog's products it matches |
+| `web/src/components/product_row` | one product, a `link_to` its page |
+| `web/src/components/choose_product`, `missing_page` | the page of `/products` when none is chosen, and the one of an unknown address |
+| `web/src/components/product_page` | the page of `/products/{id}`: the product the catalog holds, or why it is not shown |
+| `web/src/components/product_view` | a product's detail, and its sales, loaded by a `use_effect` on its `id` prop into a `use_async_state`: the sales, whether they are loading and why they failed |
+| `web/src/components/product_detail` | the product shown, edited through a `use_form` of its props: each field bound to one of the product's, what is typed kept until saved, and kept when typed while a save is on its way; its save, a `use_action` of the catalog's save run with the form, read as a state for whether it waits and why it failed |
+| `web/src/components/sales_chart` | the `line_chart` widget, and the month of the point clicked |
+| `web/src/contexts/catalog.hpp` | the products, a context the layout, the list, the product's page and its detail share: loaded by an `effect` on no state, saved by `save`, which the detail's action runs |
+| `web/src/ui/labelled.hpp`, `error_text.hpp` | a field of the form under its name, and a failure told to the user: functions of the page's own, base components to come |
+| `web/src/widgets/line_chart.js` | the widget's module: `mount`, `update` and `unmount` over chart.js, a click emitting `point_selected` |
+| `web/src/client/products_client.hpp`, `.cpp` | the calls to the server, through a `rest::client` of the contract, in a source of their own |
 
 A product is an address: a click on a row goes there, the browser's back button comes back, and a link to it opens it.
 The product's page shows a view of the product keyed by it: another product is another view, with nothing typed and

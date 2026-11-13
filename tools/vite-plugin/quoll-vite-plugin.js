@@ -44,8 +44,8 @@
 // 3. Anything else: a rebuild, then the page reloads. A compilation error shows in Vite's overlay.
 
 import { spawn } from 'node:child_process';
-import { createReadStream, readFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { createReadStream, readdirSync, readFileSync, statSync } from 'node:fs';
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -321,11 +321,54 @@ export function within(directories) {
   return (path) => directories.some((directory) => path === directory || path.startsWith(directory + sep));
 }
 
+// What a C++ source is named, which a directory of `sources` gives.
+const cppExtensions = new Set(['.cpp', '.cc', '.cxx', '.hpp', '.hh', '.h', '.ipp']);
+
+// Whether `path` is a directory, none for what is not there.
+function isDirectory(path) {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// Whether `path` is a file of a directory of `sources` the page compiles: a C++ file, not in `ignored`, as the build
+// directories are, nor in a node_modules.
+export function inSources(path, directories, ignored = () => false) {
+  return (
+    cppExtensions.has(extname(path)) &&
+    within(directories)(path) &&
+    !ignored(path) &&
+    !path.split(sep).includes('node_modules')
+  );
+}
+
+// The files `sources` names, from `base`: a file as it is, a directory each of the C++ files under it, at any depth,
+// in order, but for what `ignored` holds, as the build directories, and node_modules, so that a page's sources are
+// its folders rather than a list kept by hand.
+export function expandSources(base, sources, ignored = () => false) {
+  return sources.flatMap((source) => {
+    const path = resolve(base, source);
+
+    if (!isDirectory(path)) {
+      return [path];
+    }
+
+    return readdirSync(path, { recursive: true, withFileTypes: true })
+      .map((entry) => (entry.isFile() ? join(entry.parentPath ?? entry.path, entry.name) : null))
+      .filter((file) => file !== null && inSources(file, [path], ignored))
+      .sort();
+  });
+}
+
 export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) {
   // At once: a wrong option is told as Vite starts, not at the first build.
   const development = developmentOptions(debug);
 
   const base = process.cwd();
+  // What the build writes, which Vite does not watch, nor a folder of the sources lists.
+  const builds = within([resolve(base, buildDir), resolve(base, `${buildDir}-release`)]);
   const configured = new Set();
 
   const build = async (dir, options) => {
@@ -352,7 +395,7 @@ export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) 
     // Its build directories, which CMake fills with files that come and go, are not the page's: watching them is no use,
     // and a file gone between being listed and being watched stops Vite.
     config() {
-      return { server: { watch: { ignored: within([resolve(base, buildDir), resolve(base, `${buildDir}-release`)]) } } };
+      return { server: { watch: { ignored: builds } } };
     },
 
     resolveId(id) {
@@ -366,7 +409,7 @@ export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) 
 
       // Not watched through the module graph, which would send a change of a source up to the page and reload it: the
       // server's watcher makes the registry again as a source changes.
-      const files = sources.map((source) => resolve(base, source));
+      const files = expandSources(base, sources, builds);
 
       // A source gone for a moment, during a save, has no widget until it is back: the build says what is wrong.
       const readable = files.flatMap((file) => {
@@ -382,7 +425,9 @@ export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) 
 
     async configureServer(server) {
       const dir = resolve(base, buildDir);
-      const watched = sources.map((source) => resolve(base, source));
+      const watched = expandSources(base, sources, builds);
+      // A file made in one of them later is watched too.
+      const directories = sources.map((source) => resolve(base, source)).filter(isDirectory);
       const compiled = new Map();
       // What each file's page was sent since it was compiled, by place: a page reloading is sent it again.
       const sent = new Map();
@@ -462,8 +507,9 @@ export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) 
         building = false;
       };
 
-      server.watcher.add(watched);
-      server.watcher.on('change', async (file) => {
+      server.watcher.add([...watched, ...directories]);
+      // A source saved: its literals sent to the program when they are all that changed, a rebuild otherwise.
+      const changed = async (file) => {
         if (!watched.includes(file)) {
           return;
         }
@@ -488,7 +534,31 @@ export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) 
         }
 
         await rebuildAndReload();
+      };
+
+      // A file of a folder of the sources made later is one of them from now on; one of them made again, as a save
+      // writing a new file in place of the old one, or a change of branch, is a change.
+      server.watcher.on('add', async (file) => {
+        if (watched.includes(file)) {
+          await changed(file);
+          return;
+        }
+
+        if (!inSources(file, directories, builds)) {
+          return;
+        }
+
+        watched.push(file);
+        // Its widgets join the registry, which the page reloading reads again.
+        const registry = server.moduleGraph.getModuleById(resolvedRegistryId);
+
+        if (registry) {
+          server.moduleGraph.invalidateModule(registry);
+        }
+
+        await rebuildAndReload();
       });
+      server.watcher.on('change', changed);
 
       // A program starting again holds what was compiled, not what its page was sent.
       server.ws.on('quoll:ready', (_, client) => {

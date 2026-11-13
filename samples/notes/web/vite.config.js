@@ -45,16 +45,8 @@ export default defineConfig({
     tailwindcss(),
     quoll({
       target: 'quoll_notes_web',
-      sources: [
-        'main.cpp',
-        'components/note_form.hpp',
-        'components/note_row.hpp',
-        'components/notes_page.hpp',
-        'notes_client.cpp',
-        'notes_client.hpp',
-        '../api/note.hpp',
-        '../api/notes_api.hpp',
-      ],
+      // Every C++ file of these folders, watched, and read for the widgets it declares.
+      sources: ['src', '../api'],
     }),
   ],
   server: {

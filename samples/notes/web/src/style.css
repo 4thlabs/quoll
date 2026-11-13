@@ -2,5 +2,4 @@
 @plugin 'daisyui';
 
 /* Tailwind generates the classes it finds written in the C++. */
-@source '../*.{cpp,hpp}';
-@source '../components/*.{cpp,hpp}';
+@source './**/*.{cpp,hpp}';

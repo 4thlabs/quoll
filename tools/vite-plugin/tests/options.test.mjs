@@ -35,9 +35,12 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { developmentOptions, quoll, within } from '../quoll-vite-plugin.js';
+import { developmentOptions, expandSources, inSources, quoll, within } from '../quoll-vite-plugin.js';
 
 test('a development build has line tables by default, and the debug information asked for', () => {
   assert.deepEqual(developmentOptions(), [
@@ -71,4 +74,45 @@ test('the plugin hands Vite that test for its own build directories', () => {
   assert.ok(ignored(`${process.cwd()}/out/CMakeCache.txt`));
   assert.ok(ignored(`${process.cwd()}/out-release/a.js`));
   assert.ok(!ignored(`${process.cwd()}/src/app.js`));
+});
+
+test('a directory of the sources gives its C++ files at any depth, in order, a file is taken as it is', () => {
+  const base = mkdtempSync(join(tmpdir(), 'quoll-sources-'));
+
+  try {
+    mkdirSync(join(base, 'src', 'components'), { recursive: true });
+    writeFileSync(join(base, 'src', 'main.cpp'), '');
+    writeFileSync(join(base, 'src', 'main.js'), '');
+    writeFileSync(join(base, 'src', 'components', 'row.hpp'), '');
+    writeFileSync(join(base, 'src', 'components', 'row.cpp'), '');
+    writeFileSync(join(base, 'api.hpp'), '');
+
+    mkdirSync(join(base, 'src', 'build', 'CMakeFiles'), { recursive: true });
+    mkdirSync(join(base, 'src', 'node_modules', 'native'), { recursive: true });
+    writeFileSync(join(base, 'src', 'build', 'CMakeFiles', 'id.cpp'), '');
+    writeFileSync(join(base, 'src', 'node_modules', 'native', 'addon.h'), '');
+
+    const builds = within([join(base, 'src', 'build')]);
+
+    assert.deepEqual(expandSources(base, ['src', 'api.hpp', 'gone.hpp'], builds), [
+      join(base, 'src', 'components', 'row.cpp'),
+      join(base, 'src', 'components', 'row.hpp'),
+      join(base, 'src', 'main.cpp'),
+      join(base, 'api.hpp'),
+      join(base, 'gone.hpp'),
+    ]);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('a file made in a folder of the sources is one of them, but in a build directory or a node_modules', () => {
+  const builds = within(['/web/build']);
+
+  assert.ok(inSources('/web/src/components/card.cpp', ['/web/src'], builds));
+  assert.ok(inSources('/web/src/components/card.hpp', ['/web/src'], builds));
+  assert.ok(!inSources('/web/src/components/card.js', ['/web/src'], builds));
+  assert.ok(!inSources('/web/other/card.cpp', ['/web/src'], builds));
+  assert.ok(!inSources('/web/build/CMakeFiles/id.cpp', ['/web'], builds));
+  assert.ok(!inSources('/web/src/node_modules/native/addon.h', ['/web/src'], builds));
 });

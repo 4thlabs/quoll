@@ -37,9 +37,9 @@
 // The page of samples/notes/web, run natively: the calls to the server are defined here, over notes in memory, in place
 // of notes_client.cpp, which goes through fetch.
 
+#include "client/notes_client.hpp"
 #include "components/notes_page.hpp"
 #include "note.hpp"
-#include "notes_client.hpp"
 
 #include <quoll/async/task.hpp>
 #include <quoll/test/memory_renderer.hpp>

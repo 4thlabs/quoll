@@ -2,10 +2,11 @@
 # tools/vite-plugin, which also serves it during development: see README.md.
 
 # REST and JSON, in a library of their own: a change in the page does not compile them again.
-add_library(quoll_notes_web_client OBJECT notes_client.cpp)
+add_library(quoll_notes_web_client OBJECT src/client/notes_client.cpp)
+target_include_directories(quoll_notes_web_client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(quoll_notes_web_client PUBLIC quoll_notes_api quoll::emscripten)
 
-add_executable(quoll_notes_web main.cpp)
+add_executable(quoll_notes_web src/main.cpp)
 target_link_libraries(quoll_notes_web PRIVATE quoll_notes_web_client quoll_notes_web_components quoll::emscripten)
 target_link_options(quoll_notes_web PRIVATE -sALLOW_MEMORY_GROWTH)
 

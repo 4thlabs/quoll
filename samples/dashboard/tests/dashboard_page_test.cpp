@@ -37,9 +37,11 @@
 // The page of samples/dashboard/web, run natively: the calls to the server are defined here, over products in memory,
 // in place of products_client.cpp, which goes through fetch. The chart is a widget, which memory_renderer logs.
 
-#include "components/routes.hpp"
+#include "client/products_client.hpp"
+#include "components/app_shell.hpp"
+#include "contexts/catalog.hpp"
 #include "product.hpp"
-#include "products_client.hpp"
+#include "routes.hpp"
 
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>

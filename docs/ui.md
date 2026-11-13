@@ -89,12 +89,34 @@ inline constexpr component<> notes_page = [] {
 | Call an API              | A `rest::client`, over [`fetch`](runtimes.md#httpclient-in-a-browser)                                                                          |
 | Make a decorator         | `decorator([](element &target) { target.classes += " card"; })`                                                                                |
 
-**A component is written with its props**, one way everywhere:
+**A component is a header and a source**, one way everywhere, its props always written:
 
-- `constexpr component<props> name = [](props const &given) { ... };`, or `component<>` for one with no props, and
-  `inline` in a header, as any constant there: `component name = ...` does not compile;
-- or declared in a header, `extern component<props> const name;`, and defined in a source of its own as above, which
-  a change to it alone compiles again: the header of a screen declares its pages so, each in its source;
+```cpp
+// components/note_row.hpp: its props, and the component declared
+struct note_row_props {
+  notes::note item;
+  callback<void(std::int64_t)> on_remove;
+
+  bool operator==(note_row_props const &) const = default;
+};
+
+extern component<note_row_props> const note_row;
+
+// components/note_row.cpp: its view
+#include "components/note_row.hpp"
+
+constexpr component<note_row_props> note_row = [](note_row_props const &given) {
+  auto const remove = [&given] { return given.on_remove(given.item.id); };
+
+  return li({span(given.item.text), button("Delete") | on_click(remove)});
+};
+```
+
+- `component<>` for one with no props; `component name = ...`, its props not written, does not compile;
+- the source includes its own header first, which gives the definition its linkage, then the headers of the components
+  it places: a change of a view compiles again only its source, and a change of props its source and those placing it;
+- the examples of this guide define a component in one block, as `inline constexpr component<props> name = ...` in a
+  header would, which a program splits so;
 - made of a lambda capturing nothing, or of an empty struct whose `element operator()(props const &) const` keeps the
   props and their helpers together, as `constexpr component<badge::props> badge_shown = badge{};`. It is made for each
   view, and holds nothing: what lasts is its hooks. One capturing, or holding members, does not compile;
@@ -552,7 +574,7 @@ The pages of an app, and the addresses that show them, are routes, checked at co
 fields of its page's props, which give their types, and a link to a page takes those props.
 
 ```cpp
-// components.hpp: each component declared with its props, defined in a source of its own.
+// components/product_page.hpp, its view in components/product_page.cpp; home_page and app_shell alike.
 struct product_page_props {
   std::int64_t id = 0;
 
@@ -560,8 +582,6 @@ struct product_page_props {
 };
 
 extern component<product_page_props> const product_page;
-extern component<> const home_page;
-extern component<> const app_shell;
 
 // routes.hpp
 inline constexpr auto routes = ui::routes(
@@ -572,7 +592,7 @@ inline constexpr auto routes = ui::routes(
     ui::redirect<"/items/{id}", "/products/{id}">(),
     ui::not_found<missing_page>());
 
-// app_shell.cpp: the app's root, or a layout, shows the page of the address in its outlet().
+// components/app_shell.cpp: the app's root, or a layout, shows the page of the address in its outlet().
 constexpr component<> app_shell = [] {
   return div({nav({link_to(home_page, "Home"), link_to("/products", "Products")}), outlet()});
 };
@@ -738,9 +758,30 @@ shortest rebuilds:
 ```js
 quoll({
   target: "my_page",
-  sources: ["main.cpp", "components/components.hpp", "components/page.cpp"],
+  sources: ["src", "../api"],
   debug: "full",
 });
+```
+
+`sources` names files, or folders, each of whose C++ files, at any depth, the plugin watches and reads for its widgets;
+one made in a folder later is watched as it appears.
+
+## A page's folder
+
+A page keeps at its root what its tools read, and its code in `src/`, by role, as the samples do:
+
+```
+web/
+├── CMakeLists.txt  vite.config.js  package.json  index.html  dev.sh
+└── src/
+    ├── main.cpp           mount(app_shell, ...)
+    ├── main.js  style.css the page's script and styles
+    ├── routes.hpp         its routes and the app's options
+    ├── client/            the calls to its server, in sources of their own
+    ├── contexts/          what its components share
+    ├── components/        a header and a source for each component
+    ├── ui/                functions giving a piece of view, with no state
+    └── widgets/           the JavaScript modules of its widgets
 ```
 
 ## What it lacks
