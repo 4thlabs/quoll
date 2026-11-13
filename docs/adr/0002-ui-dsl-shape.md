@@ -1,456 +1,466 @@
-# ADR 0002: the shape of the UI DSL
+# ADR 0002: the shape of a UI component
 
-- **Status:** proposed, waiting for the maintainer's decision
+- **Status:** decided by the maintainer on 2026-11-13: forms S and D below, a component in its header only; the
+  prototypes of the next pull requests confirm the details
 - **Date:** 2026-11-13
 - **Related:** [#182](https://github.com/4thlabs/quoll/issues/182) (Glaze for JSON only),
   [#173](https://github.com/4thlabs/quoll/issues/173) (contexts), [`PLAN.md`](../PLAN.md) step 6
+- **Supersedes**, in `PLAN.md`'s Decided section and `design-decisions.md`: components as functions only (2026-11-12),
+  one way to write a component, and a header and a source for each, never `inline` (2026-11-13)
 
 ## Context
 
-A page of `quoll::ui` today, from the dashboard sample:
+A component of `quoll::ui` today, from the dashboard sample:
 
 ```cpp
-// components/product_row.hpp
-struct product_row_props {
+// components/product_view.hpp
+struct product_view_props {
+  std::int64_t id = 0;
   products::product item;
-  bool selected = false;
 
-  bool operator==(product_row_props const &) const = default;
+  bool operator==(product_view_props const &) const = default;
 };
 
-extern component<product_row_props> const product_row;
+extern component<product_view_props> const product_view;
 
-// components/product_row.cpp
-constexpr component<product_row_props> product_row = [](product_row_props const &given) {
-  auto const name = span(given.item.name) | tw("flex-1 font-medium");
-  auto const category = span(given.item.category) | tw("badge badge-ghost");
-  auto const row = link_to(product_page, {.id = given.item.id}, {name, category});
+// components/product_view.cpp
+constexpr component<product_view_props> product_view = [](product_view_props const &given) {
+  auto &sales = use_async_state<products::monthly_sales>();
+  auto &load_sales = use_effect(given.id, products_client::sales, sales);
 
-  auto const shown = row | tw("flex w-full gap-3 px-4 py-2") | tw_if(given.selected, "bg-base-200");
+  auto const sales_shown = [&]() -> element {
+    if (sales->loading) {
+      return p("Loading its sales") | tw("opacity-70");
+    }
 
-  return li({shown});
+    if (sales->error) {
+      auto const retry = [&load_sales] { load_sales.reload(); };
+      auto const failed = div({
+          error_text(told(sales->error, "the sales did not load")),
+          button("Try again") | tw("btn btn-sm self-start") | on_click(retry),
+      });
+
+      return failed | tw("flex flex-col gap-2");
+    }
+
+    return sales_chart({.sales = sales->value});
+  };
+
+  auto const shown = div({
+      product_detail({.item = given.item}),
+      sales_shown(),
+  });
+
+  return shown | tw("flex flex-col gap-8");
 };
-
-// In the view of the list:
-ul({list(items, [&](products::product const &item) {
-  return product_row({.item = item, .selected = item.id == chosen}) | key(item.id);
-})});
 ```
 
-(Shortened: the sample shows the stock too.) A component is a lambda named with its props. Its state is what its `use_`
-calls give, found again at each view by where they are called, as React's hooks. A view is a tree of `div({...})`,
-decorated after its children with `|`. Before going on with step 6, four points are open:
+The maintainer keeps the view's tree as it is: tags, children in braces, decorators after them with `|`. The rest he
+finds unreadable, "the concepts mixed":
 
-1. **Two ways to write a component.** The maintainer asked for a struct as well as a lambda, a component being a
-   function and C++ writing a function either way. The struct form drafted on the branch `ui-component-struct`, not
-   pushed, fights the language: it needs `using component::component;` to take designated props, its base holds the
-   element placed, a `sizeof` check refuses its members, and Clang caches the answer of a constraint asked while the
-   struct is still incomplete, so every check had to move into function bodies (see B below).
-2. **The props are a type apart.** `product_row_props` and `product_row` are two names for one thing. The header repeats
-   the type in an `extern` declaration that its source defines again, and the parts of a view are free functions taking
-   the props.
-3. **Decorators come after the children.** In HTML, the classes are read with the tag, here they come after the whole
-   tree. The samples name the tree to decorate it, `auto const shown = div({...}); return shown | tw(...);`.
-4. **No reflection.** Contexts (their members walked) and routes (the props' fields found by name) go through Glaze,
-   which [#182](https://github.com/4thlabs/quoll/issues/182) takes out. The
-   maintainer wants no reflection of Quoll's own either (2026-11-13): what it gave is written by the user, or found
-   another way, until C++26 reflection (as in option E of [ADR 0001](0001-rest-contract-shape.md)).
+- **The props are a type apart.** `product_view_props` and `product_view` are two names for one thing, and the header
+  repeats the type in an `extern` declaration its source defines again.
+- **One body holds everything.** States, effects, handlers and parts of the view are lines of one lambda, told apart by
+  their order and by `use_` calls, with rules no compiler checks: a handler captures by value what the view computed,
+  and a function calling hooks, called in a branch or in a loop whose turns change, shifts the later calls of its
+  place. (`auto x = use_state(0)` does not compile, and a hook in a branch shifts nothing else.)
+- **Two files a component** were taken for the rebuild's budget, a second at most for one component changed. The
+  maintainer would rather have a component in its header only, if it compiles cheaply.
+- **No reflection.** Contexts (their members walked) and routes (the props' fields found by name) go through Glaze,
+  which [#182](https://github.com/4thlabs/quoll/issues/182) takes out of everything but JSON. No reflection of
+  Quoll's own either, until C++26 has it.
 
-Each option is judged on:
+Constraints: C++23 on GCC 13, Clang 19 and Apple Clang 21, no macro but include guards and `QUOLL_` switches,
+WebAssembly first. The Vite plugin replaces at once, without a rebuild, a string literal that is the only argument of
+`tw`, `text` or a tag, and Tailwind reads the classes in the source.
 
-- **Reading:** how close a view is to the page it shows, and to React's model, kept since step 6: components, props,
-  hooks, keys.
-- **Writing:** what a user has to write and to learn, and the messages for what is wrong.
-- **Architecture:** a rebuild of one component in a second at most (its view in a source of its own, little instantiated
-  for it), the size of the WebAssembly, and one table per type of component, as today.
-- **Hot reload:** the Vite plugin replaces, without a rebuild, a string literal that is the only argument of `tw`,
-  `text` or a tag (`tw("flex")`, `p("Hello")`): one followed by another argument, as `button("Add", ...)`, takes a
-  rebuild. A raw string is code. Tailwind reads the classes in the source, written whole.
-- **Safety:** the lifetimes (a handler captures the props by reference, and the hooks are stable), and misuse refused as
-  it compiles.
+## What other frameworks do
 
-Hooks are kept (part 3). Every example below shows the same `product_row`, and none is implemented beyond a sketch,
-whose points to check are listed. The ones marked *new* are proposals.
+| Framework | A component | Its state | What loads | Its view |
+|---|---|---|---|---|
+| React (TS) | a function, its props an object | hooks, `useState` | `useEffect(f, [deps])`, its cleanup written by the user | JSX |
+| Solid (TS) | a function, run once | signals | `createResource(source, fetcher)` | JSX, compiled to DOM calls |
+| Vue 3 (TS) | options (`props`, `data`, `watch`, `methods`), or `setup(props)` run once | `ref`, `reactive` | `watch(source, f)` | a template, or `h(tag, attrs, children)`, run again on change |
+| Svelte 5 (TS) | a file, `$props()` | `$state` | `$effect` | markup, compiled |
+| Angular (TS) | a class | `signal()`, `input()` fields | `effect`, `resource` | a template |
+| Lit (TS) | a class, its properties declared | `@state` fields | `updated(changed)` | `` html`...` `` |
+| Leptos (Rust) | `#[component] fn`, run once | `signal()` | `Resource::new(source, fetcher)` | `view!`, or builders |
+| Dioxus (Rust) | `#[component] fn`, its parameters its props | `use_signal` | `use_resource` | `rsx!` |
+| Yew (Rust) | a function with hooks, or a `Component` with `update(msg)` and `view` | hooks, or the struct | `use_effect_with` | `html!` |
+| Iced (Rust), Elm | a state, messages, `update`, `view` | the state, a value | a task returned by `update` | functions, `column![...]`, `div [ attrs ] [ children ]` |
+| Flutter (Dart) | a widget, and for state a `State` class | the `State`'s fields, `setState` | `initState`, `didUpdateWidget` | constructors |
+| SwiftUI | a struct, its fields its props | `@State`, found by reflection | `.task(id:) {...}`, cancelled as the id changes | result builders, modifiers after |
+| Compose (Kotlin) | `@Composable fun` | `remember { mutableStateOf(...) }` | `LaunchedEffect(key) {...}`, cancelled as the key changes | `Column(modifier) { ... }` |
+| Blazor (C#) | a `.razor` file, `[Parameter]` props | its fields | `OnParametersSetAsync` | markup |
+| Nui (C++) | functions giving elements | `Observed<T>` | none of its own | `div{class_ = "x"}(span{}("text"))` |
 
-## 1. A component
+What follows for Quoll:
 
-### A: a lambda named with its props (today)
+- **Every declaration that reads in sections is class-shaped**: Angular, Lit, SwiftUI, Blazor, Flutter's `State`, Yew's
+  struct components, and Vue's options, an object of named sections. One named member for each thing held, its type or
+  keyword saying what it is, behaviour in named methods, the view in one method. The maintainer's own sketch had this
+  shape. In each, **the framework makes the object**, not the parent that places it: that is what Quoll's earlier struct
+  drafts lacked.
+- **Every function-shaped one** (React, Solid, Compose, Leptos, Dioxus) keeps the concepts apart by convention only.
+  Dioxus reads well because its compiler checks what a closure borrows; C++'s does not.
+- **A load cancelled as its key changes** is Compose's `LaunchedEffect(key)` and SwiftUI's `.task(id:)`, and Quoll's
+  effect. React's `useEffect` leaves it to a cleanup the user writes.
+- **A load as one value**, `Option<Result<T, E>>` and a `match` in Rust, reads better than three fields.
 
-The example of the Context.
+A study written alongside (the samples rewritten with axum, reqwest and Dioxus, kept out of the repository) found
+Quoll better at its form, its action that refuses to overlap, its widget in one line, its nested routes, its key on any
+component and the size of its page, and Dioxus better at the declaration of a component, `#[component] fn
+ProductView(product: Product) -> Element`. Both forms below keep the first list.
 
-- **For:** a function, as React's; a constant, so its identity is its table, and nothing is made before `main`.
-- **Against:** the props are a type and a name apart. The header repeats the type, `extern component<props> const`,
-  and the source has to include its own header first, or the `constexpr` definition gets internal linkage. Its parts are
-  free functions taking `given`.
+## Forms set aside
 
-A lambda's place may also be taken by an empty struct whose call operator is the view, as
-`constexpr component<badge::props> badge_shown = badge{};` (`docs/ui.md`): the struct frames the props, nested, and
-the parts, with no base and no `using`, but the component is a second name beside the struct, and the props still come
-in as `given`.
+| | Form | Why not |
+|---|---|---|
+| 1 | Today's lambda, props apart, hooks in its body | the Context's three points |
+| 2 | A struct deriving from `component<name>`, nested `props`, view `element operator()(props const &)` | `using component::component;` in every struct; Clang caches as false a constraint asked while the struct is incomplete; props passed as `given` though nested |
+| 3 | The struct is its props, hooks in `operator()() const` | placed with braces, and still one body holding states and view |
+| 4 | States, contexts and effects as members, the struct made where it is placed | placing it in the parent's view makes its members there, registering in the parent's store; they see only the first props |
+| 5 | A life cycle, `mounted`, `updated`, `unmounted`, as React's classes | one concern in three functions, its comparison written by hand; Quoll's `mounted()` went with #185 for this |
+| 6 | Props, and a nested `state` struct defined in the source, as Flutter | two structs; `state` hides Quoll's `state<T>`; a table to find across sources |
+| 7 | Sections in a nested `inside`: `using contexts`, `struct state`, a constant table of effects, a static view | "not better", by the maintainer |
+| 8 | Signals and a view run once, as Solid and Leptos | every view rewritten, each binding a closure C++ does not check |
+| 9 | A state, messages, `update`, `view`, as Elm and Iced | a message type for each event, and no props: far from React's model |
 
-### B: a struct deriving from `component<name>`, its props inside it (the draft)
+Two placements of form S were set aside as well: `product_view::with({...})`, which the maintainer found tedious, and
+a constructor making an inert shell, which needs the `using` line again and constructs every member at each
+placement.
+
+## Decided: two forms, each in its header
+
+Both are written as functions are in C++, as the maintainer asked: a struct with its sections, form S, or a function
+of its props, form D. Both are header-only, place the same way and keep the decorators of the view.
+
+### Form S: the struct is the component
 
 ```cpp
-struct product_row : component<product_row> {
-  using component::component;
-
+// components/product_view.hpp: the whole component
+struct product_view : component<product_view> {
   struct props {
     products::product item;
-    bool selected = false;
 
     bool operator==(props const &) const = default;
   };
 
-  element operator()(props const &given) const;
+  // State: its sales, loaded as it first shows and again as the id changes, the load before stopped.
+  resource<products::monthly_sales> sales{given->item.id, products_client::sales};
 
-private:
-  element stock(props const &given) const;
+  // Handlers
+  void retry() { sales.reload(); }
+
+  // View
+  element view() {
+    auto const shown = div({
+        product_detail({.item = given->item}),
+        sales.match(
+            [] { return p("Loading its sales") | tw("opacity-70"); },
+            [this](std::exception_ptr const &error) { return sales_failed(error); },
+            [](products::monthly_sales const &loaded) { return sales_chart({.sales = loaded}); }),
+    });
+
+    return shown | tw("flex flex-col gap-8");
+  }
+
+  element sales_failed(std::exception_ptr const &error) {
+    auto const shown = div({
+        error_text(told(error, "the sales did not load")),
+        button("Try again") | tw("btn btn-sm self-start") | on_click(this, &product_view::retry),
+    });
+
+    return shown | tw("flex flex-col gap-2");
+  }
 };
 
-element product_row::operator()(props const &given) const { ... }
-
-// Placed:
-product_row({.item = item, .selected = item.id == chosen})
+inline constexpr placer<product_view> product_view;
 ```
 
-- **For:** the props and the parts are framed in the struct.
-- **Against:**
-  - **The `using` line.** `using component::component;` is required for designated props, as C++ does not inherit
-    constructors. Without it, the compiler's error speaks of designated initializers, not of Quoll.
-  - **Twice the props.** They are nested in the struct, yet still passed as `given`.
-  - **What the base holds.** It holds the element placed, which costs one allocation more per placement. A struct with
-    members of its own is refused by comparing sizes.
-  - **Checks only in bodies.** A constraint asked while the struct is incomplete is cached by Clang as false. Every
-    check of the struct moved into function bodies.
-  - **One name, two meanings.** `component<X>` means "of props X" for a lambda, and "the struct X" here.
-
-### C: a function and its component *(new)*
+With a context, a form and an action:
 
 ```cpp
-// components/product_row.hpp
-struct product_row_props { ... };
+// components/product_detail.hpp
+struct product_detail : component<product_detail> {
+  struct props {
+    products::product item;
 
-element product_row_view(product_row_props const &given);
+    bool operator==(props const &) const = default;
+  };
 
-inline constexpr component_of<&product_row_view> product_row;
+  // Contexts
+  context<catalog> products;
 
-// components/product_row.cpp
-element product_row_view(product_row_props const &given) { ... }
-```
+  // State: the product given, with what is typed; and its save, once at a time.
+  form_state<products::product> form{given->item};
+  action<&catalog::save> save{products};
 
-The function's address is the component's identity, and its props are deduced from its parameter.
+  // View
+  element view() {
+    auto const shown = section({
+        h2(given->item.name) | tw("text-2xl font-semibold"),
+        labelled("Name", input() | bind(form, &products::product::name)),
+        labelled("Price", input() | bind(form, &products::product::price)),
+        labelled("Stock", input() | bind(form, &products::product::stock)),
+        when(!form.valid(), not_numbers),
+        when(form.valid() && save->error != nullptr, [this] { return save_failed(); }),
+        button(save->loading ? "Saving…" : "Save") | disabled(save->loading || !form.valid()) |
+            on_click(save.with(form)) | tw("btn btn-primary self-start"),
+    });
 
-- **For:** a plain function. There is no `extern`, as the constant is `inline` in the header and the function is
-  defined in the source.
-- **Against:** three names: the props, the view and the component. The props are still apart.
+    return shown | tw("flex flex-col gap-3");
+  }
 
-### D: the struct is its props *(new, recommended)*
-
-A component is a class whose `element operator()() const` is its view. Its members are its props, read by name.
-
-```cpp
-// components/product_row.hpp
-struct product_row {
-  products::product item;
-  bool selected = false;
-
-  bool operator==(product_row const &) const = default;
-  element operator()() const;
-
-private:
-  element stock() const;
+  static element not_numbers() { return error_text("The price and the stock are numbers"); }
+  element save_failed() { return error_text("Not saved: " + told(save->error, "the save failed")); }
 };
 
-// components/product_row.cpp
-element product_row::operator()() const {
-  auto const row = link_to(product_page{.id = item.id}, {span(item.name) | tw("flex-1 font-medium"), stock()});
-
-  return li({row | tw("flex w-full gap-3 px-4 py-2") | tw_if(selected, "bg-base-200")});
-}
-
-element product_row::stock() const { return span(stock_text(item.stock)) | tw("text-sm opacity-70"); }
-
-// Placed, with braces:
-product_row{.item = item, .selected = item.id == chosen} | key(item.id)
+inline constexpr placer<product_detail> product_detail;
 ```
 
-A small one fits in its header:
+**Where each concept is:**
+
+| Concept | Where | Read as |
+|---|---|---|
+| Props | `struct props`, first | `given->item` |
+| Contexts | `context<T> name;` | `products->items` |
+| State | `state<T> name{start};`, `form_state<T> name{given->item};` | `*count` |
+| A load | `resource<T> name{what it follows, function};` | `sales.match(...)`, `sales.reload()` |
+| An effect writing into a state | `effect name{what it follows, function, target};` | `load.reload()` |
+| An action | `action<&function> name{context};` | `save->loading`, `save.with(form)` |
+| Handlers | member functions | `on_click(this, &product_view::retry)`, or `[this] { retry(); }` |
+| View | `element view()`, and its parts as member functions | |
+| A context for the components of its view | `provided<T> name;` | as today's `provide_context<T>()` |
+
+**How it works, without reflection:**
+
+- **Who makes it.** Placing a component gives an element holding its table and its props, nothing more. The app, the
+  first time it finds that element at a place, copies the props beside the instance and makes the struct there, a
+  scope open: each member joins the instance in its constructor, as hooks join the scope of a view today. At each
+  later view the app gives the props anew, or skips the view when they compare equal and no state changed, as today,
+  then calls `view()`.
+- **`given`** is a member of the base whose `operator->` has a deduced return type, so the base never names
+  `product_view::props` while the struct is incomplete. It is read in member functions and member initializers, where
+  the struct is complete: no `using` line, and no constraint asked on an incomplete type.
+- **What an effect or a load follows** is named by reference, `given->item.id` or a state, and compared after each
+  view; a value made on the spot, `given->item.id + 1`, does not compile (a deleted overload). A function of values,
+  `[this] { return ...; }`, for what is computed.
+- **A context** is the same struct without a view: `provide<catalog>()` makes it under the same scope, its members
+  joining it, and Glaze no longer walks it. One change to today's: `effect load{std::tie(), products_client::list,
+  items};` follows a value made on the spot, which the rule above refuses, so a load that follows nothing is
+  `resource<std::vector<products::product>> items{products_client::list};`, or an effect with no key.
+- **A struct made by hand**, `struct product_view mine;`, compiles and throws `std::logic_error` as it runs: C++23
+  cannot refuse it as it compiles.
+
+**The placement**, `product_view({.item = item})`, is the variable declared after the struct, of the struct's name,
+as POSIX's `struct stat` and `stat()`. After that line, the name is the variable; its `operator()(props)` gives the
+element, and Quoll reaches the struct through it. The rest reads as today:
 
 ```cpp
-struct badge {
-  std::string label;
+product_view({.item = item}) | key(item.id)
+link_to(product_page, {.id = item.id}, "Open")
+quoll::emscripten::mount(app_shell, "#app", options);
+route<"{id}", product_page>(&product_page::props::id)
+```
 
-  bool operator==(badge const &) const = default;
-  element operator()() const { return span(label) | tw("badge"); }
+- Inside the struct, its name is still the struct: `&product_view::retry`, and `product_view::props` anywhere, as a
+  name before `::` is looked up among types only.
+- The line is the same for every component. Forgotten, `badge({.label = "new"})` is the struct's constructor, and the
+  message speaks of initializers, not of Quoll (`too many initializers for 'component<badge>'` on GCC 13, `field
+  designator 'label' does not refer to any field` on Clang 19). A component placing itself writes
+  `tree::with({...})`, the base's.
+- `product_view mine;` no longer compiles outside the struct, which is welcome. `-Wshadow` stays silent: neither name
+  hides the other from an enclosing scope.
+- The other way, if a name meaning two things is refused later: the props as the named struct, the component a struct
+  nested in it, placed `product_view{.item = item}` with no line to add.
+
+**What C++ makes awkward:**
+
+- **Members are made in the order they are declared**, a state before the effect writing into it, a context before
+  its action. Neither GCC 13 nor Clang 19 warns of one given by reference before it is made (Clang alone warns of one
+  called too early): Quoll says it as the component is first made, `quoll::ui: an effect is declared after the state
+  it writes into`.
+- **A member's type is written**, `state<int> count{0};`: a member takes no `auto`.
+- **The struct's name is written twice**, `struct product_view : component<product_view>`: deducing `this` would do
+  without, which GCC 13 lacks.
+
+**Lifetimes get simpler.** Everything a handler or an effect touches is a member of a struct that lives as long as its
+component, which outlives its tasks: a handler that is a member function needs `[this]` alone. It is a convention, not a
+guarantee: a lambda written in `view()` may still capture one of its locals by reference, and compiles. An effect's
+function and an action's are fixed as the component is made. Nothing is found by where it is called: a branch not taken,
+a loop or a part called twice change nothing. What stays: `given` holds the props of the last view, props given to a
+child are copied, and a `callback` in props runs as a task of the parent.
+
+### Form D: a function whose parameters are its props
+
+```cpp
+// components/product_view.hpp: the whole component
+inline constexpr component product_view = [](products::product const &item) -> element {
+  // Its sales, loaded as it first shows and again as the id changes, the load before stopped.
+  auto &sales = use_resource(item.id, products_client::sales);
+
+  auto const failed = [&sales](std::exception_ptr const &error) {
+    auto const shown = div({
+        error_text(told(error, "the sales did not load")),
+        button("Try again") | tw("btn btn-sm self-start") | on_click([&sales] { sales.reload(); }),
+    });
+
+    return shown | tw("flex flex-col gap-2");
+  };
+
+  auto const shown = div({
+      product_detail(item),
+      sales.match(
+          [] { return p("Loading its sales") | tw("opacity-70"); },
+          failed,
+          [](products::monthly_sales const &loaded) { return sales_chart(loaded); }),
+  });
+
+  return shown | tw("flex flex-col gap-8");
 };
+
+// Placed with its arguments, in the order of its parameters:
+product_view(item) | key(item.id)
+product_row(item, item.id == chosen)
 ```
 
-- **How it works.** A struct placed is copied into the element, as the props are today. The app keeps its instance, and
-  its hooks, by the struct's type and its place. Its view is called on that copy, so what a handler captures from it
-  lives as long as the props. `==` is optional: with it, a component given equal props is not viewed again, as today.
-- **For:**
-  - one name and one type;
-  - no base, no `using`, no constructor and no `extern`: the header declares the struct, the source defines its view;
-  - its parts are const member functions that read the props directly;
-  - routes name the type, `route<"{id}", product_page>(&product_page::id)` (part 5), and the links, `go` and the root
-    take a component placed, `link_to(product_page{.id = 7}, "Open")` and `mount(app_shell{}, "#app")`.
-- **Against:**
-  - **Braces.** A component is placed with braces, `product_row{...}`, and a call becomes a construction. One with no
-    props is `app_shell{}`.
-  - **A member is a prop, never a state.** The view is `const`, so a write to a member does not compile, and a state is
-    a hook, as in A.
-  - **What counts as a component.** Any class whose call operator is the view could be taken for one, and a closure put
-    in braces by mistake would be one. The concept asks for an aggregate, which a closure is not.
-  - **Parts in the header rebuild more.** A part declared as a member function is in the header, so adding one or
-    changing its signature compiles again every source placing the component, where today's free functions in the
-    source compile only it. Parts that are free functions in the source, taking `*this`, keep today's cost. Each source
-    placing a component also instantiates the small function calling its view, which today's lambda instantiates once,
-    in its own source.
-- **To check:**
-  - designated initializers follow the order of declaration;
-  - an aggregate may have private member functions, but no private members;
-  - the concept's message when a view is missing, or is not `const`.
-  A sketch of the placement and of the braces compiles on GCC 13 and Clang 19.
+- **How it works.** A deduction guide reads the lambda's parameters; the component keeps the arguments of a placement
+  in a tuple, compares them with `==`, and calls the function with them. No props struct, no `operator==` to write, no
+  `extern`, no source: today's lambda with its ceremony gone, and today's hooks. A component with many props takes a
+  struct, as today, and keeps their names: `chart({.title = "Sales", .height = 64})`.
+- **What C++ cannot give of Dioxus's form:**
+  - names at the placement: `product_row(item, true)` does not say what `true` is; only a struct names them;
+  - parameters by value: each is `T const &`, checked as it compiles, as a handler may refer to one;
+  - a compiler checking what a closure captures: a handler capturing by reference a value its view computed compiles
+    and dangles, and a function calling hooks, called in a branch or a loop whose turns change, shifts the later
+    calls of its place. `docs/ui.md` keeps them as rules, as today.
+- **A route's page with parameters** takes a struct, so that its fields can be named, and the struct is then named
+  apart, `[](page_props const &given)`, its route `route<"{id}", product_page>(&page_props::id)`: the separate props
+  type of today, for a page. A page with no parameter is either form.
 
-D can replace A everywhere, as the small one shows: shorter than a lambda with its props apart. A could stay beside it,
-which makes two ways to learn and to document.
+### Between the two
 
-### E: members holding the state (set aside)
+| | Form D | Form S |
+|---|---|---|
+| Lines that are not blank, `product_view` above | 19 | 29 |
+| Written beyond the view | nothing | `struct props` and its `==`, the base, the placer's line |
+| Props at the placement | by position, or a struct for names | by name |
+| Where the state is | `use_` calls in the body, found by where they are called | members, on top |
+| What a handler may capture | what `use_` gives and the parameters by reference; what the view computed by value, by rule | `this` |
+| What may go wrong unseen | a local captured by reference; a function calling hooks, in a branch or a loop | a local of `view()` captured by reference; an effect declared before its target, said as the component is first made |
 
-```cpp
-struct counter {
-  state<int> count{0};
+Both are kept, without a rule choosing between them, as the maintainer asked for the lambda and the struct together:
+form D reads best for a small component, form S frames a large one. What holds nothing to compare stays a function,
+`element error_text(std::string_view text)`, with no framework in it.
 
-  element operator()() const;
-};
-```
+### A load, matched
 
-Members of a struct register themselves as it is made, without reflection. The struct components removed by #184 did
-the same through Glaze. The maintainer chose hooks on 2026-11-12, for a third of the code: a state sits beside its use,
-and props and state stay apart.
+`resource<T>` (form S) and `use_resource` (form D) are a state and the effect loading it, as Solid's
+`createResource`, Angular's `resource` and Dioxus's `use_resource`. Its value keeps a `std::expected<T,
+std::exception_ptr>` once a run has ended, and whether one is under way; `match` takes what to show while it loads,
+once it failed and once it gave a value. The three give an element, and a case forgotten does not compile. The first
+function may take the value before, for a view that keeps showing it while it loads again, which Rust's
+`Option<Result<T, E>>` alone cannot say. `loading()` stays for what needs only the flag, as a button's label. `effect`
+with a target stays for what writes into a state the component also changes by hand.
 
-### F: signals and a view run once (later, for performance)
+### Routes without reflection
 
-As in Leptos and Solid, a view runs once and binds signals to the DOM, `text([&] { return std::to_string(*count); })`.
-There is no diff, which is faster for large lists. But each binding is a closure kept with the DOM, whose lifetime C++
-does not check, and `app_core` changes wholesale. It also changes how every view is written: a view that branches on a
-state, as `product_view`'s `if (sales->loading) return ...`, becomes a binding, `when(...)` or a closure, and hooks
-are no longer found by their place in a view run again. Taking a shape of part 1 now leaves it out for good, unless
-every component is rewritten.
-
-## 2. The tree of a view
-
-The example: the view of the dashboard's `product_view`.
-
-### A: children in braces, decorators after (today)
+A page is named as it is placed, and a route names the field each `{parameter}` of its path fills, in order; the
+query's fields are named:
 
 ```cpp
-auto const failed = div({
-    error_text(told(sales->error, "the sales did not load")),
-    button("Try again") | tw("btn btn-sm self-start") | on_click(retry),
-});
-
-return failed | tw("flex flex-col gap-2");
-```
-
-- **For:** one `initializer_list`, with no template per call, and literals that are direct arguments of `tw` and the
-  tags.
-- **Against:** the classes and the handlers come after the children, which a long tree pushes far from the tag.
-
-### B: decorators first, in the braces *(new)*
-
-```cpp
-return div({
-    tw("flex flex-col gap-2"),
-    error_text(told(sales->error, "the sales did not load")),
-    button({tw("btn btn-sm self-start"), on_click(retry), text("Try again")}),
-});
-```
-
-- **For:** the attributes read with the tag, as in HTML. The braces hold one `initializer_list` of a child or a
-  decorator, so nothing more is instantiated. `|` stays, for a decorator added to an element made elsewhere.
-- **Against:** a decorator in the middle of the children is accepted, or refused only at run time. A text in a tag that
-  has decorators becomes `text("...")`.
-
-### C: attributes in parentheses, children in brackets *(new)*
-
-C++23 lets `operator[]` take several arguments.
-
-```cpp
-return div(tw("flex flex-col gap-2"))[
-    error_text(told(sales->error, "the sales did not load")),
-    button(tw("btn btn-sm self-start"), on_click(retry))[text("Try again")]
-];
-```
-
-- **For:** the closest to HTML: attributes with the tag, then the children. A text is `text("...")`, its only
-  argument, which the plugin replaces as today; `button("Try again", ...)`, with the text first, would take a rebuild
-  unless the plugin learns that form.
-- **Against:**
-  - **Templates.** `()` and `[]` take any number of arguments, so a template is instantiated for each shape of call.
-    They can forward at once to a function that is not a template, but the cost is to measure against the second's
-    budget.
-  - **`div` is a function** (a `div` object would be ambiguous with C's `::div`), so it is written `div()[...]`, while a
-    tag that is an object could be `ul[...]`. Writing every tag `name(...)[...]` is consistent.
-  - **No trailing comma.** A subscript takes an expression list, which has none, unlike braces: adding or moving the
-    last child touches the line before. `[{...}]`, an `initializer_list` in the brackets, allows it and instantiates
-    nothing per call, at the cost of the braces back.
-  - **New to C++ readers:** multidimensional subscripts.
-- **To check:** a sketch compiles on GCC 13 and Clang 19; Apple Clang 21 and Emscripten's Clang have the feature.
-
-### D: an HTML template checked as it compiles *(new)*
-
-```cpp
-return html<R"(
-  <div class="flex flex-col gap-2">
-    {}
-    <button class="btn btn-sm self-start" onclick={}>Try again</button>
-  </div>)">(error_text(told(sales->error, "the sales did not load")), retry);
-```
-
-A `consteval` parser reads the template, as the path templates of the REST DSL are read, and checks the placeholders by
-position.
-
-- **For:** it reads as HTML, and Tailwind reads it.
-- **Against:**
-  - **No types by name.** Placeholders are checked by position only.
-  - **Errors in a string**, which an editor neither colours nor completes.
-  - **A parser to write.**
-  - **Compile time.** Every view is a template instantiated by its own string.
-  - **No hot reload.** The text is a template argument, part of the type: any change of it is a rebuild.
-
-### E: builder methods (set aside)
-
-```cpp
-div().classes("flex flex-col gap-2").children({...});
-```
-
-Longer, and its methods are closed: today a user makes a decorator with `decorator(...)`, but cannot add a method.
-
-## 3. State, effects and actions: hooks (kept)
-
-`use_state`, `use_async_state`, `use_effect`, `use_action`, `use_form`, `use_context` and `provide_context` stay as
-they are, found again by their place of call. No reflection is involved, and every form of part 1 calls them from its
-view.
-
-## 4. Contexts without reflection
-
-Today a context is a struct whose members are states, effects and other contexts used. Glaze walks them to link the
-states to the app, to start the effects and to find the contexts used:
-
-```cpp
-struct catalog {
-  async_state<std::vector<products::product>> items;
-  effect load{std::tie(), products_client::list, items};
-
-  quoll::async::task<products::product> save(products::product edited);
-};
-```
-
-### A: its members register themselves as it is made *(new, recommended)*
-
-`provide<catalog>()` makes the context in place, with a scope open, as a view opens one for its hooks. Each state,
-effect or `shared<T>` member joins, as it is constructed, the context being made. The context is never copied or moved
-afterwards. Nothing changes for the user: `catalog` stays as written.
-
-- **Against:** today the contexts a context uses are read from its members' types, before it is made, so that one
-  missing refuses it before its constructor runs, and its destructor, which may write to them, never runs on a half
-  found context. Registered as they are made, its members only find a missing context during its construction: the one
-  that throws destroys those already made, whose destructors have to accept it. Whether a context uses others is no
-  longer known as it compiles either.
-- **To check:** a member made outside a context being made (a local `state<int>` in a function) has to stay a plain
-  value, or be refused with a message; and a prototype, of the destruction above under ASan.
-
-### B: members listed by hand (set aside)
-
-```cpp
-static constexpr auto members = quoll::ui::members(&catalog::items, &catalog::load);
-```
-
-A member added and forgotten in the list is silently left out.
-
-## 5. Routes without reflection
-
-Today `{id}` and the query's fields are found by name among the page's props.
-
-### A: member pointers, in the order of the path's parameters *(new, recommended)*
-
-```cpp
-inline constexpr auto routes = ui::routes(
+inline constexpr auto app_routes = routes(
     route<"/products", products_layout>(
-        route<"", product_list>(query<"q">(&product_list::q)),
-        route<"{id}", product_page>(&product_page::id)));
+        route<"", product_list>(query<"q">(&product_list::props::q)),
+        route<"{id}", product_page>(&product_page::props::id)),
+    redirect<"/", "/products">(),
+    not_found<missing_page>());
 ```
 
-Each `{name}` of the path takes the next member pointer, whose type gives how its text is parsed. A count that differs,
-or a type that cannot be parsed, does not compile. A query field is named, as it is not in the path.
+The member pointer's type says how the parameter is read, and a count that differs or a field of another struct does
+not compile (`quoll::ui: a route names one field of its page's props for each {parameter} of its path, in order`).
+The name in `{id}` is then for the reader: nothing checks it against the field's. Today every field not in the path is
+a query field, found by name; listed now, one added to the props and forgotten in the route is left out of the
+address.
 
-- **Against:** today every field of the props not in the path is a query field, found by name. Without reflection,
-  each is listed: one added to the props and forgotten in the route is silently left out of the address, the cost that
-  sets 4B aside. The path's parameters are bound by rank, as 2D's placeholders, which a path of one or two parameters
-  keeps readable.
+### Forms and widgets
 
-### B: names to members (beside A)
+Unchanged: `bind(form, &product::price)` names a field by its member pointer already, and a widget's props go to
+JavaScript as JSON, where Glaze stays (#182).
 
-`route<"{id}", product_page>(param<"id">(&product_page::id))`: longer, but a parameter is found by its name rather than
-its rank. It could be accepted beside A, for a path with several parameters.
+## Compile cost, in headers only
 
-### C: the page declares its parameters (set aside)
+A page is one Emscripten target whose `main.cpp` includes its routes, which include the pages, which include what they
+place: header-only makes the page one translation unit, and any change compiles all of it. Measured with em++
+(`-c`, the container's build):
 
-```cpp
-static constexpr auto route_params = params(param<"id">(&product_page::id));
-```
+| | Seconds |
+|---|---|
+| `<quoll/ui.hpp>` parsed | 1.8, of which Glaze's headers 1.5 |
+| The same, precompiled | 0.30 |
+| A component's unit today, over the precompiled header | 0.35 to 1.16, by what it holds |
+| Each effect today, on types of its own | about 0.10 |
+| Each form with its action today | about 0.16 |
+| The dashboard's eleven units (its components and `main.cpp`) as one, precompiled header | 2.6 |
+| The link | 0.36 |
 
-The page would then know its route, which the table of routes should hold.
+So header-only does not fit the budget as Quoll is today. It does once two changes are made, both planned:
 
-## 6. Forms
+1. **Glaze out of `quoll::ui`'s headers**, but for the JSON of widgets
+   ([#182](https://github.com/4thlabs/quoll/issues/182)).
+2. **What is no template compiled once in Quoll's library**: effects, actions, forms and loads erased behind their
+   types, so that a component instantiates little, the pull request the plan already names after the rebuild's
+   budget.
 
-`use_form(item)` and `bind(form, &product::price)` name a field by its member pointer, without reflection already.
-Nothing changes.
+On a model of form S built that way, a component costs about 6 ms. The model's precompiled header loads in 0.10 s,
+the real one in 0.30 s, so a page reads about `0.30 + 0.01 x components + 0.36` seconds: under a second up to about
+30 components, 1.5 s at 80. That is an estimate from a model, not the library: the next pull requests measure the
+real one, and a check in CI keeps it. Past that, a page takes its heavy views into sources of their own, in plain C++,
+or modules.
 
-## 7. Widgets
+## Modules, later
 
-A widget's props go to JavaScript as JSON, through Glaze, which `widget.hpp` and `json_event.hpp` call directly. Glaze
-stays for JSON (#182), where moving it behind a codec, as `rest::json_codec`, is that issue's work, not this one's.
+Quoll's UI headers build as a module with no header changed, on Clang 19 and em++: a file exporting `<quoll/ui.hpp>`
+with Glaze and the standard library in its global fragment. GCC 13 fails on it with an internal compiler error.
 
-## Comparison
+| A component's unit (em++, `-c`) | Seconds |
+|---|---|
+| `#include <quoll/ui.hpp>` | 1.80 |
+| over the precompiled header | 0.33 |
+| `import quoll.ui;`, the standard headers included | 0.30 |
+| `import quoll.ui; import std;` | 0.18 |
 
-| | Reading | Writing | Rebuild, size | Messages | Hot reload |
-|---|---|---|---|---|---|
-| **1A** lambda | function, props apart | two names, `extern` | good | good | yes |
-| **1B** struct with base | framed | `using`, `given` | one allocation more | from the compiler, for `using` | yes |
-| **1C** function | function, props apart | three names | good | good | yes |
-| **1D** struct of props | framed, props by name | one name, braces | good, but parts in the header | a concept's | yes |
-| **2A** braces, `\|` after | classes last | simple | good | good | yes |
-| **2B** decorators in braces | attributes first | `text(...)` with them | good | an order checked at run time | yes |
-| **2C** `()` then `[]` | as HTML | no trailing comma | to measure | good | with `text(...)` |
-| **2D** HTML template | HTML | errors in a string | template per view | by position | no |
+- **Not faster than a precompiled header** at what one does: the gain is the standard library's headers going too,
+  and no precompiled header to set up.
+- **A module per component** rebuilds, at a change, every component importing it, one after the other along a chain:
+  about 0.13 s a level. It beats one unit only past about 75 components. Splitting a component into an interface and
+  an implementation unit stops that, and is two files again; `module :private;` does not help today.
+- **The literals' hot reload** works through a module (`std::source_location` keys are the importer's places), with
+  `QUOLL_UI_HOT` a definition of the module's build. Components in `.cppm` files need the extension added to Tailwind's
+  sources and the plugin's.
+- **What they cost:** GCC 15 for `import std;` (GCC 14 only lets CMake build modules), a CMake recent enough for
+  `import std;`, `clang-scan-deps` in CI, clangd's support still experimental; Apple Clang to check on the Mac
+  (`xcrun --find clang-scan-deps` and a two-file project with a `FILE_SET CXX_MODULES`).
 
-## Decision
-
-To take, by the maintainer:
-
-1. **A component:** D alone (recommended), D beside A, or B as drafted.
-2. **The tree:** C (recommended, once its compile time is measured against the second's budget), B as its fallback, or A
-   kept.
-3. **Contexts:** A. **Routes:** A, with B for named parameters. **Forms:** unchanged.
-
-Prototype before deciding: a sketch of 1D's placement compiles on GCC 13 and Clang 19, and 2C's brackets too. To
-prototype: 2C's cost, a view of the dashboard rebuilt under Vite; 4A's destruction of a context half made, under ASan;
-5A is plain `consteval` work, as the path templates are.
+Forms S and D need no module. Form S's struct, its placer included, compiles as a header and as a module unit alike;
+form D's lambda exported from a module was not tried, and GCC 13 already refused a lambda's type across modules. Modules
+come later, as a module of `quoll.ui` beside the headers, once every compiler of the floor has the `std` module: a
+change of the floor, GCC 13 to 15, which is the maintainer's to make.
 
 ## Consequences
 
-If D and C are taken:
+In this order, each a pull request:
 
-- **`component<P>` goes.** A concept takes its place: an aggregate with `element operator()() const`. `app`, `mount`,
-  `link_to`, `router::go` and `router::href` take a component placed. The draft branch already does this last part,
-  and is kept for it.
-- **Routes name types only,** with the member pointers of part 5.
-- **Contexts** register their members (part 4).
-- **Glaze leaves `quoll::ui`**, but for the JSON of widgets.
-- **The tags** take attributes in parentheses and children in brackets, and `|` stays for decorating an element made
-  elsewhere.
-- **The plugin** keeps its rules: a text replaced at once is the only argument of `text` or a tag, and classes are in
-  `tw("...")`.
-- **The samples and `docs/ui.md`** are rewritten. `design-decisions.md` and `PLAN.md` say what was decided.
+1. **Glaze out of the UI's headers, and the erasure** of effects, actions, forms and loads into Quoll's library, with a
+   rebuild check in CI.
+2. **Form S and form D** on the real library: `component<C>` as the base of form S, `placer<C>`, `context<T>`,
+   `resource<T>` and `match`, members joining their instance, `component` deduced from a lambda's parameters for form
+   D; routes by member pointers; contexts without Glaze. `product_view`, `product_detail` and `product_row` first,
+   written both ways, read and timed before the rest.
+3. **The samples, `docs/ui.md`, `design-decisions.md` and `PLAN.md`** rewritten: a component in its header only, which
+   replaces the rule of a header and a source; the samples keep both forms.
+4. **Modules**, once the floor is raised.
+
+The draft of the struct form on the branch `ui-component-struct`, not pushed, is not taken: with the placer, `link_to`,
+`go`, `mount` and the routes keep today's calls, a component and its props, for both forms.

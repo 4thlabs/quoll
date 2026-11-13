@@ -441,7 +441,8 @@ changes only what the harness shows. Candidates:
   (`saving`, which said one of its three fields), the state of a save being the action's own. It changes #167's "no
   status on the members" only in form: the action is read as a state, so the view still reads states only. An effect
   keeps its target, which is the data it loads.
-- **Components are functions, their state their `use_` hooks** (2026-11-12), as React's function components: the
+- **Components are functions, their state their `use_` hooks** (2026-11-12; superseded on 2026-11-13 by the next
+  entry but one, which keeps these hooks for form D), as React's function components: the
   maintainer compared a prototype of function components with one of struct components whose members list themselves,
   and chose the functions ("il y a pas photo"). A component of a state, an effect and a handler generates about 102
   functions and 11 KB of code, against 318 and 36 KB as a struct, an effect depending on values rather than on a type of
@@ -455,7 +456,8 @@ changes only what the harness shows. Candidates:
   a component's props and helpers together. `use_context` and `provide_context` take Leptos's names; no `use_mounted`,
   as an effect on nothing runs once and stops as the component goes. Done since: the samples, the router's pages and the
   app's root as functions, the struct components removed (see the next entry).
-- **A component is an object of its props, placed by calling it** (2026-11-13), as React's JSX places a component: the
+- **A component is an object of its props, placed by calling it** (2026-11-13; its one rule and its header and
+  source superseded the same day by the next entry, its placement by name kept), as React's JSX places a component: the
   maintainer refused `component<product_detail>(...)` in a view ("je veux utiliser le nom du compo comme dans react").
   `component<props>` depends only on its props, so that a header declares it `extern` and a source of its own defines
   it, which a change to it alone compiles again; and one rule writes it, its props always written, `constexpr
@@ -471,6 +473,22 @@ changes only what the harness shows. Candidates:
   maintainer set: with Quoll's header and the app's contexts precompiled, under Clang, a view alone takes 0.6 s and one
   with a form and an action 1.4 s, the rest in instantiating `use_effect` and `use_action` in its source, about 0.6 s
   each, which the next pull request takes into Quoll's library behind type erasure, with a budget CI checks.
+- **A component is a struct of sections or a function of its props, in its header only** (2026-11-13,
+  [ADR 0002](adr/0002-ui-dsl-shape.md)): the maintainer found the declaration unreadable, the concepts mixed in one
+  body ("ce n'est pas lisible et on mélange les concepts"), kept the view's decorators, and chose both forms of a
+  study of other frameworks and of a Rust rewrite of the samples, without reflection. Form S, `struct product_view :
+  component<product_view>`, its `struct props` first, then its contexts, states, loads, effects and actions as members
+  that join it as the app makes it, its handlers as member functions and `element view()`; placed by name through a
+  variable of the struct's name, `inline constexpr placer<product_view> product_view;`, which keeps today's calls,
+  `product_view({...})`, `link_to(product_page, {...}, ...)`, `mount(app_shell, ...)`. Form D, a lambda whose
+  parameters are its props, `inline constexpr component product_view = [](products::product const &item) {...}`, with
+  today's hooks. A load is one value, `resource<T>` or `use_resource`, read with `match(loading, failed, loaded)`;
+  routes name the fields their parameters fill by member pointers,
+  `route<"{id}", product_page>(&product_page::props::id)`. Header-only makes a page one unit: it fits the second's budget, up to about 30 components, once Glaze leaves the UI's
+  headers and effects, actions, forms and loads are erased into the library, the next pull request; then the two forms
+  on the real library, three components first, measured. Modules later, with GCC 15. Against the 2026-11-12 count
+  (a struct form generating three times the code of a function), form S's effects follow a reference rather than a
+  type of props, and its tables are erased: the pull request measures it, form D staying if it costs as much.
 - **A debounce is an option of the effect** (2026-11-12), as the maintainer chose over a `debounced<T>` value to
   declare beside the state, as React's `useDebounce`, and over a pause Quoll would add to any change made by typing:
   `effect search{query, f, found, {.debounce = 300ms}}`. A run that follows a change waits that long before it calls

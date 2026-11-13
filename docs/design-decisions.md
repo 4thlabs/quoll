@@ -189,7 +189,28 @@ input methods, selection and accessibility. The same view also writes HTML, with
 **Set aside.** A React and TypeScript client beside the C++ application, with a bridge between them: two languages,
 and the API described twice.
 
+### A component is a struct of sections or a function of its props, in its header
+
+**The question.** One lambda holding the states, the effects, the handlers and the parts of a view, its props a type
+apart and declared twice, read as concepts mixed. How can a component read in sections, without reflection, and stay
+cheap to rebuild?
+
+**Taken.** Two forms, both in the component's header ([ADR 0002](adr/0002-ui-dsl-shape.md)). A struct, `struct
+product_view : component<product_view>`, its props first, its contexts, states, loads, effects and actions as members
+that join it as the app makes it, its handlers as member functions and its view in `element view()`, placed by name
+through a variable of the struct's name. Or a lambda whose parameters are its props, with hooks, as before. A load is
+one value read with `match`; routes name the fields of their parameters by member pointers.
+
+**Set aside.** Sections in a nested struct, a life cycle as React's classes, a state and messages as Elm's, signals and
+a view run once, and the struct made where it is placed (the ADR's table): each read worse, or made members in the
+parent's view. `product_view::with({...})` to place one.
+
+**For you.** A component with a state reads in sections in form S, a small one in form D; both are written in their
+header. In form S, declare a state before the effect writing into it.
+
 ### Components are functions, their state their hooks
+
+*Superseded on 2026-11-13 by the decision above, which keeps these hooks for its form D.*
 
 **The question.** A component holds states, effects, actions and contexts. Declared as members of a struct, they are
 found by walking the struct, which takes reflection, Glaze's, and code generated for each type; written in order in a
@@ -216,6 +237,9 @@ whose number of turns changes. A closure captures `given` and what a `use_` call
 computed by value.
 
 ### A component is an object of its props, placed by calling it
+
+*Its one rule, and its header and source, superseded on 2026-11-13 by the first decision of this part; its placement
+by name kept.*
 
 **The question.** A view places another component: by naming its type, as `component<product_detail>({...})`, or as
 React's JSX does, by the component itself? And how is one declared?
