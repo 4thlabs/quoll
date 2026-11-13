@@ -298,6 +298,8 @@ component<product_view>({.id = 1, .item = item})
   as in a branch, as the run starts.
 - **A struct whose `element operator()(props const &) const`** gives the view keeps its props and helpers together; it
   holds no member, as it is made for each view: what lasts is its hooks, and a struct with members does not compile.
+- **Props by const reference**: `element f(props const &)`, or `element f()` for none. Taken by value, they would be a
+  copy that goes as the view returns, which a closure of the view may capture: that does not compile.
 - A `use_` call outside the view of a function component throws `std::logic_error`.
 
 ## Effects and actions

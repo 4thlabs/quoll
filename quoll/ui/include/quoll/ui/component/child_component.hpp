@@ -140,14 +140,41 @@ template <CallableComponent C>
   return detail::hooks_element(detail::callable_table_of<C>);
 }
 
-/** @brief What is not a component, given as one: a function whose signature is not a view's says so. */
+/** @brief A struct whose operator() takes its props by value, given as a component, says what it takes. */
+template <class C>
+  requires std::is_class_v<C> && (!CallableComponent<C>) &&
+           (!std::is_void_v<typename detail::by_value_props<decltype(&C::operator())>::type>)
+[[nodiscard]] element component(typename detail::by_value_props<decltype(&C::operator())>::type) {
+  static_assert(
+      CallableComponent<C>,
+      "quoll::ui: a struct function component's operator() is `element operator()(props const &)` or `element "
+      "operator()()`: props by const reference, which what its view writes may capture"
+  );
+  return {};
+}
+
+/** @brief A function taking its props by value, given as a component, says what it takes. */
 template <auto F>
-  requires(!FunctionComponent<F>) && std::is_pointer_v<decltype(F)> &&
-          std::is_function_v<std::remove_pointer_t<decltype(F)>>
-element component(auto &&...) {
+  requires(!FunctionComponent<F>) && (!std::is_void_v<typename detail::by_value_props<decltype(F)>::type>)
+[[nodiscard]] element component(typename detail::by_value_props<decltype(F)>::type) {
   static_assert(
       FunctionComponent<F>,
-      "quoll::ui: a function component is `element f(props const &)`, `element f(props)` or `element f()`"
+      "quoll::ui: a function component is `element f(props const &)` or `element f()`: props by const reference, which "
+      "what its view writes may capture"
+  );
+  return {};
+}
+
+/** @brief Any other function given as a component, of another signature, given as it is placed: says what it takes. */
+template <auto F>
+  requires(!FunctionComponent<F>) && std::is_pointer_v<decltype(F)> &&
+          std::is_function_v<std::remove_pointer_t<decltype(F)>> &&
+          std::is_void_v<typename detail::by_value_props<decltype(F)>::type>
+[[nodiscard]] element component(auto &&...) {
+  static_assert(
+      FunctionComponent<F>,
+      "quoll::ui: a function component is `element f(props const &)` or `element f()`: props by const reference, which "
+      "what its view writes may capture"
   );
   return {};
 }

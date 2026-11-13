@@ -71,17 +71,9 @@ hook_store &hook_store::current() {
   return *current_store;
 }
 
-void hook_store::link(state_link to) noexcept {
-  link_ = to;
+void hook_store::link(state_link to) noexcept { link_ = to; }
 
-  for (auto &hook : hooks_) {
-    if (hook.ops->link != nullptr) {
-      hook.ops->link(hook.object.get(), to);
-    }
-
-    hook.linked = true;
-  }
-}
+void hook_store::changed_in(void *self) { tell(static_cast<hook_store const *>(self)->link_); }
 
 void hook_store::begin_view() noexcept {
   calls_.clear();
@@ -94,21 +86,7 @@ void hook_store::begin_view() noexcept {
   }
 }
 
-void hook_store::end_view() noexcept {
-  viewed_ = true;
-
-  for (auto &hook : hooks_) {
-    if (hook.linked) {
-      continue;
-    }
-
-    if (hook.ops->link != nullptr) {
-      hook.ops->link(hook.object.get(), link_);
-    }
-
-    hook.linked = true;
-  }
-}
+void hook_store::end_view() noexcept { viewed_ = true; }
 
 void hook_store::effects(effect_starter const &start) {
   std::exception_ptr first;
@@ -213,10 +191,15 @@ void hook_store::add(
     std::source_location const &where, std::uint32_t call, async::detail::type_id type, held_component object,
     hook_ops const &ops
 ) {
-  hooks_.push_back(
-      {.where = where, .call = call, .type = type, .object = std::move(object), .ops = &ops, .linked = false}
-  );
+  auto *const made = object.get();
+
+  hooks_.push_back({.where = where, .call = call, .type = type, .object = std::move(object), .ops = &ops});
   cursor_ = hooks_.size();
+
+  // Linked at once, to the store, which tells the app: a change in the view that made it asks for another view.
+  if (ops.link != nullptr) {
+    ops.link(made, {this, &hook_store::changed_in});
+  }
 }
 
 hook_scope::hook_scope(hook_store &store) noexcept : store_(store), previous_(std::exchange(current_store, &store)) {

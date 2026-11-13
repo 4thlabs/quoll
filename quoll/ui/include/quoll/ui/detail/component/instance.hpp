@@ -81,7 +81,9 @@ public:
   instance &operator=(instance const &) = delete;
   instance &operator=(instance &&) = delete;
 
-  ~instance() = default;
+  // Its component told of nothing more first: a member that tells as it goes, as a hook or a state, would reach this
+  // instance once its members after the component are gone.
+  ~instance();
 
   [[nodiscard]] component_table const &table() const noexcept { return *table_; }
 

@@ -45,8 +45,8 @@ namespace quoll::ui {
 
 namespace detail {
 
-// The operator() of a struct function component: of its props, taken by value or by const reference, or of nothing,
-// const or not, noexcept or not.
+// The operator() of a struct function component: of its props, taken by const reference, or of nothing, const or not,
+// noexcept or not.
 template <class S>
 struct call_operator_traits {
   static constexpr bool valid = false;
@@ -60,29 +60,29 @@ struct call_operator_traits<element (C::*)()> {
 };
 
 template <class C, class P>
-struct call_operator_traits<element (C::*)(P)> {
-  static constexpr bool valid =
-      std::is_same_v<P, std::remove_cvref_t<P>> || std::is_same_v<P, std::remove_cvref_t<P> const &>;
-  using props = std::remove_cvref_t<P>;
+struct call_operator_traits<element (C::*)(P const &)> {
+  static constexpr bool valid = true;
+  using props = P;
 };
 
 template <class C>
 struct call_operator_traits<element (C::*)() const> : call_operator_traits<element (C::*)()> {};
 
 template <class C, class P>
-struct call_operator_traits<element (C::*)(P) const> : call_operator_traits<element (C::*)(P)> {};
+struct call_operator_traits<element (C::*)(P const &) const> : call_operator_traits<element (C::*)(P const &)> {};
 
 template <class C>
 struct call_operator_traits<element (C::*)() noexcept> : call_operator_traits<element (C::*)()> {};
 
 template <class C, class P>
-struct call_operator_traits<element (C::*)(P) noexcept> : call_operator_traits<element (C::*)(P)> {};
+struct call_operator_traits<element (C::*)(P const &) noexcept> : call_operator_traits<element (C::*)(P const &)> {};
 
 template <class C>
 struct call_operator_traits<element (C::*)() const noexcept> : call_operator_traits<element (C::*)()> {};
 
 template <class C, class P>
-struct call_operator_traits<element (C::*)(P) const noexcept> : call_operator_traits<element (C::*)(P)> {};
+struct call_operator_traits<element (C::*)(P const &) const noexcept>
+    : call_operator_traits<element (C::*)(P const &)> {};
 
 // A struct whose operator() gives the view; the props it takes.
 template <class C>

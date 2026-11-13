@@ -216,13 +216,14 @@ public:
   // view reads it, as a struct's members do before their first view.
   [[nodiscard]] bool first_view() const noexcept { return !viewed_; }
 
+  // Whom its hooks tell of their changes, through the store, as each is linked to it as it is made: a state set in the
+  // view that made it asks for another view, as a struct's does.
   void link(state_link to) noexcept;
 
   // As its view starts: no place called yet.
   void begin_view() noexcept;
 
-  // As its view ends, returned or thrown: the hooks it made are linked to the app, so that what they did while the view
-  // ran, as a target set loading, asks for no other view.
+  // As its view ends, returned or thrown.
   void end_view() noexcept;
 
   void effects(effect_starter const &start);
@@ -239,8 +240,10 @@ private:
     async::detail::type_id type;
     held_component object;
     hook_ops const *ops;
-    bool linked;
   };
+
+  // What its hooks tell: the app.
+  static void changed_in(void *self);
 
   [[nodiscard]] std::uint32_t next_call(std::source_location const &where);
   [[nodiscard]] void *find_made(std::source_location const &where, std::uint32_t call, async::detail::type_id type);
