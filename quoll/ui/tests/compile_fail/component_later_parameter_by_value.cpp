@@ -34,11 +34,15 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui: a component says its props: component<props>, or component<> for none
+// expect: quoll::ui: a component takes its props by const reference
 //
-// A component written without its props: one rule, the same as an extern declaration in a header has to follow.
+// A later parameter taken by value: each is checked, not the first alone.
 
 #include <quoll/ui/component/component.hpp>
 #include <quoll/ui/view/tags.hpp>
 
-constexpr quoll::ui::component badge = [] { return quoll::ui::p("badge"); };
+#include <string>
+
+constexpr quoll::ui::component badge = [](std::string const &label, int count) {
+  return quoll::ui::p(label + std::to_string(count));
+};

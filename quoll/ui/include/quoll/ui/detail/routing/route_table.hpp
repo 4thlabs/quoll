@@ -273,6 +273,10 @@ consteval void check_fields(page_fields<Fields...> /*fields*/) {
   if constexpr ((field_member<Fields>::valid && ...)) {
     if constexpr (has_page_props<Page>) {
       static_assert(
+          std::is_class_v<page_props_t<Page>> && !is_parameters<page_props_t<Page>>,
+          "quoll::ui: a routed page takes one struct of props, whose fields its route names"
+      );
+      static_assert(
           (std::is_base_of_v<typename field_member<Fields>::owner, page_props_t<Page>> && ...),
           "quoll::ui: a route names fields of its own page's props"
       );

@@ -785,7 +785,100 @@ constexpr component<loader_props> reading_first = [](loader_props const &given) 
 
 constexpr component<> reading_first_page = [] { return reading_first({.key = 1}); };
 
+// Components whose props are their parameters, deduced: none, one, several.
+int row_views = 0;
+
+constexpr component plain_title = [] { return h1("title"); };
+constexpr component named_badge = [](std::string const &label) { return span(label); };
+
+constexpr component scored_row = [](std::string const &name, int const &score) {
+  ++row_views;
+
+  auto &clicks = use_state(0);
+
+  auto const add = [&clicks] { clicks = *clicks + 1; };
+
+  return li(name + " " + std::to_string(score) + " " + std::to_string(*clicks)) | on_click(add);
+};
+
+static_assert(std::same_as<decltype(plain_title), component<> const>);
+static_assert(std::same_as<decltype(named_badge), component<std::string> const>);
+static_assert(std::same_as<decltype(scored_row), component<parameters<std::string, int>> const>);
+
+// A struct with no ==, beside another parameter: viewed again at each view of its parent, as one alone would be.
+struct no_equality {
+  int value = 0;
+};
+
+constexpr component uncompared_row = [](no_equality const &given, int const &rank) {
+  return li(std::to_string(given.value) + " " + std::to_string(rank));
+};
+
+static_assert(!std::equality_comparable<parameters<no_equality, int>>);
+
+// Declared with its props written, as a header would, and defined below, as a source of its own would.
+extern component<parameters<std::string, bool>> const declared_row;
+
+// Made of an empty struct whose call operator gives the view.
+struct flag_view {
+  element operator()(std::string const &name, bool const &on) const { return li(name + (on ? " on" : " off")); }
+};
+
+struct deduced_page_data {
+  state<int> score{1};
+  state<int> other{0};
+};
+
+constexpr component<parameters<std::string, bool>> declared_row = flag_view{};
+
+constexpr component deduced_page = [] {
+  auto &self = use_context<deduced_page_data>();
+
+  return div({
+      plain_title(),
+      named_badge("new"),
+      ul({scored_row("tea", *self->score), uncompared_row(no_equality{.value = 3}, *self->other),
+          declared_row("lamp", *self->other == 1)}),
+      p(std::to_string(*self->other)),
+  });
+};
+
 } // namespace
+
+TEST_CASE(
+    "function component: its props are its parameters, compared together, its state kept as they change",
+    "[ui][function]"
+) {
+  row_views = 0;
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app instance{time.get_executor(), shown, deduced_page, {.contexts = {provide<deduced_page_data>()}}};
+  int views_before = 0;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.dispatch(shown.find("li"), "click");
+    co_await settle();
+
+    // Its parameters unchanged: the row is not viewed again.
+    views_before = row_views;
+    instance.context<deduced_page_data>().other = 1;
+    co_await settle();
+    CHECK(row_views == views_before);
+
+    // One changed: viewed again, its count kept.
+    instance.context<deduced_page_data>().score = 2;
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(
+      shown.html() ==
+      "<div><h1>title</h1><span>new</span><ul><li>tea 2 1</li><li>3 1</li><li>lamp on</li></ul><p>1</p></div>"
+  );
+  CHECK(row_views == views_before + 1);
+}
 
 TEST_CASE("function component: a state of its view, the same at each view", "[ui][function]") {
   virtual_time time;

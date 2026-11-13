@@ -45,10 +45,17 @@
 
 #include <concepts>
 #include <memory>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
 namespace quoll::ui::detail {
+
+template <class P>
+inline constexpr bool is_parameters = false;
+
+template <class... A>
+inline constexpr bool is_parameters<parameters<A...>> = true;
 
 template <class F>
 element view_component(void *store, [[maybe_unused]] void const *props) {
@@ -60,6 +67,8 @@ element view_component(void *store, [[maybe_unused]] void const *props) {
 
   if constexpr (std::is_void_v<props_type>) {
     return viewing();
+  } else if constexpr (is_parameters<props_type>) {
+    return std::apply(viewing, static_cast<props_type const *>(props)->values);
   } else {
     return viewing(*static_cast<props_type const *>(props));
   }

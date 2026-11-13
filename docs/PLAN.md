@@ -473,6 +473,12 @@ changes only what the harness shows. Candidates:
   maintainer set: with Quoll's header and the app's contexts precompiled, under Clang, a view alone takes 0.6 s and one
   with a form and an action 1.4 s, the rest in instantiating `use_effect` and `use_action` in its source, about 0.6 s
   each, which the next pull request takes into Quoll's library behind type erasure, with a budget CI checks.
+- **Form D, a component's props its view's parameters** (2026-11-13, [ADR 0002](adr/0002-ui-dsl-shape.md)): done,
+  `inline constexpr component note_row = [](notes::note const &item, bool const &selected) {...}` is a
+  `component<parameters<notes::note, bool>>`, placed `note_row(item, true)`; one parameter is the props, as
+  `component<chart_props>` with its fields named as it is placed; none a `component<>`. `component<props>` stays, as an
+  `extern` declaration needs it. Parameters are kept with the component, so a view among them does not compile; one
+  without `==` makes it viewed again at each view of its parent; a routed page takes one struct.
 - **A component is a struct of sections or a function of its props, in its header only** (2026-11-13,
   [ADR 0002](adr/0002-ui-dsl-shape.md)): the maintainer found the declaration unreadable, the concepts mixed in one
   body ("ce n'est pas lisible et on mélange les concepts"), kept the view's decorators, and chose both forms of a
