@@ -106,6 +106,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/shared_const_context.cpp
     tests/compile_fail/struct_component_for_its_tag.cpp
     tests/compile_fail/struct_component_not_derived.cpp
+    tests/compile_fail/struct_component_view_props.cpp
     tests/compile_fail/struct_component_without_view.cpp
     tests/compile_fail/target_bool_value.cpp
     tests/compile_fail/target_two_flags.cpp

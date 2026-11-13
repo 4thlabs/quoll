@@ -41,12 +41,14 @@
 #include <quoll/test/ui_session.hpp>
 #include <quoll/test/virtual_time.hpp>
 #include <quoll/ui.hpp>
+#include <quoll/ui/detail/context/member_registry.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
 #include <cstdint>
 #include <exception>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -496,4 +498,69 @@ TEST_CASE("struct component: a view that throws leaves its handlers the props of
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(failures == std::vector<std::string>{"boom"});
   CHECK(clicks == std::vector<std::string>{"calm"});
+}
+
+namespace {
+
+// A member of the registry below, which may make another go as its effects start.
+struct probe {
+  std::string name;
+  std::vector<std::string> *calls = nullptr;
+  quoll::ui::detail::member_registry *registry = nullptr;
+  std::unique_ptr<probe> *going = nullptr;
+};
+
+void probe_after_view(void *object, quoll::ui::detail::effect_starter const & /*start*/) {
+  auto &self = *static_cast<probe *>(object);
+
+  self.calls->push_back(self.name);
+
+  // As an on_error resetting an optional of the struct would.
+  if (self.going != nullptr && *self.going) {
+    self.registry->remove(self.going->get());
+    self.going->reset();
+  }
+}
+
+} // namespace
+
+TEST_CASE(
+    "struct component: a member that goes as the effects start is not called, and the others are, each once",
+    "[ui][struct]"
+) {
+  quoll::ui::detail::member_registry registry;
+  std::vector<std::string> calls;
+  auto first = std::make_unique<probe>(probe{.name = "first", .calls = &calls});
+  auto third = std::make_unique<probe>(probe{.name = "third", .calls = &calls});
+  probe second{.name = "second", .calls = &calls, .registry = &registry, .going = &first};
+  probe fourth{.name = "fourth", .calls = &calls, .registry = &registry, .going = &third};
+
+  // Each joins by its own address, as a member_join would.
+  for (auto *const member : {first.get(), &second, third.get(), &fourth}) {
+    registry.add({.object = member, .join = member, .after_view = &probe_after_view});
+  }
+
+  // The second makes the first go, behind it, and the fourth the third, behind it too: none after them is skipped.
+  registry.run_effects({});
+  CHECK(calls == std::vector<std::string>{"first", "second", "third", "fourth"});
+
+  // Gone for good once they started.
+  calls.clear();
+  registry.run_effects({});
+  CHECK(calls == std::vector<std::string>{"second", "fourth"});
+}
+
+TEST_CASE("struct component: a member that goes ahead of those starting is not called", "[ui][struct]") {
+  quoll::ui::detail::member_registry registry;
+  std::vector<std::string> calls;
+  auto second = std::make_unique<probe>(probe{.name = "second", .calls = &calls});
+  probe third{.name = "third", .calls = &calls};
+  probe first{.name = "first", .calls = &calls, .registry = &registry, .going = &second};
+
+  for (auto *const member : {&first, second.get(), &third}) {
+    registry.add({.object = member, .join = member, .after_view = &probe_after_view});
+  }
+
+  registry.run_effects({});
+  CHECK(calls == std::vector<std::string>{"first", "third"});
 }
