@@ -72,17 +72,16 @@ struct async_value<void> {
  * last failed, by name.
  *
  * @code
- * struct product_view {
- *   async_state<products::monthly_sales> sales;
- *   effect load{&props::id, products_client::sales, sales};
+ * inline constexpr component<product_view_props> product_view = [](product_view_props const &given) {
+ *   auto &sales = use_async_state<products::monthly_sales>();
  *
- *   element view(props const &) {
- *     if (sales->loading) {
- *       return p("Loading its sales");
- *     }
+ *   use_effect(given.id, products_client::sales, sales);
  *
- *     return sales->error ? p("No sales") : component<sales_chart>({.sales = sales->value});
+ *   if (sales->loading) {
+ *     return p("Loading its sales");
  *   }
+ *
+ *   return sales->error ? p("No sales") : sales_chart({.sales = sales->value});
  * };
  * @endcode
  *

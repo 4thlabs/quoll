@@ -42,23 +42,11 @@
 
 namespace quoll::ui::detail {
 
-namespace {
-
-// Made once the contexts it uses are known to be there: one refused is never made, so that its destructor, which may
-// write to a context it found, does not run.
-[[nodiscard]] held_component made_finding(component_table const &table, context_finder const &contexts) {
-  refuse_missing(table.finds, contexts);
-
-  return table.make();
-}
-
-} // namespace
-
 instance::instance(
     component_table const &table, std::shared_ptr<void const> props, std::string key, std::stop_token const &app_stop,
     context_finder const &contexts
 )
-    : table_(&table), props_(std::move(props)), component_(made_finding(table, contexts)), key_(std::move(key)),
+    : table_(&table), props_(std::move(props)), component_(table.make()), key_(std::move(key)),
       follow_app_(app_stop, async::detail::stop_waker{&stop_}),
       parent_(std::static_pointer_cast<instance const>(contexts.from)) {
   if (table_->bind != nullptr) {
@@ -69,7 +57,7 @@ instance::instance(
   // app hears of changes once it shows.
   table_->link(component_.get(), {this, &instance::changed_in});
   // Made, its first view next: the targets of the effects whose first run will start say they are loading.
-  first_effects(table_->effects, component_.get(), props_.get());
+  first_effects(table_->effects, component_.get());
 }
 
 void instance::tried(std::shared_ptr<void const> props) noexcept {
@@ -142,26 +130,15 @@ void instance::changed_in(void *self) {
   }
 }
 
-void instance::unmount(failure_sink sink) noexcept {
-  // First, so that nothing of it runs on past a failure below.
-  stop_.request_stop();
-
+void instance::unmount() noexcept {
+  // The components of its view first, then its own tasks, as React cleans up children first: their runs unwind in
+  // that order, the stops posted as they are asked for.
   for (auto const &child : children_) {
-    child->unmount(sink);
+    child->unmount();
   }
 
   children_.clear();
-
-  try {
-    if (table_->unmounted != nullptr) {
-      table_->unmounted(component_.get());
-    }
-  } catch (...) {
-    if (sink.failed != nullptr) {
-      sink.failed(sink.owner, std::current_exception());
-    }
-  }
-
+  stop_.request_stop();
   unlink();
 }
 

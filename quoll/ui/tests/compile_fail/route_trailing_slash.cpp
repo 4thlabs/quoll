@@ -38,11 +38,9 @@
 //
 // A route ending with '/': no address would match it, as the last '/' of an address goes before it is matched.
 
+#include <quoll/ui/component/component.hpp>
 #include <quoll/ui/routing/route.hpp>
-#include <quoll/ui/view/element.hpp>
 
-struct product_list {
-  quoll::ui::element view();
-};
+extern quoll::ui::component<> const product_list;
 
 constexpr auto shop = quoll::ui::routes(quoll::ui::route<"/products/", product_list>());

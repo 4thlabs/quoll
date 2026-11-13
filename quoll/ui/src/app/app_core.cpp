@@ -66,18 +66,6 @@ namespace {
   co_await handler(std::move(value));
 }
 
-// What a component does once it first shows, unless it went before this starts: a stop asked for since it was posted,
-// with its unmounted() run already.
-[[nodiscard]] async::task<> run_mounted(async::task<> work) {
-  auto const stop = co_await async::current_stop_token();
-
-  if (stop.stop_requested()) {
-    co_return;
-  }
-
-  co_await std::move(work);
-}
-
 [[nodiscard]] element const *find_shown(std::vector<element> const &elements, node_id id) noexcept {
   for (auto const &value : elements) {
     if (value.id == id) {
@@ -118,12 +106,10 @@ struct app_core::outcome {
 };
 
 app_core::app_core(
-    async::any_executor executor, renderer_ref renderer, view_function view, unmounted_function unmounted,
-    effects_function effects, finds_function finds, provides_function provides, void *component, app_options options
+    async::any_executor executor, renderer_ref renderer, view_function view, void const *root, app_options options
 )
     : executor_(std::move(executor)), renderer_(renderer), link_(std::make_shared<app_link>(app_link{this})),
-      view_(view), unmounted_(unmounted), effects_(effects), provides_(provides), component_(component),
-      options_(std::move(options)) {
+      view_(view), root_(root), options_(std::move(options)) {
   for (auto const &spec : options_.contexts) {
     auto const &table = spec.table();
 
@@ -142,8 +128,6 @@ app_core::app_core(
 
     contexts_.push_back(std::move(entry));
   }
-
-  refuse_missing(finds, contexts());
 }
 
 context_finder app_core::contexts() const noexcept {
@@ -167,16 +151,7 @@ context_entry *app_core::context(async::detail::type_id type) const noexcept {
 }
 
 context_entry *app_core::find_context(void const *self, async::detail::type_id type) noexcept {
-  auto const &core = *static_cast<app_core const *>(self);
-
-  // What the app's own component provides, above every component of its view, then the app's.
-  if (core.provides_ != nullptr && core.component_made_) {
-    if (auto *const provided = core.provides_(core.component_, type)) {
-      return provided;
-    }
-  }
-
-  return core.context(type);
+  return static_cast<app_core const *>(self)->context(type);
 }
 
 app_core::~app_core() { link_->core = nullptr; }
@@ -184,10 +159,9 @@ app_core::~app_core() { link_->core = nullptr; }
 void app_core::render() {
   std::vector<element> next;
   auto view = [this] {
-    // Its callbacks call the app's own component back.
     view_scope const scope{{.app = link_}};
 
-    return view_(component_);
+    return view_(root_);
   }();
   reconciler reconciled{renderer_, last_id_};
   expansion made{
@@ -195,7 +169,6 @@ void app_core::render() {
       .epoch = epoch_,
       .app_stop = stop_.get_token(),
       .link = {this, &app_core::state_changed},
-      .sink = {this, &app_core::failed_in},
       .contexts = contexts()
   };
 
@@ -207,7 +180,9 @@ void app_core::render() {
   std::vector<held_view> viewed;
 
   try {
-    for (auto const &record : made.views) {
+    for (auto const index : made.effect_order) {
+      auto const &record = made.views[index];
+
       if (record.owner->table().effects != nullptr) {
         viewed.push_back({.owner = record.owner, .props = record.props});
       }
@@ -230,7 +205,6 @@ void app_core::render() {
   // Shown: the components follow, and nothing throws until they have.
   commit(made, components_);
   shown_ = std::move(next);
-  shown_once_ = true;
 
   // In place now, as a library such as chart.js measures its node, and shown, as a module may emit as it mounts or
   // updates. One that fails is told as a failure, and the others go on all the same.
@@ -256,27 +230,11 @@ void app_core::render() {
     }
   }
 
-  // Once shown, as the app's own. One that cannot start is told as a failure, and the others start all the same.
-  for (auto const &component : made.made) {
-    if (component->table().mounted == nullptr) {
-      continue;
-    }
-
-    try {
-      mount(component->table().mounted(component->component()), {.owner = component, .props = component->props()});
-    } catch (...) {
-      failed(std::current_exception());
-    }
-  }
-
-  // Once shown, and their mounted() started, as React's effects run once a render is committed: those of each component
-  // whose view ran, whose dependency changed, then of the app's own. One that cannot start is told as a failure.
-  // The components of a view before it, as React's children before their parent: their records come after it.
-  for (auto const &held : std::views::reverse(viewed)) {
+  // Once shown, as React's effects run once a render is committed: those of each component whose view ran, whose
+  // dependency changed, the components of a view before it. One that cannot start is told as a failure.
+  for (auto const &held : viewed) {
     start_effects(held.owner->table().effects, held.owner->component(), held);
   }
-
-  start_effects(effects_, component_, {});
 
   // Then those of its contexts, as tasks of the app: they run after a view, as a component's.
   for (auto const &entry : contexts_) {
@@ -323,7 +281,7 @@ void app_core::start_effects(effects_function effects, void *component, held_vie
   };
 
   try {
-    effects(component, {.owner = &context, .start = start, .report = report, .props = held.props.get()});
+    effects(component, {.owner = &context, .start = start, .report = report});
   } catch (...) {
     failed(std::current_exception());
   }
@@ -381,27 +339,15 @@ void app_core::abandon() noexcept {
   }
 
   stopped_ = true;
-  stop_.request_stop();
 
-  // The components go as the app stops, their unmounted() with them; what one throws goes where a handler's does.
+  // The components go first, each after those of its view, in the order the stops are asked for, which the app's own,
+  // followed by each of theirs in no order the standard sets, would not give.
   for (auto const &component : components_) {
-    component->unmount({this, &app_core::failed_in});
+    component->unmount();
   }
 
   components_.clear();
-
-  // Last, as a component goes after those of its view.
-  if (!shown_once_ || unmounted_ == nullptr) {
-    return;
-  }
-
-  shown_once_ = false;
-
-  try {
-    unmounted_(component_);
-  } catch (...) {
-    failed(std::current_exception());
-  }
+  stop_.request_stop();
 }
 
 void app_core::forget_view() noexcept {
@@ -413,10 +359,6 @@ void app_core::forget_view() noexcept {
   }
 
   components_.clear();
-}
-
-void app_core::failed_in(void *self, std::exception_ptr failure) noexcept {
-  static_cast<app_core const *>(self)->failed(std::move(failure));
 }
 
 async::task<> app_core::render_later() {
@@ -475,8 +417,6 @@ void app_core::failed(std::exception_ptr failure) const noexcept {
     std::fputs("quoll::ui: a handler, an effect or an action failed\n", stderr);
   }
 }
-
-void app_core::mount(async::task<> work, held_view held) { spawn(run_mounted(std::move(work)), std::move(held)); }
 
 void app_core::spawn(async::task<> work, held_view held) {
   auto const stop_token = held.owner ? held.owner->stop_token() : stop_.get_token();

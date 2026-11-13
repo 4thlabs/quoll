@@ -86,8 +86,7 @@ using quoll::test::session;
 using quoll::test::settle;
 using quoll::test::virtual_time;
 
-template <class C>
-using test_app = app<C, memory_renderer>;
+using test_app = app<memory_renderer>;
 
 // The runs of the test running: which fail, and what each saw happen.
 struct run_log {
@@ -138,29 +137,40 @@ std::string told(Result const &result) {
 
 // Runs its action with the value it is given, on a click, and tells what each run gave.
 template <overlap Policy>
-struct running_page {
+struct running_page_data {
   state<int> next{1};
   action<&doubled, Policy> run;
-
-  element view() {
-    auto const go = [this]() -> task<> {
-      auto const value = *next;
-      auto const result = co_await run.run(value);
-
-      runs.lines.push_back("gave " + std::to_string(value) + " " + told(result));
-    };
-
-    auto const label = run->loading ? "waits" : "go";
-
-    return div({button(label) | on_click(go)});
-  }
 };
 
-// It holds what it gave too, a copy: its caller is given the run's own.
-struct valued_page {
-  action<&doubled> run;
+template <overlap Policy>
+[[nodiscard]] element running_view() {
+  auto &self = use_context<running_page_data<Policy>>();
 
-  element view() { return p(std::to_string(run->value)); }
+  auto const go = [&self]() -> task<> {
+    auto const value = *self->next;
+    auto const result = co_await self->run.run(value);
+
+    runs.lines.push_back("gave " + std::to_string(value) + " " + told(result));
+  };
+
+  auto const label = self->run->loading ? "waits" : "go";
+
+  return div({button(label) | on_click(go)});
+}
+
+constexpr component<> refusing_page = [] { return running_view<overlap::refuse>(); };
+
+constexpr component<> restarting_page = [] { return running_view<overlap::restart>(); };
+
+// It holds what it gave too, a copy: its caller is given the run's own.
+struct valued_page_data {
+  action<&doubled> run;
+};
+
+constexpr component<> valued_page = [] {
+  auto &self = use_context<valued_page_data>();
+
+  return p(std::to_string(self->run->value));
 };
 
 // A result whose copy throws once asked to, as one that allocates may.
@@ -199,10 +209,14 @@ task<touchy> touchy_of(int value) {
   co_return touchy{value};
 }
 
-struct touchy_page {
+struct touchy_page_data {
   action<&touchy_of> run;
+};
 
-  element view() { return div({}); }
+constexpr component<> touchy_page = [] {
+  auto &self = use_context<touchy_page_data>();
+
+  return div({});
 };
 
 task<std::tuple<int, touchy>> pair_of(int value) {
@@ -211,54 +225,69 @@ task<std::tuple<int, touchy>> pair_of(int value) {
 }
 
 // Two values, the second's copy may throw: written both, or neither.
-struct pair_page {
+struct pair_page_data {
   action<&pair_of> run;
-
-  element view() { return div({}); }
 };
 
-struct timed_page {
+constexpr component<> pair_page = [] {
+  auto &self = use_context<pair_page_data>();
+
+  return div({});
+};
+
+struct timed_page_data {
   action<&doubled> run;
-
-  element view() { return div({}); }
 };
 
-struct timed_restart_page {
-  action<&doubled, overlap::restart> run;
+constexpr component<> timed_page = [] {
+  auto &self = use_context<timed_page_data>();
 
-  element view() { return div({}); }
+  return div({});
+};
+
+struct timed_restart_page_data {
+  action<&doubled, overlap::restart> run;
+};
+
+constexpr component<> timed_restart_page = [] {
+  auto &self = use_context<timed_restart_page_data>();
+
+  return div({});
 };
 
 // Runs its action as it first shows, and goes as its page asks.
-struct running_panel {
-  action<&doubled> run;
+constexpr component<> running_panel = [] {
+  auto &run = use_action<&doubled>();
 
-  task<> mounted() { static_cast<void>(co_await run.run(1)); }
-
-  element view() { return div({}); }
+  use_effect([&run]() -> task<> { static_cast<void>(co_await run.run(1)); });
+  return div({});
 };
 
-struct panel_page {
+struct panel_page_data {
   state<bool> shows{true};
+};
 
-  element view() {
-    auto const panel = [] { return component<running_panel>(); };
+constexpr component<> panel_page = [] {
+  auto &self = use_context<panel_page_data>();
 
-    return div({when(*shows, panel)});
-  }
+  return div({when(*self->shows, [] { return running_panel(); })});
 };
 
 // Its action with() a value, on a click, then what follows a success.
-struct with_page {
+struct with_page_data {
   state<int> next{3};
   state<std::vector<int>> told;
   action<&doubled> run{[this](int const &value) { told.update([value](auto &all) { all.push_back(value); }); }};
+};
 
-  element view() { return div({button("go") | on_click(run.with(*next)), p(std::to_string(run->value))}); }
+constexpr component<> with_page = [] {
+  auto &self = use_context<with_page_data>();
+
+  return div({button("go") | on_click(self->run.with(*self->next)), p(std::to_string(self->run->value))});
 };
 
 // Its action runs a member function of the component itself, declared before it, then what follows a success.
-struct self_page {
+struct self_page_data {
   // A parameter a braced argument builds, as with({.times = 2}).
   struct order {
     int times = 0;
@@ -277,24 +306,30 @@ struct self_page {
     calls += given.times;
   }
 
-  action<&self_page::work> run{this, [this] { ++successes; }};
+  action<&self_page_data::work> run{this, [this] { ++successes; }};
   // With nothing to follow a success.
-  action<&self_page::work> bare{this};
+  action<&self_page_data::work> bare{this};
+};
 
-  element view() {
-    return div({
-        button("work") | on_click(run.with({.times = 2})),
-        button("fail") | on_click(run.with({.times = 0})),
-        button("bare") | on_click(bare.with({.times = 3})),
-    });
-  }
+constexpr component<> self_page = [] {
+  auto &self = use_context<self_page_data>();
+
+  return div({
+      button("work") | on_click(self->run.with({.times = 2})),
+      button("fail") | on_click(self->run.with({.times = 0})),
+      button("bare") | on_click(self->bare.with({.times = 3})),
+  });
 };
 
 // An action from a click: its failure is its error and the app's on_error's; a click refused is no failure.
-struct untold_page {
+struct untold_page_data {
   action<&doubled> run;
+};
 
-  element view() { return button("go") | on_click(run.with(4)); }
+constexpr component<> untold_page = [] {
+  auto &self = use_context<untold_page_data>();
+
+  return button("go") | on_click(self->run.with(4));
 };
 
 // Its action gives a word long enough that its copy, into where its runs are, allocates.
@@ -303,23 +338,35 @@ task<std::string> spelled(int times) {
   co_return std::string(static_cast<std::size_t>(times), 'a');
 }
 
-struct word_page {
+struct word_page_data {
   action<&spelled> run;
+};
 
-  element view() { return p(run->value); }
+constexpr component<> word_page = [] {
+  auto &self = use_context<word_page_data>();
+
+  return p(self->run->value);
 };
 
 // What follows a success throws.
-struct throwing_success_page {
+struct throwing_success_page_data {
   action<&doubled> run{[](int const &) { throw std::runtime_error{"after"}; }};
-
-  element view() { return p(std::to_string(run->value)); }
 };
 
-struct void_page {
-  action<&nothing_much> touch;
+constexpr component<> throwing_success_page = [] {
+  auto &self = use_context<throwing_success_page_data>();
 
-  element view() { return div({}); }
+  return p(std::to_string(self->run->value));
+};
+
+struct void_page_data {
+  action<&nothing_much> touch;
+};
+
+constexpr component<> void_page = [] {
+  auto &self = use_context<void_page_data>();
+
+  return div({});
 };
 
 } // namespace
@@ -329,7 +376,9 @@ TEST_CASE("action: one at a time, a call while one is under way refused at once"
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<running_page<overlap::refuse>> instance{time.get_executor(), shown};
+  test_app instance{
+      time.get_executor(), shown, refusing_page, {.contexts = {provide<running_page_data<overlap::refuse>>()}}
+  };
   std::string waiting;
 
   auto const act = [&]() -> task<> {
@@ -337,7 +386,7 @@ TEST_CASE("action: one at a time, a call while one is under way refused at once"
     co_await settle();
     waiting = shown.html();
 
-    instance.component().next = 2;
+    instance.context<running_page_data<overlap::refuse>>().next = 2;
     instance.dispatch(shown.find("button"), "click");
     co_await quoll::async::sleep_for(20ms);
   };
@@ -353,14 +402,16 @@ TEST_CASE("action: with overlap::restart, a call stops the run under way, which 
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<running_page<overlap::restart>> instance{time.get_executor(), shown};
+  test_app instance{
+      time.get_executor(), shown, restarting_page, {.contexts = {provide<running_page_data<overlap::restart>>()}}
+  };
   std::string restarted;
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
 
-    instance.component().next = 2;
+    instance.context<running_page_data<overlap::restart>>().next = 2;
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
     restarted = shown.html();
@@ -379,22 +430,24 @@ TEST_CASE("action: a run that fails holds why, gone as the next starts", "[ui][a
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<running_page<overlap::refuse>> instance{time.get_executor(), shown};
+  test_app instance{
+      time.get_executor(), shown, refusing_page, {.contexts = {provide<running_page_data<overlap::refuse>>()}}
+  };
   bool failed_after_second = false;
   bool cleared_on_third = false;
 
   auto const act = [&]() -> task<> {
-    auto const &running = instance.component().run;
+    auto const &running = instance.context<running_page_data<overlap::refuse>>().run;
 
     instance.dispatch(shown.find("button"), "click");
     co_await quoll::async::sleep_for(20ms);
 
-    instance.component().next = 2;
+    instance.context<running_page_data<overlap::refuse>>().next = 2;
     instance.dispatch(shown.find("button"), "click");
     co_await quoll::async::sleep_for(20ms);
     failed_after_second = !running->loading && running->error != nullptr;
 
-    instance.component().next = 3;
+    instance.context<running_page_data<overlap::refuse>>().next = 3;
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
     cleared_on_third = running->loading && running->error == nullptr;
@@ -417,11 +470,11 @@ TEST_CASE("action: it holds a copy of what its caller is given", "[ui][action]")
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<valued_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, valued_page, {.contexts = {provide<valued_page_data>()}}};
   int given = 0;
 
   auto const act = [&]() -> task<> {
-    auto const result = co_await instance.component().run.run(2);
+    auto const result = co_await instance.context<valued_page_data>().run.run(2);
 
     given = result.value_or(0);
     co_await settle();
@@ -438,13 +491,13 @@ TEST_CASE("action: of nothing gives whether it ended", "[ui][action]") {
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<void_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, void_page, {.contexts = {provide<void_page_data>()}}};
   bool first = false;
   bool second = true;
 
   auto const act = [&]() -> task<> {
-    first = (co_await instance.component().touch.run(1)).has_value();
-    second = (co_await instance.component().touch.run(2)).has_value();
+    first = (co_await instance.context<void_page_data>().touch.run(1)).has_value();
+    second = (co_await instance.context<void_page_data>().touch.run(2)).has_value();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
@@ -457,13 +510,13 @@ TEST_CASE("action: a run its caller stops, as a timeout does, is under way no mo
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<timed_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, timed_page, {.contexts = {provide<timed_page_data>()}}};
   bool timed_out = false;
   bool busy_after = true;
   bool again = false;
 
   auto const act = [&]() -> task<> {
-    auto &run = instance.component().run;
+    auto &run = instance.context<timed_page_data>().run;
 
     try {
       static_cast<void>(co_await quoll::async::with_timeout(5ms, run.run(1)));
@@ -471,7 +524,7 @@ TEST_CASE("action: a run its caller stops, as a timeout does, is under way no mo
       timed_out = failure.code() == std::errc::timed_out;
     }
 
-    busy_after = instance.component().run->loading;
+    busy_after = instance.context<timed_page_data>().run->loading;
     again = (co_await run.run(2)).has_value();
   };
 
@@ -479,7 +532,7 @@ TEST_CASE("action: a run its caller stops, as a timeout does, is under way no mo
   CHECK(timed_out);
   CHECK_FALSE(busy_after);
   CHECK(again);
-  CHECK_FALSE(instance.component().run->loading);
+  CHECK_FALSE(instance.context<timed_page_data>().run->loading);
 }
 
 namespace {
@@ -543,13 +596,13 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<timed_restart_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, timed_restart_page, {.contexts = {provide<timed_restart_page_data>()}}};
   std::stop_source caller;
   bool busy_meanwhile = false;
   bool second_gave = false;
 
   auto const act = [&]() -> task<> {
-    auto &run = instance.component().run;
+    auto &run = instance.context<timed_restart_page_data>().run;
 
     // The first run, under a stop of its caller's that the test asks for.
     auto const stoppable = [&]() -> task<> {
@@ -570,7 +623,7 @@ TEST_CASE(
 
     auto const watch = [&]() -> task<> {
       co_await quoll::async::sleep_for(5ms);
-      busy_meanwhile = instance.component().run->loading;
+      busy_meanwhile = instance.context<timed_restart_page_data>().run->loading;
     };
 
     co_await quoll::async::when_all(first(), second(), watch());
@@ -579,7 +632,7 @@ TEST_CASE(
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(busy_meanwhile);
   CHECK(second_gave);
-  CHECK_FALSE(instance.component().run->loading);
+  CHECK_FALSE(instance.context<timed_restart_page_data>().run->loading);
 }
 
 TEST_CASE("action: a value it cannot hold is this run's failure, given rather than thrown", "[ui][action]") {
@@ -588,12 +641,12 @@ TEST_CASE("action: a value it cannot hold is this run's failure, given rather th
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<touchy_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, touchy_page, {.contexts = {provide<touchy_page_data>()}}};
   bool first = false;
   std::string second;
 
   auto const act = [&]() -> task<> {
-    auto &run = instance.component().run;
+    auto &run = instance.context<touchy_page_data>().run;
 
     first = (co_await run.run(1)).has_value();
     touchy_throws = true;
@@ -610,8 +663,8 @@ TEST_CASE("action: a value it cannot hold is this run's failure, given rather th
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
 
-  auto const &kept = instance.component().run->value;
-  auto const &error = instance.component().run->error;
+  auto const &kept = instance.context<touchy_page_data>().run->value;
+  auto const &error = instance.context<touchy_page_data>().run->error;
 
   CHECK(first);
   CHECK(second == "no");
@@ -626,11 +679,11 @@ TEST_CASE("action: a run whose second value cannot be made writes none of them",
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<pair_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, pair_page, {.contexts = {provide<pair_page_data>()}}};
   bool second_failed = false;
 
   auto const act = [&]() -> task<> {
-    auto &run = instance.component().run;
+    auto &run = instance.context<pair_page_data>().run;
 
     static_cast<void>(co_await run.run(1));
     touchy_throws = true;
@@ -640,8 +693,8 @@ TEST_CASE("action: a run whose second value cannot be made writes none of them",
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
 
-  auto const &[number, kept] = instance.component().run->value;
-  auto const &error = instance.component().run->error;
+  auto const &[number, kept] = instance.context<pair_page_data>().run->value;
+  auto const &error = instance.context<pair_page_data>().run->error;
 
   CHECK(second_failed);
   CHECK(number == 1);
@@ -654,11 +707,11 @@ TEST_CASE("action: a component that goes stops its runs", "[ui][action]") {
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<panel_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, panel_page, {.contexts = {provide<panel_page_data>()}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().shows = false;
+    instance.context<panel_page_data>().shows = false;
     co_await quoll::async::sleep_for(20ms);
   };
 
@@ -678,7 +731,9 @@ TEST_CASE(
 
     virtual_time time;
     memory_renderer const shown;
-    test_app<running_page<overlap::refuse>> instance{time.get_executor(), shown};
+    test_app instance{
+        time.get_executor(), shown, refusing_page, {.contexts = {provide<running_page_data<overlap::refuse>>()}}
+    };
     bool escaped = false;
     // Whether an allocation failed: one does once, the count back below zero.
     bool injected = false;
@@ -686,7 +741,7 @@ TEST_CASE(
     auto const act = [&]() -> task<> {
       co_await settle();
 
-      auto &run = instance.component().run;
+      auto &run = instance.context<running_page_data<overlap::refuse>>().run;
       auto running = run.run(1);
 
       quoll::test::allocations_before_failing = before;
@@ -705,7 +760,7 @@ TEST_CASE(
     INFO("allocations before failing: " << before);
     REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
     CHECK_FALSE(escaped);
-    CHECK_FALSE(instance.component().run->loading);
+    CHECK_FALSE(instance.context<running_page_data<overlap::refuse>>().run->loading);
 
     if (!injected) {
       clean = true;
@@ -720,11 +775,15 @@ TEST_CASE(
 namespace {
 
 // What follows a success, a function object that counts what it is told: one object, whatever run tells it.
-struct counting_page {
+struct counting_page_data {
   int told = 0;
   action<&doubled> run{[count = 0, this](int const &) mutable { told = ++count; }};
+};
 
-  element view() { return button("run") | on_click(run.with(3)); }
+constexpr component<> counting_page = [] {
+  auto &self = use_context<counting_page_data>();
+
+  return button("run") | on_click(self->run.with(3));
 };
 
 } // namespace
@@ -734,7 +793,7 @@ TEST_CASE("action: what follows a success is one object, told by every run", "[u
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<counting_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, counting_page, {.contexts = {provide<counting_page_data>()}}};
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -745,7 +804,7 @@ TEST_CASE("action: what follows a success is one object, told by every run", "[u
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(instance.component().told == 2);
+  CHECK(instance.context<counting_page_data>().told == 2);
 }
 
 TEST_CASE("action: with() runs it from a click, what it gave held, then on_success", "[ui][action]") {
@@ -753,29 +812,29 @@ TEST_CASE("action: with() runs it from a click, what it gave held, then on_succe
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<with_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, with_page, {.contexts = {provide<with_page_data>()}}};
   bool loading_meanwhile = false;
 
   auto const act = [&]() -> task<> {
     co_await settle();
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
-    loading_meanwhile = instance.component().run->loading;
+    loading_meanwhile = instance.context<with_page_data>().run->loading;
     co_await quoll::async::sleep_for(20ms);
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(loading_meanwhile);
-  CHECK(instance.component().run->value == 6);
-  CHECK_FALSE(instance.component().run->loading);
-  CHECK(*instance.component().told == std::vector<int>{6});
+  CHECK(instance.context<with_page_data>().run->value == 6);
+  CHECK_FALSE(instance.context<with_page_data>().run->loading);
+  CHECK(*instance.context<with_page_data>().told == std::vector<int>{6});
   CHECK(shown.html().contains("<p>6</p>"));
 }
 
 TEST_CASE("action: of a member function of its component, run on it", "[ui][action]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<self_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, self_page, {.contexts = {provide<self_page_data>()}}};
 
   bool worked = false;
 
@@ -783,7 +842,8 @@ TEST_CASE("action: of a member function of its component, run on it", "[ui][acti
     co_await settle();
     instance.dispatch(shown.find_text("work"), "click");
     co_await quoll::async::sleep_for(5ms);
-    worked = instance.component().run->error == nullptr && !instance.component().run->loading;
+    worked =
+        instance.context<self_page_data>().run->error == nullptr && !instance.context<self_page_data>().run->loading;
 
     // A failure tells nothing to what follows a success.
     instance.dispatch(shown.find_text("fail"), "click");
@@ -795,10 +855,10 @@ TEST_CASE("action: of a member function of its component, run on it", "[ui][acti
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(worked);
-  CHECK(instance.component().calls == 5);
-  CHECK(instance.component().successes == 1);
-  REQUIRE(instance.component().run->error != nullptr);
-  CHECK_THROWS_WITH(std::rethrow_exception(instance.component().run->error), "no work");
+  CHECK(instance.context<self_page_data>().calls == 5);
+  CHECK(instance.context<self_page_data>().successes == 1);
+  REQUIRE(instance.context<self_page_data>().run->error != nullptr);
+  CHECK_THROWS_WITH(std::rethrow_exception(instance.context<self_page_data>().run->error), "no work");
 }
 
 TEST_CASE(
@@ -810,13 +870,20 @@ TEST_CASE(
   virtual_time time;
   memory_renderer const shown;
   std::vector<std::string> failures;
-  test_app<untold_page> instance{time.get_executor(), shown, {.on_error = [&failures](std::exception_ptr failure) {
-                                   try {
-                                     std::rethrow_exception(failure);
-                                   } catch (std::exception const &error) {
-                                     failures.emplace_back(error.what());
-                                   }
-                                 }}};
+  test_app instance{
+      time.get_executor(),
+      shown,
+      untold_page,
+      {.on_error =
+           [&failures](std::exception_ptr failure) {
+             try {
+               std::rethrow_exception(failure);
+             } catch (std::exception const &error) {
+               failures.emplace_back(error.what());
+             }
+           },
+       .contexts = {provide<untold_page_data>()}}
+  };
 
   auto const act = [&]() -> task<> {
     co_await settle();
@@ -829,8 +896,8 @@ TEST_CASE(
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(runs.lines == std::vector<std::string>{"start 4"});
   CHECK(failures == std::vector<std::string>{"no 4"});
-  REQUIRE(instance.component().run->error != nullptr);
-  CHECK_THROWS_WITH(std::rethrow_exception(instance.component().run->error), "no 4");
+  REQUIRE(instance.context<untold_page_data>().run->error != nullptr);
+  CHECK_THROWS_WITH(std::rethrow_exception(instance.context<untold_page_data>().run->error), "no 4");
 }
 
 TEST_CASE("action: what follows a success throws to run()'s caller, holding the success", "[ui][action]") {
@@ -838,14 +905,16 @@ TEST_CASE("action: what follows a success throws to run()'s caller, holding the 
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<throwing_success_page> instance{time.get_executor(), shown};
+  test_app instance{
+      time.get_executor(), shown, throwing_success_page, {.contexts = {provide<throwing_success_page_data>()}}
+  };
   std::string thrown;
 
   auto const act = [&]() -> task<> {
     co_await settle();
 
     try {
-      static_cast<void>(co_await instance.component().run.run(5));
+      static_cast<void>(co_await instance.context<throwing_success_page_data>().run.run(5));
     } catch (std::runtime_error const &error) {
       thrown = error.what();
     }
@@ -853,8 +922,8 @@ TEST_CASE("action: what follows a success throws to run()'s caller, holding the 
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(thrown == "after");
-  CHECK(instance.component().run->value == 10);
-  CHECK(instance.component().run->error == nullptr);
+  CHECK(instance.context<throwing_success_page_data>().run->value == 10);
+  CHECK(instance.context<throwing_success_page_data>().run->error == nullptr);
 }
 
 TEST_CASE(
@@ -869,14 +938,14 @@ TEST_CASE(
 
     virtual_time time;
     memory_renderer const shown;
-    test_app<with_page> instance{time.get_executor(), shown};
+    test_app instance{time.get_executor(), shown, with_page, {.contexts = {provide<with_page_data>()}}};
     bool thrown = false;
     bool injected = false;
 
     auto const act = [&]() -> task<> {
       co_await settle();
 
-      auto handler = instance.component().run.with(3);
+      auto handler = instance.context<with_page_data>().run.with(3);
 
       // From the making of its run, which throws from the handler's call.
       quoll::test::allocations_before_failing = before;
@@ -895,7 +964,7 @@ TEST_CASE(
     INFO("allocations before failing: " << before);
     REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
 
-    auto const &result = *instance.component().run;
+    auto const &result = *instance.context<with_page_data>().run;
 
     CHECK((result.value == 6 || result.error != nullptr || thrown));
     // A failure it holds is thrown as well, for the app's on_error.
@@ -920,14 +989,14 @@ TEST_CASE("action: with() under a lack of memory, as the word it gave is copied,
   for (long before = 0; before < 60; ++before) {
     virtual_time time;
     memory_renderer const shown;
-    test_app<word_page> instance{time.get_executor(), shown};
+    test_app instance{time.get_executor(), shown, word_page, {.contexts = {provide<word_page_data>()}}};
     bool thrown = false;
     bool injected = false;
 
     auto const act = [&]() -> task<> {
       co_await settle();
 
-      auto handler = instance.component().run.with(64);
+      auto handler = instance.context<word_page_data>().run.with(64);
 
       // From the making of its run, which throws from the handler's call.
       quoll::test::allocations_before_failing = before;
@@ -945,7 +1014,7 @@ TEST_CASE("action: with() under a lack of memory, as the word it gave is copied,
 
     INFO("allocations before failing: " << before);
     REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-    auto const &run = *instance.component().run;
+    auto const &run = *instance.context<word_page_data>().run;
 
     CHECK((run.value == std::string(64, 'a') || run.error != nullptr || thrown));
     CHECK_FALSE(run.loading);
@@ -972,10 +1041,14 @@ task<std::unique_ptr<int>> boxed(int value) {
   co_return std::make_unique<int>(value);
 }
 
-struct boxed_page {
+struct boxed_page_data {
   action<&boxed> run;
+};
 
-  element view() { return p(run->loading ? "boxing" : "boxed"); }
+constexpr component<> boxed_page = [] {
+  auto &self = use_context<boxed_page_data>();
+
+  return p(self->run->loading ? "boxing" : "boxed");
 };
 
 static_assert(quoll::ui::detail::LinkedMember<action<&doubled>>);
@@ -986,13 +1059,13 @@ static_assert(std::same_as<action<&boxed>::held_type, void>);
 TEST_CASE("action: of a result that only moves, which it holds none of, its caller given it", "[ui][action]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<boxed_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, boxed_page, {.contexts = {provide<boxed_page_data>()}}};
   int given = 0;
 
   auto const act = [&]() -> task<> {
     co_await settle();
 
-    auto boxed_value = co_await instance.component().run.run(7);
+    auto boxed_value = co_await instance.context<boxed_page_data>().run.run(7);
 
     given = boxed_value ? **boxed_value : 0;
     co_await settle();
@@ -1000,7 +1073,7 @@ TEST_CASE("action: of a result that only moves, which it holds none of, its call
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(given == 7);
-  CHECK_FALSE(instance.component().run->loading);
-  CHECK(instance.component().run->error == nullptr);
+  CHECK_FALSE(instance.context<boxed_page_data>().run->loading);
+  CHECK(instance.context<boxed_page_data>().run->error == nullptr);
   CHECK(shown.html().contains("<p>boxed</p>"));
 }

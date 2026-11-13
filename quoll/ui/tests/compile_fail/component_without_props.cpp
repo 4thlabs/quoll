@@ -34,30 +34,11 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui::form_state: in a component with props, one of whose fields it edits
+// expect: quoll::ui: a component says its props: component<props>, or component<> for none
 //
-// A form in a component without props: nothing would give it the value it edits.
+// A component written without its props: one rule, the same as an extern declaration in a header has to follow.
 
-#include <quoll/ui/component/child_component.hpp>
-#include <quoll/ui/data/form_state.hpp>
-#include <quoll/ui/view/element.hpp>
+#include <quoll/ui/component/component.hpp>
+#include <quoll/ui/view/tags.hpp>
 
-#include <string>
-
-struct item {
-  std::string name;
-};
-
-struct other {
-  struct props {
-    item value;
-  };
-};
-
-struct name_editor {
-  quoll::ui::form_state<&other::props::value> form;
-
-  quoll::ui::element view();
-};
-
-auto const placed = quoll::ui::component<name_editor>();
+constexpr quoll::ui::component badge = [] { return quoll::ui::p("badge"); };

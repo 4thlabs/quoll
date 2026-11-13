@@ -221,8 +221,9 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
 
 ### Step 6: the UI DSL, complete
 
-- Nested stateful components: done, `component<C>(props)` with its states kept by type and key, its props given anew,
-  `mounted()` and `unmounted()`, and its tasks stopped as it goes (`docs/ui.md`). `ui::callback<Signature>` in props
+- Nested stateful components: done, components placed by calling them, `product_detail({.item = item})`, their hooks
+  kept by component and key, their props given anew, and their effects, actions and handlers stopped as they go
+  (`docs/ui.md`). `ui::callback<Signature>` in props
   runs in the task of the component that wrote it, as decided on 2026-11-10: the child stops waiting for it as it
   goes, the parent's work goes on. A view is not run again when its props compare equal and none of its states
   changed (`docs/ui.md`), its callbacks those of its last view, as decided on 2026-11-11.
@@ -399,7 +400,7 @@ changes only what the harness shows. Candidates:
 - **A callback given in props runs in the task of the component that wrote it, implicitly** (2026-11-10), the design
   doc's choice 3a, against a task of the caller's or an explicit `spawn` of the parent's: the child that calls it
   stops waiting as it goes, and the parent's work goes on. The user writes neither `spawn` nor an annotation: the
-  component is the one whose view makes the callback, so that one made elsewhere, in a handler or `mounted()`, runs in
+  component is the one whose view makes the callback, so that one made elsewhere, in a handler or an effect, runs in
   its caller's task. A callback compares equal to any other that calls something, whatever its function captures, so
   that props holding one compare by the rest, for the skipped views of step 6. A view not run again keeps the
   callbacks of its last one, so that one capturing what changes from a view to the next calls with what it captured
@@ -452,8 +453,22 @@ changes only what the harness shows. Candidates:
   render's: Codex then the local review found closures that outlived the props they captured, case after case, and the
   maintainer agreed to the rule rather than a fix per closure. A struct with `operator()` is one too, for one who keeps
   a component's props and helpers together. `use_context` and `provide_context` take Leptos's names; no `use_mounted`,
-  as an effect on nothing runs once and stops as the component goes. Next: the samples, the router's pages and the app's
-  own component as functions, then the struct components removed.
+  as an effect on nothing runs once and stops as the component goes. Done since: the samples, the router's pages and the
+  app's root as functions, the struct components removed (see the next entry).
+- **A component is an object of its props, placed by calling it** (2026-11-13), as React's JSX places a component: the
+  maintainer refused `component<product_detail>(...)` in a view ("je veux utiliser le nom du compo comme dans react").
+  `component<props>` depends only on its props, so that a header declares it `extern` and a source of its own defines
+  it, which a change to it alone compiles again; and one rule writes it, its props always written, `constexpr
+  component<props>`, `inline` in a header, `component<>` with none, as the maintainer asked for one way rather than a
+  type deduced beside one written ("il faut une seule règle"). Routes and links name the page object, `route<"{id}",
+  product_page>()`, `link_to(product_page, {.id = 7}, ...)`, and the app's root is a component with no props, placed as
+  any other: `mount(app_shell, "#app", options)`. `mounted()` and `unmounted()` went with the structs: an effect on
+  nothing runs once, and its run is stopped as the component goes; effects start children first, in the order the view
+  places them, as React's. A screen declares its components with their props in one header and defines each in a
+  source named after it, as the dashboard does. A rebuild of one component is to take a second at most, which the
+  maintainer set: with Quoll's header and the app's contexts precompiled, under Clang, a view alone takes 0.6 s and one
+  with a form and an action 1.4 s, the rest in instantiating `use_effect` and `use_action` in its source, about 0.6 s
+  each, which the next pull request takes into Quoll's library behind type erasure, with a budget CI checks.
 - **A debounce is an option of the effect** (2026-11-12), as the maintainer chose over a `debounced<T>` value to
   declare beside the state, as React's `useDebounce`, and over a pause Quoll would add to any change made by typing:
   `effect search{query, f, found, {.debounce = 300ms}}`. A run that follows a change waits that long before it calls
@@ -461,7 +476,7 @@ changes only what the harness shows. Candidates:
   starts and one `reload()` asks for do not wait. It replaces a `sleep_for` at the top of the function, which mixed the pause with
   the call.
 - **A form edits a value its props give** (2026-11-12), as React Hook Form's `defaultValues` with `keepDirtyValues`:
-  `form_state<&props::item>` takes the value before each view of its component, `bind(form, &item::price)` keeps an
+  `use_form(given.item)` takes the value its view gives at each view, `bind(form, &item::price)` keeps an
   input and a field the same, reading the text by the field's type, `valid()` says whether every field typed in reads,
   and `action::with(form)` runs an action with the value as it is at the click, refused while it is not valid. When the
   props give another value, as once a save comes back, a field typed in that holds it is typed in no more: no reset to
@@ -890,21 +905,21 @@ of `components/schemas`.
 text, IME, selection and accessibility; Tailwind gives the styles.
 
 ```cpp
-struct counter {
-  state<int> count;
+using namespace quoll::ui;
 
-  element view() {
-    using namespace quoll::ui;
+inline constexpr component<> counter = [] {
+  auto &count = use_state(0);
 
-    return div({
-               text("Count: " + std::to_string(*count)) | tw("text-lg"),
-               button("Add") | tw("btn btn-primary") | on_click([this] { count = *count + 1; }),
-           }) |
-           tw("flex items-center gap-2");
-  }
+  auto const add = [&count] { count = *count + 1; };
+
+  return div({
+             text("Count: " + std::to_string(*count)) | tw("text-lg"),
+             button("Add") | tw("btn btn-primary") | on_click(add),
+         }) |
+         tw("flex items-center gap-2");
 };
 
-int main() { quoll::emscripten::mount<counter>(); }
+int main() { quoll::emscripten::mount(counter); }
 ```
 
 A state changing runs the view again; the diff reaches a `Renderer`, the DOM in a page. Handlers are plain functions or

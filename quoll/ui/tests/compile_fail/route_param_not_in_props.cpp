@@ -38,17 +38,16 @@
 //
 // A route whose parameter its page does not take: its value would go nowhere.
 
+#include <quoll/ui/component/component.hpp>
 #include <quoll/ui/routing/route.hpp>
-#include <quoll/ui/view/element.hpp>
 
 #include <cstdint>
 
-struct product_page {
-  struct props {
-    std::int64_t number = 0;
-  };
-
-  quoll::ui::element view(props const &given);
+struct product_page_props {
+  std::int64_t number = 0;
 };
+
+// Declared, as a header does, its view in a source of its own.
+extern quoll::ui::component<product_page_props> const product_page;
 
 constexpr auto shop = quoll::ui::routes(quoll::ui::route<"/products/{id}", product_page>());

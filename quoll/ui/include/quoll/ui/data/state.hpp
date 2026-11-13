@@ -47,11 +47,11 @@
 namespace quoll::ui {
 
 /**
- * @brief A value of a component that the interface depends on: changing it shows again, once, what the component views.
+ * @brief A value the interface depends on: changing it shows again, once, the components that read it.
  *
- * A member of a component, linked to its app when it is mounted. Changed through set(), `=` or update(), since a change
- * through a reference would go unnoticed. T needs no `==`: a change that shows nothing new costs a view, and no
- * operation on the renderer.
+ * What use_state() gives a component, or a member of a context, linked to its app once it is made. Changed through
+ * set(), `=` or update(), since a change through a reference would go unnoticed. T needs no `==`: a change that shows
+ * nothing new costs a view, and no operation on the renderer.
  *
  * Thread safety: none. Used from the app's executor, which runs one thing at a time.
  */

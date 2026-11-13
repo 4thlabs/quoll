@@ -40,4 +40,4 @@
 
 #include <quoll/emscripten/mount.hpp>
 
-int main() { quoll::emscripten::mount<notes_web::notes_page>(); }
+int main() { quoll::emscripten::mount(notes_web::notes_page); }

@@ -64,8 +64,7 @@ using quoll::test::session;
 using quoll::test::settle;
 using quoll::test::virtual_time;
 
-template <class C>
-using test_app = app<C, memory_renderer>;
+using test_app = app<memory_renderer>;
 
 struct chart_props {
   std::vector<std::string> labels;
@@ -80,24 +79,26 @@ inline constexpr auto line_chart = widget<chart_props>("./widgets/line_chart.js"
 
 inline constexpr auto bar_chart = widget<chart_props>("./widgets/bar_chart.js", "canvas");
 
-struct chart_page {
+struct chart_page_data {
   state<std::vector<int>> values{std::vector<int>{1, 2}};
   state<bool> shows{true};
   state<bool> bars{false};
   state<int> unrelated;
   std::vector<int> selected;
+};
 
-  element view() {
-    auto const select = [this](point_selected event) { selected.push_back(event.index); };
+constexpr component<> chart_page = [] {
+  auto &self = use_context<chart_page_data>();
 
-    auto const chart = [&] {
-      auto const &shown = *bars ? bar_chart : line_chart;
+  auto const select = [&self](point_selected event) { self->selected.push_back(event.index); };
 
-      return shown({.labels = {"a", "b"}, .values = *values}) | tw("h-64") | on("point_selected", select);
-    };
+  auto const chart = [&] {
+    auto const &shown = *self->bars ? bar_chart : line_chart;
 
-    return div({p(std::to_string(*unrelated)), when(*shows, chart)});
-  }
+    return shown({.labels = {"a", "b"}, .values = *self->values}) | tw("h-64") | on("point_selected", select);
+  };
+
+  return div({p(std::to_string(*self->unrelated)), when(*self->shows, chart)});
 };
 
 // A renderer that shows no widget.
@@ -136,102 +137,110 @@ static_assert(!JsonEventFunction<void (*)(std::string)>);
 static_assert(!JsonEventFunction<void (*)()>);
 
 // A component of the page, with a chart of its own.
-struct chart_card {
-  struct props {
-    std::vector<int> values;
+struct chart_card_props {
+  std::vector<int> values;
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  element view(props const &given) { return div({line_chart({.labels = {"a"}, .values = given.values})}); }
+  [[nodiscard]] bool operator==(chart_card_props const &) const = default;
 };
 
-struct card_page {
+constexpr component<chart_card_props> chart_card = [](chart_card_props const &given) {
+  return div({line_chart({.labels = {"a"}, .values = given.values})});
+};
+
+struct card_page_data {
   state<bool> shows{true};
+};
 
-  element view() {
-    auto const card = [] { return component<chart_card>({.values = {1}}); };
+constexpr component<> card_page = [] {
+  auto &self = use_context<card_page_data>();
 
-    return div({when(*shows, card)});
-  }
+  auto const card = [] { return chart_card({.values = {1}}); };
+
+  return div({when(*self->shows, card)});
 };
 
 // Keyed charts, reordered.
-struct keyed_charts {
+struct keyed_charts_data {
   state<std::vector<std::string>> names{std::vector<std::string>{"a", "b"}};
+};
 
-  element view() {
-    auto const chart = [](std::string const &name) {
-      return line_chart({.labels = {name}, .values = {}}) | attribute("data-name", name) | key(name);
-    };
+constexpr component<> keyed_charts = [] {
+  auto &self = use_context<keyed_charts_data>();
 
-    return div({list(names, chart)});
-  }
+  auto const chart = [](std::string const &name) {
+    return line_chart({.labels = {name}, .values = {}}) | attribute("data-name", name) | key(name);
+  };
+
+  return div({list(self->names, chart)});
 };
 
 // A chart, and what it emits as it mounts or updates, seen by the function of the view that gave its props.
-struct ready_page {
+struct ready_page_data {
   state<int> view_count;
   std::vector<int> seen;
+};
 
-  element view() {
-    auto const ready = [this, made_by = *view_count](point_selected event) {
-      seen.push_back(made_by * 10 + event.index);
-    };
+constexpr component<> ready_page = [] {
+  auto &self = use_context<ready_page_data>();
 
-    auto const chart = line_chart({.labels = {}, .values = {*view_count}});
+  auto const ready = [&self, made_by = *self->view_count](point_selected event) {
+    self->seen.push_back(made_by * 10 + event.index);
+  };
 
-    return div({chart | on("point_selected", ready)});
-  }
+  auto const chart = line_chart({.labels = {}, .values = {*self->view_count}});
+
+  return div({chart | on("point_selected", ready)});
 };
 
 // Two charts, the first of which fails to mount.
-struct two_charts {
-  element view() { return div({bar_chart({.labels = {}, .values = {}}), line_chart({.labels = {}, .values = {}})}); }
+constexpr component<> two_charts = [] {
+  return div({bar_chart({.labels = {}, .values = {}}), line_chart({.labels = {}, .values = {}})});
 };
 
 // A chart that is given children in a later view.
-struct crowding_later {
+struct crowding_later_data {
   state<bool> crowded{false};
+};
 
-  element view() {
-    auto chart = line_chart({.labels = {}, .values = {}});
+constexpr component<> crowding_later = [] {
+  auto &self = use_context<crowding_later_data>();
 
-    if (*crowded) {
-      chart.children.push_back(p("mine"));
-    }
+  auto chart = line_chart({.labels = {}, .values = {}});
 
-    return div({chart});
+  if (*self->crowded) {
+    chart.children.push_back(p("mine"));
   }
+
+  return div({chart});
 };
 
 // Two charts whose props change together.
-struct changing_charts {
+struct changing_charts_data {
   state<int> value;
   state<bool> shows{true};
+};
 
-  element view() {
-    auto const second = [this] { return line_chart({.labels = {"second"}, .values = {*value}}); };
+constexpr component<> changing_charts = [] {
+  auto &self = use_context<changing_charts_data>();
 
-    return div({line_chart({.labels = {"first"}, .values = {*value}}), when(*shows, second)});
-  }
+  auto const second = [&self] { return line_chart({.labels = {"second"}, .values = {*self->value}}); };
+
+  return div({line_chart({.labels = {"first"}, .values = {*self->value}}), when(*self->shows, second)});
 };
 
 // A chart given children, which are its module's.
-struct crowded_chart {
-  element view() {
-    auto chart = line_chart({.labels = {}, .values = {}});
+constexpr component<> crowded_chart = [] {
+  auto chart = line_chart({.labels = {}, .values = {}});
 
-    chart.children.push_back(p("mine"));
-    return chart;
-  }
+  chart.children.push_back(p("mine"));
+  return chart;
 };
 
-// A chart, and a mounted() of its own, which a refusing executor cannot start.
-struct starting_page {
-  task<> mounted() { co_return; }
+// A chart, and an effect of its own, which a refusing executor cannot start.
+constexpr component<> starting_page = [] {
+  use_effect([]() -> task<> { co_return; });
 
-  element view() { return div({line_chart({.labels = {}, .values = {}})}); }
+  return div({line_chart({.labels = {}, .values = {}})});
 };
 
 // Shows widgets in memory, failing to mount the bar chart, and calling back as one mounts.
@@ -334,7 +343,7 @@ using namespace widget_test;
 TEST_CASE("widget: mounted once its node is in place, with its props as JSON", "[ui][widget]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<chart_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, chart_page, {.contexts = {provide<chart_page_data>()}}};
 
   REQUIRE(quoll::test::run(time, session(instance, [] { return settle(); })) == 0);
   REQUIRE(shown.widget_log() == std::vector<std::string>{mounted_line, "unmount ./widgets/line_chart.js"});
@@ -343,17 +352,17 @@ TEST_CASE("widget: mounted once its node is in place, with its props as JSON", "
 TEST_CASE("widget: told of other props only, and unmounted before its node goes", "[ui][widget]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<chart_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, chart_page, {.contexts = {provide<chart_page_data>()}}};
 
   auto const act = [&]() -> task<> {
     // Nothing of the chart changes.
-    instance.component().unrelated = 1;
+    instance.context<chart_page_data>().unrelated = 1;
     co_await settle();
 
-    instance.component().values = std::vector<int>{3};
+    instance.context<chart_page_data>().values = std::vector<int>{3};
     co_await settle();
 
-    instance.component().shows = false;
+    instance.context<chart_page_data>().shows = false;
     co_await settle();
   };
 
@@ -370,10 +379,10 @@ TEST_CASE("widget: told of other props only, and unmounted before its node goes"
 TEST_CASE("widget: another module at its place is another node", "[ui][widget]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<chart_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, chart_page, {.contexts = {provide<chart_page_data>()}}};
 
   auto const act = [&]() -> task<> {
-    instance.component().bars = true;
+    instance.context<chart_page_data>().bars = true;
     co_await settle();
   };
 
@@ -391,9 +400,13 @@ TEST_CASE("widget: what it emits reaches its function, read from JSON", "[ui][wi
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<chart_page> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
-                                  failure = std::move(error);
-                                }}};
+  test_app instance{
+      time.get_executor(),
+      shown,
+      chart_page,
+      {.on_error = [&](std::exception_ptr error) { failure = std::move(error); },
+       .contexts = {provide<chart_page_data>()}}
+  };
 
   auto const act = [&]() -> task<> {
     instance.dispatch(shown.find("canvas"), "point_selected", R"({"index":1})");
@@ -404,13 +417,13 @@ TEST_CASE("widget: what it emits reaches its function, read from JSON", "[ui][wi
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().selected == std::vector<int>{1});
+  REQUIRE(instance.context<chart_page_data>().selected == std::vector<int>{1});
   REQUIRE_THROWS_AS(std::rethrow_exception(failure), std::invalid_argument);
 }
 
 TEST_CASE("widget: placed through a renderer that shows none, it throws", "[ui][widget]") {
   virtual_time time;
-  app<chart_page, plain_renderer> instance{time.get_executor(), plain_renderer{}};
+  app instance{time.get_executor(), plain_renderer{}, chart_page, {.contexts = {provide<chart_page_data>()}}};
 
   auto const start_then_stop = [&]() -> task<int> {
     REQUIRE_THROWS_AS(instance.start(), std::logic_error);
@@ -422,18 +435,18 @@ TEST_CASE("widget: placed through a renderer that shows none, it throws", "[ui][
 }
 
 TEST_CASE("widget: to_html writes its node, empty, for the module to mount", "[ui][widget]") {
-  chart_page page;
+  auto const page = div({p("0"), line_chart({.labels = {"a", "b"}, .values = {1, 2}}) | tw("h-64")});
 
-  REQUIRE(to_html(page.view()) == R"(<div><p>0</p><canvas class="h-64"></canvas></div>)");
+  REQUIRE(to_html(page) == R"(<div><p>0</p><canvas class="h-64"></canvas></div>)");
 }
 
 TEST_CASE("widget: one of a component goes with it, and moves with its key", "[ui][widget]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<card_page> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, card_page, {.contexts = {provide<card_page_data>()}}};
 
   auto const act = [&]() -> task<> {
-    instance.component().shows = false;
+    instance.context<card_page_data>().shows = false;
     co_await settle();
   };
 
@@ -447,7 +460,7 @@ TEST_CASE("widget: one of a component goes with it, and moves with its key", "[u
 
   virtual_time keyed_time;
   memory_renderer const keyed_shown;
-  test_app<keyed_charts> keyed{keyed_time.get_executor(), keyed_shown};
+  test_app keyed{keyed_time.get_executor(), keyed_shown, keyed_charts, {.contexts = {provide<keyed_charts_data>()}}};
   node_id before{};
   node_id after{};
 
@@ -455,7 +468,7 @@ TEST_CASE("widget: one of a component goes with it, and moves with its key", "[u
 
   auto const reorder = [&]() -> task<> {
     before = keyed_shown.find("canvas");
-    keyed.component().names = std::vector<std::string>{"b", "a"};
+    keyed.context<keyed_charts_data>().names = std::vector<std::string>{"b", "a"};
     co_await settle();
     after = keyed_shown.find("canvas");
     reordered = keyed_shown.html();
@@ -473,9 +486,7 @@ TEST_CASE("widget: one that fails to mount is told to on_error, and the others m
   virtual_time time;
   hooked_renderer const shown;
   int failures = 0;
-  app<two_charts, hooked_renderer> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr) {
-                                              ++failures;
-                                            }}};
+  app instance{time.get_executor(), shown, two_charts, {.on_error = [&](std::exception_ptr) { ++failures; }}};
 
   REQUIRE(quoll::test::run(time, session(instance, [] { return settle(); })) == 0);
   REQUIRE(failures == 1);
@@ -491,19 +502,19 @@ TEST_CASE("widget: what it emits as it mounts reaches its function", "[ui][widge
   virtual_time time;
   std::function<void(node_id)> mounting;
   hooked_renderer const shown{.mounting = &mounting};
-  app<ready_page, hooked_renderer> instance{time.get_executor(), shown};
+  app instance{time.get_executor(), shown, ready_page, {.contexts = {provide<ready_page_data>()}}};
 
   mounting = [&](node_id id) { instance.dispatch(id, "point_selected", R"({"index":3,"datasetIndex":0})"); };
 
   REQUIRE(quoll::test::run(time, session(instance, [] { return settle(); })) == 0);
   // The field it does not declare is left.
-  REQUIRE(instance.component().seen == std::vector<int>{3});
+  REQUIRE(instance.context<ready_page_data>().seen == std::vector<int>{3});
 }
 
 TEST_CASE("widget: given children, it is refused", "[ui][widget]") {
   virtual_time time;
   memory_renderer const shown;
-  test_app<crowded_chart> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, crowded_chart};
 
   auto const start_then_stop = [&]() -> task<int> {
     REQUIRE_THROWS_AS(instance.start(), std::logic_error);
@@ -512,22 +523,24 @@ TEST_CASE("widget: given children, it is refused", "[ui][widget]") {
   };
 
   REQUIRE(quoll::test::run(time, start_then_stop()) == 0);
-  REQUIRE_THROWS_AS(to_html(crowded_chart{}.view()), std::logic_error);
+  REQUIRE_THROWS_AS(to_html(crowded_chart()), std::logic_error);
 }
 
-TEST_CASE("widget: unmounted as a start that fails stops the app", "[ui][widget]") {
+TEST_CASE("widget: a start whose effect cannot start shows all the same, its widgets mounted", "[ui][widget]") {
   virtual_time time;
   memory_renderer const shown;
   bool fail = true;
-  app<starting_page, memory_renderer> instance{refusing_executor{time.get_executor(), &fail}, shown};
+  int failures = 0;
+  app instance{
+      refusing_executor{time.get_executor(), &fail},
+      shown,
+      starting_page,
+      {.on_error = [&failures](std::exception_ptr) { ++failures; }}
+  };
 
-  REQUIRE_THROWS_AS(instance.start(), std::runtime_error);
-  REQUIRE(
-      shown.widget_log() ==
-      std::vector<std::string>{
-          R"(mount ./widgets/line_chart.js {"labels":[],"values":[]})", "unmount ./widgets/line_chart.js"
-      }
-  );
+  instance.start();
+  REQUIRE(failures == 1);
+  REQUIRE(shown.widget_log() == std::vector<std::string>{R"(mount ./widgets/line_chart.js {"labels":[],"values":[]})"});
 
   fail = false;
 
@@ -537,19 +550,28 @@ TEST_CASE("widget: unmounted as a start that fails stops the app", "[ui][widget]
   };
 
   REQUIRE(quoll::test::run(time, stop()) == 0);
-  REQUIRE(shown.widget_log().size() == 2);
+  REQUIRE(
+      shown.widget_log() ==
+      std::vector<std::string>{
+          R"(mount ./widgets/line_chart.js {"labels":[],"values":[]})", "unmount ./widgets/line_chart.js"
+      }
+  );
 }
 
 TEST_CASE("widget: given children in a later view, the render is refused, and nothing changes", "[ui][widget]") {
   virtual_time time;
   memory_renderer const shown;
   std::exception_ptr failure;
-  test_app<crowding_later> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr error) {
-                                      failure = std::move(error);
-                                    }}};
+  test_app instance{
+      time.get_executor(),
+      shown,
+      crowding_later,
+      {.on_error = [&](std::exception_ptr error) { failure = std::move(error); },
+       .contexts = {provide<crowding_later_data>()}}
+  };
 
   auto const act = [&]() -> task<> {
-    instance.component().crowded = true;
+    instance.context<crowding_later_data>().crowded = true;
     co_await settle();
   };
 
@@ -570,19 +592,22 @@ TEST_CASE("widget: an update or an unmount that fails is told to on_error, and t
   bool fails_unmounts = false;
   hooked_renderer const shown{.fails_updates = &fails_updates, .fails_unmounts = &fails_unmounts};
   int failures = 0;
-  app<changing_charts, hooked_renderer> instance{time.get_executor(), shown, {.on_error = [&](std::exception_ptr) {
-                                                   ++failures;
-                                                 }}};
+  app instance{
+      time.get_executor(),
+      shown,
+      changing_charts,
+      {.on_error = [&](std::exception_ptr) { ++failures; }, .contexts = {provide<changing_charts_data>()}}
+  };
 
   auto const act = [&]() -> task<> {
     // The first update asked fails; the other chart is updated all the same.
     fails_updates = true;
-    instance.component().value = 1;
+    instance.context<changing_charts_data>().value = 1;
     co_await settle();
 
     // The unmount of the second fails; it goes all the same.
     fails_unmounts = true;
-    instance.component().shows = false;
+    instance.context<changing_charts_data>().shows = false;
     co_await settle();
   };
 
@@ -599,15 +624,15 @@ TEST_CASE("widget: what it emits as it updates reaches the function of the view 
   virtual_time time;
   std::function<void(node_id)> updating;
   hooked_renderer const shown{.updating = &updating};
-  app<ready_page, hooked_renderer> instance{time.get_executor(), shown};
+  app instance{time.get_executor(), shown, ready_page, {.contexts = {provide<ready_page_data>()}}};
 
   updating = [&](node_id id) { instance.dispatch(id, "point_selected", R"({"index":0})"); };
 
   auto const act = [&]() -> task<> {
-    instance.component().view_count = 1;
+    instance.context<ready_page_data>().view_count = 1;
     co_await settle();
   };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  REQUIRE(instance.component().seen == std::vector<int>{10});
+  REQUIRE(instance.context<ready_page_data>().seen == std::vector<int>{10});
 }

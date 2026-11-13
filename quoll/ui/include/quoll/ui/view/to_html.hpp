@@ -53,7 +53,7 @@ namespace quoll::ui {
  * It writes the tree as it is given: a nesting a parser rearranges, such as a `div` in a `p` or a `tr` directly in a
  * `table`, shows as in a page written by hand, not as in the DOM. Handlers do nothing here: this is the page as it
  * first shows, without the WASM that would make it live: a component of the view writes its view with its states as
- * they start, made for the page and gone with it, with no mounted() run. A `value` on a `select` selects nothing.
+ * they start, made for the page and gone with it, with no effect run. A `value` on a `select` selects nothing.
  *
  * Text and attribute values are escaped, so that what a user wrote cannot become markup. In `script` and `style`, where
  * escaping would change the meaning, text goes as it is: it must come from the application, or be refused here.

@@ -34,8 +34,10 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "sales_chart.hpp"
+// The sales of a product, in a chart.js chart, and the month of the point clicked. The widget writes its props and
+// reads what it emits with Glaze, which a change elsewhere in the page then does not compile again.
 
+#include "components.hpp"
 #include "product.hpp"
 
 #include <quoll/ui.hpp>
@@ -62,18 +64,20 @@ constexpr auto line_chart = widget<products::monthly_sales>("../widgets/line_cha
 
 } // namespace
 
-element sales_chart::view(props const &given) {
+constexpr component<sales_chart_props> sales_chart = [](sales_chart_props const &given) {
+  auto &selected = use_state<std::optional<std::size_t>>();
+
   // Sales come from the server, as months and units: only the months that have both are points of this chart.
   auto const points = std::min(given.sales.months.size(), given.sales.units.size());
 
   // The index comes from JavaScript: one out of those is no point.
-  auto const select = [this, points](point_selected event) {
+  auto const select = [&selected, points](point_selected event) {
     if (event.index >= 0 && static_cast<std::size_t>(event.index) < points) {
       selected = std::optional<std::size_t>{static_cast<std::size_t>(event.index)};
     }
   };
 
-  auto const figure = [this, &given] {
+  auto const figure = [&selected, &given] {
     auto const month = **selected;
 
     return p(std::format("{}: {} units", given.sales.months[month], given.sales.units[month]));
@@ -91,6 +95,6 @@ element sales_chart::view(props const &given) {
   });
 
   return shown | tw("flex flex-col gap-2");
-}
+};
 
 } // namespace dashboard_web

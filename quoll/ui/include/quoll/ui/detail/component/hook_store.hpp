@@ -158,7 +158,7 @@ inline constexpr hook_ops hook_ops_of = make_hook_ops<H>();
 // The hooks of a function component: what its use_ calls made, each found again by where it is called, and how many
 // times that place was called before in the same view, so that a branch not taken shifts nothing and a function calling
 // hooks may be called twice. A hook its view does not call keeps what it holds. Neither copied nor moved: its hooks are
-// referred to by the view's handlers and the component's tasks, which it outlives, as a struct component's members.
+// referred to by the view's handlers and the component's tasks, which it outlives.
 //
 // Thread safety: none, as its app.
 class hook_store {

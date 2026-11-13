@@ -37,7 +37,6 @@
 #ifndef QUOLL_UI_DETAIL_DATA_EFFECT_STARTER_HPP
 #define QUOLL_UI_DETAIL_DATA_EFFECT_STARTER_HPP
 
-#include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/task.hpp>
 
 #include <exception>
@@ -53,10 +52,6 @@ struct effect_starter {
   // Where each failure to start goes, as the app's on_error, so that two in one view are both told; none to throw the
   // first once the others started, as for a test calling after_view() itself.
   void (*report)(void *owner, std::exception_ptr failure) noexcept = nullptr;
-  // The props of the view that ran, none for a component without them, and their type, for an effect on a field of
-  // them.
-  void const *props = nullptr;
-  async::detail::type_id props_type = nullptr;
   // Before the first view of a component made, or a context: nothing starts, and each effect whose first run will
   // start says its target is loading, as React's useState(true).
   bool first = false;

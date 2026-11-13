@@ -38,9 +38,6 @@
 #define QUOLL_UI_CONTEXT_PROVIDE_HPP
 
 #include <quoll/async/detail/type_id.hpp>
-#include <quoll/ui/component/component_with_props.hpp>
-#include <quoll/ui/component/mounted_component.hpp>
-#include <quoll/ui/component/unmounted_component.hpp>
 #include <quoll/ui/context/context_spec.hpp>
 #include <quoll/ui/detail/component/held_component.hpp>
 #include <quoll/ui/detail/context/bind_contexts.hpp>
@@ -74,26 +71,19 @@ inline constexpr context_table context_table_of{
  * lives, for each component using a `shared<T>`.
  *
  * @code
- * mount<dashboard_page>("#app", {.contexts = {provide<catalog>()}});
+ * mount(dashboard_page, "#app", {.contexts = {provide<catalog>()}});
  * @endcode
  *
- * T is an aggregate, as a component, with no view, mounted() nor unmounted(): its states, its effects, which start
- * after each view of the app and do what a component's mounted() would, and what its components run on it, through
- * shared<T>::run().
+ * T is an aggregate: its states, its effects, which start after each view of the app, and what its components run on
+ * it, through shared<T>::run().
  */
 template <class T>
 [[nodiscard]] constexpr context_spec provide() noexcept {
   static_assert(
       std::is_aggregate_v<T> && !std::is_const_v<T>,
-      "quoll::ui: a context is an aggregate, as a component: public members and no constructor"
+      "quoll::ui: a context is an aggregate: public members and no constructor"
   );
   static_assert(!std::is_same_v<T, router>, "quoll::ui: an app's router is made by routing(), with its routes");
-  static_assert(
-      !MountedComponent<T> && !UnmountedComponent<T> && !ComponentWithProps<T> &&
-          !requires(T &context) { context.view(); },
-      "quoll::ui: a context has no view, mounted() nor unmounted(), which would never run: its effects do "
-      "what a component's mounted() would"
-  );
 
   return context_spec{detail::context_table_of<T>};
 }

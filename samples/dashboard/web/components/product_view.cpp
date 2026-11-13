@@ -34,37 +34,18 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// What the page of a product shows of it: its detail, to edit, and its sales, in a chart. Keyed by the product, so
-// that another product is another view, its states, what is typed and its sales, its own from the start.
-
-#ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_VIEW_HPP
-#define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_VIEW_HPP
-
+#include "components.hpp"
 #include "error_text.hpp"
-#include "product.hpp"
-#include "product_detail.hpp"
 #include "products_client.hpp"
-#include "sales_chart.hpp"
 
 #include <quoll/ui.hpp>
 
-#include <cstdint>
-
 namespace dashboard_web {
 
-using namespace quoll::ui;
-
-struct product_view_props {
-  // The product, and its id, which its sales load for: a field of its own, as an effect compares it, and the product
-  // changes as it is saved, which would load them again.
-  std::int64_t id = 0;
-  products::product item;
-
-  [[nodiscard]] bool operator==(product_view_props const &) const = default;
-};
-
-// A function component: its sales, whether they are loading, and why they did not load, are its hooks.
-inline element product_view(product_view_props const &given) {
+// What the page shows of a product: its detail, to edit, and its sales, in a chart. Keyed by the product, so that
+// another product is another view, its states, what is typed and its sales, its own from the start.
+constexpr component<product_view_props> product_view = [](product_view_props const &given) {
+  // Its sales, whether they are loading, and why they did not load.
   auto &sales = use_async_state<products::monthly_sales>();
   auto &load_sales = use_effect(given.id, products_client::sales, sales);
 
@@ -77,7 +58,6 @@ inline element product_view(product_view_props const &given) {
     if (sales->error) {
       // As React runs an effect again: the product does not change.
       auto const retry = [&load_sales] { load_sales.reload(); };
-
       auto const failed = div({
           error_text(told(sales->error, "the sales did not load")),
           button("Try again") | tw("btn btn-sm self-start") | on_click(retry),
@@ -86,17 +66,15 @@ inline element product_view(product_view_props const &given) {
       return failed | tw("flex flex-col gap-2");
     }
 
-    return component<sales_chart>({.sales = sales->value});
+    return sales_chart({.sales = sales->value});
   };
 
   auto const shown = div({
-      component<product_detail>({.item = given.item}),
+      product_detail({.item = given.item}),
       sales_shown(),
   });
 
   return shown | tw("flex flex-col gap-8");
-}
+};
 
 } // namespace dashboard_web
-
-#endif // QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_VIEW_HPP

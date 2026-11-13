@@ -56,51 +56,25 @@
 
 namespace quoll::ui {
 
-namespace detail {
-
-// The field of props a form_state edits: its type and the props it is in, or none for what is not a field.
-template <class M>
-struct form_field {
-  static constexpr bool valid = false;
-  using value_type = void;
-  using props_type = void;
-};
-
-template <class T, class P>
-  requires(!std::is_function_v<T>)
-struct form_field<T P::*> {
-  static constexpr bool valid = true;
-  using value_type = T;
-  using props_type = P;
-};
-
-} // namespace detail
-
 /**
  * @brief What a form edits: a value its component's props give, a field of them, as the fields of the form show it,
  * with what is typed in them, as React Hook Form's defaultValues with keepDirtyValues.
  *
  * @code
- * struct product_detail {
- *   struct props {
- *     products::product item;
- *   };
+ * inline constexpr component<product_detail_props> product_detail = [](product_detail_props const &given) {
+ *   auto &products = use_context<catalog>();
+ *   auto &form = use_form(given.item);
+ *   auto &save = use_action<&catalog::save>(products);
  *
- *   shared<catalog> products;
- *   form_state<&props::item> form;
- *   action<&catalog::save> save{products};
- *
- *   element view(props const &given) {
- *     return section({
- *         label({text("Price"), input() | bind(form, &products::product::price)}),
- *         when(!form.valid(), [] { return p("The price is a number"); }),
- *         button("Save") | disabled(save->loading || !form.valid()) | on_click(save.with(form)),
- *     });
- *   }
+ *   return section({
+ *       label({text("Price"), input() | bind(form, &products::product::price)}),
+ *       when(!form.valid(), [] { return p("The price is a number"); }),
+ *       button("Save") | disabled(save->loading || !form.valid()) | on_click(save.with(form)),
+ *   });
  * };
  * @endcode
  *
- * A member of a component, or what use_form() gives a function component, whose fields are given to inputs with
+ * What use_form() gives a component, whose fields are given to inputs with
  * bind(): a field not typed in shows what its component gives, one typed in what is typed, kept as it is, even what
  * does not read as the field's type, as `12,5` for a number. value() is what it is given, with each field typed in
  * that reads; valid() whether every field typed in reads; `action::with(form)` runs an action with value() as it is
@@ -113,7 +87,7 @@ struct form_field<T P::*> {
  * Neither copied nor moved: the inputs bound to it refer to it. Thread safety: none, as a state.
  */
 template <class T>
-class basic_form_state {
+class form_state {
   static_assert(
       std::copyable<T> && std::default_initializable<T>, "quoll::ui::form_state: what it edits is copied as it is given"
   );
@@ -121,14 +95,14 @@ class basic_form_state {
 public:
   using value_type = T;
 
-  basic_form_state() = default;
+  form_state() = default;
 
-  basic_form_state(basic_form_state const &) = delete;
-  basic_form_state(basic_form_state &&) = delete;
-  basic_form_state &operator=(basic_form_state const &) = delete;
-  basic_form_state &operator=(basic_form_state &&) = delete;
+  form_state(form_state const &) = delete;
+  form_state(form_state &&) = delete;
+  form_state &operator=(form_state const &) = delete;
+  form_state &operator=(form_state &&) = delete;
 
-  ~basic_form_state() = default;
+  ~form_state() = default;
 
   /** @brief What it is given, with each field typed in that reads as its type. */
   [[nodiscard]] value_type value() const {
@@ -174,7 +148,7 @@ public:
    * @throws std::invalid_argument for no field, a null pointer.
    */
   template <class F>
-  [[nodiscard]] friend auto bind(basic_form_state &form, F value_type::*member) {
+  [[nodiscard]] friend auto bind(form_state &form, F value_type::*member) {
     static_assert(detail::text_value<F>, "quoll::ui::bind: a field of a form is a string, a number or a bool");
 
     if (member == nullptr) {
@@ -254,33 +228,6 @@ private:
   // The fields typed in, in the order they were first typed in.
   std::vector<typed_field> typed_;
   detail::state_link link_{};
-};
-
-/**
- * @brief A form of a struct component, of the field `Member` of its props, which it takes before each of its views:
- * see basic_form_state, and use_form() in a function component.
- */
-template <auto Member>
-class form_state : public basic_form_state<typename detail::form_field<decltype(Member)>::value_type> {
-  using traits = detail::form_field<decltype(Member)>;
-
-  static_assert(traits::valid, "quoll::ui::form_state: of a field of its component's props, as &props::item");
-
-public:
-  using value_type = typename traits::value_type;
-  using props_type = typename traits::props_type;
-
-  /** @brief For its component, before each of its views: the value of `given` is what it edits now. */
-  void before_view(props_type const &given) { this->take(given.*Member); }
-
-  /**
-   * @brief basic_form_state's bind(), found for a form_state as it is, which `std::bind` would be otherwise, as a
-   * conversion to its base would make a worse match.
-   */
-  template <class F>
-  [[nodiscard]] friend auto bind(form_state &form, F value_type::*member) {
-    return bind(static_cast<basic_form_state<value_type> &>(form), member);
-  }
 };
 
 } // namespace quoll::ui

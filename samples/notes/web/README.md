@@ -6,8 +6,8 @@ as it shows.
 
 | File | What it holds |
 |---|---|
-| `main.cpp` | `mount<notes_page>()`, in `#app` |
-| `components/notes_page.hpp` | the notes, what the server answered last, and the calls that change them |
+| `main.cpp` | `mount(notes_page)`, in `#app` |
+| `components/notes_page.hpp` | the notes and what the server answered last, `use_state` hooks, loaded by a `use_effect` on nothing, and the calls that change them |
 | `components/note_form.hpp` | the input of a new note, its draft a state of its own, and the `on_add` callback it calls |
 | `components/note_row.hpp` | one note, with its `on_remove` callback; props compared with `==`, so that a row whose note is unchanged is not viewed again |
 | `notes_client.hpp`, `.cpp` | the calls to the server, through a `rest::client` of the contract, in a source of their own |

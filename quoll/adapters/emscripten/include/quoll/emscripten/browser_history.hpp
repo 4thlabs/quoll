@@ -46,8 +46,9 @@ namespace quoll::emscripten {
  * whose popstate it is told of.
  *
  * @code
- * quoll::emscripten::mount<app_shell>("#app", {.contexts =
- * {ui::routing<routes>(quoll::emscripten::browser_history())}});
+ * quoll::emscripten::mount(
+ *     app_shell, "#app", {.contexts = {ui::routing<routes>(quoll::emscripten::browser_history())}}
+ * );
  * @endcode
  *
  * One for the page, which outlives its apps. In Node, which has no history, its location stays "/".

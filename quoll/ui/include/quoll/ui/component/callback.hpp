@@ -57,30 +57,24 @@ namespace quoll::ui {
  * its tasks, not the caller's.
  *
  * @code
- * struct note_row {
- *   struct props {
- *     notes::note item;
- *     callback<void(std::int64_t)> on_remove;
- *   };
+ * struct note_row_props {
+ *   notes::note item;
+ *   callback<void(std::int64_t)> on_remove;
+ * };
  *
- *   element view(props const &given) {
- *     auto const remove = [&given] {
- *       return given.on_remove(given.item.id);
- *     };
+ * inline constexpr component<note_row_props> note_row = [](note_row_props const &given) {
+ *   auto const remove = [&given] { return given.on_remove(given.item.id); };
  *
- *     return button("Delete") | on_click(remove);
- *   }
+ *   return button("Delete") | on_click(remove);
  * };
  *
  * // In the page's view:
- * auto const on_remove = [this](std::int64_t id) {
- *   return remove(id);
- * };
+ * auto const on_remove = [&notes](std::int64_t id) { return remove_note(notes, id); };
  *
- * return component<note_row>({.item = item, .on_remove = on_remove});
+ * return note_row({.item = item, .on_remove = on_remove});
  * @endcode
  *
- * Made from a function in a view, it holds the component whose view that is, or the app for its own view. Calling it
+ * Made from a function in a view, it holds the component whose view that is. Calling it
  * gives a task: awaited, it starts the function as a task of that component, under its stop, and waits for its end,
  * giving what it gives and throwing what it throws. A caller that stops, as the component calling it goes, stops
  * waiting, and the work goes on, as it belongs to the component that wrote it; what it throws then goes to the app's
@@ -93,7 +87,7 @@ namespace quoll::ui {
  *
  * A caller already stopped starts nothing, and a work whose component is stopped before it starts does not run.
  *
- * Made outside a view, in a handler or a mounted() included, it knows no component: it runs the function as part of
+ * Made outside a view, in a handler or an effect, it knows no component: it runs the function as part of
  * the caller's task, as a std::function would, and what the function captures is the caller's to keep alive. What marks
  * the component is its view running. The function returns `R`, or a task of `R`;
  * the arguments are copied into the task, so that none can be a reference to write to or a view, refused at compile

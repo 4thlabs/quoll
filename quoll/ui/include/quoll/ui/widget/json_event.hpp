@@ -85,7 +85,7 @@ template <JsonEventFunction F>
  *   int index;
  * };
  *
- * auto const select = [this](point_selected event) {
+ * auto const select = [&selected](point_selected event) {
  *   selected = event.index;
  * };
  *

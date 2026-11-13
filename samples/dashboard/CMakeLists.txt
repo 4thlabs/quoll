@@ -5,11 +5,22 @@ add_library(quoll_dashboard_api INTERFACE)
 target_include_directories(quoll_dashboard_api INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/api)
 target_link_libraries(quoll_dashboard_api INTERFACE quoll::rest)
 
-# The components of the page, headers but for the chart. The test of the page runs them natively, in place of the calls of
-# web/products_client.cpp, which go through fetch.
+# The components of the page, a source for each page, which a change to it alone compiles again, compiled in each program
+# using them. The test of the page runs them natively, in place of the calls of web/products_client.cpp, which go
+# through fetch.
 add_library(quoll_dashboard_web_components INTERFACE)
-# The chart's view, compiled in each program using the components: the widget's JSON stays out of the page's sources.
-target_sources(quoll_dashboard_web_components INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/web/components/sales_chart.cpp)
+target_sources(
+  quoll_dashboard_web_components
+  INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/web/components/app_shell.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/components/choose_product.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/components/missing_page.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/components/product_detail.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/components/product_list.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/components/product_page.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/components/product_row.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/components/product_view.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/components/products_layout.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/web/components/sales_chart.cpp)
 target_include_directories(quoll_dashboard_web_components INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/web)
 target_link_libraries(quoll_dashboard_web_components INTERFACE quoll_dashboard_api quoll::ui)
 

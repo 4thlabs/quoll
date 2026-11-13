@@ -36,13 +36,13 @@
 
 // The products in a browser: the pages, from components/, shown in #app, the browser's history their addresses.
 
-#include "components/pages.hpp"
+#include "components/routes.hpp"
 
 #include <quoll/emscripten/browser_history.hpp>
 #include <quoll/emscripten/mount.hpp>
 
 int main() {
-  quoll::emscripten::mount<dashboard_web::app_shell>(
-      "#app", dashboard_web::page_options(quoll::emscripten::browser_history())
+  quoll::emscripten::mount(
+      dashboard_web::app_shell, "#app", dashboard_web::page_options(quoll::emscripten::browser_history())
   );
 }

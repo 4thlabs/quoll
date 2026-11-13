@@ -47,7 +47,7 @@ effect::~effect() { assert(slot_.frames == 0 && "quoll::ui::effect: destroyed wh
 void effect::reload() {
   failed_ = false;
   started_ = false;
-  watch_(watching::forget, nullptr);
+  watch_(watching::forget);
   detail::tell(link_);
 }
 
@@ -58,31 +58,19 @@ void effect::after_view(detail::effect_starter const &start) {
     return;
   }
 
-  auto const *const props = start.props;
-  bool const wrong_props =
-      props_type_ != async::detail::type_id{} && (props_type_ != start.props_type || props == nullptr);
-
-  // Before the first view: loading if its first run will start, which wrong props, refused at that view, do not.
+  // Before the first view: loading if its first run will start.
   if (start.first) {
-    if (!wrong_props && watch_(watching::peek, props)->holds) {
+    if (watch_(watching::peek)->holds) {
       target_.begin();
     }
 
     return;
   }
 
-  // On the props of another component, or a field of a base of them, or of an app's own component, which has none: a
-  // mistake of the program, refused at its first view, to the app's on_error whatever its target holds, which was not
-  // loading; then waiting for reload(), as its type tells no more.
-  if (wrong_props) {
-    failed_ = true;
-    throw std::logic_error{"quoll::ui::effect: it depends on a field of props its component does not have"};
-  }
-
   // One way out for what fails, whatever it is, comparing or copying its states, or starting: a view in which they
   // changed, or may have, stops the run before, which would give what the values before ask for.
   try {
-    auto const now = *watch_(watching::record, props);
+    auto const now = *watch_(watching::record);
 
     if (!now.differs) {
       return;
@@ -97,7 +85,7 @@ void effect::after_view(detail::effect_starter const &start) {
 
     // Asked for now, as the view is shown: the run before stops at once, so that an answer of its that comes before
     // this one starts writes nothing.
-    start(run_(detail::ask(slot_), props, started_));
+    start(run_(detail::ask(slot_), started_));
     started_ = true;
   } catch (...) {
     fail_start(std::current_exception());

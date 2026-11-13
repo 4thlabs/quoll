@@ -34,82 +34,80 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_UI_COMPONENT_CALLABLE_COMPONENT_HPP
-#define QUOLL_UI_COMPONENT_CALLABLE_COMPONENT_HPP
+#ifndef QUOLL_UI_COMPONENT_COMPONENT_VIEW_HPP
+#define QUOLL_UI_COMPONENT_COMPONENT_VIEW_HPP
 
 #include <quoll/ui/view/element.hpp>
 
+#include <concepts>
 #include <type_traits>
 
 namespace quoll::ui {
 
 namespace detail {
 
-// The operator() of a struct function component: of its props, taken by const reference, or of nothing, const or not,
-// noexcept or not.
+// What a call operator takes: its props by const reference, or nothing; props by value are told apart, to say so.
 template <class S>
 struct call_operator_traits {
   static constexpr bool valid = false;
+  static constexpr bool by_value = false;
   using props = void;
 };
 
 template <class C>
 struct call_operator_traits<element (C::*)()> {
   static constexpr bool valid = true;
+  static constexpr bool by_value = false;
   using props = void;
 };
 
 template <class C, class P>
 struct call_operator_traits<element (C::*)(P const &)> {
   static constexpr bool valid = true;
+  static constexpr bool by_value = false;
   using props = P;
 };
 
-template <class C>
-struct call_operator_traits<element (C::*)() const> : call_operator_traits<element (C::*)()> {};
-
 template <class C, class P>
-struct call_operator_traits<element (C::*)(P const &) const> : call_operator_traits<element (C::*)(P const &)> {};
-
-template <class C>
-struct call_operator_traits<element (C::*)() noexcept> : call_operator_traits<element (C::*)()> {};
-
-template <class C, class P>
-struct call_operator_traits<element (C::*)(P const &) noexcept> : call_operator_traits<element (C::*)(P const &)> {};
-
-template <class C>
-struct call_operator_traits<element (C::*)() const noexcept> : call_operator_traits<element (C::*)()> {};
-
-template <class C, class P>
-struct call_operator_traits<element (C::*)(P const &) const noexcept>
-    : call_operator_traits<element (C::*)(P const &)> {};
-
-// A struct whose operator() gives the view; the props it takes.
-template <class C>
-struct callable_component_traits {
+  requires(!std::is_reference_v<P>)
+struct call_operator_traits<element (C::*)(P)> {
   static constexpr bool valid = false;
-  using props = void;
+  static constexpr bool by_value = true;
+  using props = P;
 };
 
-template <class C>
-  requires std::is_class_v<C> && requires { &C::operator(); }
-struct callable_component_traits<C> : call_operator_traits<decltype(&C::operator())> {};
+template <class C, class... A>
+struct call_operator_traits<element (C::*)(A...) const> : call_operator_traits<element (C::*)(A...)> {};
 
-struct callable_component_model {
+template <class C, class... A>
+struct call_operator_traits<element (C::*)(A...) noexcept> : call_operator_traits<element (C::*)(A...)> {};
+
+template <class C, class... A>
+struct call_operator_traits<element (C::*)(A...) const noexcept> : call_operator_traits<element (C::*)(A...)> {};
+
+template <class F>
+struct view_traits : call_operator_traits<void> {};
+
+template <class F>
+  requires std::is_class_v<F> && requires { &F::operator(); }
+struct view_traits<F> : call_operator_traits<decltype(&F::operator())> {};
+
+struct component_view_model {
   element operator()() const { return {}; }
 };
 
 } // namespace detail
 
 /**
- * @brief A struct whose `element operator()(props const &)`, or of nothing, gives the view: a function component that
- * keeps its props and helpers together. Made for each view, it holds no member: what lasts is its `use_` hooks.
+ * @brief What a component is made of: a lambda capturing nothing, or an empty struct, whose call operator gives the
+ * view, `element (props const &)` or `element ()`. Made for each view, it holds nothing: what lasts is its `use_`
+ * hooks. Its props by const reference, which what its view writes may capture, kept with it.
  */
-template <class C>
-concept CallableComponent = detail::callable_component_traits<C>::valid;
+template <class F>
+concept ComponentView = detail::view_traits<F>::valid && std::is_empty_v<F> && std::default_initializable<F>;
 
-static_assert(CallableComponent<detail::callable_component_model>);
+static_assert(ComponentView<detail::component_view_model>);
 
 } // namespace quoll::ui
 
-#endif // QUOLL_UI_COMPONENT_CALLABLE_COMPONENT_HPP
+#endif // QUOLL_UI_COMPONENT_COMPONENT_VIEW_HPP

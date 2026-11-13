@@ -322,17 +322,23 @@ void walk_component(
     shown.placed(type, kept->key());
   }
 
+  auto const record = context.views.size();
   auto view = given_again ? *unchanged : run_view(spec, kept, props, by, context);
 
   std::vector<std::shared_ptr<instance>> inner;
   matching inner_shown{kept->children()};
 
   walk(view, inner_shown, inner, {kept, props}, context);
+
+  // After those of its view.
+  if (!given_again) {
+    context.effect_order.push_back(record);
+  }
   inner_shown.check_keys();
   inner_shown.leave_the_rest(context);
   context.children.emplace_back(kept, std::move(inner));
 
-  // After those of its view, so that their mounted() run first, as the app's own runs after its components'.
+  // After those of its view, as React's children before their parent.
   if (fresh) {
     context.made.push_back(kept);
   }
@@ -407,11 +413,12 @@ void commit(expansion &context, std::vector<std::shared_ptr<instance>> &shown) n
   }
 
   for (auto const &leaving : context.leaving) {
-    leaving->unmount(context.sink);
+    leaving->unmount();
   }
 
   shown = std::move(context.now);
   context.views.clear();
+  context.effect_order.clear();
   context.children.clear();
   context.leaving.clear();
 }
@@ -427,6 +434,7 @@ void discard(expansion &context) noexcept {
   context.made.clear();
   context.now.clear();
   context.views.clear();
+  context.effect_order.clear();
   context.children.clear();
   context.leaving.clear();
 }

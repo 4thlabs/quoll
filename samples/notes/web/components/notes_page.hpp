@@ -56,72 +56,79 @@
 
 namespace notes_web {
 
+using namespace quoll::ui;
+
 using quoll::async::task;
-using quoll::ui::callback;
-using quoll::ui::element;
-using quoll::ui::state;
 
-struct notes_page {
-  state<std::vector<notes::note>> items;
-  state<std::string> problem;
+// What the page shows: the notes, and what went wrong last, none once a call succeeds. States of the page, which
+// outlive its tasks.
+struct notes_shown {
+  state<std::vector<notes::note>> &items;
+  state<std::string> &problem;
+};
 
-  task<> mounted() {
-    try {
-      items = co_await notes_client::list();
-    } catch (std::exception const &failure) {
-      problem = std::string{failure.what()};
-    }
+inline task<> load_notes(notes_shown shown) {
+  try {
+    shown.items = co_await notes_client::list();
+  } catch (std::exception const &failure) {
+    shown.problem = std::string{failure.what()};
   }
+}
 
-  task<bool> add(std::string text) {
-    try {
-      auto const created = co_await notes_client::create(std::move(text));
+inline task<bool> add_note(notes_shown shown, std::string text) {
+  try {
+    auto const created = co_await notes_client::create(std::move(text));
 
-      items.update([&created](auto &all) { all.push_back(created); });
-      problem.set({});
-      co_return true;
-    } catch (std::exception const &failure) {
-      problem = std::string{failure.what()};
-      co_return false;
-    }
+    shown.items.update([&created](auto &all) { all.push_back(created); });
+    shown.problem.set({});
+    co_return true;
+  } catch (std::exception const &failure) {
+    shown.problem = std::string{failure.what()};
+    co_return false;
   }
+}
 
-  task<> remove(std::int64_t id) {
-    try {
-      co_await notes_client::remove(id);
+inline task<> remove_note(notes_shown shown, std::int64_t id) {
+  try {
+    co_await notes_client::remove(id);
 
-      auto const removed = [id](notes::note const &item) { return item.id == id; };
+    auto const removed = [id](notes::note const &item) { return item.id == id; };
 
-      items.update([&removed](auto &all) { std::erase_if(all, removed); });
-      problem.set({});
-    } catch (std::exception const &failure) {
-      problem = std::string{failure.what()};
-    }
+    shown.items.update([&removed](auto &all) { std::erase_if(all, removed); });
+    shown.problem.set({});
+  } catch (std::exception const &failure) {
+    shown.problem = std::string{failure.what()};
   }
+}
 
-  element view() {
-    using namespace quoll::ui;
+inline constexpr component<> notes_page = [] {
+  auto &items = use_state<std::vector<notes::note>>();
+  auto &problem = use_state<std::string>();
 
-    auto const on_add = [this](std::string text) { return add(std::move(text)); };
+  notes_shown const shown{.items = items, .problem = problem};
 
-    // One callback, which every row shares.
-    callback<void(std::int64_t)> const on_remove = [this](std::int64_t id) { return remove(id); };
+  // Loaded once, as the page first shows.
+  use_effect([shown] { return load_notes(shown); });
 
-    auto const row = [&on_remove](notes::note const &item) {
-      return component<note_row>({.item = item, .on_remove = on_remove}) | key(item.id);
-    };
+  auto const on_add = [shown](std::string text) { return add_note(shown, std::move(text)); };
 
-    auto const alert = [this] { return p(*problem) | tw("alert alert-error") | role("alert"); };
+  // One callback, which every row shares.
+  callback<void(std::int64_t)> const on_remove = [shown](std::int64_t id) { return remove_note(shown, id); };
 
-    auto const page = main_({
-        h1("Notes") | tw("text-4xl font-bold"),
-        component<note_form>({.on_add = on_add}),
-        when(!problem->empty(), alert),
-        ul({list(items, row)}) | tw("flex flex-col gap-2"),
-    });
+  auto const row = [&on_remove](notes::note const &item) {
+    return note_row({.item = item, .on_remove = on_remove}) | key(item.id);
+  };
 
-    return page | tw("mx-auto flex max-w-xl flex-col gap-6 p-8");
-  }
+  auto const alert = [&problem] { return p(*problem) | tw("alert alert-error") | role("alert"); };
+
+  auto const page = main_({
+      h1("Notes") | tw("text-4xl font-bold"),
+      note_form({.on_add = on_add}),
+      when(!problem->empty(), alert),
+      ul({list(items, row)}) | tw("flex flex-col gap-2"),
+  });
+
+  return page | tw("mx-auto flex max-w-xl flex-col gap-6 p-8");
 };
 
 } // namespace notes_web

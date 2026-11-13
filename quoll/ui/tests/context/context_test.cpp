@@ -68,8 +68,7 @@ using quoll::test::session;
 using quoll::test::settle;
 using quoll::test::virtual_time;
 
-template <class C>
-using test_app = app<C, memory_renderer>;
+using test_app = app<memory_renderer>;
 
 // What the test running saw happen.
 std::vector<std::string> lines;
@@ -102,57 +101,55 @@ struct names {
 // Shows the names, through its context: no props, so that its view runs again only as what it reads changes.
 int list_views = 0;
 
-struct name_list {
-  shared<names> shown;
+constexpr component<> name_list = [] {
+  auto &shown = use_context<names>();
 
-  element view() {
-    ++list_views;
+  ++list_views;
 
-    auto const &[all, loading, error] = *shown->all;
-    std::string text = loading ? "loading" : "";
+  auto const &[all, loading, error] = *shown->all;
+  std::string text = loading ? "loading" : "";
 
-    for (auto const &name : all) {
-      text += name + ";";
-    }
-
-    return p(text);
+  for (auto const &name : all) {
+    text += name + ";";
   }
+
+  return p(text);
 };
 
 // Renames the first name as it first shows, through its context, and may go before the rename ends.
-struct renamer {
-  shared<names> data;
-  state<std::string> gave;
+constexpr component<> renamer = [] {
+  auto &data = use_context<names>();
+  auto &gave = use_state<std::string>();
 
-  task<> mounted() {
+  use_effect([&data, &gave]() -> task<> {
     auto const given = co_await data.run(&names::rename, 0, std::string{"green tea"});
 
     gave = given;
-  }
+  });
 
-  element view() { return p("renamer " + *gave); }
+  return p("renamer " + *gave);
 };
 
-struct names_page {
+struct names_page_data {
   state<bool> renames;
+};
 
-  element view() {
-    auto const editor = [] { return component<renamer>(); };
+constexpr component<> names_page = [] {
+  auto &self = use_context<names_page_data>();
 
-    return div({component<name_list>(), when(*renames, editor)});
-  }
+  auto const editor = [] { return renamer(); };
+
+  return div({name_list(), when(*self->renames, editor)});
 };
 
 // Uses a context its app was not given.
-struct orphan_page {
-  shared<names> missing;
+constexpr component<> orphan_page = [] {
+  auto &missing = use_context<names>();
 
-  element view() { return p("orphan"); }
+  return p("orphan");
 };
 
-struct orphan_child_page {
-  element view() { return div({component<name_list>()}); }
-};
+constexpr component<> orphan_child_page = [] { return div({name_list()}); };
 
 // A context using another.
 struct greeting {
@@ -165,10 +162,10 @@ struct greeting {
   }
 };
 
-struct greeter_page {
-  shared<greeting> said;
+constexpr component<> greeter_page = [] {
+  auto &said = use_context<greeting>();
 
-  element view() { return p(said->first()); }
+  return p(said->first());
 };
 
 // Reads the names as it goes: given after them, it goes before them.
@@ -226,155 +223,136 @@ struct counting_executor {
   [[nodiscard]] bool operator==(counting_executor const &) const noexcept = default;
 };
 
-// Writes to the first as it goes, and uses a context no app is given: refused before it is made.
-struct broken_component {
-  shared<first_gone> from;
-  shared<context_never_given> missing;
-
-  // NOLINTNEXTLINE(cppcoreguidelines-special-member-functions,hicpp-special-member-functions): an aggregate.
-  ~broken_component() {
-    from->count = 1;
-    lines.emplace_back("component gone");
-  }
-
-  element view() { return p("broken"); }
+// Uses the first, then a context no app is given: refused as its view calls for it.
+constexpr component<> broken_component = [] {
+  static_cast<void>(use_context<first_gone>());
+  static_cast<void>(use_context<context_never_given>());
+  return p("broken");
 };
 
-struct broken_child_page {
-  element view() { return div({component<broken_component>()}); }
-};
-
-// Writes to its context as it goes, as its app goes too.
-struct leaving_page {
-  shared<first_gone> from;
-
-  // NOLINTNEXTLINE(cppcoreguidelines-special-member-functions,hicpp-special-member-functions): an aggregate.
-  ~leaving_page() { from->count = 2; }
-
-  element view() { return p("leaving"); }
-};
+constexpr component<> broken_child_page = [] { return div({broken_component()}); };
 
 // Reads its count, and sets it in its view the first time: the view the change asks for shows the count set.
 int counting_views = 0;
 
-struct counting_child {
-  shared<first_gone> data;
+constexpr component<> counting_child = [] {
+  auto &data = use_context<first_gone>();
 
-  element view() {
-    ++counting_views;
+  ++counting_views;
 
-    auto const seen = *data->count;
+  auto const seen = *data->count;
 
-    if (seen == 0) {
-      data->count = 1;
-    }
-
-    return p("count " + std::to_string(seen));
+  if (seen == 0) {
+    data->count = 1;
   }
+
+  return p("count " + std::to_string(seen));
 };
 
 // Reads its count, and throws while asked to: a view that failed is run again by the next render.
 bool child_throws = false;
 
-struct throwing_child {
-  shared<first_gone> data;
+constexpr component<> throwing_child = [] {
+  auto &data = use_context<first_gone>();
 
-  element view() {
-    auto const seen = *data->count;
+  auto const seen = *data->count;
 
-    if (child_throws) {
-      throw std::runtime_error{"no view"};
-    }
-
-    return p("count " + std::to_string(seen));
+  if (child_throws) {
+    throw std::runtime_error{"no view"};
   }
+
+  return p("count " + std::to_string(seen));
 };
 
-struct throwing_child_page {
+struct throwing_child_page_data {
   state<int> other;
-
-  element view() { return div({p(std::to_string(*other)), component<throwing_child>()}); }
 };
 
-struct counting_child_page {
-  element view() { return div({component<counting_child>()}); }
+constexpr component<> throwing_child_page = [] {
+  auto &self = use_context<throwing_child_page_data>();
+
+  return div({p(std::to_string(*self->other)), throwing_child()});
 };
+
+constexpr component<> counting_child_page = [] { return div({counting_child()}); };
 
 // Shows the names once asked to, after they changed.
-struct later_list_page {
+struct later_list_page_data {
   state<bool> shows;
-
-  element view() {
-    auto const names_shown = [] { return component<name_list>(); };
-
-    return div({when(*shows, names_shown)});
-  }
 };
 
-struct counting_page {
-  shared<second_gone> said;
+constexpr component<> later_list_page = [] {
+  auto &self = use_context<later_list_page_data>();
 
-  element view() { return p("counting"); }
+  auto const names_shown = [] { return name_list(); };
+
+  return div({when(*self->shows, names_shown)});
+};
+
+constexpr component<> counting_page = [] {
+  auto &said = use_context<second_gone>();
+
+  return p("counting");
 };
 
 // A component that only runs on its context, and counts its views.
 int runner_views = 0;
 
-struct name_runner {
-  shared<names> data;
+constexpr component<> name_runner = [] {
+  auto &data = use_context<names>();
 
-  element view() {
-    ++runner_views;
+  ++runner_views;
 
-    auto const rename = [this]() -> task<> {
-      static_cast<void>(co_await data.run(&names::rename, 1, std::string{"mate"}));
-    };
+  auto const rename = [&data]() -> task<> {
+    static_cast<void>(co_await data.run(&names::rename, 1, std::string{"mate"}));
+  };
 
-    return button("rename") | on_click(rename);
-  }
+  return button("rename") | on_click(rename);
 };
 
-struct runner_page {
-  element view() { return div({component<name_runner>(), component<name_list>()}); }
-};
+constexpr component<> runner_page = [] { return div({name_runner(), name_list()}); };
 
 // Renames through an action of its context, on a click, what it gave in a state of its own.
-struct action_renamer {
-  shared<names> data;
-  action<&names::rename> rename{data};
+constexpr component<> action_renamer = [] {
+  auto &data = use_context<names>();
+  auto &rename = use_action<&names::rename>(data);
   // Made but not run, from its context alone.
-  action<&names::rename> plain{data};
+  auto &plain = use_action<&names::rename>(data);
 
-  element view() { return div({button("rename") | on_click(rename.with(1, "mate")), p("renamed " + rename->value)}); }
+  return div({button("rename") | on_click(rename.with(1, "mate")), p("renamed " + rename->value)});
 };
 
-struct action_page {
+struct action_page_data {
   state<bool> renames{true};
+};
 
-  element view() {
-    auto const renamer_shown = [] { return component<action_renamer>(); };
+constexpr component<> action_page = [] {
+  auto &self = use_context<action_page_data>();
 
-    return div({when(*renames, renamer_shown), component<name_list>()});
-  }
+  auto const renamer_shown = [] { return action_renamer(); };
+
+  return div({when(*self->renames, renamer_shown), name_list()});
 };
 
 // The names, as its own member: run() from outside, once the app stopped.
-struct holding_page {
+struct holding_page_data {
   shared<names> data;
+};
 
-  element view() { return p("holding"); }
+constexpr component<> holding_page = [] {
+  auto &self = use_context<holding_page_data>();
+
+  return p("holding");
 };
 
 // The greeting in a component of a view: no props, so that its view runs again only as what it reads changes.
-struct greeting_line {
-  shared<greeting> said;
+constexpr component<> greeting_line = [] {
+  auto &said = use_context<greeting>();
 
-  element view() { return p(said->first()); }
+  return p(said->first());
 };
 
-struct greeting_child_page {
-  element view() { return div({component<greeting_line>()}); }
-};
+constexpr component<> greeting_child_page = [] { return div({greeting_line()}); };
 
 // A draft of names, which a panel provides to the components of its view.
 struct draft {
@@ -384,57 +362,55 @@ struct draft {
 };
 
 // Shows the draft it finds: the nearest provided above, or the app's.
-struct draft_view {
-  shared<draft> shown;
+constexpr component<> draft_view = [] {
+  auto &shown = use_context<draft>();
 
-  element view() {
-    std::string text;
+  std::string text;
 
-    for (auto const &line : *shown->lines) {
-      text += line + ";";
-    }
-
-    for (auto const &name : std::get<0>(*shown->loaded)) {
-      text += "loaded " + name + ";";
-    }
-
-    return p("draft " + text);
+  for (auto const &line : *shown->lines) {
+    text += line + ";";
   }
+
+  for (auto const &name : std::get<0>(*shown->loaded)) {
+    text += "loaded " + name + ";";
+  }
+
+  return p("draft " + text);
 };
 
 // Adds to the draft it finds, on a click.
-struct draft_adder {
-  shared<draft> added;
+constexpr component<> draft_adder = [] {
+  auto &added = use_context<draft>();
 
-  element view() {
-    auto const add = [this] { added->lines.update([](auto &all) { all.emplace_back("typed"); }); };
+  auto const add = [&added] { added->lines.update([](auto &all) { all.emplace_back("typed"); }); };
 
-    return button("add") | on_click(add);
-  }
+  return button("add") | on_click(add);
 };
 
-struct draft_panel {
-  provided<draft> mine;
+constexpr component<> draft_panel = [] {
+  auto &mine = provide_context<draft>();
 
-  element view() { return div({component<draft_adder>(), component<draft_view>()}); }
+  return div({draft_adder(), draft_view()});
 };
 
 // A panel providing its draft, and beside it a view of the app's.
-struct drafts_page {
+struct drafts_page_data {
   state<bool> shows{true};
+};
 
-  element view() {
-    auto const panel = [] { return component<draft_panel>(); };
+constexpr component<> drafts_page = [] {
+  auto &self = use_context<drafts_page_data>();
 
-    return div({when(*shows, panel), component<draft_view>()});
-  }
+  auto const panel = [] { return draft_panel(); };
+
+  return div({when(*self->shows, panel), draft_view()});
 };
 
 // The app's own component provides a draft to the components of its view.
-struct providing_root {
-  provided<draft> mine;
+constexpr component<> providing_root = [] {
+  auto &mine = provide_context<draft>();
 
-  element view() { return div({component<draft_adder>(), component<draft_view>()}); }
+  return div({draft_adder(), draft_view()});
 };
 
 // A context of the app using a draft, as the app's own component provides one too.
@@ -447,26 +423,29 @@ struct local_greeting {
   shared<names> from;
 };
 
-struct greeting_holder {
-  provided<local_greeting> mine;
+constexpr component<> greeting_holder = [] {
+  auto &mine = provide_context<local_greeting>();
 
-  element view() {
-    auto const &all = std::get<0>(*mine->from->all);
+  auto const &all = std::get<0>(*mine->from->all);
 
-    return p(all.empty() ? "holder nobody" : "holder " + all.front());
-  }
+  return p(all.empty() ? "holder nobody" : "holder " + all.front());
 };
 
-struct greeting_holder_page {
-  element view() { return div({component<greeting_holder>()}); }
-};
+constexpr component<> greeting_holder_page = [] { return div({greeting_holder()}); };
 
 // The app's own component uses the app's draft, and provides one of its own to the components of its view.
-struct using_and_providing_root {
-  shared<draft> app_draft;
-  provided<draft> mine;
+// What the root found, and what it provides.
+draft const *root_found = nullptr;
+draft const *root_provided = nullptr;
 
-  element view() { return div({component<draft_view>()}); }
+constexpr component<> using_and_providing_root = [] {
+  auto &app_draft = use_context<draft>();
+  auto &mine = provide_context<draft>();
+
+  root_found = &*app_draft;
+  root_provided = &*mine;
+
+  return div({draft_view()});
 };
 
 } // namespace
@@ -478,7 +457,9 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<names_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  test_app instance{
+      time.get_executor(), shown, names_page, {.contexts = {provide<names>(), provide<names_page_data>()}}
+  };
   std::string loading;
 
   auto const act = [&]() -> task<> {
@@ -500,7 +481,9 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<names_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  test_app instance{
+      time.get_executor(), shown, names_page, {.contexts = {provide<names>(), provide<names_page_data>()}}
+  };
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
@@ -519,25 +502,27 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<names_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  test_app instance{
+      time.get_executor(), shown, names_page, {.contexts = {provide<names>(), provide<names_page_data>()}}
+  };
   std::string given;
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
 
     // Shown, it renames; its caller waits, and shows what it gave.
-    instance.component().renames = true;
+    instance.context<names_page_data>().renames = true;
     co_await quoll::async::sleep_for(20ms);
     given = shown.html();
 
     // Shown again, then gone before its rename ends: the rename goes on, and the list shows it.
-    instance.component().renames = false;
+    instance.context<names_page_data>().renames = false;
     co_await settle();
-    instance.component().renames = true;
+    instance.context<names_page_data>().renames = true;
     co_await settle();
     instance.context<names>().all.update([](auto &held) { std::get<0>(held).at(0) = "tea"; });
     co_await settle();
-    instance.component().renames = false;
+    instance.context<names_page_data>().renames = false;
     co_await quoll::async::sleep_for(20ms);
   };
 
@@ -553,33 +538,37 @@ TEST_CASE(
   CHECK_FALSE(shown.html().contains("renamer"));
 }
 
+namespace {
+
+constexpr component<> failing_renamer = [] {
+  auto &data = use_context<names>();
+
+  use_effect([&data]() -> task<> { static_cast<void>(co_await data.run(&names::rename, 0, std::string{})); });
+  return p("renamer");
+};
+
+struct failing_page_data {
+  state<bool> renames{true};
+};
+
+constexpr component<> failing_page = [] {
+  auto &self = use_context<failing_page_data>();
+
+  return div({when(*self->renames, [] { return failing_renamer(); })});
+};
+
+} // namespace
+
 TEST_CASE("context: what its work throws once its caller went goes to on_error", "[ui][context]") {
   lines.clear();
-
-  struct failing_renamer {
-    shared<names> data;
-
-    task<> mounted() { static_cast<void>(co_await data.run(&names::rename, 0, std::string{})); }
-
-    element view() { return p("renamer"); }
-  };
-
-  struct failing_page {
-    state<bool> renames{true};
-
-    element view() {
-      auto const editor = [] { return component<failing_renamer>(); };
-
-      return div({when(*renames, editor)});
-    }
-  };
 
   virtual_time time;
   memory_renderer const shown;
   std::vector<std::string> failures;
-  test_app<failing_page> instance{
+  test_app instance{
       time.get_executor(),
       shown,
+      failing_page,
       {.on_error =
            [&failures](std::exception_ptr failure) {
              try {
@@ -588,12 +577,12 @@ TEST_CASE("context: what its work throws once its caller went goes to on_error",
                failures.emplace_back(error.what());
              }
            },
-       .contexts = {provide<names>()}}
+       .contexts = {provide<names>(), provide<failing_page_data>()}}
   };
 
   auto const act = [&]() -> task<> {
     co_await settle();
-    instance.component().renames = false;
+    instance.context<failing_page_data>().renames = false;
     co_await quoll::async::sleep_for(20ms);
   };
 
@@ -601,13 +590,20 @@ TEST_CASE("context: what its work throws once its caller went goes to on_error",
   CHECK(failures == std::vector<std::string>{"no name"});
 }
 
-TEST_CASE("context: one its app was not given is refused as the component using it is made", "[ui][context]") {
+TEST_CASE("context: one its app was not given is refused as the view using it calls for it", "[ui][context]") {
   virtual_time time;
   memory_renderer const shown;
 
-  CHECK_THROWS_AS((test_app<orphan_page>{time.get_executor(), shown}), std::logic_error);
+  test_app orphaned{time.get_executor(), shown, orphan_page};
+  auto const start_orphaned = [&]() -> task<int> {
+    CHECK_THROWS_AS(orphaned.start(), std::logic_error);
+    co_await orphaned.stop();
+    co_return 0;
+  };
 
-  test_app<orphan_child_page> instance{time.get_executor(), shown};
+  REQUIRE(quoll::test::run(time, start_orphaned()) == 0);
+
+  test_app instance{time.get_executor(), shown, orphan_child_page};
   auto const start = [&]() -> task<int> {
     bool refused = false;
 
@@ -630,7 +626,7 @@ TEST_CASE("context: two of one type are refused", "[ui][context]") {
   memory_renderer const shown;
 
   CHECK_THROWS_AS(
-      (test_app<names_page>{time.get_executor(), shown, {.contexts = {provide<names>(), provide<names>()}}}),
+      (test_app{time.get_executor(), shown, names_page, {.contexts = {provide<names>(), provide<names>()}}}),
       std::logic_error
   );
 }
@@ -640,8 +636,8 @@ TEST_CASE("context: one may use another given before it, whose changes show wher
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<greeting_child_page> instance{
-      time.get_executor(), shown, {.contexts = {provide<names>(), provide<greeting>()}}
+  test_app instance{
+      time.get_executor(), shown, greeting_child_page, {.contexts = {provide<names>(), provide<greeting>()}}
   };
   std::string before;
 
@@ -661,13 +657,13 @@ TEST_CASE("context: one using another given after it is refused, so that none us
   memory_renderer const shown;
 
   CHECK_THROWS_AS(
-      (test_app<greeter_page>{time.get_executor(), shown, {.contexts = {provide<greeting>(), provide<names>()}}}),
+      (test_app{time.get_executor(), shown, greeter_page, {.contexts = {provide<greeting>(), provide<names>()}}}),
       std::logic_error
   );
 }
 
 TEST_CASE("context: a component a view written once shows, with no app, cannot use one", "[ui][context]") {
-  CHECK_THROWS_AS(to_html(div({component<name_list>()})), std::logic_error);
+  CHECK_THROWS_AS(to_html(div({name_list()})), std::logic_error);
 }
 
 TEST_CASE("context: one using another goes before it, which it may still read", "[ui][context]") {
@@ -676,8 +672,11 @@ TEST_CASE("context: one using another goes before it, which it may still read", 
   {
     virtual_time time;
     memory_renderer const shown;
-    test_app<greeter_page> instance{
-        time.get_executor(), shown, {.contexts = {provide<names>(), provide<greeting>(), provide<last_word>()}}
+    test_app instance{
+        time.get_executor(),
+        shown,
+        greeter_page,
+        {.contexts = {provide<names>(), provide<greeting>(), provide<last_word>()}}
     };
 
     auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
@@ -696,8 +695,8 @@ TEST_CASE("context: the contexts go the last given first, telling their app of n
     memory_renderer const shown;
 
     // Never started: what the second writes to the first as it goes reaches no app.
-    test_app<counting_page> instance{
-        time.get_executor(), shown, {.contexts = {provide<first_gone>(), provide<second_gone>()}}
+    test_app instance{
+        time.get_executor(), shown, counting_page, {.contexts = {provide<first_gone>(), provide<second_gone>()}}
     };
   }
 
@@ -712,7 +711,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<runner_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  test_app instance{time.get_executor(), shown, runner_page, {.contexts = {provide<names>()}}};
   int before = 0;
 
   auto const act = [&]() -> task<> {
@@ -734,15 +733,17 @@ TEST_CASE("context: run() once its app stopped runs nothing, and ends its caller
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<holding_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  test_app instance{
+      time.get_executor(), shown, holding_page, {.contexts = {provide<names>(), provide<holding_page_data>()}}
+  };
 
   auto const act = [&]() -> task<int> {
     instance.start();
     co_await instance.stop();
 
-    auto const given =
-        co_await quoll::async::stopped_as_optional(instance.component().data.run(&names::rename, 0, std::string{"late"})
-        );
+    auto const given = co_await quoll::async::stopped_as_optional(
+        instance.context<holding_page_data>().data.run(&names::rename, 0, std::string{"late"})
+    );
 
     co_return given ? 1 : 0;
   };
@@ -763,9 +764,10 @@ TEST_CASE(
   int posts = 0;
 
   CHECK_THROWS_AS(
-      (test_app<counting_page>{
+      (test_app{
           counting_executor{time.get_executor(), &posts},
           shown,
+          counting_page,
           {.contexts = {provide<first_gone>(), provide<broken_user>()}}
       }),
       std::logic_error
@@ -786,13 +788,15 @@ TEST_CASE(
   memory_renderer const shown;
   int posts = 0;
 
-  // Its context not found: it is never made, and the app, half made, hears of nothing.
-  CHECK_THROWS_AS(
-      (test_app<broken_component>{
-          counting_executor{time.get_executor(), &posts}, shown, {.contexts = {provide<first_gone>()}}
-      }),
-      std::logic_error
-  );
+  // Its context not found as its first view calls for it: the app shows nothing, and hears of nothing.
+  {
+    test_app instance{
+        counting_executor{time.get_executor(), &posts}, shown, broken_component, {.contexts = {provide<first_gone>()}}
+    };
+
+    CHECK_THROWS_AS(instance.start(), std::logic_error);
+  }
+
   CHECK(posts == 0);
   CHECK(lines == std::vector<std::string>{"first gone"});
 }
@@ -802,7 +806,7 @@ TEST_CASE("context: a component of a view missing one is refused before it is ma
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<broken_child_page> instance{time.get_executor(), shown, {.contexts = {provide<first_gone>()}}};
+  test_app instance{time.get_executor(), shown, broken_child_page, {.contexts = {provide<first_gone>()}}};
 
   auto const act = [&]() -> task<int> {
     bool refused = false;
@@ -821,35 +825,19 @@ TEST_CASE("context: a component of a view missing one is refused before it is ma
   CHECK(lines.empty());
 }
 
-TEST_CASE(
-    "context: what a component writes to one as its app goes, never started, asks for no render", "[ui][context]"
-) {
-  lines.clear();
-
-  virtual_time time;
-  memory_renderer const shown;
-  int posts = 0;
-
-  {
-    test_app<leaving_page> instance{
-        counting_executor{time.get_executor(), &posts}, shown, {.contexts = {provide<first_gone>()}}
-    };
-  }
-
-  CHECK(posts == 0);
-}
-
 TEST_CASE("context: a component shown after its context changed shows once", "[ui][context]") {
   lines.clear();
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<later_list_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  test_app instance{
+      time.get_executor(), shown, later_list_page, {.contexts = {provide<names>(), provide<later_list_page_data>()}}
+  };
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
     list_views = 0;
-    instance.component().shows = true;
+    instance.context<later_list_page_data>().shows = true;
     co_await settle();
   };
 
@@ -863,7 +851,7 @@ TEST_CASE("context: a view that changes the context it reads shows again", "[ui]
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<counting_child_page> instance{time.get_executor(), shown, {.contexts = {provide<first_gone>()}}};
+  test_app instance{time.get_executor(), shown, counting_child_page, {.contexts = {provide<first_gone>()}}};
 
   auto const act = [&]() -> task<> { co_await settle(); };
 
@@ -883,9 +871,10 @@ TEST_CASE(
   virtual_time time;
   memory_renderer const shown;
   std::vector<std::string> failures;
-  test_app<throwing_child_page> instance{
+  test_app instance{
       time.get_executor(),
       shown,
+      throwing_child_page,
       {.on_error =
            [&failures](std::exception_ptr failure) {
              try {
@@ -894,7 +883,7 @@ TEST_CASE(
                failures.emplace_back(error.what());
              }
            },
-       .contexts = {provide<first_gone>()}}
+       .contexts = {provide<first_gone>(), provide<throwing_child_page_data>()}}
   };
 
   auto const act = [&]() -> task<> {
@@ -907,7 +896,7 @@ TEST_CASE(
     child_throws = false;
 
     // The next render, for a state of the page, views it again, with what its context holds now.
-    instance.component().other = 1;
+    instance.context<throwing_child_page_data>().other = 1;
     co_await settle();
   };
 
@@ -916,19 +905,15 @@ TEST_CASE(
   CHECK(shown.html().contains("<p>count 5</p>"));
 }
 
-TEST_CASE(
-    "context: the app's own component, or a context, missing one is never made, as its destructor may read it",
-    "[ui][context]"
-) {
+TEST_CASE("context: a context missing one is never made, as its destructor may read it", "[ui][context]") {
   lines.clear();
 
   virtual_time time;
   memory_renderer const shown;
 
-  // Their destructors read what they would have found: a throw there would end the program.
-  CHECK_THROWS_AS((test_app<broken_component>{time.get_executor(), shown}), std::logic_error);
+  // Its destructor reads what it would have found: a throw there would end the program.
   CHECK_THROWS_AS(
-      (test_app<counting_page>{time.get_executor(), shown, {.contexts = {provide<broken_user>()}}}), std::logic_error
+      (test_app{time.get_executor(), shown, counting_page, {.contexts = {provide<broken_user>()}}}), std::logic_error
   );
   CHECK(lines.empty());
 }
@@ -941,7 +926,9 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<drafts_page> instance{time.get_executor(), shown, {.contexts = {provide<draft>()}}};
+  test_app instance{
+      time.get_executor(), shown, drafts_page, {.contexts = {provide<draft>(), provide<drafts_page_data>()}}
+  };
   std::string added;
 
   auto const act = [&]() -> task<> {
@@ -965,7 +952,9 @@ TEST_CASE("context: one a component provides goes with it", "[ui][context]") {
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<drafts_page> instance{time.get_executor(), shown, {.contexts = {provide<draft>()}}};
+  test_app instance{
+      time.get_executor(), shown, drafts_page, {.contexts = {provide<draft>(), provide<drafts_page_data>()}}
+  };
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
@@ -973,9 +962,9 @@ TEST_CASE("context: one a component provides goes with it", "[ui][context]") {
     co_await settle();
 
     // The panel goes, and comes back: its draft is a new one.
-    instance.component().shows = false;
+    instance.context<drafts_page_data>().shows = false;
     co_await settle();
-    instance.component().shows = true;
+    instance.context<drafts_page_data>().shows = true;
     co_await quoll::async::sleep_for(5ms);
   };
 
@@ -989,7 +978,7 @@ TEST_CASE("context: one the app's own component provides is found by the compone
   virtual_time time;
   memory_renderer const shown;
   // No context of the app: what the components find is the app's own component's.
-  test_app<providing_root> instance{time.get_executor(), shown};
+  test_app instance{time.get_executor(), shown, providing_root};
 
   auto const act = [&]() -> task<> {
     co_await quoll::async::sleep_for(5ms);
@@ -1007,8 +996,8 @@ TEST_CASE("context: the app's contexts are made before its own component, which 
   virtual_time time;
   memory_renderer const shown;
   // The app's own component provides a draft too, made after the app's contexts: the user finds the app's.
-  test_app<providing_root> instance{
-      time.get_executor(), shown, {.contexts = {provide<draft>(), provide<draft_user>()}}
+  test_app instance{
+      time.get_executor(), shown, providing_root, {.contexts = {provide<draft>(), provide<draft_user>()}}
   };
 
   auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
@@ -1022,7 +1011,7 @@ TEST_CASE("context: a component shows again as a context what it provides uses c
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<greeting_holder_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  test_app instance{time.get_executor(), shown, greeting_holder_page, {.contexts = {provide<names>()}}};
   std::string before;
 
   auto const act = [&]() -> task<> {
@@ -1037,20 +1026,19 @@ TEST_CASE("context: a component shows again as a context what it provides uses c
 }
 
 TEST_CASE(
-    "context: the app's own component finds the app's contexts, what it provides being for those of its view",
-    "[ui][context]"
+    "context: the app's root finds the app's contexts, what it provides being for those of its view", "[ui][context]"
 ) {
   lines.clear();
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<using_and_providing_root> instance{time.get_executor(), shown, {.contexts = {provide<draft>()}}};
+  test_app instance{time.get_executor(), shown, using_and_providing_root, {.contexts = {provide<draft>()}}};
 
   auto const act = [&]() -> task<> { co_await quoll::async::sleep_for(5ms); };
 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
-  CHECK(&*instance.component().app_draft == &instance.context<draft>());
-  CHECK(&*instance.component().app_draft != &*instance.component().mine);
+  CHECK(root_found == &instance.context<draft>());
+  CHECK(root_found != root_provided);
 }
 
 TEST_CASE(
@@ -1061,7 +1049,9 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<action_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  test_app instance{
+      time.get_executor(), shown, action_page, {.contexts = {provide<names>(), provide<action_page_data>()}}
+  };
   bool waited = false;
   std::string given;
 
@@ -1069,7 +1059,7 @@ TEST_CASE(
     co_await quoll::async::sleep_for(5ms);
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
-    waited = *instance.component().renames && shown.html().contains("<p>renamed </p>");
+    waited = *instance.context<action_page_data>().renames && shown.html().contains("<p>renamed </p>");
     co_await quoll::async::sleep_for(20ms);
     given = shown.html();
 
@@ -1078,7 +1068,7 @@ TEST_CASE(
     co_await settle();
     instance.dispatch(shown.find("button"), "click");
     co_await settle();
-    instance.component().renames = false;
+    instance.context<action_page_data>().renames = false;
     co_await quoll::async::sleep_for(20ms);
   };
 
@@ -1098,7 +1088,7 @@ TEST_CASE(
 
   virtual_time time;
   memory_renderer const shown;
-  test_app<runner_page> instance{time.get_executor(), shown, {.contexts = {provide<names>()}}};
+  test_app instance{time.get_executor(), shown, runner_page, {.contexts = {provide<names>()}}};
   std::string first;
 
   auto const act = [&]() -> task<> {

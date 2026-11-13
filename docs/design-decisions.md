@@ -195,11 +195,12 @@ and the API described twice.
 found by walking the struct, which takes reflection, Glaze's, and code generated for each type; written in order in a
 view, they read as the screen does.
 
-**Taken.** Functions, as React's components: `element product_view(props const &given)`, whose `use_state`,
-`use_effect`, `use_action`, `use_form`, `use_context` and `provide_context` give what the component holds, found again
-at each view by the place of the call and its rank there, so that a branch shifts nothing. A component of a state, an
-effect and a handler costs a third of the code of a struct, as its effect depends on values rather than on its type of
-props, and nothing is reflected. A struct whose `operator()` gives the view is one too.
+**Taken.** Functions, as React's components: `constexpr component<props> product_view = [](props const &given) {...}`,
+whose `use_state`, `use_effect`, `use_action`, `use_form`, `use_context` and `provide_context` give what the component
+holds, found again at each view by the place of the call and its rank there, so that a branch shifts nothing. A
+component of a state, an effect and a handler costs a third of the code of a struct, as its effect depends on values
+rather than on its type of props, and nothing is reflected. An empty struct whose `operator()` gives the view is one
+too.
 
 **Set aside.** Struct components found by Glaze's reflection, which ties the UI to a JSON library; struct components
 whose members list themselves as they are made, which needs no reflection but generates as much code as before; hooks
@@ -214,23 +215,31 @@ that rule.
 whose number of turns changes. A closure captures `given` and what a `use_` call gives by reference, and what the view
 computed by value.
 
-### Components are aggregates with states
+### A component is an object of its props, placed by calling it
 
-**Taken.** A component is a struct whose `state<T>` members are what its view depends on, found by reflection, and a
-component of a view gets its props as an argument of `view(props const &)`.
+**The question.** A view places another component: by naming its type, as `component<product_detail>({...})`, or as
+React's JSX does, by the component itself? And how is one declared?
 
-**Set aside.** Functions with hooks, which keep their states by the order of their calls. Props as members, which the
-reflection finding the states would have to tell apart.
+**Taken.** An object, `component<props>`, called with its props in the view: `product_detail({.item = item})`. Its type
+depends only on its props, so that a header declares it, `extern component<props> const product_detail;`, and a source
+of its own defines it, which a change to it alone compiles again. One way to write it everywhere, its props always
+written, `constexpr component<props> name = ...`, `inline` in a header, `component<>` with none: one written without
+them does not compile. The routes name their pages so, `route<"{id}", product_page>()`, and the links too,
+`link_to(product_page, {.id = 7}, "Open")`. The app's root is one, with no props.
 
-**For you.** A component lives at a stable address, so that its handlers capture `this`; props come from the parent,
-states belong to the component, and the type shows which is which.
+**Set aside.** `component<product_detail>(...)` in the view, which the maintainer found out of place in a view. A type
+deduced from the lambda, which left two ways to write a component, as an extern declaration has to write its props.
+
+**For you.** A screen declares its components in one header, each with its props, and defines each in a source named
+after it.
 
 ### A component that goes stays until its tasks end
 
 **The question.** A component removed while one of its handlers waits for a server: what becomes of that handler?
 
-**Taken.** Its tasks are asked to stop, `void unmounted()` runs at once, and the instance stays until its tasks have
-ended, so that none resumes on a component destroyed. A stop ends what they wait on.
+**Taken.** Its tasks, its effects, its actions and its handlers, are asked to stop, and the instance stays until they
+have ended, so that none resumes on a component destroyed. A stop ends what they wait on; what a run holds goes as the
+stop unwinds it.
 
 **Set aside.** Letting the tasks finish, as React does, which a loop reading a WebSocket would never do. Destroying the
 component at once, which C++ cannot do while a coroutine may resume on it.
@@ -247,7 +256,7 @@ but the callback.
 **Set aside.** The caller's task, which would stop the delete with the row. An explicit `spawn` in the parent, which
 every callback would need.
 
-**For you.** A callback made outside a view, in a handler or in `mounted()`, knows no component, and runs in its
+**For you.** A callback made outside a view, in a handler or in an effect, knows no component, and runs in its
 caller's task.
 
 ### A view not run again, its callbacks those of its last view
@@ -294,9 +303,9 @@ run reaches the app's `on_error`, shown or not, as React Query's global `onError
 is given. A debounce is an option of the effect, `{.debounce = 300ms}`, rather than a debounced value to declare beside
 the state, or a pause Quoll would add to any change made by typing, which would hide where it waits.
 
-**For you.** Declare an `async_state`, then the effect that writes into it; an action is read as one. Set the states an effect
-depends on, or call `reload()`, and its run follows. Give `save.with(args...)` to `on_click`, or await `run()` from a
-task of the component, a handler or `mounted()`: a call refused, or a run a later one took the place of, gives
+**For you.** Call `use_async_state`, then `use_effect`, which writes into it; an action is read as one. Change what an
+effect depends on, or call `reload()`, and its run follows. Give `save.with(args...)` to `on_click`, or await `run()` from a
+task of the component, a handler or an effect: a call refused, or a run a later one took the place of, gives
 `run_refused` or `run_replaced`, and its caller goes on. A component that goes stops its runs; a save that must go on
 is a member function of a context, which the action runs, whose work goes on.
 
@@ -314,7 +323,7 @@ all reads, and `action::with(form)` sends the value as it is at the click, refus
 step 6 first did: the maintainer found it hard to read. A reset to call after a save, or a callback of the action:
 the props bring what was saved anyway. The name `form`, which is the HTML tag.
 
-**For you.** Declare `form_state<&props::item> form;`, bind the inputs to its fields, and give `save.with(form)` to the
+**For you.** Write `auto &form = use_form(given.item);`, bind the inputs to its fields, and give `save.with(form)` to the
 button. Another value to edit from the start is another component, with a `key()`.
 
 ### Contexts given to the app, found by type
@@ -323,8 +332,8 @@ button. Another value to edit from the start is another component, with a `key()
 it, and who does a save that must go on once the detail is left?
 
 **Taken.** A context, as React's: an aggregate with no view, its states, its effects and member functions, which the
-app makes from its options, `provide<T>()`, and holds as long as it lives. A component finds it through a `shared<T>`
-member, by type, as the app makes the component. A change of its states shows again the components using it.
+app makes from its options, `provide<T>()`, and holds as long as it lives. A component finds it with
+`use_context<T>()`, by type, the nearest a component above provides first. A change of its states shows again the components using it.
 `shared<T>::run()` runs a member function of it as a task of the app: a component that goes stops waiting, and the
 work goes on, as a callback's does.
 
@@ -332,8 +341,8 @@ work goes on, as a callback's does.
 page of many components. A context made at its first use: what an app holds shows in `main`. Data a component keeps by
 reference, as FTXUI's: the lifetime would be the program's to keep, and a stale answer or a cancellation too.
 
-**For you.** Declare the context, give it to the app, `{.contexts = {provide<catalog>()}}`, and add a `shared<catalog>`
-to each component that reads or changes it. Run what must go on once a component goes through `run()`.
+**For you.** Declare the context, give it to the app, `{.contexts = {provide<catalog>()}}`, and call
+`use_context<catalog>()` in each component that reads or changes it. Run what must go on once a component goes through `run()`.
 
 ### Routes checked at compile time, their parameters a page's props
 
@@ -348,10 +357,11 @@ its history the browser's or one in memory.
 
 **Set aside.** Parameters read as strings, as React Router's `useParams`: each page would check its own. Types written
 in the template, `{id:int64}`: they would repeat the props', and could differ. Loaders run by the router: an effect on
-a field of the props does it, as React does with `useEffect`.
+the page's props does it, as React does with `useEffect`.
 
-**For you.** Give each page props for its parameters, declare the routes, and put `outlet()` where pages show. Use
-`link_to<Page>(props, text)` for links, and `shared<router>` to go elsewhere from a handler.
+**For you.** Give each page props for its parameters, declare the routes, naming the pages' component objects, and put
+`outlet()` where pages show. Use `link_to(page, props, text)` for links, and `use_context<router>()` to go elsewhere
+from a handler.
 
 ### JavaScript libraries as modules
 

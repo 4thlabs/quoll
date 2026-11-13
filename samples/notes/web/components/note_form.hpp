@@ -46,49 +46,44 @@
 
 namespace notes_web {
 
-using quoll::ui::callback;
-using quoll::ui::element;
-using quoll::ui::state;
+using namespace quoll::ui;
 
-struct note_form {
-  struct props {
-    // Whether the note was added: one that was not comes back in the input.
-    callback<bool(std::string)> on_add;
+struct note_form_props {
+  // Whether the note was added: one that was not comes back in the input.
+  callback<bool(std::string)> on_add;
 
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
+  [[nodiscard]] bool operator==(note_form_props const &) const = default;
+};
 
-  state<std::string> draft;
-
-  quoll::async::task<> add(callback<bool(std::string)> on_add) {
-    if (draft->empty()) {
-      co_return;
-    }
-
-    // Out of the input as it leaves: what is typed meanwhile is the next note, and a second click sends nothing.
-    auto const sent = *draft;
-
-    draft.set({});
-
-    bool const added = co_await on_add(sent);
-
-    if (!added && draft->empty()) {
-      draft = sent;
-    }
+// Sends what `draft` holds, out of the input as it leaves: what is typed meanwhile is the next note, and a second click
+// sends nothing. `draft` is a state of the form, which outlives its handlers' tasks.
+inline quoll::async::task<> send_note(state<std::string> &draft, callback<bool(std::string)> on_add) {
+  if (draft->empty()) {
+    co_return;
   }
 
-  element view(props const &given) {
-    using namespace quoll::ui;
+  auto const sent = *draft;
 
-    auto const send = [this, &given] { return add(given.on_add); };
+  draft.set({});
 
-    auto const form = div({
-        input() | bind(draft) | tw("input input-bordered flex-1") | placeholder("A new note"),
-        button("Add") | tw("btn btn-primary") | on_click(send),
-    });
+  bool const added = co_await on_add(sent);
 
-    return form | tw("flex gap-2");
+  if (!added && draft->empty()) {
+    draft = sent;
   }
+}
+
+inline constexpr component<note_form_props> note_form = [](note_form_props const &given) {
+  auto &draft = use_state<std::string>();
+
+  auto const send = [&draft, &given] { return send_note(draft, given.on_add); };
+
+  auto const form = div({
+      input() | bind(draft) | tw("input input-bordered flex-1") | placeholder("A new note"),
+      button("Add") | tw("btn btn-primary") | on_click(send),
+  });
+
+  return form | tw("flex gap-2");
 };
 
 } // namespace notes_web

@@ -36,7 +36,7 @@
 
 import { Chart } from 'chart.js/auto';
 
-// The line chart of components/sales_chart.hpp: its props are {months, units}; a click on a point emits its index.
+// The line chart of components/sales_chart.cpp: its props are {months, units}; a click on a point emits its index.
 export function mount(node, props, emit) {
   const select = (_, points) => {
     if (points.length > 0) {

@@ -63,7 +63,7 @@ template <class T>
 class shared;
 
 template <class T>
-class basic_form_state;
+class form_state;
 
 /** @brief What a call of an action does while another is under way. */
 enum class overlap {
@@ -188,7 +188,7 @@ public:
    */
   template <class T>
     requires(sizeof...(Ts) == 1 && (std::same_as<T, Ts> && ...))
-  [[nodiscard]] auto with(basic_form_state<T> const &form QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
+  [[nodiscard]] auto with(form_state<T> const &form QUOLL_LIFETIMEBOUND) QUOLL_LIFETIMEBOUND {
     return [action = &self(), form = &form] {
       return action->run_with(std::tuple<Ts...>{form->value()}, detail::failure_to::app, form->valid());
     };
@@ -206,25 +206,24 @@ private:
  * to show, as React Query's useMutation.
  *
  * @code
- * struct product_detail {
- *   shared<catalog> products;
- *   action<&catalog::save> save{products};
+ * inline constexpr component<product_detail_props> product_detail = [](product_detail_props const &given) {
+ *   auto &products = use_context<catalog>();
+ *   auto &save = use_action<&catalog::save>(products);
  *
- *   element view(props const &given) {
- *     return button(save->loading ? "Saving…" : "Save") | disabled(save->loading) |
- *            on_click(save.with(given.item.id, changes(given.item)));
- *   }
+ *   return button(save->loading ? "Saving…" : "Save") | disabled(save->loading) |
+ *          on_click(save.with(given.item.id, changes(given.item)));
  * };
  * @endcode
  *
- * `Function` gives its signature: a free function returning a task, as `&products_client::update`, or a member
- * function of a context, given its `shared<C>`, whose work then goes on as the component goes, or of the component
- * itself, given `this`, declared before it. It is read as a state: `save->loading`, `save->error` and `save->value`,
- * what the last run that succeeded gave, copied, none for a value it cannot copy or make empty, as a move-only one,
- * which only run()'s caller is given; a change of them shows its component again. What follows a success, given as it
- * is made, as React Query's onSuccess, is told what the run gave, before its caller.
+ * What use_action() gives a component, or a member of a context. `Function` gives its signature: a free function
+ * returning a task, as `&products_client::update`, or a member function of a context, given its `shared<C>`, whose
+ * work then goes on as the component goes, or of the context itself, given `this`, declared before it. It is read as a
+ * state: `save->loading`, `save->error` and `save->value`, what the last run that succeeded gave, copied, none for a
+ * value it cannot copy or make empty, as a move-only one, which only run()'s caller is given; a change of them shows
+ * its component again. What follows a success, given as it is made, as React Query's onSuccess, is told what the run
+ * gave, before its caller.
  *
- * run() runs it in the task awaiting it, a handler's or mounted()'s, and gives what it gave or what it threw, as a
+ * run() runs it in the task awaiting it, a handler's or an effect's, and gives what it gave or what it threw, as a
  * std::expected, not thrown again; what follows a success throws to it, as code of the handler after the run would.
  * with() gives a handler that runs it, for on_click. Every failure of a run, a lack of memory before it began included,
  * is its error, and, from with(), the app's on_error's too, as every failure of an effect or a handler; a lack of

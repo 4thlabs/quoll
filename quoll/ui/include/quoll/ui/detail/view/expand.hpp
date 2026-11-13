@@ -52,16 +52,14 @@
 namespace quoll::ui::detail {
 
 // What an expansion makes components with: the app their callbacks call back, none for a view written once, the app's
-// stop, which theirs follow, the link of their states, none for a
-// view written once (to_html), and where what their unmounted() throws goes. Then what it found, for commit(): the
-// components it made, to mount once shown, and what changes for those it kept.
+// stop, which theirs follow, and the link of their states, none for a view written once (to_html). Then what it found,
+// for commit(): the components it made, and what changes for those it kept.
 struct expansion {
   std::shared_ptr<app_link> app{};
   // Of the app's hot reloads: a last view from another is not given again.
   std::uint64_t epoch = 0;
   std::stop_token app_stop;
   state_link link{};
-  failure_sink sink{};
   // Where the components it makes find their contexts: none for a view written once.
   context_finder contexts{};
   std::vector<std::shared_ptr<instance>> made{};
@@ -79,6 +77,9 @@ struct expansion {
   };
 
   std::vector<view_record> views{};
+  // The records of `views` in the order their effects start, as React's: those of the components of a view before it,
+  // in the order the view places them.
+  std::vector<std::size_t> effect_order{};
   std::vector<std::pair<std::shared_ptr<instance>, std::vector<std::shared_ptr<instance>>>> children{};
   std::vector<std::shared_ptr<instance>> leaving{};
 };
@@ -100,8 +101,7 @@ struct expansion {
 void expand(element &view, std::vector<std::shared_ptr<instance>> const &shown, expansion &context);
 
 // Applies what expand() found: `shown` becomes the components of the view, the states of those made are linked, the
-// props and the components of those kept are replaced, and those that go are unmounted, what their unmounted() throws
-// going to the sink.
+// props and the components of those kept are replaced, and those that go are unmounted.
 void commit(expansion &context, std::vector<std::shared_ptr<instance>> &shown) noexcept;
 
 // Drops what expand() found: the components it made go, never mounted, and those kept whose view returned hold the

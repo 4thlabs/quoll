@@ -68,23 +68,21 @@ namespace quoll::ui {
  *   task<products::product> save(std::int64_t id, products::product_update changes);
  * };
  *
- * struct product_list {
- *   shared<catalog> products;
+ * inline constexpr component<> product_list = [] {
+ *   auto &products = use_context<catalog>();
  *
- *   element view() {
- *     if (products->items->loading) {
- *       return p("Loading the products");
- *     }
- *     // ...
+ *   if (products->items->loading) {
+ *     return p("Loading the products");
  *   }
+ *   // ...
  * };
  * @endcode
  *
- * A member of a component, found as the app makes the component, by its type, among the contexts its options give
- * (see provide()). A change of the context's states shows again the components using it, as theirs would; its effects
- * start after each view of the app. run() runs a member function of the context as a task of the app, not the
- * caller's: a component that goes stops waiting for it, and the work goes on, so that what it changes shows wherever it
- * is read, as a callback's does.
+ * What use_context() gives a component, or a member of a context using another, found by its type among the
+ * contexts the components above provide, nearest first, then those its app's options give (see provide()). A change of
+ * the context's states shows again the components using it, as theirs would; its effects start after each view of the
+ * app. run() runs a member function of the context as a task of the app, not the caller's: a component that goes stops
+ * waiting for it, and the work goes on, so that what it changes shows wherever it is read, as a callback's does.
  *
  * The app holds its context as long as it lives, past the tasks of its components. Thread safety: none, as its app.
  */

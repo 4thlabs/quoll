@@ -34,13 +34,11 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui: a struct function component's operator() is `element operator()(props const &)` or `element
-// operator()()`
+// expect: quoll::ui: a component<Props> is made of a view taking Props
 //
-// A struct function component taking its props by value: a copy that goes as the view returns, which what the view
-// writes may capture.
+// Declared with the props of another view than the one it is made of, as an extern declaration out of step.
 
-#include <quoll/ui/component/child_component.hpp>
+#include <quoll/ui/component/component.hpp>
 #include <quoll/ui/view/tags.hpp>
 
 #include <string>
@@ -49,8 +47,8 @@ struct badge_props {
   std::string label;
 };
 
-struct badge {
-  quoll::ui::element operator()(badge_props given) { return quoll::ui::p(given.label); }
+struct other_props {
+  int count = 0;
 };
 
-auto const placed = quoll::ui::component<badge>({.label = "badge"});
+constexpr quoll::ui::component<other_props> badge = [](badge_props const &given) { return quoll::ui::p(given.label); };

@@ -58,38 +58,48 @@ namespace detail {
 
 // What is left of a start that failed: nothing shows any more, and its tasks need it until they end.
 template <class App>
-[[nodiscard]] async::task<> discard(std::unique_ptr<App> failed) {
+[[nodiscard]] async::task<> discard(std::shared_ptr<App> failed) {
   co_await failed->stop();
 }
+
+// Whether the component of `root` is the root of an app mounted already.
+[[nodiscard]] bool is_mounted(ui::detail::component_table const &root) noexcept;
+
+// Room for one more app, made before it starts, so that keep_mounted() cannot throw.
+void reserve_mounted();
+
+// Keeps `app`, the app of `root`, for as long as the page: held without its type, its deleter made where the app is,
+// in the program's sources, which a QUOLL_ switch may change.
+void keep_mounted(ui::detail::component_table const &root, std::shared_ptr<void> app) noexcept;
 
 } // namespace detail
 
 /**
- * @brief Shows a component in the page, in the element found by `selector`, for as long as the page lives: what the
- * main() of an interface calls.
+ * @brief Shows a component, the root of an app, in the page, in the element found by `selector`, for as long as the
+ * page lives: what the main() of an interface calls.
  *
  * @code
- * int main() { quoll::emscripten::mount<notes_page>("#app"); }
+ * int main() { quoll::emscripten::mount(notes_page, "#app"); }
  * @endcode
  *
  * Returning from main() leaves the event loop running, and the app with it.
  *
  * @throws std::invalid_argument when nothing matches `selector`.
- * @throws std::logic_error when this component is already mounted: one app per component type.
- * @throws what the first view or mounted() throws: the page is left as it was, and a later mount can try again.
+ * @throws std::logic_error when this component is already mounted: one app for each.
+ * @throws what the first view throws: the page is left as it was, and a later mount can try again.
  */
-template <ui::Component C>
-C &mount(std::string_view selector = "#app", ui::app_options options = {}) {
-  using app_type = ui::app<C, dom_renderer>;
+inline ui::app<dom_renderer> &
+mount(ui::component<> root, std::string_view selector = "#app", ui::app_options options = {}) {
+  using app_type = ui::app<dom_renderer>;
 
-  // For as long as the page: a page has no end to wait for.
-  static std::unique_ptr<app_type> instance;
-
-  if (instance) {
+  if (detail::is_mounted(root.table())) {
     throw std::logic_error{"quoll::emscripten::mount: this component is already mounted"};
   }
 
-  instance = std::make_unique<app_type>(executor{}, dom_renderer{selector}, std::move(options));
+  // Its room first: once started, the app goes nowhere but into it, as one started must not go without its stop.
+  detail::reserve_mounted();
+
+  auto instance = std::make_shared<app_type>(executor{}, dom_renderer{selector}, root, std::move(options));
 
   auto const dispatch = [](void *owner, ui::node_id id, char const *name, char const *value) {
     static_cast<app_type *>(owner)->dispatch(id, name, value);
@@ -118,7 +128,10 @@ C &mount(std::string_view selector = "#app", ui::app_options options = {}) {
     throw;
   }
 
-  return instance->component();
+  auto &shown = *instance;
+
+  detail::keep_mounted(root.table(), std::move(instance));
+  return shown;
 }
 
 } // namespace quoll::emscripten

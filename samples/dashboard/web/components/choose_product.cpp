@@ -34,47 +34,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_UI_COMPONENT_COMPONENT_WITH_PROPS_HPP
-#define QUOLL_UI_COMPONENT_COMPONENT_WITH_PROPS_HPP
+// At /products, beside the list: none chosen yet.
 
-#include <quoll/ui/view/element.hpp>
+#include "components.hpp"
 
-#include <concepts>
+#include <quoll/ui.hpp>
 
-namespace quoll::ui {
+namespace dashboard_web {
 
-/**
- * @brief A component of a parent's view, which the parent gives its props on each of its views: an aggregate with
- * `struct props` and `element view(props const &)`, and its own state<T> members, kept from one view of the parent to
- * the next.
- *
- * @code
- * struct note_row {
- *   struct props {
- *     notes::note item;
- *   };
- *
- *   state<bool> editing;
- *
- *   element view(props const &given) {
- *     auto const edit = [this] { editing = true; };
- *
- *     return li(given.item.text) | on_click(edit);
- *   }
- * };
- * @endcode
- *
- * `given` lives as long as what that view made: its handlers and their tasks may keep a reference to it. The
- * component, and the components it places, may keep a reference to `given` until its next view that returns, as a view
- * that throws keeps none; and mounted() to the props of the first view, until it ends. The props it gives a component
- * of its view may refer to it, its `this` or its `given`: they stay as long as those props. One with no props, a
- * Component, is placed with component<C>().
- */
-template <class C>
-concept ComponentWithProps = requires { typename C::props; } && requires(C &component, typename C::props const &given) {
-  { component.view(given) } -> std::same_as<element>;
-};
+constexpr component<> choose_product = [] { return p("Choose a product") | tw("opacity-70"); };
 
-} // namespace quoll::ui
-
-#endif // QUOLL_UI_COMPONENT_COMPONENT_WITH_PROPS_HPP
+} // namespace dashboard_web

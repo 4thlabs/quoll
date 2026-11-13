@@ -37,8 +37,6 @@
 #ifndef QUOLL_UI_DETAIL_DATA_RUN_EFFECTS_HPP
 #define QUOLL_UI_DETAIL_DATA_RUN_EFFECTS_HPP
 
-#include <quoll/async/detail/type_id.hpp>
-#include <quoll/ui/component/component_with_props.hpp>
 #include <quoll/ui/detail/data/effect_member.hpp>
 #include <quoll/ui/detail/data/effect_starter.hpp>
 #include <quoll/ui/detail/for_each_member.hpp>
@@ -54,16 +52,10 @@ namespace quoll::ui::detail {
 template <class C>
 void run_effects(C &component, effect_starter const &start) {
   std::exception_ptr first;
-  auto given = start;
-
-  if constexpr (ComponentWithProps<C>) {
-    given.props_type = async::detail::type_id_of<typename C::props>();
-  }
-
   for_each_member(component, [&](auto &member) {
     if constexpr (EffectMember<std::remove_cvref_t<decltype(member)>>) {
       try {
-        member.after_view(given);
+        member.after_view(start);
       } catch (...) {
         if (start.report != nullptr) {
           start.report(start.owner, std::current_exception());
@@ -79,12 +71,11 @@ void run_effects(C &component, effect_starter const &start) {
   }
 }
 
-// Before the first view of a component, or a context, just made, `props` its props or none: the targets of its effects
-// whose first run will start say they are loading. Nothing starts, and nothing throws.
-inline void
-first_effects(void (*effects)(void *, effect_starter const &), void *component, void const *props) noexcept {
+// Before the first view of a component, or a context, just made: the targets of its effects whose first run will start
+// say they are loading. Nothing starts, and nothing throws.
+inline void first_effects(void (*effects)(void *, effect_starter const &), void *component) noexcept {
   if (effects != nullptr) {
-    effects(component, effect_starter{.props = props, .first = true});
+    effects(component, effect_starter{.first = true});
   }
 }
 

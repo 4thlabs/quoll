@@ -34,50 +34,41 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// One product of the list: a link to its page.
+#ifndef QUOLL_UI_DETAIL_COMPONENT_COMPONENT_SOURCE_HPP
+#define QUOLL_UI_DETAIL_COMPONENT_COMPONENT_SOURCE_HPP
 
-#ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_ROW_HPP
-#define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_ROW_HPP
+#include <quoll/ui/view/element.hpp>
 
-#include "product.hpp"
-#include "product_page.hpp"
+#include <type_traits>
 
-#include <quoll/ui.hpp>
+namespace quoll::ui {
 
-#include <cstdint>
-#include <string>
+template <class Props>
+class component;
 
-namespace dashboard_web {
+namespace detail {
 
-using namespace quoll::ui;
+template <class C>
+inline constexpr bool is_component = false;
 
-struct product_row {
-  struct props {
-    products::product item;
-    bool selected = false;
+template <class P>
+inline constexpr bool is_component<component<P>> = true;
 
-    // A row whose product and selection are unchanged is not viewed again.
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
+// What a component is made of, as it is written: a class, a lambda or a struct, but no component, which converts to
+// none of another type, and no class that holds data without a call operator, as a string, which a call taking a
+// component or a string would otherwise find ambiguous. The rest is checked as it is made, a message for each mistake.
+template <class F>
+concept ComponentSource =
+    std::is_class_v<F> && !is_component<F> && (std::is_empty_v<F> || requires { &F::operator(); });
 
-  element view(props const &given) {
-    auto const stock =
-        given.item.stock == 0 ? std::string{"out of stock"} : std::to_string(given.item.stock) + " in stock";
-
-    auto const name = span(given.item.name) | tw("flex-1 text-left font-medium");
-    auto const category = span(given.item.category) | tw("badge badge-ghost");
-    auto const in_stock = span(stock) | tw("whitespace-nowrap text-right text-sm opacity-70");
-
-    // A link to its page: the address follows, and the back button comes back.
-    auto const row = link_to<product_page>({.id = given.item.id}, {name, category, in_stock});
-
-    auto const shown = row | tw("flex w-full items-center gap-3 rounded-box px-4 py-2 hover:bg-base-200") |
-                       tw_if(given.selected, "bg-base-200");
-
-    return li({shown});
-  }
+struct component_source_model {
+  element operator()() const { return {}; }
 };
 
-} // namespace dashboard_web
+static_assert(ComponentSource<component_source_model>);
 
-#endif // QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_ROW_HPP
+} // namespace detail
+
+} // namespace quoll::ui
+
+#endif // QUOLL_UI_DETAIL_COMPONENT_COMPONENT_SOURCE_HPP

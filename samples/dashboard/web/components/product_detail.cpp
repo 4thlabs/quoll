@@ -34,60 +34,40 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The product shown, to edit: what is typed stays here until it is saved, the product itself is the catalog's.
-
-#ifndef QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_DETAIL_HPP
-#define QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_DETAIL_HPP
-
 #include "catalog.hpp"
+#include "components.hpp"
 #include "error_text.hpp"
 #include "labelled.hpp"
-#include "product.hpp"
 
 #include <quoll/ui.hpp>
 
-#include <string>
-
 namespace dashboard_web {
 
-using namespace quoll::ui;
-
-struct product_detail {
-  struct props {
-    products::product item;
-
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
-
-  shared<catalog> products;
-
+// The product shown, to edit: what is typed stays here until it is saved, the product itself is the catalog's.
+constexpr component<product_detail_props> product_detail = [](product_detail_props const &given) {
+  auto &products = use_context<catalog>();
   // The product edited: the one given, with what is typed.
-  form_state<&props::item> form;
-
+  auto &form = use_form(given.item);
   // Saves the product edited, once at a time; the save is the catalog's, which goes on as the detail is left.
-  action<&catalog::save> save{products};
+  auto &save = use_action<&catalog::save>(products);
 
-  element view(props const &given) {
-    auto const not_numbers = [] { return error_text("The price and the stock are numbers"); };
-    auto const save_failed = [this] { return error_text("Not saved: " + told(save->error, "the save failed")); };
+  auto const not_numbers = [] { return error_text("The price and the stock are numbers"); };
+  auto const save_failed = [&save] { return error_text("Not saved: " + told(save->error, "the save failed")); };
 
-    // The fields stay open while a save is on its way: what is typed meanwhile is kept for the next.
-    auto const shown = section({
-        h2(given.item.name) | tw("text-2xl font-semibold"),
-        labelled("Name", input() | bind(form, &products::product::name)),
-        labelled("Price", input() | bind(form, &products::product::price)),
-        labelled("Stock", input() | bind(form, &products::product::stock)),
-        // What is typed wrong first: the last save's failure is of what was sent then.
-        when(!form.valid(), not_numbers),
-        when(form.valid() && save->error != nullptr, save_failed),
-        button(save->loading ? "Saving…" : "Save") | disabled(save->loading || !form.valid()) |
-            on_click(save.with(form)) | tw("btn btn-primary self-start"),
-    });
+  // The fields stay open while a save is on its way: what is typed meanwhile is kept for the next.
+  auto const shown = section({
+      h2(given.item.name) | tw("text-2xl font-semibold"),
+      labelled("Name", input() | bind(form, &products::product::name)),
+      labelled("Price", input() | bind(form, &products::product::price)),
+      labelled("Stock", input() | bind(form, &products::product::stock)),
+      // What is typed wrong first: the last save's failure is of what was sent then.
+      when(!form.valid(), not_numbers),
+      when(form.valid() && save->error != nullptr, save_failed),
+      button(save->loading ? "Saving…" : "Save") | disabled(save->loading || !form.valid()) |
+          on_click(save.with(form)) | tw("btn btn-primary self-start"),
+  });
 
-    return shown | tw("flex flex-col gap-3");
-  }
+  return shown | tw("flex flex-col gap-3");
 };
 
 } // namespace dashboard_web
-
-#endif // QUOLL_SAMPLES_DASHBOARD_WEB_COMPONENTS_PRODUCT_DETAIL_HPP

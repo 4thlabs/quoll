@@ -50,27 +50,27 @@
 namespace quoll::ui {
 
 /**
- * @brief A context a component provides to the components of its view, and theirs, as React's Provider: found by a
- * `shared<T>` among them before the app's, and gone with the component.
+ * @brief A context a component provides to the components of its view, and theirs, as React's Provider: found by
+ * `use_context<T>()` among them before the app's, and gone with the component.
  *
  * @code
- * struct checkout_page {
+ * inline constexpr component<> checkout_page = [] {
  *   // The cart being filled, for the steps of the page: gone as the page goes.
- *   provided<cart_draft> cart;
+ *   auto &cart = provide_context<cart_draft>();
  *
- *   element view() { return div({component<cart_lines>(), component<payment_step>()}); }
+ *   return div({cart_lines(), payment_step()});
  * };
  *
- * struct cart_lines {
- *   shared<cart_draft> cart;
+ * inline constexpr component<> cart_lines = [] {
+ *   auto &cart = use_context<cart_draft>();
  *   // ...
  * };
  * @endcode
  *
- * A member of a component. T is a context, as provide<T>() takes: its states show again the components reading it,
- * and the component providing it; its effects start after each view of that component, as its tasks; it uses the
- * contexts its component finds. A component using it keeps the component providing it while it lives, and run() as
- * long as its work.
+ * What provide_context() gives a component. T is a context, as provide<T>() takes: its states show again the components
+ * reading it, and the component providing it; its effects start after each view of that component, as its tasks; it
+ * uses the contexts its component finds. A component using it keeps the component providing it while it lives, and
+ * run() as long as its work.
  *
  * Neither copied nor moved: the components using it refer to it. Thread safety: none, as a state.
  */
@@ -78,7 +78,7 @@ template <class T>
 class provided {
   static_assert(
       std::is_aggregate_v<T> && !std::is_const_v<T>,
-      "quoll::ui: a context is an aggregate, as a component: public members and no constructor"
+      "quoll::ui: a context is an aggregate: public members and no constructor"
   );
 
 public:
@@ -112,11 +112,7 @@ public:
     }
 
     if (auto const effects = entry_->table().effects; effects != nullptr) {
-      auto own = start;
-
-      own.props = nullptr;
-      own.props_type = nullptr;
-      effects(entry_->object(), own);
+      effects(entry_->object(), start);
     }
   }
 

@@ -47,30 +47,25 @@
 
 namespace notes_web {
 
-using quoll::ui::callback;
-using quoll::ui::element;
+using namespace quoll::ui;
 
-struct note_row {
-  struct props {
-    notes::note item;
-    callback<void(std::int64_t)> on_remove;
+struct note_row_props {
+  notes::note item;
+  callback<void(std::int64_t)> on_remove;
 
-    // A row whose note has not changed is not viewed again.
-    [[nodiscard]] bool operator==(props const &) const = default;
-  };
+  // A row whose note has not changed is not viewed again.
+  [[nodiscard]] bool operator==(note_row_props const &) const = default;
+};
 
-  element view(props const &given) {
-    using namespace quoll::ui;
+inline constexpr component<note_row_props> note_row = [](note_row_props const &given) {
+  auto const remove = [&given] { return given.on_remove(given.item.id); };
 
-    auto const remove = [&given] { return given.on_remove(given.item.id); };
+  auto const row = li({
+      span(given.item.text) | tw("flex-1"),
+      button("Delete") | tw("btn btn-ghost btn-sm") | on_click(remove),
+  });
 
-    auto const row = li({
-        span(given.item.text) | tw("flex-1"),
-        button("Delete") | tw("btn btn-ghost btn-sm") | on_click(remove),
-    });
-
-    return row | tw("flex items-center gap-2 rounded-box bg-base-100 px-4 py-2 shadow-sm");
-  }
+  return row | tw("flex items-center gap-2 rounded-box bg-base-100 px-4 py-2 shadow-sm");
 };
 
 } // namespace notes_web
