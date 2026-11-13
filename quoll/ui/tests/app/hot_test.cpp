@@ -34,7 +34,8 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// Hot reload, in a program of its own: QUOLL_UI_HOT changes the signatures of tw(), text() and the tags.
+// Hot reload, in a program of its own: QUOLL_UI_HOT changes the signatures of tw(), text(), the tags and link_to(),
+// which a program built with it calls in a library built without.
 
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/test/memory_renderer.hpp>
@@ -72,6 +73,22 @@ unsigned const child_line = std::source_location::current().line() + 2;
 constexpr component<> child = [] { return p("Child"); };
 
 constexpr component<> nested_page = [] { return div({child()}); };
+
+// Links with a text, whose type QUOLL_UI_HOT changes: inline, they link against a library built without it, and their
+// texts are replaced as any literal.
+constexpr component<> other_page = [] { return p("The other page"); };
+
+unsigned const links_line = std::source_location::current().line() + 4;
+
+constexpr component<> linking_page = [] {
+  return div({
+      link_to(other_page, "Other"),
+      link_to("/", "Home"),
+      outlet(),
+  });
+};
+
+inline constexpr auto linked_routes = routes(route<"/other", other_page>());
 
 int failures = 0;
 
@@ -147,5 +164,35 @@ int main() {
 
   auto const nested_done = quoll::test::run(nested_time, nested_session());
 
-  return done.has_value() && nested_done.has_value() && failures == 0 ? 0 : 1;
+  quoll::test::virtual_time linked_time;
+  quoll::test::memory_renderer const linked_shown;
+  app linked{linked_time.get_executor(), linked_shown, linking_page, {.contexts = {routing<linked_routes>("/other")}}};
+
+  auto const linked_session = [&]() -> task<int> {
+    linked.start();
+    check(
+        linked_shown.html(),
+        R"(<div><a data-quoll-link="" href="/other">Other</a><a data-quoll-link="" href="/">Home</a><p>The other page</p></div>)"
+    );
+
+#if defined(__clang__)
+    detail::hot_replace(file, links_line, 27, "Autre");
+    detail::hot_replace(file, links_line + 1, 20, "Accueil");
+#else
+    detail::hot_replace(file, links_line, 14, "Autre");
+    detail::hot_replace(file, links_line + 1, 14, "Accueil");
+#endif
+    co_await quoll::async::sleep_for(1ms);
+    check(
+        linked_shown.html(),
+        R"(<div><a data-quoll-link="" href="/other">Autre</a><a data-quoll-link="" href="/">Accueil</a><p>The other page</p></div>)"
+    );
+
+    co_await linked.stop();
+    co_return 0;
+  };
+
+  auto const linked_done = quoll::test::run(linked_time, linked_session());
+
+  return done.has_value() && nested_done.has_value() && linked_done.has_value() && failures == 0 ? 0 : 1;
 }
