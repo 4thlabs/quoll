@@ -167,7 +167,8 @@ note_counter({.label = "Notes"})
   refusing it with `std::logic_error`. A member made later, as one an `optional` makes, joins nothing;
 - an effect follows a state, or what its props give: a field of them, `effect load{&props::id, load_notes, notes};`,
   or a function of them, `effect load{[](props const &given) { return given.item.id; }, load_notes, notes};`, taking
-  them by const reference or by value, not generic, for a nested field, one a base declares, or a value computed.
+  them by const reference or by value, not generic, for a nested field, one a base declares, or a value computed,
+  never a pointer into them.
   Read from the props of each view, it runs again as that value changes, the run before stopped, and not as another
   prop does. Props equal to the last ones by their `==` give no view: a field their `==` leaves out is seen with the
   next props that differ. One outside the making of a struct, or following the props of another, as `&props::size`

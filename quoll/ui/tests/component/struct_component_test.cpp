@@ -47,13 +47,13 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
+#include <concepts>
 #include <cstdint>
 #include <exception>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace struct_component_test {
@@ -435,6 +435,75 @@ struct mismatched_page : component<mismatched_page> {
 
 inline constexpr tag<mismatched_page> mismatched_page;
 
+// What follows its props throws, as a copy lacking memory would: reported after the view, rather than end the program.
+std::int64_t throwing_id(std::int64_t /*id*/) { throw std::runtime_error{"no id"}; }
+
+struct throwing_follow : component<throwing_follow> {
+  struct props {
+    std::int64_t id = 0;
+
+    bool operator==(props const &) const = default;
+  };
+
+  async_state<std::string> loaded;
+  // An optional, which may hold none: read before the first view, where nothing may throw.
+  effect load{[](props const &given) { return std::optional{throwing_id(given.id)}; }, load_for, loaded};
+
+  element view() { return p(loaded->error ? std::string{"failed"} : loaded->loading ? "loading" : "idle"); }
+};
+
+inline constexpr tag<throwing_follow> throwing_follow;
+
+struct throwing_follow_page : component<throwing_follow_page> {
+  element view() { return throwing_follow({.id = 1}); }
+};
+
+inline constexpr tag<throwing_follow_page> throwing_follow_page;
+
+// What it follows may hold none, it is debounced, and its button loads again.
+struct waited_card : component<waited_card> {
+  struct props {
+    std::optional<std::int64_t> id;
+
+    bool operator==(props const &) const = default;
+  };
+
+  async_state<std::string> loaded;
+  effect load{&props::id, load_for, loaded, {.debounce = 5ms}};
+
+  element view() {
+    return button(loaded->loading ? std::string{"loading"} : loaded->value) | on_click([this] { load.reload(); });
+  }
+};
+
+inline constexpr tag<waited_card> waited_card;
+
+struct waited_data {
+  state<std::optional<std::int64_t>> id;
+};
+
+struct waited_page : component<waited_page> {
+  element view() {
+    auto &self = use_context<waited_data>();
+
+    return waited_card({.id = *self->id});
+  }
+};
+
+inline constexpr tag<waited_page> waited_page;
+
+// What does not say whose props it follows, or what it gives of them, is refused.
+using some_target = state<std::string>;
+
+static_assert(!std::constructible_from<
+              effect, decltype([](auto const &given) { return given.id; }), decltype(&load_for), some_target &>);
+static_assert(!std::constructible_from<
+              effect, decltype([](product_card::props &given) { return given.id; }), decltype(&load_for),
+              some_target &>);
+static_assert(!std::constructible_from<effect, decltype([](product_card::props const &) {}), decltype(&note_followed)>);
+static_assert(!std::constructible_from<
+              effect, std::int64_t (product_card::props::*)() const, decltype(&load_for), some_target &>);
+
 // A field a base of its props declares, named by a member pointer: that of the base, refused as another's.
 struct base_field : component<base_field> {
   struct props : sized {
@@ -799,14 +868,8 @@ TEST_CASE("struct component: an effect on the props of another struct is refused
   test_app instance{time.get_executor(), shown, mismatched_page};
 
   auto const act = [&]() -> task<int> {
-    try {
-      instance.start();
-    } catch (std::logic_error const &error) {
-      co_return std::string_view{error.what()}.find("follows its own component's props") == std::string_view::npos ? 1
-                                                                                                                   : 0;
-    }
-
-    co_return 1;
+    CHECK_THROWS_WITH(instance.start(), Catch::Matchers::ContainsSubstring("follows its own component's props"));
+    co_return 0;
   };
 
   CHECK(quoll::test::run(time, act()) == 0);
@@ -820,15 +883,77 @@ TEST_CASE(
   test_app instance{time.get_executor(), shown, base_field_page};
 
   auto const act = [&]() -> task<int> {
-    try {
-      instance.start();
-    } catch (std::logic_error const &error) {
-      co_return std::string_view{error.what()}.find("a field a base of them declares") == std::string_view::npos ? 1
-                                                                                                                 : 0;
-    }
-
-    co_return 1;
+    CHECK_THROWS_WITH(instance.start(), Catch::Matchers::ContainsSubstring("a field a base of them declares"));
+    co_return 0;
   };
 
   CHECK(quoll::test::run(time, act()) == 0);
+}
+
+TEST_CASE("struct component: what follows a prop that throws is reported after the view", "[ui][struct]") {
+  std::vector<std::string> errors;
+  virtual_time time;
+  memory_renderer const shown;
+  test_app instance{
+      time.get_executor(),
+      shown,
+      throwing_follow_page,
+      {.on_error =
+           [&errors](std::exception_ptr const &error) {
+             try {
+               std::rethrow_exception(error);
+             } catch (std::exception const &failure) {
+               errors.emplace_back(failure.what());
+             }
+           }}
+  };
+
+  auto const act = []() -> task<> { co_await quoll::async::sleep_for(10ms); };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html() == "<p>failed</p>");
+  CHECK(errors == std::vector<std::string>{"no id"});
+}
+
+TEST_CASE("struct component: an effect on a prop holding none waits, debounced, and loads again", "[ui][struct]") {
+  loads.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app instance{time.get_executor(), shown, waited_page, {.contexts = {provide<waited_data>()}}};
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(20ms);
+    CHECK(shown.html() == "<button></button>");
+    CHECK(loads.empty());
+
+    // The first run that starts does not wait.
+    instance.context<waited_data>().id = 1;
+    co_await quoll::test::settle();
+    CHECK(loads == std::vector<std::int64_t>{1});
+    co_await quoll::async::sleep_for(20ms);
+    CHECK(shown.html() == "<button>loaded 1</button>");
+
+    // A change waits for the pause, loading meanwhile.
+    instance.context<waited_data>().id = 2;
+    co_await quoll::async::sleep_for(2ms);
+    CHECK(shown.html() == "<button>loading</button>");
+    CHECK(loads == std::vector<std::int64_t>{1});
+    co_await quoll::async::sleep_for(20ms);
+    CHECK(shown.html() == "<button>loaded 2</button>");
+
+    // reload() reads the props again, at once.
+    instance.dispatch(shown.find("button"), "click");
+    co_await quoll::test::settle();
+    CHECK(loads == std::vector<std::int64_t>{1, 2, 2});
+    co_await quoll::async::sleep_for(20ms);
+
+    // None again: the target loads no more, its value kept.
+    instance.context<waited_data>().id = std::nullopt;
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html() == "<button>loaded 2</button>");
+  CHECK(loads == std::vector<std::int64_t>{1, 2, 2});
 }
