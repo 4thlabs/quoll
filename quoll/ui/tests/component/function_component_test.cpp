@@ -691,6 +691,58 @@ struct touchy_page {
   element view() { return component<touchy_effect>({.key = *key}); }
 };
 
+// A state its own first view sets, as a struct's readying: the view after shows what it set.
+element readying() {
+  auto &ready = use_state(false);
+  bool const was = *ready;
+
+  if (!was) {
+    ready = true;
+  }
+
+  return p(was ? "ready" : "not yet");
+}
+
+struct readying_page {
+  element view() { return component<readying>(); }
+};
+
+// A state made in a branch of a later view, and set by that view: the view after shows what it set.
+element opening() {
+  auto &open = use_state(false);
+  auto const toggle = [&open] { open = true; };
+
+  if (!*open) {
+    return button("open") | on_click(toggle);
+  }
+
+  auto &done = use_state(false);
+  bool const was = *done;
+
+  if (!was) {
+    done = true;
+  }
+
+  return p(was ? "done" : "not yet");
+}
+
+struct opening_page {
+  element view() { return component<opening>(); }
+};
+
+// A view that reads its effect's target before it calls use_effect: the view the first run's loading asks for shows it.
+element reading_first(loader_props const &given) {
+  auto &text = use_async_state<std::string>();
+  bool const was_loading = text->loading;
+
+  use_effect(given.key, load_text, text);
+  return p(was_loading ? std::string{"loading"} : text->value);
+}
+
+struct reading_first_page {
+  element view() { return component<reading_first>({.key = 1}); }
+};
+
 } // namespace
 
 TEST_CASE("function component: a state of its view, the same at each view", "[ui][function]") {
@@ -1229,4 +1281,53 @@ TEST_CASE(
   CHECK(failed_shown == "<button>failed</button>");
   CHECK(touched_with == std::vector<int>{1, 3});
   CHECK(failures == std::vector<std::string>{"no touchy"});
+}
+
+TEST_CASE("function component: a state its view sets, the view that made it included, shows again", "[ui][function]") {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<readying_page> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> { co_await settle(); };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html() == "<p>ready</p>");
+}
+
+TEST_CASE(
+    "function component: a state made in a branch of a later view, and set by it, shows again", "[ui][function]"
+) {
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<opening_page> instance{time.get_executor(), shown};
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    instance.dispatch(shown.find("button"), "click");
+    co_await settle();
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html() == "<p>done</p>");
+}
+
+TEST_CASE(
+    "function component: a view reading its target before use_effect shows it loading the view after", "[ui][function]"
+) {
+  loads.clear();
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app<reading_first_page> instance{time.get_executor(), shown};
+  std::string meanwhile;
+
+  auto const act = [&]() -> task<> {
+    co_await settle();
+    meanwhile = shown.html();
+    co_await quoll::async::sleep_for(20ms);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(meanwhile == "<p>loading</p>");
+  CHECK(shown.html() == "<p>text 1</p>");
 }

@@ -303,6 +303,8 @@ effect &use_effect_at(
     // before it. Made in a later view, as in a branch, its target is already shown, and linked: it is loading as the
     // run starts, after the view, rather than in the middle of it.
     if (store.first_view()) {
+      // Told as any change in the view is, which asks for another: a view that read the target before this call shows
+      // it loading then.
       hook.run().after_view(effect_starter{.first = true});
     }
   } else {

@@ -165,6 +165,8 @@ void instance::unmount(failure_sink sink) noexcept {
   unlink();
 }
 
+instance::~instance() { table_->link(component_.get(), {}); }
+
 void instance::unlink() noexcept {
   // Gone from the view: what its tasks, or its destructor, still change shows nowhere.
   table_->link(component_.get(), {});

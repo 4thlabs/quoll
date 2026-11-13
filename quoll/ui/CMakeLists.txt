@@ -59,6 +59,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/action_optional_view_argument.cpp
     tests/compile_fail/action_throwing_move.cpp
     tests/compile_fail/action_with_move_only_argument.cpp
+    tests/compile_fail/callable_component_props_by_value.cpp
     tests/compile_fail/callback_optional_view_argument.cpp
     tests/compile_fail/callback_optional_view_result.cpp
     tests/compile_fail/callback_reference_argument.cpp
@@ -78,6 +79,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/effect_view_value.cpp
     tests/compile_fail/event_function_signature.cpp
     tests/compile_fail/form_state_bind_struct_field.cpp
+    tests/compile_fail/function_component_props_by_value.cpp
     tests/compile_fail/function_component_with_member.cpp
     tests/compile_fail/form_state_other_props.cpp
     tests/compile_fail/form_state_without_props.cpp

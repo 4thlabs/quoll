@@ -45,8 +45,8 @@ namespace quoll::ui {
 
 namespace detail {
 
-// What a function component is: a function giving its view, of its props, taken by value or by const reference, or of
-// nothing; the props it takes.
+// What a function component is: a function giving its view, of its props, taken by const reference, or of nothing; the
+// props it takes. Not by value: a copy goes as the view returns, which what the view writes may refer to.
 template <class F>
 struct function_component_traits {
   static constexpr bool valid = false;
@@ -60,25 +60,67 @@ struct function_component_traits<element (*)()> {
 };
 
 template <class P>
-struct function_component_traits<element (*)(P)> {
-  static constexpr bool valid =
-      std::is_same_v<P, std::remove_cvref_t<P>> || std::is_same_v<P, std::remove_cvref_t<P> const &>;
-  using props = std::remove_cvref_t<P>;
+struct function_component_traits<element (*)(P const &)> {
+  static constexpr bool valid = true;
+  using props = P;
 };
 
 template <>
 struct function_component_traits<element (*)() noexcept> : function_component_traits<element (*)()> {};
 
 template <class P>
-struct function_component_traits<element (*)(P) noexcept> : function_component_traits<element (*)(P)> {};
+struct function_component_traits<element (*)(P const &) noexcept> : function_component_traits<element (*)(P const &)> {
+};
+
+// The props of a view taking them by value, which a component refuses, none for another signature: for the message.
+template <class F>
+struct by_value_props {
+  using type = void;
+};
+
+template <class P>
+  requires(!std::is_reference_v<P>)
+struct by_value_props<element (*)(P)> {
+  using type = P;
+};
+
+template <class P>
+  requires(!std::is_reference_v<P>)
+struct by_value_props<element (*)(P) noexcept> {
+  using type = P;
+};
+
+template <class C, class P>
+  requires(!std::is_reference_v<P>)
+struct by_value_props<element (C::*)(P)> {
+  using type = P;
+};
+
+template <class C, class P>
+  requires(!std::is_reference_v<P>)
+struct by_value_props<element (C::*)(P) const> {
+  using type = P;
+};
+
+template <class C, class P>
+  requires(!std::is_reference_v<P>)
+struct by_value_props<element (C::*)(P) noexcept> {
+  using type = P;
+};
+
+template <class C, class P>
+  requires(!std::is_reference_v<P>)
+struct by_value_props<element (C::*)(P) const noexcept> {
+  using type = P;
+};
 
 [[nodiscard]] inline element function_component_model() { return {}; }
 
 } // namespace detail
 
 /**
- * @brief A function giving a view, `element f(props const &)`, `element f(props)` or `element f()`: a component whose
- * state is the `use_` hooks its view calls.
+ * @brief A function giving a view, `element f(props const &)` or `element f()`: a component whose state is the `use_`
+ * hooks its view calls. Its props by const reference, which what its view writes may capture, kept with it.
  */
 template <auto F>
 concept FunctionComponent = detail::function_component_traits<decltype(F)>::valid;
