@@ -279,6 +279,8 @@ struct target_table {
   void (*begin)(void *target) noexcept;
   // Ended with nothing to write, as a stop of its caller: loading no more.
   void (*abandon)(void *target) noexcept;
+  // What it follows holds none: loading no more, and, for a resource's, nothing loaded.
+  void (*release)(void *target) noexcept;
   // Failed: loading no more, and the error, where it has a place for it.
   void (*fail)(void *target, std::exception_ptr failure) noexcept;
 };
@@ -424,10 +426,26 @@ void finish_target(void *target, std::expected<R, std::exception_ptr> &ended) no
   }
 }
 
+// Whether a target holding T goes back to how it was made once what its effect follows holds none, as a resource's,
+// whose value says so: the others keep what they hold.
+template <class T>
+inline constexpr bool cleared_when_none = requires { typename T::value_type::cleared_when_none; };
+
+template <class T>
+void release_target(void *target) noexcept {
+  if constexpr (cleared_when_none<T>) {
+    // Called as what it follows changed to none: written, whether T compares or not.
+    write_quietly(*static_cast<state<T> *>(target), [](T &value) noexcept { value = T{}; });
+  } else {
+    abandon_target<T>(target);
+  }
+}
+
 template <class T>
 inline constexpr target_table target_table_for{
     .begin = &begin_target<T>,
     .abandon = &abandon_target<T>,
+    .release = &release_target<T>,
     .fail = &fail_target<T>,
 };
 
@@ -453,6 +471,12 @@ public:
   void abandon() const noexcept {
     if (table_ != nullptr) {
       table_->abandon(target_);
+    }
+  }
+
+  void release() const noexcept {
+    if (table_ != nullptr) {
+      table_->release(target_);
     }
   }
 

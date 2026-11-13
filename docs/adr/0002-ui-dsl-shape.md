@@ -356,9 +356,9 @@ form D reads best for a small component, form S frames a large one. What holds n
 ### A load, matched
 
 `resource<T>` (form S) and `use_resource` (form D) are a state and the effect loading it, as Solid's
-`createResource`, Angular's `resource` and Dioxus's `use_resource`. Its value keeps a `std::expected<T,
-std::exception_ptr>` once a run has ended, and whether one is under way; `match` takes what to show while it loads,
-once it failed and once it gave a value. The three give an element, and a case forgotten does not compile. The first
+`createResource`, Angular's `resource` and Dioxus's `use_resource`. Its state keeps what the last load that ended
+well gave, none before the first, why the last one failed, and whether one is under way; `match` takes what to show
+while it loads, once it failed and once it gave a value. The three give an element, and a case forgotten does not compile. The first
 function may take the value before, for a view that keeps showing it while it loads again, which Rust's
 `Option<Result<T, E>>` alone cannot say. `loading()` stays for what needs only the flag, as a button's label. `effect`
 with a target stays for what writes into a state the component also changes by hand.
