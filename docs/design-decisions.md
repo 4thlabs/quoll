@@ -230,8 +230,8 @@ them does not compile. The routes name their pages so, `route<"{id}", product_pa
 **Set aside.** `component<product_detail>(...)` in the view, which the maintainer found out of place in a view. A type
 deduced from the lambda, which left two ways to write a component, as an extern declaration has to write its props.
 
-**For you.** A screen declares its components in one header, each with its props, and defines each in a source named
-after it.
+**For you.** Give each component a header, its props and its `extern` declaration, and a source, its view: a source
+includes the headers of the components it places, so that a change of one compiles again only it and what places it.
 
 ### A component that goes stays until its tasks end
 

@@ -6,13 +6,15 @@ as it shows.
 
 | File | What it holds |
 |---|---|
-| `main.cpp` | `mount(notes_page)`, in `#app` |
-| `components/notes_page.hpp` | the notes and what the server answered last, `use_state` hooks, loaded by a `use_effect` on nothing, and the calls that change them |
-| `components/note_form.hpp` | the input of a new note, its draft a state of its own, and the `on_add` callback it calls |
-| `components/note_row.hpp` | one note, with its `on_remove` callback; props compared with `==`, so that a row whose note is unchanged is not viewed again |
-| `notes_client.hpp`, `.cpp` | the calls to the server, through a `rest::client` of the contract, in a source of their own |
-| `src/app.js`, `src/style.css`, `index.html` | what Vite serves: the program's script, Tailwind and daisyUI |
-| `vite.config.js` | the Vite plugin of [`tools/vite-plugin`](../../../tools/vite-plugin), with the target and its sources |
+| `CMakeLists.txt`, `vite.config.js`, `package.json`, `index.html`, `dev.sh` | the build and the development server, with the Vite plugin of [`tools/vite-plugin`](../../../tools/vite-plugin): all that is at the root, the code is in `src/` |
+| `src/main.cpp` | `mount(notes_page)`, in `#app` |
+| `src/main.js`, `src/style.css` | the page's script, Tailwind and daisyUI |
+| `src/components/notes_page` | the notes and what the server answered last, `use_state` hooks, loaded by a `use_effect` on nothing, and the calls that change them |
+| `src/components/note_form` | the input of a new note, its draft a state of its own, and the `on_add` callback it calls |
+| `src/components/note_row` | one note, with its `on_remove` callback; props compared with `==`, so that a row whose note is unchanged is not viewed again |
+| `src/client/notes_client.hpp`, `.cpp` | the calls to the server, through a `rest::client` of the contract, in a source of their own |
+
+Each component is a header, its props and its `extern` declaration, and a source, its view.
 
 ## Run it
 
@@ -51,17 +53,20 @@ Add a note, start typing another one, and change a component in your editor:
 
 ## Keep rebuilds short
 
-The page lives in headers, with no source of its own but `main.cpp`. Three things keep its rebuilds short:
+Each component is a header and a source: a change in one compiles again only its source. Four things keep its
+rebuilds short:
+
+- **A source for each component:** a change of a view compiles again only its source, and a change of props its source
+  and those placing it.
 
 - **Quoll, precompiled:** `target_precompile_headers` in `CMakeLists.txt`. This only tells the compiler to parse it once.
-- **REST and JSON in a source apart:** `notes_client.cpp`, which compiles only when a call changes. It relays the contract
+- **REST and JSON in a source apart:** `src/client/notes_client.cpp`, which compiles only when a call changes. It relays the contract
   by hand for now; it could be generated from it.
 - **Line tables, not full debug information:** what the plugin's `debug` option gives by default, `'lines'`: a trace
   still names files and lines. `debug: 'full'` in `vite.config.js` gives the browser's debugger the variables too, for
   rebuilds half as long again; `'none'` gives the shortest.
 
-Measured on a 4-core i5, for a change in the page: compiling `main.cpp` takes 1.1 s, 1.65 s with full debug information,
-and linking 0.4 s.
+The time of a rebuild is measured in [the dashboard's README](../../dashboard/README.md), for each of its components.
 
 ## Build for production
 

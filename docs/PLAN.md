@@ -464,8 +464,10 @@ changes only what the harness shows. Candidates:
   product_page>()`, `link_to(product_page, {.id = 7}, ...)`, and the app's root is a component with no props, placed as
   any other: `mount(app_shell, "#app", options)`. `mounted()` and `unmounted()` went with the structs: an effect on
   nothing runs once, and its run is stopped as the component goes; effects start children first, in the order the view
-  places them, as React's. A screen declares its components with their props in one header and defines each in a
-  source named after it, as the dashboard does. A rebuild of one component is to take a second at most, which the
+  places them, as React's. Each component is a header, its props and `extern component<props> const name;`, and a
+  source, `constexpr component<props> name = ...`, never `inline`: the maintainer chose it so that a change of props
+  compiles again only that component and those placing it, not the whole page, and a page's folder keeps its tools' files at its root and its code in `src/` by role, `components/`,
+  `contexts/`, `client/`, `ui/`, `widgets/`, which the Vite plugin's `sources` names as folders. A rebuild of one component is to take a second at most, which the
   maintainer set: with Quoll's header and the app's contexts precompiled, under Clang, a view alone takes 0.6 s and one
   with a form and an action 1.4 s, the rest in instantiating `use_effect` and `use_action` in its source, about 0.6 s
   each, which the next pull request takes into Quoll's library behind type erasure, with a budget CI checks.

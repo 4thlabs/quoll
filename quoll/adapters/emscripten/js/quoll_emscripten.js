@@ -504,7 +504,7 @@ addToLibrary({
     }
   },
 
-  // What samples/notes/web/src/app.js and the like call when the development server says a literal has changed.
+  // What samples/notes/web/src/main.js and the like call when the development server says a literal has changed.
   quoll_emscripten_ui_hot_install__deps: ['$stringToNewUTF8', '$callUserCallback', 'free'],
   quoll_emscripten_ui_hot_install: (replace) => {
     globalThis.quollHotReplace = (file, line, column, value) => {
