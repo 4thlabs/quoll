@@ -98,7 +98,7 @@ inline constexpr bool is_view<std::initializer_list<T>> = true;
 template <class T>
 struct held_types {
   static constexpr bool view = false;
-  static constexpr bool pointer = false;
+  static constexpr bool refers = false;
 };
 
 // What refers to an object it does not hold, or holds such a thing in a std::optional, a std::pair, a std::tuple, a
@@ -114,36 +114,36 @@ inline constexpr bool holds_view =
 template <class T>
 inline constexpr bool refers_out =
     holds_view<T> || std::is_pointer_v<std::remove_cv_t<T>> || std::is_member_pointer_v<std::remove_cv_t<T>> ||
-    held_types<std::remove_cv_t<T>>::pointer;
+    held_types<std::remove_cv_t<T>>::refers;
 
 template <class V>
 struct held_types<std::optional<V>> {
   static constexpr bool view = holds_view<V>;
-  static constexpr bool pointer = refers_out<V>;
+  static constexpr bool refers = refers_out<V>;
 };
 
 template <class A, class B>
 struct held_types<std::pair<A, B>> {
   static constexpr bool view = holds_view<A> || holds_view<B>;
-  static constexpr bool pointer = refers_out<A> || refers_out<B>;
+  static constexpr bool refers = refers_out<A> || refers_out<B>;
 };
 
 template <class... E>
 struct held_types<std::tuple<E...>> {
   static constexpr bool view = (holds_view<E> || ...);
-  static constexpr bool pointer = (refers_out<E> || ...);
+  static constexpr bool refers = (refers_out<E> || ...);
 };
 
 template <class... E>
 struct held_types<std::variant<E...>> {
   static constexpr bool view = (holds_view<E> || ...);
-  static constexpr bool pointer = (refers_out<E> || ...);
+  static constexpr bool refers = (refers_out<E> || ...);
 };
 
 template <class V, class E>
 struct held_types<std::expected<V, E>> {
   static constexpr bool view = holds_view<V> || holds_view<E>;
-  static constexpr bool pointer = refers_out<V> || refers_out<E>;
+  static constexpr bool refers = refers_out<V> || refers_out<E>;
 };
 
 // What may hold no function, which a callback made of it holds none either.
@@ -155,8 +155,8 @@ inline constexpr bool may_be_empty<std::function<Signature>> = true;
 
 static_assert(refers_out<int const *>);
 static_assert(refers_out<std::optional<std::pair<int, int *>>>);
-static_assert(refers_out<std::tuple<std::variant<int, std::string_view>>>);
-static_assert(!refers_out<std::optional<std::tuple<int, std::string>>>);
+static_assert(refers_out<std::tuple<std::variant<int, std::reference_wrapper<int>>>>);
+static_assert(!refers_out<std::optional<std::tuple<int, int>>>);
 
 } // namespace quoll::ui::detail
 

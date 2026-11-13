@@ -493,6 +493,44 @@ struct waited_page : component<waited_page> {
 
 inline constexpr tag<waited_page> waited_page;
 
+// A function of the props that counts its calls: once a view, none before the first, and the run given what it gave.
+int follow_calls = 0;
+int counted_views = 0;
+
+struct counted_card : component<counted_card> {
+  struct props {
+    std::int64_t id = 0;
+
+    bool operator==(props const &) const = default;
+  };
+
+  async_state<std::string> loaded;
+  effect load{
+      [](props const &given) {
+        ++follow_calls;
+        return given.id + follow_calls * 0;
+      },
+      load_for, loaded
+  };
+
+  element view() {
+    ++counted_views;
+    return p(loaded->value);
+  }
+};
+
+inline constexpr tag<counted_card> counted_card;
+
+struct counted_page : component<counted_page> {
+  element view() {
+    auto &self = use_context<product_card_data>();
+
+    return counted_card({.id = *self->id});
+  }
+};
+
+inline constexpr tag<counted_page> counted_page;
+
 // What does not say whose props it follows, or what it gives of them, is refused.
 using some_target = state<std::string>;
 
@@ -964,4 +1002,27 @@ TEST_CASE("struct component: an effect on a prop holding none waits, debounced, 
   REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
   CHECK(shown.html() == "<button>loaded 2</button>");
   CHECK(loads == std::vector<std::int64_t>{1, 2, 2});
+}
+
+TEST_CASE("struct component: a function of the props is called once a view, and not before the first", "[ui][struct]") {
+  loads.clear();
+  follow_calls = 0;
+  counted_views = 0;
+
+  virtual_time time;
+  memory_renderer const shown;
+  test_app instance{time.get_executor(), shown, counted_page, {.contexts = {provide<product_card_data>()}}};
+
+  auto const act = [&]() -> task<> {
+    co_await quoll::async::sleep_for(10ms);
+    CHECK(follow_calls == counted_views);
+
+    instance.context<product_card_data>().id = 2;
+    co_await quoll::async::sleep_for(10ms);
+    CHECK(follow_calls == counted_views);
+  };
+
+  REQUIRE(quoll::test::run(time, session(instance, act)) == 0);
+  CHECK(shown.html() == "<p>loaded 2</p>");
+  CHECK(loads == std::vector<std::int64_t>{1, 2});
 }

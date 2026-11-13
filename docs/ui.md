@@ -169,7 +169,8 @@ note_counter({.label = "Notes"})
 - an effect follows a state, or what its props give: a field of them, `effect load{&props::id, load_notes, notes};`,
   or a function of them, `effect load{[](props const &given) { return given.item.id; }, load_notes, notes};`, taking
   them by const reference or by value, not generic, for a nested field, one a base declares, or a value computed,
-  never a pointer or a view into them, at any depth.
+  never a pointer or a view into them, also inside an optional, a pair, a tuple, a variant or an expected; one inside
+  a struct of the program's is not seen.
   Read from the props of each view, it runs again as that value changes, the run before stopped, and not as another
   prop does. Props equal to the last ones by their `==` give no view: a field their `==` leaves out is seen with the
   next props that differ. One outside the making of a struct, or following the props of another, as `&props::size`
