@@ -83,7 +83,16 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/redirect_trailing_slash.cpp
     tests/compile_fail/redirect_unknown_param.cpp
     tests/compile_fail/route_child_absolute.cpp
-    tests/compile_fail/route_param_not_in_props.cpp
+    tests/compile_fail/route_field_not_a_member.cpp
+    tests/compile_fail/route_field_of_other_props.cpp
+    tests/compile_fail/route_field_twice.cpp
+    tests/compile_fail/route_fields_without_props.cpp
+    tests/compile_fail/route_member_twice.cpp
+    tests/compile_fail/route_not_found_path_field.cpp
+    tests/compile_fail/route_param_without_field.cpp
+    tests/compile_fail/route_parameter_read_twice.cpp
+    tests/compile_fail/route_path_name_unknown.cpp
+    tests/compile_fail/route_props_not_made.cpp
     tests/compile_fail/route_props_not_routable.cpp
     tests/compile_fail/route_trailing_slash.cpp
     tests/compile_fail/route_typed_param.cpp

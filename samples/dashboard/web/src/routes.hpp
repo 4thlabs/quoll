@@ -65,9 +65,9 @@ using namespace quoll::ui;
 // One route a line, those under it indented, which clang-format would not keep.
 // clang-format off
 inline constexpr auto app_routes = routes(
-    route<"/products", products_layout>(
+    route<"/products", products_layout, from_path<"id", &products_layout_props::id>>(
         route<"", choose_product>(),
-        route<"{id}", product_page>()),
+        route<"{id}", product_page, &product_page_props::id>()),
     redirect<"/", "/products">(),
     not_found<missing_page>());
 // clang-format on

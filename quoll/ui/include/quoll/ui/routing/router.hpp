@@ -173,7 +173,8 @@ struct router {
   void back() const { core.back(); }
 
   /**
-   * @brief The address of the page `page`, the component a route names, for `props`, by its first route.
+   * @brief The address of the page `page`, the component a route names, for `props`, by its first route: the fields
+   * of `props` that route names, a field it does not name in no address.
    * @throws std::logic_error when no route shows it.
    */
   template <class P>
@@ -259,7 +260,7 @@ struct outlet_level {
 
 /**
  * @brief A link to the page `page`, the component a route names, for `props`, by its first route, its props checked at
- * compile time.
+ * compile time: the fields of `props` that route names, as href() writes them.
  * @throws std::logic_error when no route shows it.
  */
 template <class P>

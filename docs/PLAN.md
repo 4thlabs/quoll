@@ -256,7 +256,7 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
   `run()` for what goes on as the component goes, and `provided<T>`, a context a component provides to those of its
   view, found before the app's. Left: what a context keeps per item, as a save of a product once at a time across
   its details, and the failure of a save whose detail went.
-- **Routing**: done (2026-11-12, see [Decided](#decided)): `routes(...)` of `route<Path, Page>`, layouts with
+- **Routing**: done (2026-11-12, see [Decided](#decided)): `routes(...)` of `route<Path, Page, fields...>`, layouts with
   `outlet()`, `redirect<From, To>`, `not_found<Page>`, `routing<routes>(history)` as a context, `link_to`, the
   browser's history in `quoll::emscripten`; the dashboard is pages, `/products` and `/products/{id}`. Next: pages
   written by a server.
@@ -517,6 +517,12 @@ changes only what the harness shows. Candidates:
   and a component provides a context to those of its view with `provided<T>`, as React's `Provider`, for what only
   a page needs. A route types no parameter itself, `{id}` rather than `{id:int64}`: the props do, and the two could
   differ. `link` became `link_to`, as POSIX's `link()` takes two strings and wins over it.
+  Since 2026-11-13 ([ADR 0002](adr/0002-ui-dsl-shape.md), no reflection): a route names the fields it fills, a member
+  pointer for each `{parameter}` of its whole path in order, `route<"{id}", product_page, &product_page_props::id>()`,
+  and by name `from_query<"q", &props::q>` and `from_path<"id", &props::id>`, the latter for a layout reading the
+  parameter of the page under it. As template arguments rather than the ADR's call arguments, which as values cannot
+  name the functions reading and writing the field. A field not named stays as made: the query no longer fills every
+  other field by its name, which took Glaze.
 - **Contexts: data the components of an app share, given to the app, found by type** (2026-11-11 and 2026-11-12), as
   a page cannot do the save of each of its components and pass callbacks down. A context is an aggregate with no view,
   its states, its effects, and member functions; the app makes the contexts its options give, `provide<T>()`, as it is

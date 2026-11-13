@@ -587,8 +587,10 @@ extern component<product_page_props> const product_page;
 inline constexpr auto routes = ui::routes(
     ui::route<"/", home_page>(),
     ui::route<"/products", products_layout>(
-        ui::route<"", product_list>(),          // /products, its `q` from ?q=tea
-        ui::route<"{id}", product_page>()),     // /products/7
+        // /products, its `q` from ?q=tea
+        ui::route<"", product_list, ui::from_query<"q", &product_list_props::q>>(),
+        // /products/7
+        ui::route<"{id}", product_page, &product_page_props::id>()),
     ui::redirect<"/items/{id}", "/products/{id}">(),
     ui::not_found<missing_page>());
 
@@ -607,10 +609,14 @@ int main() {
 - `routes(...)` is the table, in order: the first route that matches an address wins. A route of the top level
   starts with '/', one under another adds its own segments to its parent's, none for its index route;
 - a route's page is a component, named by the object, which a header declares: the route and the links name it so;
-- a route's path is a template, as the REST DSL's: `{name}` is a field of its page's props, of any type a number,
-  a bool, a string or an optional of one gives, written `{id}` and not `{id:int64}`; `{name:path}` takes the rest of
-  the path. An address whose parameter is no such value, as `/products/seven`, matches no route;
-- the other fields of the props come from the query, `?q=tea`, percent-decoded, or stay as made when it lacks them;
+- a route's path is a template, as the REST DSL's, written `{id}` and not `{id:int64}`; `{name:path}` takes the rest
+  of the path. After its page, the route names the field of its page's props each `{parameter}` of its whole path
+  fills, in order, as `&product_page_props::id`, of any type a number, a bool, a string or an optional of one gives.
+  A count that differs, or a field of another struct, does not compile. An address whose parameter is no such value,
+  as `/products/seven`, matches no route;
+- a field the query gives is named, `from_query<"q", &props::q>`, percent-decoded, and one a parameter of the path
+  matched gives, that of a route under it, as a layout's of the page it shows, `from_path<"id", &props::id>`. Each
+  stays as made when the address lacks it, and a field the route does not name stays as made;
 - a route with routes under it is a layout: its page shows the page of the address in its `outlet()`, as the app's
   root does in its own. A page shown for another value of its parameter is the same component, given other props, as
   an effect on that prop sees;
@@ -625,11 +631,9 @@ int main() {
   now, `back()` goes back, `href(page, props)` writes one, and `where` is the location, a state;
 - `link_to(page, props, text)`, `link_to(page, text)` for a page without props, and `link_to(href, text)` are links,
   `<a href>` that a click follows without leaving the page; a click with a key held, or another button, opens
-  elsewhere, as the browser does;
+  elsewhere, as the browser does. A link's address holds the fields of `props` its page's route names, and no other;
 - the history is the browser's, `quoll::emscripten::browser_history()`, whose back button the router follows, or one
-  in memory, `routing<routes>("/products/7")`, for a program with no browser and for tests;
-- a page's props are not in an unnamed namespace: the names of their fields, which a route reads, cannot be reflected
-  in a type without linkage under Clang.
+  in memory, `routing<routes>("/products/7")`, for a program with no browser and for tests.
 
 ## JavaScript widgets
 

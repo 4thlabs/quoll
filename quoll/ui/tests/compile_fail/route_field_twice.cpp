@@ -34,20 +34,22 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui: each parameter of a route's path is a field of its page's props, of the same name
+// expect: quoll::ui: a route names each field once, and each name of its address once
 //
-// A route whose parameter its page does not take: its value would go nowhere.
+// Two fields of the query read from one name: the address a link writes would not read back.
 
 #include <quoll/ui/component/component.hpp>
 #include <quoll/ui/routing/route.hpp>
 
-#include <cstdint>
+#include <string>
 
-struct product_page_props {
-  std::int64_t number = 0;
+struct list_page_props {
+  std::string first;
+  std::string second;
 };
 
-// Declared, as a header does, its view in a source of its own.
-extern quoll::ui::component<product_page_props> const product_page;
+extern quoll::ui::component<list_page_props> const list_page;
 
-constexpr auto shop = quoll::ui::routes(quoll::ui::route<"/products/{id}", product_page>());
+constexpr auto shop = quoll::ui::routes(quoll::ui::route<
+                                        "/list", list_page, quoll::ui::from_query<"q", &list_page_props::first>,
+                                        quoll::ui::from_query<"q", &list_page_props::second>>());

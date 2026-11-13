@@ -44,13 +44,11 @@
 #include <quoll/ui/detail/routing/route_field.hpp>
 #include <quoll/ui/view/element.hpp>
 
-#include <algorithm>
 #include <array>
+#include <concepts>
 #include <cstddef>
-#include <optional>
 #include <string>
 #include <string_view>
-#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -172,8 +170,138 @@ struct joined {
   return names;
 }
 
-// The checks of a route of `Path`, its own as written, whole as `Full`, for `Page`, one message a way to be wrong.
-template <http::fixed_string Path, http::fixed_string Full, auto const &Page, bool Top>
+// Whether the whole path template `path` has the parameter `name`.
+[[nodiscard]] constexpr bool has_param(std::string_view path, std::string_view name) {
+  for (auto const param : template_params(path)) {
+    if (param == name) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+template <auto Field>
+inline constexpr bool named = is_named_field<std::remove_cvref_t<decltype(Field)>>;
+
+template <auto Field>
+using field_member = member_traits<std::remove_cvref_t<decltype(member_of<Field>())>>;
+
+// The number of the fields a route names by the rank of its path's {parameters}, those named left out.
+template <auto... Fields>
+inline constexpr std::size_t path_field_count = (std::size_t{0} + ... + (named<Fields> ? 0 : 1));
+
+// The rank among those of the path, by rank, of the field at `Index`.
+template <std::size_t Index, auto... Fields>
+[[nodiscard]] consteval std::size_t rank_of() {
+  std::size_t rank = 0;
+  std::size_t at = 0;
+
+  ((rank += (at++ < Index && !named<Fields>) ? 1 : 0), ...);
+  return rank;
+}
+
+// What the address names the field at `Index` by, in a route of the whole template `Full`: its parameter's name, by
+// its rank, or the name it is given.
+template <http::fixed_string Full, std::size_t Index, auto... Fields>
+[[nodiscard]] consteval std::string_view name_of() {
+  constexpr auto field = field_at<Index, Fields...>;
+
+  if constexpr (named<field>) {
+    return std::remove_cvref_t<decltype(field)>::name.view();
+  } else {
+    return template_params(Full.view())[rank_of<Index, Fields...>()];
+  }
+}
+
+// Whether the field at `Index` is read from the path: by its rank, or named with from_path.
+template <std::size_t Index, auto... Fields>
+[[nodiscard]] consteval bool from_path_at() {
+  constexpr auto field = field_at<Index, Fields...>;
+
+  if constexpr (named<field>) {
+    return std::remove_cvref_t<decltype(field)>::in_path;
+  } else {
+    return true;
+  }
+}
+
+// Whether no two fields a route names fill the same member, or read the same name of the query or of the path, by
+// rank or by name.
+template <http::fixed_string Full, auto... Fields>
+[[nodiscard]] consteval bool distinct_fields() {
+  constexpr std::size_t count = sizeof...(Fields);
+
+  return []<std::size_t... I>(std::index_sequence<I...>) {
+    auto const differ = []<std::size_t A, std::size_t B>() {
+      if constexpr (A >= B) {
+        return true;
+      } else {
+        constexpr auto left = field_at<A, Fields...>;
+        constexpr auto right = field_at<B, Fields...>;
+        bool same_member = false;
+
+        if constexpr (std::is_same_v<decltype(member_of<left>()), decltype(member_of<right>())>) {
+          same_member = member_of<left>() == member_of<right>();
+        }
+
+        bool const same_name = from_path_at<A, Fields...>() == from_path_at<B, Fields...>() &&
+                               name_of<Full, A, Fields...>() == name_of<Full, B, Fields...>();
+
+        return !same_member && !same_name;
+      }
+    };
+    auto const row = [&]<std::size_t A>() {
+      return [&]<std::size_t... J>(std::index_sequence<J...>) {
+        return (differ.template operator()<A, J>() && ...);
+      }(std::make_index_sequence<count>{});
+    };
+
+    return (row.template operator()<I>() && ...);
+  }(std::make_index_sequence<count>{});
+}
+
+// The checks of the fields a route of the whole template `Full` names for `Page`, one message a way to be wrong.
+template <http::fixed_string Full, auto const &Page, auto... Fields>
+consteval void check_fields(page_fields<Fields...> /*fields*/) {
+  static_assert(
+      (field_member<Fields>::valid && ...),
+      "quoll::ui: a route names the fields of its page's props, `&props::id`, `from_path<\"id\", &props::id>` or "
+      "`from_query<\"q\", &props::q>`"
+  );
+
+  if constexpr ((field_member<Fields>::valid && ...)) {
+    if constexpr (has_page_props<Page>) {
+      static_assert(
+          (std::is_base_of_v<typename field_member<Fields>::owner, page_props_t<Page>> && ...),
+          "quoll::ui: a route names fields of its own page's props"
+      );
+      static_assert(
+          (route_field<typename field_member<Fields>::field> && ...),
+          "quoll::ui: a field a route fills is a number, a bool, a string, or an optional of one"
+      );
+      static_assert(
+          std::default_initializable<page_props_t<Page>>,
+          "quoll::ui: a routed page's props are made with nothing, what the address lacks left as made"
+      );
+      static_assert(
+          path_field_count<Fields...> != template_params(Full.view()).size() || distinct_fields<Full, Fields...>(),
+          "quoll::ui: a route names each field once, and each name of its address once"
+      );
+    } else {
+      static_assert(sizeof...(Fields) == 0, "quoll::ui: a page with no props has no fields to fill");
+    }
+
+    static_assert(
+        path_field_count<Fields...> == template_params(Full.view()).size(),
+        "quoll::ui: a route names one field of its page's props for each {parameter} of its path, in order"
+    );
+  }
+}
+
+// The checks of a route of `Path`, its own as written, whole as `Full`, for `Page` and the fields it names, one
+// message a way to be wrong.
+template <http::fixed_string Path, http::fixed_string Full, auto const &Page, bool Top, class Fields>
 consteval void check_route() {
   constexpr auto parsed_error = http::detail::parse_template(Full.view()).error;
   constexpr bool typed = [] {
@@ -202,92 +330,110 @@ consteval void check_route() {
       "quoll::ui: a route's path does not end with '/', which an address loses as it is matched"
   );
 
-  if constexpr (has_page_props<Page>) {
-    using props = page_props_t<Page>;
-
-    static_assert(
-        route_fields_only<props>(),
-        "quoll::ui: a page's props come from its route: each field is a number, a bool, a string, or an "
-        "optional of one"
-    );
-    static_assert(
-        [] {
-          for (auto const name : template_params(Full.view())) {
-            if (!has_route_field<props>(name)) {
-              return false;
-            }
-          }
-
-          return true;
-        }(),
-        "quoll::ui: each parameter of a route's path is a field of its page's props, of the same name"
-    );
-  } else {
-    static_assert(template_params(Full.view()).empty(), "quoll::ui: a page with parameters in its route has props");
+  if constexpr (parsed_error == http::detail::template_error::none) {
+    check_fields<Full, Page>(Fields{});
   }
 }
 
-// The props of `Page` from what an address gives: the path's parameters first, then the query's, each field left as it
-// was made when neither has it; false when a path parameter is no such value.
-template <auto const &Page>
-[[nodiscard]] bool fill_props(page_props_t<Page> &props, route_values const &values) {
-  bool suits = true;
+// Fills the field at `Index` from the address, or only tells whether it suits it with `PathOnly`, which leaves the
+// query's alone: false when the path has it and it is no such value, or when a field of the route's own path lacks it.
+template <bool PathOnly, http::fixed_string Full, std::size_t Index, auto... Fields, class Props>
+[[nodiscard]] bool fill_field(Props &props, route_values const &values) {
+  constexpr auto field = field_at<Index, Fields...>;
+  constexpr std::string_view name = name_of<Full, Index, Fields...>();
+  constexpr bool in_path = from_path_at<Index, Fields...>();
 
-  for_each_route_field(props, [&](std::string_view name, auto &field) {
-    if (auto const *const text = values.find(name, true)) {
-      suits = parse_route_field(*text, field) && suits;
-    } else if (auto const *const given = values.find(name, false)) {
-      static_cast<void>(parse_route_field(*given, field));
-    }
-  });
+  if constexpr (PathOnly && !in_path) {
+    return true;
+  }
 
-  return suits;
+  auto const *const text = values.find(name, in_path);
+
+  if (text == nullptr) {
+    return named<field>;
+  }
+
+  // A query's value that is no such value leaves the field as made; one of the path matches no route.
+  return parse_route_field(*text, props.*member_of<field>()) || !in_path;
 }
 
-template <auto const &Page>
+// The props of `Page` from what an address gives, the fields its route names, each one left as it was made when the
+// address does not have it, the query's left alone with `PathOnly`; false when a parameter of the path is no such
+// value.
+template <bool PathOnly, http::fixed_string Full, auto const &Page, auto... Fields>
+[[nodiscard]] bool
+fill_props(page_props_t<Page> &props, route_values const &values, page_fields<Fields...> /*fields*/) {
+  return [&]<std::size_t... Index>(std::index_sequence<Index...>) {
+    bool suits = true;
+
+    ((suits = fill_field<PathOnly, Full, Index, Fields...>(props, values) && suits), ...);
+    return suits;
+  }(std::make_index_sequence<sizeof...(Fields)>{});
+}
+
+template <http::fixed_string Full, auto const &Page, class Fields>
 [[nodiscard]] element show_page(route_values const &values) {
   if constexpr (has_page_props<Page>) {
     page_props_t<Page> props{};
 
-    static_cast<void>(fill_props<Page>(props, values));
+    static_cast<void>(fill_props<false, Full, Page>(props, values, Fields{}));
     return Page(std::move(props));
   } else {
     return Page();
   }
 }
 
-template <auto const &Page>
+template <http::fixed_string Full, auto const &Page, class Fields>
 [[nodiscard]] bool accepts_page(route_values const &values) {
   if constexpr (has_page_props<Page>) {
     page_props_t<Page> props{};
 
-    return fill_props<Page>(props, values);
+    return fill_props<true, Full, Page>(props, values, Fields{});
   } else {
     return true;
   }
 }
 
-// The address of `Page` for `props`, by the whole template `Full`: its parameters from the fields of their names, the
-// other fields set otherwise than as a value-made props are in the query.
-template <http::fixed_string Full, auto const &Page>
-[[nodiscard]] std::string href_of(void const *given) {
+// The address of `Page` for `props`, by the whole template `Full`: each parameter from the field its route names for
+// it, and the query's fields set otherwise than as a value-made props has them. A field named from the path is the
+// parameter of a route under this one, which its own address writes; a field the route does not name is in none.
+template <http::fixed_string Full, auto const &Page, auto... Fields>
+[[nodiscard]] std::string href_with(void const *given, page_fields<Fields...> /*fields*/) {
   std::string href;
 
   if constexpr (has_page_props<Page>) {
     auto const &props = *static_cast<page_props_t<Page> const *>(given);
     page_props_t<Page> const made{};
-    auto const params = template_params(Full.view());
-    auto const value_of = [&props](std::string_view name) {
-      std::optional<std::string> found;
+    std::array<std::string, path_field_count<Fields...>> path_texts{};
+    std::string query;
+    char separator = '?';
 
-      for_each_route_field(props, [&](std::string_view key, auto const &field) {
-        if (key == name) {
-          found = format_route_field(field);
+    auto const write = [&]<std::size_t Index>() {
+      constexpr auto field = field_at<Index, Fields...>;
+      auto const &value = props.*member_of<field>();
+
+      if constexpr (!named<field>) {
+        path_texts[rank_of<Index, Fields...>()] = format_route_field(value).value_or(std::string{});
+      } else if constexpr (!std::remove_cvref_t<decltype(field)>::in_path) {
+        if (value == made.*member_of<field>()) {
+          return;
         }
-      });
 
-      return found.value_or(std::string{});
+        if (auto const text = format_route_field(value)) {
+          query += separator;
+          query += http::detail::percent_encode(name_of<Full, Index, Fields...>());
+          query += '=';
+          query += http::detail::percent_encode(*text);
+          separator = '&';
+        }
+      }
     };
+
+    [&]<std::size_t... Index>(std::index_sequence<Index...>) {
+      (write.template operator()<Index>(), ...);
+    }(std::make_index_sequence<sizeof...(Fields)>{});
+
+    std::size_t rank = 0;
 
     for (auto const &segment : http::detail::parse_template(Full.view()).segments) {
       href += '/';
@@ -296,28 +442,13 @@ template <http::fixed_string Full, auto const &Page>
         href += segment.text;
       } else {
         href += http::detail::percent_encode(
-            value_of(segment.text),
+            path_texts[rank++],
             segment.kind == http::detail::segment_kind::rest ? std::string_view{"/"} : std::string_view{}
         );
       }
     }
 
-    // The other fields, set otherwise than as props made with nothing are, in the query.
-    char separator = '?';
-
-    for_each_route_field_pair(props, made, [&](std::string_view name, auto const &field, auto const &unset) {
-      if (field == unset || std::ranges::find(params, name) != params.end()) {
-        return;
-      }
-
-      if (auto const text = format_route_field(field)) {
-        href += separator;
-        href += http::detail::percent_encode(name);
-        href += '=';
-        href += http::detail::percent_encode(*text);
-        separator = '&';
-      }
-    });
+    href += query;
   } else {
     for (auto const &segment : http::detail::parse_template(Full.view()).segments) {
       href += '/';
@@ -325,7 +456,12 @@ template <http::fixed_string Full, auto const &Page>
     }
   }
 
-  return href.empty() ? std::string{"/"} : href;
+  return href.empty() || href.front() == '?' ? "/" + href : href;
+}
+
+template <http::fixed_string Full, auto const &Page, class Fields>
+[[nodiscard]] std::string href_of(void const *given) {
+  return href_with<Full, Page>(given, Fields{});
 }
 
 template <class Node>

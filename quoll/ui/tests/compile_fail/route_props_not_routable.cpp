@@ -34,8 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui: a page's props come from its route: each field is a number, a bool, a string, or an optional of
-// one
+// expect: quoll::ui: a field a route fills is a number, a bool, a string, or an optional of one
 //
 // A page whose props hold what no address can give.
 
@@ -50,4 +49,6 @@ struct list_page_props {
 
 extern quoll::ui::component<list_page_props> const list_page;
 
-constexpr auto shop = quoll::ui::routes(quoll::ui::route<"/list", list_page>());
+constexpr auto shop =
+    quoll::ui::routes(quoll::ui::route<"/list", list_page, quoll::ui::from_query<"picked", &list_page_props::picked>>()
+    );

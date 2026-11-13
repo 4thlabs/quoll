@@ -37,14 +37,14 @@
 #ifndef QUOLL_UI_DETAIL_ROUTING_ROUTE_FIELD_HPP
 #define QUOLL_UI_DETAIL_ROUTING_ROUTE_FIELD_HPP
 
+#include <quoll/http/fixed_string.hpp>
 #include <quoll/ui/detail/text_value.hpp>
-
-#include <glaze/core/reflect.hpp>
 
 #include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -98,43 +98,53 @@ template <class T>
   }
 }
 
-// Calls `visit(name, field)` for each field of the props `value`, with its name.
-template <class P, class Visitor>
-void for_each_route_field(P &value, Visitor &&visit) {
-  using type = std::remove_const_t<P>;
+// What a member pointer names: the struct it is a field of, and the field's type.
+template <class M>
+struct member_traits {
+  static constexpr bool valid = false;
+};
 
-  [&]<std::size_t... Index>(std::index_sequence<Index...>) {
-    (visit(glz::reflect<type>::keys[Index], glz::get<Index>(glz::to_tie(value))), ...);
-  }(std::make_index_sequence<glz::reflect<type>::size>{});
-}
+template <class C, class F>
+struct member_traits<F C::*> {
+  static constexpr bool valid = true;
+  using owner = C;
+  using field = F;
+};
 
-// Calls `visit(name, field, other)` for each field of `value` and the same of `other`, two props of one type.
-template <class P, class Visitor>
-void for_each_route_field_pair(P const &value, P const &other, Visitor &&visit) {
-  [&]<std::size_t... Index>(std::index_sequence<Index...>) {
-    (visit(glz::reflect<P>::keys[Index], glz::get<Index>(glz::to_tie(value)), glz::get<Index>(glz::to_tie(other))),
-     ...);
-  }(std::make_index_sequence<glz::reflect<P>::size>{});
-}
+// A field of a page's props that the address fills by a name: the query's, or a parameter of the path matched,
+// that of the route or of one under it.
+template <http::fixed_string Name, auto Member, bool InPath>
+struct named_field {
+  static constexpr auto name = Name;
+  static constexpr auto member = Member;
+  static constexpr bool in_path = InPath;
+};
 
-// Whether the props P have a field named `name`, and whether every field may come from a route.
-template <class P>
-[[nodiscard]] constexpr bool has_route_field(std::string_view name) {
-  for (auto const key : glz::reflect<P>::keys) {
-    if (key == name) {
-      return true;
-    }
+template <class F>
+inline constexpr bool is_named_field = false;
+
+template <http::fixed_string Name, auto Member, bool InPath>
+inline constexpr bool is_named_field<named_field<Name, Member, InPath>> = true;
+
+// A field a route names, `&props::id` from its path's {parameters} in order, or by name, `from_query` and `from_path`
+// (see route): its member pointer.
+template <auto Field>
+[[nodiscard]] consteval auto member_of() {
+  if constexpr (is_named_field<std::remove_cvref_t<decltype(Field)>>) {
+    return std::remove_cvref_t<decltype(Field)>::member;
+  } else {
+    return Field;
   }
-
-  return false;
 }
 
-template <class P>
-[[nodiscard]] consteval bool route_fields_only() {
-  return []<std::size_t... Index>(std::index_sequence<Index...>) {
-    return (route_field<std::remove_cvref_t<decltype(glz::get<Index>(glz::to_tie(std::declval<P &>())))>> && ...);
-  }(std::make_index_sequence<glz::reflect<P>::size>{});
-}
+// The fields a route names, in the order written: those of its path, in the order of its {parameters}, and those of
+// its query, by name.
+template <auto... Fields>
+struct page_fields {};
+
+// The field at `Index` of those a route names.
+template <std::size_t Index, auto... Fields>
+inline constexpr auto field_at = std::get<Index>(std::tuple{Fields...});
 
 } // namespace quoll::ui::detail
 
