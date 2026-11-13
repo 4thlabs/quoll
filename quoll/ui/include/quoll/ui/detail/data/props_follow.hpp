@@ -37,6 +37,8 @@
 #ifndef QUOLL_UI_DETAIL_DATA_PROPS_FOLLOW_HPP
 #define QUOLL_UI_DETAIL_DATA_PROPS_FOLLOW_HPP
 
+#include <quoll/ui/detail/callback_traits.hpp>
+
 #include <concepts>
 #include <type_traits>
 
@@ -99,6 +101,17 @@ struct follow_traits<Follow> : follow_call_traits<decltype(&Follow::operator())>
 
 template <class Follow>
 concept PropsFollow = std::copy_constructible<Follow> && follow_traits<Follow>::valid;
+
+// What an effect follows of the props is a value: a pointer or a view, at any depth, would refer to the props their
+// next view frees.
+template <class V>
+consteval void check_followed() {
+  static_assert(
+      !refers_out<V>,
+      "quoll::ui::effect: what follows its props gives a value, not a pointer or a view into them, which their next "
+      "view frees"
+  );
+}
 
 struct follow_model {
   int id = 0;

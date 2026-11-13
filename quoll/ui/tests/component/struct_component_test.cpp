@@ -50,6 +50,7 @@
 #include <concepts>
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -824,6 +825,13 @@ TEST_CASE(
   CHECK_THROWS_WITH(
       (effect{static_cast<std::int64_t (*)(product_card::props const &)>(nullptr), load_for, target}),
       ContainsSubstring("no prop")
+  );
+  CHECK_THROWS_WITH(
+      (effect{std::function<std::int64_t(product_card::props const &)>{}, load_for, target}),
+      ContainsSubstring("no prop")
+  );
+  CHECK_THROWS_WITH(
+      (effect{std::function<std::int64_t(product_card::props const &)>{}, note_followed}), ContainsSubstring("no prop")
   );
 }
 

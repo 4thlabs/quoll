@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::ui::effect: what follows its props gives a value, not a pointer into them, which their next view frees
+// expect: quoll::ui::effect: what follows its props gives a value, not a pointer or a view into them, which their next
 //
 // A function of the props giving an address inside them: the run would read props their next view frees.
 
