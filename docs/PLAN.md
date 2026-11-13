@@ -477,8 +477,10 @@ changes only what the harness shows. Candidates:
   `struct note_counter : component<note_counter>` with `struct props` read through `given->`, states, effects, forms
   and `shared<T>` as members that join it as the app makes it (`member_join`, no reflection), handlers as member
   functions, `element view()` that may still call `use_context`, placed by `inline constexpr tag<note_counter>
-  note_counter;`, which routes, links, `go` and the root take. Next: an effect following a prop, `effect
-  load{given->id, ...}`, then `resource<T>` and `match`.
+  note_counter;`, which routes, links, `go` and the root take. An effect follows a prop by its member pointer,
+  `effect load{&props::id, products_client::sales, sales};`, or a function of the props for a nested field, a base's
+  or a value computed, `[](props const &given) { return given.item.id; }`, read from the props of each view (a
+  reference, `given->id`, would dangle as the props are replaced). Next: `resource<T>` and `match`.
 - **Form D, a component's props its view's parameters** (2026-11-13, [ADR 0002](adr/0002-ui-dsl-shape.md)): done,
   `inline constexpr component note_row = [](notes::note const &item, bool const &selected) {...}` is a
   `component<parameters<notes::note, bool>>`, placed `note_row(item, true)`; one parameter is the props, as

@@ -41,6 +41,7 @@
 #include <exception>
 #include <functional>
 #include <iterator>
+#include <stdexcept>
 #include <vector>
 
 namespace quoll::ui::detail {
@@ -146,14 +147,31 @@ bool making_context::holds(void const *member) const noexcept {
 making_context *current_making() noexcept { return current; }
 
 making_scope::making_scope(
-    member_registry &into, context_finder const &finder, void const *begin, void const *end, void const *const *props
+    member_registry &into, context_finder const &finder, void const *begin, void const *end, void const *const *props,
+    async::detail::type_id props_type
 ) noexcept
-    : making_{.into = &into, .finder = &finder, .begin = begin, .end = end, .props = props}, outer_(current) {
+    : making_{.into = &into, .finder = &finder, .begin = begin, .end = end, .props = props, .props_type = props_type},
+      outer_(current) {
   current = &making_;
 }
 
 making_scope::~making_scope() { current = outer_; }
 
 void const *const *making_props() noexcept { return current == nullptr ? nullptr : current->props; }
+
+void const *const *making_props_of(async::detail::type_id type, void const *member) {
+  if (current == nullptr || current->props == nullptr || !current->holds(member)) {
+    throw std::logic_error{"quoll::ui: what follows a prop is a member of a component written as a struct"};
+  }
+
+  if (current->props_type != type) {
+    throw std::logic_error{
+        "quoll::ui: what follows a prop follows its own component's props: a field a base of them declares goes "
+        "through a function of them, `[](props const &given) { return given.size; }`"
+    };
+  }
+
+  return current->props;
+}
 
 } // namespace quoll::ui::detail

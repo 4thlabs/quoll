@@ -38,6 +38,7 @@
 #define QUOLL_UI_DATA_EFFECT_HPP
 
 #include <quoll/async/current_stop_token.hpp>
+#include <quoll/async/detail/type_id.hpp>
 #include <quoll/async/sleep_for.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/ui/data/state.hpp>
@@ -47,6 +48,7 @@
 #include <quoll/ui/detail/data/effect_member.hpp>
 #include <quoll/ui/detail/data/effect_starter.hpp>
 #include <quoll/ui/detail/data/linked_member.hpp>
+#include <quoll/ui/detail/data/props_follow.hpp>
 #include <quoll/ui/detail/data/run_slot.hpp>
 #include <quoll/ui/detail/data/state_link.hpp>
 #include <quoll/ui/detail/data/target.hpp>
@@ -133,7 +135,9 @@ struct effect_options {
 /**
  * @brief What runs as states change, as React's useEffect with them as its dependencies: after each view in which one
  * changed, the run before stopped, what the function gives written into a target state. What use_effect() gives a
- * component, or a member of a context, which loads what the app's components share.
+ * component, a member of a context, which loads what the app's components share, or a member of a component written as
+ * a struct, which may also follow its props: a field, `effect load{&props::id, f, target};`, or a function of them,
+ * `effect load{[](props const &given) { return given.item.id; }, f, target};`.
  *
  * @code
  * struct catalog {
@@ -228,6 +232,42 @@ public:
     );
   }
 
+  /**
+   * @brief Runs `function` with what `follow`, a field of its component's props or a function of them, gives as it
+   * changes, what it gives written into `target`: a member of a component written as a struct,
+   * `effect load{&props::id, products_client::sales, sales};` or
+   * `effect load{[](props const &given) { return given.item.id; }, products_client::sales, sales};`. Read from the
+   * props of each view, compared with what the last run was given.
+   * @throws std::logic_error outside the making of a struct, or for the props of another.
+   * @throws std::invalid_argument for no field or no function, as a null pointer, rather than at each run.
+   */
+  template <class Follow, class F, class T>
+    requires detail::PropsFollow<Follow> && detail::EffectFunction<F, typename detail::follow_traits<Follow>::value>
+  effect(Follow follow, F function, state<T> &target, effect_options options = {}) {
+    using followed = typename detail::follow_traits<Follow>::value;
+    using value = detail::effect_value_t<F, followed>;
+
+    static_assert(
+        detail::kept_as_values<value>, "quoll::ui::effect: the values its function gives are kept, as values"
+    );
+    detail::check_target<T, value, false>();
+    init<value, followed>(
+        props_reader(follow), std::move(function), detail::target_ref<value>{target, std::false_type{}}, options
+    );
+  }
+
+  /** @brief See the one with a target: for a function that gives nothing. */
+  template <class Follow, class F>
+    requires detail::PropsFollow<Follow> && detail::EffectFunction<F, typename detail::follow_traits<Follow>::value>
+  effect(Follow follow, F function, effect_options options = {}) {
+    using followed = typename detail::follow_traits<Follow>::value;
+    using value = detail::effect_value_t<F, followed>;
+
+    static_assert(std::is_void_v<value>, "quoll::ui::effect: the values its function gives go into a target state");
+
+    init<value, followed>(props_reader(follow), std::move(function), detail::target_ref<value>{}, options);
+  }
+
   effect(effect const &) = delete;
   effect(effect &&) = delete;
   effect &operator=(effect const &) = delete;
@@ -264,6 +304,32 @@ private:
   template <class... D>
   [[nodiscard]] static auto states_reader(std::tuple<state<D> &...> dependencies) {
     return [dependencies] { return std::apply([](auto &...held) { return std::tie(*held...); }, dependencies); };
+  }
+
+  // What reads what it follows of the props of the struct being made, at each view: its props are replaced as its
+  // parent views again, so it keeps where they are, not a reference into them. A field is read by reference, the props
+  // alive for the read, as a state's value is; what a function gives, by value.
+  template <class Follow>
+  [[nodiscard]] auto props_reader(Follow follow) {
+    using props = typename detail::follow_traits<Follow>::props;
+
+    if constexpr (std::is_member_object_pointer_v<Follow> || std::is_pointer_v<Follow>) {
+      if (follow == nullptr) {
+        throw std::invalid_argument{"quoll::ui::effect: no prop, nor a function of them"};
+      }
+    }
+
+    auto const *const slot = detail::making_props_of(async::detail::type_id_of<props>(), this);
+
+    return [slot, follow] {
+      auto const &given = *static_cast<props const *>(*slot);
+
+      if constexpr (std::is_member_object_pointer_v<Follow>) {
+        return std::tie(given.*follow);
+      } else {
+        return std::tuple<typename detail::follow_traits<Follow>::value>{std::invoke(follow, given)};
+      }
+    };
   }
 
   // `read` gives what it depends on, as a tuple of references to D....
