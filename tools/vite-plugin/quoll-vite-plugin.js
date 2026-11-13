@@ -41,10 +41,11 @@
 // Three levels, from the cheapest:
 // 1. CSS: Vite and Tailwind's own plugin, which reads the C++ for class names.
 // 2. A text or a class list changed in the source: sent to the running program, which keeps its state. No compilation.
-// 3. Anything else: a rebuild, then the page reloads. A compilation error shows in Vite's overlay.
+// 3. Anything else: a rebuild, then the page reloads. A compilation error shows in Vite's overlay. A source made in a
+//    folder of `sources`, or removed from it, is one of them, or no longer, and rebuilds the page as well.
 
 import { spawn } from 'node:child_process';
-import { createReadStream, readdirSync, readFileSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -324,42 +325,79 @@ export function within(directories) {
 // What a C++ source is named, which a directory of `sources` gives.
 const cppExtensions = new Set(['.cpp', '.cc', '.cxx', '.hpp', '.hh', '.h', '.ipp']);
 
-// Whether `path` is a directory, none for what is not there.
-function isDirectory(path) {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
+// What `sources` names, from `base`: its folders and its files. A path that is not there yet is a file when it has an
+// extension, a folder otherwise.
+export function sourcePaths(base, sources) {
+  const paths = { folders: [], files: [] };
+
+  for (const path of sources.map((source) => resolve(base, source))) {
+    const folder = statSync(path, { throwIfNoEntry: false })?.isDirectory() ?? extname(path) === '';
+
+    (folder ? paths.folders : paths.files).push(path);
   }
+
+  return paths;
 }
 
-// Whether `path` is a file of a directory of `sources` the page compiles: a C++ file, not in `ignored`, as the build
-// directories are, nor in a node_modules.
-export function inSources(path, directories, ignored = () => false) {
+// Whether a file of a folder of the sources is one of them: a C++ file, not in `ignored`, as the build directories are,
+// nor in a node_modules under that folder.
+function inFolder(folder, path, ignored) {
   return (
-    cppExtensions.has(extname(path)) &&
-    within(directories)(path) &&
-    !ignored(path) &&
-    !path.split(sep).includes('node_modules')
+    cppExtensions.has(extname(path)) && !ignored(path) && !relative(folder, path).split(sep).includes('node_modules')
   );
 }
 
-// The files `sources` names, from `base`: a file as it is, a directory each of the C++ files under it, at any depth,
-// in order, but for what `ignored` holds, as the build directories, and node_modules, so that a page's sources are
-// its folders rather than a list kept by hand.
-export function expandSources(base, sources, ignored = () => false) {
-  return sources.flatMap((source) => {
-    const path = resolve(base, source);
+// Whether `path` is a source of the page: one of the files `paths` names, whatever its extension, or a C++ file of one of
+// its folders, as `listSources` finds them.
+export function isSource(path, paths, ignored = () => false) {
+  return (
+    paths.files.includes(path) || paths.folders.some((folder) => within([folder])(path) && inFolder(folder, path, ignored))
+  );
+}
 
-    if (!isDirectory(path)) {
-      return [path];
+// The sources there now, in order: the files named, and every C++ file of the folders, at any depth, links followed, once
+// each, so that a page's sources are its folders rather than a list kept by hand. The walk does not go into what
+// `ignored` holds, nor a node_modules, nor a folder it has walked. A folder not there, as one named and not made yet or
+// one removed during the walk, holds none; one that cannot be read is told to `warn`.
+export function listSources(paths, ignored = () => false, warn = () => {}) {
+  const found = new Set(paths.files);
+  const walked = new Set();
+
+  const walk = (folder, directory) => {
+    let entries = [];
+
+    try {
+      const real = realpathSync(directory);
+
+      if (walked.has(real)) {
+        return;
+      }
+
+      walked.add(real);
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        warn(`quoll: ${directory} cannot be read: ${error.message}`);
+      }
     }
 
-    return readdirSync(path, { recursive: true, withFileTypes: true })
-      .map((entry) => (entry.isFile() ? join(entry.parentPath ?? entry.path, entry.name) : null))
-      .filter((file) => file !== null && inSources(file, [path], ignored))
-      .sort();
-  });
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      const target = entry.isSymbolicLink() ? statSync(path, { throwIfNoEntry: false }) : entry;
+
+      if (target?.isDirectory() && entry.name !== 'node_modules' && !ignored(path)) {
+        walk(folder, path);
+      } else if (target?.isFile() && inFolder(folder, path, ignored)) {
+        found.add(path);
+      }
+    }
+  };
+
+  for (const folder of paths.folders) {
+    walk(folder, folder);
+  }
+
+  return [...found].sort();
 }
 
 export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) {
@@ -369,6 +407,17 @@ export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) 
   const base = process.cwd();
   // What the build writes, which Vite does not watch, nor a folder of the sources lists.
   const builds = within([resolve(base, buildDir), resolve(base, `${buildDir}-release`)]);
+  const paths = sourcePaths(base, sources);
+  // Where a folder that cannot be read is told, once each: Vite's logger once its server runs.
+  const told = new Set();
+  let logger = console;
+
+  const warn = (message) => {
+    if (!told.has(message)) {
+      told.add(message);
+      logger.warn(message);
+    }
+  };
   const configured = new Set();
 
   const build = async (dir, options) => {
@@ -409,7 +458,7 @@ export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) 
 
       // Not watched through the module graph, which would send a change of a source up to the page and reload it: the
       // server's watcher makes the registry again as a source changes.
-      const files = expandSources(base, sources, builds);
+      const files = listSources(paths, builds, warn);
 
       // A source gone for a moment, during a save, has no widget until it is back: the build says what is wrong.
       const readable = files.flatMap((file) => {
@@ -425,9 +474,8 @@ export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) 
 
     async configureServer(server) {
       const dir = resolve(base, buildDir);
-      const watched = expandSources(base, sources, builds);
-      // A file made in one of them later is watched too.
-      const directories = sources.map((source) => resolve(base, source)).filter(isDirectory);
+      logger = server.config.logger;
+      const source = (file) => isSource(file, paths, builds);
       const compiled = new Map();
       // What each file's page was sent since it was compiled, by place: a page reloading is sent it again.
       const sent = new Map();
@@ -444,8 +492,11 @@ export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) 
 
       const rebuild = async () => {
         const started = Date.now();
-        // Before the build: a save during it then differs from this, and is not taken for what was compiled.
-        const sources = watched.map((file) => [file, read(file)]);
+
+        // The sources as they are now, a file made in a folder, or removed, since the last build included. Before the
+        // build: a save during it then differs from this, and is not taken for what was compiled.
+        const files = listSources(paths, builds, warn);
+        const readSources = files.map((file) => [file, read(file)]);
         const built = await build(dir, development);
 
         failed = built.code !== 0;
@@ -456,8 +507,12 @@ export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) 
           return false;
         }
 
-        for (const [file, source] of sources) {
-          compiled.set(file, source);
+        // What was compiled is what this build read: a file gone since leaves no entry.
+        compiled.clear();
+        sent.clear();
+
+        for (const [file, scanned] of readSources) {
+          compiled.set(file, scanned);
           sent.set(file, new Map());
         }
 
@@ -507,19 +562,27 @@ export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) 
         building = false;
       };
 
-      server.watcher.add([...watched, ...directories]);
-      // A source saved: its literals sent to the program when they are all that changed, a rebuild otherwise.
-      const changed = async (file) => {
-        if (!watched.includes(file)) {
-          return;
-        }
+      // Once: what the build reads is what is under these, which the watcher tells of as it changes.
+      server.watcher.add([...paths.folders, ...paths.files]);
 
-        // Its widgets may have changed: the registry is made again as the page reloads.
+      // The widgets' registry, made again as the page reloads.
+      const invalidateRegistry = () => {
         const registry = server.moduleGraph.getModuleById(resolvedRegistryId);
 
         if (registry) {
           server.moduleGraph.invalidateModule(registry);
         }
+      };
+
+      // A source saved: its literals sent to the program when they are all that changed, a rebuild otherwise, as for one
+      // never compiled.
+      const changed = async (file) => {
+        if (!source(file)) {
+          return;
+        }
+
+        // Its widgets may have changed.
+        invalidateRegistry();
 
         // After a failed build, whatever the source says now: the overlay goes when the page reloads.
         const changes = building || failed ? null : literalChanges(compiled.get(file), read(file), sent.get(file));
@@ -536,29 +599,25 @@ export function quoll({ target, sources, buildDir = 'build', debug = 'lines' }) 
         await rebuildAndReload();
       };
 
-      // A file of a folder of the sources made later is one of them from now on; one of them made again, as a save
-      // writing a new file in place of the old one, or a change of branch, is a change.
-      server.watcher.on('add', async (file) => {
-        if (watched.includes(file)) {
-          await changed(file);
-          return;
-        }
-
-        if (!inSources(file, directories, builds)) {
-          return;
-        }
-
-        watched.push(file);
-        // Its widgets join the registry, which the page reloading reads again.
-        const registry = server.moduleGraph.getModuleById(resolvedRegistryId);
-
-        if (registry) {
-          server.moduleGraph.invalidateModule(registry);
-        }
-
-        await rebuildAndReload();
-      });
+      // A source made is a change, as one never compiled: a rebuild with it, or, as a save writing a new file in place of
+      // the old makes it again, its literals alone.
+      server.watcher.on('add', changed);
       server.watcher.on('change', changed);
+
+      // A source removed: the page rebuilds without it, unless it is back a moment later, as a save writing a new file in
+      // place of the old makes it where the watcher tells that as a removal and an addition, which is the change.
+      server.watcher.on('unlink', (file) => {
+        if (!source(file)) {
+          return;
+        }
+
+        setTimeout(() => {
+          if (!existsSync(file)) {
+            invalidateRegistry();
+            rebuildAndReload();
+          }
+        }, 100);
+      });
 
       // A program starting again holds what was compiled, not what its page was sent.
       server.ws.on('quoll:ready', (_, client) => {
