@@ -36,7 +36,7 @@
 
 #include <quoll/rest/param_traits.hpp>
 
-#include <glaze/util/parse.hpp>
+#include <quoll/http/detail/utf8.hpp>
 
 #include <optional>
 #include <string>
@@ -45,7 +45,7 @@
 namespace quoll::rest {
 
 std::optional<std::string> param_traits<std::string>::from_text(std::string_view text) {
-  if (!glz::validate_utf8(text.data(), text.size())) {
+  if (!http::detail::is_utf8(text)) {
     return std::nullopt;
   }
 

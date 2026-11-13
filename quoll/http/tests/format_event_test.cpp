@@ -156,6 +156,16 @@ TEST_CASE("utf8: the bounds of the Encoding Standard, checked and repaired", "[h
   REQUIRE_FALSE(is_utf8("\xF0\x8F\xBF\xBF"));
   REQUIRE(is_utf8("\xF0\x90\x80\x80"));
 
+  // Past eight bytes of ASCII, read eight at a time: what is wrong is found wherever it is, and what is right after.
+  for (std::size_t at = 0; at <= 20; ++at) {
+    std::string text(20, 'a');
+
+    text.insert(at, "\xC3\xA9");
+    REQUIRE(is_utf8(text));
+    text[at] = '\xFF';
+    REQUIRE_FALSE(is_utf8(text));
+  }
+
   for (auto const *const lead : {"\xC0", "\xC1", "\xF5", "\xFF"}) {
     REQUIRE_FALSE(is_utf8(lead));
     REQUIRE(repaired(lead) == "\uFFFD");
