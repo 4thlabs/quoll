@@ -231,10 +231,7 @@ them does not compile. The routes name their pages so, `route<"{id}", product_pa
 deduced from the lambda, which left two ways to write a component, as an extern declaration has to write its props.
 
 **For you.** Give each component a header, its props and its `extern` declaration, and a source, its view: a source
-includes the headers of the components it places, so that a change of one compiles again only it and what places it. A
-component kept as a class is a struct with no data, `name_view`, declared in the header and made into `name` in the
-source: a suffix, rather than a namespace of structs of the components' names, which would find the struct before the
-component in the structs' own functions, where placing one would make the struct.
+includes the headers of the components it places, so that a change of one compiles again only it and what places it.
 
 ### A component that goes stays until its tasks end
 
