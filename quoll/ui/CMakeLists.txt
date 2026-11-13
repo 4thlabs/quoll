@@ -73,6 +73,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/component_mutable_parameter.cpp
     tests/compile_fail/component_not_a_view.cpp
     tests/compile_fail/component_other_props.cpp
+    tests/compile_fail/component_pointer_parameter.cpp
     tests/compile_fail/component_props_by_value.cpp
     tests/compile_fail/component_struct_props_by_value.cpp
     tests/compile_fail/component_view_parameter.cpp

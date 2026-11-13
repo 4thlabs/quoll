@@ -51,15 +51,18 @@ namespace quoll::ui {
 
 namespace detail {
 
-// Whether props refer to what they do not hold: each of several parameters, or the one.
+// Whether props refer to what they do not hold, a view or a pointer: each of several parameters, or the one.
 template <class P>
-inline constexpr bool holds_view_props = holds_view<P>;
+inline constexpr bool refers_out = holds_view<P> || std::is_pointer_v<P> || std::is_member_pointer_v<P>;
+
+template <class P>
+inline constexpr bool holds_view_props = refers_out<P>;
 
 template <>
 inline constexpr bool holds_view_props<void> = false;
 
 template <class... A>
-inline constexpr bool holds_view_props<parameters<A...>> = (holds_view<A> || ...);
+inline constexpr bool holds_view_props<parameters<A...>> = (refers_out<A> || ...);
 
 // The table of components made of F, once it is checked: what a component is made of says what is wrong with it.
 template <class Props, class F>
