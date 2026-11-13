@@ -110,7 +110,8 @@ inline constexpr component chart = [](chart_props const &given) { ... };
   ones, and whose states did not change, is not viewed again. One of them without `==`, or one struct of props without
   it, and the component is viewed again at each view of its parent;
 - its props are kept with it, past its parent's view: a parameter that is a view, as a `std::string_view` or a
-  `std::span`, does not compile, and one takes a `std::string`;
+  `std::span`, or a pointer, also inside an optional, a pair, a tuple, a variant or an expected, does not compile. One
+  takes a `std::string`, and shares an object through a `std::shared_ptr`, or gives it whole in a `std::unique_ptr`;
 - a component is `inline constexpr` in a header, or declared in a header with its props written,
   `extern component<note_row_props> const note_row;`, or `component<parameters<notes::note, bool>>` for several, and
   defined in a source of its own,
@@ -168,7 +169,7 @@ note_counter({.label = "Notes"})
 - an effect follows a state, or what its props give: a field of them, `effect load{&props::id, load_notes, notes};`,
   or a function of them, `effect load{[](props const &given) { return given.item.id; }, load_notes, notes};`, taking
   them by const reference or by value, not generic, for a nested field, one a base declares, or a value computed,
-  never a pointer into them.
+  never a pointer or a view into them, at any depth.
   Read from the props of each view, it runs again as that value changes, the run before stopped, and not as another
   prop does. Props equal to the last ones by their `==` give no view: a field their `==` leaves out is seen with the
   next props that differ. One outside the making of a struct, or following the props of another, as `&props::size`

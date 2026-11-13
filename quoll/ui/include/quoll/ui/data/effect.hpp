@@ -240,7 +240,8 @@ public:
    * `effect load{[](props const &given) { return given.item.id; }, products_client::sales, sales};`. Read from the
    * props of each view, compared with what the last run was given.
    * @throws std::logic_error outside the making of a struct, or for the props of another.
-   * @throws std::invalid_argument for no field or no function, as a null pointer, rather than at each run.
+   * @throws std::invalid_argument for no field or no function, as a null pointer or an empty std::function, rather
+   * than at each run.
    */
   template <class Follow, class F, class T>
     requires detail::PropsFollow<Follow> && detail::EffectFunction<F, typename detail::follow_traits<Follow>::value>
@@ -248,10 +249,7 @@ public:
     using followed = typename detail::follow_traits<Follow>::value;
     using value = detail::effect_value_t<F, followed>;
 
-    static_assert(
-        !std::is_pointer_v<followed>,
-        "quoll::ui::effect: what follows its props gives a value, not a pointer into them, which their next view frees"
-    );
+    detail::check_followed<followed>();
 
     static_assert(
         detail::kept_as_values<value>, "quoll::ui::effect: the values its function gives are kept, as values"
@@ -269,10 +267,7 @@ public:
     using followed = typename detail::follow_traits<Follow>::value;
     using value = detail::effect_value_t<F, followed>;
 
-    static_assert(
-        !std::is_pointer_v<followed>,
-        "quoll::ui::effect: what follows its props gives a value, not a pointer into them, which their next view frees"
-    );
+    detail::check_followed<followed>();
 
     static_assert(std::is_void_v<value>, "quoll::ui::effect: the values its function gives go into a target state");
 
@@ -324,7 +319,8 @@ private:
   [[nodiscard]] auto props_reader(Follow follow) {
     using props = typename detail::follow_traits<Follow>::props;
 
-    if constexpr (std::is_member_object_pointer_v<Follow> || std::is_pointer_v<Follow>) {
+    // A null pointer, or a function holding none, as an empty std::function.
+    if constexpr (detail::may_be_empty<Follow>) {
       if (follow == nullptr) {
         throw std::invalid_argument{"quoll::ui::effect: no prop, nor a function of them"};
       }

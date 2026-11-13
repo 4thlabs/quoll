@@ -98,6 +98,7 @@ inline constexpr bool is_view<std::initializer_list<T>> = true;
 template <class T>
 struct held_types {
   static constexpr bool view = false;
+  static constexpr bool pointer = false;
 };
 
 // What refers to an object it does not hold, or holds such a thing in a std::optional, a std::pair, a std::tuple, a
@@ -107,29 +108,42 @@ template <class T>
 inline constexpr bool holds_view =
     std::is_reference_v<T> || is_view<std::remove_cv_t<T>> || held_types<std::remove_cv_t<T>>::view;
 
+// What refers to what it does not hold, a view as holds_view says, or a pointer, held as deep: what a component keeps
+// past the view that gave it, its props and what its effects follow of them, holds neither, as what a pointer reaches
+// may go before it, as the props a parent's next view replaces.
+template <class T>
+inline constexpr bool refers_out =
+    holds_view<T> || std::is_pointer_v<std::remove_cv_t<T>> || std::is_member_pointer_v<std::remove_cv_t<T>> ||
+    held_types<std::remove_cv_t<T>>::pointer;
+
 template <class V>
 struct held_types<std::optional<V>> {
   static constexpr bool view = holds_view<V>;
+  static constexpr bool pointer = refers_out<V>;
 };
 
 template <class A, class B>
 struct held_types<std::pair<A, B>> {
   static constexpr bool view = holds_view<A> || holds_view<B>;
+  static constexpr bool pointer = refers_out<A> || refers_out<B>;
 };
 
 template <class... E>
 struct held_types<std::tuple<E...>> {
   static constexpr bool view = (holds_view<E> || ...);
+  static constexpr bool pointer = (refers_out<E> || ...);
 };
 
 template <class... E>
 struct held_types<std::variant<E...>> {
   static constexpr bool view = (holds_view<E> || ...);
+  static constexpr bool pointer = (refers_out<E> || ...);
 };
 
 template <class V, class E>
 struct held_types<std::expected<V, E>> {
   static constexpr bool view = holds_view<V> || holds_view<E>;
+  static constexpr bool pointer = refers_out<V> || refers_out<E>;
 };
 
 // What may hold no function, which a callback made of it holds none either.
@@ -138,6 +152,11 @@ inline constexpr bool may_be_empty = std::is_pointer_v<T> || std::is_member_poin
 
 template <class Signature>
 inline constexpr bool may_be_empty<std::function<Signature>> = true;
+
+static_assert(refers_out<int const *>);
+static_assert(refers_out<std::optional<std::pair<int, int *>>>);
+static_assert(refers_out<std::tuple<std::variant<int, std::string_view>>>);
+static_assert(!refers_out<std::optional<std::tuple<int, std::string>>>);
 
 } // namespace quoll::ui::detail
 

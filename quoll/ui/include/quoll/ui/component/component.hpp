@@ -52,10 +52,8 @@ namespace quoll::ui {
 
 namespace detail {
 
-// Whether props refer to what they do not hold, a view or a pointer: each of several parameters, or the one.
-template <class P>
-inline constexpr bool refers_out = holds_view<P> || std::is_pointer_v<P> || std::is_member_pointer_v<P>;
-
+// Whether props refer to what they do not hold, a view or a pointer, refers_out: each of several parameters, or the
+// one.
 template <class P>
 inline constexpr bool holds_view_props = refers_out<P>;
 
