@@ -37,10 +37,9 @@
 #ifndef QUOLL_REST_TEXT_CODEC_HPP
 #define QUOLL_REST_TEXT_CODEC_HPP
 
+#include <quoll/http/detail/utf8.hpp>
 #include <quoll/rest/codec.hpp>
 #include <quoll/rest/decode_error.hpp>
-
-#include <glaze/util/parse.hpp>
 
 #include <concepts>
 #include <expected>
@@ -57,7 +56,7 @@ public:
 
   /** @throws std::invalid_argument for text that is not UTF-8, which its content type would misstate. */
   [[nodiscard]] std::string encode(std::string const &value) const {
-    if (!glz::validate_utf8(value.data(), value.size())) {
+    if (!http::detail::is_utf8(value)) {
       throw std::invalid_argument{"quoll::rest: cannot encode text that is not UTF-8"};
     }
 
@@ -68,7 +67,7 @@ public:
   template <class T>
     requires std::same_as<T, std::string>
   [[nodiscard]] std::expected<T, decode_error> decode(std::string_view body) const {
-    if (!glz::validate_utf8(body.data(), body.size())) {
+    if (!http::detail::is_utf8(body)) {
       return std::unexpected{decode_error{"text that is not UTF-8"}};
     }
 

@@ -37,6 +37,8 @@
 #include <quoll/http/detail/utf8.hpp>
 
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <optional>
 
 namespace quoll::http::detail {
@@ -98,7 +100,21 @@ sequence_at(std::string_view text, std::size_t position, bool *truncated = nullp
 } // namespace
 
 bool is_utf8(std::string_view text) noexcept {
+  constexpr std::uint64_t high_bits = 0x8080808080808080ULL;
+
   for (std::size_t position = 0; position < text.size();) {
+    // ASCII, most of most texts, eight bytes at a time: none of them has its high bit set.
+    if (text.size() - position >= sizeof(std::uint64_t)) {
+      std::uint64_t word = 0;
+
+      std::memcpy(&word, text.data() + position, sizeof word);
+
+      if ((word & high_bits) == 0) {
+        position += sizeof word;
+        continue;
+      }
+    }
+
     auto const length = sequence_at(text, position);
 
     if (length < 0) {

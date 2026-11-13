@@ -37,6 +37,7 @@
 #ifndef QUOLL_REST_JSON_CODEC_HPP
 #define QUOLL_REST_JSON_CODEC_HPP
 
+#include <quoll/http/detail/utf8.hpp>
 #include <quoll/rest/codec.hpp>
 #include <quoll/rest/decode_error.hpp>
 #include <quoll/rest/detail/json_read_options.hpp>
@@ -44,7 +45,6 @@
 
 #include <glaze/json/read.hpp>
 #include <glaze/json/write.hpp>
-#include <glaze/util/parse.hpp>
 
 #include <expected>
 #include <stdexcept>
@@ -103,7 +103,7 @@ public:
       throw std::invalid_argument{"quoll::rest: cannot encode JSON: " + glz::format_error(error)};
     }
 
-    if (!glz::validate_utf8(body.data(), body.size())) {
+    if (!http::detail::is_utf8(body)) {
       throw std::invalid_argument{"quoll::rest: cannot encode JSON: text that is not UTF-8"};
     }
 
