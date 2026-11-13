@@ -38,6 +38,7 @@
 #define QUOLL_UI_DATA_STATE_HPP
 
 #include <quoll/async/lifetimebound.hpp>
+#include <quoll/ui/detail/context/member_join.hpp>
 #include <quoll/ui/detail/data/linked_member.hpp>
 #include <quoll/ui/detail/data/state_link.hpp>
 
@@ -108,6 +109,8 @@ private:
 
   T value_{};
   detail::state_link link_{};
+  // Last: joins the component being made once it is made, if it is one of its members.
+  detail::member_join<state> joined_{*this};
 };
 
 static_assert(detail::LinkedMember<state<int>>);

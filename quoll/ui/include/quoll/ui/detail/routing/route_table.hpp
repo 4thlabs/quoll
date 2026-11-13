@@ -73,12 +73,14 @@ struct route_values {
 
 enum class route_kind : unsigned char { page, redirect, not_found };
 
-// What a route's page is: a component, `component<props>` or `component<>`, named by the object.
+// What a route's page is: a component, `component<props>` or `component<>`, or a struct's tag<C>, named by the object.
 template <class C>
 inline constexpr bool is_page = false;
 
-template <class P>
-inline constexpr bool is_page<component<P>> = true;
+template <class C>
+  requires requires { typename C::props_type; }
+inline constexpr bool is_page<C> =
+    std::derived_from<C, component_base<typename C::props_type>> && !std::derived_from<C, component<C>>;
 
 template <auto const &Page>
 using page_props_t = typename std::remove_cvref_t<decltype(Page)>::props_type;

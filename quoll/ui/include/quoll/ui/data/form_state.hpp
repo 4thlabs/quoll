@@ -37,6 +37,7 @@
 #ifndef QUOLL_UI_DATA_FORM_STATE_HPP
 #define QUOLL_UI_DATA_FORM_STATE_HPP
 
+#include <quoll/ui/detail/context/member_join.hpp>
 #include <quoll/ui/detail/data/state_link.hpp>
 #include <quoll/ui/detail/text_value.hpp>
 #include <quoll/ui/view/decorators.hpp>
@@ -228,6 +229,8 @@ private:
   // The fields typed in, in the order they were first typed in.
   std::vector<typed_field> typed_;
   detail::state_link link_{};
+  // Last: joins the component being made once it is made, if it is one of its members.
+  detail::member_join<form_state> joined_{*this};
 };
 
 } // namespace quoll::ui

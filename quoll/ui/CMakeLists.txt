@@ -6,6 +6,7 @@ quoll_declare_module(
     src/component/instance.cpp
     src/component/ready.cpp
     src/context/context_entry.cpp
+    src/context/member_registry.cpp
     src/data/effect.cpp
     src/data/run_error.cpp
     src/data/run_slot.cpp
@@ -37,6 +38,7 @@ quoll_declare_tests(
     tests/app/app_test.cpp
     tests/component/callback_test.cpp
     tests/component/function_component_test.cpp
+    tests/component/struct_component_test.cpp
     tests/component/nested_test.cpp
     tests/component/skip_test.cpp
     tests/context/context_test.cpp
@@ -102,6 +104,9 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/route_typed_param.cpp
     tests/compile_fail/router_provided.cpp
     tests/compile_fail/shared_const_context.cpp
+    tests/compile_fail/struct_component_for_its_tag.cpp
+    tests/compile_fail/struct_component_not_derived.cpp
+    tests/compile_fail/struct_component_without_view.cpp
     tests/compile_fail/target_bool_value.cpp
     tests/compile_fail/target_two_flags.cpp
     tests/compile_fail/target_value_count.cpp

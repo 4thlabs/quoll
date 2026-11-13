@@ -53,7 +53,8 @@ namespace quoll::ui::detail {
 // could be another's too, as a linker may fold identical constants.
 struct component_table {
   async::detail::type_id type;
-  held_component (*make)();
+  // Made with the props of its first placing, which a component written as a struct reads as it is made.
+  held_component (*make)(void const *props);
   void (*link)(void *component, state_link to);
   // The context of a type it provides to those of its view, none for one it does not.
   context_entry *(*provides)(void *component, async::detail::type_id type);

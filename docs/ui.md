@@ -124,6 +124,53 @@ inline constexpr component chart = [](chart_props const &given) { ... };
   the view returns, which a closure of the view may capture, or what its parent gave written into, and that does not
   compile either.
 
+**A component is also written as a struct**, its concepts in sections: its props inside it, what it holds and what it
+does as members, its handlers as member functions, and its view, placed by a `tag<name>` of its name declared after
+it:
+
+```cpp
+struct note_counter : component<note_counter> {
+  struct props {
+    std::string label;
+
+    bool operator==(props const &) const = default;
+  };
+
+  // State
+  state<int> count{0};
+  async_state<std::vector<std::string>> notes;
+  effect load{count, load_notes, notes};
+
+  // Contexts
+  shared<catalog> products;
+
+  // Handlers
+  void add() { count = *count + 1; }
+
+  // View
+  element view() {
+    return button(given->label + ": " + std::to_string(*count)) | on_click([this] { add(); });
+  }
+};
+
+inline constexpr tag<note_counter> note_counter;
+
+// Placed as any component:
+note_counter({.label = "Notes"})
+```
+
+- the struct derives from `component<name>`; its props, if it has some, are `struct props` inside it, read through
+  `given->`, those of its last view; its view is `element view()`. With no props, it is placed `name()`;
+- the app makes the struct as it first places it, keeps it while it stays at that place, gives it its props anew at
+  each view of its parent, and destroys it as it goes. Its members are made once: its states, effects, forms and the
+  contexts it uses as `shared<T>` join it as they are made, with no reflection, a `shared<T>` the app was not given
+  refusing it with `std::logic_error`. A member made later, as one an `optional` makes, joins nothing;
+- its handlers are member functions, `[this] { add(); }`: the struct lives as long as the component;
+- its view may still call `use_context<T>()` and `provide_context<T>()`;
+- `tag<name>` is what places it, and what routes, links, `go` and the app's root take, as a component made of a lambda:
+  `route<"{id}", item_page, &item_page::props::id>()`, `link_to(item_page, {.id = 3}, "Open")`,
+  `mount(app_shell, "#app")`.
+
 **What a `use_` call gives is the component's own**, found again at each view by where it is called, and how many times
 that place was called before in the same view:
 

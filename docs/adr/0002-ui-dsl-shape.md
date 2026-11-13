@@ -175,7 +175,7 @@ struct product_view : component<product_view> {
   }
 };
 
-inline constexpr placer<product_view> product_view;
+inline constexpr tag<product_view> product_view;
 ```
 
 With a context, a form and an action:
@@ -216,7 +216,7 @@ struct product_detail : component<product_detail> {
   element save_failed() { return error_text("Not saved: " + told(save->error, "the save failed")); }
 };
 
-inline constexpr placer<product_detail> product_detail;
+inline constexpr tag<product_detail> product_detail;
 ```
 
 **Where each concept is:**
@@ -344,7 +344,7 @@ product_row(item, item.id == chosen)
 | | Form D | Form S |
 |---|---|---|
 | Lines that are not blank, `product_view` above | 19 | 29 |
-| Written beyond the view | nothing | `struct props` and its `==`, the base, the placer's line |
+| Written beyond the view | nothing | `struct props` and its `==`, the base, the `tag<C>` line |
 | Props at the placement | by position, or a struct for names | by name |
 | Where the state is | `use_` calls in the body, found by where they are called | members, on top |
 | What a handler may capture | what `use_` gives and the parameters by reference; what the view computed by value, by rule | `this` |
@@ -443,7 +443,7 @@ with Glaze and the standard library in its global fragment. GCC 13 fails on it w
   `import std;`, `clang-scan-deps` in CI, clangd's support still experimental; Apple Clang to check on the Mac
   (`xcrun --find clang-scan-deps` and a two-file project with a `FILE_SET CXX_MODULES`).
 
-Forms S and D need no module. Form S's struct, its placer included, compiles as a header and as a module unit alike;
+Forms S and D need no module. Form S's struct, its `tag<C>` variable included, compiles as a header and as a module unit alike;
 form D's lambda exported from a module was not tried, and GCC 13 already refused a lambda's type across modules. Modules
 come later, as a module of `quoll.ui` beside the headers, once every compiler of the floor has the `std` module: a
 change of the floor, GCC 13 to 15, which is the maintainer's to make.
@@ -454,7 +454,7 @@ In this order, each a pull request:
 
 1. **Glaze out of the UI's headers, and the erasure** of effects, actions, forms and loads into Quoll's library, with a
    rebuild check in CI.
-2. **Form S and form D** on the real library: `component<C>` as the base of form S, `placer<C>`, `context<T>`,
+2. **Form S and form D** on the real library: `component<C>` as the base of form S, `tag<C>`, `context<T>`,
    `resource<T>` and `match`, members joining their instance, `component` deduced from a lambda's parameters for form
    D; routes by member pointers; contexts without Glaze. `product_view`, `product_detail` and `product_row` first,
    written both ways, read and timed before the rest.
@@ -462,5 +462,5 @@ In this order, each a pull request:
    replaces the rule of a header and a source; the samples keep both forms.
 4. **Modules**, once the floor is raised.
 
-The draft of the struct form on the branch `ui-component-struct`, not pushed, is not taken: with the placer, `link_to`,
+The draft of the struct form on the branch `ui-component-struct`, not pushed, is not taken: through the `tag<C>` variable, `link_to`,
 `go`, `mount` and the routes keep today's calls, a component and its props, for both forms.

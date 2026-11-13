@@ -43,6 +43,7 @@
 #include <quoll/ui/component/component.hpp>
 #include <quoll/ui/component/component_view.hpp>
 #include <quoll/ui/component/hooks.hpp>
+#include <quoll/ui/component/tag.hpp>
 #include <quoll/ui/context/context_spec.hpp>
 #include <quoll/ui/context/provide.hpp>
 #include <quoll/ui/context/provided.hpp>

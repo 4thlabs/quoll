@@ -211,7 +211,7 @@ hook_scope::~hook_scope() {
   current_store = previous_;
 }
 
-held_component make_hook_store() { return make_held<hook_store>(); }
+held_component make_hook_store(void const * /*props*/) { return make_held<hook_store>(); }
 
 void link_hook_store(void *store, state_link to) { static_cast<hook_store *>(store)->link(to); }
 

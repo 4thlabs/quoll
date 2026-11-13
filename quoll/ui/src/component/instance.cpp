@@ -46,7 +46,7 @@ instance::instance(
     component_table const &table, std::shared_ptr<void const> props, std::string key, std::stop_token const &app_stop,
     context_finder const &contexts
 )
-    : table_(&table), props_(std::move(props)), component_(table.make()), key_(std::move(key)),
+    : table_(&table), props_(std::move(props)), component_(table.make(props_.get())), key_(std::move(key)),
       follow_app_(app_stop, async::detail::stop_waker{&stop_}),
       parent_(std::static_pointer_cast<instance const>(contexts.from)) {
   if (table_->bind != nullptr) {

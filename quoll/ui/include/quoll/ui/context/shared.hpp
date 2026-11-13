@@ -44,6 +44,7 @@
 #include <quoll/ui/detail/context/bind_contexts.hpp>
 #include <quoll/ui/detail/context/context_entry.hpp>
 #include <quoll/ui/detail/context/context_member.hpp>
+#include <quoll/ui/detail/context/member_join.hpp>
 #include <quoll/ui/detail/data/effect_function.hpp>
 #include <quoll/ui/detail/view/view_context.hpp>
 
@@ -212,6 +213,8 @@ private:
   std::shared_ptr<detail::app_link> app_{};
   // What provides its context, a component above, kept as long as this one: none for the app's.
   std::shared_ptr<void const> keeper_{};
+  // Last: joins the component being made once it is made, if it is one of its members.
+  detail::member_join<shared> joined_{*this};
 };
 
 namespace detail {
@@ -221,6 +224,22 @@ struct context_model {};
 } // namespace detail
 
 static_assert(detail::ContextMember<shared<detail::context_model>>);
+
+namespace detail {
+
+// What a shared<T> member of a component written as a struct gives it: what its view saw, read or not.
+template <class T>
+struct joined_context<shared<T>> {
+  static void mark(void *member) noexcept { context_access::mark(*static_cast<shared<T> *>(member)); }
+
+  static void commit(void *member) noexcept { context_access::commit(*static_cast<shared<T> *>(member)); }
+
+  static bool changed(void const *member) noexcept {
+    return context_access::changed(*static_cast<shared<T> const *>(member));
+  }
+};
+
+} // namespace detail
 
 } // namespace quoll::ui
 

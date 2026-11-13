@@ -42,6 +42,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/ui/data/state.hpp>
 #include <quoll/ui/detail/callback_traits.hpp>
+#include <quoll/ui/detail/context/member_join.hpp>
 #include <quoll/ui/detail/data/effect_function.hpp>
 #include <quoll/ui/detail/data/effect_member.hpp>
 #include <quoll/ui/detail/data/effect_starter.hpp>
@@ -372,6 +373,8 @@ private:
   bool failed_ = false;
   // A run started since it was made or reloaded: the next one waits for its debounce, the first calls at once.
   bool started_ = false;
+  // Last: joins the component being made once it is made, if it is one of its members.
+  detail::member_join<effect> joined_{*this};
 };
 
 static_assert(detail::LinkedMember<effect>);

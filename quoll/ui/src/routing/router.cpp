@@ -472,7 +472,7 @@ element link_to(std::string_view href, std::initializer_list<detail::child> chil
   return detail::linked(detail::router_in_view(), std::string{href}, node("a", children));
 }
 
-element link_to(component<> const &page, std::initializer_list<detail::child> children) {
+element link_to(component_base<void> const &page, std::initializer_list<detail::child> children) {
   auto &nav = detail::router_in_view();
 
   return detail::linked(nav, nav.href(page), node("a", children));
