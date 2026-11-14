@@ -104,11 +104,13 @@ public:
   void add(verb method, std::string_view path, std::string name, handler target);
 
   /**
-   * @brief Routes GET requests on `path` to `target`, which takes the parameters of the path, by position:
+   * @brief Routes GET requests on `path` to `target`, which takes the parameters of the path, then those of its query,
+   * by position:
    *
    * ```cpp
    * router.get("/users/{id}/cards/{card}", [](http::request request, std::int64_t id, std::string card) { ... });
-   * router.delete_("/users/{id}", [](std::int64_t id) -> task<http::response> { ... });
+   * router.get("/notes?contains={contains}&page={page}", [](std::optional<std::string> q, std::optional<int> page)
+   * {...}); router.delete_("/users/{id}", [](std::int64_t id) -> task<http::response> { ... });
    * ```
    *
    * The request is optional, and first. A parameter is a number, a `bool` (`true` or `false`), a `std::string` or a
@@ -119,8 +121,10 @@ public:
    * takes, which must have types (no `auto`). A path made at run time goes through add(), with a route_match.
    *
    * A parameter that cannot be read as its type answers 400. The route is named after `path`, as next::route() says.
-   * The handler says the types: the only one a path says is `{name:path}`, for the rest of it. The query is in
-   * `request.target`, or in the route_match of add(). A parameter of type http::body_reader, after those of the path,
+   * The handler says the types: the only one a path says is `{name:path}`, for the rest of it. A query parameter,
+   * `key={name}`, may also be a std::optional, missing, or a std::vector, repeated; a fixed `key=value` missing or
+   * another answers 400. The whole query is in `request.target`, or in the route_match of add(), whose `query_params`
+   * holds the values of the template's. A parameter of type http::body_reader, after those of the path and the query,
    * reads the body of the request in pieces, rather than `request.body`, empty for the middlewares too: see
    * body_reader.
    */

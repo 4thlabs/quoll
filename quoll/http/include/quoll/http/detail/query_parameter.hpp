@@ -34,42 +34,37 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_REST_DETAIL_QUERY_STRING_HPP
-#define QUOLL_REST_DETAIL_QUERY_STRING_HPP
+#ifndef QUOLL_HTTP_DETAIL_QUERY_PARAMETER_HPP
+#define QUOLL_HTTP_DETAIL_QUERY_PARAMETER_HPP
 
-#include <quoll/async/lifetimebound.hpp>
+#include <quoll/http/detail/path_parameter.hpp>
 
 #include <optional>
 #include <string>
-#include <string_view>
-#include <utility>
 #include <vector>
 
-namespace quoll::rest::detail {
+namespace quoll::http::detail {
 
-struct query_entry {
-  std::string name;
-  std::string value;
-};
+// A parameter of a route's query, `?q={q}`: a path parameter's type, required and given once; a std::optional of one,
+// which may be missing; a std::vector of one, its values in order.
+template <class T>
+inline constexpr bool is_query_list = false;
 
-// Decodes a component of a query string: '+' is a space, as forms send it, and %XX escapes.
-[[nodiscard]] std::optional<std::string> decode_query_component(std::string_view text);
+template <class T>
+inline constexpr bool is_query_list<std::vector<T>> = PathParameter<T>;
 
-// The `name=value` pairs of a query string, decoded and in order; `name` alone has an empty value. Nothing for an
-// invalid escape or a NUL (`%00`), which C APIs would cut at, as the router refuses one in the path.
-[[nodiscard]] std::optional<std::vector<query_entry>> parse_query(std::string_view query);
+template <class T>
+inline constexpr bool is_query_optional = false;
 
-// The values of the parameter `name`, in order.
-[[nodiscard]] std::vector<std::string_view>
-query_texts(std::vector<query_entry> const &query QUOLL_LIFETIMEBOUND, std::string_view name);
+template <class T>
+inline constexpr bool is_query_optional<std::optional<T>> = PathParameter<T>;
 
-// Appends `name=value` to a query string or a form under construction, both percent-encoded. A value holding a NUL
-// throws std::invalid_argument, saying `what` it is.
-void append_query(
-    std::string &query, std::string_view name, std::string_view value,
-    std::string_view what = "quoll::rest::client: query parameter"
-);
+template <class T>
+concept QueryParameter = PathParameter<T> || is_query_list<T> || is_query_optional<T>;
 
-} // namespace quoll::rest::detail
+static_assert(QueryParameter<std::optional<int>> && QueryParameter<std::vector<std::string>>);
+static_assert(!QueryParameter<std::optional<std::vector<int>>>);
 
-#endif // QUOLL_REST_DETAIL_QUERY_STRING_HPP
+} // namespace quoll::http::detail
+
+#endif // QUOLL_HTTP_DETAIL_QUERY_PARAMETER_HPP

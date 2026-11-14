@@ -43,6 +43,7 @@
 #include <quoll/http/detail/has_signature.hpp>
 #include <quoll/http/detail/number.hpp>
 #include <quoll/http/detail/path_parameter.hpp>
+#include <quoll/http/detail/query_parameter.hpp>
 #include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/request.hpp>
@@ -65,6 +66,7 @@
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace quoll::http::detail {
 
@@ -79,6 +81,45 @@ template <PathParameter T>
     return parse_bool(text);
   } else {
     return parse_number<T>(text);
+  }
+}
+
+// From the values the request gives a query parameter: one for a required one, none or one for an optional one, any
+// for a list; none if they do not read as its type.
+template <QueryParameter T>
+[[nodiscard]] std::optional<T> read_query_parameter(std::vector<std::string> &values) {
+  if constexpr (is_query_list<T>) {
+    T list;
+
+    for (auto &text : values) {
+      auto value = read_path_parameter<typename T::value_type>(text);
+
+      if (!value) {
+        return std::nullopt;
+      }
+
+      list.push_back(std::move(*value));
+    }
+
+    return list;
+  } else if constexpr (is_query_optional<T>) {
+    if (values.empty()) {
+      return T{};
+    }
+
+    if (values.size() > 1) {
+      return std::nullopt;
+    }
+
+    auto value = read_path_parameter<typename T::value_type>(values.front());
+
+    return value ? std::optional<T>{T{std::move(*value)}} : std::nullopt;
+  } else {
+    if (values.size() != 1) {
+      return std::nullopt;
+    }
+
+    return read_path_parameter<T>(values.front());
   }
 }
 
@@ -115,7 +156,8 @@ struct takes_request<std::tuple<First, Rest...>> : std::is_same<std::remove_cvre
 // What the compiler names in its error, as a consteval function cannot say more: see checked_path.
 void the_route_template_is_invalid();
 void the_only_type_a_path_says_is_path_as_the_handler_says_the_others();
-void the_handler_does_not_take_as_many_parameters_as_the_path_has();
+void the_handler_does_not_take_as_many_parameters_as_its_template_has();
+void a_path_parameter_is_no_optional_nor_vector_only_a_query_parameter_is();
 
 // A path checked at compile time against the handler it comes with, the way std::format_string checks a format against
 // its arguments: `F` comes from the handler, and `std::type_identity_t` keeps the path from deducing it.
@@ -145,14 +187,42 @@ public:
           return segment.kind != segment_kind::literal;
         }));
 
-    if (in_path != count()) {
-      the_handler_does_not_take_as_many_parameters_as_the_path_has();
+    if (in_path + parsed.query.size() - fixed_in(parsed) != count()) {
+      the_handler_does_not_take_as_many_parameters_as_its_template_has();
+    }
+
+    if (!plain_up_to(in_path)) {
+      a_path_parameter_is_no_optional_nor_vector_only_a_query_parameter_is();
     }
   }
 
   [[nodiscard]] constexpr std::string_view text() const noexcept { return text_; }
 
 private:
+  [[nodiscard]] static constexpr std::size_t fixed_in(parsed_template const &parsed) {
+    return static_cast<std::size_t>(std::ranges::count_if(parsed.query, [](template_query const &entry) {
+      return entry.param.empty();
+    }));
+  }
+
+  // Whether the handler's first `in_path` parameters, after a request, are no std::optional nor std::vector, which only
+  // a query parameter may be.
+  [[nodiscard]] static consteval bool plain_up_to(std::size_t in_path) {
+    using arguments = typename signature_of<F>::arguments;
+
+    return []<std::size_t... Index>(std::size_t limit, std::index_sequence<Index...>) {
+      constexpr std::size_t skip = takes_request<arguments>::value ? 1 : 0;
+
+      return (
+          // Another type that is no parameter's is told by the handler's own check.
+          (Index < skip || Index - skip >= limit ||
+           !(is_query_list<std::remove_cvref_t<std::tuple_element_t<Index, arguments>>> ||
+             is_query_optional<std::remove_cvref_t<std::tuple_element_t<Index, arguments>>>)) &&
+          ...
+      );
+    }(in_path, std::make_index_sequence<std::tuple_size_v<arguments>>{});
+  }
+
   [[nodiscard]] static consteval std::size_t count() {
     using arguments = typename signature_of<F>::arguments;
 
@@ -169,13 +239,21 @@ inline constexpr bool is_response_result = std::same_as<R, response> || std::sam
 // No request among the parameters of a handler.
 struct no_request {};
 
-// What a parameter of a handler is: read from `match`, or what reads the body.
+// What a parameter of a handler is: read from `match`, the path's first and then the query's, or what reads the body.
 template <class T, std::size_t Index>
 [[nodiscard]] std::optional<T> read_parameter(route_match &match) {
   if constexpr (std::same_as<T, body_reader>) {
     return match.reader;
   } else {
-    return read_path_parameter<T>(match.params.at(Index));
+    if (Index < match.params.size()) {
+      if constexpr (PathParameter<T>) {
+        return read_path_parameter<T>(match.params[Index]);
+      } else {
+        return std::nullopt;
+      }
+    }
+
+    return read_query_parameter<T>(match.query_params.at(Index - match.params.size()));
   }
 }
 
@@ -327,14 +405,15 @@ template <class Result, class F, class Request, class... Parameters>
       "quoll::http::router: a handler taking an http::response_writer returns task<>"
   );
   static_assert(
-      ((PathParameter<std::remove_cvref_t<Parameters>> || is_body_reader<Parameters> ||
+      ((QueryParameter<std::remove_cvref_t<Parameters>> || is_body_reader<Parameters> ||
         is_response_writer<Parameters>) &&
        ...),
-      "quoll::http::router: a path parameter is a std::string, a std::string_view, a number or a bool"
+      "quoll::http::router: a parameter is a std::string, a std::string_view, a number or a bool; one of the query "
+      "may be a std::optional or a std::vector of one"
   );
   static_assert(
       body_reader_comes_last<Parameters...>(),
-      "quoll::http::router: a handler takes one http::body_reader, after its path parameters"
+      "quoll::http::router: a handler takes one http::body_reader, after its path and query parameters"
   );
   static_assert(
       response_writer_comes_last<Parameters...>(),

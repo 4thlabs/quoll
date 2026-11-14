@@ -169,6 +169,9 @@ struct path_template {
     return path_error::invalid_escape;
   case template_error::dot_segment:
     return path_error::dot_segment;
+  case template_error::invalid_query:
+  case template_error::duplicate_query_key:
+    return path_error::invalid_character;
   case template_error::empty_type:
     return path_error::unknown_type;
   }
@@ -191,6 +194,14 @@ struct path_template {
 // an api).
 [[nodiscard]] consteval path_template parse_path(std::string_view text) {
   path_template parsed;
+
+  // A query in the template comes with the routes of #176: until then, '?' is no character of a REST path, whatever
+  // the query holds.
+  if (http::detail::find_char(text, '?') != std::string_view::npos) {
+    parsed.error = path_error::invalid_character;
+    return parsed;
+  }
+
   auto const grammar = http::detail::parse_template(text);
 
   parsed.error = to_path_error(grammar.error);

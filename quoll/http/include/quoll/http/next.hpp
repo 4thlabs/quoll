@@ -85,7 +85,11 @@ public:
    */
   [[nodiscard]] std::string_view path() const noexcept;
 
-  /** @brief The name of the route that answers, empty if none does (404, 405, 400). */
+  /**
+   * @brief The name of the route that answers, empty if none does (404, 405, 400 for the target). A request whose query
+   * its route refuses (a fixed value missing or another, a parameter that does not decode) keeps its route and its
+   * params(), and router_answered() says the router answered its 400.
+   */
   [[nodiscard]] std::string_view route() const noexcept;
 
   /**

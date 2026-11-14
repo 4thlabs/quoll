@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: the_handler_does_not_take_as_many_parameters_as_the_path_has
+// expect: the_handler_does_not_take_as_many_parameters_as_its_template_has
 
 // A route of a server is checked as one of a router: the path has two parameters, the handler one.
 

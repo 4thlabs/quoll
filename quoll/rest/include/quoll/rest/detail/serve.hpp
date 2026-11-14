@@ -42,6 +42,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/http/body_stream.hpp>
 #include <quoll/http/detail/error_answer.hpp>
+#include <quoll/http/detail/query_string.hpp>
 #include <quoll/http/http_error.hpp>
 #include <quoll/http/problem.hpp>
 #include <quoll/http/request.hpp>
@@ -52,7 +53,6 @@
 #include <quoll/rest/credential.hpp>
 #include <quoll/rest/detail/arguments.hpp>
 #include <quoll/rest/detail/part.hpp>
-#include <quoll/rest/detail/query_string.hpp>
 #include <quoll/rest/detail/response_value.hpp>
 #include <quoll/rest/detail/scheme_traits.hpp>
 #include <quoll/rest/detail/type_list.hpp>
@@ -331,7 +331,7 @@ template <class Route>
 struct served_input {
   http::request request;
   http::route_match match;
-  std::optional<std::vector<query_entry>> query;
+  std::optional<std::vector<http::detail::query_entry>> query;
 };
 
 // What an events<> service can answer: an error (4xx or 5xx), as an http_error, its body a problem or none.
@@ -499,9 +499,10 @@ template <class Route, class State, class Input>
         any_reads_the_query(typename Route::parts{}) || any_reads_the_query(typename Route::schemes{});
 
     // An invalid query string is reported after the credentials, which an api_key_query cannot then find.
-    in.query = reads_query ? parse_query(in.match.query) : std::optional{std::vector<query_entry>{}};
+    in.query = reads_query ? http::detail::parse_query(in.match.query)
+                           : std::optional{std::vector<http::detail::query_entry>{}};
 
-    std::vector<query_entry> const none;
+    std::vector<http::detail::query_entry> const none;
     request_input const request{in.request, in.match, in.query ? *in.query : none};
 
     if constexpr (Route::schemes::size > 0) {

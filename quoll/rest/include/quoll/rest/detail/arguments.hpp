@@ -39,6 +39,7 @@
 
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/http/detail/ascii.hpp>
+#include <quoll/http/detail/query_string.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
@@ -46,7 +47,6 @@
 #include <quoll/rest/detail/checked_path.hpp>
 #include <quoll/rest/detail/fields_of.hpp>
 #include <quoll/rest/detail/part.hpp>
-#include <quoll/rest/detail/query_string.hpp>
 #include <quoll/rest/detail/single_field.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
@@ -76,7 +76,7 @@ struct argument_error {
 struct request_input {
   http::request const &request;
   http::route_match const &match;
-  std::vector<query_entry> const &query;
+  std::vector<http::detail::query_entry> const &query;
 };
 
 template <class T>
@@ -205,7 +205,7 @@ void for_each_text(T const &value, Add &&add) {
 // The fields of `Struct` from the `name=value` entries of a query or a form, each as a parameter is (see from_texts).
 template <class Struct>
 [[nodiscard]] std::expected<Struct, argument_error>
-decode_fields(std::string_view what, std::vector<query_entry> const &entries) {
+decode_fields(std::string_view what, std::vector<http::detail::query_entry> const &entries) {
   Struct value{};
   std::optional<argument_error> error;
 
@@ -214,7 +214,8 @@ decode_fields(std::string_view what, std::vector<query_entry> const &entries) {
       return;
     }
 
-    auto decoded = from_texts<std::remove_cvref_t<decltype(field)>>(what, name, query_texts(entries, name));
+    auto decoded =
+        from_texts<std::remove_cvref_t<decltype(field)>>(what, name, http::detail::query_texts(entries, name));
 
     if (!decoded) {
       error = std::move(decoded.error());
@@ -235,14 +236,14 @@ decode_fields(std::string_view what, std::vector<query_entry> const &entries) {
 template <class Struct>
 void append_fields(std::string &out, Struct const &value, std::string_view what) {
   for_each_field(value, [&](std::string_view name, auto const &field) {
-    for_each_text(field, [&](std::string const &text) { append_query(out, name, text, what); });
+    for_each_text(field, [&](std::string const &text) { http::detail::append_query(out, name, text, what); });
   });
 }
 
 template <fixed_string Name, class T>
 [[nodiscard]] std::expected<T, argument_error>
 decode_source(std::type_identity<query<Name, T>>, request_input const &input) {
-  return from_texts<T>("query parameter", Name.view(), query_texts(input.query, Name.view()));
+  return from_texts<T>("query parameter", Name.view(), http::detail::query_texts(input.query, Name.view()));
 }
 
 template <class Struct>

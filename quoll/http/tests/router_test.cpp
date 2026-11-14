@@ -39,6 +39,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/http/body_stream.hpp>
+#include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
@@ -55,6 +56,7 @@
 #include <chrono>
 #include <concepts>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -1640,4 +1642,200 @@ TEST_CASE("local_transport: a body on what cannot have one is refused", "[http]"
   }
 
   REQUIRE_THROWS_AS(quoll::test::run(transport.send(std::move(message))), std::invalid_argument);
+}
+
+TEST_CASE("router: the query of a route's template gives its parameters, after the path's", "[http][router][query]") {
+  http::router router;
+
+  router.get(
+      "/notes/{folder}?contains={contains}&page={page}&tag={tags}",
+      [](std::string folder, std::optional<std::string> contains, std::optional<int> page,
+         std::vector<std::string> tags) {
+        http::response answer;
+
+        answer.body = folder + "|" + contains.value_or("-") + "|" + (page ? std::to_string(*page) : "-");
+
+        for (auto const &tag : tags) {
+          answer.body += "|" + tag;
+        }
+
+        return answer;
+      }
+  );
+
+  CHECK(
+      dispatch(router, verb::get, "/notes/home?contains=green%20tea&page=2&tag=a&tag=b+c").body ==
+      "home|green tea|2|a|b c"
+  );
+  CHECK(dispatch(router, verb::get, "/notes/home").body == "home|-|-");
+  // An optional given twice, or one that is not its type: refused.
+  CHECK(dispatch(router, verb::get, "/notes/home?page=1&page=2").status == http::status::bad_request);
+  CHECK(dispatch(router, verb::get, "/notes/home?page=two").status == http::status::bad_request);
+}
+
+TEST_CASE("router: a required query parameter, and a fixed value the request must give", "[http][router][query]") {
+  http::router router;
+
+  router.get("/export?format=json&id={id}", [](std::int64_t id) {
+    http::response answer;
+
+    answer.body = std::to_string(id);
+    return answer;
+  });
+
+  CHECK(dispatch(router, verb::get, "/export?id=7&format=json").body == "7");
+  CHECK(dispatch(router, verb::get, "/export?format=json").status == http::status::bad_request);
+  CHECK(dispatch(router, verb::get, "/export?id=7").status == http::status::bad_request);
+  CHECK(dispatch(router, verb::get, "/export?id=7&format=xml").status == http::status::bad_request);
+}
+
+TEST_CASE("router: a route of add() gets the values of its query parameters", "[http][router][query]") {
+  http::router router;
+
+  router.add(verb::get, "/search?q={q}", "search", [](http::request, http::route_match match) -> task<http::response> {
+    http::response answer;
+
+    answer.body = std::to_string(match.query_params.at(0).size()) + ":" + match.query_params.at(0).at(0);
+    co_return answer;
+  });
+
+  CHECK(dispatch(router, verb::get, "/search?q=tea&other=1").body == "1:tea");
+  CHECK_THROWS_WITH(
+      router.add(
+          verb::get, "/bad?q", "bad",
+          [](http::request, http::route_match) -> task<http::response> { co_return http::response{}; }
+      ),
+      Catch::Matchers::ContainsSubstring("key={name} or key=value")
+  );
+}
+
+static_assert(quoll::http::detail::parse_template("/a?b={b}&c=d").query.size() == 2);
+static_assert(
+    quoll::http::detail::parse_template("/a/{b}?b={b}").error == quoll::http::detail::template_error::duplicate_name
+);
+static_assert(quoll::http::detail::parse_template("/a?").error == quoll::http::detail::template_error::invalid_query);
+
+TEST_CASE("router: a route is chosen by its method and path, its fixed values only checked", "[http][router][query]") {
+  http::router router;
+
+  router.get("/export?format=json&id={id}", [](std::int64_t id) {
+    http::response answer;
+
+    answer.body = "json " + std::to_string(id);
+    return answer;
+  });
+  router.post("/export", [] { return http::response{}; });
+
+  // Another fixed value: refused, 400, rather than another route; the methods of the path are still told.
+  CHECK(dispatch(router, verb::get, "/export?format=csv&id=3").status == http::status::bad_request);
+  CHECK(dispatch(router, verb::head, "/export?format=json&id=3").status == http::status::ok);
+  CHECK(dispatch(router, verb::delete_, "/export").status == http::status::method_not_allowed);
+  // Two routes of one method and path, whatever their queries: never told apart.
+  CHECK_THROWS_AS(router.get("/export?format=csv", [] { return http::response{}; }), std::invalid_argument);
+}
+
+TEST_CASE("router: a handler writing its response takes the query's parameters too", "[http][router][query]") {
+  struct kept_sink {
+    std::string *body;
+
+    [[nodiscard]] task<> write(std::string_view piece) const {
+      body->append(piece);
+      co_return;
+    }
+  };
+
+  quoll::async::run_loop loop;
+  std::string written;
+  http::router router;
+
+  router.get("/stream?tag={tags}", [](std::vector<std::string_view> tags, http::response_writer out) -> task<> {
+    for (auto const tag : tags) {
+      co_await out.write(tag);
+    }
+  });
+
+  http::request request;
+
+  request.target = "/stream?tag=a&tag=b";
+
+  auto response = quoll::test::run(loop, router.dispatch(std::move(request)));
+  kept_sink sink{&written};
+  auto const writer = response.value().late_head_writer;
+
+  (void)quoll::test::run(loop, [&]() -> task<int> {
+    co_await writer(http::body_stream{sink});
+    co_return 1;
+  }());
+
+  CHECK(written == "ab");
+}
+
+TEST_CASE(
+    "router: a key a route does not read refuses nothing, even one that does not decode", "[http][router][query]"
+) {
+  http::router router;
+
+  router.get("/notes?page={page}", [](std::optional<int> page) {
+    http::response answer;
+
+    answer.body = page ? std::to_string(*page) : "-";
+    return answer;
+  });
+
+  CHECK(dispatch(router, verb::get, "/notes?utm=%zz&page=2").body == "2");
+  CHECK(dispatch(router, verb::get, "/notes?page=%zz").status == http::status::bad_request);
+}
+
+static_assert(quoll::http::detail::parse_template("?q={q}").error != quoll::http::detail::template_error::none);
+static_assert(
+    quoll::http::detail::parse_template("/a?q={a}&%71={b}").error ==
+    quoll::http::detail::template_error::duplicate_query_key
+);
+static_assert(
+    quoll::http::detail::parse_template("/a?k=x#y").error == quoll::http::detail::template_error::invalid_query
+);
+
+TEST_CASE("router: a request's keys are read decoded, as its template's", "[http][router][query]") {
+  http::router router;
+
+  router.get("/search?a+b={first}&format=json", [](std::string first) {
+    http::response answer;
+
+    answer.body = first;
+    return answer;
+  });
+
+  // `%61%20b` is `a b`, and `%6Ason` is `json`.
+  CHECK(dispatch(router, verb::get, "/search?%61%20b=tea&format=%6Ason").body == "tea");
+}
+
+TEST_CASE(
+    "router: a middleware sees the route and its parameters of a request its query refuses", "[http][router][query]"
+) {
+  http::router router;
+  std::vector<std::string> seen;
+  int handled = 0;
+
+  router.get("/users/{id}?format=json&q={q}", [&handled](std::int64_t, std::optional<std::string>) {
+    ++handled;
+    return http::response{};
+  });
+  router.use([&seen](http::request message, http::next next) -> task<http::response> {
+    auto answer = co_await next(std::move(message));
+
+    seen.push_back(
+        std::string{next.route()} + ":" + (next.params().empty() ? std::string{} : next.params().front()) + ":" +
+        (next.router_answered() ? "router" : "handler")
+    );
+    co_return answer;
+  });
+
+  // A fixed value another, and a parameter that does not decode: the router answers, the handler never runs.
+  CHECK(dispatch(router, verb::get, "/users/42?format=xml").status == http::status::bad_request);
+  CHECK(dispatch(router, verb::get, "/users/42?format=json&q=%zz").status == http::status::bad_request);
+  CHECK(handled == 0);
+  CHECK(
+      seen ==
+      std::vector<std::string>{"/users/{id}?format=json&q={q}:42:router", "/users/{id}?format=json&q={q}:42:router"}
+  );
 }

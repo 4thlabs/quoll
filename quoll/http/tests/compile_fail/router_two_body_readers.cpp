@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: a handler takes one http::body_reader, after its path parameters
+// expect: a handler takes one http::body_reader, after its path and query parameters
 
 // One body, one reader.
 

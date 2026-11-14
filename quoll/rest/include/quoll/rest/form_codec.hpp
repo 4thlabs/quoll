@@ -37,11 +37,11 @@
 #ifndef QUOLL_REST_FORM_CODEC_HPP
 #define QUOLL_REST_FORM_CODEC_HPP
 
+#include <quoll/http/detail/query_string.hpp>
 #include <quoll/rest/codec.hpp>
 #include <quoll/rest/decode_error.hpp>
 #include <quoll/rest/detail/arguments.hpp>
 #include <quoll/rest/detail/fields_by_name.hpp>
-#include <quoll/rest/detail/query_string.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -96,7 +96,7 @@ public:
       return std::unexpected{decode_error{"a form of more than " + std::to_string(max_fields) + " fields"}};
     }
 
-    auto const entries = detail::parse_query(body);
+    auto const entries = http::detail::parse_query(body);
 
     if (!entries) {
       return std::unexpected{decode_error{"a form that is not URL-encoded, or holds a NUL"}};

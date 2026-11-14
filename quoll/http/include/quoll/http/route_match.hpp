@@ -61,6 +61,11 @@ struct route_match {
   body_reader reader{};
   /** @brief What `reader` reads from, when nothing outside the router keeps it: for what goes on after dispatch(). */
   std::shared_ptr<void> reader_owner{};
+  /**
+   * @brief The values of the query parameters the route's template names, `?q={q}`, in its order: each the values
+   * the request gives it, decoded, in order, none when it gives none.
+   */
+  std::vector<std::vector<std::string>> query_params{};
 };
 
 } // namespace quoll::http

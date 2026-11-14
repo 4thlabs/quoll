@@ -34,74 +34,52 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/rest/detail/query_string.hpp>
+#ifndef QUOLL_HTTP_DETAIL_QUERY_STRING_HPP
+#define QUOLL_HTTP_DETAIL_QUERY_STRING_HPP
 
-#include <quoll/http/detail/percent.hpp>
+#include <quoll/async/lifetimebound.hpp>
 
-#include <algorithm>
 #include <optional>
-#include <ranges>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
-namespace quoll::rest::detail {
+namespace quoll::http::detail {
 
-std::optional<std::string> decode_query_component(std::string_view text) {
-  std::string spaced{text};
+struct query_entry {
+  std::string name;
+  std::string value;
+};
 
-  std::ranges::replace(spaced, '+', ' ');
-  return http::detail::percent_decode(spaced);
-}
+// Decodes a component of a query string: '+' is a space, as forms send it, and %XX escapes.
+[[nodiscard]] std::optional<std::string> decode_query_component(std::string_view text);
 
-std::optional<std::vector<query_entry>> parse_query(std::string_view query) {
-  std::vector<query_entry> entries;
+// A pair of a query string, its name and its value decoded, each none if it does not decode (a bad escape, a NUL).
+struct query_pair {
+  std::optional<std::string> name;
+  std::optional<std::string> value;
+};
 
-  for (auto const pair : std::views::split(query, '&')) {
-    std::string_view const text{pair.begin(), pair.end()};
+// The `name=value` pairs of a query string, in order, each part decoded or none: what reads one part only, as a router
+// reading the keys of its routes, is refused by nothing else.
+[[nodiscard]] std::vector<query_pair> query_pairs(std::string_view query);
 
-    if (text.empty()) {
-      continue;
-    }
+// The `name=value` pairs of a query string, decoded and in order; `name` alone has an empty value. Nothing for an
+// invalid escape or a NUL (`%00`), which C APIs would cut at, as the router refuses one in the path.
+[[nodiscard]] std::optional<std::vector<query_entry>> parse_query(std::string_view query);
 
-    auto const equals = text.find('=');
-    auto name = decode_query_component(text.substr(0, equals));
-    auto value =
-        decode_query_component(equals == std::string_view::npos ? std::string_view{} : text.substr(equals + 1));
+// The values of the parameter `name`, in order.
+[[nodiscard]] std::vector<std::string_view>
+query_texts(std::vector<query_entry> const &query QUOLL_LIFETIMEBOUND, std::string_view name);
 
-    if (!name || !value || name->contains('\0') || value->contains('\0')) {
-      return std::nullopt;
-    }
+// Appends `name=value` to a query string or a form under construction, both percent-encoded. A value holding a NUL
+// throws std::invalid_argument, saying `what` it is.
+void append_query(
+    std::string &query, std::string_view name, std::string_view value,
+    std::string_view what = "quoll::http: query parameter"
+);
 
-    entries.push_back({std::move(*name), std::move(*value)});
-  }
+} // namespace quoll::http::detail
 
-  return entries;
-}
-
-std::vector<std::string_view> query_texts(std::vector<query_entry> const &query, std::string_view name) {
-  std::vector<std::string_view> texts;
-
-  for (auto const &entry : query) {
-    if (entry.name == name) {
-      texts.push_back(entry.value);
-    }
-  }
-
-  return texts;
-}
-
-void append_query(std::string &query, std::string_view name, std::string_view value, std::string_view what) {
-  if (value.contains('\0')) {
-    throw std::invalid_argument{std::string{what} + " " + std::string{name} + " holds a NUL, which the server refuses"};
-  }
-
-  query += query.empty() ? "" : "&";
-  query += http::detail::percent_encode(name);
-  query += '=';
-  query += http::detail::percent_encode(value);
-}
-
-} // namespace quoll::rest::detail
+#endif // QUOLL_HTTP_DETAIL_QUERY_STRING_HPP

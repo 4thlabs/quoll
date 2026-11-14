@@ -37,6 +37,7 @@
 #include <quoll/ui/routing/router.hpp>
 
 #include <quoll/http/detail/percent.hpp>
+#include <quoll/http/detail/query_string.hpp>
 #include <quoll/http/detail/route_template.hpp>
 #include <quoll/ui/component/component.hpp>
 #include <quoll/ui/component/hooks.hpp>
@@ -168,27 +169,14 @@ constexpr int most_redirects = 8;
   }
 }
 
-// The pairs of `query`, percent-decoded, '+' a space as a form sends it: one that does not decode is left out.
+// The pairs of `query`, decoded as the router decodes them ('+' a space, %XX, no NUL): one that does not decode, or
+// with no name, is left out.
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> query_of(std::string_view query) {
   std::vector<std::pair<std::string, std::string>> pairs;
 
-  while (!query.empty()) {
-    auto const amp = query.find('&');
-    auto pair = std::string{query.substr(0, amp)};
-
-    query = amp == std::string_view::npos ? std::string_view{} : query.substr(amp + 1);
-
-    for (auto &character : pair) {
-      character = character == '+' ? ' ' : character;
-    }
-
-    auto const equals = pair.find('=');
-    auto key = http::detail::percent_decode(std::string_view{pair}.substr(0, equals));
-    auto value = equals == std::string::npos ? std::optional<std::string>{std::string{}}
-                                             : http::detail::percent_decode(std::string_view{pair}.substr(equals + 1));
-
-    if (key && value && !key->empty()) {
-      pairs.emplace_back(std::move(*key), std::move(*value));
+  for (auto &pair : http::detail::query_pairs(query)) {
+    if (pair.name && pair.value && !pair.name->empty()) {
+      pairs.emplace_back(std::move(*pair.name), std::move(*pair.value));
     }
   }
 

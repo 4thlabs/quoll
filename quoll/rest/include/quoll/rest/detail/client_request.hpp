@@ -39,6 +39,7 @@
 
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/percent.hpp>
+#include <quoll/http/detail/query_string.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/rest/body.hpp>
@@ -47,7 +48,6 @@
 #include <quoll/rest/detail/fields_of.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/path_template.hpp>
-#include <quoll/rest/detail/query_string.hpp>
 #include <quoll/rest/detail/scheme_traits.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
@@ -81,7 +81,9 @@ struct request_draft {
 
 template <fixed_string Name, class T>
 void add_part(std::type_identity<query<Name, T>>, T const &value, request_draft &draft) {
-  for_each_text(value, [&](std::string const &text) { append_query(draft.query, Name.view(), text); });
+  for_each_text(value, [&](std::string const &text) {
+    http::detail::append_query(draft.query, Name.view(), text, "quoll::rest::client: query parameter");
+  });
 }
 
 template <class Struct>
