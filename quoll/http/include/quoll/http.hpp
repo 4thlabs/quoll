@@ -40,6 +40,7 @@
 #include <quoll/http/accept_websocket.hpp>
 #include <quoll/http/body_reader.hpp>
 #include <quoll/http/body_stream.hpp>
+#include <quoll/http/ensure_ok.hpp>
 #include <quoll/http/error.hpp>
 #include <quoll/http/event_parser.hpp>
 #include <quoll/http/event_reader.hpp>

@@ -441,7 +441,10 @@ TEST_CASE("rest events: the id to resume from is an argument like any", "[rest][
   REQUIRE(quoll::test::run(reading()).value() == change{8, "change 8"});
 }
 
-TEST_CASE("rest events: an http_error before the first event answers, and subscribe throws an http_error received", "[rest][sse]") {
+TEST_CASE(
+    "rest events: an http_error before the first event answers, and subscribe throws an http_error received",
+    "[rest][sse]"
+) {
   changes_client const client{streaming_transport{make_router()}};
 
   auto const reading = [&client]() -> task<std::string> {

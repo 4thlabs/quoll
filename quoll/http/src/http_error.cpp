@@ -37,6 +37,7 @@
 #include <quoll/http/http_error.hpp>
 
 #include <quoll/http/detail/error_answer.hpp>
+#include <quoll/http/ensure_ok.hpp>
 #include <quoll/http/problem.hpp>
 
 #include <memory>

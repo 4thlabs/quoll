@@ -182,6 +182,17 @@ are declared. A name that is not a C++ name is given only where it is needed: in
 or a form, in Glaze's `glz::meta` for JSON; a struct the reflection does not read, as one with a base class, lists
 its fields in `rest_fields`.
 
+
+### One HTTP error
+
+**Taken.** One exception, `http::http_error`, for what a handler answers and what a client receives, in
+`quoll::http`, so that the REST layer is a layer over HTTP rather than a second set of errors. The router answers one a
+handler or a middleware lets through with its status and an RFC 9457 problem. One received from another call is
+answered `502 Bad Gateway`: that server's 404 is not this one's, and passing it on would tell the caller its own
+resource is missing.
+
+**For you.** Throw `http::http_error{status, detail}` to answer an error; catch it around a call, `received()` and
+`answer()` telling what came back; `http::ensure_ok(response)` for a plain client.
 ## UI
 
 ### An interface in C++, compiled to WebAssembly

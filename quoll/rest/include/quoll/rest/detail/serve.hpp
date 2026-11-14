@@ -310,33 +310,20 @@ async::task<http::response> answer(mounted<Validators, Services...> &state, type
 template <class Endpoint>
 using sink_of = event_sink<typename events_part_of<Endpoint>::type, typename events_part_of<Endpoint>::codec>;
 
-// Whether an http_error is one: another status is a programming error, which goes on as any other exception.
-[[nodiscard]] constexpr bool answers_as_an_error(http::status status) noexcept {
-  auto const code = static_cast<int>(status);
-
-  return code >= 400 && code <= 599;
-}
-
-// The answer to an http_error a service or a validator threw: its status, with the challenge of the route's first
-// scheme on a 401 (RFC 9110); a 502 for one received from another call.
+// The answer to an http_error a service or a validator threw, as the router answers one (http::detail::error_answer),
+// with the challenge of the route's first scheme on a 401 (RFC 9110); none for one raised with a status that is no
+// error, which goes on as any other exception.
 template <class Route>
-[[nodiscard]] http::response error_response(http::http_error const &error) {
-  // Received from another call, let through: a 502, as the router answers one.
-  if (error.received()) {
-    return *http::detail::error_answer(error);
-  }
-
-  auto response = http::problem_response(error.status(), error.what());
+[[nodiscard]] std::optional<http::response> error_response(http::http_error const &error) {
+  auto answer = http::detail::error_answer(error);
 
   if constexpr (Route::schemes::size > 0) {
-    if (error.status() == http::status::unauthorized) {
-      response.fields.add(
-          "WWW-Authenticate", scheme_traits<typename front<typename Route::schemes>::type>::challenge()
-      );
+    if (answer && !error.received() && error.status() == http::status::unauthorized) {
+      answer->fields.add("WWW-Authenticate", scheme_traits<typename front<typename Route::schemes>::type>::challenge());
     }
   }
 
-  return response;
+  return answer;
 }
 
 // What the arguments of a request are decoded from: for a stream, it lives as long as the stream, as they may point
@@ -434,9 +421,7 @@ template <class Route, class Validators, class... Services>
   try {
     stopped = !co_await async::stopped_as_optional(call());
   } catch (http::http_error const &error) {
-    if (error.received() || answers_as_an_error(error.status())) {
-      refused = error_response<Route>(error);
-    }
+    refused = error_response<Route>(error);
 
     failure = std::current_exception();
   } catch (...) {
@@ -543,11 +528,13 @@ template <class Route, class State, class Input>
       co_return co_await answer<Route>(*state, std::move(*arguments));
     }
   } catch (http::http_error const &error) {
-    if (!error.received() && !answers_as_an_error(error.status())) {
+    auto answer = error_response<Route>(error);
+
+    if (!answer) {
       throw;
     }
 
-    co_return error_response<Route>(error);
+    co_return std::move(*answer);
   }
 }
 

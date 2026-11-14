@@ -74,16 +74,16 @@ using result = detail::call_result<Endpoint>;
  * one: its contract is all a client needs.
  *
  * - `call<Endpoint>(arguments...)` returns a task of the body of the endpoint's first returns<> (nothing for an
- *   endpoint without one, or whose first response has no body). Any other outcome throws an http::http_error received
- * from the task: another declared response (read it with try_call), an undeclared status (its problem detail, if any),
- * a body that does not decode.
+ *   endpoint without one, or whose first response has no body). Any other outcome throws an http::http_error
+ *   received from the task: another declared response (read it with try_call), an undeclared status (its problem
+ *   detail, if any), a body that does not decode.
  * - `try_call<Endpoint>(arguments...)` returns a task of result<Endpoint>: a reply<Endpoint> holding the declared
  *   response received, or an unexpected_response.
  * - `subscribe<Endpoint>(arguments...)`, for an endpoint with events<T>, returns a task of rest::event_stream<T>, once
  *   the head of a `text/event-stream` has come: its events as they come. Any other answer throws an http::http_error
- * received from the task, as from call, with its body read up to 64 KiB. It needs a transport that gives a response as
- * its head comes
- *   (`stream()`: http::client, not http::local_transport), and it goes straight through it, credentials applied.
+ *   received from the task, as from call, with its body read up to 64 KiB. It needs a transport that gives a response
+ *   as its head comes (`stream()`: http::client, not http::local_transport), and it goes straight through it,
+ *   credentials applied.
  *   Interceptors take whole responses: on a client with any, it throws std::logic_error at the call, rather than go
  *   out without what they add.
  * - Transport failures (network, cancellation) are exceptions from the tasks (std::system_error). Over a
