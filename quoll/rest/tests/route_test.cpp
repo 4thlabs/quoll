@@ -143,8 +143,9 @@ namespace more {
 
 using sign_in = rest::post<"/token", token, rest::header<"X-Device", std::optional<std::string>>, rest::form<login>>;
 using file = rest::get<"/files/{rest:path}", rest::text, std::string>;
+using device = rest::get<"/device", rest::text, rest::header<"X-Device", std::string>>;
 
-using routes = rest::group<rest::group<sign_in>, file>;
+using routes = rest::group<rest::group<sign_in>, file, device>;
 
 } // namespace more
 
@@ -158,7 +159,7 @@ http::router make_more_router() {
       [](more::sign_in, std::optional<std::string> device, login given) {
         return token{.value = given.user + "/" + device.value_or("-")};
       },
-      [](more::file, std::string rest) { return rest; }
+      [](more::file, std::string rest) { return rest; }, [](more::device, std::string device) { return device; }
   );
 
   rest::mount<more_api>(router, handlers);
@@ -318,6 +319,15 @@ TEST_CASE("route: any 2xx is a route's success, its body read for a result, none
 
   REQUIRE_FALSE(refused.has_value());
   CHECK(refused.error().status() == http::status::found);
+
+  // A result is a whole body: none comes with a 204, and a 206 is a part of one.
+  for (auto const status : {http::status::no_content, http::status::partial_content}) {
+    rest::client<third_party::api, canned_transport> const partial{canned_transport{status, R"({"id":4,"text":"x"})"}};
+
+    CHECK_FALSE(quoll::test::run(partial.try_call<third_party::create>(new_note{.text = "x"})).value().has_value());
+    // A void result takes any 2xx.
+    CHECK(quoll::test::run(partial.try_call<third_party::forget>(4)).value().has_value());
+  }
 }
 
 TEST_CASE("route: a result read leniently skips the fields its type does not know", "[rest][route]") {
@@ -374,6 +384,29 @@ TEST_CASE("route: a header, a form, nested groups and the rest of a path", "[res
           .value == "ada/phone"
   );
   CHECK(run(client.call<more::file>(std::string{"a/b.txt"})) == "a/b.txt");
+}
+
+TEST_CASE("route: a call by name, in any order, what may be missing left out", "[rest][route]") {
+  using namespace quoll::rest::literals;
+
+  auto const router = make_router();
+  rest::client<api, http::local_transport> client{http::local_transport{router}};
+
+  CHECK(run(client.call<notes::list>("page"_p = 2, "contains"_p = std::string{"tea"})).front().text == "tea");
+  CHECK(run(client.call<notes::list>("page"_p = 5)).front().id == 5);
+  CHECK(run(client.call<notes::get>("id"_p = 3)).id == 3);
+  CHECK(quoll::test::run(client.try_call<notes::get>("id"_p = 4)).value()->id == 4);
+
+  // A header by its name, without case, as HTTP reads it.
+  auto const more_router = make_more_router();
+  rest::client<more_api, http::local_transport> more_client{http::local_transport{more_router}};
+
+  CHECK(run(more_client.call<more::device>("x-device"_p = std::string{"phone"})) == "phone");
+
+  // The name of an argument, as a call by name gives it: a {parameter}'s, a header's, none for a body.
+  static_assert(api::route<notes::list>::argument_names[1] == "page");
+  static_assert(more_api::route<more::sign_in>::argument_names[0] == "X-Device");
+  static_assert(more_api::route<more::sign_in>::argument_names[1].empty());
 }
 
 TEST_CASE("route: a contract of routes is served and called, by its path and its query", "[rest][route]") {

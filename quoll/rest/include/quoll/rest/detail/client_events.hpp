@@ -55,7 +55,7 @@
 
 namespace quoll::rest::detail {
 
-// What subscribe produces for an endpoint with events<>.
+// What subscribe produces for a route of events<>.
 template <class Endpoint>
 using event_stream_of = event_stream<typename events_part_of<Endpoint>::type, typename events_part_of<Endpoint>::codec>;
 

@@ -233,8 +233,19 @@ if (!maybe) {
 | Outcome                                      | `call`                                                                   | `try_call`                                    |
 | -------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------- |
 | The route's result                           | Its value                                                                | `std::expected<T, http::http_error>` with it  |
-| Another status, a body that does not decode  | Throws `http::http_error`, whose `what()` is the problem's detail if any | The same `http::http_error`, as its error     |
+| A status that is no 2xx, a body that does not decode, no whole body (204, 205, 206) for a result | Throws `http::http_error`, whose `what()` is the problem's detail if any | The same `http::http_error`, as its error |
 | A failure of the transport                   | Throws `std::system_error`                                               | Throws `std::system_error`                    |
+
+A call takes its arguments by position, in the route's order, or by name, through `rest::literals`: a `{parameter}`
+of the route's expression or a header by its name, in any order, one that may be missing (a `std::optional`, a
+`std::vector`) left out. By position or by name, not both in one call; a body, which has no name, is passed by
+position:
+
+```cpp
+using namespace quoll::rest::literals;
+
+auto const second = co_await client.call<cards::list>("user_id"_p = 7, "status"_p = std::string{"active"});
+```
 
 Arguments are encoded by the call: an invalid one (an empty path parameter, one holding a NUL or a dot segment, the
 rest of a path starting with `/`, a query parameter holding a NUL, a number that is not finite, a header value or a

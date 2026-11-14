@@ -47,7 +47,7 @@
 
 namespace quoll::rest::detail {
 
-// What a part of an endpoint is: something the caller passes (query, header, body), a declared response, a stream of
+// What a part of a route is: something the caller passes (query, header, body), a route's result, a stream of
 // events, or the security schemes it requires.
 struct argument_part {};
 

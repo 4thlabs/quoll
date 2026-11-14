@@ -72,7 +72,8 @@ template <class Endpoint>
 using call_result = std::expected<typename call_value<Endpoint>::type, http::http_error>;
 
 // Whether `status` is a success, 2xx: a route's own (200, 201, 202, 204 for a void one) or another a server answers for
-// it, as a third-party API's 200 to a HEAD or to a DELETE with nothing to say.
+// it, as a third-party API's 200 to a HEAD or to a DELETE with nothing to say. A result with a body takes any but 204,
+// 205 and 206.
 [[nodiscard]] constexpr bool is_success(http::status status) noexcept {
   auto const code = static_cast<int>(status);
 
@@ -95,6 +96,13 @@ read_response(http::response response) {
   if constexpr (std::is_void_v<value_type>) {
     return {};
   } else {
+    // A result is a whole body: none comes with a 204 or a 205, and a 206 is a part of one, which no route asks for.
+    if (auto const code = static_cast<int>(response.status); code >= 204 && code <= 206) {
+      auto reason = "status " + std::to_string(code) + " with no whole body";
+
+      return std::unexpected{refusal{std::move(response), std::move(reason)}};
+    }
+
     using result = typename front<own_responses<typename Route::endpoint>>::type;
 
     typename result::codec const codec{};

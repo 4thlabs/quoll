@@ -136,7 +136,7 @@ struct path_template {
   return path_error::none;
 }
 
-// What a literal of an endpoint's path may hold (RFC 3986, pchar): a client copies it into the target as it is, where a
+// What a literal of a route's path may hold (RFC 3986, pchar): a client copies it into the target as it is, where a
 // space, '?', '#', a control or a byte past ASCII would take the request elsewhere, or none could carry it. The router
 // itself matches literals decoded, and takes them.
 [[nodiscard]] constexpr bool is_path_character(char character) noexcept {
@@ -152,8 +152,7 @@ struct path_template {
 [[nodiscard]] consteval path_template parse_path(std::string_view text) {
   path_template parsed;
 
-  // A query in the template comes with the routes of #176: until then, '?' is no character of a REST path, whatever
-  // the query holds.
+  // The path of a route, without its query, which its expression holds after the '?': here, '?' is no character of it.
   if (http::detail::find_char(text, '?') != std::string_view::npos) {
     parsed.error = path_error::invalid_character;
     return parsed;
@@ -196,7 +195,7 @@ struct path_template {
   return parsed;
 }
 
-// The path of an endpoint under the prefix of its api: an endpoint path of "/" is the prefix itself, and an empty
+// The path of a route under the prefix of its api: a route path of "/" is the prefix itself, and an empty
 // result is "/".
 template <fixed_string Prefix, fixed_string Path>
 [[nodiscard]] consteval auto join_paths() {

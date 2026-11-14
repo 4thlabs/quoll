@@ -72,6 +72,8 @@ namespace quoll::rest {
  *   outcome throws an http::http_error received from the task: another status (its problem detail, if any, as
  *   what()), a body that does not decode. Its body_as() reads a third-party API's own shape of its errors.
  * - `try_call<Route>(arguments...)` returns a task of `std::expected<T, http::http_error>`: the value, or that error.
+ * - Each of them takes its arguments by position, or by name, `call<notes::list>("page"_p = 2)` (rest::literals): a
+ *   `{parameter}` of the route's expression, or a header by its name, in any order, one that may be missing left out.
  * - `subscribe<Route>(arguments...)`, for a route of events<T>, returns a task of rest::event_stream<T>, once
  *   the head of a `text/event-stream` has come: its events as they come. Any other answer throws an http::http_error
  *   received from the task, as from call, with its body read up to 64 KiB. It needs a transport that gives a response
@@ -183,6 +185,9 @@ public:
 private:
   template <class, class, class>
   friend struct detail::client_calls;
+
+  template <class, class>
+  friend struct detail::client_named_calls;
 
   // Through the interceptors, if any: the transport alone otherwise, as before any was added.
   [[nodiscard]] async::task<http::response> send(http::request message) const {

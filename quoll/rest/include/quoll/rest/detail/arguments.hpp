@@ -67,7 +67,7 @@
 
 namespace quoll::rest::detail {
 
-// Why a request does not carry the arguments of its endpoint: 400, or 415 for a body of another media type.
+// Why a request does not carry the arguments of its route: 400, or 415 for a body of another media type.
 struct argument_error {
   http::status status = http::status::bad_request;
   std::string detail;

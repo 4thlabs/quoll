@@ -167,7 +167,7 @@ check_security(type_list<Scheme, Rest...>, Validators &validators, request_input
   co_return co_await check_security(type_list<Rest...>{}, validators, input);
 }
 
-// A declared response, as an HTTP response: with its body, or without for a void one.
+// A route's result, as an HTTP response: with its body, or without for a void one.
 template <class Response>
 [[nodiscard]] http::response make_response() {
   http::response response;
@@ -235,8 +235,8 @@ struct exactly {
   operator Other() && = delete;
 };
 
-// The service for an endpoint: the one taking it and exactly its arguments, by value or by reference.
-// `Extra`, given as is after the arguments: the sink of an endpoint with events<>.
+// The handler of a route: the one taking it and exactly its arguments, by value or by reference.
+// `Extra`, given as is after the arguments: the sink of a route of events<>.
 template <class Endpoint, class... Extra, class... Arguments, class... Services>
 [[nodiscard]] consteval std::size_t service_index(std::tuple<Arguments...> const *, type_list<Services...>) {
   return first_true(std::array<bool, sizeof...(Services)>{
@@ -282,7 +282,7 @@ async::task<http::response> answer(mounted<Validators, Services...> &state, type
   }
 }
 
-// The sink the service of an endpoint with events<> sends through.
+// The sink the handler of a route of events<> sends through.
 template <class Endpoint>
 using sink_of = event_sink<typename events_part_of<Endpoint>::type, typename events_part_of<Endpoint>::codec>;
 
@@ -310,7 +310,7 @@ struct served_input {
   std::optional<std::vector<http::detail::query_entry>> query;
 };
 
-// The services taking an endpoint's arguments with no `Sink`, and not with one: those a stream would never call.
+// The handlers taking a route's arguments with no `Sink`, and not with one: those a stream would never call.
 template <class Endpoint, class Sink, class... Arguments, class... Services>
 [[nodiscard]] consteval std::size_t services_without_sink(std::tuple<Arguments...> const *, type_list<Services...>) {
   return count_true(std::array<bool, sizeof...(Services)>{
@@ -328,7 +328,7 @@ struct held_arguments {
   std::atomic_flag started;
 };
 
-// The stream of an endpoint with events<>: its service, given a sink over the response, run as the response's writer,
+// The stream of a route of events<>: its handler, given a sink over the response, run as the response's writer,
 // after the router has answered. An http_error before the stream starts answers as from any service; after, it cuts the
 // stream, as any failure of a writer does. What it reads is held here: the arguments, and the state of the services.
 template <class Route, class Validators, class... Services>
@@ -399,7 +399,7 @@ template <class Route, class Validators, class... Services>
   co_await event_sink_access::finish(sink);
 }
 
-// The answer of an endpoint with events<>: its stream, run once the router has answered.
+// The answer of a route of events<>: its stream, run once the router has answered.
 template <class Route, class State>
 [[nodiscard]] http::response events_response(
     std::shared_ptr<State> state, std::shared_ptr<served_input const> input, typename Route::arguments arguments
@@ -431,8 +431,8 @@ template <class... Parts>
   return (reads_the_query<Parts> || ...);
 }
 
-// One frame for a request, which holds what its arguments are decoded from: in it, or shared with the stream of an
-// endpoint with events<>, as they may point into it.
+// One frame for a request, which holds what its arguments are decoded from: in it, or shared with the stream of a
+// route of events<>, as they may point into it.
 template <class Route, class State, class Input>
 [[nodiscard]] async::task<http::response> serve_from(std::shared_ptr<State> state, Input input) {
   // What `input` holds, as it is or behind the pointer of a stream.

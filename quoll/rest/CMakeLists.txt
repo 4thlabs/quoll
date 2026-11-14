@@ -44,6 +44,11 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/api_key_query_name.cpp
     tests/compile_fail/bad_escape.cpp
     tests/compile_fail/body_codec_mismatch.cpp
+    tests/compile_fail/call_by_name_required_left_out.cpp
+    tests/compile_fail/call_by_name_twice.cpp
+    tests/compile_fail/call_by_name_two_arguments.cpp
+    tests/compile_fail/call_by_name_unknown.cpp
+    tests/compile_fail/call_by_name_with_body.cpp
     tests/compile_fail/call_on_events.cpp
     tests/compile_fail/client_unused_scheme.cpp
     tests/compile_fail/events_in_group.cpp
@@ -114,6 +119,8 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/route_query_not_a_value.cpp
     tests/compile_fail/route_rest_of_path_text.cpp
     tests/compile_fail/route_service_two_handlers.cpp
+    tests/compile_fail/route_static_handler_of_other_api.cpp
+    tests/compile_fail/route_too_many_query_parameters.cpp
     tests/compile_fail/route_two_bodies.cpp
     tests/compile_fail/route_two_operation_ids.cpp
     tests/compile_fail/route_typed_in_path.cpp

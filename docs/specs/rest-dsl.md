@@ -1,7 +1,7 @@
 # The REST DSL
 
-> [!WARNING]
-> **Draft**, to be validated by the maintainer with [#227](https://github.com/4thlabs/quoll/pull/227).
+> [!NOTE]
+> **Validated** by the maintainer on 2026-11-14, with [#227](https://github.com/4thlabs/quoll/pull/227).
 
 The spec of `quoll::rest`'s contract, decided with the maintainer in [#176](https://github.com/4thlabs/quoll/issues/176).
 How it behaves, for users, is in [`rest.md`](../rest.md); why, in [`design-decisions.md`](../design-decisions.md); what

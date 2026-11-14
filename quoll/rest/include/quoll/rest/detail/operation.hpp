@@ -58,6 +58,7 @@
 #include <quoll/rest/result_status.hpp>
 #include <quoll/rest/security.hpp>
 
+#include <array>
 #include <concepts>
 #include <cstddef>
 #include <string>
@@ -201,6 +202,18 @@ struct body_parts_of<type_list<Body>> {
   using type = typename body_parts<Body>::type;
 };
 
+// The names of the first `Count` `{parameters}` of an expression, the path's then the query's.
+template <class Expression, std::size_t Count>
+[[nodiscard]] consteval std::array<std::string_view, Count> parameter_names_of() {
+  std::array<std::string_view, Count> names{};
+
+  for (std::size_t index = 0; index < Count; ++index) {
+    names[index] = Expression::parameter_name(index);
+  }
+
+  return names;
+}
+
 // Whether the last path parameter, the rest of the path when there is one, is a std::string.
 template <bool RestOfPath, class PathTypes>
 [[nodiscard]] consteval bool rest_of_path_is_text() {
@@ -235,7 +248,7 @@ template <class... Types>
 }
 
 // A route of `Method` at `Expr`, answering `Result`, taking `Args`: its parameters' types, its headers, its body. What
-// the REST layer serves and calls, as endpoint<> was: each route is its own type, as it is a struct of its own.
+// the REST layer serves and calls: each route is its own type, as it is a struct of its own.
 template <http::verb Method, fixed_string Expr, class Result, class... Args>
 struct operation : operation_tag {
   using expression_type = expression<Expr>;
@@ -276,7 +289,12 @@ struct operation : operation_tag {
       "quoll::rest: a route has a type for each {parameter} of its expression, in order, after its result"
   );
 
-  static constexpr bool counted = well_formed && values::size >= path_count + query_count;
+  static constexpr bool counted = well_formed && path_count <= max_expression_path &&
+                                  query_count <= max_expression_query && values::size >= path_count + query_count;
+
+  // The names of its `{parameters}`, the path's then the query's, which a call by name gives.
+  static constexpr auto parameter_names = parameter_names_of < expression_type,
+                        counted ? path_count + query_count : 0 > ();
 
   using path_types = typename slice_if<counted, values, 0, path_count>::type;
   using query_types = typename slice_if<counted, values, path_count, query_count>::type;

@@ -175,6 +175,48 @@ template <class Endpoint, fixed_string Path>
   }
 }
 
+// The name of an argument part, as a call by name gives it: a header's; none for a body or a query_params<>.
+template <class Part>
+inline constexpr std::string_view argument_part_name{};
+
+template <fixed_string Name, class T>
+inline constexpr std::string_view argument_part_name<header<Name, T>> = Name.view();
+
+// The names of a route's arguments, in their order: its `{parameters}`, then its argument parts past its query's, the
+// headers by their names.
+template <class Endpoint, class... ArgumentParts>
+[[nodiscard]] consteval auto argument_names_of(type_list<ArgumentParts...> /*parts*/) {
+  constexpr auto named = Endpoint::parameter_names;
+  constexpr std::size_t path_count = Endpoint::path_types::size;
+  std::array<std::string_view, path_count + sizeof...(ArgumentParts)> names{};
+  std::size_t at = 0;
+
+  for (; at < named.size() && at < names.size(); ++at) {
+    names[at] = named[at];
+  }
+
+  at = path_count;
+  ((names[at] = at < named.size() ? names[at] : argument_part_name<ArgumentParts>, ++at), ...);
+  return names;
+}
+
+template <class Part>
+inline constexpr bool is_header_part = false;
+
+template <fixed_string Name, class T>
+inline constexpr bool is_header_part<header<Name, T>> = true;
+
+// Whether each argument of a route is a header, whose name a call by name gives without case.
+template <class Endpoint, class... ArgumentParts>
+[[nodiscard]] consteval auto argument_headers_of(type_list<ArgumentParts...> /*parts*/) {
+  constexpr std::size_t path_count = Endpoint::path_types::size;
+  std::array<bool, path_count + sizeof...(ArgumentParts)> headers{};
+  std::size_t at = path_count;
+
+  ((headers[at++] = is_header_part<ArgumentParts>), ...);
+  return headers;
+}
+
 // A route as an api serves it: its full path (the api's prefix, then its own path) and what the groups around it give
 // all their routes, security<> and header<>, which come after its own arguments.
 template <class Endpoint, fixed_string Path, class Inherited>
@@ -192,6 +234,10 @@ struct route {
       as_tuple_t<concat_t<path_types, typename part_argument_types<filter_t<is_argument_part, parts>>::type>>;
   using responses = filter_t<is_response_part, parts>;
   using schemes = typename security_schemes<filter_t<is_security_part, parts>>::type;
+
+  // The name of each argument, as a call by name gives it: empty for one it cannot name.
+  static constexpr auto argument_names = argument_names_of<Endpoint>(filter_t<is_argument_part, parts>{});
+  static constexpr auto argument_is_header = argument_headers_of<Endpoint>(filter_t<is_argument_part, parts>{});
 
   static_assert(
       distinct_places(filter_t<is_argument_part, parts>{}, schemes{}),

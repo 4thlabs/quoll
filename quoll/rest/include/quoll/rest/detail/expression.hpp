@@ -56,8 +56,9 @@ template <fixed_string S, std::size_t Begin, std::size_t Length>
   return sliced;
 }
 
-// The most query parameters a route's expression has.
+// The most query parameters a route's expression has, and path parameters, as many as a REST path has.
 inline constexpr std::size_t max_expression_query = 32;
+inline constexpr std::size_t max_expression_path = 16;
 
 // What a route's expression says, read once: its counts, its flags, where its query's keys are.
 struct expression_summary {
@@ -70,6 +71,9 @@ struct expression_summary {
   bool rest_of_path = false;
   std::array<std::size_t, max_expression_query> key_begin{};
   std::array<std::size_t, max_expression_query> key_size{};
+  // Where the name of each `{parameter}` is, the path's then the query's: what a call by name names.
+  std::array<std::size_t, max_expression_path + max_expression_query> name_begin{};
+  std::array<std::size_t, max_expression_path + max_expression_query> name_size{};
 };
 
 [[nodiscard]] consteval expression_summary summarize(std::string_view text) {
@@ -80,6 +84,11 @@ struct expression_summary {
   summary.query_count = parsed.query.size();
 
   for (auto const &segment : parsed.segments) {
+    if (segment.kind != http::detail::segment_kind::literal && summary.path_count < max_expression_path) {
+      summary.name_begin[summary.path_count] = static_cast<std::size_t>(segment.text.data() - text.data());
+      summary.name_size[summary.path_count] = segment.text.size();
+    }
+
     summary.path_count += segment.kind == http::detail::segment_kind::literal ? 0 : 1;
     summary.typed_in_path =
         summary.typed_in_path || (segment.kind == http::detail::segment_kind::param && !segment.type.empty());
@@ -94,6 +103,11 @@ struct expression_summary {
     summary.plain_keys = summary.plain_keys && entry.key.find_first_of("%+") == std::string_view::npos;
     summary.key_begin[index] = static_cast<std::size_t>(entry.key.data() - text.data());
     summary.key_size[index] = entry.key.size();
+
+    if (summary.path_count <= max_expression_path && !entry.param.empty()) {
+      summary.name_begin[summary.path_count + index] = static_cast<std::size_t>(entry.param.data() - text.data());
+      summary.name_size[summary.path_count + index] = entry.param.size();
+    }
   }
 
   return summary;
@@ -116,6 +130,9 @@ struct expression {
   static_assert(
       info.query_count <= max_expression_query, "quoll::rest: a route's expression has 32 query parameters at most"
   );
+  static_assert(
+      info.path_count <= max_expression_path, "quoll::rest: a route's expression has 16 path parameters at most"
+  );
 
   [[nodiscard]] static consteval http::detail::template_error error() { return info.error; }
 
@@ -134,6 +151,12 @@ struct expression {
   [[nodiscard]] static consteval std::size_t key_begin(std::size_t index) { return info.key_begin[index]; }
 
   [[nodiscard]] static consteval std::size_t key_size(std::size_t index) { return info.key_size[index]; }
+
+  // The name of its `Index`th `{parameter}`, the path's then the query's: a view of `Expr`, a template argument, which
+  // lives as long as the program.
+  [[nodiscard]] static consteval std::string_view parameter_name(std::size_t index) {
+    return Expr.view().substr(info.name_begin[index], info.name_size[index]);
+  }
 };
 
 // The key of the `Index`th pair of the query of `Expr`, as a fixed_string: the name of its query<> part.

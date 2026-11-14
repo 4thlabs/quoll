@@ -581,11 +581,14 @@ TEST_CASE("rest events: another failure before the first event answers 500", "[r
   REQUIRE(answer.find("internal") == std::string::npos);
 }
 
-TEST_CASE("rest events: a subscription takes its route's path parameters", "[rest][sse]") {
+TEST_CASE("rest events: a subscription takes its route's path parameters, by name too", "[rest][sse]") {
   changes_client const client{streaming_transport{make_router()}};
 
   auto const reading = [&client]() -> task<std::optional<change>> {
-    auto stream = co_await client.subscribe<changes::named::feed>(std::string{"north"});
+    using namespace quoll::rest::literals;
+
+    // By name, as by position.
+    auto stream = co_await client.subscribe<changes::named::feed>("name"_p = std::string{"north"});
 
     co_return co_await stream.next();
   };

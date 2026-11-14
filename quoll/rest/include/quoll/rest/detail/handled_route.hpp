@@ -75,6 +75,57 @@ struct call_first_parameter<R (C::*)(First, Rest...) const noexcept> {
   using type = std::remove_cvref_t<First>;
 };
 
+template <class C, class R, class First, class... Rest>
+struct call_first_parameter<R (C::*)(First, Rest...) &> {
+  using type = std::remove_cvref_t<First>;
+};
+
+template <class C, class R, class First, class... Rest>
+struct call_first_parameter<R (C::*)(First, Rest...) const &> {
+  using type = std::remove_cvref_t<First>;
+};
+
+template <class C, class R, class First, class... Rest>
+struct call_first_parameter<R (C::*)(First, Rest...) & noexcept> {
+  using type = std::remove_cvref_t<First>;
+};
+
+template <class C, class R, class First, class... Rest>
+struct call_first_parameter<R (C::*)(First, Rest...) const & noexcept> {
+  using type = std::remove_cvref_t<First>;
+};
+
+template <class C, class R, class First, class... Rest>
+struct call_first_parameter<R (C::*)(First, Rest...) &&> {
+  using type = std::remove_cvref_t<First>;
+};
+
+template <class C, class R, class First, class... Rest>
+struct call_first_parameter<R (C::*)(First, Rest...) const &&> {
+  using type = std::remove_cvref_t<First>;
+};
+
+template <class C, class R, class First, class... Rest>
+struct call_first_parameter<R (C::*)(First, Rest...) && noexcept> {
+  using type = std::remove_cvref_t<First>;
+};
+
+template <class C, class R, class First, class... Rest>
+struct call_first_parameter<R (C::*)(First, Rest...) const && noexcept> {
+  using type = std::remove_cvref_t<First>;
+};
+
+// A static call operator, as a C++23 `[](...) static` lambda's.
+template <class R, class First, class... Rest>
+struct call_first_parameter<R (*)(First, Rest...)> {
+  using type = std::remove_cvref_t<First>;
+};
+
+template <class R, class First, class... Rest>
+struct call_first_parameter<R (*)(First, Rest...) noexcept> {
+  using type = std::remove_cvref_t<First>;
+};
+
 // The route a handler takes first, when it has one call operator, not a template: void otherwise, a struct of several
 // or a generic lambda, which no check sees.
 template <class Handler>
