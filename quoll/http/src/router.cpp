@@ -37,10 +37,12 @@
 #include <quoll/http/router.hpp>
 
 #include <quoll/http/detail/ascii.hpp>
+#include <quoll/http/detail/error_answer.hpp>
 #include <quoll/http/detail/percent.hpp>
 #include <quoll/http/detail/plain_segment.hpp>
 #include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/detail/status_response.hpp>
+#include <quoll/http/http_error.hpp>
 #include <quoll/http/status.hpp>
 
 #include <algorithm>
@@ -345,6 +347,37 @@ struct resolved_route {
 
 namespace {
 
+// What the middlewares answer, or the answer to the http_error one lets through (see detail::error_answer).
+async::task<response> answering(async::task<response> inner) {
+  try {
+    co_return co_await std::move(inner);
+  } catch (http_error const &error) {
+    auto answer = detail::error_answer(error);
+
+    if (!answer) {
+      throw;
+    }
+
+    co_return std::move(*answer);
+  }
+}
+
+// The handler's response, called inside the try, as one may throw before its task is made. `target` is the router's,
+// which outlives the dispatch awaiting this.
+async::task<response> answered(router::handler const &target, request message, route_match match) {
+  try {
+    co_return co_await target(std::move(message), std::move(match));
+  } catch (http_error const &error) {
+    auto answer = detail::error_answer(error);
+
+    if (!answer) {
+      throw;
+    }
+
+    co_return std::move(*answer);
+  }
+}
+
 // What the router says by itself, when no route answers.
 [[nodiscard]] response answer_without_route(detail::resolved_route const &resolved) {
   if (!resolved.valid) {
@@ -515,10 +548,10 @@ async::task<response> router::dispatch(request message, body_reader reader) cons
 
   // Nothing else reads what routing found, and a middleware may call next again: only here can it be moved.
   if (middlewares_.empty() && resolved.target != nullptr) {
-    co_return co_await (*resolved.target)(std::move(message), std::move(resolved.match));
+    co_return co_await answered(*resolved.target, std::move(message), std::move(resolved.match));
   }
 
-  co_return co_await run_from(resolved, 0, std::move(message));
+  co_return co_await answering(run_from(resolved, 0, std::move(message)));
 }
 
 // A coroutine: what a handler or a middleware throws before it returns its task comes out of this one, and what it is
@@ -538,7 +571,7 @@ router::run_from(detail::resolved_route const &resolved, std::size_t position, r
 
   auto match = resolved.match;
 
-  co_return co_await (*resolved.target)(std::move(message), std::move(match));
+  co_return co_await answered(*resolved.target, std::move(message), std::move(match));
 }
 
 } // namespace quoll::http

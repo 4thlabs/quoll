@@ -115,6 +115,23 @@ router.get("/hello", [](http::request) {
 
 A handler setting `Connection: close` ends the connection after its response.
 
+A handler answers an error by throwing an `http::http_error`: the router answers its status with an RFC 9457 problem
+(`application/problem+json`, `http::problem`), its detail what the error says, and its middlewares see it as a
+response. `http::problem_response(status, detail)` builds the same response for a handler that returns it.
+
+```cpp
+router.get("/notes/{id}", [](std::int64_t id) -> http::response {
+  throw http::http_error{http::status::not_found, "no note " + std::to_string(id)};
+});
+```
+
+An `http::http_error` received from another call, which a handler lets through, is answered `502 Bad Gateway`, whatever
+its status, saying nothing of that server's answer: its status and detail are that server's, not this one's. One
+raised with a status that is no error goes on as any other exception. A middleware throwing one is answered the same
+way. A handler writing its response itself, with an `http::response_writer`, answers 500 to one it throws, as to any
+exception: it writes its error as a response instead. A 401 gets no `WWW-Authenticate` challenge from the router,
+which does not know the scheme: a handler adds it with `http::problem_response`.
+
 ## Middlewares
 
 `router.use` runs a function around every request. It answers by awaiting `next`, changing what it
@@ -399,7 +416,8 @@ On a stop request:
 | A request that does not arrive in time                | 408                                                                                    | ends                     |
 | A connection idle past `idle_timeout`                 | nothing                                                                                | ends                     |
 | A response that does not leave in time                | what has left                                                                          | ends                     |
-| A handler or a middleware throws                      | 500, and `on_handler_error` is told                                                    | goes on                  |
+| A handler throws an `http::http_error`                | its status and a problem, or 502 for one received                                      | goes on                  |
+| A handler or a middleware throws anything else        | 500, and `on_handler_error` is told                                                    | goes on                  |
 | A handler builds a response that cannot be serialized | 500                                                                                    | goes on                  |
 | A `body_writer` throws                                | 500 if nothing has left, otherwise [a body cut short](streaming.md#writing-a-response) | ends once it has started |
 

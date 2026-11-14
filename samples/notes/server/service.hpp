@@ -72,7 +72,7 @@ public:
 
     if (found == notes_.end()) {
       // An error status the endpoint does not declare: answered as an RFC 9457 problem.
-      throw quoll::rest::http_error{quoll::http::status::not_found, "no note " + std::to_string(id)};
+      throw quoll::http::http_error{quoll::http::status::not_found, "no note " + std::to_string(id)};
     }
 
     return found->second;

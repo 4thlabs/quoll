@@ -38,9 +38,9 @@
 #define QUOLL_REST_DETAIL_CLIENT_RESPONSE_HPP
 
 #include <quoll/async/task.hpp>
+#include <quoll/http/http_error.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
-#include <quoll/rest/call_error.hpp>
 #include <quoll/rest/detail/arguments.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/response_value.hpp>
@@ -148,7 +148,8 @@ async::task<call_result<typename Route::endpoint>> receive(async::task<http::res
   co_return read_response<Route>(co_await std::move(sending));
 }
 
-// What call produces: the body of the first declared response, or nothing; any other outcome throws call_error.
+// What call produces: the body of the first declared response, or nothing; any other outcome throws an http::http_error
+// received.
 template <class Route>
 async::task<typename call_value<typename Route::endpoint>::type> receive_value(async::task<http::response> sending) {
   using endpoint = typename Route::endpoint;

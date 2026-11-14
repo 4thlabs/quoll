@@ -34,20 +34,16 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/rest/detail/printable_text.hpp>
+#ifndef QUOLL_HTTP_DETAIL_PRINTABLE_TEXT_HPP
+#define QUOLL_HTTP_DETAIL_PRINTABLE_TEXT_HPP
 
-namespace quoll::rest::detail {
+#include <string>
 
-std::string printable_text(std::string text) {
-  for (auto &character : text) {
-    auto const byte = static_cast<unsigned char>(character);
+namespace quoll::http::detail {
 
-    if ((byte < 0x20 && character != '\n') || byte >= 0x7F) {
-      character = '?';
-    }
-  }
+// `text` with what is no printable ASCII replaced by '?', line breaks kept: a message quoting what came from a peer.
+[[nodiscard]] std::string printable_text(std::string text);
 
-  return text;
-}
+} // namespace quoll::http::detail
 
-} // namespace quoll::rest::detail
+#endif // QUOLL_HTTP_DETAIL_PRINTABLE_TEXT_HPP

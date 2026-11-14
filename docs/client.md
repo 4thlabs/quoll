@@ -221,6 +221,13 @@ try {
 }
 ```
 
+A response of any status is a response: `http::ensure_ok(response)` gives it back if its status is no error, and
+throws an `http::http_error` received otherwise, its `answer()` the response as it came:
+
+```cpp
+auto const response = http::ensure_ok(co_await client.send(request));
+```
+
 Interim 1xx responses are skipped, up to 8 of them, but for a 101 switch of protocol, which comes back
 as the response.
 

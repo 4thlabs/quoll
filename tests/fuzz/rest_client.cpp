@@ -97,10 +97,10 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const *data, std::size_t size
   quoll::fuzz::require(quoll::test::run(client.try_call<quoll::fuzz::list>({})).has_value());
   quoll::fuzz::require(quoll::test::run(client.try_call<quoll::fuzz::create>({.text = "x"})).has_value());
 
-  // call reads the detail of a problem out of what it refuses, and throws nothing but call_error.
+  // call reads the detail of a problem out of what it refuses, and throws nothing but an http::http_error received.
   try {
     quoll::fuzz::require(quoll::test::run(client.call<quoll::fuzz::get>(1)).has_value());
-  } catch (quoll::rest::call_error const &) {
+  } catch (quoll::http::http_error const &) {
   }
 
   return 0;

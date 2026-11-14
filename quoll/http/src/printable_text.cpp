@@ -34,36 +34,20 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_REST_PROBLEM_HPP
-#define QUOLL_REST_PROBLEM_HPP
+#include <quoll/http/detail/printable_text.hpp>
 
-#include <optional>
-#include <string>
-#include <string_view>
+namespace quoll::http::detail {
 
-namespace quoll::rest {
+std::string printable_text(std::string text) {
+  for (auto &character : text) {
+    auto const byte = static_cast<unsigned char>(character);
 
-/** @brief The media type of a problem body. */
-inline constexpr std::string_view problem_content_type = "application/problem+json";
+    if ((byte < 0x20 && character != '\n') || byte >= 0x7F) {
+      character = '?';
+    }
+  }
 
-/**
- * @brief An RFC 9457 problem, the body of the errors the server answers itself (400, 401, 415, http_error).
- *
- * Every member is optional, as in the RFC: an absent `type` means `about:blank`. A third-party API with errors of
- * another shape declares them with `returns<its_error, status>`.
- */
-struct problem {
-  /** @brief A URI identifying the problem type. */
-  std::optional<std::string> type{};
-  /** @brief A short summary of the problem type: the reason phrase of the status for the server's own errors. */
-  std::optional<std::string> title{};
-  std::optional<int> status{};
-  /** @brief What went wrong with this request. */
-  std::optional<std::string> detail{};
-  /** @brief A URI identifying this occurrence. */
-  std::optional<std::string> instance{};
-};
+  return text;
+}
 
-} // namespace quoll::rest
-
-#endif // QUOLL_REST_PROBLEM_HPP
+} // namespace quoll::http::detail

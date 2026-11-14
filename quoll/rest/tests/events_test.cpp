@@ -105,7 +105,7 @@ using namespace quoll::rest;
 // Changes after a given one, as many as asked; 404 for a feed that does not exist, before any event.
 using feed = endpoint<
     "changes.feed", verb::get, "/{name}", query<"count", int>, header<"Last-Event-ID", std::optional<std::string>>,
-    events<change>, returns<problem, status::not_found>>;
+    events<change>, returns<quoll::http::problem, status::not_found>>;
 // One event the client cannot decode, then a good one.
 using broken = endpoint<"changes.broken", verb::get, "/broken", events<change>>;
 // An error once the stream has started.
@@ -113,15 +113,16 @@ using cut = endpoint<"changes.cut", verb::get, "/cut", events<change>>;
 // Nothing to say.
 using none = endpoint<"changes.none", verb::get, "/none", events<change>>;
 // An event the service cannot send, then a declared 400 it answers instead.
-using checked =
-    endpoint<"changes.checked", verb::get, "/checked", events<change>, returns<problem, status::bad_request>>;
+using checked = endpoint<
+    "changes.checked", verb::get, "/checked", events<change>, returns<quoll::http::problem, status::bad_request>>;
 // A failure that is no http_error, before the first event.
 using failing = endpoint<"changes.failing", verb::get, "/failing", events<change>>;
 
 // A first event, then a second once the test lets it go: what only comes as it is sent.
 using paced = endpoint<"changes.paced", verb::get, "/paced", events<change>>;
 // open() asked and not awaited, then a refusal.
-using opened = endpoint<"changes.opened", verb::get, "/opened", events<change>, returns<problem, status::not_found>>;
+using opened =
+    endpoint<"changes.opened", verb::get, "/opened", events<change>, returns<quoll::http::problem, status::not_found>>;
 
 // A filter read from the body as a view into it: what makes the request live as long as the stream.
 using search = endpoint<"changes.search", verb::post, "/search", body<filter>, events<change>>;
@@ -193,7 +194,7 @@ struct changes_service {
     auto const opening = events.open();
 
     static_cast<void>(opening);
-    throw rest::http_error{status::not_found, "nothing to open"};
+    throw quoll::http::http_error{status::not_found, "nothing to open"};
     co_return;
   }
 
@@ -201,7 +202,7 @@ struct changes_service {
       changes::feed, std::string name, int count, std::optional<std::string> last_id, rest::event_sink<change> &events
   ) const {
     if (name != "main") {
-      throw rest::http_error{status::not_found, "no feed " + name};
+      throw quoll::http::http_error{status::not_found, "no feed " + name};
     }
 
     co_await events.open();
@@ -231,7 +232,7 @@ struct changes_service {
     }
 
     if (refused) {
-      throw rest::http_error{status::bad_request, "an id on two lines"};
+      throw quoll::http::http_error{status::bad_request, "an id on two lines"};
     }
 
     co_return;
@@ -253,7 +254,7 @@ struct changes_service {
   quoll::async::task<> operator()(changes::cut, rest::event_sink<change> &events) const {
     co_await events.send({.id = 1, .what = "before"});
 
-    throw rest::http_error{status::not_found, "gone meanwhile"};
+    throw quoll::http::http_error{status::not_found, "gone meanwhile"};
   }
 };
 
@@ -446,7 +447,7 @@ TEST_CASE("rest events: an http_error before the first event answers, and subscr
   auto const reading = [&client]() -> task<std::string> {
     try {
       static_cast<void>(co_await client.subscribe<changes::feed>("other", 1, std::nullopt));
-    } catch (rest::call_error const &failed) {
+    } catch (quoll::http::http_error const &failed) {
       co_return std::to_string(static_cast<int>(failed.status())) + " " + failed.what();
     }
 
@@ -493,8 +494,8 @@ TEST_CASE("rest events: a value the codec cannot read throws call_error from nex
 
     try {
       static_cast<void>(co_await stream.next());
-    } catch (rest::call_error const &failed) {
-      seen = failed.failure().response.body + ";";
+    } catch (quoll::http::http_error const &failed) {
+      seen = failed.answer()->body + ";";
     }
 
     auto const next = co_await stream.next();
@@ -521,8 +522,8 @@ TEST_CASE("rest events: a response that is no event stream throws call_error", "
   auto const reading = [&client]() -> task<std::string> {
     try {
       static_cast<void>(co_await client.subscribe<changes::broken>());
-    } catch (rest::call_error const &failed) {
-      co_return failed.failure().reason + "|" + failed.failure().response.body;
+    } catch (quoll::http::http_error const &failed) {
+      co_return std::string{failed.what()} + "|" + failed.answer()->body;
     }
 
     co_return "subscribed";
@@ -608,8 +609,8 @@ TEST_CASE("rest events: a refusal's body is read up to a bound, an undeclared st
   auto const reading = [&client]() -> task<std::string> {
     try {
       static_cast<void>(co_await client.subscribe<changes::broken>());
-    } catch (rest::call_error const &failed) {
-      co_return failed.failure().reason + "|" + std::to_string(failed.failure().response.body.size());
+    } catch (quoll::http::http_error const &failed) {
+      co_return std::string{failed.what()} + "|" + std::to_string(failed.answer()->body.size());
     }
 
     co_return "subscribed";
@@ -640,8 +641,8 @@ namespace {
 task<std::string> refusal_of(changes_client const &client) {
   try {
     static_cast<void>(co_await client.subscribe<changes::broken>());
-  } catch (rest::call_error const &failed) {
-    co_return failed.failure().reason + "|" + std::to_string(failed.failure().response.body.size());
+  } catch (quoll::http::http_error const &failed) {
+    co_return std::string{failed.what()} + "|" + std::to_string(failed.answer()->body.size());
   }
 
   co_return "subscribed";
@@ -890,7 +891,7 @@ TEST_CASE("rest events: a refusal through http::client leaves the client whole f
 
     try {
       static_cast<void>(co_await client.subscribe<changes::broken>());
-    } catch (rest::call_error const &failed) {
+    } catch (quoll::http::http_error const &failed) {
       seen = std::to_string(static_cast<int>(failed.status())) + ";";
     }
 
@@ -1182,8 +1183,8 @@ TEST_CASE("rest events: a contract's own Accept takes its media type, not any 20
   auto const reading = [&client]() -> task<std::string> {
     try {
       static_cast<void>(co_await client.subscribe<changes::secured::feed>("application/vnd.changes+event-stream"));
-    } catch (rest::call_error const &failed) {
-      co_return failed.failure().reason;
+    } catch (quoll::http::http_error const &failed) {
+      co_return std::string{failed.what()};
     }
 
     co_return "subscribed";
@@ -1230,8 +1231,8 @@ TEST_CASE("rest events: an Accept naming several media types takes text/event-st
   auto const reading = [&client]() -> task<std::string> {
     try {
       static_cast<void>(co_await client.subscribe<changes::secured::feed>("application/json, text/event-stream"));
-    } catch (rest::call_error const &failed) {
-      co_return failed.failure().reason;
+    } catch (quoll::http::http_error const &failed) {
+      co_return std::string{failed.what()};
     }
 
     co_return "subscribed";
@@ -1307,8 +1308,8 @@ TEST_CASE("rest events: an Accept naming one media type that is no event stream 
   auto const reading = [&client]() -> task<std::string> {
     try {
       static_cast<void>(co_await client.subscribe<changes::secured::feed>("application/json"));
-    } catch (rest::call_error const &failed) {
-      co_return failed.failure().reason;
+    } catch (quoll::http::http_error const &failed) {
+      co_return std::string{failed.what()};
     }
 
     co_return "subscribed";

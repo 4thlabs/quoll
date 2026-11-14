@@ -879,7 +879,7 @@ rest::mount<bank::v1>(router, bank::auth_service{}, bank::users_service{}, bank:
   inherited from `with<>` are the server's (credentials, errors).
 - Errors without a declared response:
   - 400 for an invalid argument or body, 415 for a wrong `Content-Type`, 401 for missing or rejected credentials.
-  - `throw rest::http_error(status, detail)` answers that status as `application/problem+json`.
+  - `throw http::http_error(status, detail)` answers that status as `application/problem+json`.
   - Any other exception goes on, as from any handler: a connection answers 500 without detail and tells `on_handler_error`.
 - `mount` registers the routes in the sans-IO `quoll::http` router, which `quoll::server` feeds. Middlewares (logs, metrics,
   CORS, a rate limit, auth beyond the schemes) run around the chosen route with `router::use`, and read what routing found
@@ -899,9 +899,10 @@ auto page = co_await api.call<bank::users::list>({.limit = 20});
 auto alice_cards = api.scope<bank::cards::api>(1); // fixes {user_id}
 ```
 
-- `call` returns the first declared response. Any other outcome throws `rest::call_error`, with the response, and the
-  detail of the server's problem, if any, as `what()`; another declared response is read with `try_call`. It is no
-  `rest::http_error`, so that a service letting a failed call escape answers 500, not that API's status.
+- `call` returns the first declared response. Any other outcome throws an `http::http_error` received, with the
+  response, and the detail of the server's problem, if any, as `what()`; another declared response is read with
+  `try_call`. A service letting it escape answers 502, not that API's status (2026-11-14, #176: one HTTP error for the
+  HTTP client, the REST client and the server).
 - `try_call` returns `rest::result<E>`, `std::expected<rest::reply<E>, rest::unexpected_response>`: the declared
   response received, or the whole response with why it is unexpected (an undeclared status, a body that does not
   decode).

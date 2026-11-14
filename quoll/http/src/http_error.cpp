@@ -34,39 +34,54 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/rest/detail/serve.hpp>
+#include <quoll/http/http_error.hpp>
 
-#include <quoll/http/detail/utf8.hpp>
-#include <quoll/rest/detail/printable_text.hpp>
-#include <quoll/rest/json_codec.hpp>
-#include <quoll/rest/problem.hpp>
+#include <quoll/http/detail/error_answer.hpp>
+#include <quoll/http/problem.hpp>
 
+#include <memory>
+#include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 
-namespace quoll::rest::detail {
+namespace quoll::http {
 
-http::response problem_response(http::status code, std::optional<std::string> detail) {
-  // It may quote what came from a peer, and an error has to get out.
-  if (detail && !http::detail::is_utf8(*detail)) {
-    detail = printable_text(std::move(*detail));
-  }
+http_error http_error::received_from(http::response answer, std::string const &detail) {
+  http_error error{answer.status, detail};
 
-  auto const reason = http::reason_phrase(code);
-  problem const body{
-      .type = std::nullopt,
-      .title = reason.empty() ? std::nullopt : std::optional<std::string>{reason},
-      .status = static_cast<int>(code),
-      .detail = std::move(detail),
-      .instance = std::nullopt,
-  };
-  http::response response;
-
-  response.status = code;
-  response.body = json_codec{}.encode(body);
-  response.fields.add("Content-Type", problem_content_type);
-  return response;
+  error.response_ = std::make_shared<http::response const>(std::move(answer));
+  return error;
 }
 
-} // namespace quoll::rest::detail
+response ensure_ok(response answer) {
+  if (static_cast<int>(answer.status) < 400) {
+    return answer;
+  }
+
+  auto const code = static_cast<int>(answer.status);
+  auto const reason = reason_phrase(answer.status);
+  auto detail = std::to_string(code);
+
+  if (!reason.empty()) {
+    detail += ' ';
+    detail += reason;
+  }
+
+  throw http_error::received_from(std::move(answer), detail);
+}
+
+std::optional<response> detail::error_answer(http_error const &error) {
+  if (error.received()) {
+    return problem_response(status::bad_gateway, "a call to another server failed");
+  }
+
+  auto const code = static_cast<int>(error.status());
+
+  if (code < 400 || code > 599) {
+    return std::nullopt;
+  }
+
+  return problem_response(error.status(), error.what());
+}
+
+} // namespace quoll::http

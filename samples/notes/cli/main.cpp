@@ -76,7 +76,7 @@ quoll::async::task<> use_notes(std::string url) {
 
   try {
     co_await client.call<notes::get>(milk.id);
-  } catch (quoll::rest::call_error const &error) {
+  } catch (quoll::http::http_error const &error) {
     // The detail of the server's problem.
     std::cout << "get #" << milk.id << ": " << static_cast<int>(error.status()) << ' ' << error.what() << '\n';
   }
