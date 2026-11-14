@@ -161,18 +161,18 @@ header_texts(http::fields const &fields QUOLL_LIFETIMEBOUND, std::string_view na
 // "application/json".
 [[nodiscard]] std::string_view media_type(std::string_view content_type QUOLL_LIFETIMEBOUND) noexcept;
 
-// A path parameter of the route's template, by index.
-template <fixed_string Path, std::size_t Index>
+// A path parameter of the route's template, by index, of the type the route gives it.
+template <fixed_string Path, std::size_t Index, class T>
 struct path_source {
   static constexpr auto param = checked_path<Path>::parsed.params[Index];
 
-  using value_type = typename param_kind_type<param.kind>::type;
+  using value_type = T;
 };
 
-template <fixed_string Path, std::size_t Index>
-[[nodiscard]] std::expected<typename path_source<Path, Index>::value_type, argument_error>
-decode_source(std::type_identity<path_source<Path, Index>>, request_input const &input) {
-  using source = path_source<Path, Index>;
+template <fixed_string Path, std::size_t Index, class T>
+[[nodiscard]] std::expected<T, argument_error>
+decode_source(std::type_identity<path_source<Path, Index, T>>, request_input const &input) {
+  using source = path_source<Path, Index, T>;
 
   auto value = param_traits<typename source::value_type>::from_text(input.match.params[Index]);
 
@@ -298,12 +298,12 @@ decode_source(std::type_identity<body<T, BodyCodec>>, request_input const &input
   return std::move(*value);
 }
 
-template <fixed_string Path, class Indices = std::make_index_sequence<checked_path<Path>::parsed.size>>
+template <fixed_string Path, class Types, class Indices = std::make_index_sequence<Types::size>>
 struct path_sources;
 
-template <fixed_string Path, std::size_t... Index>
-struct path_sources<Path, std::index_sequence<Index...>> {
-  using type = type_list<path_source<Path, Index>...>;
+template <fixed_string Path, class... Types, std::size_t... Index>
+struct path_sources<Path, type_list<Types...>, std::index_sequence<Index...>> {
+  using type = type_list<path_source<Path, Index, Types>...>;
 };
 
 template <class Source>
@@ -311,9 +311,9 @@ struct source_value {
   using type = typename Source::argument_type;
 };
 
-template <fixed_string Path, std::size_t Index>
-struct source_value<path_source<Path, Index>> {
-  using type = typename path_source<Path, Index>::value_type;
+template <fixed_string Path, std::size_t Index, class T>
+struct source_value<path_source<Path, Index, T>> {
+  using type = T;
 };
 
 // A route without arguments.
@@ -363,8 +363,9 @@ decode_all(type_list<First, Sources...>, request_input const &input) {
 // The arguments of a route, decoded from a request: path parameters, then the argument parts in order.
 template <class Route>
 [[nodiscard]] std::expected<typename Route::arguments, argument_error> decode_arguments(request_input const &input) {
-  using sources =
-      concat_t<typename path_sources<Route::path_value>::type, filter_t<is_argument_part, typename Route::parts>>;
+  using sources = concat_t<
+      typename path_sources<Route::path_value, typename Route::path_types>::type,
+      filter_t<is_argument_part, typename Route::parts>>;
 
   return decode_all(sources{}, input);
 }

@@ -45,6 +45,7 @@
 #include <quoll/rest/detail/field_names.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/path_template.hpp>
+#include <quoll/rest/detail/path_types.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/header.hpp>
@@ -61,14 +62,6 @@
 #include <vector>
 
 namespace quoll::rest::detail {
-
-template <fixed_string Path, class Indices = std::make_index_sequence<checked_path<Path>::parsed.size>>
-struct path_argument_types;
-
-template <fixed_string Path, std::size_t... Index>
-struct path_argument_types<Path, std::index_sequence<Index...>> {
-  using type = type_list<typename param_kind_type<checked_path<Path>::parsed.params[Index].kind>::type...>;
-};
 
 template <class Parts>
 struct part_argument_types;
@@ -181,9 +174,15 @@ struct route {
       "quoll::rest::with: an endpoint with events<> gets another success, where only errors may come"
   );
 
+  // The types of its path parameters: those of the prefixes around it, as their templates say them, then its own, as
+  // it says them, from its template or its C++ types.
+  using path_types = concat_t<
+      typename template_path_types<Path, checked_path<Path>::parsed.size - Endpoint::path_types::size>::type,
+      typename Endpoint::path_types>;
+
   // The arguments of a call and of the service: path parameters, then argument parts in order.
-  using arguments = as_tuple_t<concat_t<
-      typename path_argument_types<Path>::type, typename part_argument_types<filter_t<is_argument_part, parts>>::type>>;
+  using arguments =
+      as_tuple_t<concat_t<path_types, typename part_argument_types<filter_t<is_argument_part, parts>>::type>>;
   using responses = filter_t<is_response_part, parts>;
   using schemes = typename security_schemes<filter_t<is_security_part, parts>>::type;
 
@@ -194,6 +193,8 @@ struct route {
 
   static constexpr auto path_value = Path;
   static constexpr std::string_view path = path_value.view();
+  // The name of the operation, which the router and the checks of an api read.
+  static constexpr std::string_view name = Endpoint::name;
 };
 
 // The shape of a template as the router compares it: the kind of each segment, and each literal decoded. Nothing for a
@@ -243,7 +244,7 @@ same_operation(http::verb first_method, std::string_view first, http::verb secon
 
 template <class... Routes>
 [[nodiscard]] consteval bool distinct_names(type_list<Routes...>) {
-  constexpr std::array<std::string_view, sizeof...(Routes)> names{Routes::endpoint::name...};
+  constexpr std::array<std::string_view, sizeof...(Routes)> names{Routes::name...};
 
   for (std::size_t first = 0; first < names.size(); ++first) {
     for (std::size_t second = first + 1; second < names.size(); ++second) {
