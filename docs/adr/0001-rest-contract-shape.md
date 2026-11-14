@@ -1,8 +1,13 @@
 # ADR 0001: the shape of a REST contract and of its service
 
-- **Status:** proposed, waiting for the maintainer's decision
+- **Status:** proposed, waiting for the maintainer's decision, the REST contract's shape to be redesigned with him.
+  Settled since, by [#182](https://github.com/4thlabs/quoll/issues/182) (2026-11-12): option D's sub-choice, its
+  members found through Glaze or without, is without, through a reflection of Quoll's own, as Glaze serves JSON only;
+  its first step reads the fields of `query_params<>` and of a form ([#201](https://github.com/4thlabs/quoll/issues/201)).
+  The errors, [#176](https://github.com/4thlabs/quoll/issues/176), stay open.
 - **Date:** 2026-11-12
-- **Related:** [#176](https://github.com/4thlabs/quoll/issues/176) (errors declared once per API)
+- **Related:** [#176](https://github.com/4thlabs/quoll/issues/176) (errors declared once per API),
+  [#182](https://github.com/4thlabs/quoll/issues/182) (Glaze for JSON only)
 
 ## Context
 

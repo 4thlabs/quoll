@@ -34,9 +34,11 @@ other fields that Quoll does not.
 Allocations are per request, counted over `operator new`. A GET on one connection takes 26 of them for
 both sides over TCP, most of them on the server.
 
-**To compile.** A program using `quoll::runtime` compiles neither llhttp nor asio. A native server
-rebuilt in 3.9 s and a page in 0.81 s, for 52 KB of gzipped WebAssembly with the REST client, at the end
-of [step 1](PLAN.md#step-1-compiled-libraries-done).
+**To compile.** A program using `quoll::runtime` compiles neither llhttp nor asio. At the end of
+[step 1](PLAN.md#step-1-compiled-libraries-done), on 2026-11-05, a native server rebuilt in 3.9 s and a page in
+0.81 s, for 52 KB of gzipped WebAssembly with the REST client. The pages have grown since: the samples' READMEs give
+the rebuilds of today, [the notes page](../samples/notes/web/README.md#try-hot-reload)'s and
+[the dashboard](../samples/dashboard/README.md#run-it)'s.
 
 ## Larger than memory
 

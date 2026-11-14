@@ -2,9 +2,21 @@
 
 - **Status:** decided by the maintainer on 2026-11-13: forms S and D below, a component in its header only; the
   prototypes of the next pull requests confirm the details
+- **Changes since** (2026-11-14): the names below are the code's; the rest is as it was decided.
+  - Routes by member pointers (#189), then forms D and S and `resource<T>` (#190 to #193) came first. Still to do:
+    contexts without Glaze ([#204](https://github.com/4thlabs/quoll/issues/204)), the widgets' JSON through `json_codec` ([#205](https://github.com/4thlabs/quoll/issues/205)), effects,
+    actions, forms and loads compiled once ([#199](https://github.com/4thlabs/quoll/issues/199)), and `use_resource` ([#198](https://github.com/4thlabs/quoll/issues/198)).
+  - A form S member using a context is a `shared<T>`, as before, not a `context<T>`. A `provided<T>` member joins no
+    struct yet: a struct's view calls `provide_context<T>()`.
+  - A route takes its fields as template arguments, `route<"{id}", product_page, &product_page::props::id>()`,
+    `from_query<"q", &props::q>` and `from_path<"id", &props::id>`: as values, they could not name the functions
+    reading and writing a field.
+  - `docs/ui.md` writes a component in its header; the samples still give each a header and a source
+    ([#200](https://github.com/4thlabs/quoll/issues/200)).
+  - Stores are planned to replace contexts ([#206](https://github.com/4thlabs/quoll/issues/206)).
 - **Date:** 2026-11-13
 - **Related:** [#182](https://github.com/4thlabs/quoll/issues/182) (Glaze for JSON only),
-  [#173](https://github.com/4thlabs/quoll/issues/173) (contexts), [`PLAN.md`](../PLAN.md) step 6
+  [#204](https://github.com/4thlabs/quoll/issues/204) (contexts without Glaze), [`PLAN.md`](../PLAN.md) step 6
 - **Supersedes**, in `PLAN.md`'s Decided section and `design-decisions.md`: components as functions only (2026-11-12),
   one way to write a component, and a header and a source for each, never `inline` (2026-11-13)
 
@@ -68,7 +80,8 @@ finds unreadable, "the concepts mixed":
   maintainer would rather have a component in its header only, if it compiles cheaply.
 - **No reflection.** Contexts (their members walked) and routes (the props' fields found by name) go through Glaze,
   which [#182](https://github.com/4thlabs/quoll/issues/182) takes out of everything but JSON. No reflection of
-  Quoll's own either, until C++26 has it.
+  Quoll's own in `quoll::ui` either, until C++26 has it; `quoll::rest` gets one for its query and form fields
+  (#182, its first step).
 
 Constraints: C++23 on GCC 13, Clang 19 and Apple Clang 21, no macro but include guards and `QUOLL_` switches,
 WebAssembly first. The Vite plugin replaces at once, without a rebuild, a string literal that is the only argument of
@@ -190,7 +203,7 @@ struct product_detail : component<product_detail> {
   };
 
   // Contexts
-  context<catalog> products;
+  shared<catalog> products;
 
   // State: the product given, with what is typed; and its save, once at a time.
   form_state<products::product> form{given->item};
@@ -224,7 +237,7 @@ inline constexpr tag<product_detail> product_detail;
 | Concept | Where | Read as |
 |---|---|---|
 | Props | `struct props`, first | `given->item` |
-| Contexts | `context<T> name;` | `products->items` |
+| Contexts | `shared<T> name;` | `products->items` |
 | State | `state<T> name{start};`, `form_state<T> name{given->item};` | `*count` |
 | A load | `resource<T> name{what it follows, function};` | `sales.match(...)`, `sales.reload()` |
 | An effect writing into a state | `effect name{what it follows, function, target};` | `load.reload()` |
@@ -260,7 +273,7 @@ element, and Quoll reaches the struct through it. The rest reads as today:
 product_view({.item = item}) | key(item.id)
 link_to(product_page, {.id = item.id}, "Open")
 quoll::emscripten::mount(app_shell, "#app", options);
-route<"{id}", product_page>(&product_page::props::id)
+route<"{id}", product_page, &product_page::props::id>()
 ```
 
 - Inside the struct, its name is still the struct: `&product_view::retry`, and `product_view::props` anywhere, as a
@@ -335,7 +348,7 @@ product_row(item, item.id == chosen)
     and dangles, and a function calling hooks, called in a branch or a loop whose turns change, shifts the later
     calls of its place. `docs/ui.md` keeps them as rules, as today.
 - **A route's page with parameters** takes a struct, so that its fields can be named, and the struct is then named
-  apart, `[](page_props const &given)`, its route `route<"{id}", product_page>(&page_props::id)`: the separate props
+  apart, `[](page_props const &given)`, its route `route<"{id}", product_page, &page_props::id>()`: the separate props
   type of today, for a page. A page with no parameter is either form.
 
 ### Between the two
@@ -371,8 +384,8 @@ query's fields are named:
 ```cpp
 inline constexpr auto app_routes = routes(
     route<"/products", products_layout>(
-        route<"", product_list>(query<"q">(&product_list::props::q)),
-        route<"{id}", product_page>(&product_page::props::id)),
+        route<"", product_list, from_query<"q", &product_list::props::q>>(),
+        route<"{id}", product_page, &product_page::props::id>()),
     redirect<"/", "/products">(),
     not_found<missing_page>());
 ```
@@ -386,7 +399,7 @@ address.
 ### Forms and widgets
 
 Unchanged: `bind(form, &product::price)` names a field by its member pointer already, and a widget's props go to
-JavaScript as JSON, where Glaze stays (#182).
+JavaScript as JSON, through `json_codec`, behind which Glaze stays (#182, [#205](https://github.com/4thlabs/quoll/issues/205)).
 
 ## Compile cost, in headers only
 
@@ -453,12 +466,13 @@ In this order, each a pull request:
 
 1. **Glaze out of the UI's headers, and the erasure** of effects, actions, forms and loads into Quoll's library, with a
    rebuild check in CI.
-2. **Form S and form D** on the real library: `component<C>` as the base of form S, `tag<C>`, `context<T>`,
+2. **Form S and form D** on the real library: `component<C>` as the base of form S, `tag<C>`, `shared<T>`,
    `resource<T>` and `match`, members joining their instance, `component` deduced from a lambda's parameters for form
    D; routes by member pointers; contexts without Glaze. `product_view`, `product_detail` and `product_row` first,
    written both ways, read and timed before the rest.
 3. **The samples, `docs/ui.md`, `design-decisions.md` and `PLAN.md`** rewritten: a component in its header only, which
-   replaces the rule of a header and a source; the samples keep both forms.
+   replaces the rule of a header and a source; the samples keep both forms (not done yet:
+   [#200](https://github.com/4thlabs/quoll/issues/200)).
 4. **Modules**, once the floor is raised.
 
 The draft of the struct form on the branch `ui-component-struct`, not pushed, is not taken: through the `tag<C>` variable, `link_to`,
