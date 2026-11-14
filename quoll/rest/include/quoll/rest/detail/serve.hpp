@@ -57,6 +57,7 @@
 #include <quoll/rest/detail/scheme_traits.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/event_sink.hpp>
+#include <quoll/rest/events.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/frame_sink.hpp>
 #include <quoll/rest/query_params.hpp>

@@ -69,6 +69,12 @@ public:
   )
       : state_(std::make_unique<state_type>(std::move(listening), std::move(socket_strands))) {}
 
+  unix_acceptor(unix_acceptor const &) = delete;
+  unix_acceptor &operator=(unix_acceptor const &) = delete;
+  unix_acceptor(unix_acceptor &&) noexcept = default;
+  unix_acceptor &operator=(unix_acceptor &&) noexcept = default;
+  ~unix_acceptor() = default;
+
   /** @brief The next connection a peer opens. */
   [[nodiscard]] async::task<io::any_stream> accept() { return accepting(checked_state()); }
 

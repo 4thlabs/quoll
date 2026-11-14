@@ -43,6 +43,7 @@
 #include <quoll/rest/json_codec.hpp>
 #include <quoll/rest/stream.hpp>
 
+#include <cstddef>
 #include <expected>
 #include <optional>
 #include <string>
@@ -71,34 +72,35 @@ struct json_lines_framing {
     return line;
   }
 
-  [[nodiscard]] std::expected<std::optional<T>, decode_error> decode(std::string &pending) const {
-    for (;;) {
-      auto const end = pending.find('\n');
+  [[nodiscard]] std::expected<std::optional<framed<T>>, decode_error> decode(std::string_view pending) const {
+    std::size_t begin = 0;
 
-      if (end == std::string::npos) {
-        return std::optional<T>{};
+    for (;;) {
+      auto const end = pending.find('\n', begin);
+
+      if (end == std::string_view::npos) {
+        return std::optional<framed<T>>{};
       }
 
-      auto line = std::string_view{pending}.substr(0, end);
+      auto line = pending.substr(begin, end - begin);
 
       if (line.ends_with('\r')) {
         line.remove_suffix(1);
       }
 
+      // An empty line, skipped, its bytes taken with the next value's.
       if (line.empty()) {
-        pending.erase(0, end + 1);
+        begin = end + 1;
         continue;
       }
 
       auto value = LineCodec{}.template decode<T>(line);
 
-      // A line that is none stays, for the error to hold it.
       if (!value) {
         return std::unexpected{std::move(value.error())};
       }
 
-      pending.erase(0, end + 1);
-      return std::optional<T>{std::move(*value)};
+      return std::optional{framed<T>{std::move(*value), end + 1}};
     }
   }
 };

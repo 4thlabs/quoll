@@ -1329,6 +1329,8 @@ namespace lines {
 
 using numbers = rest::get<"/numbers?up_to={up_to}", rest::json_lines<int>, int>;
 // A number beyond 100 refused before the stream starts.
+// Values viewing the bytes they were read from, `filter` holding a std::string_view: each stays whole until the next.
+using viewed = rest::get<"/viewed-lines", rest::json_lines<filter>>;
 // Served by handlers of the router's own, as a third-party API would: what it sends is no number, or ends inside one.
 using broken = rest::get<"/broken-lines", rest::json_lines<int>>;
 using cut = rest::get<"/cut-lines", rest::json_lines<int>>;
@@ -1352,10 +1354,17 @@ using cut = rest::get<"/cut-lines", rest::json_lines<int>>;
   );
   router.get("/broken-lines", [](http::response_writer out) -> task<> { co_await out.write("1\nnot a number\n"); });
   router.get("/cut-lines", [](http::response_writer out) -> task<> { co_await out.write("1\n2"); });
+  router.get("/viewed-lines", [](http::response_writer out) -> task<> {
+    co_await out.write(R"({"word":"first"})"
+                       "\n"
+                       R"({"word":"other"})"
+                       "\n");
+  });
   return router;
 }
 
-using lines_client = rest::client<rest::api<"", lines::numbers, lines::broken, lines::cut>, streaming_transport>;
+using lines_client =
+    rest::client<rest::api<"", lines::numbers, lines::broken, lines::cut, lines::viewed>, streaming_transport>;
 
 } // namespace
 
@@ -1403,25 +1412,23 @@ TEST_CASE("rest json_lines: a line that is no value is an http_error received, t
 
 TEST_CASE("rest json_lines_framing: a value once its line has come, CRLF and empty lines read", "[rest][stream]") {
   rest::json_lines_framing<int> const framing;
-  std::string pending = "1\r";
 
-  REQUIRE(framing.decode(pending).value() == std::nullopt);
+  REQUIRE(framing.decode("1\r").value() == std::nullopt);
 
-  pending += "\n\n2";
+  auto const first = framing.decode("1\r\n\n2").value();
 
-  REQUIRE(framing.decode(pending).value() == 1);
-  REQUIRE(framing.decode(pending).value() == std::nullopt);
-  REQUIRE(pending == "2");
+  REQUIRE(first.has_value());
+  REQUIRE(first->value == 1);
+  REQUIRE(first->size == 3);
+  // An empty line, taken with the value after it.
+  REQUIRE(framing.decode("\n2").value() == std::nullopt);
 
-  pending += "\n";
+  auto const second = framing.decode("\n2\n").value();
 
-  REQUIRE(framing.decode(pending).value() == 2);
-  REQUIRE(pending.empty());
+  REQUIRE(second->value == 2);
+  REQUIRE(second->size == 3);
   REQUIRE(framing.encode(7) == "7\n");
-
-  pending = "x\n";
-
-  REQUIRE_FALSE(framing.decode(pending).has_value());
+  REQUIRE_FALSE(framing.decode("x\n").has_value());
 }
 
 TEST_CASE(
@@ -1459,4 +1466,20 @@ TEST_CASE(
 
   REQUIRE(refused.starts_with("HTTP/1.1 404"));
   REQUIRE(refused.find("no such numbers") != std::string::npos);
+}
+
+TEST_CASE("rest json_lines: a value viewing its line stays whole until the next is asked", "[rest][stream]") {
+  lines_client const client{streaming_transport{make_lines_router()}};
+
+  auto const reading = [&client]() -> task<std::string> {
+    auto stream = co_await client.subscribe<lines::viewed>();
+    auto const first = co_await stream.next();
+    // Read before the next is asked, as its view lasts until then.
+    std::string seen{first.value().word};
+    auto const second = co_await stream.next();
+
+    co_return seen + "|" + std::string{second.value().word};
+  };
+
+  REQUIRE(quoll::test::run(reading()).value() == "first|other");
 }

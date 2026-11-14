@@ -169,9 +169,23 @@ async::task<int> run_container(docker_client client, std::string image, std::vec
     co_return report(made.error());
   }
 
-  auto const status = co_await run_created(client, made->id);
+  // Removed whatever ends the run, an exception of the transport too, which goes on after it.
+  std::exception_ptr failure;
+  auto status = 1;
 
-  if (auto const removed = co_await client.try_call<docker::containers::remove>(made->id, true); !removed) {
+  try {
+    status = co_await run_created(client, made->id);
+  } catch (...) {
+    failure = std::current_exception();
+  }
+
+  auto const removed = co_await client.try_call<docker::containers::remove>(made->id, true);
+
+  if (failure) {
+    std::rethrow_exception(failure);
+  }
+
+  if (!removed) {
     co_return report(removed.error());
   }
 
@@ -250,7 +264,11 @@ async::task<int> run(given what) {
       } else if (arguments[at] == "-f" && equal != std::string::npos) {
         auto const &filter = arguments[++at];
 
-        kept.emplace().by[filter.substr(0, equal)].push_back(filter.substr(equal + 1));
+        if (!kept) {
+          kept.emplace();
+        }
+
+        kept->by[filter.substr(0, equal)].push_back(filter.substr(equal + 1));
       } else {
         std::cerr << "ps: -a or -f key=value, not " << arguments[at] << '\n';
         co_return 2;

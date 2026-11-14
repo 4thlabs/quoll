@@ -40,6 +40,7 @@
 #include <quoll/rest/decode_error.hpp>
 
 #include <concepts>
+#include <cstddef>
 #include <expected>
 #include <optional>
 #include <string>
@@ -47,25 +48,32 @@
 
 namespace quoll::rest {
 
+/** @brief A value a Framing cut, and the size of the bytes it took from the front of what had come. */
+template <class T>
+struct framed {
+  T value;
+  std::size_t size = 0;
+};
+
 /**
  * @brief How a stream of values is cut into bytes and back, for a route whose result is rest::stream<F>: a value per
  * line of JSON (json_lines), or the frames of an API of its own, as Docker's logs.
  *
  * `F::value_type` is what the stream carries, `F::content_type` the media type a server sends it with.
- * `framing.encode(value)` returns its bytes; `framing.decode(pending)` takes the first whole value off the front of
- * what has come, nothing when the rest of it has not come yet, or a decode_error for bytes that are none: what it read
- * goes from `pending`, so that a value owns what it holds, no view into it, but on an error, which a frame_stream then
- * gives with what follows as the body of its http_error. Default constructible: one is built where
+ * `framing.encode(value)` returns its bytes; `framing.decode(pending)` reads the first whole value off the front of
+ * what has come, with the size of what it took, nothing when the rest of it has not come yet, or a decode_error for
+ * bytes that are none. It erases nothing: a frame_stream keeps the bytes a value was read from until its next next(),
+ * so that a value may view them, as a `std::string_view` field of JSON does. Default constructible: one is built where
  * it is used.
  */
 template <class F>
 concept Framing = std::default_initializable<F> &&
-                  requires(F const &framing, typename F::value_type const &value, std::string &pending) {
+                  requires(F const &framing, typename F::value_type const &value, std::string_view pending) {
                     { F::content_type } -> std::convertible_to<std::string_view>;
                     { framing.encode(value) } -> std::same_as<std::string>;
                     {
                       framing.decode(pending)
-                    } -> std::same_as<std::expected<std::optional<typename F::value_type>, decode_error>>;
+                    } -> std::same_as<std::expected<std::optional<framed<typename F::value_type>>, decode_error>>;
                   };
 
 } // namespace quoll::rest

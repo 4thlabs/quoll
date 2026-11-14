@@ -153,14 +153,15 @@ struct log_frames {
     return bytes + frame.text;
   }
 
-  [[nodiscard]] std::expected<std::optional<log_frame>, quoll::rest::decode_error> decode(std::string &pending) const {
+  [[nodiscard]] std::expected<std::optional<quoll::rest::framed<log_frame>>, quoll::rest::decode_error>
+  decode(std::string_view pending) const {
     if (pending.size() < head_size) {
-      return std::optional<log_frame>{};
+      return std::optional<quoll::rest::framed<log_frame>>{};
     }
 
     auto const stream = static_cast<std::uint8_t>(pending[0]);
 
-    // Bytes that are no frame stay, for the error to hold them.
+    // 1 stdout, 2 stderr, 3 an error of the engine's: anything else is no frame of Docker's.
     if (stream > 3) {
       return std::unexpected{quoll::rest::decode_error{"not a frame of Docker's logs"}};
     }
@@ -172,13 +173,12 @@ struct log_frames {
     }
 
     if (pending.size() < head_size + size) {
-      return std::optional<log_frame>{};
+      return std::optional<quoll::rest::framed<log_frame>>{};
     }
 
-    log_frame frame{.stream = stream, .text = pending.substr(head_size, size)};
-
-    pending.erase(0, head_size + size);
-    return std::optional{std::move(frame)};
+    return std::optional{quoll::rest::framed<log_frame>{
+        {.stream = stream, .text = std::string{pending.substr(head_size, size)}}, head_size + size
+    }};
   }
 };
 

@@ -46,6 +46,7 @@
 #include <quoll/rest/framing.hpp>
 
 #include <atomic>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -55,7 +56,8 @@
 namespace quoll::rest {
 
 /**
- * @brief The values of a route of stream<F>, as a client's `subscribe` gives them, each cut by `F` from what comes.
+ * @brief The values of a route of stream<F>, as a client's `subscribe` gives them, each cut by `F` from what comes. A
+ * value may view the bytes it was read from, which stay until the next next().
  *
  * One next() at a time. Bytes that cut no value throw an http::http_error received from next(), holding them and what
  * followed as its body, and end the stream, as a stream that ends inside a value does: past bytes that are none, no
@@ -84,9 +86,11 @@ public:
   }
 
 private:
-  // What has come and no value has taken yet, whether the body has ended, and the turn of one next() at a time.
+  // What has come, the bytes the last value was read from at its front, kept until the next next() as the value may
+  // view them; whether the body has ended, and the turn of one next() at a time.
   struct state {
     std::string pending;
+    std::size_t taken = 0;
     bool ended = false;
     std::atomic<bool> busy = false;
   };
@@ -104,6 +108,9 @@ private:
   reading(http::detail::one_at_a_time turn, http::response_body body, std::shared_ptr<state> kept) {
     auto const held = std::move(turn);
 
+    // The last value's bytes go now, as next() is asked again: its views end with it.
+    kept->pending.erase(0, std::exchange(kept->taken, 0));
+
     for (;;) {
       auto value = F{}.decode(kept->pending);
 
@@ -114,7 +121,8 @@ private:
       }
 
       if (*value) {
-        co_return std::move(**value);
+        kept->taken = (*value)->size;
+        co_return std::move((*value)->value);
       }
 
       if (kept->ended) {
