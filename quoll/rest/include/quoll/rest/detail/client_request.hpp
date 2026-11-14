@@ -175,7 +175,7 @@ template <class Route, std::size_t... Index>
 
 template <class Route, class Parts, std::size_t... Index>
 void add_parts(typename Route::arguments const &arguments, request_draft &draft, Parts, std::index_sequence<Index...>) {
-  constexpr auto first = checked_path<Route::path_value>::parsed.size;
+  constexpr auto first = Route::path_types::size;
 
   [&]<class... Part>(type_list<Part...>) {
     (add_part(std::type_identity<Part>{}, std::get<first + Index>(arguments), draft), ...);
@@ -189,11 +189,11 @@ template <class Route>
 build_request(typename Route::arguments const &arguments, credential_map const &credentials) {
   using argument_parts = filter_t<is_argument_part, typename Route::parts>;
 
-  constexpr auto path_size = checked_path<Route::path_value>::parsed.size;
+  constexpr auto path_size = Route::path_types::size;
 
   request_draft draft;
 
-  draft.request.method = Route::endpoint::method;
+  draft.request.method = Route::method;
   add_parts<Route>(arguments, draft, argument_parts{}, std::make_index_sequence<argument_parts::size>{});
 
   add_credentials(typename Route::schemes{}, credentials, draft);

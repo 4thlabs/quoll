@@ -198,7 +198,7 @@ static_assert(!quoll::rest::detail::distinct_operations(
 
 TEST_CASE("rest contract: endpoints are routed under their prefixes", "[rest][contract]") {
   REQUIRE(v1::route<cards::remove>::path == "/api/v1/users/{user_id:int64}/cards/{id:int64}");
-  REQUIRE(v1::route<users::list>::endpoint::name == "users.list");
+  REQUIRE(v1::route<users::list>::name == "users.list");
   REQUIRE(v1::route<users::create>::endpoint::method == verb::post);
   REQUIRE(v1::prefix == "/api/v1");
 }
@@ -360,3 +360,14 @@ using guarded = rest::api<"", rest::with<rest::returns<problem_body, quoll::http
 static_assert(guarded::routes::size == 1);
 
 } // namespace contract_test_size
+
+namespace contract_test_types {
+
+using get = quoll::rest::endpoint<"e", quoll::http::verb::get, "/{id:uint}">;
+using api = quoll::rest::api<"/u/{uid:int64}", get>;
+
+// The types of a route's path parameters: its prefixes', then its own, each as its template says it.
+static_assert(std::same_as<api::route<get>::path_types, quoll::rest::detail::type_list<std::int64_t, unsigned>>);
+static_assert(api::route<get>::method == quoll::http::verb::get);
+
+} // namespace contract_test_types

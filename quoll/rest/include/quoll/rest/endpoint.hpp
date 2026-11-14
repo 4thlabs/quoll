@@ -41,7 +41,6 @@
 #include <quoll/rest/detail/category.hpp>
 #include <quoll/rest/detail/checked_path.hpp>
 #include <quoll/rest/detail/part.hpp>
-#include <quoll/rest/detail/path_types.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
 
@@ -110,9 +109,6 @@ struct endpoint {
 
   using contract_category = detail::endpoint_category;
   using parts = detail::type_list<Parts...>;
-  // The types of its own path parameters, as its template says them.
-  using path_types = typename detail::path_argument_types<Path>::type;
-
   static constexpr auto path_value = Path;
 
   static constexpr std::string_view name = Name.view();

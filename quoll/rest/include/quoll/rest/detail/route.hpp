@@ -174,11 +174,18 @@ struct route {
       "quoll::rest::with: an endpoint with events<> gets another success, where only errors may come"
   );
 
-  // The types of its path parameters: those of the prefixes around it, as their templates say them, then its own, as
-  // it says them, from its template or its C++ types.
-  using path_types = concat_t<
-      typename template_path_types<Path, checked_path<Path>::parsed.size - Endpoint::path_types::size>::type,
-      typename Endpoint::path_types>;
+  // The types of its own path parameters, as its template says them.
+  using own_path_types = typename path_argument_types<Endpoint::path_value>::type;
+
+  // How many path parameters the prefixes around it have: none for a template that is wrong, which has its own
+  // static_assert, rather than a count wrapping around, which the index sequence below would make huge.
+  static constexpr std::size_t prefix_parameters =
+      checked_path<Path>::valid && checked_path<Path>::parsed.size >= own_path_types::size
+          ? checked_path<Path>::parsed.size - own_path_types::size
+          : 0;
+
+  // The types of its path parameters: those of the prefixes around it, then its own.
+  using path_types = concat_t<typename template_path_types<Path, prefix_parameters>::type, own_path_types>;
 
   // The arguments of a call and of the service: path parameters, then argument parts in order.
   using arguments =
@@ -193,8 +200,9 @@ struct route {
 
   static constexpr auto path_value = Path;
   static constexpr std::string_view path = path_value.view();
-  // The name of the operation, which the router and the checks of an api read.
+  // The name and the method of the operation, which the router, the client and the checks of an api read.
   static constexpr std::string_view name = Endpoint::name;
+  static constexpr http::verb method = Endpoint::method;
 };
 
 // The shape of a template as the router compares it: the kind of each segment, and each literal decoded. Nothing for a
@@ -259,7 +267,7 @@ template <class... Routes>
 
 template <class... Routes>
 [[nodiscard]] consteval bool distinct_operations(type_list<Routes...>) {
-  constexpr std::array<http::verb, sizeof...(Routes)> methods{Routes::endpoint::method...};
+  constexpr std::array<http::verb, sizeof...(Routes)> methods{Routes::method...};
   constexpr std::array<std::string_view, sizeof...(Routes)> paths{Routes::path...};
   // Once each, before the pairs. A loop, as GCC 13 refuses a consteval call in a pack expansion here.
   std::array<std::optional<std::string>, sizeof...(Routes)> shapes{};
