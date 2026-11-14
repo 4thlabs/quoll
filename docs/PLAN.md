@@ -226,7 +226,7 @@ which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10
 
 ### Step 6: the UI DSL, complete
 
-Done:
+Its issue: [#163](https://github.com/4thlabs/quoll/issues/163). Done:
 
 - Nested stateful components, placed by calling them, their hooks kept by component and key, their effects, actions
   and handlers stopped as they go; `ui::callback<Signature>` in props, run in the task of the component that wrote it
@@ -562,8 +562,10 @@ changes only what the harness shows. Candidates:
   used less than a second before, which reviews kept finding holes in: a server closing within the second, a response
   read slowly. One idle for longer than `client_options::max_idle_time`, 90 s as Go's `IdleConnTimeout`, is not
   used again, as no check sees a connection something on the way dropped with no word.
-- **Using the JavaScript libraries a page needs is a requirement of the UI** (2026-11-07), whatever form it takes: see step
-  6.
+- **Using the JavaScript libraries a page needs is a requirement of the UI** (2026-11-07), whatever form it takes: a node
+  the reconciler leaves alone, a lifecycle with an unmount, calls both ways, bytes passed without a copy where it
+  counts, npm packages through the Vite build, loaded on demand. Done so far: see step 6; a handle for calls that are
+  not props is [#210](https://github.com/4thlabs/quoll/issues/210).
 - **`samples/github` is step 4's real API** (2026-11-07), and a client of Docker over a Unix socket comes later, in no step
   yet.
 - **A local account with a password** (2026-11-07) joins OIDC and a shared secret in step 8, against the "no store of

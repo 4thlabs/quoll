@@ -83,7 +83,7 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`; 
   the case's name must not hold (native builds; a build without assertions says so and passes).
 - `tests/fuzz/`, `tests/bench/`, `tests/load/` and `tests/interop/`: libFuzzer targets, the benchmark, a mixed load on a
   server and its clients, and runs against third-party peers, each built by its own option rather than in `quoll_tests`,
-  and run every night and on a PR touching it: see [`docs/development.md`](docs/development.md#other-checks). An input
+  and run every night and on a PR touching it: see [`docs/development.md`](docs/development.md#what-ci-checks). An input
   that crashed a fuzz target joins its seeds in `tests/fuzz/corpus/<target>/`, with a test of the fix. `bench.yml`
   checks the allocations per request against the budgets in the benchmark's source, GCC 13's, which do not depend on
   the machine: a change that raises one says why. CI compiles `quoll_load`, so that a change to what it uses breaks the

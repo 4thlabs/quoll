@@ -192,7 +192,7 @@ Every night, and on a pull request touching their targets:
 ## Built with
 
 [llhttp](https://github.com/nodejs/llhttp) for HTTP parsing ·
-[Glaze](https://github.com/stephenberry/glaze) for JSON ·
+[Glaze](https://github.com/stephenberry/glaze) for JSON, and for reflection until #182 ·
 [asio](https://github.com/chriskohlhoff/asio) for the native runtime ·
 [OpenSSL](https://www.openssl.org) for TLS ·
 [Catch2](https://github.com/catchorg/Catch2) for the tests.

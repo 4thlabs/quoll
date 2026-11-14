@@ -251,11 +251,12 @@ React's JSX does, by the component itself? And how is one declared?
 **Taken.** An object, called with its props in the view: `product_detail({.item = item})`. The routes name their pages
 so, `route<"{id}", product_page, &product_page_props::id>()`, and the links too, `link_to(product_page, {.id = 7},
 "Open")`. The app's root is one, with no props. Superseded: one way to write it everywhere, its props always written,
-`constexpr component<props>`, and a header and a source for each component. A component is now written in its header,
-in form S or in form D, whose props are deduced; an `extern` declaration and a source remain possible for one whose
-rebuild matters.
+`constexpr component<props>`, and a header and a source for each component.
 
 **Set aside.** `component<product_detail>(...)` in the view, which the maintainer found out of place in a view.
+
+**For you.** A component is written in its header, `inline constexpr`, in form S or in form D; an `extern`
+declaration in its header and a source of its own remain possible for one whose rebuild matters.
 
 ### A component that goes stays until its tasks end
 
