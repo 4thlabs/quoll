@@ -38,6 +38,7 @@
 #define QUOLL_REST_DETAIL_FIELD_NAMES_HPP
 
 #include <quoll/rest/detail/aggregate_fields.hpp>
+#include <quoll/rest/detail/lists_fields.hpp>
 #include <quoll/rest/names.hpp>
 
 #include <array>
@@ -116,6 +117,19 @@ template <class T>
   return named;
 }
 
+template <std::size_t Count>
+[[nodiscard]] consteval bool distinct_names(std::array<std::string_view, Count> const &named) {
+  for (std::size_t first = 0; first < Count; ++first) {
+    for (std::size_t second = first + 1; second < Count; ++second) {
+      if (named[first] == named[second]) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 // Whether each field goes by a name of its own, and is named once by the rest_names.
 template <std::size_t Count>
 [[nodiscard]] consteval bool named_once(naming<Count> const &named) {
@@ -123,15 +137,9 @@ template <std::size_t Count>
     if (named.renamed[first] > 1) {
       return false;
     }
-
-    for (std::size_t second = first + 1; second < Count; ++second) {
-      if (named.names[first] == named.names[second]) {
-        return false;
-      }
-    }
   }
 
-  return true;
+  return distinct_names(named.names);
 }
 
 template <class T>
@@ -153,7 +161,69 @@ struct checked_field_names {
   static constexpr auto value = named.names;
 };
 
-// The names the fields of T go by in a query or a form, in order: those it declares, or those of its rest_names.
+template <class Member>
+struct member_field;
+
+template <class C, class D>
+struct member_field<D C::*> {
+  using type = D;
+};
+
+// Whether two of the list name one field of T: compared as pointers to members of T, whichever class declares them.
+template <class T, class First, class Second>
+[[nodiscard]] consteval bool same_member() {
+  using first = typename member_field<std::remove_cv_t<decltype(First::member)>>::type;
+  using second = typename member_field<std::remove_cv_t<decltype(Second::member)>>::type;
+
+  if constexpr (std::same_as<first, second>) {
+    return static_cast<first T::*>(First::member) == static_cast<first T::*>(Second::member);
+  } else {
+    return false;
+  }
+}
+
+template <class T>
+[[nodiscard]] consteval bool each_member_once(rest::names<> /*names*/) {
+  return true;
+}
+
+template <class T, class First, class... Rest>
+[[nodiscard]] consteval bool each_member_once(rest::names<First, Rest...> /*names*/) {
+  return (!same_member<T, First, Rest>() && ...) && each_member_once<T>(rest::names<Rest...>{});
+}
+
+template <class T, class... Names>
+[[nodiscard]] consteval std::array<std::string_view, sizeof...(Names)> listed_names(rest::names<Names...> list) {
+  static_assert(
+      (std::is_convertible_v<T *, typename member_class<std::remove_cv_t<decltype(Names::member)>>::type *> && ...),
+      "quoll::rest::name: names a field of the struct whose rest_fields hold it, or of a public base of it"
+  );
+  static_assert(each_member_once<T>(list), "quoll::rest::names: each field goes by a name of its own, named once");
+
+  return {Names::value...};
+}
+
+template <ListsFields T>
+struct checked_field_names<T> {
+  static_assert(
+      requires { sizeof(typename T::rest_fields); },
+      "quoll::rest: a struct's rest_fields are a rest::names<rest::name<...>...>"
+  );
+  static_assert(
+      std::default_initializable<T>, "quoll::rest: a struct listing its fields is made with none of them given"
+  );
+  static_assert(
+      !requires { typename T::rest_names; },
+      "quoll::rest::names: a struct lists its fields, rest_fields, or renames some, rest_names, not both"
+  );
+
+  static constexpr auto value = listed_names<T>(typename T::rest_fields{});
+
+  static_assert(distinct_names(value), "quoll::rest::names: each field goes by a name of its own, named once");
+};
+
+// The names the fields of T go by in a query or a form, in order: those it declares, those of its rest_names, or those
+// its rest_fields list.
 template <class T>
 inline constexpr auto field_names = checked_field_names<T>::value;
 

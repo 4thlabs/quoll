@@ -39,6 +39,7 @@
 
 #include <quoll/rest/detail/aggregate_fields.hpp>
 #include <quoll/rest/detail/field_names.hpp>
+#include <quoll/rest/detail/lists_fields.hpp>
 
 #include <cstddef>
 #include <tuple>
@@ -47,17 +48,26 @@
 
 namespace quoll::rest::detail {
 
-// Calls `visit(name, field)` for each field of `value`, with the name it is declared with, or its rest_names give: the
-// fields of a query_params<> struct or a form, to fill (the server) or to read (a client, with a const value).
+// Calls `visit(name, field)` for each field of `value`, with the name it is declared with, its rest_names give or its
+// rest_fields list: the fields of a query_params<> struct or a form, to fill (the server) or to read (a client, with a
+// const value).
 template <class T, class Visitor>
 void for_each_field(T &value, Visitor &&visit) {
   using type = std::remove_const_t<T>;
 
-  auto fields = tie_fields(value);
+  if constexpr (ListsFields<type>) {
+    static_cast<void>(field_names<type>);
 
-  [&]<std::size_t... Index>(std::index_sequence<Index...>) {
-    (visit(field_names<type>[Index], std::get<Index>(fields)), ...);
-  }(std::make_index_sequence<std::tuple_size_v<decltype(fields)>>{});
+    [&]<class... Names>(rest::names<Names...> /*names*/) {
+      (visit(Names::value, value.*Names::member), ...);
+    }(typename type::rest_fields{});
+  } else {
+    auto fields = tie_fields(value);
+
+    [&]<std::size_t... Index>(std::index_sequence<Index...>) {
+      (visit(field_names<type>[Index], std::get<Index>(fields)), ...);
+    }(std::make_index_sequence<std::tuple_size_v<decltype(fields)>>{});
+  }
 }
 
 } // namespace quoll::rest::detail

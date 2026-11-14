@@ -92,6 +92,17 @@ struct user_filter {
   using rest_names = rest::names<rest::name<"page-size", &user_filter::limit>>;
 };
 
+// A filter with a base class, which the reflection does not read: it lists its fields.
+struct base_search {
+  std::optional<std::string> name;
+};
+
+struct user_search : base_search {
+  std::optional<int> page;
+
+  using rest_fields = rest::names<rest::name<"name", &user_search::name>, rest::name<"p", &user_search::page>>;
+};
+
 struct not_found {
   std::string detail;
 };
@@ -103,8 +114,9 @@ using list = endpoint<"users.list", verb::get, "/", query_params<user_filter>, r
 using get = endpoint<"users.get", verb::get, "/{id:int64}", returns<user>, returns<not_found, status::not_found>>;
 using create = endpoint<"users.create", verb::post, "/", body<new_user>, returns<user, status::created>>;
 using remove = endpoint<"users.remove", verb::delete_, "/{id:int64}">;
+using search = endpoint<"users.search", verb::get, "/search", query_params<user_search>, returns<std::vector<user>>>;
 
-using api = rest::api<"/users", list, get, create, remove>;
+using api = rest::api<"/users", list, get, create, remove, search>;
 } // namespace users
 
 namespace files {
@@ -146,6 +158,12 @@ struct users_service {
     }
 
     co_return std::vector<user>{{.id = 1, .name = described}};
+  }
+
+  task<std::vector<user>> operator()(users::search, user_search filter) const {
+    co_return std::vector<user>{
+        {.id = 2, .name = filter.name.value_or("-") + "|" + (filter.page ? std::to_string(*filter.page) : "-")}
+    };
   }
 
   task<rest::reply<users::get>> operator()(users::get, std::int64_t id) const {
@@ -291,6 +309,25 @@ TEST_CASE("client: a field of query_params goes by the name its rest_names give,
   REQUIRE(run(client.call<users::list>({.limit = 2})).front().name == "2|-");
   CHECK(target.find("page-size=2") != std::string::npos);
   CHECK(target.find("limit") == std::string::npos);
+}
+
+TEST_CASE("client: a query_params struct listing its fields goes by them, both ways", "[rest][client]") {
+  auto router = make_router();
+  std::string target;
+
+  router.use([&target](http::request message, http::next next) -> task<http::response> {
+    target = message.target;
+    co_return co_await next(std::move(message));
+  });
+
+  auto const client = make_client(router);
+  user_search wanted;
+
+  wanted.name = "Ada";
+  wanted.page = 3;
+
+  REQUIRE(run(client.call<users::search>(wanted)).front().name == "Ada|3");
+  CHECK(target.find("name=Ada&p=3") != std::string::npos);
 }
 
 TEST_CASE("client: required parameters of a scalar type reach the server", "[rest][client]") {

@@ -180,6 +180,22 @@ struct tagged_field {
   using rest_names = quoll::rest::names<quoll::rest::name<"renamed", &tagged_field::x>>;
 };
 
+// A struct with a base class, which the reflection does not read: it lists its fields.
+struct base_filter {
+  std::optional<std::string> q;
+
+  bool operator==(base_filter const &) const = default;
+};
+
+struct derived_filter : base_filter {
+  std::optional<int> page;
+
+  using rest_fields =
+      quoll::rest::names<quoll::rest::name<"q", &derived_filter::q>, quoll::rest::name<"page", &derived_filter::page>>;
+
+  bool operator==(derived_filter const &) const = default;
+};
+
 } // namespace aggregate_fields_test
 
 using namespace aggregate_fields_test;
@@ -242,4 +258,22 @@ TEST_CASE("aggregate fields: rest_names rename the fields they name, and only th
   CAPTURE(encoded);
   CHECK(encoded.starts_with("metadata%5Border_id%5D=A7&"));
   CHECK(form.decode<charge>(encoded) == sent);
+}
+
+TEST_CASE("aggregate fields: a struct the reflection does not read lists its fields", "[rest][reflect]") {
+  using quoll::rest::detail::field_names;
+
+  static_assert(quoll::rest::detail::FieldsByName<derived_filter>);
+  CHECK(field_names<derived_filter> == std::array<std::string_view, 2>{"q", "page"});
+
+  quoll::rest::form_codec const form;
+  derived_filter sent;
+
+  sent.q = "tea";
+  sent.page = 2;
+
+  auto const encoded = form.encode(sent);
+
+  CHECK(encoded == "q=tea&page=2");
+  CHECK(form.decode<derived_filter>(encoded) == sent);
 }

@@ -102,6 +102,9 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/query_type.cpp
     tests/compile_fail/reply_holds_undeclared.cpp
     tests/compile_fail/reply_without_returns.cpp
+    tests/compile_fail/rest_fields_and_names.cpp
+    tests/compile_fail/rest_fields_field_twice.cpp
+    tests/compile_fail/rest_fields_of_other_struct.cpp
     tests/compile_fail/rest_name_empty.cpp
     tests/compile_fail/rest_name_not_a_member.cpp
     tests/compile_fail/rest_name_of_other_struct.cpp
