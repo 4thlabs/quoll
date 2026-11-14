@@ -37,9 +37,7 @@
 #ifndef QUOLL_ASIO_UNIX_ACCEPTOR_HPP
 #define QUOLL_ASIO_UNIX_ACCEPTOR_HPP
 
-#include <asio/detail/config.hpp>
-
-#if defined(ASIO_HAS_LOCAL_SOCKETS)
+#if defined(QUOLL_ASIO_LOCAL)
 
 #include <quoll/asio/detail/accept.hpp>
 #include <quoll/asio/unix_stream.hpp>
@@ -97,6 +95,6 @@ static_assert(io::Listener<unix_acceptor>);
 
 } // namespace quoll::asio
 
-#endif // ASIO_HAS_LOCAL_SOCKETS
+#endif // QUOLL_ASIO_LOCAL
 
 #endif // QUOLL_ASIO_UNIX_ACCEPTOR_HPP

@@ -58,8 +58,8 @@ namespace {
 // not there when the build was configured.
 constexpr char const *tls_service_name = "TLS network, which needs OpenSSL when Quoll is configured";
 
-// A browser has no Unix domain sockets, nor a system without them.
-constexpr char const *local_service_name = "local network of Unix domain sockets, which a browser has not";
+// A browser has no Unix domain sockets, nor a system or a loop without them.
+constexpr char const *local_service_name = "local network of Unix domain sockets, which this executor does not offer";
 
 } // namespace
 

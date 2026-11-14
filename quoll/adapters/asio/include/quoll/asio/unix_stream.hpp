@@ -37,9 +37,7 @@
 #ifndef QUOLL_ASIO_UNIX_STREAM_HPP
 #define QUOLL_ASIO_UNIX_STREAM_HPP
 
-#include <asio/detail/config.hpp>
-
-#if defined(ASIO_HAS_LOCAL_SOCKETS)
+#if defined(QUOLL_ASIO_LOCAL)
 
 #include <quoll/asio/detail/basic_stream.hpp>
 #include <quoll/asio/detail/poll_socket.hpp>
@@ -61,7 +59,7 @@ namespace quoll::asio {
  * errors, the same executor a socket needs, one handler at a time.
  *
  * Move-only, the socket on the heap. Thread safety: none, like the socket. Where the system has such sockets
- * (ASIO_HAS_LOCAL_SOCKETS).
+ * (QUOLL_ASIO_LOCAL).
  */
 class unix_stream : public detail::basic_stream<::asio::local::stream_protocol::socket> {
 public:
@@ -86,6 +84,6 @@ static_assert(io::PollableStream<unix_stream>);
 
 } // namespace quoll::asio
 
-#endif // ASIO_HAS_LOCAL_SOCKETS
+#endif // QUOLL_ASIO_LOCAL
 
 #endif // QUOLL_ASIO_UNIX_STREAM_HPP

@@ -37,43 +37,49 @@
 #ifndef QUOLL_ASIO_DETAIL_LOOP_SERVICES_HPP
 #define QUOLL_ASIO_DETAIL_LOOP_SERVICES_HPP
 
-#include <asio/detail/config.hpp>
-
 #include <quoll/async/offloader_ref.hpp>
 #include <quoll/async/service.hpp>
 #include <quoll/async/strands_ref.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/io/local_network_ref.hpp>
 #include <quoll/io/network_ref.hpp>
-#if defined(QUOLL_ASIO_TLS)
 #include <quoll/io/tls_network_ref.hpp>
-#endif
 
 namespace quoll::asio::detail {
 
-// What an executor of an asio loop offers, TLS with OpenSSL, Unix domain sockets where the system has them.
-#if defined(QUOLL_ASIO_TLS) && defined(ASIO_HAS_LOCAL_SOCKETS)
-using loop_services = async::service_list<
-    io::network_ref, async::timer_ref, async::offloader_ref, io::tls_network_ref, io::local_network_ref>;
-#elif defined(QUOLL_ASIO_TLS)
-using loop_services = async::service_list<io::network_ref, async::timer_ref, async::offloader_ref, io::tls_network_ref>;
-#elif defined(ASIO_HAS_LOCAL_SOCKETS)
-using loop_services =
-    async::service_list<io::network_ref, async::timer_ref, async::offloader_ref, io::local_network_ref>;
-#else
-using loop_services = async::service_list<io::network_ref, async::timer_ref, async::offloader_ref>;
-#endif
-
-// What a runtime's executor offers: the same, and its strands.
-template <class List>
-struct with_strands;
-
-template <class... Services>
-struct with_strands<async::service_list<Services...>> {
-  using type = async::service_list<Services..., async::strands_ref>;
+// `List` with `Service` after the others, or as it is when `Offered` is false.
+template <bool Offered, class List, class Service>
+struct offer_if {
+  using type = List;
 };
 
-using runtime_services = typename with_strands<loop_services>::type;
+template <class... Services, class Service>
+struct offer_if<true, async::service_list<Services...>, Service> {
+  using type = async::service_list<Services..., Service>;
+};
+
+#if defined(QUOLL_ASIO_TLS)
+inline constexpr bool offers_tls = true;
+#else
+inline constexpr bool offers_tls = false;
+#endif
+
+#if defined(QUOLL_ASIO_LOCAL)
+inline constexpr bool offers_local = true;
+#else
+inline constexpr bool offers_local = false;
+#endif
+
+// What an executor of an asio loop offers: TLS with OpenSSL, Unix domain sockets where the system has them.
+using loop_services = typename offer_if<
+    offers_local,
+    typename offer_if<
+        offers_tls, async::service_list<io::network_ref, async::timer_ref, async::offloader_ref>,
+        io::tls_network_ref>::type,
+    io::local_network_ref>::type;
+
+// What a runtime's executor offers: the same, and its strands.
+using runtime_services = typename offer_if<true, loop_services, async::strands_ref>::type;
 
 } // namespace quoll::asio::detail
 

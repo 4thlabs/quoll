@@ -126,7 +126,8 @@ struct event {
   std::int64_t time = 0;
 };
 
-// A piece of what a container wrote, as GET /containers/{id}/logs sends it: on its stdout (1) or its stderr (2).
+// A piece of what a container wrote, as GET /containers/{id}/logs sends it: on its stdout (1) or its stderr (2), or an
+// error of the engine's within the stream (3).
 struct log_frame {
   std::uint8_t stream = 1;
   std::string text;
@@ -160,7 +161,7 @@ struct log_frames {
     auto const stream = static_cast<std::uint8_t>(pending[0]);
 
     // Bytes that are no frame stay, for the error to hold them.
-    if (stream > 2) {
+    if (stream > 3) {
       return std::unexpected{quoll::rest::decode_error{"not a frame of Docker's logs"}};
     }
 

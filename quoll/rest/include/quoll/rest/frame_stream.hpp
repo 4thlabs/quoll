@@ -57,8 +57,9 @@ namespace quoll::rest {
 /**
  * @brief The values of a route of stream<F>, as a client's `subscribe` gives them, each cut by `F` from what comes.
  *
- * One next() at a time. Bytes that cut no value throw an http::http_error received from next(), holding them as its
- * body; a stream that ends inside a value too. Destroyed before its end is how to give up on it.
+ * One next() at a time. Bytes that cut no value throw an http::http_error received from next(), holding them and what
+ * followed as its body, and end the stream, as a stream that ends inside a value does: past bytes that are none, no
+ * frame can be told from the next. Destroyed before its end is how to give up on it.
  */
 template <Framing F>
 class frame_stream {
@@ -107,7 +108,9 @@ private:
       auto value = F{}.decode(kept->pending);
 
       if (!value) {
-        refuse(std::move(kept->pending), "invalid frame: " + value.error().message);
+        // Ended: what follows bytes that are none cannot be told apart.
+        kept->ended = true;
+        refuse(std::exchange(kept->pending, {}), "invalid frame: " + value.error().message);
       }
 
       if (*value) {
@@ -116,7 +119,7 @@ private:
 
       if (kept->ended) {
         if (!kept->pending.empty()) {
-          refuse(std::move(kept->pending), "a stream ended inside a frame");
+          refuse(std::exchange(kept->pending, {}), "a stream ended inside a frame");
         }
 
         co_return std::nullopt;

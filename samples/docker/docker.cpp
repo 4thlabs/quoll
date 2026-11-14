@@ -132,18 +132,8 @@ async::task<int> inspect(docker_client client, std::string container) {
   co_return 0;
 }
 
-// Creates, starts, waits for and removes a container: the exit code of its command.
-async::task<int> run_container(docker_client client, std::string image, std::vector<std::string> command) {
-  auto const made = co_await client.try_call<docker::containers::create>(
-      std::nullopt, docker::create_request{.image = std::move(image), .cmd = std::move(command)}
-  );
-
-  if (!made) {
-    co_return report(made.error());
-  }
-
-  auto const id = made->id;
-
+// Starts the container `id`, waits for it and shows what it wrote: the exit code of its command.
+async::task<int> run_created(docker_client client, std::string id) {
   if (auto const started = co_await client.try_call<docker::containers::start>(id); !started) {
     co_return report(started.error());
   }
@@ -154,19 +144,38 @@ async::task<int> run_container(docker_client client, std::string image, std::vec
     co_return report(waited.error());
   }
 
-  // What it wrote, as Docker's frames, its stdout to ours and its stderr to ours.
-  auto logs = co_await client.subscribe<docker::containers::logs>("id"_p = id, "stdout"_p = true, "stderr"_p = true);
+  // What it wrote, as Docker's frames: its stdout to ours, its stderr and the engine's errors to ours.
+  try {
+    auto logs = co_await client.subscribe<docker::containers::logs>("id"_p = id, "stdout"_p = true, "stderr"_p = true);
 
-  while (auto const frame = co_await logs.next()) {
-    (frame->stream == 2 ? std::cerr : std::cout) << frame->text;
-  }
-
-  if (auto const removed = co_await client.try_call<docker::containers::remove>("id"_p = id); !removed) {
-    co_return report(removed.error());
+    while (auto const frame = co_await logs.next()) {
+      (frame->stream == 1 ? std::cout : std::cerr) << frame->text;
+    }
+  } catch (http::http_error const &failed) {
+    co_return report(failed);
   }
 
   std::cout << id.substr(0, 12) << " exited with " << waited->status_code << '\n';
   co_return static_cast<int>(waited->status_code);
+}
+
+// Creates a container, runs it, and removes it whatever happened once it was made, as `docker run --rm` does.
+async::task<int> run_container(docker_client client, std::string image, std::vector<std::string> command) {
+  auto const made = co_await client.try_call<docker::containers::create>(
+      std::nullopt, docker::create_request{.image = std::move(image), .cmd = std::move(command)}
+  );
+
+  if (!made) {
+    co_return report(made.error());
+  }
+
+  auto const status = co_await run_created(client, made->id);
+
+  if (auto const removed = co_await client.try_call<docker::containers::remove>(made->id, true); !removed) {
+    co_return report(removed.error());
+  }
+
+  co_return status;
 }
 
 // What happened on the engine from `since`, up to now: Docker ends the stream at `until`.

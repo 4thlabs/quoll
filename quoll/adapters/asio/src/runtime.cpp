@@ -294,7 +294,7 @@ io::tls_network_ref runtime::executor::query(async::service_tag<io::tls_network_
 }
 #endif
 
-#if defined(ASIO_HAS_LOCAL_SOCKETS)
+#if defined(QUOLL_ASIO_LOCAL)
 io::local_network_ref runtime::executor::query(async::service_tag<io::local_network_ref>) const {
   return io::local_network_ref{state_->loop};
 }

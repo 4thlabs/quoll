@@ -1537,6 +1537,17 @@ TEST_CASE("asio::runtime: an http::client of a unix:// URL reaches a server on t
   REQUIRE_THROWS_AS(run_task(io::connect_local(path)), std::system_error);
 }
 
+TEST_CASE(
+    "asio::runtime: listen_local refuses a path that exists, a socket left there included", "[asio][runtime][unix]"
+) {
+  auto const path = free_socket_path("taken");
+
+  std::ofstream{path} << "taken";
+
+  REQUIRE_THROWS_AS(run_task(io::listen_local(path)), std::system_error);
+  std::filesystem::remove(path);
+}
+
 TEST_CASE("asio::runtime runs a task to its end", "[asio][runtime]") {
   REQUIRE(run_task(answer()) == 42);
   REQUIRE_THROWS_AS(run_task(fail()), std::runtime_error);

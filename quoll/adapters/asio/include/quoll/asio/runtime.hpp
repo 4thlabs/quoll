@@ -140,7 +140,7 @@ public:
     [[nodiscard]] io::tls_network_ref query(async::service_tag<io::tls_network_ref>) const;
 #endif
 
-#if defined(ASIO_HAS_LOCAL_SOCKETS)
+#if defined(QUOLL_ASIO_LOCAL)
     /** @brief The local network of the runtime's loop, Unix domain sockets, as long-lived as the runtime. */
     [[nodiscard]] io::local_network_ref query(async::service_tag<io::local_network_ref>) const;
 #endif

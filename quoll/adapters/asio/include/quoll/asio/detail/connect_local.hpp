@@ -37,9 +37,7 @@
 #ifndef QUOLL_ASIO_DETAIL_CONNECT_LOCAL_HPP
 #define QUOLL_ASIO_DETAIL_CONNECT_LOCAL_HPP
 
-#include <asio/detail/config.hpp>
-
-#if defined(ASIO_HAS_LOCAL_SOCKETS)
+#if defined(QUOLL_ASIO_LOCAL)
 
 #include <quoll/asio/detail/cancellation.hpp>
 #include <quoll/asio/detail/io_error.hpp>
@@ -76,6 +74,6 @@ inline async::task<io::any_stream> connect_local(::asio::any_io_executor executo
 
 } // namespace quoll::asio::detail
 
-#endif // ASIO_HAS_LOCAL_SOCKETS
+#endif // QUOLL_ASIO_LOCAL
 
 #endif // QUOLL_ASIO_DETAIL_CONNECT_LOCAL_HPP

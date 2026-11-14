@@ -1328,8 +1328,10 @@ namespace {
 namespace lines {
 
 using numbers = rest::get<"/numbers?up_to={up_to}", rest::json_lines<int>, int>;
-// Served by a handler of the router's own, as a third-party API would: what it sends is no number.
+// A number beyond 100 refused before the stream starts.
+// Served by handlers of the router's own, as a third-party API would: what it sends is no number, or ends inside one.
 using broken = rest::get<"/broken-lines", rest::json_lines<int>>;
+using cut = rest::get<"/cut-lines", rest::json_lines<int>>;
 
 } // namespace lines
 
@@ -1339,20 +1341,25 @@ using broken = rest::get<"/broken-lines", rest::json_lines<int>>;
   rest::mount<rest::api<"", lines::numbers>>(
       router,
       [](lines::numbers, int up_to, rest::frame_sink<rest::json_lines_framing<int>> &out) -> task<> {
+        if (up_to > 100) {
+          throw quoll::http::http_error{quoll::http::status::not_found, "no such numbers"};
+        }
+
         for (int number = 1; number <= up_to; ++number) {
           co_await out.send(number);
         }
       }
   );
   router.get("/broken-lines", [](http::response_writer out) -> task<> { co_await out.write("1\nnot a number\n"); });
+  router.get("/cut-lines", [](http::response_writer out) -> task<> { co_await out.write("1\n2"); });
   return router;
 }
 
-using lines_client = rest::client<rest::api<"", lines::numbers, lines::broken>, streaming_transport>;
+using lines_client = rest::client<rest::api<"", lines::numbers, lines::broken, lines::cut>, streaming_transport>;
 
 } // namespace
 
-TEST_CASE("rest json_lines: a value per line of JSON, sent through a frame_sink, read by subscribe", "[rest][sse]") {
+TEST_CASE("rest json_lines: a value per line of JSON, sent through a frame_sink, read by subscribe", "[rest][stream]") {
   lines_client const client{streaming_transport{make_lines_router()}};
 
   auto const reading = [&client]() -> task<std::vector<int>> {
@@ -1375,7 +1382,7 @@ TEST_CASE("rest json_lines: a value per line of JSON, sent through a frame_sink,
   REQUIRE(answer.find("1\n") != std::string::npos);
 }
 
-TEST_CASE("rest json_lines: a line that is no value is an http_error received, the line its body", "[rest][sse]") {
+TEST_CASE("rest json_lines: a line that is no value is an http_error received, the line its body", "[rest][stream]") {
   lines_client const client{streaming_transport{make_lines_router()}};
 
   auto const reading = [&client]() -> task<std::string> {
@@ -1394,7 +1401,7 @@ TEST_CASE("rest json_lines: a line that is no value is an http_error received, t
   REQUIRE(quoll::test::run(reading()).value() == "1|invalid frame|not a number\n");
 }
 
-TEST_CASE("rest json_lines_framing: a value once its line has come, CRLF and empty lines read", "[rest][sse]") {
+TEST_CASE("rest json_lines_framing: a value once its line has come, CRLF and empty lines read", "[rest][stream]") {
   rest::json_lines_framing<int> const framing;
   std::string pending = "1\r";
 
@@ -1415,4 +1422,41 @@ TEST_CASE("rest json_lines_framing: a value once its line has come, CRLF and emp
   pending = "x\n";
 
   REQUIRE_FALSE(framing.decode(pending).has_value());
+}
+
+TEST_CASE(
+    "rest json_lines: a stream that ends inside a value is an http_error, then the stream has ended", "[rest][stream]"
+) {
+  lines_client const client{streaming_transport{make_lines_router()}};
+
+  auto const reading = [&client]() -> task<std::string> {
+    auto stream = co_await client.subscribe<lines::cut>();
+    std::string seen = std::to_string((co_await stream.next()).value());
+
+    try {
+      static_cast<void>(co_await stream.next());
+    } catch (quoll::http::http_error const &failed) {
+      seen += "|" + std::string{failed.what()} + "|" + failed.answer()->body;
+    }
+
+    co_return seen + ((co_await stream.next()) ? "|more" : "|ended");
+  };
+
+  REQUIRE(quoll::test::run(reading()).value() == "1|a stream ended inside a frame|2|ended");
+}
+
+TEST_CASE(
+    "rest stream: an empty one has its head; an http_error before it starts answers its status", "[rest][stream]"
+) {
+  auto const empty = answer_to(make_lines_router(), get("/numbers?up_to=0"));
+
+  REQUIRE(empty.starts_with("HTTP/1.1 200"));
+  REQUIRE(empty.find("Content-Type: application/x-ndjson\r\n") != std::string::npos);
+  // A reverse proxy passes it on as it comes.
+  REQUIRE(empty.find("X-Accel-Buffering: no\r\n") != std::string::npos);
+
+  auto const refused = answer_to(make_lines_router(), get("/numbers?up_to=101"));
+
+  REQUIRE(refused.starts_with("HTTP/1.1 404"));
+  REQUIRE(refused.find("no such numbers") != std::string::npos);
 }

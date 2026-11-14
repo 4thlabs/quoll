@@ -143,7 +143,7 @@ public:
   /** @brief This executor, as the network of its execution context: valid while it lives (see io::network_ref). */
   [[nodiscard]] io::network_ref query(async::service_tag<io::network_ref>) const { return io::network_ref{*this}; }
 
-#if defined(ASIO_HAS_LOCAL_SOCKETS)
+#if defined(QUOLL_ASIO_LOCAL)
   /** @brief Opens a connection to the Unix domain socket at `path`, on the execution context. */
   [[nodiscard]] async::task<io::any_stream> connect_local(std::string path) const {
     return detail::connect_local(object_executor(), std::move(path));
@@ -250,7 +250,7 @@ static_assert(async::Offloader<executor<>>);
 static_assert(async::OffersService<executor<>, async::offloader_ref>);
 static_assert(async::OffersService<executor<>, io::network_ref>);
 static_assert(async::OffersService<executor<>, async::timer_ref>);
-#if defined(ASIO_HAS_LOCAL_SOCKETS)
+#if defined(QUOLL_ASIO_LOCAL)
 static_assert(io::LocalNetwork<executor<>>);
 static_assert(async::OffersService<executor<>, io::local_network_ref>);
 #endif

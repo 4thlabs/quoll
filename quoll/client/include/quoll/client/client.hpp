@@ -173,7 +173,8 @@ public:
    * @brief A client of the server at `url`, as above, connecting through `connector`: asio's on a context of its own, a
    * stream in memory in a test...
    *
-   * @throws std::invalid_argument as above, and for `https` with a connector that is no io::TlsConnector.
+   * @throws std::invalid_argument as above, for `https` with a connector that is no io::TlsConnector, and for `unix://`
+   * with one that is no io::LocalConnector.
    */
   template <io::Connector Connector>
   client(Connector connector, std::string_view url, client_options options = {})

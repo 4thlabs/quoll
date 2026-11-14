@@ -539,8 +539,8 @@ template <class Route, class... Services>
 
     static_assert(
         found,
-        "quoll::rest::mount: no handler takes a route of the api with events<>, the route first, then exactly its "
-        "arguments and its event_sink<T> &"
+        "quoll::rest::mount: no handler takes a route of the api with a stream, the route first, then exactly its "
+        "arguments and its sink, event_sink<T> & or frame_sink<F> &"
     );
     static_assert(!found || once, "quoll::rest::mount: more than one handler takes a route of the api");
     return found && once;

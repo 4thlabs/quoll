@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::mount: no handler takes a route of the api with events<>, the route first
+// expect: quoll::rest::mount: no handler takes a route of the api with a stream, the route first
 //
 // A handler written as for a call: it returns the value rather than send events.
 

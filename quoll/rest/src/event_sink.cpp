@@ -58,7 +58,7 @@ public:
 
     do {
       if ((seen & closed_bit) != 0) {
-        throw std::logic_error{"quoll::rest::event_sink: an operation the service did not await before it ended"};
+        throw std::logic_error{"quoll::rest: an operation of a sink its handler did not await before it ended"};
       }
     } while (!state_->activity.compare_exchange_weak(seen, seen + 1));
   }
@@ -89,7 +89,7 @@ private:
 http::detail::one_at_a_time sink_turn(std::shared_ptr<event_sink_state> const &state) {
   return http::detail::one_at_a_time{
       std::shared_ptr<std::atomic<bool>>{state, &state->busy},
-      "quoll::rest::event_sink: an operation while another is pending"
+      "quoll::rest: an operation of a sink while another is pending"
   };
 }
 
@@ -138,11 +138,18 @@ sink_retry(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time 
 
 namespace {
 
-// A stream of frames's head: its media type, unless a middleware has set one, then the status as it was given.
+// The head of a stream of frames: its media type, unless a middleware has set one, then the status as it was given.
 void frame_head(http::response_writer &out, std::string_view content_type) {
-  if (!out.head_given() && !out.fields.contains("Content-Type")) {
+  if (out.head_given()) {
+    return;
+  }
+
+  if (!out.fields.contains("Content-Type")) {
     out.fields.set("Content-Type", content_type);
   }
+
+  // As for server-sent events: a reverse proxy passes each piece on as it comes rather than buffer the stream.
+  out.fields.set("X-Accel-Buffering", "no");
 }
 
 } // namespace
@@ -193,7 +200,7 @@ async::task<> sink_drain(std::shared_ptr<event_sink_state> state) {
 
 async::task<> sink_answer(std::shared_ptr<event_sink_state> state, http::response refusal) {
   if (!state->out || state->out->head_given()) {
-    throw std::logic_error{"quoll::rest::event_sink: an answer once the stream has started"};
+    throw std::logic_error{"quoll::rest: an answer once the stream has started"};
   }
 
   auto &out = *state->out;
