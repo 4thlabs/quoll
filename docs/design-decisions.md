@@ -172,11 +172,15 @@ third-party API needs no Quoll server.
 
 ### JSON through Glaze
 
-**Taken.** [Glaze](https://github.com/stephenberry/glaze), pinned and fetched by CPM. Its reflection of aggregates also
-finds the members of a contract's types, of a component's states and of a widget's props, with no macro. It is why
-Quoll asks for C++23.
+**Taken.** [Glaze](https://github.com/stephenberry/glaze), pinned and fetched by CPM, for JSON only, behind
+`json_codec`, so that it can be replaced: no mechanism of Quoll is to rest on it (#182). The fields of a set of query
+parameters or of a form are read by a reflection of Quoll's own, through structured bindings and the names a compiler
+gives, which C++26's reflection will replace; the names of enums, the contexts and the widgets' JSON follow.
 
-**For you.** A plain struct is a JSON body, a set of query parameters, or a widget's props, as it is.
+**For you.** A plain struct is a JSON body, a set of query parameters or a form, as it is, its fields named as they
+are declared. A name that is not a C++ name is given only where it is needed: in a struct's `rest_names` for a query
+or a form, in Glaze's `glz::meta` for JSON; a struct the reflection does not read, as one with a base class, lists
+its fields in `rest_fields`.
 
 ## UI
 

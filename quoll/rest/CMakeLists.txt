@@ -21,6 +21,7 @@ quoll_declare_module(
 
 quoll_declare_tests(
   SOURCES
+    tests/aggregate_fields_test.cpp
     tests/client_test.cpp
     tests/codecs_test.cpp
     tests/contract_test.cpp
@@ -88,12 +89,25 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/path_without_slash.cpp
     tests/compile_fail/prefix_trailing_slash.cpp
     tests/compile_fail/query_empty_name.cpp
+    tests/compile_fail/query_params_char_pointer.cpp
     tests/compile_fail/query_params_field_twice.cpp
+    tests/compile_fail/query_params_leading_no_default.cpp
+    tests/compile_fail/query_params_no_default.cpp
     tests/compile_fail/query_params_not_aggregate.cpp
+    tests/compile_fail/query_params_range.cpp
+    tests/compile_fail/query_params_too_many_fields.cpp
     tests/compile_fail/query_twice.cpp
     tests/compile_fail/query_type.cpp
     tests/compile_fail/reply_holds_undeclared.cpp
     tests/compile_fail/reply_without_returns.cpp
+    tests/compile_fail/rest_fields_and_names.cpp
+    tests/compile_fail/rest_fields_field_twice.cpp
+    tests/compile_fail/rest_fields_of_other_struct.cpp
+    tests/compile_fail/rest_name_empty.cpp
+    tests/compile_fail/rest_name_not_a_member.cpp
+    tests/compile_fail/rest_name_of_other_struct.cpp
+    tests/compile_fail/rest_names_clash.cpp
+    tests/compile_fail/rest_names_field_twice.cpp
     tests/compile_fail/returns_body_on_no_content.cpp
     tests/compile_fail/returns_informational.cpp
     tests/compile_fail/same_name.cpp

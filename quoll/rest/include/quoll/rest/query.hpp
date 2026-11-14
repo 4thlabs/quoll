@@ -37,9 +37,13 @@
 #ifndef QUOLL_REST_QUERY_HPP
 #define QUOLL_REST_QUERY_HPP
 
+#include <quoll/rest/detail/aggregate_fields.hpp>
+#include <quoll/rest/detail/lists_fields.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/fixed_string.hpp>
 
+#include <concepts>
+#include <ranges>
 #include <string_view>
 #include <type_traits>
 
@@ -66,13 +70,30 @@ struct query {
 };
 
 /**
- * @brief An endpoint part: one query parameter per field of the aggregate `Struct`, named after the field (or its
- * `glz::meta` name), with the rules of query<> for each field type. For operations with many optional parameters: the
- * caller fills a struct with designated initializers.
+ * @brief An endpoint part: one query parameter per field of the aggregate `Struct`, named as the field is declared,
+ * or as its `rest_names` give (see names), with the rules of query<> for each field type. For operations with many
+ * optional parameters: the caller fills a struct with designated initializers. A struct of 64 fields at most, with no
+ * base class, each field with a default value, none a reference nor a pointer to characters; or a struct listing its
+ * fields, `rest_fields`, as one with a base class (see names).
  */
 template <class Struct>
 struct query_params {
-  static_assert(std::is_aggregate_v<Struct>, "quoll::rest::query_params: the type is not an aggregate");
+  static_assert(
+      !std::ranges::range<Struct>, "quoll::rest::query_params: the type is a struct of fields, not an array or a range"
+  );
+  static_assert(
+      detail::ListsFields<Struct> || std::is_aggregate_v<Struct>,
+      "quoll::rest::query_params: the type is not an aggregate, nor a struct listing its fields (rest_fields)"
+  );
+  static_assert(
+      detail::ListsFields<Struct> || detail::within_fields<Struct>(),
+      "quoll::rest::query_params: the struct has more than 64 fields"
+  );
+
+  static_assert(
+      !detail::ListsFields<Struct> || std::default_initializable<Struct>,
+      "quoll::rest::query_params: a struct listing its fields is made with none of them given"
+  );
 
   using part_category = detail::argument_part;
   using argument_type = Struct;
