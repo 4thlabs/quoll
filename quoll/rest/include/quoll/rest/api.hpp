@@ -59,8 +59,8 @@ namespace quoll::rest {
 template <class... Members>
 struct with {
   static_assert(
-      ((detail::Part<Members> || detail::Api<Members> || detail::Endpoint<Members>) && ...),
-      "quoll::rest::with: a member is neither a part nor an api<> or endpoint<>"
+      ((detail::Part<Members> || detail::Api<Members> || detail::Endpoint<Members> || detail::With<Members>) && ...),
+      "quoll::rest::with: a member is neither a part nor an api<>, a route or a group"
   );
   static_assert(
       ((!std::same_as<typename detail::part_category_of<Members>::type, detail::events_part>) && ...),
@@ -70,6 +70,15 @@ struct with {
   using contract_category = detail::with_category;
   using members = detail::type_list<Members...>;
 };
+
+/**
+ * @brief Routes and the options they share, with no prefix: `rest::group<rest::security<rest::bearer_auth>, list,
+ * get>`. Its members are options (security<>, header<>...), routes and groups, in any order; what it holds comes after
+ * a route's own arguments, in its arguments too. Groups nest; only api<> has a prefix, so that a route's string says
+ * its whole path below it.
+ */
+template <class... Members>
+struct group : with<Members...> {};
 
 /**
  * @brief A group of endpoints under the path `Prefix`: endpoints, nested apis and with<>.

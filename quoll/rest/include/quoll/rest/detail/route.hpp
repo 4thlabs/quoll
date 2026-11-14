@@ -43,6 +43,7 @@
 #include <quoll/rest/body.hpp>
 #include <quoll/rest/detail/checked_path.hpp>
 #include <quoll/rest/detail/field_names.hpp>
+#include <quoll/rest/detail/join_strings.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/path_template.hpp>
 #include <quoll/rest/detail/path_types.hpp>
@@ -52,6 +53,7 @@
 #include <quoll/rest/query.hpp>
 #include <quoll/rest/security.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <optional>
@@ -147,6 +149,32 @@ template <class... Arguments, class... Schemes>
   return true;
 }
 
+template <class Endpoint>
+struct own_path_types_of {
+  using type = typename path_argument_types<Endpoint::path_value>::type;
+};
+
+template <class Endpoint>
+  requires requires { typename Endpoint::path_types; }
+struct own_path_types_of<Endpoint> {
+  using type = typename Endpoint::path_types;
+};
+
+[[nodiscard]] consteval std::size_t method_size(http::verb method) { return http::to_string(method).size(); }
+
+template <http::verb Method>
+[[nodiscard]] consteval auto method_string() {
+  fixed_string<method_size(Method) + 1> name;
+
+  std::ranges::copy(http::to_string(Method), name.value);
+  return name;
+}
+
+// The name of an operation that gives none: its method and its whole path, `GET /api/notes/{id}`, unique in an api as
+// the router refuses two routes of one method and path.
+template <http::verb Method, fixed_string Path>
+inline constexpr auto default_operation_name = join_strings<method_string<Method>(), " ", Path>();
+
 // An endpoint as an api serves it: its full path (the prefixes of the apis around it, then its own path) and the
 // parts inherited from the with<> around it, which come after its own.
 template <class Endpoint, fixed_string Path, class Inherited>
@@ -174,8 +202,9 @@ struct route {
       "quoll::rest::with: an endpoint with events<> gets another success, where only errors may come"
   );
 
-  // The types of its own path parameters, as its template says them.
-  using own_path_types = typename path_argument_types<Endpoint::path_value>::type;
+  // The types of its own path parameters: those a route's C++ types give (rest::get<...>), or those an endpoint<>'s
+  // template says.
+  using own_path_types = typename own_path_types_of<Endpoint>::type;
 
   // How many path parameters the prefixes around it have: none for a template that is wrong, which has its own
   // static_assert, rather than a count wrapping around, which the index sequence below would make huge.
@@ -201,7 +230,8 @@ struct route {
   static constexpr auto path_value = Path;
   static constexpr std::string_view path = path_value.view();
   // The name and the method of the operation, which the router, the client and the checks of an api read.
-  static constexpr std::string_view name = Endpoint::name;
+  static constexpr std::string_view name =
+      Endpoint::name.empty() ? default_operation_name<Endpoint::method, Path>.view() : Endpoint::name;
   static constexpr http::verb method = Endpoint::method;
 };
 

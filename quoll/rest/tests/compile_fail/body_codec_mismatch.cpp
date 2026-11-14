@@ -48,6 +48,6 @@ struct thing {
   int value = 0;
 };
 
-using created = endpoint<"created", verb::post, "/", body<thing, text_codec>>;
+using made = endpoint<"created", verb::post, "/", body<thing, text_codec>>;
 
-api<"", created> const instance{};
+api<"", made> const instance{};

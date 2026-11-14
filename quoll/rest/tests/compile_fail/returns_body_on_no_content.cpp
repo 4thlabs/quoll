@@ -50,6 +50,6 @@ struct thing {
   int value = 0;
 };
 
-using created = endpoint<"created", verb::post, "/", returns<thing, status::no_content>>;
+using made = endpoint<"created", verb::post, "/", returns<thing, status::no_content>>;
 
-api<"", created> const instance{};
+api<"", made> const instance{};

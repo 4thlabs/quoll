@@ -14,6 +14,52 @@ using http::status;
 using http::verb;
 ```
 
+## Routes
+
+The contract is being rewritten as routes (#176), served and called as endpoints are below, which they will replace.
+A route is its method, its path and query below the api's prefix, its result and the types of its parameters:
+
+```cpp
+namespace notes {
+
+using list   = rest::get<"/notes?contains={contains}&page={page}", std::vector<note>,
+                         std::optional<std::string>, std::optional<int>>;
+using get    = rest::get<"/notes/{id}", note, std::int64_t>;
+using create = rest::post<"/notes", rest::created<note>, new_note>;
+using remove = rest::del<"/notes/{id}", void, std::int64_t>;
+
+using routes = rest::group<list, get, create, remove>;
+
+} // namespace notes
+
+using api = rest::api<"/api", notes::routes>;
+```
+
+- **The method** is the type: `rest::get`, `post`, `put`, `patch`, `del` (`delete` is a keyword), `head`, `options`.
+- **The string** holds the whole path below the api's prefix, and the query: `key={name}` for a parameter. A route is
+  unique by its method and path, as the router requires.
+- **The result** comes first: answered 200, 204 for `void`; `rest::created<T>` and `rest::accepted<T>` say 201 and 202;
+  `rest::text`, `rest::bytes`, `rest::json<T>` and `rest::lenient_json<T>`, which skips the fields its type does not
+  know, say its format, JSON by default.
+- **The parameters** follow, a type for each `{name}` of the string in its order, the path's then the query's (a
+  `std::optional` may be missing, a `std::vector` repeats); then the headers, `rest::header<"X-Device", T>`; then the
+  body, for a `post`, a `put` or a `patch` only, `rest::form<T>` for a form.
+- **The name** of its operation is `rest::operation_id<"notes.get">`, or its method and whole path,
+  `GET /api/notes/{id}`.
+- **A group** holds routes, groups and what they share, `rest::security<...>` or a header, which come after a route's own
+  arguments; only the api has a prefix.
+
+The server handles each route with a service, as below, or with `rest::on`, the two mixed:
+
+```cpp
+rest::mount<api>(router, notes_service{},
+                 rest::on<notes::create>([](new_note made) { return note{.id = 7, .text = made.text}; }),
+                 rest::on<notes::remove>([](std::int64_t id) -> async::task<> { co_return; }));
+```
+
+Each route has one handler, of its parameters exactly: one missing, two, or one of a route of another api do not
+compile. A fixed value in a route's query comes later.
+
 ## The contract
 
 Bodies are plain aggregates, whose fields Glaze reflects, with no macro and no declaration. One alias

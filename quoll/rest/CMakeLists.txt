@@ -30,6 +30,7 @@ quoll_declare_tests(
     tests/open_enum_test.cpp
     tests/param_traits_test.cpp
     tests/path_template_test.cpp
+    tests/route_test.cpp
   DEPS
     quoll::rest
     quoll::server
@@ -109,6 +110,13 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/rest_names_field_twice.cpp
     tests/compile_fail/returns_body_on_no_content.cpp
     tests/compile_fail/returns_informational.cpp
+    tests/compile_fail/route_body_on_get.cpp
+    tests/compile_fail/route_fixed_value.cpp
+    tests/compile_fail/route_missing_type.cpp
+    tests/compile_fail/route_on_other_api.cpp
+    tests/compile_fail/route_rest_of_path_text.cpp
+    tests/compile_fail/route_two_bodies.cpp
+    tests/compile_fail/route_typed_in_path.cpp
     tests/compile_fail/same_name.cpp
     tests/compile_fail/same_route.cpp
     tests/compile_fail/same_route_encoded.cpp

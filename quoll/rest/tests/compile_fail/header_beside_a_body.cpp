@@ -49,10 +49,10 @@ struct thing {
   int value = 0;
 };
 
-using created = endpoint<"created", verb::post, "/", body<thing>, header<"content-type", std::string>>;
+using made = endpoint<"created", verb::post, "/", body<thing>, header<"content-type", std::string>>;
 
 // The body has its own.
-using wrapped = api<"", created>;
+using wrapped = api<"", made>;
 
 using routes = typename wrapped::routes;
 

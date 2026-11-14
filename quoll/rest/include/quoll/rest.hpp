@@ -63,6 +63,7 @@
 #include <quoll/rest/reply.hpp>
 #include <quoll/rest/retry.hpp>
 #include <quoll/rest/returns.hpp>
+#include <quoll/rest/route.hpp>
 #include <quoll/rest/scoped_client.hpp>
 #include <quoll/rest/security.hpp>
 #include <quoll/rest/text_codec.hpp>
