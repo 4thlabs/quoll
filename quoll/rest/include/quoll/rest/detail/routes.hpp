@@ -52,14 +52,6 @@
 // How api<> collects the routes of its members: endpoints, nested apis and with<>.
 namespace quoll::rest::detail {
 
-template <class E>
-struct endpoint_traits;
-
-template <fixed_string Name, http::verb Method, fixed_string Path, class... Parts>
-struct endpoint_traits<endpoint<Name, Method, Path, Parts...>> {
-  static constexpr auto path = Path;
-};
-
 template <class T>
 struct is_part : std::bool_constant<Part<T>> {};
 
@@ -82,7 +74,7 @@ struct routes_of;
 
 template <fixed_string Prefix, Endpoint E>
 struct routes_of<Prefix, E> {
-  using type = type_list<route<E, join_paths<Prefix, endpoint_traits<E>::path>(), type_list<>>>;
+  using type = type_list<route<E, join_paths<Prefix, E::path_value>(), type_list<>>>;
 };
 
 template <fixed_string Prefix, Api A>

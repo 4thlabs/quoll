@@ -155,7 +155,7 @@ void mount(http::router &router, Args &&...args) {
 
   [&]<class... Routes>(detail::type_list<Routes...>) {
     (staged.add(
-         Routes::endpoint::method, Routes::path, std::string{Routes::endpoint::name},
+         Routes::endpoint::method, Routes::path, std::string{Routes::name},
          [state](http::request request, http::route_match match) {
            return detail::serve<Routes>(state, std::move(request), std::move(match));
          }
