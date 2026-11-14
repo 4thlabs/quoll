@@ -562,6 +562,10 @@ changes only what the harness shows. Candidates:
   used less than a second before, which reviews kept finding holes in: a server closing within the second, a response
   read slowly. One idle for longer than `client_options::max_idle_time`, 90 s as Go's `IdleConnTimeout`, is not
   used again, as no check sees a connection something on the way dropped with no word.
+- **One HTTP error, in `quoll::http`** (2026-11-14, #176): `http::http_error`, raised by a handler or received by a
+  client, with `http::problem` (RFC 9457) and `http::ensure_ok`; `rest::http_error` and `rest::call_error` went. The
+  router answers one a handler or a middleware lets through, at each level: its status when raised, `502 Bad Gateway`
+  when received from another call, whose status and detail are that server's (it answered 500 before).
 - **Using the JavaScript libraries a page needs is a requirement of the UI** (2026-11-07), whatever form it takes: a node
   the reconciler leaves alone, a lifecycle with an unmount, calls both ways, bytes passed without a copy where it
   counts, npm packages through the Vite build, loaded on demand. Done so far: see step 6; a handle for calls that are

@@ -87,13 +87,6 @@ private:
   std::shared_ptr<http::response const> response_;
 };
 
-/**
- * @brief `answer` if its status is not an error, else an http_error received from it, its detail the status and its
- * reason: `co_await client.send(request)` read as `http::ensure_ok(co_await client.send(request))`.
- * @throws http_error for a status of 400 or more.
- */
-[[nodiscard]] response ensure_ok(response answer);
-
 } // namespace quoll::http
 
 #endif // QUOLL_HTTP_HTTP_ERROR_HPP

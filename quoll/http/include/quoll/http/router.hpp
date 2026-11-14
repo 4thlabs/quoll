@@ -188,7 +188,10 @@ public:
 
   /**
    * @brief The response of the route `message` matches, from its handler, or the 404 / 405 / 400 above, through the
-   * middlewares. Anything a handler or a middleware throws, even before it returns its task, comes out of the task.
+   * middlewares. An http_error a handler or a middleware throws is answered as a response: its status and a problem,
+   * or 502 for one received from another call, and each middleware sees the one under it as a response. Anything else
+   * a handler or a middleware throws, an http_error whose status is no error included, even before it returns its task,
+   * comes out of the task.
    */
   [[nodiscard]] async::task<response> dispatch(request message, body_reader reader = {}) const &QUOLL_LIFETIMEBOUND;
 

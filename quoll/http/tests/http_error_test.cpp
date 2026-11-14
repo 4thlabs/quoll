@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/task.hpp>
+#include <quoll/http/ensure_ok.hpp>
 #include <quoll/http/http_error.hpp>
 #include <quoll/http/problem.hpp>
 #include <quoll/http/request.hpp>
@@ -180,4 +181,38 @@ TEST_CASE("http_error: one received with a status that is no error still answers
   });
 
   CHECK(dispatch(router, verb::get, "/copy").status == status::bad_gateway);
+}
+
+TEST_CASE("http_error: each middleware sees the one under it as a response", "[http][http_error]") {
+  http::router router;
+  std::string seen;
+
+  router.get("/me", []() -> http::response { return http::response{}; });
+  // The outer one, as a CORS middleware adding its field to whatever comes back.
+  router.use([&seen](http::request message, http::next next) -> task<http::response> {
+    auto answer = co_await next(std::move(message));
+
+    seen = std::to_string(static_cast<int>(answer.status));
+    answer.fields.add("Access-Control-Allow-Origin", "*");
+    co_return answer;
+  });
+  router.use([](http::request, http::next) -> task<http::response> {
+    throw http::http_error{status::unauthorized, "expired session"};
+  });
+
+  auto const answer = dispatch(router, verb::get, "/me");
+
+  CHECK(answer.status == status::unauthorized);
+  CHECK(seen == "401");
+  CHECK(answer.fields.find("Access-Control-Allow-Origin") == "*");
+}
+
+TEST_CASE("http_error: a handler raising one before its task is made is answered", "[http][http_error]") {
+  http::router router;
+
+  router.add(verb::get, "/now", "now", [](http::request, http::route_match) -> task<http::response> {
+    throw http::http_error{status::service_unavailable, "busy"};
+  });
+
+  CHECK(dispatch(router, verb::get, "/now").status == status::service_unavailable);
 }

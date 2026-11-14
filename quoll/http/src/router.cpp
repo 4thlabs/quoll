@@ -347,35 +347,16 @@ struct resolved_route {
 
 namespace {
 
-// What the middlewares answer, or the answer to the http_error one lets through (see detail::error_answer).
-async::task<response> answering(async::task<response> inner) {
-  try {
-    co_return co_await std::move(inner);
-  } catch (http_error const &error) {
-    auto answer = detail::error_answer(error);
+// The answer to the http_error being handled (see detail::error_answer), or that error thrown again, from inside its
+// catch.
+[[nodiscard]] response answer_or_rethrow(http_error const &error) {
+  auto answer = detail::error_answer(error);
 
-    if (!answer) {
-      throw;
-    }
-
-    co_return std::move(*answer);
+  if (!answer) {
+    throw;
   }
-}
 
-// The handler's response, called inside the try, as one may throw before its task is made. `target` is the router's,
-// which outlives the dispatch awaiting this.
-async::task<response> answered(router::handler const &target, request message, route_match match) {
-  try {
-    co_return co_await target(std::move(message), std::move(match));
-  } catch (http_error const &error) {
-    auto answer = detail::error_answer(error);
-
-    if (!answer) {
-      throw;
-    }
-
-    co_return std::move(*answer);
-  }
+  return std::move(*answer);
 }
 
 // What the router says by itself, when no route answers.
@@ -548,20 +529,29 @@ async::task<response> router::dispatch(request message, body_reader reader) cons
 
   // Nothing else reads what routing found, and a middleware may call next again: only here can it be moved.
   if (middlewares_.empty() && resolved.target != nullptr) {
-    co_return co_await answered(*resolved.target, std::move(message), std::move(resolved.match));
+    try {
+      co_return co_await (*resolved.target)(std::move(message), std::move(resolved.match));
+    } catch (http_error const &error) {
+      co_return answer_or_rethrow(error);
+    }
   }
 
-  co_return co_await answering(run_from(resolved, 0, std::move(message)));
+  co_return co_await run_from(resolved, 0, std::move(message));
 }
 
 // A coroutine: what a handler or a middleware throws before it returns its task comes out of this one, and what it is
-// given by reference lives in this frame until its task ends.
+// given by reference lives in this frame until its task ends. An http_error is answered at each level, so that each
+// middleware sees the one under it as a response.
 async::task<response>
 router::run_from(detail::resolved_route const &resolved, std::size_t position, request message) const {
   if (position < middlewares_.size()) {
     next const following{*this, resolved, position + 1};
 
-    co_return co_await middlewares_[position](std::move(message), following);
+    try {
+      co_return co_await middlewares_[position](std::move(message), following);
+    } catch (http_error const &error) {
+      co_return answer_or_rethrow(error);
+    }
   }
 
   if (resolved.target == nullptr) {
@@ -571,7 +561,11 @@ router::run_from(detail::resolved_route const &resolved, std::size_t position, r
 
   auto match = resolved.match;
 
-  co_return co_await answered(*resolved.target, std::move(message), std::move(match));
+  try {
+    co_return co_await (*resolved.target)(std::move(message), std::move(match));
+  } catch (http_error const &error) {
+    co_return answer_or_rethrow(error);
+  }
 }
 
 } // namespace quoll::http
