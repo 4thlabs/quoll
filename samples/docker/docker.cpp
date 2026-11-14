@@ -39,11 +39,14 @@
 //   quoll_docker version                 the engine's version
 //   quoll_docker ps [-a] [-f key=value]  the containers, running or all, those a filter of Docker's keeps
 //   quoll_docker inspect <container>     one container
-//   quoll_docker run <image> [cmd...]    creates a container, starts it, waits for it, removes it: its exit code
+//   quoll_docker run <image> [cmd...]    creates a container, starts it, waits for it, shows what it wrote, removes it:
+//                                        its exit code
+//   quoll_docker events [since]          what happened on the engine since then (seconds), up to now
 //   quoll_docker stop <container>
 //   quoll_docker rm <container>
 //
-// It calls the engine at DOCKER_HOST, as Docker's own client does, `unix:///var/run/docker.sock` by default.
+// It calls the engine at DOCKER_HOST, as Docker's own client does, `unix:///var/run/docker.sock` by default, or
+// `tcp://host:2375`.
 
 #include "docker_api.hpp"
 
@@ -53,7 +56,9 @@
 #include <quoll/rest.hpp>
 #include <quoll/runtime.hpp>
 
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -149,12 +154,32 @@ async::task<int> run_container(docker_client client, std::string image, std::vec
     co_return report(waited.error());
   }
 
+  // What it wrote, as Docker's frames, its stdout to ours and its stderr to ours.
+  auto logs = co_await client.subscribe<docker::containers::logs>("id"_p = id, "stdout"_p = true, "stderr"_p = true);
+
+  while (auto const frame = co_await logs.next()) {
+    (frame->stream == 2 ? std::cerr : std::cout) << frame->text;
+  }
+
   if (auto const removed = co_await client.try_call<docker::containers::remove>("id"_p = id); !removed) {
     co_return report(removed.error());
   }
 
   std::cout << id.substr(0, 12) << " exited with " << waited->status_code << '\n';
   co_return static_cast<int>(waited->status_code);
+}
+
+// What happened on the engine from `since`, up to now: Docker ends the stream at `until`.
+async::task<int> show_events(docker_client client, std::int64_t since, std::int64_t until) {
+  auto happened = co_await client.subscribe<docker::system::events>("since"_p = since, "until"_p = until);
+
+  while (auto const event = co_await happened.next()) {
+    auto const name = event->from.attributes.contains("name") ? event->from.attributes.at("name") : event->from.id;
+
+    std::cout << event->type << ' ' << event->action << ' ' << name << '\n';
+  }
+
+  co_return 0;
 }
 
 async::task<int> stop(docker_client client, std::string container) {
@@ -194,6 +219,14 @@ async::task<int> run(given what) {
 
   if (command == "version") {
     co_return co_await show_version(client);
+  }
+
+  if (command == "events") {
+    auto const now =
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch());
+    auto const since = arguments.size() > 1 ? std::stoll(arguments[1]) : now.count() - 60;
+
+    co_return co_await show_events(client, since, now.count());
   }
 
   if (command == "ps") {
@@ -272,12 +305,15 @@ struct record_status {
 
 int main(int argc, char **argv) {
   quoll::runtime runtime;
-  auto const *host = std::getenv("DOCKER_HOST");
+  auto const *set = std::getenv("DOCKER_HOST");
+  std::string host = set != nullptr && *set != '\0' ? set : "unix:///var/run/docker.sock";
 
-  given what{
-      .arguments = std::vector<std::string>(argv + 1, argv + argc),
-      .host = host != nullptr && *host != '\0' ? std::string{host} : std::string{"unix:///var/run/docker.sock"},
-  };
+  // Docker writes an engine over TCP tcp://host:2375, which is plain HTTP.
+  if (host.starts_with("tcp://")) {
+    host = "http://" + host.substr(6);
+  }
+
+  given what{.arguments = std::vector<std::string>(argv + 1, argv + argc), .host = std::move(host)};
 
   co_spawn(runtime.get_executor(), run(std::move(what)), record_status{});
   runtime.run();

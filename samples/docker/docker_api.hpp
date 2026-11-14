@@ -45,7 +45,9 @@
 
 #include <glaze/core/common.hpp>
 
+#include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <map>
 #include <optional>
 #include <string>
@@ -109,6 +111,74 @@ struct version_info {
 // What Docker answers on an error, whatever its status.
 struct error {
   std::string message;
+};
+
+// What happens to an object of the engine, as GET /events streams it, a value per line of JSON.
+struct actor {
+  std::string id;
+  std::map<std::string, std::string> attributes;
+};
+
+struct event {
+  std::string type;
+  std::string action;
+  actor from;
+  std::int64_t time = 0;
+};
+
+// A piece of what a container wrote, as GET /containers/{id}/logs sends it: on its stdout (1) or its stderr (2).
+struct log_frame {
+  std::uint8_t stream = 1;
+  std::string text;
+};
+
+// Docker's frames of logs, for a container with no TTY: 8 bytes of head, the stream and the size of the text in big
+// endian, then the text. A Framing of the sample's own, as rest::stream<F> takes any.
+struct log_frames {
+  using value_type = log_frame;
+
+  static constexpr std::string_view content_type = "application/vnd.docker.multiplexed-stream";
+  static constexpr std::size_t head_size = 8;
+
+  [[nodiscard]] std::string encode(log_frame const &frame) const {
+    auto const size = static_cast<std::uint32_t>(frame.text.size());
+    std::string bytes(head_size, '\0');
+
+    bytes[0] = static_cast<char>(frame.stream);
+    bytes[4] = static_cast<char>((size >> 24U) & 0xFFU);
+    bytes[5] = static_cast<char>((size >> 16U) & 0xFFU);
+    bytes[6] = static_cast<char>((size >> 8U) & 0xFFU);
+    bytes[7] = static_cast<char>(size & 0xFFU);
+    return bytes + frame.text;
+  }
+
+  [[nodiscard]] std::expected<std::optional<log_frame>, quoll::rest::decode_error> decode(std::string &pending) const {
+    if (pending.size() < head_size) {
+      return std::optional<log_frame>{};
+    }
+
+    auto const stream = static_cast<std::uint8_t>(pending[0]);
+
+    // Bytes that are no frame stay, for the error to hold them.
+    if (stream > 2) {
+      return std::unexpected{quoll::rest::decode_error{"not a frame of Docker's logs"}};
+    }
+
+    std::size_t size = 0;
+
+    for (std::size_t at = 4; at < head_size; ++at) {
+      size = (size << 8U) | static_cast<std::uint8_t>(pending[at]);
+    }
+
+    if (pending.size() < head_size + size) {
+      return std::optional<log_frame>{};
+    }
+
+    log_frame frame{.stream = stream, .text = pending.substr(head_size, size)};
+
+    pending.erase(0, head_size + size);
+    return std::optional{std::move(frame)};
+  }
 };
 
 // What GET /containers/json lists, `{"status":["running"]}`: a query parameter in JSON, as Docker reads it.
@@ -176,6 +246,19 @@ struct glz::meta<docker::wait_result> {
 };
 
 template <>
+struct glz::meta<docker::actor> {
+  using T = docker::actor;
+  static constexpr auto value = glz::object("ID", &T::id, "Attributes", &T::attributes);
+};
+
+template <>
+struct glz::meta<docker::event> {
+  using T = docker::event;
+  static constexpr auto value =
+      glz::object("Type", &T::type, "Action", &T::action, "Actor", &T::from, "time", &T::time);
+};
+
+template <>
 struct glz::meta<docker::version_info> {
   using T = docker::version_info;
   static constexpr auto value =
@@ -200,19 +283,29 @@ using start = rest::post<"/containers/{id}/start", void, std::string>;
 using stop = rest::post<"/containers/{id}/stop?t={t}", void, std::string, std::optional<int>>;
 using wait = rest::post<"/containers/{id}/wait", rest::lenient_json<wait_result>, std::string>;
 using remove = rest::del<"/containers/{id}?force={force}", void, std::string, std::optional<bool>>;
+// What it wrote, as Docker's frames: until now, or as it comes with follow.
+using logs = rest::get<
+    "/containers/{id}/logs?stdout={stdout}&stderr={stderr}&follow={follow}", rest::stream<log_frames>, std::string,
+    std::optional<bool>, std::optional<bool>, std::optional<bool>>;
 
-using routes = rest::group<list, inspect, create, start, stop, wait, remove>;
+using routes = rest::group<list, inspect, create, start, stop, wait, remove, logs>;
 
 } // namespace containers
 
 namespace system {
 
 using version = rest::get<"/version", rest::lenient_json<version_info>>;
+// What happens on the engine, a value per line of JSON, between two times in seconds; with no end, as it happens.
+using events = rest::get<
+    "/events?since={since}&until={until}", rest::json_lines<event, rest::lenient_json_codec>,
+    std::optional<std::int64_t>, std::optional<std::int64_t>>;
+
+using routes = rest::group<version, events>;
 
 } // namespace system
 
 // The version of the API the program speaks, which every path starts with.
-using api = rest::api<"/v1.43", containers::routes, system::version>;
+using api = rest::api<"/v1.43", containers::routes, system::routes>;
 
 } // namespace docker
 

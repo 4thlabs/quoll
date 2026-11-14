@@ -53,13 +53,19 @@ concurrently, from any thread, if the connector allows it.
 
 ## URLs
 
-The URL is `http[s]://host[:port][/path]`, an IPv6 address in brackets:
+The URL is `http[s]://host[:port][/path]`, an IPv6 address in brackets, or `unix:///path` for a Unix domain socket,
+natively:
 
 ```cpp
 http::client local{"http://127.0.0.1:8080"};
 http::client v6{"http://[::1]:8080"};
 http::client api{"https://api.example.com/v1"};
+http::client docker{"unix:///var/run/docker.sock"};   // its requests name localhost, as Docker's client does
 ```
+
+A `unix://` URL connects through the local network of the executor that sends (`io::connect_local`), which
+`quoll::runtime` offers where the system has such sockets, and a browser has not: there, the URL throws
+`std::invalid_argument`. A server listens on one through `io::listen_local(path)`, then `server.serve(listener)`.
 
 A path goes before the target of every request, as it is. With the last one, `/users` is `/v1/users`,
 and `/` is `/v1/`, never `/v1`. It is no boundary: a target with dot segments of its own can climb out

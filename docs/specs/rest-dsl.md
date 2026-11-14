@@ -1,7 +1,8 @@
 # The REST DSL
 
 > [!NOTE]
-> **Validated** by the maintainer on 2026-11-14, with [#227](https://github.com/4thlabs/quoll/pull/227).
+> **Validated** by the maintainer on 2026-11-14, with [#227](https://github.com/4thlabs/quoll/pull/227); streams of
+> frames added on 2026-11-14, as the maintainer decided after the Docker test of the DSL.
 
 The spec of `quoll::rest`'s contract, decided with the maintainer in [#176](https://github.com/4thlabs/quoll/issues/176).
 How it behaves, for users, is in [`rest.md`](../rest.md); why, in [`design-decisions.md`](../design-decisions.md); what
@@ -54,7 +55,9 @@ using api = rest::api<"/api", rest::group<rest::security<rest::bearer_auth>, not
   `rest::accepted<T>` (202) say otherwise, so that a `POST /token` answers 200.
 - **The format** is JSON. `rest::form<T>`, `rest::text`, `rest::bytes` and `rest::json<T>` say another, on the body
   or the result; `rest::lenient_json<T>` reads a result whose unknown fields it skips; `rest::encoded<T, Codec>` takes a
-  codec of one's own. `rest::events<T>` as a result is a stream of server-sent events.
+  codec of one's own. `rest::events<T>` as a result is a stream of server-sent events; `rest::stream<F>` one of values
+  cut by a framing of one's own, as Docker's logs; `rest::json_lines<T>` one of a value per line of JSON, as Docker's
+  events. Both are read by `subscribe`, and sent through a sink, as events are.
 - **The parameters** follow, in order: one type per `{parameter}` of the string, the path's then the query's (a
   `std::optional` may be missing, a `std::vector` repeats); then the headers, `rest::header<"X-Request-Id", T>`; then
   the body, last, for a `post`, a `put`, a `patch` or a `del` only, as some APIs take one on DELETE (GitHub's

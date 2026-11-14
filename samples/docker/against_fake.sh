@@ -36,6 +36,7 @@ grep -q '^Docker 24.0.7 (API 1.43), linux/amd64$' "$out" || fail "no version"
 
 # A container run to its end, removed: its exit code is the program's.
 "$program" run alpine echo hi >"$out" 2>&1 || fail "run failed"
+grep -q '^hi$' "$out" || fail "no logs, Docker's frames through rest::stream"
 grep -q ' exited with 0$' "$out" || fail "no exit code"
 
 if "$program" run alpine false >"$out" 2>&1; then
@@ -50,6 +51,11 @@ grep -q ' exited with 1$' "$out" || fail "no failing exit code"
 # Nothing left of them.
 "$program" ps -a >"$out" 2>&1 || fail "ps failed"
 [ ! -s "$out" ] || fail "containers left"
+
+# What happened, a value per line of JSON through rest::json_lines.
+"$program" events 0 >"$out" 2>&1 || fail "events failed"
+grep -q '^container create quoll_1$' "$out" || fail "no create event"
+grep -q '^container destroy quoll_2$' "$out" || fail "no destroy event"
 
 # Docker's errors, in its own shape, through try_call.
 if "$program" run missing >"$out" 2>&1; then

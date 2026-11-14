@@ -57,6 +57,7 @@
 #include <quoll/rest/query_params.hpp>
 #include <quoll/rest/result_status.hpp>
 #include <quoll/rest/security.hpp>
+#include <quoll/rest/stream.hpp>
 
 #include <array>
 #include <concepts>
@@ -94,6 +95,11 @@ struct result_parts<accepted<T>> {
 template <class T, class Codec>
 struct result_parts<events<T, Codec>> {
   using type = type_list<events<T, Codec>>;
+};
+
+template <class F>
+struct result_parts<stream<F>> {
+  using type = type_list<stream<F>>;
 };
 
 // What of a route's arguments is no type of a value: its operation's name, its security.

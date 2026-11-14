@@ -74,7 +74,8 @@ namespace quoll::rest {
  * - `try_call<Route>(arguments...)` returns a task of `std::expected<T, http::http_error>`: the value, or that error.
  * - Each of them takes its arguments by position, or by name, `call<notes::list>("page"_p = 2)` (rest::literals): a
  *   `{parameter}` of the route's expression, or a header by its name, in any order, one that may be missing left out.
- * - `subscribe<Route>(arguments...)`, for a route of events<T>, returns a task of rest::event_stream<T>, once
+ * - `subscribe<Route>(arguments...)`, for a route of events<T>, returns a task of rest::event_stream<T>, and for one of
+ *   stream<F> a task of rest::frame_stream<F>, once
  *   the head of a `text/event-stream` has come: its events as they come. Any other answer throws an http::http_error
  *   received from the task, as from call, with its body read up to 64 KiB. It needs a transport that gives a response
  *   as its head comes (`stream()`: http::client, not http::local_transport), and it goes straight through it,
@@ -200,7 +201,10 @@ private:
 
   template <class Endpoint>
   [[nodiscard]] async::task<typename detail::call_value<Endpoint>::type> call_with(arguments<Endpoint> args) const {
-    static_assert(!detail::has_events<Endpoint>, "quoll::rest::client::call: the route answers events<>: subscribe");
+    static_assert(
+        !detail::has_events<Endpoint>,
+        "quoll::rest::client::call: the route answers a stream, events<> or stream<>: subscribe"
+    );
 
     using route = typename Api::template route<Endpoint>;
 
@@ -210,7 +214,8 @@ private:
   template <class Endpoint>
   [[nodiscard]] async::task<detail::call_result<Endpoint>> try_call_with(arguments<Endpoint> args) const {
     static_assert(
-        !detail::has_events<Endpoint>, "quoll::rest::client::try_call: the route answers events<>: subscribe"
+        !detail::has_events<Endpoint>,
+        "quoll::rest::client::try_call: the route answers a stream, events<> or stream<>: subscribe"
     );
 
     using route = typename Api::template route<Endpoint>;
@@ -222,7 +227,8 @@ private:
   template <class Endpoint>
   [[nodiscard]] auto subscribe_with(arguments<Endpoint> args) const {
     static_assert(
-        detail::has_events<Endpoint>, "quoll::rest::client::subscribe: the route answers no events<>: call it"
+        detail::has_events<Endpoint>,
+        "quoll::rest::client::subscribe: the route answers no stream, events<> nor stream<>: call it"
     );
     static_assert(
         http::StreamingTransport<Transport>,
@@ -241,7 +247,7 @@ private:
       auto request = detail::build_request<route>(args, credentials_);
 
       // One the contract declares stays, a third-party API's own media type say, which the answer may then carry.
-      if (!request.fields.contains("Accept")) {
+      if (detail::server_sent<Endpoint> && !request.fields.contains("Accept")) {
         request.fields.set("Accept", "text/event-stream");
       }
 

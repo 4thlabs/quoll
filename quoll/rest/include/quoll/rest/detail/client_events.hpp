@@ -47,6 +47,9 @@
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/refusal.hpp>
 #include <quoll/rest/event_stream.hpp>
+#include <quoll/rest/events.hpp>
+#include <quoll/rest/frame_stream.hpp>
+#include <quoll/rest/stream.hpp>
 
 #include <memory>
 #include <string>
@@ -55,9 +58,30 @@
 
 namespace quoll::rest::detail {
 
-// What subscribe produces for a route of events<>.
+// What subscribe produces for a route of events<> or stream<>, and whether it is server-sent events.
+template <class Part>
+struct stream_for;
+
+template <class T, class Codec>
+struct stream_for<events<T, Codec>> {
+  using type = event_stream<T, Codec>;
+
+  static constexpr bool server_sent = true;
+};
+
+template <class F>
+struct stream_for<stream<F>> {
+  using type = frame_stream<F>;
+
+  static constexpr bool server_sent = false;
+};
+
 template <class Endpoint>
-using event_stream_of = event_stream<typename events_part_of<Endpoint>::type, typename events_part_of<Endpoint>::codec>;
+inline constexpr bool server_sent = stream_for<events_part_of<Endpoint>>::server_sent;
+
+// What subscribe produces for a route of events<> or stream<>.
+template <class Endpoint>
+using event_stream_of = typename stream_for<events_part_of<Endpoint>>::type;
 
 // Whether a 200 is the stream asked for: a `text/event-stream`, or of the one media type the request's Accept named, an
 // event stream of a third-party API's own, case and parameters aside.
@@ -75,8 +99,13 @@ template <class Route, class Transport>
 open_events(std::shared_ptr<Transport const> transport, http::request request, std::string accepted) {
   auto streamed = co_await transport->stream(std::move(request));
 
-  if (streamed.status == http::status::ok && is_accepted_stream(streamed.fields, accepted)) {
-    co_return event_stream_of<typename Route::endpoint>{http::event_reader{std::move(streamed.body)}};
+  if constexpr (server_sent<typename Route::endpoint>) {
+    if (streamed.status == http::status::ok && is_accepted_stream(streamed.fields, accepted)) {
+      co_return event_stream_of<typename Route::endpoint>{http::event_reader{std::move(streamed.body)}};
+    }
+  } else if (streamed.status == http::status::ok) {
+    // A stream of frames comes with the media type its API gives it, which its framing reads: none is checked.
+    co_return event_stream_of<typename Route::endpoint>{std::move(streamed.body)};
   }
 
   auto const status = streamed.status;

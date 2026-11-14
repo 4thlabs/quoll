@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::client::subscribe: the route answers no events<>: call it
+// expect: quoll::rest::client::subscribe: the route answers no stream, events<> nor stream<>: call it
 //
 // A route with one body to give, subscribed to.
 

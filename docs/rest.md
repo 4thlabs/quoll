@@ -353,6 +353,35 @@ goes straight through it, credentials applied. Interceptors take whole responses
 throws `std::logic_error`, rather than go out without what they add; subscribe through a client without them. It does
 not connect again on its own: resuming is an argument of the contract, `Last-Event-ID` above.
 
+### Other streams
+
+A route whose result is `rest::json_lines<T>` streams a value per line of JSON, as Docker's events or Kubernetes'
+watches do; one of `rest::stream<F>`, values cut by a framing of your own, `F`, a `rest::Framing`: its `value_type`, its
+`content_type`, `encode(value)` and `decode(pending)`, which takes the first whole value off what has come, or nothing
+yet. They are served and read as events are, through a `rest::frame_sink<F>` and a `rest::frame_stream<F>`:
+
+```cpp
+using events = rest::get<"/events?since={since}", rest::json_lines<event, rest::lenient_json_codec>,
+                         std::optional<std::int64_t>>;
+
+[&engine](events, std::optional<std::int64_t> since,
+          rest::frame_sink<rest::json_lines_framing<event, rest::lenient_json_codec>> &out) -> async::task<> {
+  for (auto const &happened : engine.since(since)) {
+    co_await out.send(happened);
+  }
+}
+
+auto happened = co_await client.subscribe<events>("since"_p = 0);
+
+while (auto const event = co_await happened.next()) {
+  show(*event);
+}
+```
+
+A stream of frames comes with the media type its API gives it, which the client does not check. Bytes that cut no
+value throw an `http::http_error` received from `next()`, holding them as its body, as does a stream that ends inside
+a value. [`samples/docker`](../samples/docker) reads Docker's logs through a framing of its own.
+
 ## Codecs
 
 A codec encodes values into bodies and decodes bodies back, for one media type. The formats of a route's body and

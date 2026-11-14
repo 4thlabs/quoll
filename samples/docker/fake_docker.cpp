@@ -55,6 +55,8 @@
 #include <quoll/server.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
@@ -78,10 +80,22 @@ struct container {
   std::string status = "created";
 };
 
-// The engine's containers, by id. The runtime runs one thread.
+// The engine's containers, by id, and what happened to them. The runtime runs one thread.
 struct engine_state {
   std::map<std::string, container> containers;
+  std::vector<docker::event> happened;
   std::uint64_t made = 0;
+
+  void record(std::string action, std::string const &id, container const &of) {
+    auto const now = std::chrono::system_clock::now().time_since_epoch();
+
+    happened.push_back(
+        {.type = "container",
+         .action = std::move(action),
+         .from = {.id = id, .attributes = {{"name", of.name.substr(1)}, {"image", of.image}}},
+         .time = std::chrono::duration_cast<std::chrono::seconds>(now).count()}
+    );
+  }
 };
 
 [[noreturn]] void no_such_container(std::string const &id) {
@@ -146,11 +160,20 @@ struct docker_engine {
     auto const id = std::string(56, '0') + std::to_string(10000000 + ++state->made);
     auto const named = "/" + name.value_or("quoll_" + std::to_string(state->made));
 
-    state->containers.emplace(id, container{.name = named, .image = request.image, .cmd = request.cmd});
+    auto const &made =
+        state->containers.emplace(id, container{.name = named, .image = request.image, .cmd = request.cmd})
+            .first->second;
+
+    state->record("create", id, made);
     return {.id = id, .warnings = {}};
   }
 
-  void operator()(docker::containers::start, std::string id) const { find(id).second.status = "running"; }
+  void operator()(docker::containers::start, std::string id) const {
+    auto &[full, found] = find(id);
+
+    found.status = "running";
+    state->record("start", full, found);
+  }
 
   void operator()(docker::containers::stop, std::string id, std::optional<int>) const {
     find(id).second.status = "exited";
@@ -173,7 +196,42 @@ struct docker_engine {
       };
     }
 
+    state->record("destroy", entry.first, entry.second);
     state->containers.erase(entry.first);
+  }
+
+  // What its command wrote, as the shell would: echo its arguments, on its stdout.
+  async::task<> operator()(
+      docker::containers::logs, std::string id, std::optional<bool> stdout_wanted, std::optional<bool>,
+      std::optional<bool>, rest::frame_sink<docker::log_frames> &out
+  ) const {
+    auto const cmd = find(id).second.cmd;
+
+    if (stdout_wanted.value_or(false) && !cmd.empty() && cmd.front() == "echo") {
+      std::string line;
+
+      for (std::size_t at = 1; at < cmd.size(); ++at) {
+        line += (at > 1 ? " " : "") + cmd[at];
+      }
+
+      co_await out.send({.stream = 1, .text = line + "\n"});
+    }
+  }
+
+  // What happened between two times, a value per line of JSON; then the stream ends, as Docker's does at `until`.
+  async::task<> operator()(
+      docker::system::events, std::optional<std::int64_t> since, std::optional<std::int64_t> until,
+      rest::frame_sink<rest::json_lines_framing<docker::event, rest::lenient_json_codec>> &out
+  ) const {
+    auto const happened = state->happened;
+
+    co_await out.open();
+
+    for (auto const &event : happened) {
+      if (event.time >= since.value_or(0) && event.time <= until.value_or(event.time)) {
+        co_await out.send(event);
+      }
+    }
   }
 };
 

@@ -136,6 +136,51 @@ sink_retry(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time 
   co_await writer_of(*state).retry(delay);
 }
 
+namespace {
+
+// A stream of frames's head: its media type, unless a middleware has set one, then the status as it was given.
+void frame_head(http::response_writer &out, std::string_view content_type) {
+  if (!out.head_given() && !out.fields.contains("Content-Type")) {
+    out.fields.set("Content-Type", content_type);
+  }
+}
+
+} // namespace
+
+async::task<>
+frame_open(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn, std::string_view content_type) {
+  auto const held = std::move(turn);
+  running const counted{*state};
+  auto &out = *state->out;
+
+  if (!out.head_given()) {
+    frame_head(out, content_type);
+    co_await out.write({});
+  }
+}
+
+async::task<> frame_send(
+    std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn, std::string bytes,
+    std::string_view content_type
+) {
+  auto const held = std::move(turn);
+  running const counted{*state};
+  auto &out = *state->out;
+
+  frame_head(out, content_type);
+  co_await out.write(bytes);
+}
+
+async::task<> frame_finish(std::shared_ptr<event_sink_state> state, std::string_view content_type) {
+  // Drained: none runs, none can. A stream with no frame is still one: its head.
+  if (state->out && !state->out->head_given()) {
+    frame_head(*state->out, content_type);
+    co_await state->out->write({});
+  }
+
+  sink_close(*state);
+}
+
 async::task<> sink_drain(std::shared_ptr<event_sink_state> state) {
   // Closed to what has not run yet, at once; then what runs, on a task of the service's own, ends: it writes to the
   // connection, which goes with the stream. Turns of the loop, as it ends on its own executor.
@@ -147,7 +192,7 @@ async::task<> sink_drain(std::shared_ptr<event_sink_state> state) {
 }
 
 async::task<> sink_answer(std::shared_ptr<event_sink_state> state, http::response refusal) {
-  if (!state->out) {
+  if (!state->out || state->out->head_given()) {
     throw std::logic_error{"quoll::rest::event_sink: an answer once the stream has started"};
   }
 

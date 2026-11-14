@@ -58,8 +58,10 @@
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/event_sink.hpp>
 #include <quoll/rest/fixed_string.hpp>
+#include <quoll/rest/frame_sink.hpp>
 #include <quoll/rest/query_params.hpp>
 #include <quoll/rest/security.hpp>
+#include <quoll/rest/stream.hpp>
 #include <quoll/rest/validators.hpp>
 
 #include <algorithm>
@@ -282,9 +284,22 @@ async::task<http::response> answer(mounted<Validators, Services...> &state, type
   }
 }
 
-// The sink the handler of a route of events<> sends through.
+// The sink the handler of a route of events<> or stream<> sends through.
+template <class Part>
+struct sink_for;
+
+template <class T, class Codec>
+struct sink_for<events<T, Codec>> {
+  using type = event_sink<T, Codec>;
+};
+
+template <class F>
+struct sink_for<stream<F>> {
+  using type = frame_sink<F>;
+};
+
 template <class Endpoint>
-using sink_of = event_sink<typename events_part_of<Endpoint>::type, typename events_part_of<Endpoint>::codec>;
+using sink_of = typename sink_for<events_part_of<Endpoint>>::type;
 
 // The answer to an http_error a service or a validator threw, as the router answers one (http::detail::error_answer),
 // with the challenge of the route's first scheme on a 401 (RFC 9110); none for one raised with a status that is no

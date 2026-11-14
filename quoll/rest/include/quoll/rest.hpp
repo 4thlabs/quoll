@@ -50,8 +50,12 @@
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/form_codec.hpp>
 #include <quoll/rest/formats.hpp>
+#include <quoll/rest/frame_sink.hpp>
+#include <quoll/rest/frame_stream.hpp>
+#include <quoll/rest/framing.hpp>
 #include <quoll/rest/header.hpp>
 #include <quoll/rest/json_codec.hpp>
+#include <quoll/rest/json_lines.hpp>
 #include <quoll/rest/mount.hpp>
 #include <quoll/rest/named_argument.hpp>
 #include <quoll/rest/names.hpp>
@@ -66,6 +70,7 @@
 #include <quoll/rest/route.hpp>
 #include <quoll/rest/security.hpp>
 #include <quoll/rest/service.hpp>
+#include <quoll/rest/stream.hpp>
 #include <quoll/rest/text_codec.hpp>
 #include <quoll/rest/validators.hpp>
 
