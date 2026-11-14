@@ -170,6 +170,7 @@ Every night, and on a pull request touching their targets:
 | [REST](docs/rest.md)                           | The contract, `mount`, `rest::client`, codecs, third-party APIs                                  |
 | [Command line](docs/command-line.md)           | A command-line program calling an API, natively and in Node                                       |
 | [UI](docs/ui.md)                               | Components, props, callbacks, views not run again, JavaScript widgets, `to_html`, the build      |
+| [UI life cycle](docs/ui-lifecycle.md)          | How a component is made, viewed, runs its effects and goes, in diagrams                          |
 | [Runtimes](docs/runtimes.md)                   | `quoll::runtime`, the adapters, `http::client` in a browser, what WebAssembly asks of you         |
 | [Performance](docs/performance.md)             | What Quoll costs, and how it is measured                                                          |
 | [Design decisions](docs/design-decisions.md)   | The choices Quoll made where they matter to a user, the options set aside, and what follows       |
