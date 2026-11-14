@@ -4,7 +4,8 @@ An interface written in C++ and compiled to WebAssembly, in the same language as
 DOM gives text, input methods, selection and accessibility, and Tailwind the styles. Link `quoll::emscripten`, which
 brings `quoll::ui`. [`samples/notes/web`](../samples/notes/web) is a whole page, with its build, and
 [`samples/dashboard`](../samples/dashboard) a screen with a chart.js widget; what is still to come is
-[at the end](#what-it-lacks).
+[at the end](#what-it-lacks). How the app makes a component, views it, runs its effects and lets it go is drawn in
+[The life of a component](ui-lifecycle.md).
 
 ## A component
 
