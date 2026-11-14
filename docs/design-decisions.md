@@ -226,16 +226,18 @@ rather than on its type of props, and nothing is reflected. An empty struct whos
 too.
 
 **Set aside.** Struct components found by Glaze's reflection, which ties the UI to a JSON library; struct components
-whose members list themselves as they are made, which needs no reflection but generates as much code as before; hooks
-found by the order of their calls, as React's, which a branch would shift with nothing to catch it in C++.
+whose members list themselves as they are made, which needs no reflection but generated as much code as before, and
+which form S took up the next day, its effects following values of its props rather than their type (the decision
+above); hooks found by the order of their calls, as React's, which a branch would shift with nothing to catch it in
+C++.
 
 What a view writes into its hooks, an effect's dependencies and function or what follows an action's success, takes
 effect once that view shows, with that view's props, as React's effects are those of the committed render; a run calls
 the closure shown as it is asked for. Fixing each closure that outlives the props it captured, one at a time, was set aside for
 that rule.
 
-**For you.** Write `auto &` for what a `use_` call gives, capture it by reference, and keep the calls out of loops
-whose number of turns changes. A closure captures `given` and what a `use_` call gives by reference, and what the view
+**For you**, in form D, which keeps these hooks: write `auto &` for what a `use_` call gives, capture it by reference,
+and keep the calls out of loops whose number of turns changes. A closure captures `given` and what a `use_` call gives by reference, and what the view
 computed by value.
 
 ### A component is an object of its props, placed by calling it
@@ -246,18 +248,14 @@ by name kept.*
 **The question.** A view places another component: by naming its type, as `component<product_detail>({...})`, or as
 React's JSX does, by the component itself? And how is one declared?
 
-**Taken.** An object, `component<props>`, called with its props in the view: `product_detail({.item = item})`. Its type
-depends only on its props, so that a header declares it, `extern component<props> const product_detail;`, and a source
-of its own defines it, which a change to it alone compiles again. One way to write it everywhere, its props always
-written, `constexpr component<props> name = ...`, `inline` in a header, `component<>` with none: one written without
-them does not compile. The routes name their pages so, `route<"{id}", product_page, &product_page_props::id>()`,
-and the links too, `link_to(product_page, {.id = 7}, "Open")`. The app's root is one, with no props.
+**Taken.** An object, called with its props in the view: `product_detail({.item = item})`. The routes name their pages
+so, `route<"{id}", product_page, &product_page_props::id>()`, and the links too, `link_to(product_page, {.id = 7},
+"Open")`. The app's root is one, with no props. Superseded: one way to write it everywhere, its props always written,
+`constexpr component<props>`, and a header and a source for each component. A component is now written in its header,
+in form S or in form D, whose props are deduced; an `extern` declaration and a source remain possible for one whose
+rebuild matters.
 
-**Set aside.** `component<product_detail>(...)` in the view, which the maintainer found out of place in a view. A type
-deduced from the lambda, which left two ways to write a component, as an extern declaration has to write its props.
-
-**For you.** Give each component a header, its props and its `extern` declaration, and a source, its view: a source
-includes the headers of the components it places, so that a change of one compiles again only it and what places it.
+**Set aside.** `component<product_detail>(...)` in the view, which the maintainer found out of place in a view.
 
 ### A component that goes stays until its tasks end
 
@@ -368,7 +366,10 @@ page of many components. A context made at its first use: what an app holds show
 reference, as FTXUI's: the lifetime would be the program's to keep, and a stale answer or a cancellation too.
 
 **For you.** Declare the context, give it to the app, `{.contexts = {provide<catalog>()}}`, and call
-`use_context<catalog>()` in each component that reads or changes it. Run what must go on once a component goes through `run()`.
+`use_context<catalog>()` in each component that reads or changes it, or give a struct component a `shared<catalog>`
+member. A context only a page needs is provided by its component, `provide_context<T>()`, which gives a `provided<T>`.
+Run what must go on once a component goes through `run()`. Stores are planned to replace contexts
+([#206](https://github.com/4thlabs/quoll/issues/206)).
 
 ### Routes checked at compile time, their parameters a page's props
 

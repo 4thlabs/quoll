@@ -3,8 +3,9 @@
 Guidance for AI coding agents working in this repository.
 
 **Before writing or reviewing code, read [`docs/CODING_RULES.md`](docs/CODING_RULES.md)** — the C++ rules every
-change must follow. The target, the roadmap and open decisions are in [`docs/PLAN.md`](docs/PLAN.md): read it first, it is the
-source of truth for the design and the order of the work. **Before committing or reviewing C++ that borrows** (a reference, pointer,
+change must follow. The target, the decisions and the architecture are in [`docs/PLAN.md`](docs/PLAN.md): read it first, it is the
+source of truth for the design; what is to do, and in which order, is in the GitHub project
+[Quoll](https://github.com/users/4thlabs/projects/2). **Before committing or reviewing C++ that borrows** (a reference, pointer,
 view, span, iterator or `this` held past one expression, a move, a coroutine or a callback, a destruction order that matters,
 state shared between threads or tasks), run the check in
 [`.agents/skills/borrow-checker/SKILL.md`](.agents/skills/borrow-checker/SKILL.md).
@@ -16,29 +17,20 @@ The maintainer communicates in French; code, comments, docs and commit messages 
 
 ## Status
 
-Exploration. Modules so far: `quoll::async` (task, executor_ref, any_executor, await_context with stop token,
-current_executor and current_stop_token, executor services, co_spawn, on an executor or, in a coroutine, on `this_executor` by default, and its `detached` handler, when_all, run_loop,
-`Timer` and `timer_ref`, `sleep_for`, `with_timeout`, `Offloader`, `offloader_ref` and `offload` for blocking work),
-`quoll::io` (`ByteStream`, `HalfClosableStream`, `PollableStream` with its `read_readiness`, `Connector`, `Listener`, `BoundListener` and `Network` concepts, `any_stream` /
-`any_listener` type erasure, `io::network_ref` with `io::connect` / `io::listen` through the executor's network,
-`io::network_connector`, TLS options with `TlsNetwork`, `tls_network_ref`, `TlsConnector`, `io::connect_tls` and
-`io::listen_tls`, in-memory stream pair, `io::write`), `quoll::http` (messages, llhttp parser, serializer, server-sent events: `event_writer`, `event_reader` and `is_event_stream`, over `event_parser`, `format_event`, `format_retry` and `format_comment`, WebSocket frames: `websocket_parser` and `close_code_of`, `format_websocket_frame` and `format_websocket_close`, `is_websocket_upgrade` and `websocket_accept`, and WebSocket connections: `websocket`, and `accept_websocket` for a server, through `response::upgrade`,
-`http::read` / `http::write` over a byte stream, `HttpTransport` concept, sans-IO `router`, `local_transport` to a
-router of the same program; llhttp is compiled and exported as `quoll::llhttp`), `quoll::server` (in `quoll::http`: `server` holds routes or a copy of a router, a handle shared with its tasks, and serves a byte stream,
-takes over a `Listener` or listens on a port, `static_files`, a middleware),
-`quoll::client` (in `quoll::http`: `client`, an `HttpTransport` over a `Connector` with keep-alive connections, built from an
-`http[s]://` URL, and `connect_websocket` from a `ws[s]://` one), `quoll::rest` (the server, `mount`, the `client` over an `HttpTransport`, `http::client` by default, and the
-contract: `endpoint`, `api`, `with`, the parts and compile-time checked path templates, and `events<T>` with its `event_sink` and the client's `subscribe`; and the codecs: `json_codec` on
-Glaze, `text_codec`, `param_traits`), `quoll::ui` (elements, decorators, `state`, `to_html`, `app` of a root component and the `Renderer` concept,
-components, `component<Props>` objects placed by calling them, their state their `use_` hooks, `callback`, views not run again, `widget<Props>` with `WidgetRenderer`, `effect`,
-`action`, an effect writing into a target state, debounced as an option, an action holding its own, `async_state`, `form_state`, a form of a value the view gives, contexts: `provide<T>()` in the app's options, `use_context<T>()` in a component and `provide_context<T>()` for those of its view, and routing: `routes` of `route<Path, page, fields...>` naming component objects and the fields of their props an address fills, by member pointers, `from_query` and `from_path`, `outlet()`, `link_to`, `routing<routes>(history)` and `router`), the adapters `quoll::asio` (asio executor offering the network, a timer, threads for blocking work and TLS, `tcp_stream`, `tls_stream`, connector and acceptors, `accepted_tls_stream`,
-`runtime`; native only, its runtime hides asio from a program, its streams and acceptors need standalone asio, TLS needs OpenSSL) and `quoll::emscripten` (JavaScript event loop executor offering
-a timer, the browser's `fetch` as the `http::platform_ref` a client from a URL goes through, `dom_renderer`, `mount` of a root component and `browser_history`; Emscripten only, its JavaScript side `js/quoll_emscripten.js` is linked with `--js-library`),
-and
-`quoll::runtime` (`<quoll/runtime.hpp>`: `quoll::runtime`, the runtime of the adapter chosen with `QUOLL_RUNTIME`, asio
-natively, the browser's event loop under Emscripten). A client GET runs end to end over a memory stream, over TCP through the asio
-connector, and over `fetch` in Node; a `rest::client` built from a URL calls `http::server` over TCP on a `quoll::runtime`.
-**The roadmap in `docs/PLAN.md` says what comes next, and which step is current.** Do not write the module design into this file.
+Exploration. The modules, each a library `quoll::<module>`:
+
+- `quoll::async`: tasks, executors and their services, `co_spawn`, `when_all`, timers, stops, blocking work offloaded.
+- `quoll::io`: byte streams, listeners, connectors and networks, TLS options, their type erasure, a memory stream.
+- `quoll::http`: messages, the llhttp parser (llhttp compiled and exported as `quoll::llhttp`), the serializer, the
+  sans-IO router, server-sent events and WebSocket.
+- `quoll::server` and `quoll::client`: `http::server` and `http::client`, their names in `quoll::http`.
+- `quoll::rest`: the contract DSL, `mount`, `rest::client`, the codecs.
+- `quoll::ui`: components in two forms, states, effects and actions, forms, contexts, routing, widgets, `to_html`.
+- The adapters `quoll::asio` (native) and `quoll::emscripten` (the browser), and `quoll::runtime`, the build's one.
+
+What each gives is in the module table of [`README.md`](README.md#what-it-holds) and in the guides under `docs/`. Do not
+write the module design into this file. **What is to do, and its priority, is in the GitHub project
+[Quoll](https://github.com/users/4thlabs/projects/2); the design and the decisions are in `docs/PLAN.md`.**
 
 ## Build & test
 
@@ -66,28 +58,15 @@ CC=clang-19 CXX=clang++-19 cmake -B build-fuzz -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
 ## Layout
 
-Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
+Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`; what
+[`docs/development.md`](docs/development.md#layout) says of it is not repeated here:
 
-- Each module is a directory `quoll/<module>/` with `include/quoll/<module>/...` headers, an optional umbrella
-  `include/quoll/<module>.hpp`, `src/` once it has code compiled once, `tests/`, and a `CMakeLists.txt`:
-
-  ```cmake
-  quoll_declare_module(NAME http SOURCES src/parser.cpp DEPS quoll::async)
-  quoll_declare_tests(SOURCES tests/parser_test.cpp DEPS quoll::http)
-  ```
-
-  This creates the target `quoll_<module>`, a static library, or `INTERFACE` without `SOURCES`, alias `quoll::<module>`, exported as `quoll::<module>`
-  by `find_package(quoll)`. Modules are added in dependency order in the root `CMakeLists.txt`.
-- `quoll::ui`, the largest, has its headers in folders by subject, `view`, `component`, `data`, `context`, `routing`,
-  `widget` and `app` (`<quoll/ui/data/state.hpp>`), its details in the same folders under `detail/`, but for helpers
-  they all use, at its root, and its `src/` and `tests/` alike, `tests/compile_fail/` flat; its namespace stays
-  `quoll::ui`, and `<quoll/ui.hpp>` includes them all. The other modules stay flat for now.
-- Adapters (asio, Emscripten, later a webview...) are modules like the others, grouped under
-  `quoll/adapters/<adapter>/` (added by `quoll/adapters/CMakeLists.txt`) rather than at the root. Only the directory
-  changes: the target stays `quoll::<adapter>` and the headers `<quoll/<adapter>/...>`.
-  `quoll/adapters/runtime/` is no adapter: it picks the build's one (`QUOLL_RUNTIME`, asio natively), whose
-  `<adapter>::runtime` becomes `quoll::runtime` in `<quoll/runtime.hpp>`; a new runtime adapter adds its branch
-  there.
+- Each module is a directory `quoll/<module>/`, declared with `quoll_declare_module` and `quoll_declare_tests`, and
+  added in dependency order in the root `CMakeLists.txt`. `quoll::ui` has its headers in folders by subject; the other
+  modules stay flat for now. Adapters are modules grouped under `quoll/adapters/<adapter>/`, their target
+  `quoll::<adapter>` and their headers `<quoll/<adapter>/...>`. `quoll/adapters/runtime/` is no adapter: it picks the
+  build's one (`QUOLL_RUNTIME`), whose `<adapter>::runtime` becomes `quoll::runtime`; a new runtime adapter adds its
+  branch there.
 - All test sources compile into one executable, `build/tests/quoll_tests` (Catch2 v3 via CPM, built by
   `quoll_main_tests()` in `tests/CMakeLists.txt`).
   Helpers shared by the tests of every module live in `tests/support/quoll/test/` (`quoll::test::run` runs a
@@ -102,19 +81,13 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
   Catch2 case (`[.assert]`) that breaks it, declared with `quoll_declare_assert_tests(NAME ... CASE ... EXPECT ...)`. Each
   becomes a ctest `assert.<name>` that runs it alone and passes only when the program ends with the assertion's text, which
   the case's name must not hold (native builds; a build without assertions says so and passes).
-- `tests/fuzz/`: one libFuzzer target per source, built with `QUOLL_FUZZ` (Clang, under ASan and UBSan) rather than in
-  `quoll_tests`, its seeds in `corpus/<target>/`. An input that crashed one joins its seeds, with a test of the fix.
-- `tests/bench/`: `quoll_bench`, built with `QUOLL_BENCH`, measures requests per second, latency and allocations, its figures in
-  `docs/BENCHMARKS.md`. `bench.yml` runs it every night, and on a PR touching it only, and checks the allocations per request against
-  the budgets in its source, GCC 13's, which do not depend on the machine. A change that raises one says why.
-- `tests/load/`: `quoll_load`, built with `QUOLL_LOAD`, a mixed load on a server and its clients, each on a runtime of several
-  threads: well-formed requests, stops, peers gone in mid-request, past the limits or stalling. `load.yml` runs it every night
-  under TSan and under ASan with UBSan, and on a PR touching it only; a sanitizer's report or a wrong answer fails it. CI
-  compiles it, so that a change to what it uses breaks the PR rather than the night.
-- `tests/interop/`: `quoll_interop_server` and `quoll_interop_client`, built with `QUOLL_INTEROP`, and `run.sh`, which runs
-  them against third-party peers, each in a container: curl, Python's requests, httpx, http.client and websockets, Node's
-  fetch and WebSocket, aiohttp's and Node's servers, nginx as a proxy, and Autobahn's WebSocket suite each way. `interop.yml`
-  runs it every night, and on a PR touching it only.
+- `tests/fuzz/`, `tests/bench/`, `tests/load/` and `tests/interop/`: libFuzzer targets, the benchmark, a mixed load on a
+  server and its clients, and runs against third-party peers, each built by its own option rather than in `quoll_tests`,
+  and run every night and on a PR touching it: see [`docs/development.md`](docs/development.md#other-checks). An input
+  that crashed a fuzz target joins its seeds in `tests/fuzz/corpus/<target>/`, with a test of the fix. `bench.yml`
+  checks the allocations per request against the budgets in the benchmark's source, GCC 13's, which do not depend on
+  the machine: a change that raises one says why. CI compiles `quoll_load`, so that a change to what it uses breaks the
+  PR rather than the night.
 - `samples/<sample>/`: small programs using Quoll, built when `QUOLL_BUILD_SAMPLES` is ON (default when top-level).
   `samples/notes`: a REST contract in `api/`, its server in `server/` and its command line in `cli/` (native), and its
   page in `web/` (Emscripten); with tests ON, the ctest `notes_round_trip` runs the server and the command line against
@@ -153,10 +126,10 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`:
 
 ## Repository
 
-Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). CI (`.github/workflows/ci.yml`): GCC 13, Clang 19
-and Emscripten build + tests, GCC 13 with TSan and with ASan / UBSan, and a clang-format check, on every PR and push to
-`main`, and Apple Clang on macOS; fuzzing (`.github/workflows/fuzz.yml`), a load under the sanitizers (`load.yml`), the interop runs (`interop.yml`) and `clang-tidy` with its analyzer on the tests too (`clang-tidy.yml`) run every night, and on a PR touching their targets or rules; the header checks run on GCC 13, Emscripten and macOS, the `compile_fail` ctests on GCC 13 and Clang 19, `clang-tidy`
-(`.clang-tidy`) on Clang 19, and the jobs keep their compilations in ccache. Formatting: `clang-format-18 -i <file>` with the repo `.clang-format`; format only
+Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll). CI (`.github/workflows/ci.yml`) runs on every PR
+and push to `main`; fuzzing, the load, the interop runs, the benchmark and the whole of `clang-tidy` run every night, and
+on a PR touching their targets or rules. What each job checks is in
+[`docs/development.md`](docs/development.md#what-ci-checks). Formatting: `clang-format-18 -i <file>` with the repo `.clang-format`; format only
 the files you touch, but for a change to `.clang-format`, which formats the whole repository in a commit of its own, listed in
 `.git-blame-ignore-revs`.
 

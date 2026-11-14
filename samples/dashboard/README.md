@@ -41,6 +41,9 @@ dashboard/
 | `web/src/widgets/line_chart.js` | the widget's module: `mount`, `update` and `unmount` over chart.js, a click emitting `point_selected` |
 | `web/src/client/products_client.hpp`, `.cpp` | the calls to the server, through a `rest::client` of the contract, in a source of their own |
 
+The components move to their headers alone, in forms S and D, as [`docs/ui.md`](../../docs/ui.md#a-component) writes
+them, with [#200](https://github.com/4thlabs/quoll/issues/200).
+
 A product is an address: a click on a row goes there, the browser's back button comes back, and a link to it opens it.
 The product's page shows a view of the product keyed by it: another product is another view, with nothing typed and
 its own sales, loading from the start, the load of the one before stopped. A detail saves its product once at a time,
