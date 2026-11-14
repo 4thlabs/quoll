@@ -265,6 +265,11 @@ template <class Tail>
 
 // Whether each type is a path parameter's: read from text.
 template <class... Types>
+[[nodiscard]] consteval bool all_query_values(type_list<Types...> /*types*/) {
+  return (is_parameter_value<Types>::value && ...);
+}
+
+template <class... Types>
 [[nodiscard]] consteval bool all_parameters(type_list<Types...> /*types*/) {
   return (Parameter<Types> && ...);
 }
@@ -318,6 +323,10 @@ struct operation : operation_tag {
       "which only a query parameter may be"
   );
   static_assert(
+      all_query_values(query_types{}), "quoll::rest: a query parameter's type is read from text (a Parameter), or a "
+                                       "std::optional or a std::vector of one"
+  );
+  static_assert(
       Method != http::verb::head || std::is_void_v<Result>,
       "quoll::rest: a response to HEAD has no body: its result is void"
   );
@@ -326,16 +335,18 @@ struct operation : operation_tag {
       rest_of_path_is_text<expression_type::rest_of_path(), path_types>(),
       "quoll::rest: a {name:path} parameter, the rest of the path, is a std::string"
   );
-  static_assert(
-      bodies::size == 0 || (Method != http::verb::get && Method != http::verb::head),
-      "quoll::rest: a get or a head has no body, which fetch refuses"
-  );
-
   using contract_category = endpoint_category;
   using parts = concat_t<
       typename expression_query_parts<Expr, query_types>::type, filter_t<is_tail_part, tail>,
       typename body_parts_of<bodies>::type, typename result_parts<Result>::type,
       filter_t<is_security_part, filter_t<is_tail_part, options>>>;
+
+  // On its parts, so that a body<> written as a part counts too; a group's, inherited, are checked by its route.
+  static_assert(
+      count_bodies(parts{}) == 0 || Method == http::verb::post || Method == http::verb::put ||
+          Method == http::verb::patch,
+      "quoll::rest: only a post, a put or a patch has a body"
+  );
 
   static constexpr http::verb method = Method;
   static constexpr auto path_value = expression_type::path;

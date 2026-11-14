@@ -49,8 +49,8 @@ namespace quoll::rest {
  *
  * @code
  * auto const service = rest::service(
- *     [](notes::get, std::int64_t id) -> note { return store.find(id); },
- *     [](notes::create, new_note made) { return store.add(std::move(made)); });
+ *     [&store](notes::get, std::int64_t id) -> note { return store.find(id); },
+ *     [&store](notes::create, new_note made) { return store.add(std::move(made)); });
  *
  * rest::mount<api>(router, service);
  * @endcode

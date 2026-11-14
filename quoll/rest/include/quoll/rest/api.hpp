@@ -118,7 +118,9 @@ struct group : with<Members...> {};
  *
  * Paths join: `api<"/api/v1", api<"/users", endpoint<..., "/{id:int64}">>>` serves `/api/v1/users/{id:int64}`, and
  * an endpoint path of `/` is the prefix itself. A prefix may have parameters, which come first in the arguments of
- * its endpoints. Checked at compile time: endpoint names are unique, and no two endpoints share a method and a path.
+ * its endpoints. An api of routes (rest::get<...>) has one prefix, with no parameter, and its routes in rest::group:
+ * a parameter they share goes in each one's path. Checked at compile time: endpoint names are unique, and no two
+ * endpoints share a method and a path.
  */
 template <fixed_string Prefix, class... Members>
 struct api {
@@ -138,6 +140,10 @@ struct api {
   using contract_category = detail::api_category;
   using routes = detail::concat_t<detail::type_list<>, typename detail::routes_of<Prefix, Members>::type...>;
 
+  static_assert(
+      !detail::holds_operation<routes>::value || detail::checked_path<Prefix>::parsed.size == 0,
+      "quoll::rest::api: the prefix of an api of routes has no parameter: it goes in each route's path"
+  );
   static_assert(detail::distinct_names(routes{}), "quoll::rest::api: two endpoints have the same name");
   static_assert(detail::distinct_operations(routes{}), "quoll::rest::api: two endpoints have the same method and path");
 

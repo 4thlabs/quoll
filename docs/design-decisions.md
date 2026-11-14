@@ -163,8 +163,9 @@ refusing to run.
 
 ### A contract made of types
 
-**Taken.** An API is a set of C++ types: `rest::endpoint<"name", verb, "/path", parts...>` per operation, gathered in
-`rest::api<>`, its path templates checked at compile time. A server implements a contract with `rest::mount`, and a
+**Taken.** An API is a set of C++ types, a layer over the router: one route per operation, its method as its type,
+`rest::get<"/notes/{id}", note, std::int64_t>`, gathered in `rest::group` and `rest::api<>`, checked at compile time
+([its design](design/rest-dsl.md)). A server implements a contract with `rest::mount`, and a
 client consumes one, but neither needs the other. Each declared status has its typed response.
 
 **For you.** A call with the wrong arguments, or a server missing an endpoint, does not compile, and a contract for a

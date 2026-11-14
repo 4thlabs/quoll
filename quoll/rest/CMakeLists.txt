@@ -110,13 +110,18 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/rest_names_field_twice.cpp
     tests/compile_fail/returns_body_on_no_content.cpp
     tests/compile_fail/returns_informational.cpp
+    tests/compile_fail/route_body_in_group.cpp
     tests/compile_fail/route_body_not_last.cpp
+    tests/compile_fail/route_body_on_delete.cpp
     tests/compile_fail/route_body_on_get.cpp
+    tests/compile_fail/route_body_part_on_delete.cpp
     tests/compile_fail/route_fixed_value.cpp
     tests/compile_fail/route_handler_of_other_api.cpp
     tests/compile_fail/route_head_with_body.cpp
     tests/compile_fail/route_missing_type.cpp
     tests/compile_fail/route_optional_path_parameter.cpp
+    tests/compile_fail/route_prefix_with_parameter.cpp
+    tests/compile_fail/route_query_not_a_value.cpp
     tests/compile_fail/route_rest_of_path_text.cpp
     tests/compile_fail/route_service_two_handlers.cpp
     tests/compile_fail/route_two_bodies.cpp

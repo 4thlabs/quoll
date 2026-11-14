@@ -43,7 +43,7 @@ using api = rest::api<"/api", notes::routes>;
   know, say its format, JSON by default.
 - **The parameters** follow, a type for each `{name}` of the string in its order, the path's then the query's (a
   `std::optional` may be missing, a `std::vector` repeats); then the headers, `rest::header<"X-Device", T>`; then the
-  body, none on a `get` or a `head`, `rest::form<T>` for a form.
+  body, for a `post`, a `put` or a `patch` only, `rest::form<T>` for a form.
 - **The name** of its operation is `rest::operation_id<"notes.get">`, or its method and whole path,
   `GET /api/notes/{id}`.
 - **A group** holds routes, groups and what they share, `rest::security<...>` or a header, which come after a route's own
@@ -68,9 +68,8 @@ rest::mount<api>(router, service);
 ```
 
 A struct with an `operator()` for each of its routes serves as well, and `mount` takes several, mixed with lambdas.
-Each route has one handler, of its parameters exactly: one missing or two do not compile. An api whose prefix has
-parameters, `rest::api<"/repos/{owner}", ...>`, gives them first, of the types its template says, `std::string` by
-default. A fixed value in a route's query comes later.
+Each route has one handler, of its parameters exactly: one missing or two do not compile. The api's prefix has no
+parameter: one its routes share goes in each one's path. A fixed value in a route's query comes later.
 
 ## The contract
 

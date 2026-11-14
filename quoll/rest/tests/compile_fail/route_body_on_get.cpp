@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest: a get or a head has no body, which fetch refuses
+// expect: quoll::rest: only a post, a put or a patch has a body
 //
 // A GET with a body, which fetch refuses.
 

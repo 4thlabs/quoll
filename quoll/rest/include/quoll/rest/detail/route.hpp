@@ -44,6 +44,7 @@
 #include <quoll/rest/detail/checked_path.hpp>
 #include <quoll/rest/detail/field_names.hpp>
 #include <quoll/rest/detail/join_strings.hpp>
+#include <quoll/rest/detail/operation_concept.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/path_template.hpp>
 #include <quoll/rest/detail/path_types.hpp>
@@ -201,6 +202,11 @@ struct route {
   static_assert(
       count_bodies(parts{}) == 0 || (Endpoint::method != http::verb::get && Endpoint::method != http::verb::head),
       "quoll::rest::with: a GET or HEAD endpoint gets a body<> (fetch rejects one)"
+  );
+  static_assert(
+      !Operation<Endpoint> || count_bodies(parts{}) == 0 || Endpoint::method == http::verb::post ||
+          Endpoint::method == http::verb::put || Endpoint::method == http::verb::patch,
+      "quoll::rest: only a post, a put or a patch has a body, a group's too"
   );
   static_assert(
       count_bodies(parts{}) == 0 || Endpoint::method != http::verb::trace,

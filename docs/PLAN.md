@@ -667,11 +667,14 @@ changes only what the harness shows. Candidates:
 - JSON: [Glaze](https://github.com/stephenberry/glaze) (2026-11-03), header-only, fetched by CPM with a pinned version.
   It is to serve JSON only, behind `json_codec` (#182): the fields of `query_params<>` and of a form are read by a
   reflection of Quoll's own (2026-11-14); enums, the contexts and the widgets' JSON follow.
-- REST DSL (2026-11-03, see [REST DSL](#rest-dsl-contract-server-client)): one `endpoint<"name", method, "/path", parts...>`
-  alias per operation, nested `api<>`, `with<>`, overload set services, `call` / `try_call` / `scope` clients, one typed
-  response per status, `query_params<Struct>`, a reflection of aggregates instead of macros, a client over
-  `http::HttpTransport`, routes in the sans-IO router. A contract stands alone: clients of third-party APIs need no Quoll
-  server.
+- REST DSL (2026-11-03, redesigned 2026-11-14 in #176, [its design](design/rest-dsl.md)): a layer over the router, one
+  path expression for both. A route is its method as its type, its whole path and query below the api's prefix, its
+  result and its parameters' types: `rest::get<"/notes/{id}", note, std::int64_t>`. `rest::group` carries what its
+  routes share, with no prefix; only `rest::api<>` has one, with no parameter. Handlers are lambdas taking their route
+  first, in a `rest::service`, or overload sets; one `http::http_error`; `call` / `try_call` / `scope` clients,
+  `query_params<Struct>`, a reflection of aggregates instead of macros, a client over `http::HttpTransport`. A contract
+  stands alone: clients of third-party APIs need no Quoll server. `endpoint<>`, `with<>`, `reply<>` and the nested
+  prefixed `api<>` go once the refactor is done.
 - Prior art: the `claude/project-thread-*` branches of the Puffin repo (earlier `async`, `webkit`, `rest`) were removed
   from Puffin's `master` for quality reasons. Ideas only: never port code from them, rewrite to the rules.
 - Type erasure: non-intrusive function-pointer tables, `xxx_ref` + `any_xxx` (see the rules).
@@ -777,6 +780,10 @@ needs TLS throws at run time, saying so. A server's handshake takes place on the
 peer holds nobody back and the idle timeout covers it. In a browser, `fetch` does it all.
 
 ### REST DSL: contract, server, client
+
+> [!NOTE]
+> Redesigned on 2026-11-14: the contract's shape is now [design/rest-dsl.md](design/rest-dsl.md). What follows describes
+> `endpoint<>`, which routes replace in the last pull request of #176, where this section is rewritten.
 
 What this section says of OpenAPI (operation ids, security schemes, JSON Schemas) describes the optional output of
 [step 4](#step-4-rest-from-a-command-line-program-done), which does not exist yet: it binds nothing else.

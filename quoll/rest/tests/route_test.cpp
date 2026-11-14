@@ -35,8 +35,8 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/task.hpp>
-#include <quoll/http/http_error.hpp>
 #include <quoll/http/local_transport.hpp>
+#include <quoll/http/request.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/http/verb.hpp>
@@ -68,6 +68,11 @@ struct new_note {
   std::string text;
 };
 
+struct note_filter {
+  std::optional<std::string> contains;
+  std::optional<int> limit;
+};
+
 namespace notes {
 
 using list = rest::get<
@@ -76,8 +81,9 @@ using get = rest::get<"/notes/{id}", note, std::int64_t>;
 using create = rest::post<"/notes", rest::created<note>, new_note>;
 using remove = rest::del<"/notes/{id}", void, std::int64_t>;
 using ping = rest::get<"/ping", rest::text, rest::operation_id<"notes.ping">>;
+using search = rest::get<"/notes/search", std::vector<note>, rest::query_params<note_filter>>;
 
-using routes = rest::group<list, get, create, remove, ping>;
+using routes = rest::group<list, get, create, remove, ping, search>;
 
 } // namespace notes
 
@@ -90,6 +96,10 @@ struct service {
   }
 
   note operator()(notes::get, std::int64_t id) const { return {.id = id, .text = "found"}; }
+
+  std::vector<note> operator()(notes::search, note_filter filter) const {
+    return {{.id = filter.limit.value_or(0), .text = filter.contains.value_or("-")}};
+  }
 };
 
 http::router make_router() {
@@ -127,14 +137,13 @@ struct token {
   std::string value;
 };
 
-// A header after its parameters, a form for its body, a group in a group, a result read leniently, the rest of a path.
+// A header after its parameters, a form for its body, a group in a group, the rest of a path.
 namespace more {
 
 using sign_in = rest::post<"/token", token, rest::header<"X-Device", std::optional<std::string>>, rest::form<login>>;
 using file = rest::get<"/files/{rest:path}", rest::text, std::string>;
-using lenient = rest::get<"/lenient", rest::lenient_json<token>>;
 
-using routes = rest::group<rest::group<sign_in>, file, lenient>;
+using routes = rest::group<rest::group<sign_in>, file>;
 
 } // namespace more
 
@@ -148,30 +157,29 @@ http::router make_more_router() {
       [](more::sign_in, std::optional<std::string> device, login given) {
         return token{.value = given.user + "/" + device.value_or("-")};
       },
-      [](more::file, std::string rest) { return rest; }, [](more::lenient) { return token{.value = "kept"}; }
+      [](more::file, std::string rest) { return rest; }
   );
 
   rest::mount<more_api>(router, handlers);
   return router;
 }
 
-// Under a prefix with parameters, the others' methods, statuses and formats.
+// A parameter routes share, in each one's path; the other methods, statuses and formats.
 namespace repos {
 
-using update = rest::put<"/notes/{id}", note, std::int64_t, new_note>;
-using touch = rest::patch<"/notes/{id}", rest::accepted<note>, std::int64_t, rest::json<new_note>>;
-using exists = rest::head<"/notes/{id}", void, std::int64_t>;
-using allowed = rest::options<"/notes", void>;
-using forget = rest::del<"/notes", void, std::vector<std::int64_t>>;
-using raw = rest::get<"/raw", rest::bytes>;
+using update = rest::put<"/repos/{owner}/notes/{id}", note, std::string, std::int64_t, new_note>;
+using touch =
+    rest::patch<"/repos/{owner}/notes/{id}", rest::accepted<note>, std::string, std::int64_t, rest::json<new_note>>;
+using exists = rest::head<"/repos/{owner}/notes/{id}", void, std::string, std::int64_t>;
+using allowed = rest::options<"/repos/{owner}/notes", void, std::string>;
+using raw = rest::get<"/repos/{owner}/raw", rest::bytes, std::string>;
 
 } // namespace repos
 
-using repos_api = rest::api<
-    "/repos/{owner}",
-    rest::group<repos::update, repos::touch, repos::exists, repos::allowed, repos::raw, repos::forget>>;
+using repos_api =
+    rest::api<"/api", rest::group<repos::update, repos::touch, repos::exists, repos::allowed, repos::raw>>;
 
-// The prefix's parameter first, as its template says it, then the route's own.
+// The path's parameters in order, then the body.
 static_assert(std::same_as<
               repos_api::route<repos::update>::arguments, std::tuple<std::string, std::int64_t, new_note>>);
 
@@ -187,16 +195,25 @@ http::router make_repos_router() {
                     return note{.id = id, .text = owner + "~" + changed.text};
                   },
                   [](repos::exists, std::string, std::int64_t) {}, [](repos::allowed, std::string) {},
-                  [](repos::raw, std::string) { return std::vector<std::byte>{std::byte{1}, std::byte{2}}; },
-                  // A DELETE with a body, as some APIs take one.
-                  [](repos::forget, std::string, std::vector<std::int64_t> ids) {
-                    if (ids != std::vector<std::int64_t>{1, 2}) {
-                      throw http::http_error{http::status::bad_request, "wrong ids"};
-                    }
-                  }
+                  [](repos::raw, std::string) { return std::vector<std::byte>{std::byte{1}, std::byte{2}}; }
               )
   );
   return router;
+}
+
+// The status `router` answers a request of `method` to `target`, with a JSON `body` if any.
+http::status status_of(http::router const &router, http::verb method, std::string target, std::string body = {}) {
+  http::request request;
+
+  request.method = method;
+  request.target = std::move(target);
+
+  if (!body.empty()) {
+    request.body = std::move(body);
+    request.fields.add("Content-Type", "application/json");
+  }
+
+  return quoll::test::run(router.dispatch(std::move(request))).value().status;
 }
 
 // A group's security for its routes, and a query parameter that repeats.
@@ -225,29 +242,61 @@ http::router make_locked_router() {
   return router;
 }
 
+// A result read leniently: the server's has a field the client's type does not know.
+struct wide_token {
+  std::string value;
+  int extra = 0;
+};
+
+namespace lenient {
+
+using served = rest::get<"/token", wide_token>;
+using strict = rest::get<"/token", token>;
+using read = rest::get<"/token", rest::lenient_json<token>>;
+
+} // namespace lenient
+
+http::router make_lenient_router() {
+  http::router router;
+
+  rest::mount<rest::api<"", rest::group<lenient::served>>>(router, rest::service([](lenient::served) {
+                                                             return wide_token{.value = "kept", .extra = 1};
+                                                           }));
+  return router;
+}
+
 } // namespace route_test
 
 using namespace route_test;
+
+TEST_CASE("route: a result read leniently skips the fields its type does not know", "[rest][route]") {
+  auto const router = make_lenient_router();
+  // Two apis, as the two routes share a method and a path.
+  rest::client<rest::api<"", rest::group<lenient::read>>, http::local_transport> lenient_client{
+      http::local_transport{router}
+  };
+  rest::client<rest::api<"", rest::group<lenient::strict>>, http::local_transport> strict_client{
+      http::local_transport{router}
+  };
+
+  CHECK(run(lenient_client.call<lenient::read>()).value == "kept");
+  // The same body read strictly is refused: the lenient read is what skipped the field.
+  CHECK_THROWS(run(strict_client.call<lenient::strict>()));
+}
 
 TEST_CASE("route: a group's security, and a query parameter that repeats", "[rest][route]") {
   auto const router = make_locked_router();
   rest::client<locked_api, http::local_transport> client{http::local_transport{router}};
 
   CHECK(run(client.call<locked::open>()) == "open");
-
-  http::request refused;
-
-  refused.method = http::verb::get;
-  refused.target = "/tagged?tag=a";
-
-  CHECK(quoll::test::run(router.dispatch(std::move(refused))).value().status == http::status::unauthorized);
+  CHECK(status_of(router, http::verb::get, "/tagged?tag=a") == http::status::unauthorized);
 
   client.credentials<rest::bearer_auth>("valid");
 
   CHECK(run(client.call<locked::tagged>(std::vector<std::string>{"a", "b"})) == std::vector<std::string>{"a", "b"});
 }
 
-TEST_CASE("route: under a prefix with parameters, put, patch, head, options, accepted and bytes", "[rest][route]") {
+TEST_CASE("route: a parameter routes share, put, patch, head, options, accepted and bytes", "[rest][route]") {
   auto const router = make_repos_router();
   rest::client<repos_api, http::local_transport> client{http::local_transport{router}};
 
@@ -255,36 +304,9 @@ TEST_CASE("route: under a prefix with parameters, put, patch, head, options, acc
   CHECK(run(client.call<repos::touch>(std::string{"ada"}, 4, new_note{.text = "milk"})).text == "ada~milk");
   CHECK(run(client.call<repos::raw>(std::string{"ada"})).size() == 2);
 
-  http::request patched;
-
-  patched.method = http::verb::patch;
-  patched.target = "/repos/ada/notes/4";
-  patched.body = R"({"text":"x"})";
-  patched.fields.add("Content-Type", "application/json");
-
-  CHECK(quoll::test::run(router.dispatch(std::move(patched))).value().status == http::status::accepted);
-
-  http::request asked;
-
-  asked.method = http::verb::head;
-  asked.target = "/repos/ada/notes/4";
-
-  CHECK(quoll::test::run(router.dispatch(std::move(asked))).value().status == http::status::no_content);
-
-  http::request options;
-
-  options.method = http::verb::options;
-  options.target = "/repos/ada/notes";
-
-  CHECK(quoll::test::run(router.dispatch(std::move(options))).value().status == http::status::no_content);
-
-  // The closure outlives its task, which runs to its end in this expression.
-  auto const forgotten = quoll::test::run([&]() -> task<bool> {
-    co_await client.call<repos::forget>(std::string{"ada"}, std::vector<std::int64_t>{1, 2});
-    co_return true;
-  }());
-
-  CHECK(forgotten == std::optional<bool>{true});
+  CHECK(status_of(router, http::verb::patch, "/api/repos/ada/notes/4", R"({"text":"x"})") == http::status::accepted);
+  CHECK(status_of(router, http::verb::head, "/api/repos/ada/notes/4") == http::status::no_content);
+  CHECK(status_of(router, http::verb::options, "/api/repos/ada/notes") == http::status::no_content);
 }
 
 TEST_CASE("route: a header, a form, nested groups and the rest of a path", "[rest][route]") {
@@ -296,7 +318,6 @@ TEST_CASE("route: a header, a form, nested groups and the rest of a path", "[res
           .value == "ada/phone"
   );
   CHECK(run(client.call<more::file>(std::string{"a/b.txt"})) == "a/b.txt");
-  CHECK(run(client.call<more::lenient>()).value == "kept");
 }
 
 TEST_CASE("route: a contract of routes is served and called, by its path and its query", "[rest][route]") {
@@ -316,23 +337,17 @@ TEST_CASE("route: a contract of routes is served and called, by its path and its
   CHECK(run(client.call<notes::list>(std::nullopt, std::nullopt)).front().text == "-");
   CHECK(run(client.call<notes::create>(new_note{.text = "tea"})).id == 7);
   CHECK(run(client.call<notes::ping>()) == "pong");
+
+  auto const searched = run(client.call<notes::search>({.contains = "tea", .limit = 5}));
+
+  REQUIRE(searched.size() == 1);
+  CHECK(searched.front().id == 5);
+  CHECK(searched.front().text == "tea");
 }
 
 TEST_CASE("route: a route's status, a created one and one with no body", "[rest][route]") {
   auto const router = make_router();
-  http::request created;
 
-  created.method = http::verb::post;
-  created.target = "/api/notes";
-  created.body = R"({"text":"tea"})";
-  created.fields.add("Content-Type", "application/json");
-
-  CHECK(quoll::test::run(router.dispatch(std::move(created))).value().status == http::status::created);
-
-  http::request removed;
-
-  removed.method = http::verb::delete_;
-  removed.target = "/api/notes/3";
-
-  CHECK(quoll::test::run(router.dispatch(std::move(removed))).value().status == http::status::no_content);
+  CHECK(status_of(router, http::verb::post, "/api/notes", R"({"text":"tea"})") == http::status::created);
+  CHECK(status_of(router, http::verb::delete_, "/api/notes/3") == http::status::no_content);
 }
