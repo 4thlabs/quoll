@@ -261,6 +261,26 @@ struct parsed_template {
   return false;
 }
 
+// Whether `character` may be written as it is in a key or a value of a template's query: RFC 3986's query characters
+// but for '&' and '=', which separate them; anything else, a space or a '#', is escaped.
+[[nodiscard]] constexpr bool is_query_character(char character) noexcept {
+  return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+         (character >= '0' && character <= '9') || find_char("-._~!$'()*+,;:@/?%", character) != std::string_view::npos;
+}
+
+// A key as a request's query gives it, decoded as a form sends it: '+' a space, %XX escapes checked before.
+[[nodiscard]] constexpr std::string decoded_query_key(std::string_view key) {
+  std::string spaced{key};
+
+  for (auto &character : spaced) {
+    if (character == '+') {
+      character = ' ';
+    }
+  }
+
+  return decoded_literal(spaced);
+}
+
 // Whether `name` names a parameter of `parsed` already, in its path or its query.
 [[nodiscard]] constexpr bool names_a_parameter(parsed_template const &parsed, std::string_view name) {
   return std::ranges::any_of(
@@ -285,15 +305,22 @@ struct parsed_template {
     auto const key = pair.substr(0, equals);
     auto const value = pair.substr(equals + 1);
 
-    if (key.empty() || key.find_first_of("{}") != std::string_view::npos || !valid_escapes(key) || escapes_a_nul(key)) {
+    if (key.empty() || !std::ranges::all_of(key, is_query_character) || !valid_escapes(key) || escapes_a_nul(key)) {
       return template_error::invalid_query;
     }
 
-    if (std::ranges::any_of(parsed.query, [key](template_query const &entry) { return entry.key == key; })) {
+    // Compared as a request gives them: `q` and `%71` are one key.
+    if (std::ranges::any_of(parsed.query, [key](template_query const &entry) {
+          return decoded_query_key(entry.key) == decoded_query_key(key);
+        })) {
       return template_error::duplicate_query_key;
     }
 
     if (value.find_first_of("{}") == std::string_view::npos) {
+      if (!std::ranges::all_of(value, is_query_character)) {
+        return template_error::invalid_query;
+      }
+
       if (!valid_escapes(value)) {
         return template_error::invalid_escape;
       }
@@ -335,6 +362,12 @@ struct parsed_template {
 // `key=value` pairs joined by '&', each key once, each name unique in the template.
 [[nodiscard]] constexpr parsed_template parse_template(std::string_view text) {
   auto const question = find_char(text, '?');
+
+  // A query is that of a path: "?q={q}" has none, and no request would reach it.
+  if (question == 0) {
+    return parsed_template{.error = template_error::no_leading_slash, .segments = {}, .query = {}};
+  }
+
   auto parsed = parse_path_template(text.substr(0, question));
 
   if (parsed.error != template_error::none || question == std::string_view::npos) {

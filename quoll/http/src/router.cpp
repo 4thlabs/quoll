@@ -84,20 +84,6 @@ struct route_query {
   std::string value;
 };
 
-// The fixed values of a route, sorted: two routes of one shape and the same ones could never be told apart.
-[[nodiscard]] std::vector<std::pair<std::string, std::string>> fixed_values(std::vector<route_query> const &query) {
-  std::vector<std::pair<std::string, std::string>> fixed;
-
-  for (auto const &entry : query) {
-    if (!entry.is_param) {
-      fixed.emplace_back(entry.key, entry.value);
-    }
-  }
-
-  std::ranges::sort(fixed);
-  return fixed;
-}
-
 struct compiled_route {
   std::vector<route_segment> segments;
   std::vector<route_query> query;
@@ -310,16 +296,7 @@ template <class Entry>
     return &candidate;
   }
 
-  if (std::ranges::lexicographical_compare(candidate.segments, current->segments, {}, kind, kind)) {
-    return current;
-  }
-
-  // Of one shape: the one asking for more fixed values, which the request gives, is the more specific.
-  auto const fixed = [](Entry const &route) {
-    return std::ranges::count_if(route.query, [](auto const &entry) { return !entry.is_param; });
-  };
-
-  return fixed(candidate) > fixed(*current) ? &candidate : current;
+  return current;
 }
 
 // Adds `method` to the methods of `Allow`, and HEAD with GET.
@@ -373,8 +350,7 @@ void router::add_route(verb method, std::string_view path, std::string name, han
   }
 
   for (auto const &route : routes_) {
-    if (route.method == method && same_shape(route.segments, segments) &&
-        fixed_values(route.query) == fixed_values(compiled.query)) {
+    if (route.method == method && same_shape(route.segments, segments)) {
       throw std::invalid_argument{"quoll::http::router: " + route.name + " already routes this method and path"};
     }
   }
@@ -398,7 +374,7 @@ struct resolved_route {
   route_match match{};
   // Past the last middleware, with no route. Per request, as all of this is, and a middleware awaits what comes next.
   mutable bool router_answered = false;
-  // A route of its path refused its query.
+  // Its route refused its query.
   bool query_refused = false;
 };
 
@@ -406,60 +382,14 @@ struct resolved_route {
 
 namespace {
 
-// A pair of a request's query: its key decoded, its value decoded, or none if it does not decode (a bad escape, a NUL).
-struct request_pair {
-  std::string key;
-  std::optional<std::string> value;
-};
-
-[[nodiscard]] std::optional<std::string> decoded_component(std::string_view text) {
-  auto decoded = decode_query_component(text);
-
-  if (!decoded || decoded->contains('\0')) {
-    return std::nullopt;
-  }
-
-  return decoded;
-}
-
-// The pairs of a request's query, in order. One whose key does not decode is left out, as no route asks for it, and a
-// bad value counts only where a route reads it: a pair a proxy added refuses nothing.
-[[nodiscard]] std::vector<request_pair> request_query(std::string_view query) {
-  std::vector<request_pair> pairs;
-
-  for (std::size_t start = 0; start < query.size();) {
-    auto const ampersand = query.find('&', start);
-    auto const piece =
-        query.substr(start, ampersand == std::string_view::npos ? std::string_view::npos : ampersand - start);
-    auto const equals = piece.find('=');
-
-    if (!piece.empty()) {
-      if (auto key = decoded_component(piece.substr(0, equals))) {
-        auto value = equals == std::string_view::npos ? std::optional<std::string>{""}
-                                                      : decoded_component(piece.substr(equals + 1));
-
-        pairs.push_back({std::move(*key), std::move(value)});
-      }
-    }
-
-    if (ampersand == std::string_view::npos) {
-      break;
-    }
-
-    start = ampersand + 1;
-  }
-
-  return pairs;
-}
-
 // Whether the request gives each fixed value of a route, once, as it is.
-[[nodiscard]] bool fixed_given(std::vector<route_query> const &asked, std::vector<request_pair> const &pairs) {
+[[nodiscard]] bool fixed_given(std::vector<route_query> const &asked, std::vector<query_pair> const &pairs) {
   return std::ranges::all_of(asked, [&pairs](route_query const &wanted) {
     if (wanted.is_param) {
       return true;
     }
 
-    auto const same_key = [&wanted](request_pair const &pair) { return pair.key == wanted.key; };
+    auto const same_key = [&wanted](query_pair const &pair) { return pair.name == wanted.key; };
     auto const found = std::ranges::find_if(pairs, same_key);
 
     return found != pairs.end() && std::ranges::count_if(pairs, same_key) == 1 && found->value == wanted.value;
@@ -469,7 +399,7 @@ struct request_pair {
 // The values of the query parameters of a route, in the order of its template, each its values in order; none if one
 // of them does not decode.
 [[nodiscard]] std::optional<std::vector<std::vector<std::string>>>
-param_values(std::vector<route_query> const &asked, std::vector<request_pair> &pairs) {
+param_values(std::vector<route_query> const &asked, std::vector<query_pair> &pairs) {
   std::vector<std::vector<std::string>> values;
 
   for (auto const &wanted : asked) {
@@ -480,7 +410,7 @@ param_values(std::vector<route_query> const &asked, std::vector<request_pair> &p
     std::vector<std::string> found;
 
     for (auto &pair : pairs) {
-      if (pair.key != wanted.key) {
+      if (pair.name != wanted.key) {
         continue;
       }
 
@@ -488,7 +418,8 @@ param_values(std::vector<route_query> const &asked, std::vector<request_pair> &p
         return std::nullopt;
       }
 
-      found.push_back(std::move(*pair.value));
+      // Copied, as two parameters may read the same key.
+      found.push_back(*pair.value);
     }
 
     values.push_back(std::move(found));
@@ -499,8 +430,7 @@ param_values(std::vector<route_query> const &asked, std::vector<request_pair> &p
 
 // What the router says by itself, when no route answers.
 [[nodiscard]] response answer_without_route(detail::resolved_route const &resolved) {
-  // A request whose query no route of its path takes: a fixed value missing or another, a parameter that does not
-  // decode.
+  // A request whose query its route refuses: a fixed value missing or another, a parameter that does not decode.
   if (!resolved.valid || resolved.query_refused) {
     return status_response(status::bad_request);
   }
@@ -579,17 +509,8 @@ detail::resolved_route router::resolve(request const &message) const {
   entry const *chosen = nullptr;
   entry const *get_route = nullptr;
 
-  auto pairs = request_query(target->query);
-  auto query_refused = false;
-
   for (auto const &route : routes_) {
     if (!matches(route.segments, *segments)) {
-      continue;
-    }
-
-    // Its fixed values choose the route: another of the same path may take this query.
-    if (!fixed_given(route.query, pairs)) {
-      query_refused = true;
       continue;
     }
 
@@ -611,16 +532,24 @@ detail::resolved_route router::resolve(request const &message) const {
   }
 
   if (chosen == nullptr) {
-    resolved.query_refused = query_refused && resolved.allowed.empty();
     return resolved;
   }
 
-  auto values = param_values(chosen->query, pairs);
+  // Read only for a route that asks for some of it: a key no route reads refuses nothing, even one that does not
+  // decode.
+  std::vector<std::vector<std::string>> values;
 
-  // A parameter of its query that does not decode: refused, 400.
-  if (!values) {
-    resolved.query_refused = true;
-    return resolved;
+  if (!chosen->query.empty()) {
+    auto pairs = query_pairs(target->query);
+    auto read = fixed_given(chosen->query, pairs) ? param_values(chosen->query, pairs) : std::nullopt;
+
+    // A fixed value missing or another, or a parameter that does not decode: refused, 400.
+    if (!read) {
+      resolved.query_refused = true;
+      return resolved;
+    }
+
+    values = std::move(*read);
   }
 
   resolved.target = &chosen->target;
@@ -629,7 +558,7 @@ detail::resolved_route router::resolve(request const &message) const {
       .name = chosen->name,
       .params = extract_params(chosen->segments, *segments),
       .query = std::string{target->query},
-      .query_params = std::move(*values),
+      .query_params = std::move(values),
   };
 
   return resolved;

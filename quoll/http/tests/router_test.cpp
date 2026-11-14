@@ -1715,7 +1715,7 @@ static_assert(
 );
 static_assert(quoll::http::detail::parse_template("/a?").error == quoll::http::detail::template_error::invalid_query);
 
-TEST_CASE("router: fixed values choose among routes of one path, the most specific first", "[http][router][query]") {
+TEST_CASE("router: a route is chosen by its method and path, its fixed values only checked", "[http][router][query]") {
   http::router router;
 
   router.get("/export?format=json&id={id}", [](std::int64_t id) {
@@ -1724,25 +1724,50 @@ TEST_CASE("router: fixed values choose among routes of one path, the most specif
     answer.body = "json " + std::to_string(id);
     return answer;
   });
-  router.get("/export?format=csv&id={id}", [](std::int64_t id) {
-    http::response answer;
+  router.post("/export", [] { return http::response{}; });
 
-    answer.body = "csv " + std::to_string(id);
-    return answer;
+  // Another fixed value: refused, 400, rather than another route; the methods of the path are still told.
+  CHECK(dispatch(router, verb::get, "/export?format=csv&id=3").status == http::status::bad_request);
+  CHECK(dispatch(router, verb::head, "/export?format=json&id=3").status == http::status::ok);
+  CHECK(dispatch(router, verb::delete_, "/export").status == http::status::method_not_allowed);
+  // Two routes of one method and path, whatever their queries: never told apart.
+  CHECK_THROWS_AS(router.get("/export?format=csv", [] { return http::response{}; }), std::invalid_argument);
+}
+
+TEST_CASE("router: a handler writing its response takes the query's parameters too", "[http][router][query]") {
+  struct kept_sink {
+    std::string *body;
+
+    [[nodiscard]] task<> write(std::string_view piece) const {
+      body->append(piece);
+      co_return;
+    }
+  };
+
+  quoll::async::run_loop loop;
+  std::string written;
+  http::router router;
+
+  router.get("/stream?tag={tags}", [](std::vector<std::string_view> tags, http::response_writer out) -> task<> {
+    for (auto const tag : tags) {
+      co_await out.write(tag);
+    }
   });
-  router.get("/export", [] {
-    http::response answer;
 
-    answer.body = "plain";
-    return answer;
-  });
+  http::request request;
 
-  CHECK(dispatch(router, verb::get, "/export?format=csv&id=3").body == "csv 3");
-  CHECK(dispatch(router, verb::get, "/export?id=3&format=json").body == "json 3");
-  // None of its fixed values: the route without any.
-  CHECK(dispatch(router, verb::get, "/export?format=xml").body == "plain");
-  // The same shape and the same fixed values: never told apart.
-  CHECK_THROWS_AS(router.get("/export?format=csv&n={n}", [](int) { return http::response{}; }), std::invalid_argument);
+  request.target = "/stream?tag=a&tag=b";
+
+  auto response = quoll::test::run(loop, router.dispatch(std::move(request)));
+  kept_sink sink{&written};
+  auto const writer = response.value().late_head_writer;
+
+  (void)quoll::test::run(loop, [&]() -> task<int> {
+    co_await writer(http::body_stream{sink});
+    co_return 1;
+  }());
+
+  CHECK(written == "ab");
 }
 
 TEST_CASE(
@@ -1760,3 +1785,12 @@ TEST_CASE(
   CHECK(dispatch(router, verb::get, "/notes?utm=%zz&page=2").body == "2");
   CHECK(dispatch(router, verb::get, "/notes?page=%zz").status == http::status::bad_request);
 }
+
+static_assert(quoll::http::detail::parse_template("?q={q}").error != quoll::http::detail::template_error::none);
+static_assert(
+    quoll::http::detail::parse_template("/a?q={a}&%71={b}").error ==
+    quoll::http::detail::template_error::duplicate_query_key
+);
+static_assert(
+    quoll::http::detail::parse_template("/a?k=x#y").error == quoll::http::detail::template_error::invalid_query
+);

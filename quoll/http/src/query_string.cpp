@@ -56,26 +56,50 @@ std::optional<std::string> decode_query_component(std::string_view text) {
   return http::detail::percent_decode(spaced);
 }
 
-std::optional<std::vector<query_entry>> parse_query(std::string_view query) {
-  std::vector<query_entry> entries;
+namespace {
 
-  for (auto const pair : std::views::split(query, '&')) {
-    std::string_view const text{pair.begin(), pair.end()};
+[[nodiscard]] std::optional<std::string> decoded_part(std::string_view text) {
+  auto decoded = decode_query_component(text);
+
+  if (!decoded || decoded->contains('\0')) {
+    return std::nullopt;
+  }
+
+  return decoded;
+}
+
+} // namespace
+
+std::vector<query_pair> query_pairs(std::string_view query) {
+  std::vector<query_pair> pairs;
+
+  for (auto const piece : std::views::split(query, '&')) {
+    std::string_view const text{piece.begin(), piece.end()};
 
     if (text.empty()) {
       continue;
     }
 
     auto const equals = text.find('=');
-    auto name = decode_query_component(text.substr(0, equals));
-    auto value =
-        decode_query_component(equals == std::string_view::npos ? std::string_view{} : text.substr(equals + 1));
 
-    if (!name || !value || name->contains('\0') || value->contains('\0')) {
+    pairs.push_back(
+        {decoded_part(text.substr(0, equals)),
+         decoded_part(equals == std::string_view::npos ? std::string_view{} : text.substr(equals + 1))}
+    );
+  }
+
+  return pairs;
+}
+
+std::optional<std::vector<query_entry>> parse_query(std::string_view query) {
+  std::vector<query_entry> entries;
+
+  for (auto &pair : query_pairs(query)) {
+    if (!pair.name || !pair.value) {
       return std::nullopt;
     }
 
-    entries.push_back({std::move(*name), std::move(*value)});
+    entries.push_back({std::move(*pair.name), std::move(*pair.value)});
   }
 
   return entries;

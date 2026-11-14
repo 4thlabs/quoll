@@ -43,6 +43,7 @@
 #include <quoll/http/detail/has_signature.hpp>
 #include <quoll/http/detail/number.hpp>
 #include <quoll/http/detail/path_parameter.hpp>
+#include <quoll/http/detail/query_parameter.hpp>
 #include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/request.hpp>
@@ -82,26 +83,6 @@ template <PathParameter T>
     return parse_number<T>(text);
   }
 }
-
-// A parameter of a route's query, `?q={q}`: a path parameter's type, required and given once; a std::optional of one,
-// which may be missing; a std::vector of one, its values in order.
-template <class T>
-inline constexpr bool is_query_list = false;
-
-template <class T>
-inline constexpr bool is_query_list<std::vector<T>> = PathParameter<T>;
-
-template <class T>
-inline constexpr bool is_query_optional = false;
-
-template <class T>
-inline constexpr bool is_query_optional<std::optional<T>> = PathParameter<T>;
-
-template <class T>
-concept QueryParameter = PathParameter<T> || is_query_list<T> || is_query_optional<T>;
-
-static_assert(QueryParameter<std::optional<int>> && QueryParameter<std::vector<std::string>>);
-static_assert(!QueryParameter<std::optional<std::vector<int>>>);
 
 // From the values the request gives a query parameter: one for a required one, none or one for an optional one, any
 // for a list; none if they do not read as its type.

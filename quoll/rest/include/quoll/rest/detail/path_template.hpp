@@ -194,7 +194,6 @@ struct path_template {
 // an api).
 [[nodiscard]] consteval path_template parse_path(std::string_view text) {
   path_template parsed;
-  auto const grammar = http::detail::parse_template(text);
 
   // A query in the template comes with the routes of #176: until then, '?' is no character of a REST path, whatever
   // the query holds.
@@ -202,6 +201,8 @@ struct path_template {
     parsed.error = path_error::invalid_character;
     return parsed;
   }
+
+  auto const grammar = http::detail::parse_template(text);
 
   parsed.error = to_path_error(grammar.error);
 

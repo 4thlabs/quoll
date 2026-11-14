@@ -55,6 +55,16 @@ struct query_entry {
 // Decodes a component of a query string: '+' is a space, as forms send it, and %XX escapes.
 [[nodiscard]] std::optional<std::string> decode_query_component(std::string_view text);
 
+// A pair of a query string, its name and its value decoded, each none if it does not decode (a bad escape, a NUL).
+struct query_pair {
+  std::optional<std::string> name;
+  std::optional<std::string> value;
+};
+
+// The `name=value` pairs of a query string, in order, each part decoded or none: what reads one part only, as a router
+// reading the keys of its routes, is refused by nothing else.
+[[nodiscard]] std::vector<query_pair> query_pairs(std::string_view query);
+
 // The `name=value` pairs of a query string, decoded and in order; `name` alone has an empty value. Nothing for an
 // invalid escape or a NUL (`%00`), which C APIs would cut at, as the router refuses one in the path.
 [[nodiscard]] std::optional<std::vector<query_entry>> parse_query(std::string_view query);
