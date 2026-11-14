@@ -674,7 +674,8 @@ changes only what the harness shows. Candidates:
   routes share, with no prefix; only `rest::api<>` has one, with no parameter. Handlers are lambdas taking their route
   first, in a `rest::service`, or overload sets; one `http::http_error`; `call` / `try_call` / `subscribe` clients,
   `query_params<Struct>`, a reflection of aggregates instead of macros, a client over `http::HttpTransport`. A contract
-  stands alone: clients of third-party APIs need no Quoll server.
+  stands alone: clients of third-party APIs need no Quoll server. A body on a `post`, a `put`, a `patch` or a `del`,
+  which some APIs take on DELETE (2026-11-14); an error answered with a body of an API's own shape is not planned.
 - Prior art: the `claude/project-thread-*` branches of the Puffin repo (earlier `async`, `webkit`, `rest`) were removed
   from Puffin's `master` for quality reasons. Ideas only: never port code from them, rewrite to the rules.
 - Type erasure: non-intrusive function-pointer tables, `xxx_ref` + `any_xxx` (see the rules).

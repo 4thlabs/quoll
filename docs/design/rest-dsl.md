@@ -54,7 +54,8 @@ using api = rest::api<"/api", rest::group<rest::security<rest::bearer_auth>, not
   codec of one's own. `rest::events<T>` as a result is a stream of server-sent events.
 - **The parameters** follow, in order: one type per `{parameter}` of the string, the path's then the query's (a
   `std::optional` may be missing, a `std::vector` repeats); then the headers, `rest::header<"X-Request-Id", T>`; then
-  the body, last, for a `post`, a `put` or a `patch` only. Nothing else: the parts the route is made of, `body<>`,
+  the body, last, for a `post`, a `put`, a `patch` or a `del` only, as some APIs take one on DELETE (GitHub's
+  `DELETE /user/emails`). Nothing else: the parts the route is made of, `body<>`,
   `returns<>`, `query<>`, are Quoll's own, in `detail`.
 - **A query** is in the string, or a `rest::query_params<S>` struct for a long list of filters held as one value (a
   component's state), its fields named by Quoll's reflection or the struct's `rest_names` / `rest_fields` (#219); not
@@ -132,8 +133,8 @@ pass the other API's status on as its own.
 
 A `{parameter}` with no type, or a type in the string (`{id:int64}`); a path parameter whose type is not read from
 text, a query parameter's neither; a query in the expression and a `query_params<>` both; a `{name:path}` that is no
-`std::string`; a body on a method other than `post`, `put`
-and `patch`, a second body, or one before a header; a part of a route that is no header, `query_params<>`, security or
+`std::string`; a body on a method other than `post`, `put`,
+`patch` and `del`, a second body, or one before a header; a part of a route that is no header, `query_params<>`, security or
 `operation_id<>`; a result on `head`; two `operation_id`; an api's prefix with a parameter, a member of an api that is
 no route or group, of a group none of these or security or a header; two routes of one method and path; a route with
 no handler, or two; a lambda of a route of another api, or two lambdas of one route in a service. Each says so in
@@ -155,8 +156,3 @@ call operators cannot be listed.
 
 - **A fixed value in a route's query** (`?format=json`): decided as a part of its own, not yet written.
 - **Arguments by name** (`"page"_p = 2`): decided, not yet written.
-- **A body on DELETE**: refused, as decided. Some APIs take one (GitHub's `DELETE /user/emails`), which no route can
-  declare now. To decide by the maintainer.
-- **An error answered with a body of an API's own shape**: a handler answers an `http_error` as a problem only, so
-  that a fake of a third-party API (the GitHub sample's) answers GitHub's errors in a middleware, by the route's name.
-  An `http_error` carrying a body of its own would let its handler do it.

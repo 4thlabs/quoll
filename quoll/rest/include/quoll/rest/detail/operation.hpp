@@ -321,8 +321,9 @@ struct operation : operation_tag {
       filter_t<is_security_part, filter_t<is_tail_part, options>>>;
 
   static_assert(
-      bodies::size == 0 || Method == http::verb::post || Method == http::verb::put || Method == http::verb::patch,
-      "quoll::rest: only a post, a put or a patch has a body"
+      bodies::size == 0 || Method == http::verb::post || Method == http::verb::put || Method == http::verb::patch ||
+          Method == http::verb::delete_,
+      "quoll::rest: only a post, a put, a patch or a del has a body"
   );
 
   static constexpr http::verb method = Method;

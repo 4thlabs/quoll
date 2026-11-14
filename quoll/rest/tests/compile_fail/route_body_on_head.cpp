@@ -34,15 +34,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest: only a post, a put or a patch has a body
+// expect: quoll::rest: only a post, a put, a patch or a del has a body
 //
-// A DELETE with a body, refused as GET's.
+// A HEAD with a body.
 
 #include <quoll/rest.hpp>
 
 #include <cstdint>
-#include <string>
-#include <vector>
 
 namespace rest = quoll::rest;
 
@@ -50,4 +48,4 @@ struct note {
   std::int64_t id = 0;
 };
 
-inline constexpr rest::del<"/notes", void, std::vector<std::int64_t>> route{};
+inline constexpr rest::head<"/notes", void, note> route{};

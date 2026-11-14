@@ -69,7 +69,8 @@ using v1 = rest::api<"/api/v1", rest::group<rest::security<rest::bearer_auth>, u
   is its own type, unique by its method and its path, as the router requires.
 - **The result** comes first: see [Results](#results).
 - **The parameters** follow, in this order: a type for each `{name}` of the string, the path's then the query's; then
-  the headers, `rest::header<"X-Request-Id", T>`; then the body, last, on a `post`, a `put` or a `patch` only.
+  the headers, `rest::header<"X-Request-Id", T>`; then the body, last, on a `post`, a `put`, a `patch` or a `del` only. A body on DELETE has no meaning of its own
+  (RFC 9110): for an API that declares one, as GitHub's `DELETE /user/emails`, through hops that all forward it.
 - **The name** of its operation, OpenAPI's operationId, is `rest::operation_id<"users.get">` among its types, or else
   its method and whole path, `GET /api/v1/users/{id}`. It is the route's name in the router, which a middleware reads
   through `next.route()`.
@@ -115,7 +116,7 @@ What does not hold fails to compile, with a message that says so. These are some
 | A `{parameter}` with no type                     | `quoll::rest: a route has a type for each {parameter} of its expression, in order, after its result`    |
 | A type in the string: `{id:int64}`               | `quoll::rest: a route says the types of its parameters after its expression, not in it`                 |
 | A path parameter that is a `std::optional`       | `quoll::rest: a path parameter's type is read from text (a Parameter), never a std::optional ...`       |
-| A body on a `get`, a `del`...                    | `quoll::rest: only a post, a put or a patch has a body`                                                 |
+| A body on a `get`, a `head`, an `options`        | `quoll::rest: only a post, a put, a patch or a del has a body`                                          |
 | A body before a header                           | `quoll::rest: a route's body is its last type, after its parameters and headers`                        |
 | A result on a `head`                             | `quoll::rest: a response to HEAD has no body: its result is void`                                       |
 | A parameter in the api's prefix                  | `quoll::rest::api: the prefix has no parameter: one its routes share goes in each one's path`           |

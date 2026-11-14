@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest: only a post, a put or a patch has a body
+// expect: quoll::rest: only a post, a put, a patch or a del has a body
 //
 // A body written in a format, which counts as one.
 
@@ -45,4 +45,4 @@
 
 namespace rest = quoll::rest;
 
-inline constexpr rest::del<"/notes", void, rest::json<std::vector<std::int64_t>>> route{};
+inline constexpr rest::get<"/notes", void, rest::json<std::vector<std::int64_t>>> route{};

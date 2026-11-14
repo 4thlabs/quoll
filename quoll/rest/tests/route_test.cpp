@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/task.hpp>
+#include <quoll/http/http_error.hpp>
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/router.hpp>
@@ -173,11 +174,13 @@ using touch =
 using exists = rest::head<"/repos/{owner}/notes/{id}", void, std::string, std::int64_t>;
 using allowed = rest::options<"/repos/{owner}/notes", void, std::string>;
 using raw = rest::get<"/repos/{owner}/raw", rest::bytes, std::string>;
+// A DELETE with a body, as some APIs take one (GitHub's DELETE /user/emails).
+using forget = rest::del<"/repos/{owner}/notes", void, std::string, std::vector<std::int64_t>>;
 
 } // namespace repos
 
-using repos_api =
-    rest::api<"/api", rest::group<repos::update, repos::touch, repos::exists, repos::allowed, repos::raw>>;
+using repos_api = rest::api<
+    "/api", rest::group<repos::update, repos::touch, repos::exists, repos::allowed, repos::raw, repos::forget>>;
 
 // The path's parameters in order, then the body.
 static_assert(std::same_as<
@@ -195,7 +198,12 @@ http::router make_repos_router() {
                     return note{.id = id, .text = owner + "~" + changed.text};
                   },
                   [](repos::exists, std::string, std::int64_t) {}, [](repos::allowed, std::string) {},
-                  [](repos::raw, std::string) { return std::vector<std::byte>{std::byte{1}, std::byte{2}}; }
+                  [](repos::raw, std::string) { return std::vector<std::byte>{std::byte{1}, std::byte{2}}; },
+                  [](repos::forget, std::string, std::vector<std::int64_t> ids) {
+                    if (ids != std::vector<std::int64_t>{1, 2}) {
+                      throw http::http_error{http::status::conflict, "other ids"};
+                    }
+                  }
               )
   );
   return router;
@@ -350,6 +358,11 @@ TEST_CASE("route: a parameter routes share, put, patch, head, options, accepted 
   CHECK(status_of(router, http::verb::patch, "/api/repos/ada/notes/4", R"({"text":"x"})") == http::status::accepted);
   CHECK(status_of(router, http::verb::head, "/api/repos/ada/notes/4") == http::status::no_content);
   CHECK(status_of(router, http::verb::options, "/api/repos/ada/notes") == http::status::no_content);
+  // Its body reaches the handler, which answers 409 to any other, a status no decoding answers.
+  CHECK(quoll::test::run(client.try_call<repos::forget>(std::string{"ada"}, std::vector<std::int64_t>{1, 2}))
+            .value()
+            .has_value());
+  CHECK(status_of(router, http::verb::delete_, "/api/repos/ada/notes", "[3]") == http::status::conflict);
 }
 
 TEST_CASE("route: a header, a form, nested groups and the rest of a path", "[rest][route]") {

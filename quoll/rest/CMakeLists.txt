@@ -96,12 +96,12 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/rest_name_of_other_struct.cpp
     tests/compile_fail/rest_names_clash.cpp
     tests/compile_fail/rest_names_field_twice.cpp
+    tests/compile_fail/route_body_format_on_get.cpp
     tests/compile_fail/route_body_in_group.cpp
     tests/compile_fail/route_body_not_last.cpp
-    tests/compile_fail/route_body_on_delete.cpp
     tests/compile_fail/route_body_on_get.cpp
+    tests/compile_fail/route_body_on_head.cpp
     tests/compile_fail/route_body_on_options.cpp
-    tests/compile_fail/route_body_part_on_delete.cpp
     tests/compile_fail/route_fixed_value.cpp
     tests/compile_fail/route_handler_of_other_api.cpp
     tests/compile_fail/route_head_with_body.cpp

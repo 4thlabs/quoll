@@ -128,8 +128,8 @@ async::task<http::response> as_github_wants(http::request &&request, http::next 
   }
 
   // A handler answers an error as a problem only: GitHub's own shape of them goes through this middleware, which finds
-  // the routes by their names and their parameters by place, until an error can carry a body of an API's own (see
-  // docs/design/rest-dsl.md, Open).
+  // the routes by their names and their parameters by place. An error with a body of an API's own shape is not planned
+  // (#176, decided on 2026-11-14): a server answering as another API does writes it in a middleware, as here.
   auto const getting = next.route() == github::api::route<github::repos::get>::name;
   auto const of_a_repository = getting || next.route() == github::api::route<github::repos::issues>::name;
 
