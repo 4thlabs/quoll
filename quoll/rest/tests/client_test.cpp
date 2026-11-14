@@ -308,7 +308,7 @@ TEST_CASE("client: a middleware of the router wraps REST routes, through a local
   try {
     static_cast<void>(run(client.call<users::create>({.name = "Ada"})));
     FAIL("a refused call throws");
-  } catch (rest::call_error const &failure) {
+  } catch (http::http_error const &failure) {
     REQUIRE(failure.status() == status::forbidden);
   }
 
@@ -348,9 +348,9 @@ TEST_CASE("client: call throws call_error for any other outcome", "[rest][client
   try {
     (void)run(client.call<users::get>(7));
     FAIL("call returned");
-  } catch (rest::call_error const &error) {
+  } catch (http::http_error const &error) {
     REQUIRE(error.status() == http::status::not_found);
-    REQUIRE(error.failure().reason == "declared response 404: read it with try_call");
+    REQUIRE(std::string_view{error.what()} == "declared response 404: read it with try_call");
   }
 }
 
@@ -427,7 +427,7 @@ TEST_CASE("client: what a server says reaches what() with no line or escape sequ
   http::response answer;
 
   answer.status = http::status::internal_server_error;
-  answer.fields.add("Content-Type", rest::problem_content_type);
+  answer.fields.add("Content-Type", http::problem_content_type);
   answer.body = R"({"detail":"caf\u00e9\u001b[2J\r\nFAKE LOG LINE"})";
 
   rest::client<v1, canned_transport> const client{canned_transport{answer}};
@@ -435,7 +435,7 @@ TEST_CASE("client: what a server says reaches what() with no line or escape sequ
   try {
     (void)run(client.call<users::get>(42));
     FAIL("call returned");
-  } catch (rest::call_error const &error) {
+  } catch (http::http_error const &error) {
     REQUIRE(std::string_view{error.what()} == "caf\xC3\xA9?[2J??FAKE LOG LINE");
   }
 }
@@ -447,7 +447,7 @@ TEST_CASE("client: a base URL reads as for http::client", "[rest][client]") {
 }
 
 static_assert(
-    std::is_nothrow_copy_constructible_v<rest::call_error>, "an exception does not throw on its way to a handler"
+    std::is_nothrow_copy_constructible_v<http::http_error>, "an exception does not throw on its way to a handler"
 );
 
 TEST_CASE("client: credentials are sent to the endpoints that require them", "[rest][client]") {
@@ -462,7 +462,7 @@ TEST_CASE("client: credentials are sent to the endpoints that require them", "[r
   try {
     (void)run(anonymous.call<users::get>(42));
     FAIL("call returned");
-  } catch (rest::call_error const &error) {
+  } catch (http::http_error const &error) {
     // The detail of the server's problem.
     REQUIRE(error.status() == http::status::unauthorized);
     REQUIRE(std::string{error.what()} == "missing credentials");
@@ -484,7 +484,7 @@ TEST_CASE("client: a declared response whose body does not decode is unexpected"
 
   REQUIRE_FALSE(received.has_value());
   REQUIRE(received.error().reason.starts_with("invalid body: "));
-  REQUIRE_THROWS_AS(run(client.call<users::get>(42)), rest::call_error);
+  REQUIRE_THROWS_AS(run(client.call<users::get>(42)), http::http_error);
 }
 
 TEST_CASE("client: a path parameter must stay a segment where the template puts it", "[rest][client]") {
@@ -537,7 +537,7 @@ TEST_CASE("client: the detail of a problem, whatever the case of its media type"
   try {
     run(completes(client.call<users::remove>(42)));
     FAIL("call returned");
-  } catch (rest::call_error const &error) {
+  } catch (http::http_error const &error) {
     REQUIRE(std::string{error.what()} == "gone for good");
   }
 }
@@ -748,7 +748,7 @@ TEST_CASE("retry: up to its attempts, then the last answer stands", "[rest][clie
       http::status::service_unavailable, http::status::service_unavailable, http::status::service_unavailable
   };
 
-  REQUIRE_THROWS_AS(run(completes(client.call<users::remove>(1))), rest::call_error);
+  REQUIRE_THROWS_AS(run(completes(client.call<users::remove>(1))), http::http_error);
   REQUIRE(transport.shared->sent == 2);
 
   // A network error on the last attempt comes out of the call.
@@ -769,7 +769,7 @@ TEST_CASE("retry: a request that may not be sent twice is sent once", "[rest][cl
   transport.shared->script = {http::status::service_unavailable};
 
   // POST is not idempotent.
-  REQUIRE_THROWS_AS(run(client.call<users::create>({.name = "Grace"})), rest::call_error);
+  REQUIRE_THROWS_AS(run(client.call<users::create>({.name = "Grace"})), http::http_error);
   REQUIRE(transport.shared->sent == 1);
 }
 

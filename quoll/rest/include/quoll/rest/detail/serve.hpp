@@ -41,6 +41,9 @@
 #include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/body_stream.hpp>
+#include <quoll/http/detail/error_answer.hpp>
+#include <quoll/http/http_error.hpp>
+#include <quoll/http/problem.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/response_writer.hpp>
@@ -55,8 +58,6 @@
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/event_sink.hpp>
 #include <quoll/rest/fixed_string.hpp>
-#include <quoll/rest/http_error.hpp>
-#include <quoll/rest/problem.hpp>
 #include <quoll/rest/query.hpp>
 #include <quoll/rest/reply.hpp>
 #include <quoll/rest/security.hpp>
@@ -99,12 +100,9 @@ struct task_value<async::task<T>> {
   using type = T;
 };
 
-// An error the server answers itself, as an RFC 9457 problem; `detail` is sent as it is, if it is UTF-8.
-[[nodiscard]] http::response problem_response(http::status code, std::optional<std::string> detail);
-
 template <class Scheme>
 [[nodiscard]] http::response unauthorized(std::string detail) {
-  auto response = problem_response(http::status::unauthorized, std::move(detail));
+  auto response = http::problem_response(http::status::unauthorized, std::move(detail));
 
   response.fields.add("WWW-Authenticate", scheme_traits<Scheme>::challenge());
   return response;
@@ -320,10 +318,15 @@ using sink_of = event_sink<typename events_part_of<Endpoint>::type, typename eve
 }
 
 // The answer to an http_error a service or a validator threw: its status, with the challenge of the route's first
-// scheme on a 401 (RFC 9110).
+// scheme on a 401 (RFC 9110); a 502 for one received from another call.
 template <class Route>
-[[nodiscard]] http::response error_response(http_error const &error) {
-  auto response = problem_response(error.status(), error.what());
+[[nodiscard]] http::response error_response(http::http_error const &error) {
+  // Received from another call, let through: a 502, as the router answers one.
+  if (error.received()) {
+    return *http::detail::error_answer(error);
+  }
+
+  auto response = http::problem_response(error.status(), error.what());
 
   if constexpr (Route::schemes::size > 0) {
     if (error.status() == http::status::unauthorized) {
@@ -349,7 +352,7 @@ template <class... Responses>
 [[nodiscard]] consteval bool errors_are_problems(type_list<Responses...>) {
   return (
       (static_cast<int>(Responses::status) >= 400 &&
-       (std::is_void_v<typename Responses::type> || std::same_as<typename Responses::type, problem>)) &&
+       (std::is_void_v<typename Responses::type> || std::same_as<typename Responses::type, http::problem>)) &&
       ...
   );
 }
@@ -430,8 +433,8 @@ template <class Route, class Validators, class... Services>
   // A stop seen here rather than ending this frame: the drain below runs whatever ended the service.
   try {
     stopped = !co_await async::stopped_as_optional(call());
-  } catch (http_error const &error) {
-    if (answers_as_an_error(error.status())) {
+  } catch (http::http_error const &error) {
+    if (error.received() || answers_as_an_error(error.status())) {
       refused = error_response<Route>(error);
     }
 
@@ -523,13 +526,13 @@ template <class Route, class State, class Input>
     }
 
     if (!in.query) {
-      co_return problem_response(http::status::bad_request, "invalid query string");
+      co_return http::problem_response(http::status::bad_request, "invalid query string");
     }
 
     auto arguments = decode_arguments<Route>(request);
 
     if (!arguments) {
-      co_return problem_response(arguments.error().status, std::move(arguments.error().detail));
+      co_return http::problem_response(arguments.error().status, std::move(arguments.error().detail));
     }
 
     if constexpr (has_events<typename Route::endpoint>) {
@@ -539,8 +542,8 @@ template <class Route, class State, class Input>
     } else {
       co_return co_await answer<Route>(*state, std::move(*arguments));
     }
-  } catch (http_error const &error) {
-    if (!answers_as_an_error(error.status())) {
+  } catch (http::http_error const &error) {
+    if (!error.received() && !answers_as_an_error(error.status())) {
       throw;
     }
 

@@ -73,8 +73,9 @@ namespace quoll::rest {
  * endpoint (a `header<"Last-Event-ID", std::optional<std::string>>` say). An event's type is not handed over: one
  * endpoint, one type, every event decoded as `T`, a heartbeat of a third-party API's own type included, which then
  * throws as an event that does not decode. Reading fails, and ends, as http::event_reader says; an event that does not
- * decode throws call_error, holding it as the body of its response, and reading goes on. A `T` that holds views into
- * its event (a `std::string_view` Glaze reads) is valid up to the next next(), for as long as the stream.
+ * decode throws an http::http_error received, holding it as the body of its response, and reading goes on. A `T` that
+ * holds views into its event (a `std::string_view` Glaze reads) is valid up to the next next(), for as long as the
+ * stream.
  *
  * Moved, not copied: one moved from throws std::logic_error from next(). One next() at a time, its decoding included:
  * one asked while another is pending throws std::logic_error. Thread safety: as http::event_reader.
@@ -88,7 +89,8 @@ public:
   /**
    * @brief The next value, or nothing once the stream has ended.
    *
-   * @throws call_error, from the task, for an event that does not decode; as http::event_reader::next() otherwise.
+   * @throws an http::http_error received, from the task, for an event that does not decode; as
+   * http::event_reader::next() otherwise.
    */
   [[nodiscard]] async::task<std::optional<T>> next() {
     if (!state_) {

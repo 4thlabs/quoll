@@ -39,8 +39,9 @@
 
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/plain_segment.hpp>
+#include <quoll/http/http_error.hpp>
+#include <quoll/http/problem.hpp>
 #include <quoll/rest/json_codec.hpp>
-#include <quoll/rest/problem.hpp>
 
 #include <stdexcept>
 #include <string>
@@ -78,8 +79,9 @@ namespace {
 std::string failure_detail(unexpected_response const &failure) {
   auto const content_type = failure.response.fields.find("Content-Type");
 
-  if (content_type && http::detail::iequals(media_type(*content_type), problem_content_type)) {
-    if (auto const decoded = lenient_json_codec{}.decode<problem>(failure.response.body); decoded && decoded->detail) {
+  if (content_type && http::detail::iequals(media_type(*content_type), http::problem_content_type)) {
+    if (auto const decoded = lenient_json_codec{}.decode<http::problem>(failure.response.body);
+        decoded && decoded->detail) {
       return without_controls(*decoded->detail);
     }
   }
@@ -90,7 +92,7 @@ std::string failure_detail(unexpected_response const &failure) {
 void fail(unexpected_response failure) {
   auto detail = failure_detail(failure);
 
-  throw call_error{std::move(failure), detail};
+  throw http::http_error::received_from(std::move(failure.response), detail);
 }
 
 } // namespace quoll::rest::detail

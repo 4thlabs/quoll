@@ -94,7 +94,7 @@ struct github_service {
   std::vector<github::issue>
   operator()(github::repos::issues, std::string, std::string, github::issue_filter filter) const {
     if (++*issues_asked == 1) {
-      throw rest::http_error{http::status::service_unavailable, "busy"};
+      throw http::http_error{http::status::service_unavailable, "busy"};
     }
 
     // What the program asks for, or nothing: its query reaches here.

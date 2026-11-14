@@ -8,11 +8,9 @@ quoll_declare_module(
     src/event_sink.cpp
     src/next.cpp
     src/param_traits.cpp
-    src/printable_text.cpp
     src/query_string.cpp
     src/retry.cpp
     src/scheme_traits.cpp
-    src/serve.cpp
     src/single_field.cpp
   DEPS
     quoll::client

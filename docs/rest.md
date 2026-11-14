@@ -145,7 +145,7 @@ struct users_service {
   // An error the endpoint does not declare.
   user operator()(users::create, new_user const &created) const {
     if (created.name == "taken") {
-      throw rest::http_error{status::conflict, "name taken"};
+      throw http::http_error{status::conflict, "name taken"};
     }
 
     return {.id = 7, .name = created.name, .email = created.email};
@@ -200,18 +200,19 @@ those inherited from `with<>` are answered by the server.
 ### What a request goes through
 
 Credentials first, then the arguments, then the service. These errors are
-`application/problem+json` (`rest::problem`, RFC 9457), but for a service's other exceptions:
+`application/problem+json` (`http::problem`, RFC 9457), but for a service's other exceptions:
 
 | What happens                        | Status                                                   | `detail`                                      |
 | ----------------------------------- | -------------------------------------------------------- | --------------------------------------------- |
 | Missing or rejected credentials     | 401, with the `WWW-Authenticate` challenge of the scheme | `missing credentials`, `rejected credentials` |
 | An invalid or missing argument      | 400                                                      | What is wrong                                 |
 | A body of another media type        | 415                                                      | `the body is <the media type of the codec>`   |
-| A service throws `rest::http_error` | Its status                                               | `what()`, sent as it is to the client         |
+| A service throws `http::http_error` | Its status                                               | `what()`, sent as it is to the client         |
+| It lets through one received        | 502, from another call                                   | `a call to another server failed`             |
 | A service throws anything else      | 500, as from any handler; `on_handler_error` is told     | None                                          |
 
-A middleware of the router runs outside of this: what it throws is no `http_error`, and it answers a
-problem by returning a response. What a service throws goes through it, a stop or a timeout too, but
+A middleware of the router runs outside of this: it sees these answers as responses, and one it throws itself is
+answered by the router as a handler's is. What a service throws goes through it, a stop or a timeout too, but
 for a service of `events<>`, which runs once the middlewares have returned, as a handler writing its
 response does. Over a
 `http::local_transport`, it reaches the caller, as there is no connection to answer.
@@ -233,7 +234,7 @@ rest::client<v1> client{"http://127.0.0.1:8080", {.response_timeout = 5s}};
 
 client.credentials<rest::bearer_auth>("valid");
 
-// The first declared response, or call_error.
+// The first declared response, or an http::http_error received.
 user const found = co_await client.call<users::get>(42);
 auto const page = co_await client.call<users::list>({.limit = 20});
 co_await client.call<users::remove>(found.id);
@@ -253,16 +254,16 @@ if (!maybe) {
 | Outcome                                           | `call`                                                                   | `try_call`                                                 |
 | ------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------- |
 | The first declared response                       | Its body                                                                 | A `reply<Endpoint>` holding it                             |
-| Another declared response                         | Throws `rest::call_error`                                                | A `reply<Endpoint>` holding it                             |
-| An undeclared status, a body that does not decode | Throws `rest::call_error`, whose `what()` is the problem's detail if any | A `rest::unexpected_response`: the whole response, and why |
+| Another declared response                         | Throws `http::http_error`                                                | A `reply<Endpoint>` holding it                             |
+| An undeclared status, a body that does not decode | Throws `http::http_error`, whose `what()` is the problem's detail if any | A `rest::unexpected_response`: the whole response, and why |
 | A failure of the transport                        | Throws `std::system_error`                                               | Throws `std::system_error`                                 |
 
 Arguments are encoded by the call: an invalid one (an empty path parameter, one holding a NUL or a dot segment, the
 rest of a path starting with `/`, a query parameter holding a NUL, a number that is not finite, a header value or a
 credential the server would read differently) throws `std::invalid_argument` there, before the task runs.
 
-`rest::call_error` is not an `http_error`: a service letting a failed call to another API escape
-answers 500, not that API's status.
+The error a call throws is an `http::http_error` received (`received()`, the response as it came in `answer()`). A
+service letting it escape answers 502, not that API's status: its status and detail are that server's, not this one's.
 
 The transport is a template parameter: any `http::HttpTransport`. That is `http::client` by
 default, on [`fetch`](runtimes.md#httpclient-in-a-browser) in a browser, and `http::local_transport` for
@@ -335,7 +336,7 @@ it, but no other success:
 ```cpp
 using feed = rest::endpoint<"changes.feed", http::verb::get, "/changes", rest::query<"count", int>,
                             rest::header<"Last-Event-ID", std::optional<std::string>>, rest::events<change>,
-                            rest::returns<rest::problem, http::status::not_found>>;
+                            rest::returns<http::problem, http::status::not_found>>;
 ```
 
 Its service takes a `rest::event_sink<T>` by reference after its arguments, and returns a `task<>`:
@@ -376,9 +377,9 @@ if (auto const id = stream.last_event_id(); !id.empty()) {
 }
 ```
 
-Any other answer throws `call_error`, as from `call`: a declared error, an undeclared status, a 200
+Any other answer throws an `http::http_error` received, as from `call`: a declared error, an undeclared status, a 200
 that is no event stream. A contract that declares its own `Accept` sends it, and takes the one media
-type it names, if an event stream, a third-party API's `application/vnd.example+event-stream` say. An event that does not decode throws `call_error` from `next()`, holding
+type it names, if an event stream, a third-party API's `application/vnd.example+event-stream` say. An event that does not decode throws an `http::http_error` received from `next()`, holding
 it as its body, and reading goes on. `subscribe` needs a transport that gives a response as its head
 comes, `http::client` natively and through `fetch`, not `http::local_transport`. It goes straight
 through it, credentials applied. Interceptors take whole responses: on a client with any, `subscribe`

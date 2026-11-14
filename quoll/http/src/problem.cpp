@@ -34,47 +34,77 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_REST_CALL_ERROR_HPP
-#define QUOLL_REST_CALL_ERROR_HPP
+#include <quoll/http/problem.hpp>
 
-#include <quoll/async/lifetimebound.hpp>
-#include <quoll/http/status.hpp>
-#include <quoll/rest/unexpected_response.hpp>
+#include <quoll/http/detail/printable_text.hpp>
+#include <quoll/http/detail/utf8.hpp>
 
-#include <memory>
-#include <stdexcept>
+#include <cstdio>
 #include <string>
+#include <string_view>
 #include <utility>
 
-namespace quoll::rest {
+namespace quoll::http {
 
-/**
- * @brief Thrown by a client's call when the response is not the endpoint's first declared one: another declared
- * response (read it with try_call), an undeclared status, a body that does not decode.
- *
- * what() is the detail of the server's problem when it sent one, else why the response is unexpected. Not an
- * http_error: a service that lets a failed call to another API escape answers 500, not that API's status.
- */
-class call_error : public std::runtime_error {
-public:
-  call_error(unexpected_response failure, std::string const &detail)
-      : std::runtime_error(detail), failure_(std::make_shared<unexpected_response const>(std::move(failure))) {}
+namespace {
 
-  // Copies and no moves: an exception does not throw on its way to a handler, and one moved from stays whole.
-  call_error(call_error const &) noexcept = default;
-  call_error &operator=(call_error const &) noexcept = default;
-  ~call_error() override = default;
+// `text` as a JSON string, its quotes, backslashes and control characters escaped.
+void append_json_string(std::string &out, std::string_view text) {
+  out += '"';
 
-  /** @brief The status of the response received. */
-  [[nodiscard]] http::status status() const noexcept { return failure_->response.status; }
+  for (auto const character : text) {
+    auto const byte = static_cast<unsigned char>(character);
 
-  /** @brief The response received, and why it is unexpected. */
-  [[nodiscard]] unexpected_response const &failure() const noexcept QUOLL_LIFETIMEBOUND { return *failure_; }
+    if (character == '"' || character == '\\') {
+      out += '\\';
+      out += character;
+    } else if (character == '\n') {
+      out += "\\n";
+    } else if (byte < 0x20) {
+      char escaped[8];
 
-private:
-  std::shared_ptr<unexpected_response const> failure_;
-};
+      std::snprintf(escaped, sizeof escaped, "\\u%04x", static_cast<unsigned>(byte));
+      out += escaped;
+    } else {
+      out += character;
+    }
+  }
 
-} // namespace quoll::rest
+  out += '"';
+}
 
-#endif // QUOLL_REST_CALL_ERROR_HPP
+} // namespace
+
+response problem_response(status code, std::optional<std::string> said) {
+  // It may quote what came from a peer, and an error has to get out.
+  if (said && !detail::is_utf8(*said)) {
+    said = detail::printable_text(std::move(*said));
+  }
+
+  auto const reason = reason_phrase(code);
+  std::string body = "{";
+
+  if (!reason.empty()) {
+    body += "\"title\":";
+    append_json_string(body, reason);
+    body += ',';
+  }
+
+  body += "\"status\":" + std::to_string(static_cast<int>(code));
+
+  if (said) {
+    body += ",\"detail\":";
+    append_json_string(body, *said);
+  }
+
+  body += '}';
+
+  response answer;
+
+  answer.status = code;
+  answer.body = std::move(body);
+  answer.fields.add("Content-Type", problem_content_type);
+  return answer;
+}
+
+} // namespace quoll::http

@@ -132,10 +132,7 @@ TEST_CASE("text: what is not UTF-8 is refused by the text codec, a parameter and
     REQUIRE_FALSE(text.decode<std::string>(wrong).has_value());
     REQUIRE_THROWS_AS((void)text.encode(std::string{wrong}), std::invalid_argument);
     REQUIRE_FALSE(rest::param_traits<std::string>::from_text(wrong).has_value());
-    REQUIRE(
-        rest::detail::problem_response(http::status::not_found, std::string{wrong}).body.find(wrong) ==
-        std::string::npos
-    );
+    REQUIRE(http::problem_response(http::status::not_found, std::string{wrong}).body.find(wrong) == std::string::npos);
   }
 
   // The last character, four bytes long.

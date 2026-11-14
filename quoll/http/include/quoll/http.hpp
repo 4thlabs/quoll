@@ -48,12 +48,14 @@
 #include <quoll/http/fixed_string.hpp>
 #include <quoll/http/format_event.hpp>
 #include <quoll/http/format_websocket_frame.hpp>
+#include <quoll/http/http_error.hpp>
 #include <quoll/http/is_event_stream.hpp>
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/next.hpp>
 #include <quoll/http/parser.hpp>
 #include <quoll/http/platform.hpp>
 #include <quoll/http/platform_ref.hpp>
+#include <quoll/http/problem.hpp>
 #include <quoll/http/read.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
