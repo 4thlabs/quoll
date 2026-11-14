@@ -165,7 +165,8 @@ Every pull request and push to `main` goes through `.github/workflows/ci.yml`:
 Fuzzing (`fuzz.yml`), the benchmark (`bench.yml`), a mixed load under TSan and under ASan with UBSan (`load.yml`), the
 runs against third-party clients and servers (`interop.yml`) and all of `clang-tidy` (`clang-tidy.yml`) run every night,
 and on a pull request touching them.
-`codex-review.yml` sets the status `Codex`, once Codex has finished reviewing the last commit.
+`codex-review.yml` sets the status `Codex`, once Codex has finished reviewing the last commit. The jobs keep their
+compilations in ccache.
 
 ## Contributing
 

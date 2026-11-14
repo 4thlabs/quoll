@@ -399,7 +399,7 @@ address.
 ### Forms and widgets
 
 Unchanged: `bind(form, &product::price)` names a field by its member pointer already, and a widget's props go to
-JavaScript as JSON, through `json_codec`, behind which Glaze stays (#182, [#205](https://github.com/4thlabs/quoll/issues/205)).
+JavaScript as JSON, written by Glaze today, which is to go through `json_codec` (#182, [#205](https://github.com/4thlabs/quoll/issues/205)).
 
 ## Compile cost, in headers only
 
