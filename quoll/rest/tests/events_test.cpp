@@ -441,7 +441,7 @@ TEST_CASE("rest events: the id to resume from is an argument like any", "[rest][
   REQUIRE(quoll::test::run(reading()).value() == change{8, "change 8"});
 }
 
-TEST_CASE("rest events: an http_error before the first event answers, and subscribe throws call_error", "[rest][sse]") {
+TEST_CASE("rest events: an http_error before the first event answers, and subscribe throws an http_error received", "[rest][sse]") {
   changes_client const client{streaming_transport{make_router()}};
 
   auto const reading = [&client]() -> task<std::string> {
@@ -476,7 +476,7 @@ TEST_CASE("rest events: comments and a retry are no values, the retry kept", "[r
   REQUIRE(quoll::test::run(reading()).value() == "ok retry end");
 }
 
-TEST_CASE("rest events: a value the codec cannot read throws call_error from next()", "[rest][sse]") {
+TEST_CASE("rest events: a value the codec cannot read throws an http_error received from next()", "[rest][sse]") {
   http::router router;
 
   router.get("/changes/broken", [](http::response_writer out) -> task<> {
@@ -506,7 +506,7 @@ TEST_CASE("rest events: a value the codec cannot read throws call_error from nex
   REQUIRE(quoll::test::run(reading()).value() == "not json;fine");
 }
 
-TEST_CASE("rest events: a response that is no event stream throws call_error", "[rest][sse]") {
+TEST_CASE("rest events: a response that is no event stream throws an http_error received", "[rest][sse]") {
   http::router router;
 
   router.get("/changes/broken", [](http::request) {

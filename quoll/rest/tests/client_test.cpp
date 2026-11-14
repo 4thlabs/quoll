@@ -397,7 +397,7 @@ TEST_CASE("client: try_call hands over any declared response", "[rest][client]")
   REQUIRE(run(client.try_call<users::remove>(42)).has_value());
 }
 
-TEST_CASE("client: call throws call_error for any other outcome", "[rest][client]") {
+TEST_CASE("client: call throws an http_error received for any other outcome", "[rest][client]") {
   auto const router = make_router();
   auto const client = make_client(router);
 
