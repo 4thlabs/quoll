@@ -166,7 +166,7 @@ template <fixed_string Path, std::size_t Index, class T>
 struct path_source {
   static constexpr auto param = checked_path<Path>::parsed.params[Index];
 
-  using value_type = T;
+  using argument_type = T;
 };
 
 template <fixed_string Path, std::size_t Index, class T>
@@ -174,7 +174,7 @@ template <fixed_string Path, std::size_t Index, class T>
 decode_source(std::type_identity<path_source<Path, Index, T>>, request_input const &input) {
   using source = path_source<Path, Index, T>;
 
-  auto value = param_traits<typename source::value_type>::from_text(input.match.params[Index]);
+  auto value = param_traits<T>::from_text(input.match.params[Index]);
 
   if (!value) {
     return std::unexpected{
@@ -309,11 +309,6 @@ struct path_sources<Path, type_list<Types...>, std::index_sequence<Index...>> {
 template <class Source>
 struct source_value {
   using type = typename Source::argument_type;
-};
-
-template <fixed_string Path, std::size_t Index, class T>
-struct source_value<path_source<Path, Index, T>> {
-  using type = T;
 };
 
 // A route without arguments.
