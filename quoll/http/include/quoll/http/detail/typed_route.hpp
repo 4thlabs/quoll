@@ -156,7 +156,7 @@ struct takes_request<std::tuple<First, Rest...>> : std::is_same<std::remove_cvre
 // What the compiler names in its error, as a consteval function cannot say more: see checked_path.
 void the_route_template_is_invalid();
 void the_only_type_a_path_says_is_path_as_the_handler_says_the_others();
-void the_handler_does_not_take_as_many_parameters_as_the_path_has();
+void the_handler_does_not_take_as_many_parameters_as_its_template_has();
 void a_path_parameter_is_no_optional_nor_vector_only_a_query_parameter_is();
 
 // A path checked at compile time against the handler it comes with, the way std::format_string checks a format against
@@ -188,7 +188,7 @@ public:
         }));
 
     if (in_path + parsed.query.size() - fixed_in(parsed) != count()) {
-      the_handler_does_not_take_as_many_parameters_as_the_path_has();
+      the_handler_does_not_take_as_many_parameters_as_its_template_has();
     }
 
     if (!plain_up_to(in_path)) {
@@ -413,7 +413,7 @@ template <class Result, class F, class Request, class... Parameters>
   );
   static_assert(
       body_reader_comes_last<Parameters...>(),
-      "quoll::http::router: a handler takes one http::body_reader, after its path parameters"
+      "quoll::http::router: a handler takes one http::body_reader, after its path and query parameters"
   );
   static_assert(
       response_writer_comes_last<Parameters...>(),

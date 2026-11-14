@@ -41,7 +41,10 @@
 #include <quoll/async/stopped_as_optional.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/http/body_stream.hpp>
+#include <quoll/http/detail/error_answer.hpp>
 #include <quoll/http/detail/query_string.hpp>
+#include <quoll/http/http_error.hpp>
+#include <quoll/http/problem.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/response_writer.hpp>
@@ -55,8 +58,6 @@
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/event_sink.hpp>
 #include <quoll/rest/fixed_string.hpp>
-#include <quoll/rest/http_error.hpp>
-#include <quoll/rest/problem.hpp>
 #include <quoll/rest/query.hpp>
 #include <quoll/rest/reply.hpp>
 #include <quoll/rest/security.hpp>
@@ -99,12 +100,9 @@ struct task_value<async::task<T>> {
   using type = T;
 };
 
-// An error the server answers itself, as an RFC 9457 problem; `detail` is sent as it is, if it is UTF-8.
-[[nodiscard]] http::response problem_response(http::status code, std::optional<std::string> detail);
-
 template <class Scheme>
 [[nodiscard]] http::response unauthorized(std::string detail) {
-  auto response = problem_response(http::status::unauthorized, std::move(detail));
+  auto response = http::problem_response(http::status::unauthorized, std::move(detail));
 
   response.fields.add("WWW-Authenticate", scheme_traits<Scheme>::challenge());
   return response;
@@ -312,28 +310,20 @@ async::task<http::response> answer(mounted<Validators, Services...> &state, type
 template <class Endpoint>
 using sink_of = event_sink<typename events_part_of<Endpoint>::type, typename events_part_of<Endpoint>::codec>;
 
-// Whether an http_error is one: another status is a programming error, which goes on as any other exception.
-[[nodiscard]] constexpr bool answers_as_an_error(http::status status) noexcept {
-  auto const code = static_cast<int>(status);
-
-  return code >= 400 && code <= 599;
-}
-
-// The answer to an http_error a service or a validator threw: its status, with the challenge of the route's first
-// scheme on a 401 (RFC 9110).
+// The answer to an http_error a service or a validator threw, as the router answers one (http::detail::error_answer),
+// with the challenge of the route's first scheme on a 401 (RFC 9110); none for one raised with a status that is no
+// error, which goes on as any other exception.
 template <class Route>
-[[nodiscard]] http::response error_response(http_error const &error) {
-  auto response = problem_response(error.status(), error.what());
+[[nodiscard]] std::optional<http::response> error_response(http::http_error const &error) {
+  auto answer = http::detail::error_answer(error);
 
   if constexpr (Route::schemes::size > 0) {
-    if (error.status() == http::status::unauthorized) {
-      response.fields.add(
-          "WWW-Authenticate", scheme_traits<typename front<typename Route::schemes>::type>::challenge()
-      );
+    if (answer && !error.received() && error.status() == http::status::unauthorized) {
+      answer->fields.add("WWW-Authenticate", scheme_traits<typename front<typename Route::schemes>::type>::challenge());
     }
   }
 
-  return response;
+  return answer;
 }
 
 // What the arguments of a request are decoded from: for a stream, it lives as long as the stream, as they may point
@@ -349,7 +339,7 @@ template <class... Responses>
 [[nodiscard]] consteval bool errors_are_problems(type_list<Responses...>) {
   return (
       (static_cast<int>(Responses::status) >= 400 &&
-       (std::is_void_v<typename Responses::type> || std::same_as<typename Responses::type, problem>)) &&
+       (std::is_void_v<typename Responses::type> || std::same_as<typename Responses::type, http::problem>)) &&
       ...
   );
 }
@@ -430,10 +420,8 @@ template <class Route, class Validators, class... Services>
   // A stop seen here rather than ending this frame: the drain below runs whatever ended the service.
   try {
     stopped = !co_await async::stopped_as_optional(call());
-  } catch (http_error const &error) {
-    if (answers_as_an_error(error.status())) {
-      refused = error_response<Route>(error);
-    }
+  } catch (http::http_error const &error) {
+    refused = error_response<Route>(error);
 
     failure = std::current_exception();
   } catch (...) {
@@ -524,13 +512,13 @@ template <class Route, class State, class Input>
     }
 
     if (!in.query) {
-      co_return problem_response(http::status::bad_request, "invalid query string");
+      co_return http::problem_response(http::status::bad_request, "invalid query string");
     }
 
     auto arguments = decode_arguments<Route>(request);
 
     if (!arguments) {
-      co_return problem_response(arguments.error().status, std::move(arguments.error().detail));
+      co_return http::problem_response(arguments.error().status, std::move(arguments.error().detail));
     }
 
     if constexpr (has_events<typename Route::endpoint>) {
@@ -540,12 +528,14 @@ template <class Route, class State, class Input>
     } else {
       co_return co_await answer<Route>(*state, std::move(*arguments));
     }
-  } catch (http_error const &error) {
-    if (!answers_as_an_error(error.status())) {
+  } catch (http::http_error const &error) {
+    auto answer = error_response<Route>(error);
+
+    if (!answer) {
       throw;
     }
 
-    co_return error_response<Route>(error);
+    co_return std::move(*answer);
   }
 }
 

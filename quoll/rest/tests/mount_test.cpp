@@ -179,7 +179,7 @@ using slow_api = rest::api<"", slow_one, two_schemes, a_pair>;
 struct auth_service {
   token operator()(auth::login, credentials const &given) const {
     if (given.password != "secret") {
-      throw rest::http_error{status::unauthorized, "wrong password"};
+      throw quoll::http::http_error{status::unauthorized, "wrong password"};
     }
 
     return {"t-" + given.email};
@@ -214,19 +214,27 @@ struct users_service {
 
   task<user> operator()(users::create, new_user created) const {
     if (created.name == "taken") {
-      throw rest::http_error{status::conflict, "name taken"};
+      throw quoll::http::http_error{status::conflict, "name taken"};
     }
 
     if (created.name == "unauthorized") {
-      throw rest::http_error{status::unauthorized, "expired session"};
+      throw quoll::http::http_error{status::unauthorized, "expired session"};
     }
 
     if (created.name == "teapot") {
-      throw rest::http_error{static_cast<status>(418), "short and stout"};
+      throw quoll::http::http_error{static_cast<status>(418), "short and stout"};
+    }
+
+    // A call to another server that failed, let through: answered 502, not that server's 404.
+    if (created.name == "upstream") {
+      quoll::http::response theirs;
+
+      theirs.status = quoll::http::status::not_found;
+      throw quoll::http::http_error::received_from(std::move(theirs), "no such user there");
     }
 
     if (created.name == "fine") {
-      throw rest::http_error{status::ok, "not an error"};
+      throw quoll::http::http_error{status::ok, "not an error"};
     }
 
     co_return user{.id = 7, .name = std::move(created.name), .email = std::move(created.email)};
@@ -301,10 +309,10 @@ http::response send(
   return quoll::test::run(router.dispatch(std::move(message))).value();
 }
 
-rest::problem problem_of(http::response const &response) {
+quoll::http::problem problem_of(http::response const &response) {
   REQUIRE(response.fields.find("Content-Type") == "application/problem+json");
 
-  auto decoded = json.decode<rest::problem>(response.body);
+  auto decoded = json.decode<quoll::http::problem>(response.body);
 
   REQUIRE(decoded.has_value());
   return *decoded;
@@ -505,7 +513,7 @@ struct waits {
           [](rest::credential<rest::bearer_auth> const &given) { return given.value == "valid"; },
           [](rest::credential<rest::api_key<"X-Key">> const &given) {
             if (given.value == "throws") {
-              throw rest::http_error{status::forbidden, "not this one"};
+              throw quoll::http::http_error{status::forbidden, "not this one"};
             }
 
             return given.value == "valid";
@@ -640,8 +648,8 @@ TEST_CASE("text_codec: what is not UTF-8 is refused", "[rest]") {
 }
 
 TEST_CASE("mount: a problem gets out, whatever its detail quotes", "[rest][mount]") {
-  auto const quoting = rest::detail::problem_response(status::not_found, "no note a\xffz");
-  auto const french = rest::detail::problem_response(status::not_found, "pas de caf\xC3\xA9");
+  auto const quoting = quoll::http::problem_response(status::not_found, "no note a\xffz");
+  auto const french = quoll::http::problem_response(status::not_found, "pas de caf\xC3\xA9");
 
   REQUIRE(problem_of(quoting).detail == "no note a?z");
   REQUIRE(problem_of(french).detail == "pas de caf\xC3\xA9");
@@ -770,8 +778,13 @@ TEST_CASE("mount: what http_error answers", "[rest][mount]") {
 
   REQUIRE(static_cast<int>(teapot.status) == 418);
   REQUIRE_FALSE(problem_of(teapot).title.has_value());
+  // Received from another call: a 502, saying nothing of that server's answer.
+  auto const upstream = create("upstream");
+
+  REQUIRE(upstream.status == http::status::bad_gateway);
+  REQUIRE(upstream.body.find("no such user") == std::string::npos);
   // Not an error status: a programming error, which goes on as any other.
-  REQUIRE_THROWS_AS(create("fine"), rest::http_error);
+  REQUIRE_THROWS_AS(create("fine"), quoll::http::http_error);
 }
 
 TEST_CASE("mount: adds all the routes or none", "[rest][mount]") {

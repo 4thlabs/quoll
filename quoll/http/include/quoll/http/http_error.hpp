@@ -34,32 +34,59 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_REST_HTTP_ERROR_HPP
-#define QUOLL_REST_HTTP_ERROR_HPP
+#ifndef QUOLL_HTTP_HTTP_ERROR_HPP
+#define QUOLL_HTTP_HTTP_ERROR_HPP
 
+#include <quoll/async/lifetimebound.hpp>
+#include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
 
+#include <memory>
 #include <stdexcept>
 #include <string>
 
-namespace quoll::rest {
+namespace quoll::http {
 
 /**
- * @brief Thrown by a service to answer an error status its endpoint does not declare: the server sends it as a
- * problem with `detail` = what(), sent as it is to the client if it is UTF-8. With a status that is no error, it is a
- * programming error, and goes on as any other exception does.
+ * @brief An HTTP error: raised by a handler, which the server answers with its status, or received, from a response
+ * another server sent, which a client raises.
+ *
+ * @code
+ * router.get("/notes/{id}", [](std::int64_t id) -> http::response {
+ *   throw http::http_error{http::status::not_found, "no note " + std::to_string(id)};
+ * });
+ * @endcode
+ *
+ * The server answers one its handler raises with its status and an RFC 9457 problem whose detail is what(). One
+ * received from another call, let through by a handler, is answered `502 Bad Gateway`: the other server's status and
+ * detail are its own, not this one's. Copies and no moves: an exception does not throw on its way to a handler.
  */
 class http_error : public std::runtime_error {
 public:
-  http_error(http::status status, std::string const &detail) : std::runtime_error(detail), status_(status) {}
+  /** @brief Raised: the server answers `code`, with `detail`. */
+  http_error(http::status code, std::string const &detail) : std::runtime_error(detail), status_(code) {}
 
-  /** @brief The status the server answers. */
+  /** @brief Received: `answer`, a response another server sent, `detail` saying what went wrong. */
+  [[nodiscard]] static http_error received_from(http::response answer, std::string const &detail);
+
+  http_error(http_error const &) noexcept = default;
+  http_error &operator=(http_error const &) noexcept = default;
+  ~http_error() override = default;
+
+  /** @brief Its status: the one to answer, or the one received. */
   [[nodiscard]] http::status status() const noexcept { return status_; }
+
+  /** @brief Whether it comes from a response received rather than from this program's code. */
+  [[nodiscard]] bool received() const noexcept { return response_ != nullptr; }
+
+  /** @brief The response received, its fields and body as they came; none when it was raised. */
+  [[nodiscard]] http::response const *answer() const noexcept QUOLL_LIFETIMEBOUND { return response_.get(); }
 
 private:
   http::status status_;
+  std::shared_ptr<http::response const> response_;
 };
 
-} // namespace quoll::rest
+} // namespace quoll::http
 
-#endif // QUOLL_REST_HTTP_ERROR_HPP
+#endif // QUOLL_HTTP_HTTP_ERROR_HPP

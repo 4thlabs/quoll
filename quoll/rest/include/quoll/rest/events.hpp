@@ -50,7 +50,7 @@ namespace quoll::rest {
  * @code
  * using feed = rest::endpoint<"changes.feed", http::verb::get, "/changes",
  *                             rest::header<"Last-Event-ID", std::optional<std::string>>, rest::events<change>,
- *                             rest::returns<rest::problem, http::status::not_found>>;
+ *                             rest::returns<http::problem, http::status::not_found>>;
  * @endcode
  *
  * The service takes an rest::event_sink<T> as its last argument, by reference, and sends through it; a client reads

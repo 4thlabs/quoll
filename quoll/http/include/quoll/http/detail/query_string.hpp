@@ -77,7 +77,7 @@ query_texts(std::vector<query_entry> const &query QUOLL_LIFETIMEBOUND, std::stri
 // throws std::invalid_argument, saying `what` it is.
 void append_query(
     std::string &query, std::string_view name, std::string_view value,
-    std::string_view what = "quoll::rest::client: query parameter"
+    std::string_view what = "quoll::http: query parameter"
 );
 
 } // namespace quoll::http::detail

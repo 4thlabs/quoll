@@ -113,7 +113,7 @@ struct scheme_traits<api_key_query<Param>> {
 
   static void add(std::string_view value, http::fields &, std::string &query) {
     check_credential_in_query(value);
-    http::detail::append_query(query, Param.view(), value);
+    http::detail::append_query(query, Param.view(), value, "quoll::rest::client: query parameter");
   }
 };
 

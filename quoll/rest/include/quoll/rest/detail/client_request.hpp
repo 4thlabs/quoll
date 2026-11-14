@@ -81,7 +81,9 @@ struct request_draft {
 
 template <fixed_string Name, class T>
 void add_part(std::type_identity<query<Name, T>>, T const &value, request_draft &draft) {
-  for_each_text(value, [&](std::string const &text) { http::detail::append_query(draft.query, Name.view(), text); });
+  for_each_text(value, [&](std::string const &text) {
+    http::detail::append_query(draft.query, Name.view(), text, "quoll::rest::client: query parameter");
+  });
 }
 
 template <class Struct>

@@ -68,7 +68,8 @@ using event_stream_of = event_stream<typename events_part_of<Endpoint>::type, ty
 // such.
 [[nodiscard]] async::task<unexpected_response> refusal_of(http::streamed_response streamed, std::string reason);
 
-// The events of the response to `request`, or call_error for any other answer, its body read up to a bound.
+// The events of the response to `request`, or an http::http_error received for any other answer, its body read up to a
+// bound.
 template <class Route, class Transport>
 [[nodiscard]] async::task<event_stream_of<typename Route::endpoint>>
 open_events(std::shared_ptr<Transport const> transport, http::request request, std::string accepted) {

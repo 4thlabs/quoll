@@ -34,20 +34,21 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/rest/detail/printable_text.hpp>
+#ifndef QUOLL_HTTP_DETAIL_ERROR_ANSWER_HPP
+#define QUOLL_HTTP_DETAIL_ERROR_ANSWER_HPP
 
-namespace quoll::rest::detail {
+#include <quoll/http/http_error.hpp>
+#include <quoll/http/response.hpp>
 
-std::string printable_text(std::string text) {
-  for (auto &character : text) {
-    auto const byte = static_cast<unsigned char>(character);
+#include <optional>
 
-    if ((byte < 0x20 && character != '\n') || byte >= 0x7F) {
-      character = '?';
-    }
-  }
+namespace quoll::http::detail {
 
-  return text;
-}
+// The answer to an http_error a handler or a middleware let through: a 502 for one received from another call,
+// whatever its status, as that server's status and detail are its own; its status and a problem for one raised with an
+// error status; none for one raised with another, a programming error that goes on as any other exception.
+[[nodiscard]] std::optional<response> error_answer(http_error const &error);
 
-} // namespace quoll::rest::detail
+} // namespace quoll::http::detail
+
+#endif // QUOLL_HTTP_DETAIL_ERROR_ANSWER_HPP

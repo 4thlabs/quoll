@@ -37,11 +37,13 @@
 #include <quoll/http/router.hpp>
 
 #include <quoll/http/detail/ascii.hpp>
+#include <quoll/http/detail/error_answer.hpp>
 #include <quoll/http/detail/percent.hpp>
 #include <quoll/http/detail/plain_segment.hpp>
 #include <quoll/http/detail/query_string.hpp>
 #include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/detail/status_response.hpp>
+#include <quoll/http/http_error.hpp>
 #include <quoll/http/status.hpp>
 
 #include <algorithm>
@@ -418,14 +420,26 @@ param_values(std::vector<route_query> const &asked, std::vector<query_pair> &pai
         return std::nullopt;
       }
 
-      // Copied, as two parameters may read the same key.
-      found.push_back(*pair.value);
+      // Each key once in a template: no other parameter reads this pair.
+      found.push_back(std::move(*pair.value));
     }
 
     values.push_back(std::move(found));
   }
 
   return values;
+}
+
+// The answer to the http_error being handled (see detail::error_answer), or that error thrown again, from inside its
+// catch.
+[[nodiscard]] response answer_or_rethrow(http_error const &error) {
+  auto answer = detail::error_answer(error);
+
+  if (!answer) {
+    throw;
+  }
+
+  return std::move(*answer);
 }
 
 // What the router says by itself, when no route answers.
@@ -543,9 +557,11 @@ detail::resolved_route router::resolve(request const &message) const {
     auto pairs = query_pairs(target->query);
     auto read = fixed_given(chosen->query, pairs) ? param_values(chosen->query, pairs) : std::nullopt;
 
-    // A fixed value missing or another, or a parameter that does not decode: refused, 400.
+    // A fixed value missing or another, or a parameter that does not decode: refused, 400, the route still named for
+    // the middlewares, as for a path parameter not of its type.
     if (!read) {
       resolved.query_refused = true;
+      resolved.match.name = chosen->name;
       return resolved;
     }
 
@@ -622,20 +638,29 @@ async::task<response> router::dispatch(request message, body_reader reader) cons
 
   // Nothing else reads what routing found, and a middleware may call next again: only here can it be moved.
   if (middlewares_.empty() && resolved.target != nullptr) {
-    co_return co_await (*resolved.target)(std::move(message), std::move(resolved.match));
+    try {
+      co_return co_await (*resolved.target)(std::move(message), std::move(resolved.match));
+    } catch (http_error const &error) {
+      co_return answer_or_rethrow(error);
+    }
   }
 
   co_return co_await run_from(resolved, 0, std::move(message));
 }
 
 // A coroutine: what a handler or a middleware throws before it returns its task comes out of this one, and what it is
-// given by reference lives in this frame until its task ends.
+// given by reference lives in this frame until its task ends. An http_error is answered at each level, so that each
+// middleware sees the one under it as a response.
 async::task<response>
 router::run_from(detail::resolved_route const &resolved, std::size_t position, request message) const {
   if (position < middlewares_.size()) {
     next const following{*this, resolved, position + 1};
 
-    co_return co_await middlewares_[position](std::move(message), following);
+    try {
+      co_return co_await middlewares_[position](std::move(message), following);
+    } catch (http_error const &error) {
+      co_return answer_or_rethrow(error);
+    }
   }
 
   if (resolved.target == nullptr) {
@@ -645,7 +670,11 @@ router::run_from(detail::resolved_route const &resolved, std::size_t position, r
 
   auto match = resolved.match;
 
-  co_return co_await (*resolved.target)(std::move(message), std::move(match));
+  try {
+    co_return co_await (*resolved.target)(std::move(message), std::move(match));
+  } catch (http_error const &error) {
+    co_return answer_or_rethrow(error);
+  }
 }
 
 } // namespace quoll::http

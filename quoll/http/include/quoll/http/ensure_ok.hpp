@@ -34,39 +34,20 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/rest/detail/serve.hpp>
+#ifndef QUOLL_HTTP_ENSURE_OK_HPP
+#define QUOLL_HTTP_ENSURE_OK_HPP
 
-#include <quoll/http/detail/utf8.hpp>
-#include <quoll/rest/detail/printable_text.hpp>
-#include <quoll/rest/json_codec.hpp>
-#include <quoll/rest/problem.hpp>
+#include <quoll/http/response.hpp>
 
-#include <string>
-#include <string_view>
-#include <utility>
+namespace quoll::http {
 
-namespace quoll::rest::detail {
+/**
+ * @brief `answer` if its status is not an error, else an http_error received from it, its detail the status and its
+ * reason: `co_await client.send(request)` read as `http::ensure_ok(co_await client.send(request))`.
+ * @throws http_error for a status of 400 or more.
+ */
+[[nodiscard]] response ensure_ok(response answer);
 
-http::response problem_response(http::status code, std::optional<std::string> detail) {
-  // It may quote what came from a peer, and an error has to get out.
-  if (detail && !http::detail::is_utf8(*detail)) {
-    detail = printable_text(std::move(*detail));
-  }
+} // namespace quoll::http
 
-  auto const reason = http::reason_phrase(code);
-  problem const body{
-      .type = std::nullopt,
-      .title = reason.empty() ? std::nullopt : std::optional<std::string>{reason},
-      .status = static_cast<int>(code),
-      .detail = std::move(detail),
-      .instance = std::nullopt,
-  };
-  http::response response;
-
-  response.status = code;
-  response.body = json_codec{}.encode(body);
-  response.fields.add("Content-Type", problem_content_type);
-  return response;
-}
-
-} // namespace quoll::rest::detail
+#endif // QUOLL_HTTP_ENSURE_OK_HPP

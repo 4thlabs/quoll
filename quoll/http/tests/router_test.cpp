@@ -1794,3 +1794,17 @@ static_assert(
 static_assert(
     quoll::http::detail::parse_template("/a?k=x#y").error == quoll::http::detail::template_error::invalid_query
 );
+
+TEST_CASE("router: a request's keys are read decoded, as its template's", "[http][router][query]") {
+  http::router router;
+
+  router.get("/search?a+b={first}&format=json", [](std::string first) {
+    http::response answer;
+
+    answer.body = first;
+    return answer;
+  });
+
+  // `%61%20b` is `a b`, and `%6Ason` is `json`.
+  CHECK(dispatch(router, verb::get, "/search?%61%20b=tea&format=%6Ason").body == "tea");
+}

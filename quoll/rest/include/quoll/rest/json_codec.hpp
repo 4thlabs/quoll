@@ -37,11 +37,11 @@
 #ifndef QUOLL_REST_JSON_CODEC_HPP
 #define QUOLL_REST_JSON_CODEC_HPP
 
+#include <quoll/http/detail/printable_text.hpp>
 #include <quoll/http/detail/utf8.hpp>
 #include <quoll/rest/codec.hpp>
 #include <quoll/rest/decode_error.hpp>
 #include <quoll/rest/detail/json_read_options.hpp>
-#include <quoll/rest/detail/printable_text.hpp>
 
 #include <glaze/json/read.hpp>
 #include <glaze/json/write.hpp>
@@ -118,7 +118,7 @@ public:
 
     if (auto const error = glz::read<read_options>(value, body)) {
       // Glaze quotes the body, which came from anybody, and this goes back as text.
-      return std::unexpected{decode_error{detail::printable_text(glz::format_error(error, body))}};
+      return std::unexpected{decode_error{http::detail::printable_text(glz::format_error(error, body))}};
     }
 
     return value;

@@ -63,7 +63,7 @@ template <class Task>
 http::status status_of(Task work) {
   try {
     static_cast<void>(quoll::test::run(std::move(work)));
-  } catch (rest::call_error const &failure) {
+  } catch (http::http_error const &failure) {
     return failure.status();
   }
 

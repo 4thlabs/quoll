@@ -41,11 +41,14 @@ quoll_declare_module(
     src/fields.cpp
     src/format_event.cpp
     src/format_websocket_frame.cpp
+    src/http_error.cpp
     src/is_event_stream.cpp
     src/local_transport.cpp
     src/one_at_a_time.cpp
     src/parser.cpp
     src/percent.cpp
+    src/printable_text.cpp
+    src/problem.cpp
     src/query_string.cpp
     src/response_writer.cpp
     src/router.cpp
@@ -67,6 +70,7 @@ quoll_declare_tests(
     tests/event_reader_test.cpp
     tests/fields_test.cpp
     tests/format_event_test.cpp
+    tests/http_error_test.cpp
     tests/parser_test.cpp
     tests/percent_test.cpp
     tests/router_test.cpp
