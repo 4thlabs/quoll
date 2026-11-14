@@ -1700,7 +1700,13 @@ TEST_CASE("router: a route of add() gets the values of its query parameters", "[
   });
 
   CHECK(dispatch(router, verb::get, "/search?q=tea&other=1").body == "1:tea");
-  CHECK_THROWS_AS(router.add(verb::get, "/bad?q", "bad", {}), std::invalid_argument);
+  CHECK_THROWS_WITH(
+      router.add(
+          verb::get, "/bad?q", "bad",
+          [](http::request, http::route_match) -> task<http::response> { co_return http::response{}; }
+      ),
+      Catch::Matchers::ContainsSubstring("key={name} or key=value")
+  );
 }
 
 static_assert(quoll::http::detail::parse_template("/a?b={b}&c=d").query.size() == 2);
@@ -1708,3 +1714,49 @@ static_assert(
     quoll::http::detail::parse_template("/a/{b}?b={b}").error == quoll::http::detail::template_error::duplicate_name
 );
 static_assert(quoll::http::detail::parse_template("/a?").error == quoll::http::detail::template_error::invalid_query);
+
+TEST_CASE("router: fixed values choose among routes of one path, the most specific first", "[http][router][query]") {
+  http::router router;
+
+  router.get("/export?format=json&id={id}", [](std::int64_t id) {
+    http::response answer;
+
+    answer.body = "json " + std::to_string(id);
+    return answer;
+  });
+  router.get("/export?format=csv&id={id}", [](std::int64_t id) {
+    http::response answer;
+
+    answer.body = "csv " + std::to_string(id);
+    return answer;
+  });
+  router.get("/export", [] {
+    http::response answer;
+
+    answer.body = "plain";
+    return answer;
+  });
+
+  CHECK(dispatch(router, verb::get, "/export?format=csv&id=3").body == "csv 3");
+  CHECK(dispatch(router, verb::get, "/export?id=3&format=json").body == "json 3");
+  // None of its fixed values: the route without any.
+  CHECK(dispatch(router, verb::get, "/export?format=xml").body == "plain");
+  // The same shape and the same fixed values: never told apart.
+  CHECK_THROWS_AS(router.get("/export?format=csv&n={n}", [](int) { return http::response{}; }), std::invalid_argument);
+}
+
+TEST_CASE(
+    "router: a key a route does not read refuses nothing, even one that does not decode", "[http][router][query]"
+) {
+  http::router router;
+
+  router.get("/notes?page={page}", [](std::optional<int> page) {
+    http::response answer;
+
+    answer.body = page ? std::to_string(*page) : "-";
+    return answer;
+  });
+
+  CHECK(dispatch(router, verb::get, "/notes?utm=%zz&page=2").body == "2");
+  CHECK(dispatch(router, verb::get, "/notes?page=%zz").status == http::status::bad_request);
+}

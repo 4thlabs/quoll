@@ -37,9 +37,9 @@
 #ifndef QUOLL_REST_DETAIL_SCHEME_TRAITS_HPP
 #define QUOLL_REST_DETAIL_SCHEME_TRAITS_HPP
 
+#include <quoll/http/detail/query_string.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/rest/detail/join_strings.hpp>
-#include <quoll/http/detail/query_string.hpp>
 #include <quoll/rest/detail/single_field.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/security.hpp>
@@ -83,7 +83,8 @@ template <fixed_string Header>
 struct scheme_traits<api_key<Header>> {
   static constexpr auto key = join_strings<"header:", Header>();
 
-  [[nodiscard]] static std::optional<std::string> find(http::fields const &fields, std::vector<http::detail::query_entry> const &) {
+  [[nodiscard]] static std::optional<std::string>
+  find(http::fields const &fields, std::vector<http::detail::query_entry> const &) {
     auto const value = single_field(fields, Header.view());
 
     return value && !value->empty() ? std::optional<std::string>{*value} : std::nullopt;
@@ -101,7 +102,8 @@ template <fixed_string Param>
 struct scheme_traits<api_key_query<Param>> {
   static constexpr auto key = join_strings<"query:", Param>();
 
-  [[nodiscard]] static std::optional<std::string> find(http::fields const &, std::vector<http::detail::query_entry> const &query) {
+  [[nodiscard]] static std::optional<std::string>
+  find(http::fields const &, std::vector<http::detail::query_entry> const &query) {
     auto const texts = http::detail::query_texts(query, Param.view());
 
     return texts.size() != 1 || texts.front().empty() ? std::nullopt : std::optional<std::string>{texts.front()};

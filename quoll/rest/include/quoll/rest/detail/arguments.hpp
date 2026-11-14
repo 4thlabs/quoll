@@ -39,6 +39,7 @@
 
 #include <quoll/async/lifetimebound.hpp>
 #include <quoll/http/detail/ascii.hpp>
+#include <quoll/http/detail/query_string.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
@@ -46,7 +47,6 @@
 #include <quoll/rest/detail/checked_path.hpp>
 #include <quoll/rest/detail/fields_of.hpp>
 #include <quoll/rest/detail/part.hpp>
-#include <quoll/http/detail/query_string.hpp>
 #include <quoll/rest/detail/single_field.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
@@ -214,7 +214,8 @@ decode_fields(std::string_view what, std::vector<http::detail::query_entry> cons
       return;
     }
 
-    auto decoded = from_texts<std::remove_cvref_t<decltype(field)>>(what, name, http::detail::query_texts(entries, name));
+    auto decoded =
+        from_texts<std::remove_cvref_t<decltype(field)>>(what, name, http::detail::query_texts(entries, name));
 
     if (!decoded) {
       error = std::move(decoded.error());

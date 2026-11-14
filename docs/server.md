@@ -75,8 +75,10 @@ router.get("/export?format=json&id={id}", [](std::int64_t id) { ... });
   one may be missing; a `std::vector` of one takes every value, `?tag=a&tag=b`, in order. A value that is missing,
   given twice where one is asked, or not its type answers 400.
 - **The key** is the name on the wire, decoded as a form sends it (`+` for a space, `%XX`); the name between braces
-  is the parameter's, unique in the template. Other keys of the request are left alone.
-- **A fixed value** missing, or another, answers 400.
+  is the parameter's, unique in the template. Other keys of the request are left alone, even one that does not decode.
+- **A fixed value** chooses the route: `/export?format=json&id={id}` and `/export?format=csv&id={id}` are two routes,
+  and of two that match, the one asking for more fixed values wins. A request that no route of its path takes,
+  for a fixed value missing or another, answers 400.
 - **A parameter of the path** is always there: it cannot be a `std::optional` nor a `std::vector`.
 
 All of this is checked at compile time: the path is a string literal and a valid template, with as

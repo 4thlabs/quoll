@@ -250,6 +250,17 @@ struct parsed_template {
   }
 }
 
+// Whether `text` holds an escaped NUL, which no request can give a route.
+[[nodiscard]] constexpr bool escapes_a_nul(std::string_view text) noexcept {
+  for (std::size_t index = 0; index + 2 < text.size(); ++index) {
+    if (text[index] == '%' && text[index + 1] == '0' && text[index + 2] == '0') {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // Whether `name` names a parameter of `parsed` already, in its path or its query.
 [[nodiscard]] constexpr bool names_a_parameter(parsed_template const &parsed, std::string_view name) {
   return std::ranges::any_of(
@@ -274,7 +285,7 @@ struct parsed_template {
     auto const key = pair.substr(0, equals);
     auto const value = pair.substr(equals + 1);
 
-    if (key.empty() || key.find_first_of("{}") != std::string_view::npos || !valid_escapes(key)) {
+    if (key.empty() || key.find_first_of("{}") != std::string_view::npos || !valid_escapes(key) || escapes_a_nul(key)) {
       return template_error::invalid_query;
     }
 
@@ -285,6 +296,10 @@ struct parsed_template {
     if (value.find_first_of("{}") == std::string_view::npos) {
       if (!valid_escapes(value)) {
         return template_error::invalid_escape;
+      }
+
+      if (escapes_a_nul(value)) {
+        return template_error::invalid_query;
       }
 
       parsed.query.push_back({key, {}, value});

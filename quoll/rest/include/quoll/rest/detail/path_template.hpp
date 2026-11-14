@@ -196,13 +196,14 @@ struct path_template {
   path_template parsed;
   auto const grammar = http::detail::parse_template(text);
 
-  parsed.error = to_path_error(grammar.error);
-
-  // A query in the template comes with the routes of #176: until then, '?' is no character of a REST path.
-  if (parsed.error == path_error::none && !grammar.query.empty()) {
+  // A query in the template comes with the routes of #176: until then, '?' is no character of a REST path, whatever
+  // the query holds.
+  if (http::detail::find_char(text, '?') != std::string_view::npos) {
     parsed.error = path_error::invalid_character;
     return parsed;
   }
+
+  parsed.error = to_path_error(grammar.error);
 
   for (auto const &segment : grammar.segments) {
     if (segment.kind == http::detail::segment_kind::literal) {

@@ -90,6 +90,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/effect_view_value.cpp
     tests/compile_fail/event_function_signature.cpp
     tests/compile_fail/form_state_bind_struct_field.cpp
+    tests/compile_fail/redirect_query.cpp
     tests/compile_fail/redirect_trailing_slash.cpp
     tests/compile_fail/redirect_unknown_param.cpp
     tests/compile_fail/resource_not_a_value.cpp
@@ -108,6 +109,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/route_path_name_unknown.cpp
     tests/compile_fail/route_props_not_made.cpp
     tests/compile_fail/route_props_not_routable.cpp
+    tests/compile_fail/route_query_in_path.cpp
     tests/compile_fail/route_trailing_slash.cpp
     tests/compile_fail/route_typed_param.cpp
     tests/compile_fail/router_provided.cpp

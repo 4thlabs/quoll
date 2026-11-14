@@ -39,6 +39,7 @@
 
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/percent.hpp>
+#include <quoll/http/detail/query_string.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/rest/body.hpp>
@@ -47,7 +48,6 @@
 #include <quoll/rest/detail/fields_of.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/path_template.hpp>
-#include <quoll/http/detail/query_string.hpp>
 #include <quoll/rest/detail/scheme_traits.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
