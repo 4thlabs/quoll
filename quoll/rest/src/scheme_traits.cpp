@@ -47,7 +47,7 @@
 namespace quoll::rest::detail {
 
 std::optional<std::string>
-scheme_traits<bearer_auth>::find(http::fields const &fields, std::vector<query_entry> const &) {
+scheme_traits<bearer_auth>::find(http::fields const &fields, std::vector<http::detail::query_entry> const &) {
   constexpr std::string_view scheme = "Bearer ";
   auto const value = single_field(fields, "Authorization");
 

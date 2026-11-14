@@ -46,6 +46,7 @@ quoll_declare_module(
     src/one_at_a_time.cpp
     src/parser.cpp
     src/percent.cpp
+    src/query_string.cpp
     src/response_writer.cpp
     src/router.cpp
     src/serializer.cpp
@@ -92,7 +93,10 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/router_too_many_parameters.cpp
     tests/compile_fail/router_invalid_template.cpp
     tests/compile_fail/router_auto_parameter.cpp
+    tests/compile_fail/router_optional_path_parameter.cpp
     tests/compile_fail/router_parameter_type.cpp
+    tests/compile_fail/router_query_key_twice.cpp
+    tests/compile_fail/router_query_too_few_parameters.cpp
     tests/compile_fail/router_handler_result.cpp
     tests/compile_fail/router_response_writer_not_last.cpp
     tests/compile_fail/router_response_writer_result.cpp

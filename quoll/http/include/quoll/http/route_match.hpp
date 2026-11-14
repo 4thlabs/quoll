@@ -55,6 +55,11 @@ struct route_match {
   /** @brief The query string, after `?` and still encoded; empty without one. */
   std::string query;
   /**
+   * @brief The values of the query parameters the route's template names, `?q={q}`, in its order: each the values
+   * the request gives it, decoded, in order, none when it gives none.
+   */
+  std::vector<std::vector<std::string>> query_params{};
+  /**
    * @brief What reads the body, on the route of a handler taking an http::body_reader: nothing on a route of
    * router::add(), whose request comes whole.
    */

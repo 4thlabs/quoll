@@ -58,6 +58,27 @@ The handler says what the parameters are: a number, a `bool` (`true` or `false`)
 a `std::string_view`. A value that cannot be read as its type answers 400. The handler returns
 `http::response`, or `async::task<http::response>` when it has something to await.
 
+The template may go on with a query, after `?`: `key={name}` for a parameter, `key=value` for a fixed value the
+request must give, joined by `&`. Its parameters come after the path's, in the order of the template:
+
+```cpp
+router.get("/notes/{folder}?contains={contains}&page={page}&tag={tags}",
+           [](std::string folder, std::optional<std::string> contains, std::optional<int> page,
+              std::vector<std::string> tags) {
+             ...
+           });
+
+router.get("/export?format=json&id={id}", [](std::int64_t id) { ... });
+```
+
+- **Its type** says what the request may give: a type of the path's is required, given once; a `std::optional` of
+  one may be missing; a `std::vector` of one takes every value, `?tag=a&tag=b`, in order. A value that is missing,
+  given twice where one is asked, or not its type answers 400.
+- **The key** is the name on the wire, decoded as a form sends it (`+` for a space, `%XX`); the name between braces
+  is the parameter's, unique in the template. Other keys of the request are left alone.
+- **A fixed value** missing, or another, answers 400.
+- **A parameter of the path** is always there: it cannot be a `std::optional` nor a `std::vector`.
+
 All of this is checked at compile time: the path is a string literal and a valid template, with as
 many parameters as the handler takes, which has types (no `auto`). A path made at run time goes
 through `add()`, which also hands over the name of the route and its query:
@@ -67,7 +88,7 @@ router.add(http::verb::get, "/search", "search",
            [](http::request, http::route_match match) -> async::task<http::response> {
              http::response response;
 
-             // After `?`, still encoded.
+             // After `?`, still encoded; `match.query_params` holds the values of a template's `?q={q}`.
              response.body = std::move(match.query);
              co_return response;
            });

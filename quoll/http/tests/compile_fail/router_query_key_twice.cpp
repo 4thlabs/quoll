@@ -34,42 +34,15 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_REST_DETAIL_QUERY_STRING_HPP
-#define QUOLL_REST_DETAIL_QUERY_STRING_HPP
+// expect: the_route_template_is_invalid
 
-#include <quoll/async/lifetimebound.hpp>
+// The query names one key twice.
+
+#include <quoll/http/router.hpp>
 
 #include <optional>
 #include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
 
-namespace quoll::rest::detail {
-
-struct query_entry {
-  std::string name;
-  std::string value;
-};
-
-// Decodes a component of a query string: '+' is a space, as forms send it, and %XX escapes.
-[[nodiscard]] std::optional<std::string> decode_query_component(std::string_view text);
-
-// The `name=value` pairs of a query string, decoded and in order; `name` alone has an empty value. Nothing for an
-// invalid escape or a NUL (`%00`), which C APIs would cut at, as the router refuses one in the path.
-[[nodiscard]] std::optional<std::vector<query_entry>> parse_query(std::string_view query);
-
-// The values of the parameter `name`, in order.
-[[nodiscard]] std::vector<std::string_view>
-query_texts(std::vector<query_entry> const &query QUOLL_LIFETIMEBOUND, std::string_view name);
-
-// Appends `name=value` to a query string or a form under construction, both percent-encoded. A value holding a NUL
-// throws std::invalid_argument, saying `what` it is.
-void append_query(
-    std::string &query, std::string_view name, std::string_view value,
-    std::string_view what = "quoll::rest::client: query parameter"
-);
-
-} // namespace quoll::rest::detail
-
-#endif // QUOLL_REST_DETAIL_QUERY_STRING_HPP
+void route(quoll::http::router &router) {
+  router.get("/notes?q={q}&q={other}", [](std::string, std::string) { return quoll::http::response{}; });
+}

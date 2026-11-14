@@ -169,6 +169,9 @@ struct path_template {
     return path_error::invalid_escape;
   case template_error::dot_segment:
     return path_error::dot_segment;
+  case template_error::invalid_query:
+  case template_error::duplicate_query_key:
+    return path_error::invalid_character;
   case template_error::empty_type:
     return path_error::unknown_type;
   }
@@ -194,6 +197,12 @@ struct path_template {
   auto const grammar = http::detail::parse_template(text);
 
   parsed.error = to_path_error(grammar.error);
+
+  // A query in the template comes with the routes of #176: until then, '?' is no character of a REST path.
+  if (parsed.error == path_error::none && !grammar.query.empty()) {
+    parsed.error = path_error::invalid_character;
+    return parsed;
+  }
 
   for (auto const &segment : grammar.segments) {
     if (segment.kind == http::detail::segment_kind::literal) {

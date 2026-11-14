@@ -309,6 +309,11 @@ consteval void check_fields(page_fields<Fields...> /*fields*/) {
 // message a way to be wrong.
 template <http::fixed_string Path, http::fixed_string Full, auto const &Page, bool Top, class Fields>
 consteval void check_route() {
+  static_assert(
+      http::detail::parse_template(Full.view()).query.empty(),
+      "quoll::ui: a route's path has no query: a field the query fills is named by from_query<\"q\", &props::q>"
+  );
+
   constexpr auto parsed_error = http::detail::parse_template(Full.view()).error;
   constexpr bool typed = [] {
     for (auto const &segment : http::detail::parse_template(Full.view()).segments) {

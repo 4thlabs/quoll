@@ -9,7 +9,6 @@ quoll_declare_module(
     src/next.cpp
     src/param_traits.cpp
     src/printable_text.cpp
-    src/query_string.cpp
     src/retry.cpp
     src/scheme_traits.cpp
     src/serve.cpp

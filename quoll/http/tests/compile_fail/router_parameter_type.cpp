@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: a path parameter is a std::string, a std::string_view, a number or a bool
+// expect: a parameter is a std::string, a std::string_view, a number or a bool
 
 // No text reads as this.
 

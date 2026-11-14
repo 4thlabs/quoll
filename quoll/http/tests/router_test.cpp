@@ -39,6 +39,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/async/with_timeout.hpp>
 #include <quoll/http/body_stream.hpp>
+#include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
@@ -55,6 +56,7 @@
 #include <chrono>
 #include <concepts>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -1641,3 +1643,68 @@ TEST_CASE("local_transport: a body on what cannot have one is refused", "[http]"
 
   REQUIRE_THROWS_AS(quoll::test::run(transport.send(std::move(message))), std::invalid_argument);
 }
+
+TEST_CASE("router: the query of a route's template gives its parameters, after the path's", "[http][router][query]") {
+  http::router router;
+
+  router.get(
+      "/notes/{folder}?contains={contains}&page={page}&tag={tags}",
+      [](std::string folder, std::optional<std::string> contains, std::optional<int> page,
+         std::vector<std::string> tags) {
+        http::response answer;
+
+        answer.body = folder + "|" + contains.value_or("-") + "|" + (page ? std::to_string(*page) : "-");
+
+        for (auto const &tag : tags) {
+          answer.body += "|" + tag;
+        }
+
+        return answer;
+      }
+  );
+
+  CHECK(
+      dispatch(router, verb::get, "/notes/home?contains=green%20tea&page=2&tag=a&tag=b+c").body ==
+      "home|green tea|2|a|b c"
+  );
+  CHECK(dispatch(router, verb::get, "/notes/home").body == "home|-|-");
+  // An optional given twice, or one that is not its type: refused.
+  CHECK(dispatch(router, verb::get, "/notes/home?page=1&page=2").status == http::status::bad_request);
+  CHECK(dispatch(router, verb::get, "/notes/home?page=two").status == http::status::bad_request);
+}
+
+TEST_CASE("router: a required query parameter, and a fixed value the request must give", "[http][router][query]") {
+  http::router router;
+
+  router.get("/export?format=json&id={id}", [](std::int64_t id) {
+    http::response answer;
+
+    answer.body = std::to_string(id);
+    return answer;
+  });
+
+  CHECK(dispatch(router, verb::get, "/export?id=7&format=json").body == "7");
+  CHECK(dispatch(router, verb::get, "/export?format=json").status == http::status::bad_request);
+  CHECK(dispatch(router, verb::get, "/export?id=7").status == http::status::bad_request);
+  CHECK(dispatch(router, verb::get, "/export?id=7&format=xml").status == http::status::bad_request);
+}
+
+TEST_CASE("router: a route of add() gets the values of its query parameters", "[http][router][query]") {
+  http::router router;
+
+  router.add(verb::get, "/search?q={q}", "search", [](http::request, http::route_match match) -> task<http::response> {
+    http::response answer;
+
+    answer.body = std::to_string(match.query_params.at(0).size()) + ":" + match.query_params.at(0).at(0);
+    co_return answer;
+  });
+
+  CHECK(dispatch(router, verb::get, "/search?q=tea&other=1").body == "1:tea");
+  CHECK_THROWS_AS(router.add(verb::get, "/bad?q", "bad", {}), std::invalid_argument);
+}
+
+static_assert(quoll::http::detail::parse_template("/a?b={b}&c=d").query.size() == 2);
+static_assert(
+    quoll::http::detail::parse_template("/a/{b}?b={b}").error == quoll::http::detail::template_error::duplicate_name
+);
+static_assert(quoll::http::detail::parse_template("/a?").error == quoll::http::detail::template_error::invalid_query);

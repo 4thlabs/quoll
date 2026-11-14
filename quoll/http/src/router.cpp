@@ -39,6 +39,7 @@
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/percent.hpp>
 #include <quoll/http/detail/plain_segment.hpp>
+#include <quoll/http/detail/query_string.hpp>
 #include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/detail/status_response.hpp>
 #include <quoll/http/status.hpp>
@@ -76,6 +77,18 @@ struct route_segment {
   std::string literal;
 };
 
+// A pair of the query a route's template asks for: its key, decoded, and either a parameter or a fixed value, decoded.
+struct route_query {
+  std::string key;
+  bool is_param = false;
+  std::string value;
+};
+
+struct compiled_route {
+  std::vector<route_segment> segments;
+  std::vector<route_query> query;
+};
+
 [[nodiscard]] std::string_view describe(template_error error) noexcept {
   switch (error) {
   case template_error::none:
@@ -98,13 +111,17 @@ struct route_segment {
     return "no request can reach a dot segment or a NUL";
   case template_error::empty_type:
     return "a parameter's type is empty after ':'";
+  case template_error::invalid_query:
+    return "the query is key={name} or key=value pairs, joined by '&'";
+  case template_error::duplicate_query_key:
+    return "the query names a key twice";
   }
 
   return "valid";
 }
 
 // The segments of a route template, for the router. @throws std::invalid_argument for an invalid one.
-[[nodiscard]] std::vector<route_segment> compile_route(std::string_view path) {
+[[nodiscard]] compiled_route compile_route(std::string_view path) {
   auto const parsed = parse_template(path);
 
   if (path.empty() || parsed.error != template_error::none) {
@@ -113,14 +130,28 @@ struct route_segment {
     throw std::invalid_argument{"quoll::http::router: " + std::string{describe(error)}};
   }
 
-  std::vector<route_segment> segments;
+  compiled_route compiled;
 
   for (auto const &segment : parsed.segments) {
     // The escapes are valid: the template was checked.
-    segments.push_back({segment.kind, segment.kind == segment_kind::literal ? *percent_decode(segment.text) : ""});
+    compiled.segments.push_back(
+        {segment.kind, segment.kind == segment_kind::literal ? *percent_decode(segment.text) : ""}
+    );
   }
 
-  return segments;
+  for (auto const &entry : parsed.query) {
+    auto key = decode_query_component(entry.key);
+    auto value = entry.param.empty() ? decode_query_component(entry.value) : std::optional<std::string>{""};
+
+    // A NUL, which no request could send.
+    if (!key || !value) {
+      throw std::invalid_argument{"quoll::http::router: no request can send a NUL"};
+    }
+
+    compiled.query.push_back({std::move(*key), !entry.param.empty(), std::move(*value)});
+  }
+
+  return compiled;
 }
 
 // Whether two routes have the same shape: the same literals and parameters in the same places, whatever the
@@ -288,6 +319,7 @@ void allow(std::vector<verb> &allowed, verb method) {
 struct router::entry {
   verb method;
   std::vector<route_segment> segments;
+  std::vector<route_query> query;
   std::string name;
   handler target;
   bool body_in_pieces;
@@ -309,7 +341,8 @@ void router::add_route(verb method, std::string_view path, std::string name, han
     throw std::invalid_argument{"quoll::http::router: empty handler"};
   }
 
-  auto segments = compile_route(path);
+  auto compiled = compile_route(path);
+  auto &segments = compiled.segments;
 
   // next::route() tells no route by an empty name.
   if (name.empty()) {
@@ -322,7 +355,9 @@ void router::add_route(verb method, std::string_view path, std::string name, han
     }
   }
 
-  routes_.push_back(entry{method, std::move(segments), std::move(name), std::move(target), body_in_pieces});
+  routes_.push_back(
+      entry{method, std::move(segments), std::move(compiled.query), std::move(name), std::move(target), body_in_pieces}
+  );
   any_body_in_pieces_ = any_body_in_pieces_ || body_in_pieces;
 }
 
@@ -344,6 +379,43 @@ struct resolved_route {
 } // namespace detail
 
 namespace {
+
+// The values of the query parameters of a route, in the order of its template, from `query`, the request's: each its
+// values, in order; none if a fixed value is missing or another, or if the query does not decode.
+[[nodiscard]] std::optional<std::vector<std::vector<std::string>>>
+query_of(std::vector<route_query> const &asked, std::string_view query) {
+  if (asked.empty()) {
+    return std::vector<std::vector<std::string>>{};
+  }
+
+  auto const entries = parse_query(query);
+
+  if (!entries) {
+    return std::nullopt;
+  }
+
+  std::vector<std::vector<std::string>> values;
+
+  for (auto const &pair : asked) {
+    std::vector<std::string> found;
+
+    for (auto const text : query_texts(*entries, pair.key)) {
+      found.emplace_back(text);
+    }
+
+    if (!pair.is_param) {
+      if (found.size() != 1 || found.front() != pair.value) {
+        return std::nullopt;
+      }
+
+      continue;
+    }
+
+    values.push_back(std::move(found));
+  }
+
+  return values;
+}
 
 // What the router says by itself, when no route answers.
 [[nodiscard]] response answer_without_route(detail::resolved_route const &resolved) {
@@ -448,10 +520,20 @@ detail::resolved_route router::resolve(request const &message) const {
   }
 
   if (chosen != nullptr) {
+    auto query = query_of(chosen->query, target->query);
+
+    // A fixed value missing or another, or a query that does not decode: the request is refused, 400.
+    if (!query) {
+      resolved.valid = false;
+      resolved.allowed.clear();
+      return resolved;
+    }
+
     resolved.target = &chosen->target;
     resolved.body_in_pieces = chosen->body_in_pieces;
     resolved.match =
         route_match{chosen->name, extract_params(chosen->segments, *segments), std::string{target->query}, {}};
+    resolved.match.query_params = std::move(*query);
   }
 
   return resolved;

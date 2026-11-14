@@ -63,6 +63,8 @@ enum class template_error {
   invalid_escape,
   dot_segment,
   empty_type,
+  invalid_query,
+  duplicate_query_key,
 };
 
 struct template_segment {
@@ -73,9 +75,18 @@ struct template_segment {
   std::string_view type;
 };
 
+// A `key={name}` or a fixed `key=value` of the query a template has after its path: `key` and `value` as written,
+// escapes kept; `param` the name of the parameter, empty for a fixed value.
+struct template_query {
+  std::string_view key;
+  std::string_view param;
+  std::string_view value;
+};
+
 struct parsed_template {
   template_error error = template_error::none;
   std::vector<template_segment> segments;
+  std::vector<template_query> query;
 };
 
 // string_view::find, by index: GCC 13 cannot evaluate the null check of char_traits::find at compile time on a
@@ -164,11 +175,10 @@ struct parsed_template {
   return template_error::none;
 }
 
-// The grammar of route templates, shared by http::router (at run time) and the rest DSL (at compile time):
-// `/users/{id}`, `{name:type}`, `{name:path}` for the rest of the path, last. A parameter takes a whole segment and
-// has a name of letters, digits and '_', unique in the template. Literals may hold %XX escapes. "" has no segment
-// (the root of an api prefix), "/" one empty literal.
-[[nodiscard]] constexpr parsed_template parse_template(std::string_view path) {
+// The path of a route template: `/users/{id}`, `{name:type}`, `{name:path}` for the rest of the path, last. A
+// parameter takes a whole segment and has a name of letters, digits and '_', unique in the template. Literals may hold
+// %XX escapes. "" has no segment (the root of an api prefix), "/" one empty literal.
+[[nodiscard]] constexpr parsed_template parse_path_template(std::string_view path) {
   parsed_template parsed;
 
   auto fail = [&parsed](template_error error) {
@@ -238,6 +248,91 @@ struct parsed_template {
 
     start = slash + 1;
   }
+}
+
+// Whether `name` names a parameter of `parsed` already, in its path or its query.
+[[nodiscard]] constexpr bool names_a_parameter(parsed_template const &parsed, std::string_view name) {
+  return std::ranges::any_of(
+             parsed.segments, [name](template_segment const &segment
+                              ) { return segment.kind != segment_kind::literal && segment.text == name; }
+         ) ||
+         std::ranges::any_of(parsed.query, [name](template_query const &entry) { return entry.param == name; });
+}
+
+// The query of a route template, after '?': `key={name}` pairs and fixed `key=value` ones, joined by '&'.
+[[nodiscard]] constexpr template_error parse_template_query(parsed_template &parsed, std::string_view query) {
+  for (std::size_t start = 0;;) {
+    auto const ampersand = find_char(query, '&', start);
+    auto const pair =
+        query.substr(start, ampersand == std::string_view::npos ? std::string_view::npos : ampersand - start);
+    auto const equals = find_char(pair, '=');
+
+    if (equals == std::string_view::npos) {
+      return template_error::invalid_query;
+    }
+
+    auto const key = pair.substr(0, equals);
+    auto const value = pair.substr(equals + 1);
+
+    if (key.empty() || key.find_first_of("{}") != std::string_view::npos || !valid_escapes(key)) {
+      return template_error::invalid_query;
+    }
+
+    if (std::ranges::any_of(parsed.query, [key](template_query const &entry) { return entry.key == key; })) {
+      return template_error::duplicate_query_key;
+    }
+
+    if (value.find_first_of("{}") == std::string_view::npos) {
+      if (!valid_escapes(value)) {
+        return template_error::invalid_escape;
+      }
+
+      parsed.query.push_back({key, {}, value});
+    } else {
+      if (value.size() < 2 || value.front() != '{' || value.back() != '}' ||
+          value.substr(1, value.size() - 2).find_first_of("{}") != std::string_view::npos) {
+        return template_error::invalid_query;
+      }
+
+      auto const name = value.substr(1, value.size() - 2);
+
+      if (name.empty() || !std::ranges::all_of(name, is_name_char)) {
+        return template_error::invalid_name;
+      }
+
+      if (names_a_parameter(parsed, name)) {
+        return template_error::duplicate_name;
+      }
+
+      parsed.query.push_back({key, name, {}});
+    }
+
+    if (ampersand == std::string_view::npos) {
+      return template_error::none;
+    }
+
+    start = ampersand + 1;
+  }
+}
+
+// The grammar of route templates, shared by http::router (at run time) and the rest DSL and the UI's routes (at
+// compile time): a path (see parse_path_template), then, after '?', a query of `key={name}` parameters and fixed
+// `key=value` pairs joined by '&', each key once, each name unique in the template.
+[[nodiscard]] constexpr parsed_template parse_template(std::string_view text) {
+  auto const question = find_char(text, '?');
+  auto parsed = parse_path_template(text.substr(0, question));
+
+  if (parsed.error != template_error::none || question == std::string_view::npos) {
+    return parsed;
+  }
+
+  if (auto const error = parse_template_query(parsed, text.substr(question + 1)); error != template_error::none) {
+    parsed.error = error;
+    parsed.segments.clear();
+    parsed.query.clear();
+  }
+
+  return parsed;
 }
 
 } // namespace quoll::http::detail
