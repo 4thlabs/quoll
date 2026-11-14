@@ -165,7 +165,7 @@ refusing to run.
 
 **Taken.** An API is a set of C++ types, a layer over the router: one route per operation, its method as its type,
 `rest::get<"/notes/{id}", note, std::int64_t>`, gathered in `rest::group` and `rest::api<>`, checked at compile time
-([its design](design/rest-dsl.md)). A server implements a contract with `rest::mount`, and a
+([its spec](specs/rest-dsl.md)). A server implements a contract with `rest::mount`, and a
 client consumes one, but neither needs the other. A route declares its result only: an error is one `http::http_error`,
 thrown by a handler, given back by a client, whose body a third-party API's own shape reads.
 
@@ -212,7 +212,7 @@ and the API described twice.
 apart and declared twice, read as concepts mixed. How can a component read in sections, without reflection, and stay
 cheap to rebuild?
 
-**Taken.** Two forms, both in the component's header ([ADR 0002](adr/0002-ui-dsl-shape.md)). A struct, `struct
+**Taken.** Two forms, both in the component's header ([the UI spec](specs/ui-dsl.md)). A struct, `struct
 product_view : component<product_view>`, its props first, its contexts, states, loads, effects and actions as members
 that join it as the app makes it, its handlers as member functions and its view in `element view()`, placed by name
 through a variable of the struct's name. Or a lambda whose parameters are its props, with hooks, as before. A load is
@@ -221,7 +221,7 @@ follows a field of its props, `&props::id`, or a function of them, read from the
 `given->id`, would dangle once the next view replaces them. What it follows, as its props, holds no pointer nor view.
 
 **Set aside.** Sections in a nested struct, a life cycle as React's classes, a state and messages as Elm's, signals and
-a view run once, and the struct made where it is placed (the ADR's table): each read worse, or made members in the
+a view run once, and the struct made where it is placed (the UI spec's table): each read worse, or made members in the
 parent's view. `product_view::with({...})` to place one.
 
 **For you.** A component with a state reads in sections in form S, a small one in form D; both are written in their

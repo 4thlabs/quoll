@@ -1,19 +1,18 @@
-# ADR 0002: the shape of a UI component
+# The UI DSL
 
-- **Status:** decided by the maintainer on 2026-11-13: forms S and D below, a component in its header only; the
-  prototypes of the next pull requests confirm the details
+> [!WARNING]
+> **Draft**, to be reviewed and validated with the maintainer in [#226](https://github.com/4thlabs/quoll/issues/226).
+> It says what they decided on 2026-11-13, forms S and D below and a component in its header only, and what changed
+> since; what is left to do is in #226.
+
 - **Changes since** (2026-11-14): the names below are the code's; the rest is as it was decided.
-  - Routes by member pointers (#189), then forms D and S and `resource<T>` (#190 to #193) came first. Still to do:
-    contexts without Glaze ([#204](https://github.com/4thlabs/quoll/issues/204)), the widgets' JSON through `json_codec` ([#205](https://github.com/4thlabs/quoll/issues/205)), effects,
-    actions, forms and loads compiled once ([#199](https://github.com/4thlabs/quoll/issues/199)), and `use_resource` ([#198](https://github.com/4thlabs/quoll/issues/198)).
+  - Routes by member pointers (#189), then forms D and S and `resource<T>` (#190 to #193) came first.
   - A form S member using a context is a `shared<T>`, as before, not a `context<T>`. A `provided<T>` member joins no
     struct yet: a struct's view calls `provide_context<T>()`.
   - A route takes its fields as template arguments, `route<"{id}", product_page, &product_page::props::id>()`,
     `from_query<"q", &props::q>` and `from_path<"id", &props::id>`: as values, they could not name the functions
     reading and writing a field.
-  - `docs/ui.md` writes a component in its header; the samples still give each a header and a source
-    ([#200](https://github.com/4thlabs/quoll/issues/200)).
-  - Stores are planned to replace contexts ([#206](https://github.com/4thlabs/quoll/issues/206)).
+  - `docs/ui.md` writes a component in its header.
 - **Date:** 2026-11-13
 - **Related:** [#182](https://github.com/4thlabs/quoll/issues/182) (Glaze for JSON only),
   [#204](https://github.com/4thlabs/quoll/issues/204) (contexts without Glaze), [`PLAN.md`](../PLAN.md) step 6

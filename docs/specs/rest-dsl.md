@@ -1,8 +1,11 @@
 # The REST DSL
 
-The design of `quoll::rest`'s contract, as decided with the maintainer on 2026-11-14 in
-[#176](https://github.com/4thlabs/quoll/issues/176), which replaces ADR 0001. How it behaves, for users, is in
-[`rest.md`](../rest.md); why, in [`design-decisions.md`](../design-decisions.md).
+> [!WARNING]
+> **Draft**, to be validated by the maintainer with [#227](https://github.com/4thlabs/quoll/pull/227).
+
+The spec of `quoll::rest`'s contract, decided with the maintainer in [#176](https://github.com/4thlabs/quoll/issues/176).
+How it behaves, for users, is in [`rest.md`](../rest.md); why, in [`design-decisions.md`](../design-decisions.md); what
+is left to do, in [#176](https://github.com/4thlabs/quoll/issues/176).
 
 ## The principle
 
@@ -140,19 +143,3 @@ no route or group, of a group none of these or security or a header; two routes 
 no handler, or two; a lambda of a route of another api, or two lambdas of one route in a service. Each says so in
 Quoll's words. A generic lambda, or a struct of several `operator()`, escapes the check of a route of another api: its
 call operators cannot be listed.
-
-## Where it stands
-
-1. Done, #223 to #225: `http::http_error` and `problem` in `quoll::http`; the query in the router's expression; an
-   operation's path types from C++ types, its name from its method and path.
-2. #227: routes, `rest::group`, `rest::service` and the checks above; `try_call` returning
-   `std::expected<T, http::http_error>`, `http_error::body_as`; the old DSL gone (`endpoint<>`, `with<>`, nested
-   prefixed apis, `reply<>`, `respond`, `unexpected_response`, `scope`), the tests, fuzz, bench and samples moved, the
-   guides rewritten.
-3. Later: the HTTP client's interceptors, retry and credentials in `quoll::http`; `quoll::json` (a new module, which
-   the maintainer merges).
-
-## Open
-
-- **A fixed value in a route's query** (`?format=json`): decided as a part of its own, not yet written.
-- **Arguments by name** (`"page"_p = 2`): decided, not yet written.

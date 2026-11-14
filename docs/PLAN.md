@@ -245,7 +245,7 @@ Its issue: [#163](https://github.com/4thlabs/quoll/issues/163). Done:
 - Routing (2026-11-12): `routes(...)` of `route<Path, Page, fields...>`, layouts with `outlet()`, `redirect`,
   `not_found`, `routing<routes>(history)`, `link_to`, the browser's history; the dashboard is pages.
 - A component in its header, as a struct of sections (form S) or a function of its props (form D), and `resource<T>`
-  (2026-11-13, [ADR 0002](adr/0002-ui-dsl-shape.md), #189 to #193).
+  (2026-11-13, [the UI spec](specs/ui-dsl.md), #189 to #193).
 
 Left, each an issue of the project:
 
@@ -456,17 +456,17 @@ changes only what the harness shows. Candidates:
   status on the members" only in form: the action is read as a state, so the view still reads states only. An effect
   keeps its target, which is the data it loads.
 - **Components are functions, their state their `use_` hooks** (2026-11-12), as React's: superseded on 2026-11-13 by
-  [ADR 0002](adr/0002-ui-dsl-shape.md), below, which keeps these hooks for form D. Still in force from it: a hook is
+  [the UI spec](specs/ui-dsl.md), below, which keeps these hooks for form D. Still in force from it: a hook is
   found by the place of its call and how many times that place was called before in the view, and what a view writes
   takes effect once that view shows, as React's committed render; `use_context` and `provide_context` take Leptos's names.
 - **A component is an object of its props, placed by calling it** (2026-11-13), as React's JSX places one, the
   maintainer refusing `component<product_detail>(...)` in a view: `product_detail({.item = item})`, which routes, links
   and the app's root name, `mount(app_shell, "#app", options)`; an effect on nothing runs once, as `mounted()` went.
   Its one rule, `constexpr component<props>` always written, and a header and a source for each component, never
-  `inline`, were superseded the same day by [ADR 0002](adr/0002-ui-dsl-shape.md), below. Still in force: a page's folder
+  `inline`, were superseded the same day by [the UI spec](specs/ui-dsl.md), below. Still in force: a page's folder
   keeps its tools' files at its root and its code in `src/` by role, and a rebuild of one component takes a second at
   most, the maintainer's budget, which #199 measures and checks in CI.
-- **Form S, a component written as a struct** (2026-11-13, [ADR 0002](adr/0002-ui-dsl-shape.md)): its first part done,
+- **Form S, a component written as a struct** (2026-11-13, [the UI spec](specs/ui-dsl.md)): its first part done,
   `struct note_counter : component<note_counter>` with `struct props` read through `given->`, states, effects, forms
   and `shared<T>` as members that join it as the app makes it (`member_join`, no reflection), handlers as member
   functions, `element view()` that may still call `use_context`, placed by `inline constexpr tag<note_counter>
@@ -477,14 +477,14 @@ changes only what the harness shows. Candidates:
   read with `match(loading, failed, loaded)`, the first given the value before if it asks, and an optional `idle`
   first. Left: `use_resource` for form D (#198), and Glaze out of everything but JSON (#182: #201 to
   #205).
-- **Form D, a component's props its view's parameters** (2026-11-13, [ADR 0002](adr/0002-ui-dsl-shape.md)): done,
+- **Form D, a component's props its view's parameters** (2026-11-13, [the UI spec](specs/ui-dsl.md)): done,
   `inline constexpr component note_row = [](notes::note const &item, bool const &selected) {...}` is a
   `component<parameters<notes::note, bool>>`, placed `note_row(item, true)`; one parameter is the props, as
   `component<chart_props>` with its fields named as it is placed; none a `component<>`. `component<props>` stays, as an
   `extern` declaration needs it. Parameters are kept with the component, so a view among them does not compile; one
   without `==` makes it viewed again at each view of its parent; a routed page takes one struct.
 - **A component is a struct of sections or a function of its props, in its header only** (2026-11-13,
-  [ADR 0002](adr/0002-ui-dsl-shape.md)): the maintainer found the declaration unreadable, the concepts mixed in one
+  [the UI spec](specs/ui-dsl.md)): the maintainer found the declaration unreadable, the concepts mixed in one
   body ("ce n'est pas lisible et on mélange les concepts"), kept the view's decorators, and chose both forms of a
   study of other frameworks and of a Rust rewrite of the samples, without reflection. Form S, `struct product_view :
   component<product_view>`, its `struct props` first, then its contexts, states, loads, effects and actions as members
@@ -528,10 +528,10 @@ changes only what the harness shows. Candidates:
   and a component provides a context to those of its view with `provided<T>`, as React's `Provider`, for what only
   a page needs. A route types no parameter itself, `{id}` rather than `{id:int64}`: the props do, and the two could
   differ. `link` became `link_to`, as POSIX's `link()` takes two strings and wins over it.
-  Since 2026-11-13 ([ADR 0002](adr/0002-ui-dsl-shape.md), no reflection): a route names the fields it fills, a member
+  Since 2026-11-13 ([the UI spec](specs/ui-dsl.md), no reflection): a route names the fields it fills, a member
   pointer for each `{parameter}` of its whole path in order, `route<"{id}", product_page, &product_page_props::id>()`,
   and by name `from_query<"q", &props::q>` and `from_path<"id", &props::id>`, the latter for a layout reading the
-  parameter of the page under it. As template arguments rather than the ADR's call arguments, which as values cannot
+  parameter of the page under it. As template arguments rather than the UI spec's call arguments, which as values cannot
   name the functions reading and writing the field. A field not named stays as made: the query no longer fills every
   other field by its name, which took Glaze.
 - **Contexts: data the components of an app share, given to the app, found by type** (2026-11-11 and 2026-11-12), as
@@ -655,7 +655,7 @@ changes only what the harness shows. Candidates:
 - The UI is a **C++ DSL compiled to WASM** (2026-11-04), which replaces the React, TypeScript client and `quoll::bridge`
   of the earlier plan: elements with pipes and class strings (`button("Add") | tw("btn") | on_click(...)`), a view that
   runs again and a diff that reaches a `Renderer`. Its components as aggregates holding `state<T>` members were
-  superseded by functions, then by the two forms of [ADR 0002](adr/0002-ui-dsl-shape.md).
+  superseded by functions, then by the two forms of [the UI spec](specs/ui-dsl.md).
 - **The same WASM everywhere** (2026-11-04): web and PWA first, then a webview shell on desktop and mobile.
 - **Quoll drives the tools** (2026-11-04), through a `quoll` command: Vite becomes an internal detail. Replaces a
   development driven by Vite and a release driven by CMake.
@@ -668,7 +668,7 @@ changes only what the harness shows. Candidates:
 - JSON: [Glaze](https://github.com/stephenberry/glaze) (2026-11-03), header-only, fetched by CPM with a pinned version.
   It is to serve JSON only, behind `json_codec` (#182): the fields of `query_params<>` and of a form are read by a
   reflection of Quoll's own (2026-11-14); enums, the contexts and the widgets' JSON follow.
-- REST DSL (2026-11-03, redesigned 2026-11-14 in #176, [its design](design/rest-dsl.md)): a layer over the router, one
+- REST DSL (2026-11-03, redesigned 2026-11-14 in #176, [its spec](specs/rest-dsl.md)): a layer over the router, one
   path expression for both. A route is its method as its type, its whole path and query below the api's prefix, its
   result and its parameters' types: `rest::get<"/notes/{id}", note, std::int64_t>`. `rest::group` carries what its
   routes share, with no prefix; only `rest::api<>` has one, with no parameter. Handlers are lambdas taking their route
@@ -782,8 +782,8 @@ peer holds nobody back and the idle timeout covers it. In a browser, `fetch` doe
 
 ### REST DSL: contract, server, client
 
-Redesigned on 2026-11-14 with the maintainer, in #176: the design and where it stands are in
-[design/rest-dsl.md](design/rest-dsl.md), how it behaves in [rest.md](rest.md). What this section says of OpenAPI
+Redesigned on 2026-11-14 with the maintainer, in #176: the spec is [specs/rest-dsl.md](specs/rest-dsl.md), how it
+behaves is in [rest.md](rest.md), and what is left in #176. What this section says of OpenAPI
 (operation ids, security schemes, JSON Schemas) describes the optional output of
 [step 4](#step-4-rest-from-a-command-line-program-done), which does not exist yet: it binds nothing else.
 
@@ -888,7 +888,7 @@ int main() { quoll::emscripten::mount(counter); }
 ```
 
 This is form D, a function of its props, with hooks. Form S is a struct, `struct counter : component<counter>`, its
-props, states and effects as members and its view `element view()` ([ADR 0002](adr/0002-ui-dsl-shape.md)).
+props, states and effects as members and its view `element view()` ([the UI spec](specs/ui-dsl.md)).
 
 A state changing runs the view again; the diff reaches a `Renderer`, the DOM in a page. Handlers are plain functions or
 tasks, and call a REST API through a `rest::client`. How the app makes, views and lets go of a component is drawn in
