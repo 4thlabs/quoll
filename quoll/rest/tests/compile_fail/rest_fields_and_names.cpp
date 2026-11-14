@@ -38,22 +38,20 @@
 //
 // Both a list of its fields and renames: which one holds would be a guess.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
 #include <optional>
 #include <string>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
 struct filter {
   std::optional<std::string> q;
 
-  using rest_fields = names<name<"q", &filter::q>>;
-  using rest_names = names<name<"query", &filter::q>>;
+  using rest_fields = rest::names<rest::name<"q", &filter::q>>;
+  using rest_names = rest::names<rest::name<"query", &filter::q>>;
 };
 
-using listed = endpoint<"listed", verb::get, "/", query_params<filter>>;
+using route = rest::get<"/", void, rest::query_params<filter>>;
 
-api<"", listed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

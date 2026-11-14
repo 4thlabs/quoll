@@ -38,35 +38,40 @@
 #define QUOLL_REST_HPP
 
 #include <quoll/rest/api.hpp>
-#include <quoll/rest/body.hpp>
 #include <quoll/rest/bytes_codec.hpp>
 #include <quoll/rest/client.hpp>
 #include <quoll/rest/codec.hpp>
 #include <quoll/rest/credential.hpp>
 #include <quoll/rest/decode_error.hpp>
-#include <quoll/rest/endpoint.hpp>
 #include <quoll/rest/event_options.hpp>
 #include <quoll/rest/event_sink.hpp>
 #include <quoll/rest/event_stream.hpp>
 #include <quoll/rest/events.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/form_codec.hpp>
+#include <quoll/rest/formats.hpp>
+#include <quoll/rest/frame_sink.hpp>
+#include <quoll/rest/frame_stream.hpp>
+#include <quoll/rest/framing.hpp>
 #include <quoll/rest/header.hpp>
 #include <quoll/rest/json_codec.hpp>
+#include <quoll/rest/json_lines.hpp>
 #include <quoll/rest/mount.hpp>
+#include <quoll/rest/named_argument.hpp>
 #include <quoll/rest/names.hpp>
 #include <quoll/rest/next.hpp>
 #include <quoll/rest/open_enum.hpp>
+#include <quoll/rest/operation_id.hpp>
 #include <quoll/rest/param_traits.hpp>
 #include <quoll/rest/parameter.hpp>
-#include <quoll/rest/query.hpp>
-#include <quoll/rest/reply.hpp>
+#include <quoll/rest/query_params.hpp>
+#include <quoll/rest/result_status.hpp>
 #include <quoll/rest/retry.hpp>
-#include <quoll/rest/returns.hpp>
-#include <quoll/rest/scoped_client.hpp>
+#include <quoll/rest/route.hpp>
 #include <quoll/rest/security.hpp>
+#include <quoll/rest/service.hpp>
+#include <quoll/rest/stream.hpp>
 #include <quoll/rest/text_codec.hpp>
-#include <quoll/rest/unexpected_response.hpp>
 #include <quoll/rest/validators.hpp>
 
 #endif // QUOLL_REST_HPP

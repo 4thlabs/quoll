@@ -54,8 +54,8 @@ struct checked_path {
       "quoll::rest: a path parameter name is empty or not made of letters, digits and '_'"
   );
   static_assert(
-      parsed.error != path_error::unknown_type,
-      "quoll::rest: unknown path parameter type (int, int64, uint, uint64, double, bool, string, path)"
+      parsed.error != path_error::unknown_type, "quoll::rest: a path parameter says no type, its route's types do: "
+                                                "only {name:path} says one, the rest of the path"
   );
   static_assert(parsed.error != path_error::not_whole_segment, "quoll::rest: a path parameter is a whole segment");
   static_assert(parsed.error != path_error::rest_not_last, "quoll::rest: nothing follows a {name:path} parameter");

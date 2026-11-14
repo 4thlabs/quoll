@@ -34,25 +34,25 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::client::try_call: the endpoint answers events<>: subscribe
+// expect: quoll::rest::client::try_call: the route answers a stream, events<> or stream<>: subscribe
 //
 // try_call reads a whole body too.
 
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
 #include <string>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using feed = endpoint<"feed", verb::get, "/", events<std::string, text_codec>>;
+using feed = rest::get<"/", rest::events<std::string, rest::text_codec>>;
 
 void called() {
   quoll::http::router router;
-  client<api<"", feed>, quoll::http::local_transport> const caller{quoll::http::local_transport{router}};
+  rest::client<rest::api<"", rest::group<feed>>, quoll::http::local_transport> const caller{
+      quoll::http::local_transport{router}
+  };
 
   static_cast<void>(caller.try_call<feed>());
 }

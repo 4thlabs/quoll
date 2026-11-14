@@ -34,24 +34,18 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::client::subscribe: the endpoint has no events<>, call it
+// expect: quoll::rest::client::subscribe: the route answers no stream, events<> nor stream<>: call it
 //
-// An endpoint with one body to give, subscribed to.
+// A route with one body to give, subscribed to.
 
-#include <quoll/http/status.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-#include <string>
+namespace rest = quoll::rest;
 
-using namespace quoll::rest;
-using quoll::http::status;
-using quoll::http::verb;
-
-using one = endpoint<"one", verb::get, "/", returns<std::string, status::ok, text_codec>>;
+using one = rest::get<"/", rest::text>;
 
 void subscribed() {
-  client<api<"", one>> const caller{"http://example.com"};
+  rest::client<rest::api<"", rest::group<one>>> const caller{"http://example.com"};
 
   static_cast<void>(caller.subscribe<one>());
 }

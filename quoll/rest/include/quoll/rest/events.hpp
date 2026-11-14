@@ -44,19 +44,17 @@
 namespace quoll::rest {
 
 /**
- * @brief An endpoint part: its response is a stream of server-sent events, each carrying a `T` encoded by
- * `EventCodec` (JSON by default), rather than one body.
+ * @brief A route's result: a stream of server-sent events, each carrying a `T` encoded by `EventCodec` (JSON by
+ * default), rather than one body.
  *
  * @code
- * using feed = rest::endpoint<"changes.feed", http::verb::get, "/changes",
- *                             rest::header<"Last-Event-ID", std::optional<std::string>>, rest::events<change>,
- *                             rest::returns<http::problem, http::status::not_found>>;
+ * using feed = rest::get<"/changes", rest::events<change>, rest::header<"Last-Event-ID", std::optional<std::string>>>;
  * @endcode
  *
- * The service takes an rest::event_sink<T> as its last argument, by reference, and sends through it; a client reads
+ * The handler takes an rest::event_sink<T> as its last argument, by reference, and sends through it; a client reads
  * them with `subscribe` (see rest::client). What the codec encodes is the data of an event: UTF-8 text, a CR or a CRLF
- * in it read back as an LF, as for any server-sent event; JSON has none. The endpoint may declare error responses
- * beside it, answered before the stream starts (open() or the first event), but no other success.
+ * in it read back as an LF, as for any server-sent event; JSON has none. An http_error the handler throws before the
+ * stream starts (open() or the first event) answers as from any handler.
  */
 template <class T, class EventCodec = json_codec>
 struct events {

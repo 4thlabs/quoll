@@ -54,49 +54,6 @@ namespace quoll::rest::detail {
 // The types a path parameter may have, spelled `{name:type}` in a path template.
 enum class param_kind { int32, int64, uint32, uint64, floating, boolean, string, rest_of_path };
 
-template <param_kind Kind>
-struct param_kind_type;
-
-template <>
-struct param_kind_type<param_kind::int32> {
-  using type = int;
-};
-
-template <>
-struct param_kind_type<param_kind::int64> {
-  using type = std::int64_t;
-};
-
-template <>
-struct param_kind_type<param_kind::uint32> {
-  using type = unsigned;
-};
-
-template <>
-struct param_kind_type<param_kind::uint64> {
-  using type = std::uint64_t;
-};
-
-template <>
-struct param_kind_type<param_kind::floating> {
-  using type = double;
-};
-
-template <>
-struct param_kind_type<param_kind::boolean> {
-  using type = bool;
-};
-
-template <>
-struct param_kind_type<param_kind::string> {
-  using type = std::string;
-};
-
-template <>
-struct param_kind_type<param_kind::rest_of_path> {
-  using type = std::string;
-};
-
 // What makes a path template invalid; each one has its own static_assert message.
 enum class path_error {
   none,
@@ -179,7 +136,7 @@ struct path_template {
   return path_error::none;
 }
 
-// What a literal of an endpoint's path may hold (RFC 3986, pchar): a client copies it into the target as it is, where a
+// What a literal of a route's path may hold (RFC 3986, pchar): a client copies it into the target as it is, where a
 // space, '?', '#', a control or a byte past ASCII would take the request elsewhere, or none could carry it. The router
 // itself matches literals decoded, and takes them.
 [[nodiscard]] constexpr bool is_path_character(char character) noexcept {
@@ -195,8 +152,7 @@ struct path_template {
 [[nodiscard]] consteval path_template parse_path(std::string_view text) {
   path_template parsed;
 
-  // A query in the template comes with the routes of #176: until then, '?' is no character of a REST path, whatever
-  // the query holds.
+  // The path of a route, without its query, which its expression holds after the '?': here, '?' is no character of it.
   if (http::detail::find_char(text, '?') != std::string_view::npos) {
     parsed.error = path_error::invalid_character;
     return parsed;
@@ -239,7 +195,7 @@ struct path_template {
   return parsed;
 }
 
-// The path of an endpoint under the prefix of its api: an endpoint path of "/" is the prefix itself, and an empty
+// The path of a route under the prefix of its api: a route path of "/" is the prefix itself, and an empty
 // result is "/".
 template <fixed_string Prefix, fixed_string Path>
 [[nodiscard]] consteval auto join_paths() {

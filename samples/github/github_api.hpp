@@ -34,15 +34,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The contract of a few endpoints of GitHub's REST API (https://docs.github.com/rest), as GitHub has them: its names,
-// its errors, its fields as they come, more than the contract reads. Shared by the program and the fake GitHub its test
-// runs against. No I/O.
+// The contract of a few routes of GitHub's REST API (https://docs.github.com/rest), as GitHub has them: its paths, the
+// shape of its errors, its fields as they come, more than the contract reads. Shared by the program and the fake GitHub
+// its test runs against. No I/O.
 
 #ifndef QUOLL_SAMPLES_GITHUB_API_HPP
 #define QUOLL_SAMPLES_GITHUB_API_HPP
 
-#include <quoll/http/status.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
 #include <glaze/core/common.hpp>
@@ -109,37 +107,30 @@ struct glz::meta<github::repository> {
 
 namespace github {
 
-namespace http = quoll::http;
 namespace rest = quoll::rest;
 
-// GitHub adds fields over time: every response is read with the lenient codec, which skips those it does not know.
-template <class T, http::status Status = http::status::ok>
-using answers = rest::returns<T, Status, rest::lenient_json_codec>;
-
+// GitHub adds fields over time: every result is read leniently, skipping those it does not know. A route declares no
+// error: GitHub's own shape of them, `error` above, is read from the http_error a call gives (see github.cpp).
 namespace repos {
 
 // 403: a token without access, or the rate limit of a caller without one (60 requests an hour).
-using get = rest::endpoint<
-    "repos.get", http::verb::get, "/", answers<repository>, answers<error, http::status::not_found>,
-    answers<error, http::status::forbidden>>;
-using issues = rest::endpoint<
-    "repos.issues", http::verb::get, "/issues", rest::query_params<issue_filter>, answers<std::vector<issue>>,
-    answers<error, http::status::not_found>, answers<error, http::status::forbidden>>;
+using get = rest::get<"/repos/{owner}/{repo}", rest::lenient_json<repository>, std::string, std::string>;
+using issues = rest::get<
+    "/repos/{owner}/{repo}/issues", rest::lenient_json<std::vector<issue>>, std::string, std::string,
+    rest::query_params<issue_filter>>;
 
-using api = rest::api<"/repos/{owner}/{repo}", get, issues>;
+using routes = rest::group<get, issues>;
 
 } // namespace repos
 
 namespace users {
 
 // The account the token belongs to.
-using me = rest::endpoint<
-    "users.me", http::verb::get, "/user", rest::security<rest::bearer_auth>, answers<github::me>,
-    answers<error, http::status::unauthorized>, answers<error, http::status::forbidden>>;
+using me = rest::get<"/user", rest::lenient_json<github::me>, rest::security<rest::bearer_auth>>;
 
 } // namespace users
 
-using api = rest::api<"", repos::api, users::me>;
+using api = rest::api<"", repos::routes, users::me>;
 
 } // namespace github
 

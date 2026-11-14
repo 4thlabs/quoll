@@ -38,12 +38,10 @@
 //
 // A space in a literal: no request could carry it.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using spaced = endpoint<"spaced", verb::get, "/a b">;
+using route = rest::get<"/a b", void>;
 
-api<"", spaced> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

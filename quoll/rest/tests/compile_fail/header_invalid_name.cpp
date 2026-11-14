@@ -38,12 +38,10 @@
 //
 // A header name with a space.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using headed = endpoint<"headed", verb::get, "/", header<"X Bad", int>>;
+using route = rest::get<"/", void, rest::header<"X Bad", int>>;
 
-api<"", headed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

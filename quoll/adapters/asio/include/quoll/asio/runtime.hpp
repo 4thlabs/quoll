@@ -47,6 +47,7 @@
 #include <quoll/async/task.hpp>
 #include <quoll/async/timer_ref.hpp>
 #include <quoll/async/work_item.hpp>
+#include <quoll/io/local_network_ref.hpp>
 #include <quoll/io/network_ref.hpp>
 #if defined(QUOLL_ASIO_TLS)
 #include <quoll/io/tls_network_ref.hpp>
@@ -137,6 +138,11 @@ public:
 #if defined(QUOLL_ASIO_TLS)
     /** @brief The TLS network of the runtime's loop, as long-lived as the runtime. */
     [[nodiscard]] io::tls_network_ref query(async::service_tag<io::tls_network_ref>) const;
+#endif
+
+#if defined(QUOLL_ASIO_LOCAL)
+    /** @brief The local network of the runtime's loop, Unix domain sockets, as long-lived as the runtime. */
+    [[nodiscard]] io::local_network_ref query(async::service_tag<io::local_network_ref>) const;
 #endif
 
     /** @brief Makes strands of the runtime, as long-lived as the runtime: see async::Strands. */

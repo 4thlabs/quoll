@@ -76,23 +76,25 @@ namespace {
 
 } // namespace
 
-std::string failure_detail(unexpected_response const &failure) {
-  auto const content_type = failure.response.fields.find("Content-Type");
+std::string refusal_detail(refusal const &refused) {
+  auto const content_type = refused.response.fields.find("Content-Type");
 
   if (content_type && http::detail::iequals(media_type(*content_type), http::problem_content_type)) {
-    if (auto const decoded = lenient_json_codec{}.decode<http::problem>(failure.response.body);
+    if (auto const decoded = lenient_json_codec{}.decode<http::problem>(refused.response.body);
         decoded && decoded->detail) {
       return without_controls(*decoded->detail);
     }
   }
 
-  return failure.reason;
+  return refused.reason;
 }
 
-void fail(unexpected_response failure) {
-  auto detail = failure_detail(failure);
+http::http_error received_error(refusal refused) {
+  auto detail = refusal_detail(refused);
 
-  throw http::http_error::received_from(std::move(failure.response), detail);
+  return http::http_error::received_from(std::move(refused.response), detail);
 }
+
+void fail(refusal refused) { throw received_error(std::move(refused)); }
 
 } // namespace quoll::rest::detail

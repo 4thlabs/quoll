@@ -38,22 +38,19 @@
 //
 // A field renamed to nothing: it would go by no name.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-#include <array>
 #include <optional>
 #include <string>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
 struct filter {
   std::optional<std::string> q;
 
-  using rest_names = names<name<"", &filter::q>>;
+  using rest_names = rest::names<rest::name<"", &filter::q>>;
 };
 
-using listed = endpoint<"listed", verb::get, "/", query_params<filter>>;
+using route = rest::get<"/", void, rest::query_params<filter>>;
 
-api<"", listed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

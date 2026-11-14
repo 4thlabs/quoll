@@ -34,6 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <quoll/http/http_error.hpp>
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
@@ -58,7 +59,6 @@ namespace contract_test {
 
 namespace rest = quoll::rest;
 
-using quoll::http::status;
 using quoll::http::verb;
 
 struct user {
@@ -77,10 +77,6 @@ struct user_filter {
   std::optional<std::string> name;
 };
 
-struct not_found {
-  std::string detail;
-};
-
 struct card {
   std::int64_t id = 0;
 };
@@ -95,38 +91,37 @@ struct token {
 };
 
 namespace auth {
-using namespace quoll::rest;
 
-using login = endpoint<"auth.login", verb::post, "/login", body<credentials>, returns<token>>;
+using login = rest::post<"/auth/login", token, credentials>;
 
-using api = rest::api<"/auth", login>;
 } // namespace auth
 
 namespace users {
-using namespace quoll::rest;
 
-using list = endpoint<"users.list", verb::get, "/", query_params<user_filter>, returns<std::vector<user>>>;
-using get = endpoint<"users.get", verb::get, "/{id:int64}", returns<user>, returns<not_found, status::not_found>>;
-using create = endpoint<"users.create", verb::post, "/", body<new_user>, returns<user, status::created>>;
-using remove = endpoint<"users.remove", verb::delete_, "/{id:int64}">;
+using list = rest::get<"/users", std::vector<user>, rest::query_params<user_filter>>;
+using get = rest::get<"/users/{id}", user, std::int64_t, rest::operation_id<"users.get">>;
+using create = rest::post<"/users", rest::created<user>, new_user>;
+using forget = rest::del<"/users/{id}", void, std::int64_t>;
 
-using api = rest::api<"/users", list, get, create, remove>;
+using routes = rest::group<list, get, create, forget>;
+
 } // namespace users
 
 namespace cards {
-using namespace quoll::rest;
 
-using list = endpoint<
-    "cards.list", verb::get, "/", query<"status", std::optional<std::string>>, header<"X-Request-Id", std::string>,
-    returns<std::vector<card>>>;
-using remove = endpoint<"cards.remove", verb::delete_, "/{id:int64}">;
+using list = rest::get<
+    "/users/{user_id}/cards?status={status}", std::vector<card>, std::int64_t, std::optional<std::string>,
+    rest::header<"X-Request-Id", std::string>>;
+using forget = rest::del<"/users/{user_id}/cards/{id}", void, std::int64_t, std::int64_t>;
 
-using api = rest::api<"/users/{user_id:int64}/cards", list, remove>;
+using routes = rest::group<list, forget>;
+
 } // namespace cards
 
 using v1 = rest::api<
-    "/api/v1", auth::api,
-    rest::with<rest::security<rest::bearer_auth>, rest::query<"trace", std::optional<bool>>, users::api, cards::api>>;
+    "/api/v1", auth::login,
+    rest::group<
+        rest::security<rest::bearer_auth>, rest::header<"X-Trace", std::optional<bool>>, users::routes, cards::routes>>;
 
 } // namespace contract_test
 
@@ -137,13 +132,13 @@ using namespace contract_test;
 using quoll::rest::bearer_auth;
 using quoll::rest::detail::type_list;
 
-// Full paths: the prefixes, then the endpoint path ("/" is the prefix itself).
+// Full paths: the api's prefix, then the route's.
 static_assert(v1::route<auth::login>::path == "/api/v1/auth/login");
 static_assert(v1::route<users::list>::path == "/api/v1/users");
-static_assert(v1::route<users::get>::path == "/api/v1/users/{id:int64}");
-static_assert(v1::route<cards::remove>::path == "/api/v1/users/{user_id:int64}/cards/{id:int64}");
+static_assert(v1::route<users::get>::path == "/api/v1/users/{id}");
+static_assert(v1::route<cards::forget>::path == "/api/v1/users/{user_id}/cards/{id}");
 
-// Arguments: path parameters (prefixes first), the endpoint's argument parts in order, then the inherited ones.
+// Arguments: the path's and the query's parameters, the route's own parts in order, then what its groups give.
 static_assert(std::same_as<v1::route<auth::login>::arguments, std::tuple<credentials>>);
 static_assert(std::same_as<v1::route<users::list>::arguments, std::tuple<user_filter, std::optional<bool>>>);
 static_assert(std::same_as<v1::route<users::get>::arguments, std::tuple<std::int64_t, std::optional<bool>>>);
@@ -152,62 +147,45 @@ static_assert(std::same_as<
               v1::route<cards::list>::arguments,
               std::tuple<std::int64_t, std::optional<std::string>, std::string, std::optional<bool>>>);
 static_assert(std::same_as<
-              v1::route<cards::remove>::arguments, std::tuple<std::int64_t, std::int64_t, std::optional<bool>>>);
+              v1::route<cards::forget>::arguments, std::tuple<std::int64_t, std::int64_t, std::optional<bool>>>);
 
-// Responses, in order; none means 204.
-static_assert(v1::route<users::get>::responses::size == 2);
-static_assert(v1::route<users::remove>::responses::size == 0);
+// Its result: one, or none for void, answered 204.
+static_assert(v1::route<users::get>::responses::size == 1);
+static_assert(v1::route<users::forget>::responses::size == 0);
 
-// Security: inherited from with<> by the endpoints it wraps only.
+// Security: given by a group to the routes it holds only.
 static_assert(std::same_as<v1::route<users::get>::schemes, type_list<bearer_auth>>);
-static_assert(std::same_as<v1::route<cards::remove>::schemes, type_list<bearer_auth>>);
+static_assert(std::same_as<v1::route<cards::forget>::schemes, type_list<bearer_auth>>);
 static_assert(std::same_as<v1::route<auth::login>::schemes, type_list<>>);
 
-// An endpoint is also routed by the api it is declared in, without the prefixes around it.
-static_assert(users::api::route<users::get>::path == "/users/{id:int64}");
-static_assert(std::same_as<users::api::route<users::get>::arguments, std::tuple<std::int64_t>>);
-
-// What endpoint<> and route (with the parts inherited from with<>) reject, checked on the predicates of their
-// static_asserts.
-static_assert(
-    quoll::rest::detail::count_bodies(
-        type_list<quoll::rest::body<new_user>, quoll::rest::query<"q", int>, quoll::rest::body<user>>{}
-    ) == 2
-);
-static_assert(!quoll::rest::detail::distinct_statuses(
-    type_list<
-        quoll::rest::returns<user>, quoll::rest::returns<not_found, status::not_found>,
-        quoll::rest::returns<card, status::not_found>>{}
-));
-static_assert(quoll::rest::detail::distinct_statuses(v1::route<users::get>::parts{}));
+// A route's name: its operation_id<>, else its method and whole path.
+static_assert(v1::route<users::get>::name == "users.get");
+static_assert(v1::route<users::list>::name == "GET /api/v1/users");
 
 // What api<> rejects, checked on the predicates its static_asserts use.
-using clash = quoll::rest::endpoint<"users.get", verb::get, "/other">;
-using same_route = quoll::rest::endpoint<"users.find", verb::get, "/{uid:int64}">;
+using clash = quoll::rest::get<"/other", void, quoll::rest::operation_id<"users.get">>;
+using same_route = quoll::rest::get<"/users/{uid}", void, std::int64_t>;
 
 static_assert(quoll::rest::detail::distinct_names(v1::routes{}));
 static_assert(quoll::rest::detail::distinct_operations(v1::routes{}));
 static_assert(!quoll::rest::detail::distinct_names(
-    type_list<users::api::route<users::get>, quoll::rest::api<"", clash>::route<clash>>{}
+    type_list<v1::route<users::get>, quoll::rest::api<"/api/v1", clash>::route<clash>>{}
 ));
 static_assert(!quoll::rest::detail::distinct_operations(
-    type_list<users::api::route<users::get>, quoll::rest::api<"/users", same_route>::route<same_route>>{}
+    type_list<v1::route<users::get>, quoll::rest::api<"/api/v1", same_route>::route<same_route>>{}
 ));
 
 } // namespace
 
-TEST_CASE("rest contract: endpoints are routed under their prefixes", "[rest][contract]") {
-  REQUIRE(v1::route<cards::remove>::path == "/api/v1/users/{user_id:int64}/cards/{id:int64}");
-  REQUIRE(v1::route<users::list>::name == "users.list");
-  REQUIRE(v1::route<users::create>::endpoint::method == verb::post);
+TEST_CASE("rest contract: routes are served under the api's prefix", "[rest][contract]") {
+  REQUIRE(v1::route<cards::forget>::path == "/api/v1/users/{user_id}/cards/{id}");
+  REQUIRE(v1::route<users::create>::method == verb::post);
   REQUIRE(v1::prefix == "/api/v1");
 }
 
 namespace contract_test_routes {
 
-using namespace quoll::rest;
-using quoll::http::status;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
 // A codec whose default constructor is no constant: one is built where it is used, at run time, on both sides.
 class marked_codec {
@@ -221,9 +199,9 @@ public:
 
   template <class T>
     requires std::same_as<T, std::string>
-  [[nodiscard]] std::expected<T, decode_error> decode(std::string_view body) const {
+  [[nodiscard]] std::expected<T, rest::decode_error> decode(std::string_view body) const {
     if (!body.starts_with(mark_)) {
-      return std::unexpected{decode_error{"not marked"}};
+      return std::unexpected{rest::decode_error{"not marked"}};
     }
 
     return std::string{body.substr(mark_.size())};
@@ -233,39 +211,31 @@ private:
   std::string mark_;
 };
 
-static_assert(Codec<marked_codec, std::string>);
+static_assert(rest::Codec<marked_codec, std::string>);
 
 // A parameter and the rest of a path, in one place: the router tells them apart, and so does the api.
-using one = endpoint<"one", verb::get, "/x/{a}", returns<std::string, status::ok, text_codec>>;
-using rest_of = endpoint<"rest_of", verb::get, "/x/{b:path}", returns<std::string, status::ok, text_codec>>;
-// The same status twice is refused; two responses of one type tell theirs with respond<>.
-using made = endpoint<
-    "made", verb::post, "/made", body<std::string, text_codec>, returns<std::string, status::ok, text_codec>,
-    returns<std::string, status::created, text_codec>>;
-// A first response with no body.
-using accepted = endpoint<"accepted", verb::post, "/accepted", returns<void, status::accepted>>;
-// A prefix with a parameter: its argument comes first.
-using owned = endpoint<"owned", verb::get, "/items/{item:int}", returns<std::string, status::ok, text_codec>>;
+using one = rest::get<"/x/{a}", rest::text, std::string>;
+using rest_of = rest::get<"/x/{b:path}", rest::text, std::string>;
+// A result made, answered 201.
+using made = rest::post<"/made", rest::created<rest::text>, rest::text>;
+// A result with no body, answered 202.
+using queued = rest::post<"/queued", rest::accepted<void>>;
+// A parameter several routes share, in each one's path.
+using owned = rest::get<"/orgs/{org}/items/{item}", rest::text, std::string, int>;
 // Bodies both ways through that codec.
-using marked = endpoint<
-    "marked", verb::post, "/marked", body<std::string, marked_codec>, returns<std::string, status::ok, marked_codec>>;
+using marked =
+    rest::post<"/marked", rest::encoded<std::string, marked_codec>, rest::encoded<std::string, marked_codec>>;
 
-using api = quoll::rest::api<"", one, rest_of, made, accepted, marked, quoll::rest::api<"/orgs/{org}", owned>>;
+using api = rest::api<"", rest::group<one, rest_of, made, queued, owned, marked>>;
 
 struct service {
   [[nodiscard]] std::string operator()(one, std::string a) const { return "one " + a; }
 
   [[nodiscard]] std::string operator()(rest_of, std::string b) const { return "rest " + b; }
 
-  [[nodiscard]] reply<made> operator()(made, std::string text) const {
-    if (text == "new") {
-      return respond<status::created>(std::string{"created"});
-    }
+  [[nodiscard]] std::string operator()(made, std::string text) const { return "made " + text; }
 
-    return respond<status::ok>(std::string{"kept"});
-  }
-
-  void operator()(accepted) const {}
+  void operator()(queued) const {}
 
   [[nodiscard]] std::string operator()(marked, std::string text) const { return text + "!"; }
 
@@ -288,85 +258,92 @@ TEST_CASE("contract: what users write runs, through mount and a client", "[rest]
 
   REQUIRE(run(client.call<routes::one>("1")) == "one 1");
   REQUIRE(run(client.call<routes::rest_of>("1/2")) == "rest 1/2");
+  REQUIRE(run(client.call<routes::made>("tea")) == "made tea");
 
-  auto const created = run(client.try_call<routes::made>("new"));
+  auto const made = run(client.try_call<routes::made>("milk"));
 
-  REQUIRE(created.has_value());
-  REQUIRE(created->holds<quoll::http::status::created>());
-  REQUIRE(created->get<quoll::http::status::created>() == "created");
-  REQUIRE(run(client.call<routes::made>("old")) == "kept");
-  auto const accepted = run(client.try_call<routes::accepted>());
-
-  REQUIRE(accepted.has_value());
-  REQUIRE(accepted->holds<quoll::http::status::accepted>());
+  REQUIRE(made.has_value());
+  REQUIRE(*made == "made milk");
+  REQUIRE(run(client.try_call<routes::queued>()).has_value());
   REQUIRE(run(client.call<routes::owned>("acme", 7)) == "acme/7");
   // Encoded by the client, decoded and encoded by the server, decoded by the client: each with a codec built then.
   REQUIRE(run(client.call<routes::marked>("hi")) == "hi!");
 }
 
+TEST_CASE("contract: try_call gives another status as the http_error received", "[rest][contract]") {
+  namespace routes = contract_test_routes;
+
+  quoll::http::router router;
+
+  quoll::rest::mount<routes::api>(router, routes::service{});
+
+  // A route the server does not have: its 404 comes back as an error, its status and body as received.
+  using missing = quoll::rest::get<"/missing", quoll::rest::text>;
+
+  quoll::rest::client<quoll::rest::api<"", missing>, quoll::http::local_transport> const client{
+      quoll::http::local_transport{router}
+  };
+  auto const answer = std::move(quoll::test::run(client.try_call<missing>()).value());
+
+  REQUIRE_FALSE(answer.has_value());
+  REQUIRE(answer.error().status() == quoll::http::status::not_found);
+  REQUIRE(answer.error().received());
+  REQUIRE_THROWS_AS(quoll::test::run(client.call<missing>()), quoll::http::http_error);
+}
+
 namespace contract_test_size {
 
 namespace rest = quoll::rest;
-using quoll::http::verb;
 
 // Each path is parsed once to tell operations apart: comparing every pair ran out of Clang's constexpr steps at 14.
-using e0 = rest::endpoint<"e0", verb::get, "/resources0/{id:int64}/children/{child}/details">;
-using e1 = rest::endpoint<"e1", verb::get, "/resources1/{id:int64}/children/{child}/details">;
-using e2 = rest::endpoint<"e2", verb::get, "/resources2/{id:int64}/children/{child}/details">;
-using e3 = rest::endpoint<"e3", verb::get, "/resources3/{id:int64}/children/{child}/details">;
-using e4 = rest::endpoint<"e4", verb::get, "/resources4/{id:int64}/children/{child}/details">;
-using e5 = rest::endpoint<"e5", verb::get, "/resources5/{id:int64}/children/{child}/details">;
-using e6 = rest::endpoint<"e6", verb::get, "/resources6/{id:int64}/children/{child}/details">;
-using e7 = rest::endpoint<"e7", verb::get, "/resources7/{id:int64}/children/{child}/details">;
-using e8 = rest::endpoint<"e8", verb::get, "/resources8/{id:int64}/children/{child}/details">;
-using e9 = rest::endpoint<"e9", verb::get, "/resources9/{id:int64}/children/{child}/details">;
-using e10 = rest::endpoint<"e10", verb::get, "/resources10/{id:int64}/children/{child}/details">;
-using e11 = rest::endpoint<"e11", verb::get, "/resources11/{id:int64}/children/{child}/details">;
-using e12 = rest::endpoint<"e12", verb::get, "/resources12/{id:int64}/children/{child}/details">;
-using e13 = rest::endpoint<"e13", verb::get, "/resources13/{id:int64}/children/{child}/details">;
-using e14 = rest::endpoint<"e14", verb::get, "/resources14/{id:int64}/children/{child}/details">;
-using e15 = rest::endpoint<"e15", verb::get, "/resources15/{id:int64}/children/{child}/details">;
-using e16 = rest::endpoint<"e16", verb::get, "/resources16/{id:int64}/children/{child}/details">;
-using e17 = rest::endpoint<"e17", verb::get, "/resources17/{id:int64}/children/{child}/details">;
-using e18 = rest::endpoint<"e18", verb::get, "/resources18/{id:int64}/children/{child}/details">;
-using e19 = rest::endpoint<"e19", verb::get, "/resources19/{id:int64}/children/{child}/details">;
-using e20 = rest::endpoint<"e20", verb::get, "/resources20/{id:int64}/children/{child}/details">;
-using e21 = rest::endpoint<"e21", verb::get, "/resources21/{id:int64}/children/{child}/details">;
-using e22 = rest::endpoint<"e22", verb::get, "/resources22/{id:int64}/children/{child}/details">;
-using e23 = rest::endpoint<"e23", verb::get, "/resources23/{id:int64}/children/{child}/details">;
-using e24 = rest::endpoint<"e24", verb::get, "/resources24/{id:int64}/children/{child}/details">;
-using e25 = rest::endpoint<"e25", verb::get, "/resources25/{id:int64}/children/{child}/details">;
-using e26 = rest::endpoint<"e26", verb::get, "/resources26/{id:int64}/children/{child}/details">;
-using e27 = rest::endpoint<"e27", verb::get, "/resources27/{id:int64}/children/{child}/details">;
-using e28 = rest::endpoint<"e28", verb::get, "/resources28/{id:int64}/children/{child}/details">;
-using e29 = rest::endpoint<"e29", verb::get, "/resources29/{id:int64}/children/{child}/details">;
-using e30 = rest::endpoint<"e30", verb::get, "/resources30/{id:int64}/children/{child}/details">;
-using e31 = rest::endpoint<"e31", verb::get, "/resources31/{id:int64}/children/{child}/details">;
+using e0 = rest::get<"/resources0/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e1 = rest::get<"/resources1/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e2 = rest::get<"/resources2/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e3 = rest::get<"/resources3/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e4 = rest::get<"/resources4/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e5 = rest::get<"/resources5/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e6 = rest::get<"/resources6/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e7 = rest::get<"/resources7/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e8 = rest::get<"/resources8/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e9 = rest::get<"/resources9/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e10 = rest::get<"/resources10/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e11 = rest::get<"/resources11/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e12 = rest::get<"/resources12/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e13 = rest::get<"/resources13/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e14 = rest::get<"/resources14/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e15 = rest::get<"/resources15/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e16 = rest::get<"/resources16/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e17 = rest::get<"/resources17/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e18 = rest::get<"/resources18/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e19 = rest::get<"/resources19/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e20 = rest::get<"/resources20/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e21 = rest::get<"/resources21/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e22 = rest::get<"/resources22/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e23 = rest::get<"/resources23/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e24 = rest::get<"/resources24/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e25 = rest::get<"/resources25/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e26 = rest::get<"/resources26/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e27 = rest::get<"/resources27/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e28 = rest::get<"/resources28/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e29 = rest::get<"/resources29/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e30 = rest::get<"/resources30/{id}/children/{child}/details", void, std::int64_t, std::string>;
+using e31 = rest::get<"/resources31/{id}/children/{child}/details", void, std::int64_t, std::string>;
 
 using large = rest::api<
-    "/api/v1", e0, e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, e15, e16, e17, e18, e19, e20, e21, e22,
-    e23, e24, e25, e26, e27, e28, e29, e30, e31>;
+    "/api/v1", rest::group<
+                   e0, e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, e15, e16, e17, e18, e19, e20, e21,
+                   e22, e23, e24, e25, e26, e27, e28, e29, e30, e31>>;
 
 static_assert(large::routes::size == 32);
-
-// What with<> adds to a HEAD endpoint is the server's answers, never read as a body: it compiles.
-struct problem_body {
-  std::string detail;
-};
-
-using exists = rest::endpoint<"exists", verb::head, "/things/{id}">;
-using guarded = rest::api<"", rest::with<rest::returns<problem_body, quoll::http::status::unauthorized>, exists>>;
-
-static_assert(guarded::routes::size == 1);
 
 } // namespace contract_test_size
 
 namespace contract_test_types {
 
-using get = quoll::rest::endpoint<"e", quoll::http::verb::get, "/{id:uint}">;
-using api = quoll::rest::api<"/u/{uid:int64}", get>;
+using get = quoll::rest::get<"/u/{uid}/e/{id}", void, std::int64_t, unsigned>;
+using api = quoll::rest::api<"/api", get>;
 
-// The types of a route's path parameters: its prefixes', then its own, each as its template says it.
+// The types of a route's path parameters, as its own types say them.
 static_assert(std::same_as<api::route<get>::path_types, quoll::rest::detail::type_list<std::int64_t, unsigned>>);
 static_assert(api::route<get>::method == quoll::http::verb::get);
 

@@ -40,8 +40,10 @@
 #include <quoll/async/task.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/connect.hpp>
+#include <quoll/io/connect_local.hpp>
 #include <quoll/io/connect_tls.hpp>
 #include <quoll/io/connector.hpp>
+#include <quoll/io/local_connector.hpp>
 #include <quoll/io/tls_connector.hpp>
 #include <quoll/io/tls_options.hpp>
 
@@ -64,10 +66,15 @@ struct network_connector {
   connect_tls(std::string host, std::uint16_t port, tls_client_options const &options) const {
     return io::connect_tls(std::move(host), port, options);
   }
+
+  [[nodiscard]] async::task<any_stream> connect_local(std::string path) const {
+    return io::connect_local(std::move(path));
+  }
 };
 
 static_assert(Connector<network_connector>);
 static_assert(TlsConnector<network_connector>);
+static_assert(LocalConnector<network_connector>);
 
 } // namespace quoll::io
 

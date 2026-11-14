@@ -1,3 +1,6 @@
+# A command-line program calling the Docker Engine over its Unix domain socket, natively.
+add_subdirectory(docker)
+
 # A command-line program calling GitHub's API: natively, and under Emscripten in Node.
 add_subdirectory(github)
 

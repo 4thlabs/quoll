@@ -4,18 +4,18 @@ A small notes API, described once in C++ and used by a server, a command line an
 
 ```
 notes/
-├── api/        # the contract: the types and the endpoints, no I/O
+├── api/        # the contract: the types and the routes, no I/O
 ├── server/     # serves the contract over HTTP, the notes in memory
 ├── cli/        # calls it from the command line
 ├── web/        # calls it from a page in C++ compiled to WASM: see web/README.md
 └── tests/      # the session of the command line against the server
 ```
 
-- **`api/`:** `note.hpp` holds the types, `notes_api.hpp` the endpoints (`rest::endpoint` and `rest::api`). The server, the
-  command line and the page include it: a call that does not match the contract does not compile.
-- **`server/`:** `service.hpp` handles each endpoint; `main.cpp` mounts it on an `http::server`, listens, and prints its
+- **`api/`:** `note.hpp` holds the types, `notes_api.hpp` the routes (`rest::get`, `rest::post`... and `rest::api`). The
+  server, the command line and the page include it: a call that does not match the contract does not compile.
+- **`server/`:** `service.hpp` handles each route; `main.cpp` mounts it on an `http::server`, listens, and prints its
   address once it is ready. Ctrl-C or SIGTERM stops it.
-- **`cli/`:** `main.cpp` calls each endpoint through a `rest::client` built from the server's URL, and prints what it gets.
+- **`cli/`:** `main.cpp` calls each route through a `rest::client` built from the server's URL, and prints what it gets.
 - **`web/`:** the same calls from a page, with its components and its build by Vite.
 
 Each `main()` creates the build's runtime and runs the program's coroutine on it.

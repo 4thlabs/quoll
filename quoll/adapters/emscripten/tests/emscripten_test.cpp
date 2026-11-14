@@ -63,12 +63,11 @@
 #include <quoll/http/verb.hpp>
 #include <quoll/http/version.hpp>
 #include <quoll/rest/api.hpp>
-#include <quoll/rest/body.hpp>
 #include <quoll/rest/client.hpp>
-#include <quoll/rest/endpoint.hpp>
 #include <quoll/rest/events.hpp>
+#include <quoll/rest/formats.hpp>
 #include <quoll/rest/header.hpp>
-#include <quoll/rest/returns.hpp>
+#include <quoll/rest/route.hpp>
 #include <quoll/rest/text_codec.hpp>
 #include <quoll/test/code_thrown_by.hpp>
 #include <quoll/test/overloaded.hpp>
@@ -449,17 +448,17 @@ namespace {
 
 // The Node test server as a third-party API, described by its contract only: no Quoll server behind it.
 namespace node_server_api {
-using namespace quoll::rest;
 
-using echo = endpoint<
-    "echo", http::verb::post, "/echo/{name}", header<"X-Test", std::string>, body<std::string, text_codec>,
-    returns<std::string, http::status::ok, text_codec>>;
-using missing = endpoint<"missing", http::verb::get, "/status/404", returns<std::string, http::status::ok, text_codec>>;
+namespace rest = quoll::rest;
+
+using echo = rest::post<"/echo/{name}", rest::text, std::string, rest::header<"X-Test", std::string>, rest::text>;
+using missing = rest::get<"/status/404", rest::text>;
 
 // The events the test writes on the server's /events, as they come.
-using events = endpoint<"events", http::verb::get, "/events", quoll::rest::events<std::string, text_codec>>;
+using events = rest::get<"/events", rest::events<std::string, rest::text_codec>>;
 
-using api = quoll::rest::api<"", echo, missing, events>;
+using api = rest::api<"", echo, missing, events>;
+
 } // namespace node_server_api
 
 } // namespace
@@ -723,8 +722,8 @@ TEST_CASE("rest::client over http::client calls an API that only has a contract"
   auto const missing = run(client.try_call<node_server_api::missing>());
 
   REQUIRE_FALSE(missing.has_value());
-  REQUIRE(missing.error().response.status == http::status::not_found);
-  REQUIRE(missing.error().reason == "undeclared status 404");
+  REQUIRE(missing.error().status() == http::status::not_found);
+  REQUIRE(std::string{missing.error().what()} == "status 404");
 }
 
 namespace {

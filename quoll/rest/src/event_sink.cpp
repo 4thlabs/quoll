@@ -58,7 +58,7 @@ public:
 
     do {
       if ((seen & closed_bit) != 0) {
-        throw std::logic_error{"quoll::rest::event_sink: an operation the service did not await before it ended"};
+        throw std::logic_error{"quoll::rest: an operation of a sink its handler did not await before it ended"};
       }
     } while (!state_->activity.compare_exchange_weak(seen, seen + 1));
   }
@@ -89,7 +89,7 @@ private:
 http::detail::one_at_a_time sink_turn(std::shared_ptr<event_sink_state> const &state) {
   return http::detail::one_at_a_time{
       std::shared_ptr<std::atomic<bool>>{state, &state->busy},
-      "quoll::rest::event_sink: an operation while another is pending"
+      "quoll::rest: an operation of a sink while another is pending"
   };
 }
 
@@ -136,6 +136,58 @@ sink_retry(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time 
   co_await writer_of(*state).retry(delay);
 }
 
+namespace {
+
+// The head of a stream of frames: its media type, unless a middleware has set one, then the status as it was given.
+void frame_head(http::response_writer &out, std::string_view content_type) {
+  if (out.head_given()) {
+    return;
+  }
+
+  if (!out.fields.contains("Content-Type")) {
+    out.fields.set("Content-Type", content_type);
+  }
+
+  // As for server-sent events: a reverse proxy passes each piece on as it comes rather than buffer the stream.
+  out.fields.set("X-Accel-Buffering", "no");
+}
+
+} // namespace
+
+async::task<>
+frame_open(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn, std::string_view content_type) {
+  auto const held = std::move(turn);
+  running const counted{*state};
+  auto &out = *state->out;
+
+  if (!out.head_given()) {
+    frame_head(out, content_type);
+    co_await out.write({});
+  }
+}
+
+async::task<> frame_send(
+    std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn, std::string bytes,
+    std::string_view content_type
+) {
+  auto const held = std::move(turn);
+  running const counted{*state};
+  auto &out = *state->out;
+
+  frame_head(out, content_type);
+  co_await out.write(bytes);
+}
+
+async::task<> frame_finish(std::shared_ptr<event_sink_state> state, std::string_view content_type) {
+  // Drained: none runs, none can. A stream with no frame is still one: its head.
+  if (state->out && !state->out->head_given()) {
+    frame_head(*state->out, content_type);
+    co_await state->out->write({});
+  }
+
+  sink_close(*state);
+}
+
 async::task<> sink_drain(std::shared_ptr<event_sink_state> state) {
   // Closed to what has not run yet, at once; then what runs, on a task of the service's own, ends: it writes to the
   // connection, which goes with the stream. Turns of the loop, as it ends on its own executor.
@@ -147,8 +199,8 @@ async::task<> sink_drain(std::shared_ptr<event_sink_state> state) {
 }
 
 async::task<> sink_answer(std::shared_ptr<event_sink_state> state, http::response refusal) {
-  if (!state->out) {
-    throw std::logic_error{"quoll::rest::event_sink: an answer once the stream has started"};
+  if (!state->out || state->out->head_given()) {
+    throw std::logic_error{"quoll::rest: an answer once the stream has started"};
   }
 
   auto &out = *state->out;

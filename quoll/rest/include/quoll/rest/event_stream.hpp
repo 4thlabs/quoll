@@ -44,8 +44,8 @@
 #include <quoll/http/server_sent_event.hpp>
 #include <quoll/http/status.hpp>
 #include <quoll/rest/detail/client_response.hpp>
+#include <quoll/rest/detail/refusal.hpp>
 #include <quoll/rest/json_codec.hpp>
-#include <quoll/rest/unexpected_response.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -58,7 +58,7 @@
 namespace quoll::rest {
 
 /**
- * @brief The events of an endpoint with events<T, EventCodec>, as a client's `subscribe` gives them, each decoded.
+ * @brief The events of a route of events<T, EventCodec>, as a client's `subscribe` gives them, each decoded.
  *
  * @code
  * auto changes = co_await client.subscribe<feed>(std::nullopt);
@@ -70,8 +70,8 @@ namespace quoll::rest {
  *
  * next() gives nothing once the stream has ended; last_event_id() is then what to resume from, if not empty (a stream
  * that ended before an event with an id leaves the position the caller had), an argument of the
- * endpoint (a `header<"Last-Event-ID", std::optional<std::string>>` say). An event's type is not handed over: one
- * endpoint, one type, every event decoded as `T`, a heartbeat of a third-party API's own type included, which then
+ * route (a `header<"Last-Event-ID", std::optional<std::string>>` say). An event's type is not handed over: one
+ * route, one type, every event decoded as `T`, a heartbeat of a third-party API's own type included, which then
  * throws as an event that does not decode. Reading fails, and ends, as http::event_reader says; an event that does not
  * decode throws an http::http_error received, holding it as the body of its response, and reading goes on. A `T` that
  * holds views into its event (a `std::string_view` Glaze reads) is valid up to the next next(), for as long as the
@@ -143,7 +143,7 @@ private:
       received.status = http::status::ok;
       received.body = *data;
 
-      detail::fail(unexpected_response{std::move(received), "invalid event: " + value.error().message});
+      detail::fail(detail::refusal{std::move(received), "invalid event: " + value.error().message});
     }
 
     co_return std::move(*value);

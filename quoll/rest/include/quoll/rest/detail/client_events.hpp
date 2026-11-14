@@ -45,8 +45,11 @@
 #include <quoll/http/streamed_response.hpp>
 #include <quoll/rest/detail/client_response.hpp>
 #include <quoll/rest/detail/part.hpp>
+#include <quoll/rest/detail/refusal.hpp>
 #include <quoll/rest/event_stream.hpp>
-#include <quoll/rest/unexpected_response.hpp>
+#include <quoll/rest/events.hpp>
+#include <quoll/rest/frame_stream.hpp>
+#include <quoll/rest/stream.hpp>
 
 #include <memory>
 #include <string>
@@ -55,9 +58,30 @@
 
 namespace quoll::rest::detail {
 
-// What subscribe produces for an endpoint with events<>.
+// What subscribe produces for a route of events<> or stream<>, and whether it is server-sent events.
+template <class Part>
+struct stream_for;
+
+template <class T, class Codec>
+struct stream_for<events<T, Codec>> {
+  using type = event_stream<T, Codec>;
+
+  static constexpr bool server_sent = true;
+};
+
+template <class F>
+struct stream_for<stream<F>> {
+  using type = frame_stream<F>;
+
+  static constexpr bool server_sent = false;
+};
+
 template <class Endpoint>
-using event_stream_of = event_stream<typename events_part_of<Endpoint>::type, typename events_part_of<Endpoint>::codec>;
+inline constexpr bool server_sent = stream_for<events_part_of<Endpoint>>::server_sent;
+
+// What subscribe produces for a route of events<> or stream<>.
+template <class Endpoint>
+using event_stream_of = typename stream_for<events_part_of<Endpoint>>::type;
 
 // Whether a 200 is the stream asked for: a `text/event-stream`, or of the one media type the request's Accept named, an
 // event stream of a third-party API's own, case and parameters aside.
@@ -66,7 +90,7 @@ using event_stream_of = event_stream<typename events_part_of<Endpoint>::type, ty
 // What `streamed`, which is no stream of events, is, with `reason` and what came of its body, up to 64 KiB, an error's
 // problem rather than a download: none for a 200, which may never end. A stop or a timeout while it reads goes on as
 // such.
-[[nodiscard]] async::task<unexpected_response> refusal_of(http::streamed_response streamed, std::string reason);
+[[nodiscard]] async::task<refusal> refusal_of(http::streamed_response streamed, std::string reason);
 
 // The events of the response to `request`, or an http::http_error received for any other answer, its body read up to a
 // bound.
@@ -75,8 +99,13 @@ template <class Route, class Transport>
 open_events(std::shared_ptr<Transport const> transport, http::request request, std::string accepted) {
   auto streamed = co_await transport->stream(std::move(request));
 
-  if (streamed.status == http::status::ok && is_accepted_stream(streamed.fields, accepted)) {
-    co_return event_stream_of<typename Route::endpoint>{http::event_reader{std::move(streamed.body)}};
+  if constexpr (server_sent<typename Route::endpoint>) {
+    if (streamed.status == http::status::ok && is_accepted_stream(streamed.fields, accepted)) {
+      co_return event_stream_of<typename Route::endpoint>{http::event_reader{std::move(streamed.body)}};
+    }
+  } else if (streamed.status == http::status::ok) {
+    // A stream of frames comes with the media type its API gives it, which its framing reads: none is checked.
+    co_return event_stream_of<typename Route::endpoint>{std::move(streamed.body)};
   }
 
   auto const status = streamed.status;
@@ -87,11 +116,8 @@ open_events(std::shared_ptr<Transport const> transport, http::request request, s
   } else if (status == http::status::no_content) {
     // What a server answers to end a subscription, which a browser does not connect again after.
     reason = "no stream: 204 No Content";
-  } else if (has_status(typename Route::responses{}, status)) {
-    // Its own or a with<>'s alike: subscribe has no reply<Endpoint> for one and not the other.
-    reason = "declared response " + std::to_string(static_cast<int>(status));
   } else {
-    reason = unexpected_reason<Route>(status);
+    reason = "status " + std::to_string(static_cast<int>(status));
   }
 
   fail(co_await refusal_of(std::move(streamed), std::move(reason)));

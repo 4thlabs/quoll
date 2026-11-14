@@ -40,18 +40,21 @@
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/verb.hpp>
-#include <quoll/rest/body.hpp>
+#include <quoll/rest/detail/body.hpp>
 #include <quoll/rest/detail/checked_path.hpp>
 #include <quoll/rest/detail/field_names.hpp>
+#include <quoll/rest/detail/join_strings.hpp>
+#include <quoll/rest/detail/operation_concept.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/path_template.hpp>
-#include <quoll/rest/detail/path_types.hpp>
+#include <quoll/rest/detail/query.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/header.hpp>
-#include <quoll/rest/query.hpp>
+#include <quoll/rest/query_params.hpp>
 #include <quoll/rest/security.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <optional>
@@ -147,8 +150,75 @@ template <class... Arguments, class... Schemes>
   return true;
 }
 
-// An endpoint as an api serves it: its full path (the prefixes of the apis around it, then its own path) and the
-// parts inherited from the with<> around it, which come after its own.
+[[nodiscard]] consteval std::size_t method_size(http::verb method) { return http::to_string(method).size(); }
+
+template <http::verb Method>
+[[nodiscard]] consteval auto method_string() {
+  fixed_string<method_size(Method) + 1> name;
+
+  std::ranges::copy(http::to_string(Method), name.value);
+  return name;
+}
+
+// The name of an operation that gives none: its method and its whole path, `GET /api/notes/{id}`, unique in an api as
+// the router refuses two routes of one method and path.
+template <http::verb Method, fixed_string Path>
+inline constexpr auto default_operation_name = join_strings<method_string<Method>(), " ", Path>();
+
+// Its own name, or the one above, built only for an operation with none.
+template <class Endpoint, fixed_string Path>
+[[nodiscard]] consteval std::string_view operation_name_of() {
+  if constexpr (Endpoint::name.empty()) {
+    return default_operation_name<Endpoint::method, Path>.view();
+  } else {
+    return Endpoint::name;
+  }
+}
+
+// The name of an argument part, as a call by name gives it: a header's; none for a body or a query_params<>.
+template <class Part>
+inline constexpr std::string_view argument_part_name{};
+
+template <fixed_string Name, class T>
+inline constexpr std::string_view argument_part_name<header<Name, T>> = Name.view();
+
+// The names of a route's arguments, in their order: its `{parameters}`, then its argument parts past its query's, the
+// headers by their names.
+template <class Endpoint, class... ArgumentParts>
+[[nodiscard]] consteval auto argument_names_of(type_list<ArgumentParts...> /*parts*/) {
+  constexpr auto named = Endpoint::parameter_names;
+  constexpr std::size_t path_count = Endpoint::path_types::size;
+  std::array<std::string_view, path_count + sizeof...(ArgumentParts)> names{};
+  std::size_t at = 0;
+
+  for (; at < named.size() && at < names.size(); ++at) {
+    names[at] = named[at];
+  }
+
+  at = path_count;
+  ((names[at] = at < named.size() ? names[at] : argument_part_name<ArgumentParts>, ++at), ...);
+  return names;
+}
+
+template <class Part>
+inline constexpr bool is_header_part = false;
+
+template <fixed_string Name, class T>
+inline constexpr bool is_header_part<header<Name, T>> = true;
+
+// Whether each argument of a route is a header, whose name a call by name gives without case.
+template <class Endpoint, class... ArgumentParts>
+[[nodiscard]] consteval auto argument_headers_of(type_list<ArgumentParts...> /*parts*/) {
+  constexpr std::size_t path_count = Endpoint::path_types::size;
+  std::array<bool, path_count + sizeof...(ArgumentParts)> headers{};
+  std::size_t at = path_count;
+
+  ((headers[at++] = is_header_part<ArgumentParts>), ...);
+  return headers;
+}
+
+// A route as an api serves it: its full path (the api's prefix, then its own path) and what the groups around it give
+// all their routes, security<> and header<>, which come after its own arguments.
 template <class Endpoint, fixed_string Path, class Inherited>
 struct route {
   static_assert(checked_path<Path>::valid);
@@ -156,52 +226,28 @@ struct route {
   using endpoint = Endpoint;
   using inherited = Inherited;
   using parts = concat_t<typename Endpoint::parts, Inherited>;
+  // Its own: the api's prefix has none.
+  using path_types = typename Endpoint::path_types;
 
-  // The endpoint checks its own parts; these hold with the parts inherited from with<> too, but for HEAD: what with<>
-  // adds is the server's answers, never decoded as a body.
-  static_assert(count_bodies(parts{}) <= 1, "quoll::rest::with: the endpoint gets more than one body<>");
-  static_assert(
-      count_bodies(parts{}) == 0 || (Endpoint::method != http::verb::get && Endpoint::method != http::verb::head),
-      "quoll::rest::with: a GET or HEAD endpoint gets a body<> (fetch rejects one)"
-  );
-  static_assert(
-      count_bodies(parts{}) == 0 || Endpoint::method != http::verb::trace,
-      "quoll::rest::with: a TRACE endpoint gets a body<> (RFC 9110, 9.3.8)"
-  );
-  static_assert(distinct_statuses(parts{}), "quoll::rest::with: the endpoint gets two returns<> with the same status");
-  static_assert(
-      count_events(parts{}) == 0 || !any_success_response(parts{}),
-      "quoll::rest::with: an endpoint with events<> gets another success, where only errors may come"
-  );
-
-  // The types of its own path parameters, as its template says them.
-  using own_path_types = typename path_argument_types<Endpoint::path_value>::type;
-
-  // How many path parameters the prefixes around it have: none for a template that is wrong, which has its own
-  // static_assert, rather than a count wrapping around, which the index sequence below would make huge.
-  static constexpr std::size_t prefix_parameters =
-      checked_path<Path>::valid && checked_path<Path>::parsed.size >= own_path_types::size
-          ? checked_path<Path>::parsed.size - own_path_types::size
-          : 0;
-
-  // The types of its path parameters: those of the prefixes around it, then its own.
-  using path_types = concat_t<typename template_path_types<Path, prefix_parameters>::type, own_path_types>;
-
-  // The arguments of a call and of the service: path parameters, then argument parts in order.
+  // The arguments of a call and of its handler: path parameters, then argument parts in order.
   using arguments =
       as_tuple_t<concat_t<path_types, typename part_argument_types<filter_t<is_argument_part, parts>>::type>>;
   using responses = filter_t<is_response_part, parts>;
   using schemes = typename security_schemes<filter_t<is_security_part, parts>>::type;
 
+  // The name of each argument, as a call by name gives it: empty for one it cannot name.
+  static constexpr auto argument_names = argument_names_of<Endpoint>(filter_t<is_argument_part, parts>{});
+  static constexpr auto argument_is_header = argument_headers_of<Endpoint>(filter_t<is_argument_part, parts>{});
+
   static_assert(
       distinct_places(filter_t<is_argument_part, parts>{}, schemes{}),
-      "quoll::rest::endpoint: it gets the same field or query parameter twice"
+      "quoll::rest: a route gets the same header or query parameter twice, its groups' and its security's included"
   );
 
   static constexpr auto path_value = Path;
   static constexpr std::string_view path = path_value.view();
   // The name and the method of the operation, which the router, the client and the checks of an api read.
-  static constexpr std::string_view name = Endpoint::name;
+  static constexpr std::string_view name = operation_name_of<Endpoint, Path>();
   static constexpr http::verb method = Endpoint::method;
 };
 

@@ -41,7 +41,7 @@
 
 namespace quoll::rest::detail {
 
-// What a member of an api<> or with<> is.
+// What a member of an api<> or a group<> is: a route, or a group.
 struct endpoint_category {};
 
 struct api_category {};
@@ -50,9 +50,6 @@ struct with_category {};
 
 template <class T>
 concept Endpoint = std::same_as<typename T::contract_category, endpoint_category>;
-
-template <class T>
-concept Api = std::same_as<typename T::contract_category, api_category>;
 
 template <class T>
 concept With = std::same_as<typename T::contract_category, with_category>;

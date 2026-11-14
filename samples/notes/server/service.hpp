@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// What the server does with each endpoint of the contract, in memory: the handlers rest::mount routes requests to.
+// What the server does with each route of the contract, in memory: the handlers rest::mount routes requests to.
 
 #ifndef QUOLL_SAMPLES_NOTES_SERVER_SERVICE_HPP
 #define QUOLL_SAMPLES_NOTES_SERVER_SERVICE_HPP
@@ -71,7 +71,7 @@ public:
     auto const found = notes_.find(id);
 
     if (found == notes_.end()) {
-      // An error status the endpoint does not declare: answered as an RFC 9457 problem.
+      // An error, which a route does not declare: answered as an RFC 9457 problem.
       throw quoll::http::http_error{quoll::http::status::not_found, "no note " + std::to_string(id)};
     }
 

@@ -294,6 +294,12 @@ io::tls_network_ref runtime::executor::query(async::service_tag<io::tls_network_
 }
 #endif
 
+#if defined(QUOLL_ASIO_LOCAL)
+io::local_network_ref runtime::executor::query(async::service_tag<io::local_network_ref>) const {
+  return io::local_network_ref{state_->loop};
+}
+#endif
+
 runtime::runtime() : runtime(async::runtime_options{}) {}
 
 runtime::runtime(async::runtime_options options) : state_(std::make_unique<state>(options)) {}

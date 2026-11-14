@@ -38,16 +38,10 @@
 //
 // A path that does not start with a slash.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-struct thing {
-  int value = 0;
-};
+using route = rest::get<"users", void>;
 
-using e = endpoint<"e", verb::get, "users">;
-
-e const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

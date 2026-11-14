@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/task.hpp>
+#include <quoll/http/decode_error.hpp>
 #include <quoll/http/ensure_ok.hpp>
 #include <quoll/http/http_error.hpp>
 #include <quoll/http/problem.hpp>
@@ -47,7 +48,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <charconv>
 #include <cstdint>
+#include <expected>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -60,6 +63,27 @@ using quoll::http::status;
 using quoll::http::verb;
 
 namespace {
+
+// A codec of a number in text, for an error body read as a value: http has no JSON of its own.
+struct number_codec {
+  std::string_view content_type = "text/plain";
+
+  [[nodiscard]] std::string encode(int value) const { return std::to_string(value); }
+
+  template <class T>
+  [[nodiscard]] std::expected<T, http::decode_error> decode(std::string_view body) const {
+    T value{};
+    auto const [end, failure] = std::from_chars(body.data(), body.data() + body.size(), value);
+
+    if (failure != std::errc{} || end != body.data() + body.size()) {
+      return std::unexpected{http::decode_error{"not a number"}};
+    }
+
+    return value;
+  }
+};
+
+static_assert(http::Codec<number_codec, int>);
 
 http::response dispatch(http::router const &router, verb method, std::string target) {
   http::request message;
@@ -215,4 +239,14 @@ TEST_CASE("http_error: a handler raising one before its task is made is answered
   });
 
   CHECK(dispatch(router, verb::get, "/now").status == status::service_unavailable);
+}
+
+TEST_CASE("http_error: the body received read by a codec, nothing when raised or not decoded", "[http][http_error]") {
+  auto const received = http::http_error::received_from(answered_with(status::conflict, "42"), "conflict");
+
+  CHECK(received.body_as<int>(number_codec{}) == 42);
+  CHECK_FALSE(
+      http::http_error::received_from(answered_with(status::conflict, "x"), "conflict").body_as<int>(number_codec{})
+  );
+  CHECK_FALSE(http::http_error{status::conflict, "raised"}.body_as<int>(number_codec{}));
 }

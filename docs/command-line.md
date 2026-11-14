@@ -20,22 +20,19 @@ struct error {
   std::string message;
 };
 
-template <class T, http::status Status = http::status::ok>
-using answers = rest::returns<T, Status, rest::lenient_json_codec>;
-
 namespace repos {
-using get = rest::endpoint<"repos.get", http::verb::get, "/", answers<repository>,
-                           answers<error, http::status::not_found>>;
-using api = rest::api<"/repos/{owner}/{repo}", get>;
+
+using get = rest::get<"/repos/{owner}/{repo}", rest::lenient_json<repository>, std::string, std::string>;
+
 } // namespace repos
 
-using api = rest::api<"", repos::api>;
+using api = rest::api<"", repos::get>;
 
 } // namespace github
 ```
 
-`rest::lenient_json_codec` skips the fields the contract does not read, as an API adds some over time. An error the API
-declares on each status is a type of its own, read through `try_call`.
+`rest::lenient_json<T>` skips the fields the contract does not read, as an API adds some over time. A route declares no
+error: the API's own shape of them, `error` here, is read from the `http::http_error` a call gives.
 
 ## The program
 
@@ -53,14 +50,16 @@ async::task<int> run(std::string url, std::optional<std::string> token) {
     client.credentials<rest::bearer_auth>(*token);
   }
 
-  auto const quoll = client.scope<github::repos::api>("4thlabs", "quoll");
-  auto const found = co_await quoll.try_call<github::repos::get>();
+  auto const found = co_await client.try_call<github::repos::get>("4thlabs", "quoll");
 
-  if (!found || !found->holds<http::status::ok>()) {
+  if (!found) {
+    auto const said = found.error().body_as<github::error>(rest::lenient_json_codec{});
+
+    std::cerr << (said ? said->message : found.error().what()) << '\n';
     co_return 1;
   }
 
-  std::cout << found->get<http::status::ok>().stars << '\n';
+  std::cout << found->stars << '\n';
   co_return 0;
 }
 
@@ -74,7 +73,7 @@ int main() {
 ```
 
 - **A client is copied freely**: its transport and interceptors are shared. A coroutine takes it by value rather than
-  by reference, and a scope keeps a copy.
+  by reference.
 - **The environment is read in `main`**, before the runtime runs anything, and handed to the task.
 - **The exit status** comes from the task, through the handler `co_spawn` calls at its end: a value it returns, the
   exception it threw, or `async::stopped` if it ended on a stop, which nothing asks for here, and so is a failure.

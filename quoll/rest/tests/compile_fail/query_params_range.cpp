@@ -38,16 +38,12 @@
 //
 // query_params<> of an array, whose elements have no names.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
 #include <array>
-#include <optional>
-#include <string>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using listed = endpoint<"listed", verb::get, "/", query_params<std::array<int, 2>>>;
+using route = rest::get<"/", void, rest::query_params<std::array<int, 2>>>;
 
-api<"", listed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

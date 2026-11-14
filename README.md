@@ -82,19 +82,19 @@ struct greeting {
   std::string text;
 };
 
-// The contract: types and endpoints, shared by the server and the client.
-using greet = rest::endpoint<"greet", http::verb::get, "/greet/{name}", rest::returns<greeting>>;
+// The contract: types and routes, shared by the server and the client.
+using greet = rest::get<"/greet/{name}", greeting, std::string>;
 using api = rest::api<"/api", greet>;
 
-// The server: one operator() per endpoint. A missing one does not compile.
-struct greeter {
-  greeting operator()(greet, std::string name) const { return {"Hello, " + name + "!"}; }
-};
+// The server: a handler per route, taking it first. A missing one does not compile.
+auto const greeter = rest::service([](greet, std::string name) {
+  return greeting{"Hello, " + name + "!"};
+});
 
 async::task<> serve() {
   http::server server;
 
-  rest::mount<api>(server, greeter{});
+  rest::mount<api>(server, greeter);
   co_await server.listen(8080);
 }
 

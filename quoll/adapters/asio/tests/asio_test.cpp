@@ -70,9 +70,11 @@
 #include <quoll/http/write.hpp>
 #include <quoll/io/any_stream.hpp>
 #include <quoll/io/connect.hpp>
+#include <quoll/io/connect_local.hpp>
 #include <quoll/io/error.hpp>
 #include <quoll/io/io_result.hpp>
 #include <quoll/io/listen.hpp>
+#include <quoll/io/listen_local.hpp>
 #include <quoll/io/pollable_stream.hpp>
 #include <quoll/io/write.hpp>
 #include <quoll/rest.hpp>
@@ -141,29 +143,22 @@ struct new_account {
   std::string owner;
 };
 
-struct not_found {
-  std::string detail;
-};
-
 namespace accounts {
-using namespace quoll::rest;
 
-using get = endpoint<
-    "accounts.get", quoll::http::verb::get, "/{id:int64}", returns<account>,
-    returns<not_found, quoll::http::status::not_found>>;
-using open = endpoint<
-    "accounts.open", quoll::http::verb::post, "/", body<new_account>, returns<account, quoll::http::status::created>>;
+using get = quoll::rest::get<"/accounts/{id}", account, std::int64_t>;
+using open = quoll::rest::post<"/accounts", quoll::rest::created<account>, new_account>;
 
-using api = quoll::rest::api<"/api/accounts", get, open>;
+using api = quoll::rest::api<"/api", get, open>;
+
 } // namespace accounts
 
 struct accounts_service {
-  quoll::async::task<quoll::rest::reply<accounts::get>> operator()(accounts::get, std::int64_t id) const {
-    if (id == 42) {
-      co_return account{.id = 42, .owner = "Ada"};
+  quoll::async::task<account> operator()(accounts::get, std::int64_t id) const {
+    if (id != 42) {
+      throw quoll::http::http_error{quoll::http::status::not_found, "no account " + std::to_string(id)};
     }
 
-    co_return not_found{"no account " + std::to_string(id)};
+    co_return account{.id = 42, .owner = "Ada"};
   }
 
   account operator()(accounts::open, new_account opened) const { return {.id = 7, .owner = std::move(opened.owner)}; }
@@ -364,7 +359,10 @@ task<accounts_calls> make_calls(Client &client) {
   // The POST first: it opens a connection, which the GETs then reuse.
   calls.opened = co_await client.template call<accounts::open>({.owner = "Grace"});
   calls.found = co_await client.template call<accounts::get>(42);
-  calls.missing = (co_await client.template try_call<accounts::get>(7))->template get<http::status::not_found>().detail;
+
+  auto const missing = co_await client.template try_call<accounts::get>(7);
+
+  calls.missing = missing.error().what();
   co_return calls;
 }
 
@@ -1483,6 +1481,71 @@ TEST_CASE("asio::runtime: its strands, one thread or several", "[asio][runtime]"
 
   REQUIRE_FALSE(many.make_strand() == many.make_strand());
   REQUIRE_FALSE(several.get_executor() == several.get_executor());
+}
+
+namespace {
+
+// A socket's path of its own, free: in the temporary directory, named after the process and `name`.
+std::string free_socket_path(std::string const &name) {
+  auto const path =
+      std::filesystem::temp_directory_path() / ("quoll-" + std::to_string(::getpid()) + "-" + name + ".sock");
+
+  std::filesystem::remove(path);
+  return path.string();
+}
+
+// Serves the one connection `listener` accepts, which the client closes after its request.
+task<> serve_one(http::server const &server, io::any_listener &listener) {
+  co_await server.serve_connection(co_await listener.accept());
+}
+
+// A GET of /host through a Unix domain socket at `path`, served by Quoll on it: the Host its request named.
+task<std::string> get_over_a_unix_socket(std::string path) {
+  http::router router;
+
+  router.get("/host", [](http::request request) {
+    http::response response;
+
+    response.body = std::string{request.fields.find("Host").value_or("none")};
+    return response;
+  });
+
+  auto listener = co_await io::listen_local(path);
+  http::server const server{router};
+  http::client const client{"unix://" + path};
+  http::request asked;
+
+  asked.method = http::verb::get;
+  asked.target = "/host";
+  asked.fields.set("Connection", "close");
+
+  auto served = co_await quoll::async::when_all(serve_one(server, listener), client.send(std::move(asked)));
+
+  co_return std::move(std::get<1>(served).body);
+}
+
+} // namespace
+
+TEST_CASE("asio::runtime: an http::client of a unix:// URL reaches a server on that socket", "[asio][runtime][unix]") {
+  auto const path = free_socket_path("http");
+
+  REQUIRE(run_task(get_over_a_unix_socket(path)) == "localhost");
+  // The socket's file stays when its listener goes, as for any Unix domain socket.
+  REQUIRE(std::filesystem::exists(path));
+  std::filesystem::remove(path);
+  // Nobody listening there now.
+  REQUIRE_THROWS_AS(run_task(io::connect_local(path)), std::system_error);
+}
+
+TEST_CASE(
+    "asio::runtime: listen_local refuses a path that exists, a socket left there included", "[asio][runtime][unix]"
+) {
+  auto const path = free_socket_path("taken");
+
+  std::ofstream{path} << "taken";
+
+  REQUIRE_THROWS_AS(run_task(io::listen_local(path)), std::system_error);
+  std::filesystem::remove(path);
 }
 
 TEST_CASE("asio::runtime runs a task to its end", "[asio][runtime]") {

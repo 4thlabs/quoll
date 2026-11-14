@@ -41,6 +41,7 @@
 #include <quoll/client/client_options.hpp>
 #include <quoll/client/detail/client_backend.hpp>
 #include <quoll/client/detail/connector_handle.hpp>
+#include <quoll/client/detail/socket_connector.hpp>
 #include <quoll/client/detail/url.hpp>
 #include <quoll/http/detail/number.hpp>
 #include <quoll/http/request.hpp>
@@ -145,6 +146,8 @@ public:
    * @brief A client of the server at `url`, `http[s]://host[:port][/path]` (an IPv6 address in brackets), connecting
    * through the network of the executor that sends (io::network_connector), as quoll::runtime provides it. `https`
    * checks the server as `options.tls` says: by default, against the system's authorities.
+   * `unix:///var/run/docker.sock` connects to that Unix domain socket, natively, its requests naming `localhost`, as
+   * Docker's own client does.
    *
    * A path goes before the target of every request, as it is: with `https://api.example.com/v1`, a target `/users` is
    * `/v1/users`, and `/` is `/v1/`, never `/v1`. It is no boundary: a target with dot segments of its own can climb out
@@ -170,7 +173,8 @@ public:
    * @brief A client of the server at `url`, as above, connecting through `connector`: asio's on a context of its own, a
    * stream in memory in a test...
    *
-   * @throws std::invalid_argument as above, and for `https` with a connector that is no io::TlsConnector.
+   * @throws std::invalid_argument as above, for `https` with a connector that is no io::TlsConnector, and for `unix://`
+   * with one that is no io::LocalConnector.
    */
   template <io::Connector Connector>
   client(Connector connector, std::string_view url, client_options options = {})
@@ -275,11 +279,28 @@ public:
 private:
   template <io::Connector Connector>
   client(Connector connector, detail::origin server, client_options const &options)
-      : backend_(make_backend(
-            std::move(connector), std::move(server.host), server.port, server.secure, std::move(server.prefix), options
-        )) {
+      : backend_(make_origin_backend(std::move(connector), std::move(server), options)) {}
+
+  template <io::Connector Connector>
+  [[nodiscard]] static detail::client_backend
+  make_origin_backend(Connector connector, detail::origin server, client_options const &options) {
     if (server.secure && !io::TlsConnector<Connector>) {
       throw std::invalid_argument{"quoll::http::client: this connector cannot open https connections"};
+    }
+
+    if (server.socket_path.empty()) {
+      return make_backend(
+          std::move(connector), std::move(server.host), server.port, server.secure, std::move(server.prefix), options
+      );
+    }
+
+    if constexpr (io::LocalConnector<Connector>) {
+      return make_backend(
+          detail::socket_connector<Connector>{std::move(connector), std::move(server.socket_path)},
+          std::move(server.host), server.port, false, {}, options
+      );
+    } else {
+      throw std::invalid_argument{"quoll::http::client: this connector cannot open Unix domain sockets"};
     }
   }
 

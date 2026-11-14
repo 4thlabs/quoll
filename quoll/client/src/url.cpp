@@ -429,6 +429,21 @@ websocket_target parse_websocket_url(std::string_view url) {
 origin parse_url(std::string_view url) {
   constexpr std::string_view plain_scheme = "http://";
   constexpr std::string_view tls_scheme = "https://";
+  constexpr std::string_view local_scheme = "unix://";
+
+  if (url.size() >= local_scheme.size() && http::detail::iequals(url.substr(0, local_scheme.size()), local_scheme)) {
+    auto const path = url.substr(local_scheme.size());
+
+    if (!path.starts_with('/') || path.find_first_of(std::string_view{"?#\0", 3}) != std::string_view::npos) {
+      invalid_url("a unix:// URL names a socket by its absolute path, as unix:///var/run/docker.sock");
+    }
+
+    origin local;
+
+    local.host = "localhost";
+    local.socket_path = std::string{path};
+    return local;
+  }
 
   auto const secure =
       url.size() >= tls_scheme.size() && http::detail::iequals(url.substr(0, tls_scheme.size()), tls_scheme);

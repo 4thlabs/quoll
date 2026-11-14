@@ -60,8 +60,6 @@ namespace codecs_test {
 namespace rest = quoll::rest;
 
 using quoll::async::task;
-using quoll::http::status;
-using quoll::http::verb;
 
 struct login {
   std::string username;
@@ -72,19 +70,15 @@ struct login {
 };
 
 namespace uploads {
-using namespace quoll::rest;
 
 // A form in, bytes out: the server answers the bytes of the name it got, reversed.
-using reversed = endpoint<
-    "uploads.reversed", verb::post, "/reversed", body<login, form_codec>,
-    returns<std::vector<std::byte>, status::ok, bytes_codec>>;
+using reversed = rest::post<"/uploads/reversed", rest::bytes, rest::form<login>>;
 
 // Bytes in, their count out.
-using counted = endpoint<
-    "uploads.counted", verb::post, "/counted", body<std::vector<std::byte>, bytes_codec>,
-    returns<std::string, status::ok, text_codec>>;
+using counted = rest::post<"/uploads/counted", rest::text, rest::bytes>;
 
-using api = rest::api<"/uploads", reversed, counted>;
+using api = rest::api<"", rest::group<reversed, counted>>;
+
 } // namespace uploads
 
 struct uploads_service {

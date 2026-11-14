@@ -91,22 +91,15 @@ struct graded {
 
 static_assert(rest::Parameter<rest::open_enum<state>>);
 
-using quoll::http::status;
-using quoll::http::verb;
-
 namespace issues {
-using namespace quoll::rest;
 
 // The name of the state the server got, as it got it.
-using open_one = endpoint<
-    "issues.open", verb::get, "/open", query<"state", open_enum<state>>, returns<std::string, status::ok, text_codec>>;
-using strict_one = endpoint<
-    "issues.strict", verb::get, "/strict", query<"state", state>, returns<std::string, status::ok, text_codec>>;
-using in_header = endpoint<
-    "issues.header", verb::get, "/header", header<"X-State", open_enum<state>>,
-    returns<std::string, status::ok, text_codec>>;
+using open_one = rest::get<"/issues/open?state={state}", rest::text, rest::open_enum<state>>;
+using strict_one = rest::get<"/issues/strict?state={state}", rest::text, state>;
+using in_header = rest::get<"/issues/header", rest::text, rest::header<"X-State", rest::open_enum<state>>>;
 
-using api = rest::api<"/issues", open_one, strict_one, in_header>;
+using api = rest::api<"", rest::group<open_one, strict_one, in_header>>;
+
 } // namespace issues
 
 struct issues_service {

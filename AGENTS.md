@@ -96,12 +96,17 @@ Same organization as Puffin, through the helpers in `cmake/QuollHelpers.cmake`; 
   a list to filter, a detail to edit and a chart.js widget; its service and its page are tested in `quoll_tests`.
   `samples/github`: a command-line program calling GitHub's API, natively and in Node through `fetch`; the ctest
   `github_against_fake` runs it against a fake GitHub served by Quoll.
+  `samples/docker`: a command-line program calling the Docker Engine over its Unix domain socket, natively; the ctest
+  `docker_against_fake` runs it against a fake engine served by Quoll on a socket of its own.
 - `tools/vite-plugin/`: the Vite plugin a page's build goes through: it builds the C++ with CMake, serves and reloads it,
   and makes the registry of its JavaScript widgets; and `dev.sh`, which a page's `dev.sh` runs with its server. Under
   Emscripten, the ctest `vite_plugin` runs its tests in Node.
 - With tests ON, every header is also compiled alone in its own translation unit (`quoll_<module>_header_check`),
   so a header that is not self-contained breaks the build (`QUOLL_HEADER_CHECKS`, ON by default).
-- `docs/`: the guides for users, one Markdown file per subject, listed in the `README.md`, beside `PLAN.md`, `CODING_RULES.md` and `BENCHMARKS.md`.
+- `docs/`: the guides for users, one Markdown file per subject, listed in the `README.md`, beside `PLAN.md`, `CODING_RULES.md` and `BENCHMARKS.md`;
+  `docs/specs/` holds a spec per DSL, its first block saying `**Draft**` or `**Validated** by the maintainer on <date>`:
+  a validated one is changed only by a decision of theirs, which updates it in the same pull request with its new date;
+  what is left to do goes in its issue. Git keeps what it was.
   The guides say how things behave, without arguing for them; `design-decisions.md` says why, for users, from the Decided
   section of `PLAN.md`: a change to a decision there updates it, and the guide it touches, in the same pull request.
 - Dependencies come from CPM (`cmake/CPM.cmake`, always included: modules need it, not only tests). Under

@@ -42,18 +42,19 @@
 #include <quoll/http/detail/query_string.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
-#include <quoll/rest/body.hpp>
 #include <quoll/rest/detail/arguments.hpp>
+#include <quoll/rest/detail/body.hpp>
 #include <quoll/rest/detail/checked_path.hpp>
 #include <quoll/rest/detail/fields_of.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/path_template.hpp>
+#include <quoll/rest/detail/query.hpp>
 #include <quoll/rest/detail/scheme_traits.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/header.hpp>
 #include <quoll/rest/param_traits.hpp>
-#include <quoll/rest/query.hpp>
+#include <quoll/rest/query_params.hpp>
 #include <quoll/rest/security.hpp>
 
 #include <algorithm>
@@ -137,7 +138,7 @@ void add_credentials(type_list<Scheme...>, credential_map const &credentials, re
 // A path parameter the server reads back as it is, and that stays where the template puts it. Not empty, for a single
 // segment; for the rest of a path, which goes out with its '/', not starting with one, as `//host` reads as another
 // server. And what http::detail::plain_segment says: no NUL, and no `.` or `..` part, which a URL parser, or a proxy
-// decoding what the encoding hides, resolves, so a request could reach another endpoint with the client's credentials.
+// decoding what the encoding hides, resolves, so a request could reach another route with the client's credentials.
 // A '/' elsewhere in a single segment stays: it goes encoded, and some APIs ask for it (`group%2Fproject`).
 void check_path_text(std::string_view name, std::string_view text, bool rest_of_path);
 

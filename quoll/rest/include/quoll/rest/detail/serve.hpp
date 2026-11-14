@@ -53,14 +53,16 @@
 #include <quoll/rest/credential.hpp>
 #include <quoll/rest/detail/arguments.hpp>
 #include <quoll/rest/detail/part.hpp>
-#include <quoll/rest/detail/response_value.hpp>
+#include <quoll/rest/detail/query.hpp>
 #include <quoll/rest/detail/scheme_traits.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/event_sink.hpp>
+#include <quoll/rest/events.hpp>
 #include <quoll/rest/fixed_string.hpp>
-#include <quoll/rest/query.hpp>
-#include <quoll/rest/reply.hpp>
+#include <quoll/rest/frame_sink.hpp>
+#include <quoll/rest/query_params.hpp>
 #include <quoll/rest/security.hpp>
+#include <quoll/rest/stream.hpp>
 #include <quoll/rest/validators.hpp>
 
 #include <algorithm>
@@ -168,7 +170,7 @@ check_security(type_list<Scheme, Rest...>, Validators &validators, request_input
   co_return co_await check_security(type_list<Rest...>{}, validators, input);
 }
 
-// A declared response, as an HTTP response: with its body, or without for a void one.
+// A route's result, as an HTTP response: with its body, or without for a void one.
 template <class Response>
 [[nodiscard]] http::response make_response() {
   http::response response;
@@ -187,38 +189,23 @@ template <class Response, class T>
   return response;
 }
 
-// What a service returned: a reply<Endpoint>, or the body of the endpoint's first response.
+// What a service returned: the value of its route's result.
 template <class Endpoint, class T>
 [[nodiscard]] http::response encode_result(T const &value) {
-  if constexpr (std::same_as<T, reply<Endpoint>>) {
-    return value.visit([](auto const &held) {
-      using response = typename std::decay_t<decltype(held)>::response;
+  using responses = own_responses<Endpoint>;
 
-      if constexpr (std::is_void_v<typename response::type>) {
-        return make_response<response>();
-      } else {
-        return make_response<response>(held.value);
-      }
-    });
-  } else {
-    using responses = own_responses<Endpoint>;
+  static_assert(responses::size > 0, "quoll::rest::mount: a handler returns a value for a route whose result is void");
 
-    static_assert(
-        responses::size > 0, "quoll::rest::mount: a service returns a value for an endpoint without returns<>"
-    );
+  using first = typename front<responses>::type;
 
-    using first = typename front<responses>::type;
+  static_assert(
+      std::same_as<T, typename first::type>, "quoll::rest::mount: a handler returns the type of its route's result"
+  );
 
-    static_assert(
-        std::same_as<T, typename first::type>, "quoll::rest::mount: a service returns the type of its "
-                                               "endpoint's first returns<>, or a reply<Endpoint>"
-    );
-
-    return make_response<first>(value);
-  }
+  return make_response<first>(value);
 }
 
-// A service that returned nothing: 204 without returns<>, or a first response without body.
+// A service that returned nothing: 204 for a void result, or a result without body.
 template <class Endpoint>
 [[nodiscard]] http::response encode_void() {
   using responses = own_responses<Endpoint>;
@@ -233,7 +220,7 @@ template <class Endpoint>
 
     static_assert(
         std::is_void_v<typename first::type>,
-        "quoll::rest::mount: a service returns nothing for an endpoint whose first returns<> has a body"
+        "quoll::rest::mount: a handler returns nothing for a route whose result has a body"
     );
 
     return make_response<first>();
@@ -251,8 +238,8 @@ struct exactly {
   operator Other() && = delete;
 };
 
-// The service for an endpoint: the one taking it and exactly its arguments, by value or by reference.
-// `Extra`, given as is after the arguments: the sink of an endpoint with events<>.
+// The handler of a route: the one taking it and exactly its arguments, by value or by reference.
+// `Extra`, given as is after the arguments: the sink of a route of events<>.
 template <class Endpoint, class... Extra, class... Arguments, class... Services>
 [[nodiscard]] consteval std::size_t service_index(std::tuple<Arguments...> const *, type_list<Services...>) {
   return first_true(std::array<bool, sizeof...(Services)>{
@@ -275,15 +262,7 @@ async::task<http::response> answer(mounted<Validators, Services...> &state, type
   constexpr arguments_type const *signature = nullptr;
   constexpr auto index = service_index<endpoint>(signature, type_list<Services...>{});
 
-  static_assert(
-      index < sizeof...(Services),
-      "quoll::rest::mount: no service has an operator()(Endpoint, arguments...) for an endpoint of the api"
-  );
-  static_assert(
-      service_count<endpoint>(signature, type_list<Services...>{}) == 1,
-      "quoll::rest::mount: more than one service takes an endpoint of the api"
-  );
-
+  // mount() has checked it is there, once (route_has_one_handler).
   auto &service = std::get<index>(state.services);
   auto call = [&] {
     return std::apply([&](auto &...each) { return std::invoke(service, endpoint{}, std::move(each)...); }, arguments);
@@ -306,9 +285,22 @@ async::task<http::response> answer(mounted<Validators, Services...> &state, type
   }
 }
 
-// The sink the service of an endpoint with events<> sends through.
+// The sink the handler of a route of events<> or stream<> sends through.
+template <class Part>
+struct sink_for;
+
+template <class T, class Codec>
+struct sink_for<events<T, Codec>> {
+  using type = event_sink<T, Codec>;
+};
+
+template <class F>
+struct sink_for<stream<F>> {
+  using type = frame_sink<F>;
+};
+
 template <class Endpoint>
-using sink_of = event_sink<typename events_part_of<Endpoint>::type, typename events_part_of<Endpoint>::codec>;
+using sink_of = typename sink_for<events_part_of<Endpoint>>::type;
 
 // The answer to an http_error a service or a validator threw, as the router answers one (http::detail::error_answer),
 // with the challenge of the route's first scheme on a 401 (RFC 9110); none for one raised with a status that is no
@@ -334,17 +326,7 @@ struct served_input {
   std::optional<std::vector<http::detail::query_entry>> query;
 };
 
-// What an events<> service can answer: an error (4xx or 5xx), as an http_error, its body a problem or none.
-template <class... Responses>
-[[nodiscard]] consteval bool errors_are_problems(type_list<Responses...>) {
-  return (
-      (static_cast<int>(Responses::status) >= 400 &&
-       (std::is_void_v<typename Responses::type> || std::same_as<typename Responses::type, http::problem>)) &&
-      ...
-  );
-}
-
-// The services taking an endpoint's arguments with no `Sink`, and not with one: those a stream would never call.
+// The handlers taking a route's arguments with no `Sink`, and not with one: those a stream would never call.
 template <class Endpoint, class Sink, class... Arguments, class... Services>
 [[nodiscard]] consteval std::size_t services_without_sink(std::tuple<Arguments...> const *, type_list<Services...>) {
   return count_true(std::array<bool, sizeof...(Services)>{
@@ -362,7 +344,7 @@ struct held_arguments {
   std::atomic_flag started;
 };
 
-// The stream of an endpoint with events<>: its service, given a sink over the response, run as the response's writer,
+// The stream of a route of events<>: its handler, given a sink over the response, run as the response's writer,
 // after the router has answered. An http_error before the stream starts answers as from any service; after, it cuts the
 // stream, as any failure of a writer does. What it reads is held here: the arguments, and the state of the services.
 template <class Route, class Validators, class... Services>
@@ -380,18 +362,7 @@ template <class Route, class Validators, class... Services>
   constexpr arguments_type const *signature = nullptr;
   constexpr auto index = service_index<endpoint, sink_type &>(signature, type_list<Services...>{});
 
-  static_assert(
-      index < sizeof...(Services), "quoll::rest::mount: no service has an operator()(Endpoint, arguments..., "
-                                   "event_sink<T> &) for an endpoint of the api with events<>"
-  );
-  // One service: a second one taking no sink counts too, which would never be called, but not the same one twice.
-  static_assert(
-      service_count<endpoint, sink_type &>(signature, type_list<Services...>{}) +
-              services_without_sink<endpoint, sink_type &>(signature, type_list<Services...>{}) ==
-          1,
-      "quoll::rest::mount: more than one service takes an endpoint of the api"
-  );
-
+  // mount() has checked it is there, once (route_has_one_handler).
   auto &service = std::get<index>(state->services);
   sink_type sink{http::response_writer{out}};
   // Closed on every way out, a throw included, while the connection is there: an operation kept past the service, run
@@ -405,12 +376,7 @@ template <class Route, class Validators, class... Services>
 
   static_assert(
       std::same_as<decltype(call()), async::task<>>,
-      "quoll::rest::mount: the service of an endpoint with events<> returns a task<>"
-  );
-  // Its errors are thrown, as http_error, which answers a problem: a body of another type it could not send.
-  static_assert(
-      errors_are_problems(typename Route::responses{}),
-      "quoll::rest::mount: an endpoint with events<> declares its errors as 4xx or 5xx, a problem or no body"
+      "quoll::rest::mount: the handler of a route with events<> returns a task<>"
   );
 
   std::optional<http::response> refused;
@@ -449,7 +415,7 @@ template <class Route, class Validators, class... Services>
   co_await event_sink_access::finish(sink);
 }
 
-// The answer of an endpoint with events<>: its stream, run once the router has answered.
+// The answer of a route of events<>: its stream, run once the router has answered.
 template <class Route, class State>
 [[nodiscard]] http::response events_response(
     std::shared_ptr<State> state, std::shared_ptr<served_input const> input, typename Route::arguments arguments
@@ -481,8 +447,8 @@ template <class... Parts>
   return (reads_the_query<Parts> || ...);
 }
 
-// One frame for a request, which holds what its arguments are decoded from: in it, or shared with the stream of an
-// endpoint with events<>, as they may point into it.
+// One frame for a request, which holds what its arguments are decoded from: in it, or shared with the stream of a
+// route of events<>, as they may point into it.
 template <class Route, class State, class Input>
 [[nodiscard]] async::task<http::response> serve_from(std::shared_ptr<State> state, Input input) {
   // What `input` holds, as it is or behind the pointer of a stream.
@@ -552,6 +518,48 @@ serve(std::shared_ptr<State> state, http::request request, http::route_match mat
   } else {
     return serve_from<Route>(std::move(state), served_input{std::move(request), std::move(match), std::nullopt});
   }
+}
+
+// Whether `Route` has one handler among `Services`, the route first, then exactly its arguments, and its sink for one
+// of events<>: mount() checks it before it instantiates what serves the route, whose errors would then not be the
+// cause.
+template <class Route, class... Services>
+[[nodiscard]] consteval bool route_has_one_handler(type_list<Services...> /*services*/) {
+  using endpoint = typename Route::endpoint;
+  constexpr typename Route::arguments const *signature = nullptr;
+
+  if constexpr (has_events<endpoint>) {
+    using sink_type = sink_of<endpoint> &;
+
+    constexpr bool found =
+        service_index<endpoint, sink_type>(signature, type_list<Services...>{}) < sizeof...(Services);
+    // A second one taking no sink counts too, which would never be called, but not the same one twice.
+    constexpr bool once = service_count<endpoint, sink_type>(signature, type_list<Services...>{}) +
+                              services_without_sink<endpoint, sink_type>(signature, type_list<Services...>{}) ==
+                          1;
+
+    static_assert(
+        found,
+        "quoll::rest::mount: no handler takes a route of the api with a stream, the route first, then exactly its "
+        "arguments and its sink, event_sink<T> & or frame_sink<F> &"
+    );
+    static_assert(!found || once, "quoll::rest::mount: more than one handler takes a route of the api");
+    return found && once;
+  } else {
+    constexpr bool found = service_index<endpoint>(signature, type_list<Services...>{}) < sizeof...(Services);
+    constexpr bool once = service_count<endpoint>(signature, type_list<Services...>{}) == 1;
+
+    static_assert(
+        found, "quoll::rest::mount: no handler takes a route of the api, the route first, then exactly its arguments"
+    );
+    static_assert(!found || once, "quoll::rest::mount: more than one handler takes a route of the api");
+    return found && once;
+  }
+}
+
+template <class Route, class Validators, class... Services>
+[[nodiscard]] consteval bool route_has_one_handler(std::type_identity<mounted<Validators, Services...>>) {
+  return route_has_one_handler<Route>(type_list<Services...>{});
 }
 
 } // namespace quoll::rest::detail

@@ -34,32 +34,34 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::mount: more than one service takes an endpoint of the api
+// expect: quoll::rest::mount: more than one handler takes a route of the api
 //
 // Two services for one stream.
 
 #include <quoll/async/task.hpp>
 #include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
 #include <string>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using feed = endpoint<"feed", verb::get, "/", events<std::string, text_codec>>;
+using feed = rest::get<"/", rest::events<std::string, rest::text_codec>>;
 
 struct first {
-  quoll::async::task<> operator()(feed, event_sink<std::string, text_codec> & /*events*/) const { co_return; }
+  quoll::async::task<> operator()(feed, rest::event_sink<std::string, rest::text_codec> & /*events*/) const {
+    co_return;
+  }
 };
 
 struct second {
-  quoll::async::task<> operator()(feed, event_sink<std::string, text_codec> & /*events*/) const { co_return; }
+  quoll::async::task<> operator()(feed, rest::event_sink<std::string, rest::text_codec> & /*events*/) const {
+    co_return;
+  }
 };
 
 void mounted() {
   quoll::http::router router;
 
-  mount<api<"", feed>>(router, first{}, second{});
+  rest::mount<rest::api<"", rest::group<feed>>>(router, first{}, second{});
 }

@@ -52,6 +52,12 @@ elseif(quoll_tls STREQUAL "AUTO")
   find_package(OpenSSL QUIET)
 endif()
 
+# Unix domain sockets, where the system has them, as asio does (ASIO_HAS_LOCAL_SOCKETS): said by a define of Quoll's
+# own, so that what includes quoll/runtime.hpp does not need asio to know.
+if(UNIX)
+  target_compile_definitions(quoll_asio PUBLIC QUOLL_ASIO_LOCAL)
+endif()
+
 if(OpenSSL_FOUND AND NOT quoll_tls STREQUAL "OFF")
   message(STATUS "Quoll: TLS through OpenSSL ${OPENSSL_VERSION}")
   target_link_libraries(quoll_asio PUBLIC OpenSSL::SSL OpenSSL::Crypto)

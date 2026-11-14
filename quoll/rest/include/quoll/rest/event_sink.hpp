@@ -95,6 +95,17 @@ sink_retry(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time 
 // tasks of the service's own, ended.
 [[nodiscard]] async::task<> sink_drain(std::shared_ptr<event_sink_state> state);
 
+// The operations of a frame_sink, through the response_writer itself, whose first write sends the head with
+// `content_type`: a stream of frames needs no writer of its own.
+[[nodiscard]] async::task<>
+frame_open(std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn, std::string_view content_type);
+[[nodiscard]] async::task<> frame_send(
+    std::shared_ptr<event_sink_state> state, http::detail::one_at_a_time turn, std::string bytes,
+    std::string_view content_type
+);
+// Once drained: the head of a stream with no frame, unless one has started it, then the sink closed.
+[[nodiscard]] async::task<> frame_finish(std::shared_ptr<event_sink_state> state, std::string_view content_type);
+
 // Closes the sink: what writes to the connection goes now, and an operation run later throws.
 void sink_close(event_sink_state &state) noexcept;
 
@@ -117,7 +128,7 @@ private:
 } // namespace detail
 
 /**
- * @brief What the service of an endpoint with events<T, EventCodec> sends its events through, given as its last
+ * @brief What the handler of a route of events<T, EventCodec> sends its events through, given as its last
  * argument, by reference.
  *
  * @code
@@ -197,6 +208,8 @@ public:
 private:
   friend struct detail::event_sink_access;
 
+  [[nodiscard]] async::task<> finished() const { return detail::sink_finish(state_); }
+
   std::shared_ptr<detail::event_sink_state> state_;
 };
 
@@ -204,23 +217,23 @@ namespace detail {
 
 // What mount() reaches in a sink.
 struct event_sink_access {
-  template <class T, class EventCodec>
-  [[nodiscard]] static async::task<> answer(event_sink<T, EventCodec> const &sink, http::response refusal) {
+  template <class Sink>
+  [[nodiscard]] static async::task<> answer(Sink const &sink, http::response refusal) {
     return sink_answer(sink.state_, std::move(refusal));
   }
 
-  template <class T, class EventCodec>
-  [[nodiscard]] static async::task<> finish(event_sink<T, EventCodec> const &sink) {
-    return sink_finish(sink.state_);
+  template <class Sink>
+  [[nodiscard]] static async::task<> finish(Sink const &sink) {
+    return sink.finished();
   }
 
-  template <class T, class EventCodec>
-  [[nodiscard]] static async::task<> drain(event_sink<T, EventCodec> const &sink) {
+  template <class Sink>
+  [[nodiscard]] static async::task<> drain(Sink const &sink) {
     return sink_drain(sink.state_);
   }
 
-  template <class T, class EventCodec>
-  [[nodiscard]] static sink_closing closing(event_sink<T, EventCodec> const &sink) noexcept {
+  template <class Sink>
+  [[nodiscard]] static sink_closing closing(Sink const &sink) noexcept {
     return sink_closing{sink.state_};
   }
 };

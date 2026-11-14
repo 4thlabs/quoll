@@ -260,6 +260,10 @@ client_backend make_platform_backend(std::string_view url, client_options const 
   auto const relative = path.empty() || path.starts_with('/');
   auto server = relative ? parse_url("http://page.invalid" + std::string{path}) : parse_url(url);
 
+  if (!server.socket_path.empty()) {
+    throw std::invalid_argument{"quoll::http::client: a browser reaches no Unix domain socket"};
+  }
+
   // Refuses a host that is none, as a client over a connector does.
   (void)host_field(server.host, server.port, server.secure ? 443 : 80);
 

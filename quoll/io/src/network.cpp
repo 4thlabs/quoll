@@ -35,12 +35,15 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/io/connect.hpp>
+#include <quoll/io/connect_local.hpp>
 #include <quoll/io/connect_tls.hpp>
 #include <quoll/io/listen.hpp>
+#include <quoll/io/listen_local.hpp>
 #include <quoll/io/listen_tls.hpp>
 
 #include <quoll/async/current_executor.hpp>
 #include <quoll/async/detail/require_service.hpp>
+#include <quoll/io/local_network_ref.hpp>
 #include <quoll/io/network_ref.hpp>
 #include <quoll/io/tls_network_ref.hpp>
 
@@ -54,6 +57,9 @@ namespace {
 // How async::detail::require_service() names the service, for an application that finds it missing: often, OpenSSL was
 // not there when the build was configured.
 constexpr char const *tls_service_name = "TLS network, which needs OpenSSL when Quoll is configured";
+
+// A browser has no Unix domain sockets, nor a system or a loop without them.
+constexpr char const *local_service_name = "local network of Unix domain sockets, which this executor does not offer";
 
 } // namespace
 
@@ -89,6 +95,22 @@ async::task<any_listener> listen_tls(std::uint16_t port, tls_server_options opti
   );
 
   co_return network.listen_tls(std::move(address), port, options);
+}
+
+async::task<any_stream> connect_local(std::string path) {
+  auto const network = async::detail::require_service<local_network_ref>(
+      co_await async::current_executor(), "quoll::io::connect_local", local_service_name
+  );
+
+  co_return co_await network.connect_local(std::move(path));
+}
+
+async::task<any_listener> listen_local(std::string path) {
+  auto const network = async::detail::require_service<local_network_ref>(
+      co_await async::current_executor(), "quoll::io::listen_local", local_service_name
+  );
+
+  co_return network.listen_local(std::move(path));
 }
 
 } // namespace quoll::io

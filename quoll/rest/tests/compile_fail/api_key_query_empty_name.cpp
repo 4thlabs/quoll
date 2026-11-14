@@ -38,12 +38,10 @@
 //
 // A key in a query parameter with no name.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using keyed = endpoint<"keyed", verb::get, "/", security<api_key_query<"">>>;
+using route = rest::get<"/", void, rest::security<rest::api_key_query<"">>>;
 
-api<"", keyed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

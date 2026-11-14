@@ -1048,6 +1048,24 @@ TEST_CASE("http::client: what cannot be sent is refused before the task runs", "
   REQUIRE(server.connections == 0);
 }
 
+TEST_CASE("client: a unix:// URL names a socket by its absolute path, its requests naming localhost", "[client]") {
+  using quoll::http::detail::parse_url;
+
+  auto const local = parse_url("unix:///var/run/docker.sock");
+
+  REQUIRE(local.socket_path == "/var/run/docker.sock");
+  REQUIRE(local.host == "localhost");
+  REQUIRE_FALSE(local.secure);
+  REQUIRE(local.prefix.empty());
+  REQUIRE(parse_url("UNIX:///tmp/a.sock").socket_path == "/tmp/a.sock");
+  REQUIRE(parse_url("http://example.com").socket_path.empty());
+  // A relative path, a query or a fragment, a NUL: refused.
+  REQUIRE_THROWS_AS(parse_url("unix://var/run/docker.sock"), std::invalid_argument);
+  REQUIRE_THROWS_AS(parse_url("unix:///a.sock?x"), std::invalid_argument);
+  REQUIRE_THROWS_AS(parse_url("unix:///a.sock#x"), std::invalid_argument);
+  REQUIRE_THROWS_AS(parse_url(std::string_view{"unix:///a\0b", 11}), std::invalid_argument);
+}
+
 TEST_CASE("http::client: built from an http URL", "[client]") {
   using quoll::http::detail::parse_url;
 

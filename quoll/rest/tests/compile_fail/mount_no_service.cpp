@@ -34,24 +34,23 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::mount: no service has an operator
+// expect: quoll::rest::mount: no handler takes a route of the api, the route first, then exactly its arguments
 //
-// No service for an endpoint.
+// No handler for a route.
 
 #include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+#include <cstdint>
 
-struct thing {
-  int value = 0;
+namespace rest = quoll::rest;
+
+struct note {
+  std::int64_t id = 0;
 };
 
-using get_thing = endpoint<"thing", verb::get, "/", returns<thing>>;
-using secured = endpoint<"secured", verb::get, "/secured", security<bearer_auth>>;
+using got = rest::get<"/", note>;
 
 struct none {};
 
-void mount_it(quoll::http::router &router) { mount<api<"", get_thing>>(router, none{}); }
+void mount_it(quoll::http::router &router) { rest::mount<rest::api<"", rest::group<got>>>(router, none{}); }

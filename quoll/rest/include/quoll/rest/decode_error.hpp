@@ -37,18 +37,12 @@
 #ifndef QUOLL_REST_DECODE_ERROR_HPP
 #define QUOLL_REST_DECODE_ERROR_HPP
 
-#include <string>
+#include <quoll/http/decode_error.hpp>
 
 namespace quoll::rest {
 
-/**
- * @brief Why a body or a parameter could not be decoded into its type: an expected outcome for input that comes from
- * the network, reported as a value.
- */
-struct decode_error {
-  /** @brief What is wrong and where, for a log or a 400 response. */
-  std::string message;
-};
+/** @brief http::decode_error, under the name the REST layer has always given it. */
+using http::decode_error;
 
 } // namespace quoll::rest
 
