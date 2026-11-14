@@ -117,7 +117,7 @@ private:
 } // namespace detail
 
 /**
- * @brief What the service of an endpoint with events<T, EventCodec> sends its events through, given as its last
+ * @brief What the handler of a route of events<T, EventCodec> sends its events through, given as its last
  * argument, by reference.
  *
  * @code

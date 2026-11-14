@@ -34,29 +34,27 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// The contract of the products API, shared by the server and the page: types and endpoints, no I/O.
+// The contract of the products API, shared by the server and the page: types and routes, no I/O.
 
 #ifndef QUOLL_SAMPLES_DASHBOARD_API_PRODUCTS_API_HPP
 #define QUOLL_SAMPLES_DASHBOARD_API_PRODUCTS_API_HPP
 
 #include "product.hpp"
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
+#include <cstdint>
 #include <vector>
 
 namespace products {
 
-namespace http = quoll::http;
 namespace rest = quoll::rest;
 
-using list = rest::endpoint<"products.list", http::verb::get, "/", rest::returns<std::vector<product>>>;
-using update = rest::endpoint<
-    "products.update", http::verb::put, "/{id:int64}", rest::body<product_update>, rest::returns<product>>;
-using sales = rest::endpoint<"products.sales", http::verb::get, "/{id:int64}/sales", rest::returns<monthly_sales>>;
+using list = rest::get<"/products", std::vector<product>>;
+using update = rest::put<"/products/{id}", product, std::int64_t, product_update>;
+using sales = rest::get<"/products/{id}/sales", monthly_sales, std::int64_t>;
 
-using api = rest::api<"/api/products", list, update, sales>;
+using api = rest::api<"/api", list, update, sales>;
 
 } // namespace products
 

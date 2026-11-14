@@ -38,14 +38,12 @@
 //
 // A list naming a field of a struct it does not derive from.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
 #include <optional>
 #include <string>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
 struct other {
   std::optional<std::string> q;
@@ -54,9 +52,9 @@ struct other {
 struct filter {
   std::optional<std::string> q;
 
-  using rest_fields = names<name<"q", &other::q>>;
+  using rest_fields = rest::names<rest::name<"q", &other::q>>;
 };
 
-using listed = endpoint<"listed", verb::get, "/", query_params<filter>>;
+using route = rest::get<"/", void, rest::query_params<filter>>;
 
-api<"", listed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

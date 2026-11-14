@@ -38,12 +38,12 @@
 //
 // More parameters than a path holds.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using many = endpoint<"many", verb::get, "/{a}/{b}/{c}/{d}/{e}/{f}/{g}/{h}/{i}/{j}/{k}/{l}/{m}/{n}/{o}/{p}/{q}">;
+using route = rest::get<
+    "/{a}/{b}/{c}/{d}/{e}/{f}/{g}/{h}/{i}/{j}/{k}/{l}/{m}/{n}/{o}/{p}/{q}", void, int, int, int, int, int, int, int,
+    int, int, int, int, int, int, int, int, int, int>;
 
-api<"", many> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

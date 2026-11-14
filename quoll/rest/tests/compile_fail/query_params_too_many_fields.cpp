@@ -38,11 +38,9 @@
 //
 // query_params<> of a struct past what its fields are read by name for.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
 struct filter {
   int f0 = 0;
@@ -112,6 +110,6 @@ struct filter {
   int f64 = 0;
 };
 
-using listed = endpoint<"listed", verb::get, "/", query_params<filter>>;
+using route = rest::get<"/", void, rest::query_params<filter>>;
 
-api<"", listed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

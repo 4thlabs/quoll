@@ -38,12 +38,10 @@
 //
 // A parameter beside a literal in its segment.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using part = endpoint<"part", verb::get, "/a{x}">;
+using route = rest::get<"/a{x}", void>;
 
-api<"", part> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

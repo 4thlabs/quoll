@@ -7,7 +7,7 @@ of the page.
 ```
 dashboard/
 ├── api/        # the contract: product.hpp, products_api.hpp
-├── server/     # serves it over HTTP: service.hpp handles each endpoint, the products in memory
+├── server/     # serves it over HTTP: service.hpp handles each route, the products in memory
 ├── web/        # the page, in C++ compiled to WASM, and the chart's module
 └── tests/      # the service through a REST client, and the page on memory_renderer
 ```

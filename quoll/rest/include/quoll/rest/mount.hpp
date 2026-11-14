@@ -39,6 +39,8 @@
 
 #include <quoll/http/request.hpp>
 #include <quoll/http/router.hpp>
+#include <quoll/rest/detail/handled_route.hpp>
+#include <quoll/rest/detail/routes.hpp>
 #include <quoll/rest/detail/serve.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/validators.hpp>
@@ -114,27 +116,32 @@ template <class... Args>
   }(std::make_index_sequence<layout::service_count>{});
 }
 
+// Whether each route these handlers take is one of `Routes`: a handler of another api would be served by nothing.
+template <class Routes, class... Handled>
+[[nodiscard]] consteval bool handles_own_routes(type_list<Handled...>) {
+  return ((std::is_void_v<Handled> || matching_routes<Handled, Routes>::type::size != 0) && ...);
+}
+
 } // namespace detail
 
 /**
- * @brief Serves the endpoints of `Api` on `router`, with `services` and, optionally, a validators() set.
+ * @brief Serves the routes of `Api` on `router`, with handlers and, optionally, a validators() set.
  *
- * A service is an overload set: one `operator()(Endpoint, arguments...)` per endpoint, the arguments being those of
- * the endpoint (path parameters, then its parts in order, then the inherited ones), by value or `const&`. It returns
- * the body of the endpoint's first returns<>, a reply<Endpoint>, or nothing (204, or a first response without body),
- * as is or in a task<>. For an endpoint with events<T>, it takes an rest::event_sink<T> by reference after its
- * arguments, returns a task<>, and sends its events through it, after the router has answered: an http_error before the
- * stream starts (open() or the first event) answers as from any service, after it the stream is cut. It runs as the
- * response's `late_head_writer`: a middleware that sets a `body_writer` of its own replaces it, and the service is not
- * called.
+ * A handler takes its route first, then the route's arguments (its path's and query's parameters, its headers and its
+ * body, then what its groups give), by value or `const&`: a lambda, gathered or not in a rest::service, or a struct
+ * with an `operator()` per route. It returns the value of the route's result, or nothing for a void one, as is or in a
+ * task<>. For a route of events<T>, it takes an rest::event_sink<T> by reference after its arguments, returns a task<>,
+ * and sends its events through it, after the router has answered: an http_error before the stream starts (open() or
+ * the first event) answers as from any handler, after it the stream is cut. It runs as the response's
+ * `late_head_writer`: a middleware that sets a `body_writer` of its own replaces it, and the handler is not called.
  *
- * Each endpoint has exactly one service, and each security scheme of the api a validator: otherwise mount() does not
- * compile.
+ * Each route has exactly one handler, and each security scheme of the api a validator; a lambda of a route the api does
+ * not have is refused: otherwise mount() does not compile.
  *
  * For each request: credentials (401 if missing or rejected, with the `WWW-Authenticate` challenge of the scheme:
  * `Bearer`, or `ApiKey header="X-Api-Key"` / `ApiKey query="key"` for keys, which have no registered scheme), then
- * the arguments (400 for an invalid or missing one, 415 for a body of another media type), then the service. A
- * service or a validator throwing http_error with an error status answers it. These errors are
+ * the arguments (400 for an invalid or missing one, 415 for a body of another media type), then the handler. A
+ * handler or a validator throwing http_error with an error status answers it. These errors are
  * application/problem+json (problem). Anything else it throws goes on as from any handler: a connection answers 500,
  * with nothing of it, and tells `on_handler_error`, a stop or a timeout reaches what waits for it, and over a
  * http::local_transport or a direct dispatch it reaches the caller. A middleware of the router runs outside of this:
@@ -142,25 +149,37 @@ template <class... Args>
  *
  * Adds all the routes or none: @throws std::invalid_argument, leaving `router` as it was, for a route it already has.
  *
- * Services and validators are moved into storage shared by the routes, which lives as long as the router, and as long
- * as a stream of events<> under way; they are called from the thread awaiting the dispatch, concurrently if the router
- * is dispatched concurrently, but for the service of events<>, which runs as the response's writer, on the thread of
- * the connection that writes it.
+ * Handlers and validators are copied, or moved from an rvalue, into storage shared by the routes, which lives as long
+ * as the router, and as long as a stream of events<> under way; they are called from the thread awaiting the dispatch,
+ * concurrently if the router is dispatched concurrently, but for the handler of events<>, which runs as the response's
+ * writer, on the thread of the connection that writes it.
  */
 template <class Api, class... Args>
 void mount(http::router &router, Args &&...args) {
+  static_assert(
+      detail::handles_own_routes<typename Api::routes>(
+          detail::concat_t<detail::type_list<>, typename detail::handled_routes<std::decay_t<Args>>::type...>{}
+      ),
+      "quoll::rest::mount: a handler takes a route this api does not have"
+  );
+
   auto state = detail::make_mounted(std::forward<Args>(args)...);
+  using state_type = typename std::decay_t<decltype(state)>::element_type;
   // All the routes or none: on a route the router refuses (one it already has), `router` is left as it was.
   auto staged = router;
 
   [&]<class... Routes>(detail::type_list<Routes...>) {
-    (staged.add(
-         Routes::method, Routes::path, std::string{Routes::name},
-         [state](http::request request, http::route_match match) {
-           return detail::serve<Routes>(state, std::move(request), std::move(match));
-         }
-     ),
-     ...);
+    // A route without its handler stops here: what serves it is not instantiated, so that its errors are the cause
+    // only.
+    if constexpr ((detail::route_has_one_handler<Routes>(std::type_identity<state_type>{}) && ...)) {
+      (staged.add(
+           Routes::method, Routes::path, std::string{Routes::name},
+           [state](http::request request, http::route_match match) {
+             return detail::serve<Routes>(state, std::move(request), std::move(match));
+           }
+       ),
+       ...);
+    }
   }(typename Api::routes{});
 
   router = std::move(staged);

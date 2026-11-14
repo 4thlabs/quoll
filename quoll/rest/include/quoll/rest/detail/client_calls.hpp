@@ -37,6 +37,7 @@
 #ifndef QUOLL_REST_DETAIL_CLIENT_CALLS_HPP
 #define QUOLL_REST_DETAIL_CLIENT_CALLS_HPP
 
+#include <quoll/rest/detail/arguments_by_name.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 
 #include <algorithm>
@@ -58,7 +59,7 @@ struct nth_argument<std::tuple<Arguments...>, Index> {
   using type = std::tuple_element_t<Index, std::tuple<Arguments...>>;
 };
 
-// call / try_call taking exactly `sizeof...(Index)` arguments of the types the endpoint computes: not deduced, so that
+// call / try_call taking exactly `sizeof...(Index)` arguments of the types the route computes: not deduced, so that
 // a braced list (`{.limit = 20}`) converts to its parameter.
 template <class Api, class Endpoint>
 using arguments_of = typename Api::template route<Endpoint>::arguments;
@@ -103,7 +104,7 @@ template <class Scheme, class... Routes>
   );
 }
 
-// The most arguments a call to an endpoint of the api takes: the client has an overload per arity up to it.
+// The most arguments a call to a route of the api takes: the client has an overload per arity up to it.
 template <class... Routes>
 [[nodiscard]] consteval std::size_t max_arity(type_list<Routes...>) {
   std::size_t largest = 0;
@@ -112,16 +113,48 @@ template <class... Routes>
   return largest;
 }
 
-// Every arity up to the last of `Arities`.
+// call / try_call / subscribe by name, `"page"_p = 2`: the arguments it names, in any order, the others left out, as
+// a std::optional or a std::vector may be. By position or by name, not both in one call.
+template <class Client, class Api>
+struct client_named_calls {
+  template <class Endpoint, class... Named>
+    requires(sizeof...(Named) > 0 && (is_named_argument<Named> && ...))
+  [[nodiscard]] auto call(Named... named) const {
+    return static_cast<Client const &>(*this).template call_with<Endpoint>(
+        arguments_by_name<typename Api::template route<Endpoint>>(std::move(named)...)
+    );
+  }
+
+  template <class Endpoint, class... Named>
+    requires(sizeof...(Named) > 0 && (is_named_argument<Named> && ...))
+  [[nodiscard]] auto try_call(Named... named) const {
+    return static_cast<Client const &>(*this).template try_call_with<Endpoint>(
+        arguments_by_name<typename Api::template route<Endpoint>>(std::move(named)...)
+    );
+  }
+
+  template <class Endpoint, class... Named>
+    requires(sizeof...(Named) > 0 && (is_named_argument<Named> && ...))
+  [[nodiscard]] auto subscribe(Named... named) const {
+    return static_cast<Client const &>(*this).template subscribe_with<Endpoint>(
+        arguments_by_name<typename Api::template route<Endpoint>>(std::move(named)...)
+    );
+  }
+};
+
+// Every arity up to the last of `Arities`, and by name.
 template <class Client, class Api, class Arities>
 struct client_call_set;
 
 template <class Client, class Api, std::size_t... Arity>
 struct client_call_set<Client, Api, std::index_sequence<Arity...>>
-    : client_calls<Client, Api, std::make_index_sequence<Arity>>... {
+    : client_calls<Client, Api, std::make_index_sequence<Arity>>..., client_named_calls<Client, Api> {
   using client_calls<Client, Api, std::make_index_sequence<Arity>>::call...;
   using client_calls<Client, Api, std::make_index_sequence<Arity>>::try_call...;
   using client_calls<Client, Api, std::make_index_sequence<Arity>>::subscribe...;
+  using client_named_calls<Client, Api>::call;
+  using client_named_calls<Client, Api>::try_call;
+  using client_named_calls<Client, Api>::subscribe;
 };
 
 } // namespace quoll::rest::detail

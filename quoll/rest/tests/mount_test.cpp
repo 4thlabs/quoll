@@ -94,10 +94,6 @@ struct user_filter {
   std::vector<std::string> tag;
 };
 
-struct not_found {
-  std::string detail;
-};
-
 struct card {
   std::int64_t owner = 0;
   std::string request_id;
@@ -114,65 +110,55 @@ struct token {
 };
 
 namespace auth {
-using namespace quoll::rest;
 
-using login = endpoint<"auth.login", verb::post, "/login", body<credentials>, returns<token>>;
+using login = rest::post<"/auth/login", token, credentials>;
 
-using api = rest::api<"/auth", login>;
 } // namespace auth
 
 namespace users {
-using namespace quoll::rest;
 
-using list = endpoint<"users.list", verb::get, "/", query_params<user_filter>, returns<std::vector<user>>>;
-using get = endpoint<"users.get", verb::get, "/{id:int64}", returns<user>, returns<not_found, status::not_found>>;
-using create = endpoint<"users.create", verb::post, "/", body<new_user>, returns<user, status::created>>;
-using remove = endpoint<"users.remove", verb::delete_, "/{id:int64}">;
+using list = rest::get<"/users", std::vector<user>, rest::query_params<user_filter>>;
+using get = rest::get<"/users/{id}", user, std::int64_t>;
+using create = rest::post<"/users", rest::created<user>, new_user>;
+using forget = rest::del<"/users/{id}", void, std::int64_t>;
 
-using api = rest::api<"/users", list, get, create, remove>;
+using routes = rest::group<list, get, create, forget>;
+
 } // namespace users
 
 namespace cards {
-using namespace quoll::rest;
 
-using list = endpoint<
-    "cards.list", verb::get, "/", query<"status", std::optional<std::string>>, header<"X-Request-Id", std::string>,
-    returns<std::vector<card>>>;
+using list = rest::get<
+    "/users/{user_id}/cards?status={status}", std::vector<card>, std::int64_t, std::optional<std::string>,
+    rest::header<"X-Request-Id", std::string>>;
+// A header repeated, on several lines or split at commas.
+using tagged = rest::get<
+    "/users/{user_id}/cards/tagged", std::vector<std::string>, std::int64_t,
+    rest::header<"X-Tag", std::vector<std::string>>>;
+// Required parameters of a scalar type.
+using paged = rest::get<
+    "/users/{user_id}/cards/paged?page={page}&all={all}", rest::text, std::int64_t, std::int64_t, bool,
+    rest::header<"X-Limit", std::int64_t>>;
 
-// A list header: its values may come on several lines, or combined on one.
-using tagged = endpoint<
-    "cards.tagged", verb::get, "/tagged", header<"X-Tag", std::vector<std::string>>, returns<std::vector<std::string>>>;
+using routes = rest::group<list, tagged, paged>;
 
-// Required parameters of a type that is no class.
-using paged = endpoint<
-    "cards.paged", verb::get, "/paged", query<"page", std::int64_t>, query<"all", bool>,
-    header<"X-Limit", std::int64_t>, returns<std::string, status::ok, text_codec>>;
-
-using api = rest::api<"/users/{user_id:int64}/cards", list, tagged, paged>;
 } // namespace cards
 
 namespace keys {
-using namespace quoll::rest;
 
-using ping = endpoint<
-    "keys.ping", verb::get, "/ping", security<api_key<"X-Api-Key">>, returns<std::string, status::ok, text_codec>>;
-using ping_query = endpoint<
-    "keys.ping_query", verb::get, "/ping-query", security<api_key_query<"key">>,
-    returns<std::string, status::ok, text_codec>>;
+using ping = rest::get<"/keys/ping", rest::text, rest::security<rest::api_key<"X-Api-Key">>>;
+using ping_query = rest::get<"/keys/ping-query", rest::text, rest::security<rest::api_key_query<"key">>>;
 
-using api = rest::api<"/keys", ping, ping_query>;
+using routes = rest::group<ping, ping_query>;
+
 } // namespace keys
 
-using v1 =
-    rest::api<"/api/v1", auth::api, keys::api, rest::with<rest::security<rest::bearer_auth>, users::api, cards::api>>;
+using v1 = rest::api<
+    "/api/v1", auth::login, keys::routes, rest::group<rest::security<rest::bearer_auth>, users::routes, cards::routes>>;
 
-using slow_one = rest::endpoint<"slow", verb::get, "/slow", rest::returns<std::string, status::ok, rest::text_codec>>;
-using two_schemes = rest::endpoint<
-    "both", verb::get, "/both", rest::security<rest::bearer_auth, rest::api_key<"X-Key">>,
-    rest::returns<std::string, status::ok, rest::text_codec>>;
-using a_pair = rest::endpoint<
-    "pair", verb::post, "/pair", rest::body<std::pair<std::string, int>>,
-    rest::returns<std::string, status::ok, rest::text_codec>>;
+using slow_one = rest::get<"/slow", rest::text>;
+using two_schemes = rest::get<"/both", rest::text, rest::security<rest::bearer_auth, rest::api_key<"X-Key">>>;
+using a_pair = rest::post<"/pair", rest::text, std::pair<std::string, int>>;
 using slow_api = rest::api<"", slow_one, two_schemes, a_pair>;
 
 // Synchronous: returns the value itself.
@@ -200,16 +186,16 @@ struct users_service {
     co_return std::vector<user>{{.id = 1, .name = described, .email = std::nullopt}};
   }
 
-  task<rest::reply<users::get>> operator()(users::get, std::int64_t id) const {
+  task<user> operator()(users::get, std::int64_t id) const {
     if (id == 13) {
       throw std::runtime_error{"internal details that must not leak"};
     }
 
-    if (id == 42) {
-      co_return user{.id = 42, .name = "Ada", .email = "ada@example.com"};
+    if (id != 42) {
+      throw quoll::http::http_error{status::not_found, "no user " + std::to_string(id)};
     }
 
-    co_return not_found{"no user " + std::to_string(id)};
+    co_return user{.id = 42, .name = "Ada", .email = "ada@example.com"};
   }
 
   task<user> operator()(users::create, new_user created) const {
@@ -240,7 +226,7 @@ struct users_service {
     co_return user{.id = 7, .name = std::move(created.name), .email = std::move(created.email)};
   }
 
-  task<> operator()(users::remove, std::int64_t) const { co_return; }
+  task<> operator()(users::forget, std::int64_t) const { co_return; }
 };
 
 struct cards_service {
@@ -334,15 +320,15 @@ TEST_CASE("mount: a request reaches its service, and the response its client", "
   REQUIRE(ada->email == "ada@example.com");
 }
 
-TEST_CASE("mount: a reply answers the status of the response it holds", "[rest][mount]") {
+TEST_CASE("mount: an http_error a handler throws answers its status, with a problem", "[rest][mount]") {
   auto const router = make_router();
   auto const missing = send(router, verb::get, "/api/v1/users/7");
 
   REQUIRE(missing.status == http::status::not_found);
-  REQUIRE(json.decode<not_found>(missing.body)->detail == "no user 7");
+  REQUIRE(problem_of(missing).detail == "no user 7");
 }
 
-TEST_CASE("mount: bearer credentials are required where with<> asks for them", "[rest][mount]") {
+TEST_CASE("mount: bearer credentials are required where a group asks for them", "[rest][mount]") {
   auto const router = make_router();
   auto const anonymous = send(router, verb::get, "/api/v1/users/42", {});
 
@@ -355,7 +341,7 @@ TEST_CASE("mount: bearer credentials are required where with<> asks for them", "
   REQUIRE(rejected.status == http::status::unauthorized);
   REQUIRE(problem_of(rejected).detail == "rejected credentials");
   REQUIRE(send(router, verb::get, "/api/v1/users/42", {{"Authorization", "bearer valid"}}).status == http::status::ok);
-  // Not under with<security<>>: no credentials needed.
+  // In no group with security<>: no credentials needed.
   REQUIRE(
       send(
           router, verb::post, "/api/v1/auth/login", {{"Content-Type", "application/json"}},
@@ -402,7 +388,7 @@ TEST_CASE("mount: path and query arguments are decoded, or answer 400", "[rest][
   REQUIRE(problem_of(send(router, verb::get, "/api/v1/users?name=%zz")).detail == "invalid query string");
 }
 
-TEST_CASE("mount: headers and inherited path parameters", "[rest][mount]") {
+TEST_CASE("mount: headers, and a path parameter routes share", "[rest][mount]") {
   auto const router = make_router();
   auto const listed = send(
       router, verb::get, "/api/v1/users/5/cards?status=active",

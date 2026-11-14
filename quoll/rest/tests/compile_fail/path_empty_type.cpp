@@ -34,16 +34,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest: unknown path parameter type
+// expect: quoll::rest: a path parameter says no type, its route's types do
 //
 // A type forgotten after its colon.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using typed = endpoint<"typed", verb::get, "/{x:}">;
+using route = rest::get<"/{x:}", void>;
 
-api<"", typed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

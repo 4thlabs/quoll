@@ -45,8 +45,8 @@
 #include <quoll/http/streamed_response.hpp>
 #include <quoll/rest/detail/client_response.hpp>
 #include <quoll/rest/detail/part.hpp>
+#include <quoll/rest/detail/refusal.hpp>
 #include <quoll/rest/event_stream.hpp>
-#include <quoll/rest/unexpected_response.hpp>
 
 #include <memory>
 #include <string>
@@ -55,7 +55,7 @@
 
 namespace quoll::rest::detail {
 
-// What subscribe produces for an endpoint with events<>.
+// What subscribe produces for a route of events<>.
 template <class Endpoint>
 using event_stream_of = event_stream<typename events_part_of<Endpoint>::type, typename events_part_of<Endpoint>::codec>;
 
@@ -66,7 +66,7 @@ using event_stream_of = event_stream<typename events_part_of<Endpoint>::type, ty
 // What `streamed`, which is no stream of events, is, with `reason` and what came of its body, up to 64 KiB, an error's
 // problem rather than a download: none for a 200, which may never end. A stop or a timeout while it reads goes on as
 // such.
-[[nodiscard]] async::task<unexpected_response> refusal_of(http::streamed_response streamed, std::string reason);
+[[nodiscard]] async::task<refusal> refusal_of(http::streamed_response streamed, std::string reason);
 
 // The events of the response to `request`, or an http::http_error received for any other answer, its body read up to a
 // bound.
@@ -87,11 +87,8 @@ open_events(std::shared_ptr<Transport const> transport, http::request request, s
   } else if (status == http::status::no_content) {
     // What a server answers to end a subscription, which a browser does not connect again after.
     reason = "no stream: 204 No Content";
-  } else if (has_status(typename Route::responses{}, status)) {
-    // Its own or a with<>'s alike: subscribe has no reply<Endpoint> for one and not the other.
-    reason = "declared response " + std::to_string(static_cast<int>(status));
   } else {
-    reason = unexpected_reason<Route>(status);
+    reason = "status " + std::to_string(static_cast<int>(status));
   }
 
   fail(co_await refusal_of(std::move(streamed), std::move(reason)));

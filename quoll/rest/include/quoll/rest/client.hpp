@@ -51,7 +51,6 @@
 #include <quoll/rest/detail/client_response.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/next.hpp>
-#include <quoll/rest/scoped_client.hpp>
 
 #include <concepts>
 #include <memory>
@@ -63,23 +62,19 @@
 
 namespace quoll::rest {
 
-/** @brief What try_call<Endpoint> produces: one of the endpoint's declared responses, or an unexpected_response. */
-template <class Endpoint>
-using result = detail::call_result<Endpoint>;
-
 /**
- * @brief Calls the endpoints of `Api` through `Transport` (an http::HttpTransport): a connection natively
+ * @brief Calls the routes of `Api` through `Transport` (an http::HttpTransport): a connection natively
  * (quoll::http::client, the default), fetch in a browser, a Worker or Node, a router of the same program
  * (http::local_transport). The api may be a third-party
  * one: its contract is all a client needs.
  *
- * - `call<Endpoint>(arguments...)` returns a task of the body of the endpoint's first returns<> (nothing for an
- *   endpoint without one, or whose first response has no body). Any other outcome throws an http::http_error
- *   received from the task: another declared response (read it with try_call), an undeclared status (its problem
- *   detail, if any), a body that does not decode.
- * - `try_call<Endpoint>(arguments...)` returns a task of result<Endpoint>: a reply<Endpoint> holding the declared
- *   response received, or an unexpected_response.
- * - `subscribe<Endpoint>(arguments...)`, for an endpoint with events<T>, returns a task of rest::event_stream<T>, once
+ * - `call<Route>(arguments...)` returns a task of the value of the route's result (nothing for a void one). Any other
+ *   outcome throws an http::http_error received from the task: another status (its problem detail, if any, as
+ *   what()), a body that does not decode. Its body_as() reads a third-party API's own shape of its errors.
+ * - `try_call<Route>(arguments...)` returns a task of `std::expected<T, http::http_error>`: the value, or that error.
+ * - Each of them takes its arguments by position, or by name, `call<notes::list>("page"_p = 2)` (rest::literals): a
+ *   `{parameter}` of the route's expression, or a header by its name, in any order, one that may be missing left out.
+ * - `subscribe<Route>(arguments...)`, for a route of events<T>, returns a task of rest::event_stream<T>, once
  *   the head of a `text/event-stream` has come: its events as they come. Any other answer throws an http::http_error
  *   received from the task, as from call, with its body read up to 64 KiB. It needs a transport that gives a response
  *   as its head comes (`stream()`: http::client, not http::local_transport), and it goes straight through it,
@@ -89,15 +84,14 @@ using result = detail::call_result<Endpoint>;
  * - Transport failures (network, cancellation) are exceptions from the tasks (std::system_error). Over a
  *   http::local_transport, so is what a service throws, as there is no connection to answer 500.
  *
- * The arguments are those of the endpoint, in its order: path parameters (prefixes first), then the argument parts,
- * then the inherited ones; their types come from the endpoint, so braced lists convert (`{.limit = 20}`). They are
+ * The arguments are those of the route, in its order: its path's and its query's parameters, then its headers and its
+ * body, then what its groups add; their types come from the route, so braced lists convert (`{.limit = 20}`). They are
  * encoded into the request by the call: an invalid one throws std::invalid_argument there, before the task runs (a
  * path parameter that is empty or holds a NUL or a dot segment, the rest of a path starting with `/`, a query parameter
  * holding a NUL, a number that is not finite, a header value or a credential the server would read differently).
  *
  * Interceptors added with use() wrap what it sends, for call and try_call alike: a retry (rest::retry), a token
- * refreshed on a 401. scope() gives the endpoints of an api nested in this one, with the parameters of the prefixes
- * above them fixed.
+ * refreshed on a 401.
  *
  * The task does not refer to the client: the request is built by the call, and the task of a transport owns what it
  * needs, as http::HttpTransport asks, as do the interceptors'. Thread safety: none (credentials() and use() change the
@@ -111,7 +105,7 @@ public:
   /** @brief The contract it calls. */
   using api_type = Api;
 
-  /** @brief The arguments of a call to `Endpoint`, as a tuple. */
+  /** @brief The arguments of a call to `Route`, as a tuple. */
   template <class Endpoint>
   using arguments = detail::arguments_of<Api, Endpoint>;
 
@@ -144,12 +138,12 @@ public:
       : transport_(std::make_shared<Transport const>(without_trailing_slash(std::move(base_url)), std::move(options))) {
   }
 
-  /** @brief The credential sent, from now on, to the endpoints that require `Scheme`. */
+  /** @brief The credential sent, from now on, to the routes that require `Scheme`. */
   template <class Scheme>
   void credentials(std::string value) {
     static_assert(
-        detail::uses_scheme<Scheme>(typename Api::routes{}), "quoll::rest::client: the api has no endpoint "
-                                                             "that requires this scheme"
+        detail::uses_scheme<Scheme>(typename Api::routes{}), "quoll::rest::client: no route of the api requires "
+                                                             "this scheme"
     );
 
     credentials_.insert_or_assign(std::string{detail::scheme_traits<Scheme>::key.view()}, std::move(value));
@@ -159,8 +153,8 @@ public:
    * @brief Wraps every request the client sends from now on, inside the interceptors added before: `wrapping` gets the
    * request and what sends it on (the next interceptor, then the transport), and returns the response.
    *
-   * A copy of the client shares the interceptors it had, and one added after to either is its own; a scope keeps those
-   * the client had when it was made. A call keeps what it sends through until its task ends.
+   * A copy of the client shares the interceptors it had, and one added after to either is its own. A call keeps what it
+   * sends through until its task ends.
    *
    * @code
    * api.use(quoll::rest::retry{.attempts = 3});
@@ -185,27 +179,6 @@ public:
     interception_ = std::move(grown);
   }
 
-  /**
-   * @brief The endpoints of `Scope`, an api nested in this one, with `prefix`, the parameters of the prefixes above
-   * them in order, fixed: those of `Scope`'s own prefix included. It keeps a copy of this client as it is now:
-   * credentials and interceptors given to the client after do not reach it.
-   *
-   * @code
-   * auto repo = github.scope<github::repos::api>("4thlabs", "quoll");   // api<"/repos/{owner}/{repo}", ...>
-   * @endcode
-   */
-  template <class Scope, class... Prefix>
-  [[nodiscard]] scoped_client<client, Scope> scope(Prefix... prefix) const {
-    using fixed = typename scoped_client<client, Scope>::prefix_type;
-
-    static_assert(
-        sizeof...(Prefix) == std::tuple_size_v<fixed>,
-        "quoll::rest::client::scope: as many arguments as the prefixes above the api have parameters"
-    );
-
-    return {*this, fixed{std::move(prefix)...}};
-  }
-
   /** @brief The transport the client sends its requests with. */
   [[nodiscard]] Transport const &transport() const noexcept QUOLL_LIFETIMEBOUND { return *transport_; }
 
@@ -214,7 +187,7 @@ private:
   friend struct detail::client_calls;
 
   template <class, class>
-  friend class scoped_client;
+  friend struct detail::client_named_calls;
 
   // Through the interceptors, if any: the transport alone otherwise, as before any was added.
   [[nodiscard]] async::task<http::response> send(http::request message) const {
@@ -227,7 +200,7 @@ private:
 
   template <class Endpoint>
   [[nodiscard]] async::task<typename detail::call_value<Endpoint>::type> call_with(arguments<Endpoint> args) const {
-    static_assert(!detail::has_events<Endpoint>, "quoll::rest::client::call: the endpoint answers events<>: subscribe");
+    static_assert(!detail::has_events<Endpoint>, "quoll::rest::client::call: the route answers events<>: subscribe");
 
     using route = typename Api::template route<Endpoint>;
 
@@ -235,9 +208,9 @@ private:
   }
 
   template <class Endpoint>
-  [[nodiscard]] async::task<result<Endpoint>> try_call_with(arguments<Endpoint> args) const {
+  [[nodiscard]] async::task<detail::call_result<Endpoint>> try_call_with(arguments<Endpoint> args) const {
     static_assert(
-        !detail::has_events<Endpoint>, "quoll::rest::client::try_call: the endpoint answers events<>: subscribe"
+        !detail::has_events<Endpoint>, "quoll::rest::client::try_call: the route answers events<>: subscribe"
     );
 
     using route = typename Api::template route<Endpoint>;
@@ -245,11 +218,11 @@ private:
     return detail::receive<route>(send(detail::build_request<route>(args, credentials_)));
   }
 
-  // `auto`, so that an endpoint without events<> meets the static_assert, not a failure to name what it returns.
+  // `auto`, so that a route without events<> meets the static_assert, not a failure to name what it returns.
   template <class Endpoint>
   [[nodiscard]] auto subscribe_with(arguments<Endpoint> args) const {
     static_assert(
-        detail::has_events<Endpoint>, "quoll::rest::client::subscribe: the endpoint has no events<>, call it"
+        detail::has_events<Endpoint>, "quoll::rest::client::subscribe: the route answers no events<>: call it"
     );
     static_assert(
         http::StreamingTransport<Transport>,

@@ -34,15 +34,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::query_params: the type is not an aggregate
+// expect: quoll::rest::query_params: the type is not an aggregate, nor a struct listing its fields (rest_fields)
 //
 // query_params<> of a type with a constructor.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
 struct filter {
   explicit filter(int given) : limit(given) {}
@@ -50,6 +48,6 @@ struct filter {
   int limit;
 };
 
-using listed = endpoint<"listed", verb::get, "/", query_params<filter>>;
+using route = rest::get<"/", void, rest::query_params<filter>>;
 
-api<"", listed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

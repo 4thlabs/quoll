@@ -34,12 +34,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: no request can reach a dot segment or a NUL
-
+// expect: quoll::rest: no request can reach a dot segment or a NUL
+//
 // A proxy or a URL parser may resolve it, as what a client sends, and Quoll's router refuses it.
 
-#include <quoll/rest/endpoint.hpp>
+#include <quoll/rest.hpp>
 
-using e = quoll::rest::endpoint<"e", quoll::http::verb::get, "/a/%2e%2e/b">;
+namespace rest = quoll::rest;
 
-e const instance{};
+using route = rest::get<"/a/%2e%2e/b", void>;
+
+inline constexpr rest::api<"", rest::group<route>> instance{};

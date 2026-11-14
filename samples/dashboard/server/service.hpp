@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// What the server does with each endpoint of the contract, over products in memory.
+// What the server does with each route of the contract, over products in memory.
 
 #ifndef QUOLL_SAMPLES_DASHBOARD_SERVER_SERVICE_HPP
 #define QUOLL_SAMPLES_DASHBOARD_SERVER_SERVICE_HPP

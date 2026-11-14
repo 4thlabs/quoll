@@ -43,13 +43,12 @@
 #include <quoll/rest/detail/path_template.hpp>
 #include <quoll/rest/detail/route.hpp>
 #include <quoll/rest/detail/type_list.hpp>
-#include <quoll/rest/endpoint.hpp>
 #include <quoll/rest/fixed_string.hpp>
 
 #include <concepts>
 #include <type_traits>
 
-// How api<> collects the routes of its members: endpoints, nested apis and with<>.
+// How api<> collects the routes of its members: routes and groups.
 namespace quoll::rest::detail {
 
 template <class T>
@@ -75,11 +74,6 @@ struct routes_of;
 template <fixed_string Prefix, Endpoint E>
 struct routes_of<Prefix, E> {
   using type = type_list<route<E, join_paths<Prefix, E::path_value>(), type_list<>>>;
-};
-
-template <fixed_string Prefix, Api A>
-struct routes_of<Prefix, A> {
-  using type = typename rebase<Prefix, type_list<>, typename A::routes>::type;
 };
 
 template <class Members>
@@ -108,8 +102,8 @@ struct matching_routes<E, type_list<Routes...>> {
 
 template <class E, class Matches>
 struct single_route {
-  static_assert(Matches::size != 0, "quoll::rest::api: the endpoint is not in this api");
-  static_assert(Matches::size < 2, "quoll::rest::api: the endpoint is in this api more than once");
+  static_assert(Matches::size != 0, "quoll::rest::api: the route is not in this api");
+  static_assert(Matches::size < 2, "quoll::rest::api: the route is in this api more than once");
 };
 
 template <class E, class Route>

@@ -1,4 +1,3 @@
-// expect: quoll::rest::endpoint: it gets the same field or query parameter twice
 //   ___              _ _
 //  / _ \ _   _  ___ | | |
 // | | | | | | |/ _ \| | |
@@ -35,20 +34,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
+// expect: quoll::rest: a route gets the same header or query parameter twice, its groups' and its security's included
+//
+// A scheme a route and its group both require: its token would go out twice.
+
 #include <quoll/rest.hpp>
 
-#include <cstdint>
+namespace rest = quoll::rest;
 
-using namespace quoll::rest;
-using quoll::http::verb;
+using secured = rest::get<"/secured", void, rest::security<rest::bearer_auth>>;
 
-using secured = endpoint<"secured", verb::get, "/secured", security<bearer_auth>>;
-
-// Its token would go out twice.
-using wrapped = api<"", with<security<bearer_auth>, secured>>;
-
-using routes = typename wrapped::routes;
-
-using first = typename routes::template at<0>::schemes;
+inline constexpr rest::api<"", rest::group<rest::security<rest::bearer_auth>, secured>> instance{};

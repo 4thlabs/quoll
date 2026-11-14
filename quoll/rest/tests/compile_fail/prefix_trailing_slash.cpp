@@ -38,16 +38,10 @@
 //
 // An api prefix ending with a slash.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-struct thing {
-  int value = 0;
-};
+using route = rest::get<"/a", void>;
 
-using a = endpoint<"a", verb::get, "/a">;
-
-api<"/x/", a> const instance{};
+inline constexpr rest::api<"/x/", rest::group<route>> instance{};

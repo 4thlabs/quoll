@@ -1,4 +1,3 @@
-// expect: quoll::rest::mount: no service has an operator()(Endpoint, arguments...)
 //   ___              _ _
 //  / _ \ _   _  ___ | | |
 // | | | | | | |/ _ \| | |
@@ -35,20 +34,19 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+// expect: quoll::rest::mount: no handler takes a route of the api, the route first, then exactly its arguments
+//
+// A handler taking a narrower type than its route: an id past an int would reach it cut short.
+
 #include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
 #include <cstdint>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using get_thing = endpoint<"thing", verb::get, "/{id:int64}">;
+using got = rest::get<"/{id}", void, std::int64_t>;
 
-struct service {
-  // An id past an int would reach it cut short.
-  void operator()(get_thing, int) const {}
-};
-
-void mount_it(quoll::http::router &router) { mount<api<"", get_thing>>(router, service{}); }
+void mount_it(quoll::http::router &router) {
+  rest::mount<rest::api<"", rest::group<got>>>(router, rest::service([](got, int) {}));
+}

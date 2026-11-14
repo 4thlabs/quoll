@@ -1,7 +1,7 @@
 # `samples/github`
 
 A command-line program calling [GitHub's REST API](https://docs.github.com/rest) through a contract of a few of its
-endpoints, natively and, compiled to WebAssembly, in Node through `fetch`.
+routes, natively and, compiled to WebAssembly, in Node through `fetch`.
 
 ```bash
 quoll_github 4thlabs/quoll            # the repository and its open issues
@@ -10,9 +10,9 @@ GITHUB_TOKEN=... quoll_github me      # the account of the token
 
 What it shows, in [`github.cpp`](github.cpp) and [`github_api.hpp`](github_api.hpp):
 
-- **A contract of someone else's API**: GitHub's names (`stargazers_count` read as `stars`, through `glz::meta`), its
-  error bodies (`returns<error, status::not_found>`), its fields as they come (`rest::lenient_json_codec`).
-- **A scope**, `client.scope<repos::api>(owner, repo)`, for the endpoints under `/repos/{owner}/{repo}`.
+- **A contract of someone else's API**: GitHub's paths and names (`stargazers_count` read as `stars`, through
+  `glz::meta`), its fields as they come (`rest::lenient_json<T>`), and its shape of errors, read from the error a call
+  gives (`error.body_as<github::error>(rest::lenient_json_codec{})`).
 - **Interceptors**: the `User-Agent` and API version GitHub asks every request for, and `rest::retry`.
 - **`call` and `try_call`**, and a **credential**, `GITHUB_TOKEN` as a bearer token.
 

@@ -16,8 +16,8 @@ using http::verb;
 
 ## The contract
 
-Bodies are plain aggregates, whose fields Glaze reflects, with no macro and no declaration. One alias
-per operation, gathered in an `api`:
+Bodies are plain aggregates, whose fields Glaze reflects, with no macro and no declaration. A route is one alias: its
+method, its path and query, its result, then the types of its parameters. Routes are gathered in groups and in an `api`:
 
 ```cpp
 struct user {
@@ -36,191 +36,172 @@ struct user_filter {
   std::optional<std::string> name{};
 };
 
-struct not_found {
-  std::string detail;
+struct card {
+  std::int64_t id = 0;
 };
 
 namespace users {
-using namespace quoll::rest;
 
-using list = endpoint<"users.list", verb::get, "/", query_params<user_filter>, returns<std::vector<user>>>;
-using get = endpoint<"users.get", verb::get, "/{id:int64}", returns<user>, returns<not_found, status::not_found>>;
-using create = endpoint<"users.create", verb::post, "/", body<new_user>, returns<user, status::created>>;
-using remove = endpoint<"users.remove", verb::delete_, "/{id:int64}">;
+using list   = rest::get<"/users", std::vector<user>, rest::query_params<user_filter>>;
+using get    = rest::get<"/users/{id}", user, std::int64_t>;
+using create = rest::post<"/users", rest::created<user>, new_user>;
+using remove = rest::del<"/users/{id}", void, std::int64_t>;
 
-using api = rest::api<"/users", list, get, create, remove>;
+using routes = rest::group<list, get, create, remove>;
+
 } // namespace users
+
+namespace cards {
+
+using list = rest::get<"/users/{user_id}/cards?status={status}", std::vector<card>,
+                       std::int64_t, std::optional<std::string>>;
+
+} // namespace cards
+
+using v1 = rest::api<"/api/v1", rest::group<rest::security<rest::bearer_auth>, users::routes, cards::list>>;
 ```
 
 > [!NOTE]
 > Reflected types need external linkage: Clang rejects them in an anonymous namespace.
 
-An `endpoint` takes a name, unique in its API, a method, a path template, then its parts.
+- **The method** is the type: `rest::get`, `post`, `put`, `patch`, `del` (`delete` is a keyword), `head`, `options`.
+- **The string** holds the whole path below the api's prefix, and the query, `key={name}` for a parameter. Each route
+  is its own type, unique by its method and its path, as the router requires.
+- **The result** comes first: see [Results](#results).
+- **The parameters** follow, in this order: a type for each `{name}` of the string, the path's then the query's; then
+  the headers, `rest::header<"X-Request-Id", T>`; then the body, last, on a `post`, a `put`, a `patch` or a `del` only. A body on DELETE has no meaning of its own
+  (RFC 9110): for an API that declares one, as GitHub's `DELETE /user/emails`, through hops that all forward it.
+- **The name** of its operation, OpenAPI's operationId, is `rest::operation_id<"users.get">` among its types, or else
+  its method and whole path, `GET /api/v1/users/{id}`. It is the route's name in the router, which a middleware reads
+  through `next.route()`.
+- **A group** holds routes, groups, and what it gives all of them, `rest::security<...>` or a `rest::header<>`, which
+  come after a route's own arguments. Groups nest, and have no prefix.
+- **The api** has the prefix, `"/api/v1"` or none, with no parameter: one its routes share goes in each one's path, as
+  `user_id` above.
 
-### Paths
+### Parameters
 
-A parameter takes a whole segment and says its type, `string` by default:
+A path parameter takes a whole segment, and `{name:path}`, last, the rest of the path, a `std::string`. A parameter's
+type is read from text, as `rest::param_traits<T>` does: integers, floating-point numbers, `bool` (`true` or `false`),
+`std::string`, and enums described by `glz::meta`, by name. A query parameter or a header may also be a
+`std::optional<T>`, left out when empty, or a `std::vector<T>`, repeated (`?tag=a&tag=b`). `rest::query_params<S>`
+takes one query parameter per field of a struct, filled with designated initializers: for operations with many
+optional parameters, as a component's state. A route has its query in its string or in a `query_params<>`, not both.
 
-| Type in the path          | Argument                            |
-| ------------------------- | ----------------------------------- |
-| `{id}`, `{id:string}`     | `std::string`                       |
-| `{n:int}`, `{n:uint}`     | `int`, `unsigned`                   |
-| `{n:int64}`, `{n:uint64}` | `std::int64_t`, `std::uint64_t`     |
-| `{x:double}`              | `double`                            |
-| `{on:bool}`               | `bool`                              |
-| `{rest:path}`, last       | `std::string`, the rest of the path |
+### Results
+
+| Result                                   | Answered                                                              |
+| ---------------------------------------- | --------------------------------------------------------------------- |
+| `T`, `rest::json<T>`                     | 200, `T` in JSON                                                      |
+| `void`                                   | 204, no body                                                          |
+| `rest::created<R>`, `rest::accepted<R>`  | 201, 202, `R` being any result of this table but events (`void` too)  |
+| `rest::text`                             | 200, a `std::string` as `text/plain; charset=utf-8`                   |
+| `rest::bytes`                            | 200, a `std::vector<std::byte>` as `application/octet-stream`         |
+| `rest::lenient_json<T>`                  | 200, `T` in JSON, read skipping the fields it does not know           |
+| `rest::form<T>`                          | 200, the fields of `T` as `application/x-www-form-urlencoded`         |
+| `rest::encoded<T, Codec>`                | 200, `T` in a codec of your own: see [Codecs](#codecs)                |
+| `rest::events<T>`                        | A stream of server-sent events: see [Events](#events)                 |
+
+A body takes the formats of this table: `new_user`, `rest::json<T>`, `rest::lenient_json<T>`, `rest::text`,
+`rest::bytes`, `rest::form<login>` or `rest::encoded<T, Codec>`. A route declares no
+error responses: a handler throws an `http::http_error`, answered as an RFC 9457 problem, and the client gives it
+back as an `http::http_error` received, whose body a [third-party API](#third-party-apis)'s own shape reads.
+
+### What does not compile
 
 What does not hold fails to compile, with a message that says so. These are some of the checks:
 
-| What is wrong                          | What the compiler says                                                            |
-| -------------------------------------- | --------------------------------------------------------------------------------- |
-| An unknown type: `{id:long}`           | `quoll::rest: unknown path parameter type`                                        |
-| Two endpoints of an API with one name  | `quoll::rest::api: two endpoints have the same name`                              |
-| Two endpoints with one method and path | `quoll::rest::api: two endpoints have the same method and path`                   |
-| A `body<>` on GET or HEAD              | `quoll::rest::endpoint: a GET or HEAD endpoint has no body<> (fetch rejects one)` |
-| A response with a body to HEAD         | `quoll::rest::endpoint: a response to HEAD has no body`                           |
-| A body on 204, 205 or 304              | `quoll::rest::returns: a 204, 205 or 304 has no body`                             |
-| A space or a `?` in a literal          | `quoll::rest: a path holds a character RFC 3986 does not allow in a segment`      |
-| Two `returns<>` with one status        | `quoll::rest::endpoint: two returns<> have the same status`                       |
-
-### Parts
-
-| Part                        | What it is                                                                                                                           |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `query<"name", T>`          | A query parameter. `T` is required, `std::optional<T>` may be left out, `std::vector<T>` repeats it (`?tag=a&tag=b`).                |
-| `query_params<Struct>`      | One query parameter per field of an aggregate, by the same rules: for many optional parameters, filled with designated initializers. |
-| `header<"Name", T>`         | A request header field, by the same rules.                                                                                           |
-| `body<T, Codec>`            | The request body, at most one, none on GET, HEAD or TRACE. JSON by default. CONNECT is no operation of an API.                       |
-| `returns<T, Status, Codec>` | A declared response, one per status from 200 to 599. 200 and JSON by default, `void` for no body, as on 204, 205, 304 and HEAD. Without any, the endpoint answers 204. |
-| `events<T, Codec>`          | A stream of server-sent events, each a `T`, rather than one body: see [Events](#events). JSON by default; error responses only beside it. |
-| `security<Schemes...>`      | The security schemes required: `api_key<"Header">`, `api_key_query<"param">` or `bearer_auth`. They are not arguments.               |
-
-### Arguments
-
-The arguments of an endpoint are the same on both sides, in this order: its path parameters, prefixes
-first, then its argument parts in order, then those inherited from `with<>`. The endpoint computes their
-types, so that a braced list converts: `{.limit = 20}` for a `query_params`.
-
-### Grouping
-
-`api<"/prefix", ...>` nests. A prefix may have parameters, which come first in the arguments, and an
-endpoint path of `/` is the prefix itself. `with<parts..., apis...>` adds parts to every endpoint it
-wraps:
-
-```cpp
-namespace cards {
-using namespace quoll::rest;
-
-using list = endpoint<"cards.list", verb::get, "/", returns<std::vector<std::string>>>;
-
-using api = rest::api<"/users/{user_id:int64}/cards", list>;
-} // namespace cards
-
-using v1 = rest::api<"/api/v1", rest::with<rest::security<rest::bearer_auth>, users::api, cards::api>>;
-```
-
-`users::get` is now `GET /api/v1/users/{id:int64}` and needs a bearer token. `cards::list` takes the
-`user_id` of its prefix as its first argument.
+| What is wrong                                    | What the compiler says                                                                                  |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| A `{parameter}` with no type                     | `quoll::rest: a route has a type for each {parameter} of its expression, in order, after its result`    |
+| A type in the string: `{id:int64}`               | `quoll::rest: a route says the types of its parameters after its expression, not in it`                 |
+| A path parameter that is a `std::optional`       | `quoll::rest: a path parameter's type is read from text (a Parameter), never a std::optional ...`       |
+| A body on a `get`, a `head`, an `options`        | `quoll::rest: only a post, a put, a patch or a del has a body`                                          |
+| A body before a header                           | `quoll::rest: a route's body is its last type, after its parameters and headers`                        |
+| A result on a `head`                             | `quoll::rest: a response to HEAD has no body: its result is void`                                       |
+| A parameter in the api's prefix                  | `quoll::rest::api: the prefix has no parameter: one its routes share goes in each one's path`           |
+| Two routes of one method and path                | `quoll::rest::api: two routes have the same method and path`                                            |
+| A handler of a route of another api              | `quoll::rest::mount: a handler takes a route this api does not have`                                    |
 
 ## Serving: `mount`
 
-A service is an overload set: one `operator()(Endpoint, arguments...)` per endpoint, with no base class.
+A route's handler is a lambda taking the route first, then the route's parameters. A `rest::service` gathers them,
+defined once and mounted:
 
 ```cpp
-struct users_service {
-  // The body of the first returns<>, in a task or not.
-  std::vector<user> operator()(users::list, user_filter filter) const {
-    return {{.id = 1, .name = filter.name.value_or("Ada"), .email = std::nullopt}};
-  }
+auto const service = rest::service(
+    [&store](users::list, user_filter filter) {
+      return store.find(filter);
+    },
+    [&store](users::get, std::int64_t id) -> async::task<user> {
+      // An error is thrown, answered as a problem with its status.
+      auto found = co_await store.load(id);
 
-  // Any declared response: a reply<>, built from a value whose type only one response has.
-  async::task<rest::reply<users::get>> operator()(users::get, std::int64_t id) const {
-    if (id == 42) {
-      co_return user{.id = 42, .name = "Ada", .email = std::nullopt};
-    }
+      if (!found) {
+        throw http::http_error{status::not_found, "no user " + std::to_string(id)};
+      }
 
-    co_return not_found{"no user " + std::to_string(id)};
-  }
-
-  // An error the endpoint does not declare.
-  user operator()(users::create, new_user const &created) const {
-    if (created.name == "taken") {
-      throw http::http_error{status::conflict, "name taken"};
-    }
-
-    return {.id = 7, .name = created.name, .email = created.email};
-  }
-
-  // Nothing: 204.
-  void operator()(users::remove, std::int64_t) const {}
-};
-
-struct cards_service {
-  std::vector<std::string> operator()(cards::list, std::int64_t) const { return {"gold"}; }
-};
+      co_return std::move(*found);
+    },
+    [&store](users::create, new_user const &created) {
+      return store.add(created);
+    },
+    // Nothing: 204.
+    [&store](users::remove, std::int64_t id) {
+      store.erase(id);
+    },
+    [&store](cards::list, std::int64_t user_id, std::optional<std::string> status) {
+      return store.cards(user_id, status);
+    });
 ```
 
-`mount` registers the routes in a server, or in a router you give one, which you then [serve](server.md#serving):
+A handler returns its route's result, or nothing for a `void` one, as is or in an `async::task`. A struct with an
+`operator()(Route, parameters...)` for each of its routes serves the same way, and `mount` takes several, mixed with
+lambdas. `mount` registers the routes in a server, or in a router you give one, which you then
+[serve](server.md#serving):
 
 ```cpp
 http::server server;
 
-rest::mount<v1>(server, users_service{}, cards_service{},
+rest::mount<v1>(server, service,
                 rest::validators([](rest::credential<rest::bearer_auth> const &token) {
                   return token.value == "valid";
                 }));
 co_await server.listen(8080);
 ```
 
-Each endpoint has exactly one service, and each security scheme a validator, returning `bool` or
-`async::task<bool>`. Otherwise `mount` does not compile (`quoll::rest::mount: no service has an operator...`,
-`quoll::rest::mount: no validator takes the credential<Scheme>...`). Services and validators are moved
-into storage shared by the routes, which lives as long as the router, and are called from the thread
-awaiting the dispatch. `mount` adds all the routes or none: it throws `std::invalid_argument`, leaving
-the router as it was, for a route it already has.
-
-When several responses share a type, `rest::respond<Status>(value)` says which:
-
-```cpp
-using renamed = rest::endpoint<"users.rename", verb::put, "/rename/{id:int64}", rest::returns<user>,
-                               rest::returns<user, status::created>>;
-
-async::task<rest::reply<renamed>> rename(user const &value, bool existed) {
-  if (existed) {
-    co_return rest::respond<status::ok>(value);
-  }
-
-  co_return rest::respond<status::created>(value);
-}
-```
-
-A status or a type the endpoint does not declare does not compile. Only the endpoint's own responses:
-those inherited from `with<>` are answered by the server.
+Each route has one handler, of its parameters exactly, and each security scheme a validator, returning `bool` or
+`async::task<bool>`: otherwise `mount` does not compile (`quoll::rest::mount: no handler takes a route of the api...`,
+`quoll::rest::mount: no validator takes the credential<Scheme>...`). A lambda of a route the api does not have, or two
+lambdas of one route in a service, do not compile either; a generic lambda, or a struct of several `operator()`, is
+looked up by its call alone. Handlers and validators are copied, or moved when given as rvalues, into storage shared by
+the routes, which lives as long as the router, and are called from the thread awaiting the dispatch. `mount` adds all
+the routes or none: it throws `std::invalid_argument`, leaving the router as it was, for a route it already has.
 
 ### What a request goes through
 
-Credentials first, then the arguments, then the service. These errors are
-`application/problem+json` (`http::problem`, RFC 9457), but for a service's other exceptions:
+Credentials first, then the arguments, then the handler. These errors are
+`application/problem+json` (`http::problem`, RFC 9457), but for a handler's other exceptions:
 
 | What happens                        | Status                                                   | `detail`                                      |
 | ----------------------------------- | -------------------------------------------------------- | --------------------------------------------- |
 | Missing or rejected credentials     | 401, with the `WWW-Authenticate` challenge of the scheme | `missing credentials`, `rejected credentials` |
 | An invalid or missing argument      | 400                                                      | What is wrong                                 |
 | A body of another media type        | 415                                                      | `the body is <the media type of the codec>`   |
-| A service throws `http::http_error` | Its status                                               | `what()`, sent as it is to the client         |
+| A handler throws `http::http_error` | Its status                                               | `what()`, sent as it is to the client         |
 | It lets through one received        | 502, from another call                                   | `a call to another server failed`             |
-| A service throws anything else      | 500, as from any handler; `on_handler_error` is told     | None                                          |
+| A handler throws anything else      | 500, as from any handler; `on_handler_error` is told     | None                                          |
 
 A middleware of the router runs outside of this: it sees these answers as responses, and one it throws itself is
-answered by the router as a handler's is. What a service throws goes through it, a stop or a timeout too, but
-for a service of `events<>`, which runs once the middlewares have returned, as a handler writing its
-response does. Over a
+answered by the router as a handler's is. What a handler throws goes through it, a stop or a timeout too, but for one of
+`events<>`, which runs once the middlewares have returned, as a handler writing its response does. Over a
 `http::local_transport`, it reaches the caller, as there is no connection to answer.
 
-A service takes exactly the arguments of its endpoint, by value or by reference: one taking a narrower type, or
-them in another order, does not compile, and a generic parameter (`auto`) asks for a return type written out. A string
-parameter that is not UTF-8 answers 400, before the service runs. A validator takes a scheme alone: two taking the same one do not compile
-either, a generic one beside one written for it included. A credential that comes twice is none, and answers 401.
+A handler takes exactly the arguments of its route, by value or by reference: one taking a narrower type, or them in
+another order, does not compile, and a generic parameter (`auto`) asks for a return type written out. A string
+parameter that is not UTF-8 answers 400, before the handler runs. A validator takes a scheme alone: two taking the same
+one do not compile either, a generic one beside one written for it included. A credential that comes twice is none,
+and answers 401.
 
 ## Calling: `rest::client`
 
@@ -234,36 +215,45 @@ rest::client<v1> client{"http://127.0.0.1:8080", {.response_timeout = 5s}};
 
 client.credentials<rest::bearer_auth>("valid");
 
-// The first declared response, or an http::http_error received.
+// The result, or an http::http_error received.
 user const found = co_await client.call<users::get>(42);
 auto const page = co_await client.call<users::list>({.limit = 20});
 co_await client.call<users::remove>(found.id);
 
-// Any declared response, or why not.
+// The result, or the error.
 auto const maybe = co_await client.try_call<users::get>(7);
 
 if (!maybe) {
-  std::cerr << static_cast<int>(maybe.error().response.status) << ' ' << maybe.error().reason << '\n';
-} else if (maybe->holds<status::not_found>()) {
-  std::cerr << maybe->get<status::not_found>().detail << '\n';
+  std::cerr << static_cast<int>(maybe.error().status()) << ' ' << maybe.error().what() << '\n';
 } else {
-  std::cout << maybe->get<status::ok>().name << ' ' << page.size() << '\n';
+  std::cout << maybe->name << ' ' << page.size() << '\n';
 }
 ```
 
-| Outcome                                           | `call`                                                                   | `try_call`                                                 |
-| ------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| The first declared response                       | Its body                                                                 | A `reply<Endpoint>` holding it                             |
-| Another declared response                         | Throws `http::http_error`                                                | A `reply<Endpoint>` holding it                             |
-| An undeclared status, a body that does not decode | Throws `http::http_error`, whose `what()` is the problem's detail if any | A `rest::unexpected_response`: the whole response, and why |
-| A failure of the transport                        | Throws `std::system_error`                                               | Throws `std::system_error`                                 |
+| Outcome                                      | `call`                                                                   | `try_call`                                    |
+| -------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------- |
+| The route's result                           | Its value                                                                | `std::expected<T, http::http_error>` with it  |
+| A status that is no 2xx, a body that does not decode, no whole body (204, 205, 206) for a result | Throws `http::http_error`, whose `what()` is the problem's detail if any | The same `http::http_error`, as its error |
+| A failure of the transport                   | Throws `std::system_error`                                               | Throws `std::system_error`                    |
+
+A call takes its arguments by position, in the route's order, or by name, through `rest::literals`: a `{parameter}`
+of the route's expression or a header by its name, in any case as HTTP reads it, in any order, each once, one that may
+be missing (a `std::optional`, a `std::vector`) left out. By position or by name, not both in one call; a body, which has no name, is passed by
+position:
+
+```cpp
+using namespace quoll::rest::literals;
+
+auto const second = co_await client.call<cards::list>("user_id"_p = 7, "status"_p = std::string{"active"});
+```
 
 Arguments are encoded by the call: an invalid one (an empty path parameter, one holding a NUL or a dot segment, the
 rest of a path starting with `/`, a query parameter holding a NUL, a number that is not finite, a header value or a
 credential the server would read differently) throws `std::invalid_argument` there, before the task runs.
 
-The error a call throws is an `http::http_error` received (`received()`, the response as it came in `answer()`). A
-service letting it escape answers 502, not that API's status: its status and detail are that server's, not this one's.
+The error is an `http::http_error` received: its `status()`, `received()`, the response as it came in `answer()`, and
+`body_as<T>(codec)`, its body read as a `T`, a third-party API's shape of its errors. A handler letting it escape
+answers 502, not that API's status: its status and detail are that server's, not this one's.
 
 The transport is a template parameter: any `http::HttpTransport`. That is `http::client` by
 default, on [`fetch`](runtimes.md#httpclient-in-a-browser) in a browser, and `http::local_transport` for
@@ -272,31 +262,11 @@ a router of the same program, which is how to test a contract without a network:
 ```cpp
 http::router router;
 
-rest::mount<users::api>(router, users_service{});
+rest::mount<v1>(router, service, validators);
 
-rest::client<users::api, http::local_transport> client{http::local_transport{router}};
+rest::client<v1, http::local_transport> client{http::local_transport{router}};
 user const found = co_await client.call<users::get>(42);
 ```
-
-### Scopes
-
-`scope<Api>(...)` gives the endpoints of an api nested in the client's, with the parameters of the prefixes above
-them fixed, its own prefix's included. A scope of a scope fixes what the prefixes between them add:
-
-```cpp
-namespace repos {
-using issues = rest::endpoint<"issues.list", verb::get, "/issues", rest::query<"state", std::optional<std::string>>,
-                              rest::returns<std::vector<issue>>>;
-
-using api = rest::api<"/repos/{owner}/{repo}", issues>;
-} // namespace repos
-
-auto const quoll = client.scope<repos::api>("4thlabs", "quoll");
-auto const open = co_await quoll.call<repos::issues>("open");
-```
-
-A scope keeps a copy of the client as it was: its transport, which an `http::client` shares, its credentials and
-its interceptors. Credentials or interceptors given to the client after do not reach it.
 
 ### Interceptors
 
@@ -324,25 +294,22 @@ client.use([&tokens](http::request &&request, rest::next const &send) -> async::
 OPTIONS and TRACE, without a `body_writer`. A stop request ends the call at once. Its wait needs the executor's timer,
 which `quoll::runtime` has; a `delay` of zero waits for nothing.
 
-A copy of the client shares the interceptors it had, and one added after to either is its own. A scope keeps those the
-client had when it was made, and takes none of its own: make the scope from a client that has them.
+A copy of the client shares the interceptors it had, and one added after to either is its own.
 
 ## Events
 
-An endpoint declaring `rest::events<T>` answers with a stream of server-sent events, each a `T`
-encoded by the codec, JSON by default, rather than one body. It may declare error responses beside
-it, but no other success:
+A route whose result is `rest::events<T>` answers with a stream of server-sent events, each a `T` encoded by the codec,
+JSON by default, rather than one body:
 
 ```cpp
-using feed = rest::endpoint<"changes.feed", http::verb::get, "/changes", rest::query<"count", int>,
-                            rest::header<"Last-Event-ID", std::optional<std::string>>, rest::events<change>,
-                            rest::returns<http::problem, http::status::not_found>>;
+using feed = rest::get<"/changes?count={count}", rest::events<change>,
+                       int, rest::header<"Last-Event-ID", std::optional<std::string>>>;
 ```
 
-Its service takes a `rest::event_sink<T>` by reference after its arguments, and returns a `task<>`:
+Its handler takes a `rest::event_sink<T>` by reference after its arguments, and returns a `task<>`:
 
 ```cpp
-async::task<> operator()(feed, int count, std::optional<std::string> last_id, rest::event_sink<change> &events) {
+[&changes](feed, int count, std::optional<std::string> last_id, rest::event_sink<change> &events) -> async::task<> {
   // What may refuse the request comes first: an http_error here answers, a 404 say.
   auto const pending = co_await changes.after(last_id, count);
 
@@ -356,8 +323,8 @@ async::task<> operator()(feed, int count, std::optional<std::string> last_id, re
 
 It runs once the router has answered, as a handler writing its response in pieces does (see
 [Streaming](streaming.md#server-sent-events)). An `http_error` before the stream starts, with `open()`
-or the first event, comment or retry, answers as from any service, a declared 404 say; after it, the
-stream is cut. To HEAD, the service runs up to its first write, as such a handler does, so that the
+or the first event, comment or retry, answers as from any handler, a 404 say; after it, the
+stream is cut. To HEAD, the handler runs up to its first write, as such a handler does, so that the
 status is the one GET would get. `send(value, {.type, .id})`,
 `comment()` and `retry()` go through an `http::event_writer`: one at a time, and the comments that
 keep a quiet stream alive come from the loop that sends.
@@ -377,20 +344,20 @@ if (auto const id = stream.last_event_id(); !id.empty()) {
 }
 ```
 
-Any other answer throws an `http::http_error` received, as from `call`: a declared error, an undeclared status, a 200
-that is no event stream. A contract that declares its own `Accept` sends it, and takes the one media
-type it names, if an event stream, a third-party API's `application/vnd.example+event-stream` say. An event that does not decode throws an `http::http_error` received from `next()`, holding
-it as its body, and reading goes on. `subscribe` needs a transport that gives a response as its head
-comes, `http::client` natively and through `fetch`, not `http::local_transport`. It goes straight
-through it, credentials applied. Interceptors take whole responses: on a client with any, `subscribe`
-throws `std::logic_error`, rather than go out without what they add; subscribe through a client
-without them. It does not connect
-again on its own: resuming is an argument of the contract, `Last-Event-ID` above.
+Any other answer throws an `http::http_error` received, as from `call`: another status, a 200 that is no event stream.
+A route that takes its own `Accept` header sends it, and takes the one media type it names, if an event stream, a
+third-party API's `application/vnd.example+event-stream` say. An event that does not decode throws an
+`http::http_error` received from `next()`, holding it as its body, and reading goes on. `subscribe` needs a transport
+that gives a response as its head comes, `http::client` natively and through `fetch`, not `http::local_transport`. It
+goes straight through it, credentials applied. Interceptors take whole responses: on a client with any, `subscribe`
+throws `std::logic_error`, rather than go out without what they add; subscribe through a client without them. It does
+not connect again on its own: resuming is an argument of the contract, `Last-Event-ID` above.
 
 ## Codecs
 
-A codec encodes values into bodies and decodes bodies back, for one media type. `body<>` and `returns<>`
-take one each.
+A codec encodes values into bodies and decodes bodies back, for one media type. The formats of a route's body and
+result say theirs: `rest::text`, `rest::bytes`, `rest::form<T>`, `rest::lenient_json<T>`, and `rest::encoded<T, Codec>`
+for any other.
 
 | Codec                      | Bodies                                                                                                            |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -401,7 +368,7 @@ take one each.
 | `rest::bytes_codec`        | `std::vector<std::byte>` or `std::string`, as they are, as `application/octet-stream`.                            |
 
 ```cpp
-using ping = rest::endpoint<"ping", verb::get, "/ping", rest::returns<std::string, status::ok, rest::text_codec>>;
+using ping = rest::get<"/ping", rest::text>;
 ```
 
 A form takes the fields of a struct by name, as `query_params<>` does: a vector repeats its name, an `std::optional`
@@ -420,10 +387,8 @@ struct token_response {
   std::string access_token;
 };
 
-using token = rest::endpoint<"token", verb::post, "/oauth/token", rest::body<token_request, rest::form_codec>,
-                             rest::returns<token_response, status::ok, rest::lenient_json_codec>>;
-using avatar = rest::endpoint<"avatar", verb::get, "/avatar",
-                              rest::returns<std::vector<std::byte>, status::ok, rest::bytes_codec>>;
+using token  = rest::post<"/oauth/token", rest::lenient_json<token_response>, rest::form<token_request>>;
+using avatar = rest::get<"/avatar", rest::bytes>;
 ```
 
 The fields of a query or a form go by the names they are declared with. One whose name is not a C++ name is given
@@ -470,9 +435,9 @@ struct glz::meta<card_status> {
 };
 ```
 
-Anything modelling `rest::Codec` is a codec, default constructible, as one is built where it is used. `encode` throws on
-what it cannot encode, and `decode` returns a `rest::decode_error` for a body that does not match, as bodies come from the
-network:
+Anything modelling `rest::Codec` (`http::Codec`) is a codec, default constructible, as one is built where it is used.
+`encode` throws on what it cannot encode, and `decode` returns a `rest::decode_error` for a body that does not match, as
+bodies come from the network. `rest::encoded<T, Codec>` puts it on a body or a result:
 
 ```cpp
 struct lines_codec {
@@ -504,6 +469,9 @@ struct lines_codec {
 };
 
 static_assert(rest::Codec<lines_codec, std::vector<std::string>>);
+
+using lines = rest::post<"/lines", rest::encoded<std::vector<std::string>, lines_codec>,
+                         rest::encoded<std::vector<std::string>, lines_codec>>;
 ```
 
 ### Parameters
@@ -529,7 +497,7 @@ struct rest::param_traits<day> {
   }
 };
 
-using by_day = rest::endpoint<"by_day", verb::get, "/by-day", rest::query<"day", day>, rest::returns<int>>;
+using by_day = rest::get<"/by-day?day={day}", int, day>;
 ```
 
 ## Third-party APIs
@@ -538,8 +506,8 @@ A contract written for someone else's API needs no Quoll server in the program. 
 API does, not what Quoll would choose. This works today:
 
 - **Names that are not C++ names**: in JSON with `glz::meta`, in a query or a form with `rest_names`.
-- **Unknown fields**, skipped by `rest::lenient_json_codec` on each `returns<>`.
-- **Error bodies of any shape**, one type per status.
+- **Unknown fields**, skipped by a `rest::lenient_json<T>` result.
+- **Error bodies of any shape**, read from the error a call gives, `error.body_as<T>(codec)`.
 - **Bodies other than JSON**, with `rest::text_codec`, `rest::form_codec`, `rest::bytes_codec` or a codec of your own.
 - **Credentials**, through `security<>` and `client.credentials<Scheme>()`.
 - **The browser and native programs alike**, through the transport.
@@ -566,10 +534,8 @@ struct glz::meta<github::repository> {
 
 namespace github {
 
-using get_repository = rest::endpoint<"repos.get", verb::get, "/repos/{owner}/{name}",
-                                      rest::header<"User-Agent", std::string>,
-                                      rest::returns<repository, status::ok, rest::lenient_json_codec>,
-                                      rest::returns<error, status::not_found, rest::lenient_json_codec>>;
+using get_repository = rest::get<"/repos/{owner}/{name}", rest::lenient_json<repository>,
+                                 std::string, std::string, rest::header<"User-Agent", std::string>>;
 
 using api = rest::api<"", get_repository>;
 
@@ -579,15 +545,17 @@ async::task<> show_stars() {
   rest::client<github::api> client{"https://api.github.com"};
   auto const answer = co_await client.try_call<github::get_repository>("4thlabs", "quoll", "my-program");
 
-  if (answer && answer->holds<status::ok>()) {
-    std::cout << answer->get<status::ok>().stars << '\n';
+  if (answer) {
+    std::cout << answer->stars << '\n';
+  } else if (auto const said = answer.error().body_as<github::error>(rest::lenient_json_codec{})) {
+    std::cerr << said->message << '\n';
   }
 }
 ```
 
 An API's full support is [step 4 of the roadmap](PLAN.md#step-4-rest-from-a-command-line-program-done), and
-[scopes](#scopes), [interceptors](#interceptors), the form and bytes [codecs](#codecs) and an enumerator for the values
-an enum does not know are there. Not yet: an OpenAPI document generated from a contract.
+[interceptors](#interceptors), the form and bytes [codecs](#codecs) and an enumerator for the values an enum does not
+know are there. Not yet: an OpenAPI document generated from a contract.
 
 ### Values an enum does not know
 
@@ -623,4 +591,4 @@ contract of Quoll's own server that takes the enum refuses a name it does not kn
 
 A larger example, a contract with its server, its command line over TCP and its page in a browser, is in
 [`samples/notes`](../samples/notes). A command-line program calling GitHub's API, natively and through `fetch` in
-Node, with a scope, interceptors and a token, is in [`samples/github`](../samples/github).
+Node, with interceptors, a token and GitHub's shape of its errors, is in [`samples/github`](../samples/github).

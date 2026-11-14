@@ -34,20 +34,18 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::query: the type is not a Parameter
+// expect: quoll::rest: a query parameter's type is read from text (a Parameter), or a std::optional or a std::vector of
 //
 // A query parameter of a type with no text form.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
 struct thing {
   int value = 0;
 };
 
-using e = endpoint<"e", verb::get, "/", query<"q", thing>>;
+using route = rest::get<"/?q={q}", void, thing>;
 
-e const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

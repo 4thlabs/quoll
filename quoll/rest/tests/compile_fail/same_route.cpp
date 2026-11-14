@@ -34,21 +34,15 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::api: two endpoints have the same method and path
+// expect: quoll::rest::api: two routes have the same method and path
 //
-// Two endpoints on the same method and path, whatever their parameter names.
+// Two routes on the same method and path, whatever their parameter names.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-struct thing {
-  int value = 0;
-};
+using first = rest::get<"/{x}", void, int>;
+using second = rest::get<"/{y}", void, int>;
 
-using a = endpoint<"a", verb::get, "/{x}">;
-using b = endpoint<"b", verb::get, "/{y}">;
-
-api<"", a, b> const instance{};
+inline constexpr rest::api<"", rest::group<first, second>> instance{};

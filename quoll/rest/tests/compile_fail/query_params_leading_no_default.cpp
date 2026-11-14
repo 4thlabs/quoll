@@ -35,19 +35,12 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // expect: quoll::rest: a struct read by name has fields with a default value each, none a reference nor a pointer to
-// characters
 //
 // A field with no default value ahead of those with one: the server could not make the struct before filling it.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-#include <array>
-#include <optional>
-#include <string>
-
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
 struct page_size {
   explicit page_size(int given) : value(given) {}
@@ -60,6 +53,6 @@ struct filter {
   int page = 0;
 };
 
-using listed = endpoint<"listed", verb::get, "/", query_params<filter>>;
+using route = rest::get<"/", void, rest::query_params<filter>>;
 
-api<"", listed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

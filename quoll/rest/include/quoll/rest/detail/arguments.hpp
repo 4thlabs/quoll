@@ -43,16 +43,17 @@
 #include <quoll/http/request.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
-#include <quoll/rest/body.hpp>
+#include <quoll/rest/detail/body.hpp>
 #include <quoll/rest/detail/checked_path.hpp>
 #include <quoll/rest/detail/fields_of.hpp>
 #include <quoll/rest/detail/part.hpp>
+#include <quoll/rest/detail/query.hpp>
 #include <quoll/rest/detail/single_field.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/header.hpp>
 #include <quoll/rest/param_traits.hpp>
-#include <quoll/rest/query.hpp>
+#include <quoll/rest/query_params.hpp>
 
 #include <cstddef>
 #include <expected>
@@ -66,7 +67,7 @@
 
 namespace quoll::rest::detail {
 
-// Why a request does not carry the arguments of its endpoint: 400, or 415 for a body of another media type.
+// Why a request does not carry the arguments of its route: 400, or 415 for a body of another media type.
 struct argument_error {
   http::status status = http::status::bad_request;
   std::string detail;

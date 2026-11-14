@@ -38,18 +38,16 @@
 //
 // One field named twice: the last name would win without a word.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-struct twice {
+struct filter {
   int a = 0;
 
-  using rest_names = names<name<"first", &twice::a>, name<"second", &twice::a>>;
+  using rest_names = rest::names<rest::name<"first", &filter::a>, rest::name<"second", &filter::a>>;
 };
 
-using listed = endpoint<"listed", verb::get, "/", query_params<twice>>;
+using route = rest::get<"/", void, rest::query_params<filter>>;
 
-api<"", listed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

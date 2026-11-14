@@ -1,4 +1,3 @@
-// expect: quoll::rest::mount: more than one validator takes the credential<Scheme>
 //   ___              _ _
 //  / _ \ _   _  ___ | | |
 // | | | | | | |/ _ \| | |
@@ -35,25 +34,22 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+// expect: quoll::rest::mount: more than one validator takes the credential<Scheme> of a scheme the api uses
+//
+// A generic validator beside the one of the scheme: the first would let in what the second refuses.
+
 #include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-#include <cstdint>
+namespace rest = quoll::rest;
 
-using namespace quoll::rest;
-using quoll::http::verb;
+using secured = rest::get<"/secured", void, rest::security<rest::bearer_auth>>;
 
-using secured = endpoint<"secured", verb::get, "/secured", security<bearer_auth>>;
-
-struct service {
-  void operator()(secured) const {}
-};
-
-// The first would let in what the second refuses.
 void mount_it(quoll::http::router &router) {
-  mount<api<"", secured>>(
-      router, service{},
-      validators([](auto const &) { return true; }, [](credential<bearer_auth> const &) { return false; })
+  rest::mount<rest::api<"", rest::group<secured>>>(
+      router, rest::service([](secured) {}),
+      rest::validators(
+          [](auto const &) { return true; }, [](rest::credential<rest::bearer_auth> const &) { return false; }
+      )
   );
 }

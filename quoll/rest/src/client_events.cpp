@@ -71,7 +71,7 @@ bool is_accepted_stream(http::fields const &fields, std::string_view accepted) {
   return !given.empty() && http::detail::iequals(media_type(named.front()), given);
 }
 
-async::task<unexpected_response> refusal_of(http::streamed_response streamed, std::string reason) {
+async::task<refusal> refusal_of(http::streamed_response streamed, std::string reason) {
   http::response received;
 
   received.status = streamed.status;
@@ -81,7 +81,7 @@ async::task<unexpected_response> refusal_of(http::streamed_response streamed, st
 
   // A 200 that is no stream is said by its head: its body, which may never end, is not read.
   if (received.status == http::status::ok) {
-    co_return unexpected_response{std::move(received), std::move(reason)};
+    co_return refusal{std::move(received), std::move(reason)};
   }
 
   // What came of it, if reading it fails: the answer is the status, which has come. At the bound, it reads no
@@ -112,7 +112,7 @@ async::task<unexpected_response> refusal_of(http::streamed_response streamed, st
     reason += " (its body cut short)";
   }
 
-  co_return unexpected_response{std::move(received), std::move(reason)};
+  co_return refusal{std::move(received), std::move(reason)};
 }
 
 } // namespace quoll::rest::detail

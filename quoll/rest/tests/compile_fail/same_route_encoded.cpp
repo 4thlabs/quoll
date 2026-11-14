@@ -34,17 +34,15 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::api: two endpoints have the same method and path
+// expect: quoll::rest::api: two routes have the same method and path
 //
 // An encoded letter is the letter, to the router.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using a = endpoint<"a", verb::get, "/a">;
-using b = endpoint<"b", verb::get, "/%61">;
+using first = rest::get<"/a", void>;
+using second = rest::get<"/%61", void>;
 
-api<"", a, b> const instance{};
+inline constexpr rest::api<"", rest::group<first, second>> instance{};

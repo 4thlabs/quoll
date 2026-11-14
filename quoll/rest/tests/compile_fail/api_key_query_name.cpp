@@ -1,4 +1,3 @@
-// expect: quoll::rest::api_key_query: the name is not a valid token
 //   ___              _ _
 //  / _ \ _   _  ___ | | |
 // | | | | | | |/ _ \| | |
@@ -35,15 +34,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
+// expect: quoll::rest::api_key_query: the name is not a valid token
+//
+// A key whose name has a quote, which its challenge carries as a quoted string.
+
 #include <quoll/rest.hpp>
 
-#include <cstdint>
+namespace rest = quoll::rest;
 
-using namespace quoll::rest;
-using quoll::http::verb;
+using route = rest::get<"/secured", void, rest::security<rest::api_key_query<"a\"b">>>;
 
-using secured = endpoint<"secured", verb::get, "/secured", security<api_key_query<"a\"b">>>;
-
-using schemes = typename secured::parts;
+inline constexpr rest::api<"", rest::group<route>> instance{};

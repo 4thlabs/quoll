@@ -103,49 +103,45 @@ struct user_search : base_search {
   using rest_fields = rest::names<rest::name<"name", &user_search::name>, rest::name<"p", &user_search::page>>;
 };
 
-struct not_found {
+// A third-party API's own shape of its errors.
+struct rest_error {
   std::string detail;
 };
 
 namespace users {
-using namespace quoll::rest;
 
-using list = endpoint<"users.list", verb::get, "/", query_params<user_filter>, returns<std::vector<user>>>;
-using get = endpoint<"users.get", verb::get, "/{id:int64}", returns<user>, returns<not_found, status::not_found>>;
-using create = endpoint<"users.create", verb::post, "/", body<new_user>, returns<user, status::created>>;
-using remove = endpoint<"users.remove", verb::delete_, "/{id:int64}">;
-using search = endpoint<"users.search", verb::get, "/search", query_params<user_search>, returns<std::vector<user>>>;
+using list = rest::get<"/users", std::vector<user>, rest::query_params<user_filter>>;
+using get = rest::get<"/users/{id}", user, std::int64_t, rest::operation_id<"users.get">>;
+using create = rest::post<"/users", rest::created<user>, new_user>;
+using forget = rest::del<"/users/{id}", void, std::int64_t>;
+using search = rest::get<"/users/search", std::vector<user>, rest::query_params<user_search>>;
 
-using api = rest::api<"/users", list, get, create, remove, search>;
+using routes = rest::group<list, get, create, forget, search>;
+
 } // namespace users
 
 namespace files {
-using namespace quoll::rest;
 
-// Echo what reached the server: parameters with characters a URL escapes.
-using one = endpoint<
-    "files.one", verb::get, "/one/{name}", query<"q", std::optional<std::string>>,
-    header<"X-Tags", std::vector<std::string>>, returns<std::string, status::ok, text_codec>>;
-using rest_of = endpoint<"files.rest", verb::get, "/rest/{rest:path}", returns<std::string, status::ok, text_codec>>;
+using one = rest::get<
+    "/files/one/{name}?q={q}", rest::text, std::string, std::optional<std::string>,
+    rest::header<"X-Tags", std::vector<std::string>>>;
+using rest_of = rest::get<"/files/rest/{rest:path}", rest::text, std::string>;
+// Required parameters of a scalar type: the server reads them, or answers 400.
+using paged = rest::get<
+    "/files/paged?page={page}&all={all}", rest::text, std::int64_t, bool, rest::header<"X-Limit", std::int64_t>>;
 
-// Required parameters of a type that is no class.
-using paged = endpoint<
-    "files.paged", verb::get, "/paged", query<"page", std::int64_t>, query<"all", bool>,
-    header<"X-Limit", std::int64_t>, returns<std::string, status::ok, text_codec>>;
+using routes = rest::group<one, rest_of, paged>;
 
-using api = rest::api<"/files", one, rest_of, paged>;
 } // namespace files
 
 namespace keys {
-using namespace quoll::rest;
 
-using ping = endpoint<
-    "keys.ping", verb::get, "/ping", security<api_key_query<"key">>, returns<std::string, status::ok, text_codec>>;
+using ping = rest::get<"/keys/ping", rest::text, rest::security<rest::api_key_query<"key">>>;
 
-using api = rest::api<"/keys", ping>;
 } // namespace keys
 
-using v1 = rest::api<"/api/v1", keys::api, files::api, rest::with<rest::security<rest::bearer_auth>, users::api>>;
+using v1 =
+    rest::api<"/api/v1", keys::ping, files::routes, rest::group<rest::security<rest::bearer_auth>, users::routes>>;
 
 struct users_service {
   task<std::vector<user>> operator()(users::list, user_filter filter) const {
@@ -166,19 +162,19 @@ struct users_service {
     };
   }
 
-  task<rest::reply<users::get>> operator()(users::get, std::int64_t id) const {
-    if (id == 42) {
-      co_return user{.id = 42, .name = "Ada"};
+  task<user> operator()(users::get, std::int64_t id) const {
+    if (id != 42) {
+      throw quoll::http::http_error{quoll::http::status::not_found, "no user " + std::to_string(id)};
     }
 
-    co_return not_found{"no user " + std::to_string(id)};
+    co_return user{.id = 42, .name = "Ada"};
   }
 
   task<user> operator()(users::create, new_user created) const {
     co_return user{.id = 7, .name = std::move(created.name)};
   }
 
-  task<> operator()(users::remove, std::int64_t) const { co_return; }
+  task<> operator()(users::forget, std::int64_t) const { co_return; }
 };
 
 struct files_service {
@@ -282,8 +278,8 @@ TEST_CASE("client: call returns the first declared response", "[rest][client]") 
   REQUIRE(ada.id == 42);
   REQUIRE(ada.name == "Ada");
   REQUIRE(run(client.call<users::create>({.name = "Grace"})).id == 7);
-  // No returns<>: a task<void>, done on the 204.
-  REQUIRE(run(completes(client.call<users::remove>(42))));
+  // A void result: a task<void>, done on the 204.
+  REQUIRE(run(completes(client.call<users::forget>(42))));
 }
 
 TEST_CASE("client: braced arguments fill query_params, encoded and decoded", "[rest][client]") {
@@ -381,20 +377,21 @@ TEST_CASE("client: path parameters, query and headers are escaped", "[rest][clie
   REQUIRE(run(client.call<files::rest_of>("dir/sub/a b")) == "dir/sub/a b");
 }
 
-TEST_CASE("client: try_call hands over any declared response", "[rest][client]") {
+TEST_CASE("client: try_call gives the result, or the http_error received", "[rest][client]") {
   auto const router = make_router();
   auto const client = make_client(router);
   auto const missing = run(client.try_call<users::get>(7));
 
-  REQUIRE(missing.has_value());
-  REQUIRE(missing->status() == http::status::not_found);
-  REQUIRE(missing->get<http::status::not_found>().detail == "no user 7");
+  REQUIRE_FALSE(missing.has_value());
+  REQUIRE(missing.error().status() == http::status::not_found);
+  REQUIRE(missing.error().received());
+  REQUIRE(std::string_view{missing.error().what()} == "no user 7");
 
   auto const found = run(client.try_call<users::get>(42));
 
-  REQUIRE(found->holds<http::status::ok>());
-  REQUIRE(found->get<http::status::ok>().name == "Ada");
-  REQUIRE(run(client.try_call<users::remove>(42)).has_value());
+  REQUIRE(found.has_value());
+  REQUIRE(found->name == "Ada");
+  REQUIRE(run(client.try_call<users::forget>(42)).has_value());
 }
 
 TEST_CASE("client: call throws an http_error received for any other outcome", "[rest][client]") {
@@ -406,22 +403,21 @@ TEST_CASE("client: call throws an http_error received for any other outcome", "[
     FAIL("call returned");
   } catch (http::http_error const &error) {
     REQUIRE(error.status() == http::status::not_found);
-    REQUIRE(std::string_view{error.what()} == "declared response 404: read it with try_call");
+    // The server's problem detail.
+    REQUIRE(std::string_view{error.what()} == "no user 7");
   }
 }
 
 TEST_CASE("client: a credential goes to the endpoints that require it, and no other", "[rest][client]") {
-  using namespace quoll::rest;
-
-  using open_one = endpoint<"open", http::verb::get, "/open">;
-  using closed_one = endpoint<"closed", http::verb::get, "/closed", security<bearer_auth>>;
-  using keyed_one = endpoint<"keyed", http::verb::get, "/keyed", security<api_key_query<"key">>>;
+  using open_one = rest::get<"/open", void>;
+  using closed_one = rest::get<"/closed", void, rest::security<rest::bearer_auth>>;
+  using keyed_one = rest::get<"/keyed", void, rest::security<rest::api_key_query<"key">>>;
 
   recording_transport const transport;
-  rest::client<api<"", open_one, closed_one, keyed_one>, recording_transport> client{transport};
+  rest::client<rest::api<"", open_one, closed_one, keyed_one>, recording_transport> client{transport};
 
-  client.credentials<bearer_auth>("token");
-  client.credentials<api_key_query<"key">>("secret");
+  client.credentials<rest::bearer_auth>("token");
+  client.credentials<rest::api_key_query<"key">>("secret");
   REQUIRE(run(completes(client.call<open_one>())));
   REQUIRE(run(completes(client.call<closed_one>())));
   REQUIRE(run(completes(client.call<keyed_one>())));
@@ -438,15 +434,17 @@ TEST_CASE("client: a credential goes to the endpoints that require it, and no ot
 }
 
 TEST_CASE("client: what the server would refuse or read otherwise is refused at the call", "[rest][client]") {
-  using namespace quoll::rest;
+  using rest::api_key;
+  using rest::api_key_query;
+  using rest::bearer_auth;
 
-  using numbered = endpoint<"numbered", http::verb::get, "/n", query<"d", double>>;
-  using named = endpoint<"named", http::verb::get, "/q", query<"q", std::string>>;
-  using closed_one = endpoint<"closed", http::verb::get, "/closed", security<bearer_auth>>;
-  using header_keyed = endpoint<"header", http::verb::get, "/h", security<api_key<"X-Key">>>;
-  using query_keyed = endpoint<"query", http::verb::get, "/k", security<api_key_query<"key">>>;
+  using numbered = rest::get<"/n?d={d}", void, double>;
+  using named = rest::get<"/q?q={q}", void, std::string>;
+  using closed_one = rest::get<"/closed", void, rest::security<bearer_auth>>;
+  using header_keyed = rest::get<"/h", void, rest::security<api_key<"X-Key">>>;
+  using query_keyed = rest::get<"/k", void, rest::security<api_key_query<"key">>>;
 
-  rest::client<api<"", numbered, named, closed_one, header_keyed, query_keyed>, recording_transport> client{
+  rest::client<rest::api<"", numbered, named, closed_one, header_keyed, query_keyed>, recording_transport> client{
       recording_transport{}
   };
 
@@ -512,8 +510,8 @@ TEST_CASE("client: credentials are sent to the endpoints that require them", "[r
   auto const refused = run(anonymous.try_call<users::get>(42));
 
   REQUIRE_FALSE(refused.has_value());
-  REQUIRE(refused.error().response.status == http::status::unauthorized);
-  REQUIRE(refused.error().reason == "undeclared status 401");
+  REQUIRE(refused.error().status() == http::status::unauthorized);
+  REQUIRE(std::string{refused.error().what()} == "missing credentials");
 
   try {
     (void)run(anonymous.call<users::get>(42));
@@ -529,7 +527,7 @@ TEST_CASE("client: credentials are sent to the endpoints that require them", "[r
   REQUIRE(run(anonymous.call<keys::ping>()) == "pong");
 }
 
-TEST_CASE("client: a declared response whose body does not decode is unexpected", "[rest][client]") {
+TEST_CASE("client: a result whose body does not decode is an http_error received", "[rest][client]") {
   http::response garbage;
 
   garbage.status = http::status::ok;
@@ -539,7 +537,8 @@ TEST_CASE("client: a declared response whose body does not decode is unexpected"
   auto const received = run(client.try_call<users::get>(42));
 
   REQUIRE_FALSE(received.has_value());
-  REQUIRE(received.error().reason.starts_with("invalid body: "));
+  REQUIRE(received.error().status() == http::status::ok);
+  REQUIRE(std::string_view{received.error().what()}.starts_with("invalid body: "));
   REQUIRE_THROWS_AS(run(client.call<users::get>(42)), http::http_error);
 }
 
@@ -591,72 +590,35 @@ TEST_CASE("client: the detail of a problem, whatever the case of its media type"
   rest::client<v1, canned_transport> const client{canned_transport{gone}};
 
   try {
-    run(completes(client.call<users::remove>(42)));
+    run(completes(client.call<users::forget>(42)));
     FAIL("call returned");
   } catch (http::http_error const &error) {
     REQUIRE(std::string{error.what()} == "gone for good");
   }
 }
 
-TEST_CASE("client: a response declared by a with<> is not held by reply<Endpoint>, and says so", "[rest][client]") {
-  using wrapped = rest::api<"/api/v1", rest::with<rest::returns<not_found, status::conflict>, users::api>>;
+TEST_CASE("client: an error's body read in a third-party API's own shape", "[rest][client]") {
+  http::response refused;
 
-  http::response missing;
+  refused.status = http::status::forbidden;
+  refused.fields.add("Content-Type", "application/json");
+  refused.body = R"({"detail":"rate limited","retry":60})";
 
-  missing.status = http::status::conflict;
-  missing.body = R"({"detail":"no such user"})";
+  rest::client<v1, canned_transport> const client{canned_transport{refused}};
+  auto const answer = run(client.try_call<users::get>(42));
 
-  rest::client<wrapped, canned_transport> const client{canned_transport{missing}};
-  auto const removed = run(client.try_call<users::remove>(42));
+  REQUIRE_FALSE(answer.has_value());
 
-  REQUIRE_FALSE(removed.has_value());
-  REQUIRE(
-      removed.error().reason ==
-      "status 409 is declared by a with<> around the endpoint: reply<Endpoint> does not hold it"
-  );
+  // Read leniently: a field the type does not know is skipped.
+  auto const reason = answer.error().body_as<rest_error>(rest::lenient_json_codec{});
+
+  REQUIRE(reason.has_value());
+  REQUIRE(reason->detail == "rate limited");
+  // Read strictly, the same body is refused.
+  REQUIRE_FALSE(answer.error().body_as<rest_error>(rest::json_codec{}).has_value());
 }
-
-namespace client_test {
-
-// An api under prefixes with parameters, for scopes.
-namespace hub {
-using namespace quoll::rest;
-
-namespace issues {
-using list = endpoint<
-    "issues.list", verb::get, "/issues", query<"state", std::optional<std::string>>,
-    returns<std::string, status::ok, text_codec>>;
-using one = endpoint<"issues.one", verb::get, "/issues/{number:int}", returns<std::string, status::ok, text_codec>>;
-
-using api = rest::api<"/{repo}", list, one>;
-} // namespace issues
-
-using api = rest::api<"/repos/{owner}", issues::api>;
-} // namespace hub
-
-using hub_v1 = rest::api<"/hub", hub::api>;
-
-struct hub_service {
-  std::string
-  operator()(hub::issues::list, std::string owner, std::string repo, std::optional<std::string> state) const {
-    return owner + "/" + repo + " " + state.value_or("all");
-  }
-
-  std::string operator()(hub::issues::one, std::string owner, std::string repo, int number) const {
-    return owner + "/" + repo + " #" + std::to_string(number);
-  }
-};
-
-} // namespace client_test
 
 namespace {
-
-http::router make_hub_router() {
-  http::router router;
-
-  rest::mount<hub_v1>(router, hub_service{});
-  return router;
-}
 
 // Answers the statuses of `script` in turn, after `failing` network failures, then 204, and counts what it was sent.
 // Shared by its copies, as the client copies its transport for its interceptors.
@@ -694,25 +656,6 @@ struct scripted_transport {
 };
 
 } // namespace
-
-TEST_CASE("client: a scope fixes the parameters of the prefixes above its api, and its own", "[rest][client]") {
-  auto const router = make_hub_router();
-  rest::client<hub_v1, http::local_transport> const client{http::local_transport{router}};
-  auto const repo = client.scope<hub::issues::api>("4thlabs", "quoll");
-
-  static_assert(std::is_same_v<decltype(repo)::prefix_type, std::tuple<std::string, std::string>>);
-
-  REQUIRE(run(repo.call<hub::issues::list>("open")) == "4thlabs/quoll open");
-  REQUIRE(run(repo.call<hub::issues::one>(7)) == "4thlabs/quoll #7");
-  REQUIRE(run(repo.try_call<hub::issues::one>(8)).has_value());
-
-  // A scope of the owner, then of a repository of it: each fixes what its prefix adds.
-  auto const owner = client.scope<hub::api>("4thlabs");
-  auto const nested = owner.scope<hub::issues::api>("quoll");
-
-  REQUIRE(run(owner.call<hub::issues::one>("quoll", 8)) == "4thlabs/quoll #8");
-  REQUIRE(run(nested.call<hub::issues::one>(9)) == "4thlabs/quoll #9");
-}
 
 TEST_CASE("client: interceptors wrap what it sends, in the order they were added", "[rest][client]") {
   auto const router = make_router();
@@ -775,8 +718,8 @@ TEST_CASE("client: a copy shares the interceptors it had, and one added after is
     return send(std::move(request));
   });
 
-  REQUIRE(run(completes(client.call<users::remove>(1))));
-  REQUIRE(run(completes(copy.call<users::remove>(1))));
+  REQUIRE(run(completes(client.call<users::forget>(1))));
+  REQUIRE(run(completes(copy.call<users::forget>(1))));
   REQUIRE(outer == 2);
   REQUIRE(later == 1);
   REQUIRE(transport.shared->sent == 2);
@@ -791,7 +734,7 @@ TEST_CASE("retry: sends an idempotent request again after a 503 or a network err
   transport.shared->script = {http::status::service_unavailable, http::status::bad_gateway};
   transport.shared->failing = 1;
 
-  REQUIRE(run(completes(client.call<users::remove>(1))));
+  REQUIRE(run(completes(client.call<users::forget>(1))));
   REQUIRE(transport.shared->sent == 4);
 }
 
@@ -804,7 +747,7 @@ TEST_CASE("retry: up to its attempts, then the last answer stands", "[rest][clie
       http::status::service_unavailable, http::status::service_unavailable, http::status::service_unavailable
   };
 
-  REQUIRE_THROWS_AS(run(completes(client.call<users::remove>(1))), http::http_error);
+  REQUIRE_THROWS_AS(run(completes(client.call<users::forget>(1))), http::http_error);
   REQUIRE(transport.shared->sent == 2);
 
   // A network error on the last attempt comes out of the call.
@@ -812,7 +755,7 @@ TEST_CASE("retry: up to its attempts, then the last answer stands", "[rest][clie
   transport.shared->failing = 2;
   transport.shared->sent = 0;
 
-  REQUIRE_THROWS_AS(run(completes(client.call<users::remove>(1))), std::system_error);
+  REQUIRE_THROWS_AS(run(completes(client.call<users::forget>(1))), std::system_error);
   REQUIRE(transport.shared->sent == 2);
 }
 
@@ -837,7 +780,7 @@ TEST_CASE("retry: waits between attempts, twice as long each time", "[rest][clie
   client.use(rest::retry{.attempts = 3, .delay = std::chrono::milliseconds{100}});
   transport.shared->script = {http::status::service_unavailable, http::status::service_unavailable};
 
-  REQUIRE(quoll::test::run(time, completes(client.call<users::remove>(1))).value());
+  REQUIRE(quoll::test::run(time, completes(client.call<users::forget>(1))).value());
   REQUIRE(transport.shared->sent == 3);
   REQUIRE(time.now() == std::chrono::milliseconds{300});
 }
@@ -850,7 +793,7 @@ TEST_CASE("retry: an error of the message itself is not sent again", "[rest][cli
   transport.shared->failing = 3;
   transport.shared->failing_with = http::error::body_too_large;
 
-  REQUIRE_THROWS_AS(run(completes(client.call<users::remove>(1))), std::system_error);
+  REQUIRE_THROWS_AS(run(completes(client.call<users::forget>(1))), std::system_error);
   REQUIRE(transport.shared->sent == 1);
 
   // A connection ended in the middle of the response is the network's: sent again.
@@ -858,7 +801,7 @@ TEST_CASE("retry: an error of the message itself is not sent again", "[rest][cli
   transport.shared->failing_with = http::error::partial_message;
   transport.shared->sent = 0;
 
-  REQUIRE(run(completes(client.call<users::remove>(1))));
+  REQUIRE(run(completes(client.call<users::forget>(1))));
   REQUIRE(transport.shared->sent == 2);
 }
 
@@ -876,7 +819,7 @@ TEST_CASE(
 
   // The transport answers 503 even so: retry sees the stop before sending again, and the call ends on it.
   REQUIRE_THROWS_WITH(
-      quoll::test::run(loop, completes(client.call<users::remove>(1)), stop.get_token()),
+      quoll::test::run(loop, completes(client.call<users::forget>(1)), stop.get_token()),
       "quoll::test::run: the task ended on a stop"
   );
   REQUIRE(transport.shared->sent == 1);
@@ -897,34 +840,7 @@ TEST_CASE("client: an interceptor stays one object, with its state, once a copy 
 
   copy.use([](http::request &&request, rest::next const &send) { return send(std::move(request)); });
 
-  REQUIRE(run(completes(client.call<users::remove>(1))));
-  REQUIRE(run(completes(copy.call<users::remove>(1))));
+  REQUIRE(run(completes(client.call<users::forget>(1))));
+  REQUIRE(run(completes(copy.call<users::forget>(1))));
   REQUIRE(*counted == 2);
-}
-
-TEST_CASE("client: a scope keeps the credentials and interceptors the client had when it was made", "[rest][client]") {
-  recording_transport const transport;
-  rest::client<v1, recording_transport> client{transport};
-  int earlier = 0;
-  int later = 0;
-
-  client.credentials<rest::bearer_auth>("first");
-  client.use([&earlier](http::request &&request, rest::next const &send) {
-    ++earlier;
-    return send(std::move(request));
-  });
-
-  auto const users_only = client.scope<users::api>();
-
-  client.credentials<rest::bearer_auth>("second");
-  client.use([&later](http::request &&request, rest::next const &send) {
-    ++later;
-    return send(std::move(request));
-  });
-
-  REQUIRE(run(completes(users_only.call<users::remove>(1))));
-  REQUIRE(transport.sent->back().fields.find("Authorization") == "Bearer first");
-  REQUIRE(earlier == 1);
-  REQUIRE(later == 0);
-  REQUIRE(&client.transport() == &users_only.client().transport());
 }
