@@ -1808,3 +1808,34 @@ TEST_CASE("router: a request's keys are read decoded, as its template's", "[http
   // `%61%20b` is `a b`, and `%6Ason` is `json`.
   CHECK(dispatch(router, verb::get, "/search?%61%20b=tea&format=%6Ason").body == "tea");
 }
+
+TEST_CASE(
+    "router: a middleware sees the route and its parameters of a request its query refuses", "[http][router][query]"
+) {
+  http::router router;
+  std::vector<std::string> seen;
+  int handled = 0;
+
+  router.get("/users/{id}?format=json&q={q}", [&handled](std::int64_t, std::optional<std::string>) {
+    ++handled;
+    return http::response{};
+  });
+  router.use([&seen](http::request message, http::next next) -> task<http::response> {
+    auto answer = co_await next(std::move(message));
+
+    seen.push_back(
+        std::string{next.route()} + ":" + (next.params().empty() ? std::string{} : next.params().front()) + ":" +
+        (next.router_answered() ? "router" : "handler")
+    );
+    co_return answer;
+  });
+
+  // A fixed value another, and a parameter that does not decode: the router answers, the handler never runs.
+  CHECK(dispatch(router, verb::get, "/users/42?format=xml").status == http::status::bad_request);
+  CHECK(dispatch(router, verb::get, "/users/42?format=json&q=%zz").status == http::status::bad_request);
+  CHECK(handled == 0);
+  CHECK(
+      seen ==
+      std::vector<std::string>{"/users/{id}?format=json&q={q}:42:router", "/users/{id}?format=json&q={q}:42:router"}
+  );
+}

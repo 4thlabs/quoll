@@ -550,33 +550,37 @@ detail::resolved_route router::resolve(request const &message) const {
   }
 
   // Read only for a route that asks for some of it: a key no route reads refuses nothing, even one that does not
-  // decode.
+  // decode. A fixed value missing or another, or a parameter that does not decode: refused, 400, by the router.
   std::vector<std::vector<std::string>> values;
 
   if (!chosen->query.empty()) {
     auto pairs = query_pairs(target->query);
     auto read = fixed_given(chosen->query, pairs) ? param_values(chosen->query, pairs) : std::nullopt;
 
-    // A fixed value missing or another, or a parameter that does not decode: refused, 400, the route still named for
-    // the middlewares, as for a path parameter not of its type.
-    if (!read) {
-      resolved.query_refused = true;
-      resolved.match.name = chosen->name;
-      return resolved;
-    }
+    resolved.query_refused = !read;
 
-    values = std::move(*read);
+    if (read) {
+      values = std::move(*read);
+    }
+  }
+
+  // What the route matched, its query refused or not: a middleware reads it, its route and params() given, the router
+  // answering 400 after it (router_answered()). Built for a refused query only when a middleware may read it.
+  if (!resolved.query_refused || !middlewares_.empty()) {
+    resolved.match = route_match{
+        .name = chosen->name,
+        .params = extract_params(chosen->segments, *segments),
+        .query = std::string{target->query},
+        .query_params = std::move(values),
+    };
+  }
+
+  if (resolved.query_refused) {
+    return resolved;
   }
 
   resolved.target = &chosen->target;
   resolved.body_in_pieces = chosen->body_in_pieces;
-  resolved.match = route_match{
-      .name = chosen->name,
-      .params = extract_params(chosen->segments, *segments),
-      .query = std::string{target->query},
-      .query_params = std::move(values),
-  };
-
   return resolved;
 }
 
