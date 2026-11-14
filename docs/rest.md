@@ -405,7 +405,8 @@ using ping = rest::endpoint<"ping", verb::get, "/ping", rest::returns<std::strin
 
 A form takes the fields of a struct by name, as `query_params<>` does: a vector repeats its name, an `std::optional`
 without a value is left out, anything else is required, once. The struct is an aggregate of 64 fields at most, with
-no base class, each field with a default value and none a reference, and a form of more than 1000 fields is refused.
+no base class, each field with a default value and none a reference, or a struct listing its fields as below, and a
+form of more than 1000 fields is refused.
 It is what a browser's form sends, and what many APIs take, as an OAuth token endpoint does:
 
 ```cpp
@@ -436,6 +437,21 @@ struct charge {
   using rest_names = rest::names<
       rest::name<"metadata[order_id]", &charge::order_id>,
       rest::name<"api-version", &charge::api_version>>;
+};
+```
+
+A struct the reflection does not read, as one with a base class, lists all its fields, by `rest_fields` of the same
+form: then they are read as listed, and only those: a field left out of the list is neither sent nor read.
+
+```cpp
+struct base_filter {
+  std::optional<std::string> q;
+};
+
+struct filter : base_filter {
+  std::optional<int> page;
+
+  using rest_fields = rest::names<rest::name<"q", &filter::q>, rest::name<"page", &filter::page>>;
 };
 ```
 

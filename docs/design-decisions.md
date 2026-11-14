@@ -179,7 +179,8 @@ gives, which C++26's reflection will replace; the names of enums, the contexts a
 
 **For you.** A plain struct is a JSON body, a set of query parameters or a form, as it is, its fields named as they
 are declared. A name that is not a C++ name is given only where it is needed: in a struct's `rest_names` for a query
-or a form, in Glaze's `glz::meta` for JSON.
+or a form, in Glaze's `glz::meta` for JSON; a struct the reflection does not read, as one with a base class, lists
+its fields in `rest_fields`.
 
 ## UI
 

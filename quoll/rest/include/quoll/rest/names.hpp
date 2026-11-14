@@ -74,7 +74,9 @@ struct name {
  * };
  * @endcode
  *
- * A name of a field of another struct does not compile, nor do two fields of one name. JSON names are given by the
+ * A struct the reflection does not read, as one with a base class, lists all its fields as `rest_fields`, of the same
+ * form, read as listed. A name of a field of another struct does not compile, nor do two fields of one name, nor a
+ * struct with both. JSON names are given by the
  * JSON codec's own description, as Glaze's `glz::meta`.
  */
 template <class... Names>

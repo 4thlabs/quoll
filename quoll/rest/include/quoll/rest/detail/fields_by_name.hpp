@@ -38,7 +38,9 @@
 #define QUOLL_REST_DETAIL_FIELDS_BY_NAME_HPP
 
 #include <quoll/rest/detail/aggregate_fields.hpp>
+#include <quoll/rest/detail/lists_fields.hpp>
 
+#include <concepts>
 #include <optional>
 #include <ranges>
 #include <string>
@@ -47,9 +49,12 @@
 namespace quoll::rest::detail {
 
 // A type whose fields for_each_field visits by name: an aggregate struct, not an array or a range, of
-// max_aggregate_fields fields at most, each named as it is declared.
+// max_aggregate_fields fields at most, each named as it is declared; or a struct made with none of its fields given,
+// which lists them, rest_fields.
 template <class T>
-concept FieldsByName = std::is_class_v<T> && std::is_aggregate_v<T> && !std::ranges::range<T> && fields_readable<T>();
+concept FieldsByName =
+    std::is_class_v<T> && !std::ranges::range<T> &&
+    (ListsFields<T> ? std::default_initializable<T> : std::is_aggregate_v<T> && fields_readable<T>());
 
 struct fields_by_name_model {
   std::string text;

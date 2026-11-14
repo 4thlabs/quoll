@@ -930,7 +930,8 @@ would choose:
 fields with no macro and no declaration, and a `glz::meta<T>` renames a JSON field (`stargazers_count`), maps an enum
 to its JSON names, and describes a type that is not an aggregate. The fields of `query_params<Struct>` and of a form
 are read by a reflection of Quoll's own, by their declared names (2026-11-14, #182): an aggregate of 64 fields at most,
-with no base class, a name that is not a C++ name given by the struct's `rest_names`, for those fields only.
+with no base class, a name that is not a C++ name given by the struct's `rest_names`, for those fields only, and a
+struct the reflection does not read listing its fields, `rest_fields`.
 - Decoding errors come back as values (Glaze's `expected`): the server answers 400 with them, and `try_call` reports
   them.
 - The client skips unknown keys when it decodes the responses of a third-party API (`error_on_unknown_keys`
