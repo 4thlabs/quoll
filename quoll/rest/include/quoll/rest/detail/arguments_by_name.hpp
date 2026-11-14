@@ -79,13 +79,34 @@ template <class Route>
   return Route::argument_is_header[slot] ? http::detail::iequals(given, known) : given == known;
 }
 
+// The one argument of `Route` that `name` names: past the last if none does, or two do, which a static_assert refuses.
+template <class Route>
+[[nodiscard]] consteval std::size_t slot_of(std::string_view name) {
+  constexpr auto none = Route::argument_names.size();
+  auto found = none;
+
+  for (std::size_t slot = 0; slot < none; ++slot) {
+    if (!names_slot<Route>(name, slot)) {
+      continue;
+    }
+
+    if (found != none) {
+      return none;
+    }
+
+    found = slot;
+  }
+
+  return found;
+}
+
 // Which of the arguments given names the argument `Slot` of `Route`: their count if none does.
 template <class Route, std::size_t Slot, class... Named>
 [[nodiscard]] consteval std::size_t named_for() {
   constexpr std::array<std::string_view, sizeof...(Named)> given{Named::name...};
 
   for (std::size_t index = 0; index < given.size(); ++index) {
-    if (names_slot<Route>(given[index], Slot)) {
+    if (slot_of<Route>(given[index]) == Slot) {
       return index;
     }
   }
@@ -93,7 +114,7 @@ template <class Route, std::size_t Slot, class... Named>
   return given.size();
 }
 
-// How many arguments of `Route` `name` names: one, or none for a name it does not have.
+// How many arguments of `Route` `name` names: one, or none for a name it does not have, or two.
 template <class Route>
 [[nodiscard]] consteval std::size_t slots_named(std::string_view name) {
   std::size_t count = 0;
@@ -117,13 +138,15 @@ template <class Route>
   return true;
 }
 
-template <class... Named>
-[[nodiscard]] consteval bool distinct_names_given() {
-  constexpr std::array<std::string_view, sizeof...(Named)> given{Named::name...};
+// Whether no argument of `Route` is given twice: a header in two cases neither. A name that matches none, or two, is
+// left to its own static_assert.
+template <class Route, class... Named>
+[[nodiscard]] consteval bool each_named_once() {
+  constexpr std::array<std::size_t, sizeof...(Named)> slots{slot_of<Route>(Named::name)...};
 
-  for (std::size_t first = 0; first < given.size(); ++first) {
-    for (std::size_t second = first + 1; second < given.size(); ++second) {
-      if (given[first] == given[second]) {
+  for (std::size_t first = 0; first < slots.size(); ++first) {
+    for (std::size_t second = first + 1; second < slots.size(); ++second) {
+      if (slots[first] < Route::argument_names.size() && slots[first] == slots[second]) {
         return false;
       }
     }
@@ -170,7 +193,10 @@ template <class Route, class... Named>
       ((slots_named<Route>(Named::name) < 2) && ...),
       "quoll::rest::client: two arguments of the route go by this name, a header and a parameter: call it by position"
   );
-  static_assert(distinct_names_given<Named...>(), "quoll::rest::client: a call by name names each parameter once");
+  static_assert(
+      each_named_once<Route, Named...>(),
+      "quoll::rest::client: a call by name gives each parameter once, a header in any case"
+  );
 
   std::tuple<Named &...> held{named...};
 

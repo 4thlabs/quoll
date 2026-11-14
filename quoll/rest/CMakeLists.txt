@@ -44,6 +44,7 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/api_key_query_name.cpp
     tests/compile_fail/bad_escape.cpp
     tests/compile_fail/body_codec_mismatch.cpp
+    tests/compile_fail/call_by_name_header_two_cases.cpp
     tests/compile_fail/call_by_name_required_left_out.cpp
     tests/compile_fail/call_by_name_twice.cpp
     tests/compile_fail/call_by_name_two_arguments.cpp

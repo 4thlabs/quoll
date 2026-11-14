@@ -237,8 +237,8 @@ if (!maybe) {
 | A failure of the transport                   | Throws `std::system_error`                                               | Throws `std::system_error`                    |
 
 A call takes its arguments by position, in the route's order, or by name, through `rest::literals`: a `{parameter}`
-of the route's expression or a header by its name, in any order, one that may be missing (a `std::optional`, a
-`std::vector`) left out. By position or by name, not both in one call; a body, which has no name, is passed by
+of the route's expression or a header by its name, in any case as HTTP reads it, in any order, each once, one that may
+be missing (a `std::optional`, a `std::vector`) left out. By position or by name, not both in one call; a body, which has no name, is passed by
 position:
 
 ```cpp

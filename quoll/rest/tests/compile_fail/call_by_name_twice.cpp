@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::client: a call by name names each parameter once
+// expect: quoll::rest::client: a call by name gives each parameter once, a header in any case
 //
 // One parameter named twice.
 
