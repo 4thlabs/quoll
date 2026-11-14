@@ -1,6 +1,8 @@
 # Quoll — plan
 
-Last update: 2026-11-08. The [roadmap](#roadmap) says what comes next, and is the reference for the order of the work.
+Last update: 2026-11-14. What is to do, and its priority, is in the GitHub project
+[Quoll](https://github.com/users/4thlabs/projects/2), one issue per item. This plan keeps the target, the positioning, the decisions and the architecture, and the [roadmap](#roadmap)
+says what each step brings.
 
 ## Target
 
@@ -45,12 +47,15 @@ The figures to lead with are those of size, build time and memory (see [Done](#d
 
 ## Roadmap
 
+What is to do, and its priority, is in the project [Quoll](https://github.com/users/4thlabs/projects/2): each step
+from 6 on, and each open item of step 6, links its issue.
+
 One pull request per topic, under the rule in [`AGENTS.md`](../AGENTS.md). A new public API is shown to the maintainer
 before much is built on it. Points marked "To settle" and the [open questions](#open-questions) are the maintainer's to
 decide. Steps marked *(maintainer merges)* are big architecture changes.
 
 **Current step: 6.** Step 0 only waits for the maintainer, and step 5's WebSocket in the browser and in the REST DSL for
-a page that needs them.
+a page that needs them ([#213](https://github.com/4thlabs/quoll/issues/213)).
 
 ### Done
 
@@ -67,13 +72,13 @@ values an enum does not know, and `samples/github`, calling GitHub natively and 
 
 Client and server (step 2): the reviews of each module, a runtime on several threads with a strand per connection, a
 coroutine frame destroyed only once it will not resume again, which a program reaches no way of breaking through
-`co_await` and `co_spawn`, and debug builds assert, and every night nine fuzz targets,
+`co_await` and `co_spawn`, and debug builds assert, and every night the fuzz targets, eleven today,
 a mixed load under TSan and under ASan with UBSan, and `clang-tidy` with its analyzer, with no crash open.
 
 Streaming (step 3): a body in pieces on the server, the client and browser `fetch`, a minimum rate, static files. 32 GiB each way
 through a process that never holds more than 10.3 MiB, checked every night at 1 GiB.
 
-Compiled libraries (step 1): a program using `quoll::runtime` compiles neither llhttp nor asio. A page rebuilds in 0.81 s and a
+Compiled libraries (step 1, 2026-11-05): a program using `quoll::runtime` compiles neither llhttp nor asio. A page rebuilt in 0.81 s and a
 native server in 3.9 s, for 52 KB of gzipped WASM with the REST client, against about 45 KB for React and ReactDOM alone. A literal shows in about 31 ms,
 keeping the state.
 
@@ -215,58 +220,58 @@ WebSocket is done natively on 2026-11-10: its frames, fuzzed, and its handshake 
 (#129). The interop tests run every night (#150): Quoll's server against curl, Python and Node as clients, its client against
 Node's and Python's servers, Quoll's client and server through nginx as a proxy, and Autobahn's suite both ways, without its
 permessage-deflate cases, as Quoll offers no extension. Left: the browser's WebSocket and a WebSocket shape in the REST DSL,
-which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10).
+which come when a page of step 6 needs them (see [Decided](#decided), 2026-11-10): [#213](https://github.com/4thlabs/quoll/issues/213).
 
 *Done when:* each runs end to end, natively and in the browser, with its frame parsing fuzzed.
 
 ### Step 6: the UI DSL, complete
 
-- Nested stateful components: done, components placed by calling them, `product_detail({.item = item})`, their hooks
-  kept by component and key, their props given anew, and their effects, actions and handlers stopped as they go
-  (`docs/ui.md`). `ui::callback<Signature>` in props
-  runs in the task of the component that wrote it, as decided on 2026-11-10: the child stops waiting for it as it
-  goes, the parent's work goes on. A view is not run again when its props compare equal and none of its states
-  changed (`docs/ui.md`), its callbacks those of its last view, as decided on 2026-11-11.
-- Restoring the states after a rebuild, which the third level of hot reload still lacks.
-- How a page writes its names: done, `using namespace quoll::ui;` once in the application's namespace, as the
-  dashboard does (2026-11-12); a rule of Quoll's own headers no longer stands in its way.
-- Base components, styled with Tailwind.
-- In the sample: adding a note during the first load can hide it until a reload.
-- Two siblings with the same key: only caught by an `assert`, on the render after, which a real error should replace. A state
-  changed on an app never started leaves a render pending, which nothing waits for.
-- Hydration, then pages sent by a server: see [UI DSL](#ui-dsl). `to_html` is there; a `value` on a `select` selects nothing yet.
-- Using the JavaScript libraries a page needs (charts, maps, editors, a terminal), a requirement whatever form the UI
-  takes, said on 2026-11-07. The C++ side is done: `widget<Props>(module, tag)`, its node left to a JavaScript
-  module's `mount`, `update` and `unmount`, its props as JSON, what it emits read by `on(name, function)` into the
-  function's parameter, and `WidgetRenderer` (2026-11-11, the form agreed with the maintainer). In the browser too:
-  `dom_renderer` shows them, their modules from the registry the Vite plugin makes of the C++ sources, loaded on
-  demand. Next, a handle for calls that are not props, as writing to a terminal. As said then: a node the reconciler leaves alone, a lifecycle with an unmount, calls both ways, bytes passed
-  without a copy where it counts, npm packages through the Vite build, loaded on demand. Plain DOM libraries and web
-  components come this way; those tied to React cannot.
-- A trial on a real screen of an application, chosen with the maintainer at the start of this step: a dashboard
-  (2026-11-11), a list to filter, a detail to edit, and a chart.js chart fed by the REST API. Written with what Quoll
-  has in `samples/dashboard`, whose README lists what it lacked, for the base components to give: an input showing a
-  value it is given (now `value()`), labelled and number fields, states that start from the props, and above all requests that
-  overlap: three rounds of review found stale answers and saves out of order, handled by hand. The screen needed no
-  handle on the widget, and no WebSocket. What takes the place of that bookkeeping was decided on 2026-11-11 (see
-  [Decided](#decided)): `ui::effect` and `ui::action`, then `ui::form_state`, a form of a value the props give (done,
-  2026-11-12).
-- **Contexts**: done, data the components of an app share, as React's contexts, agreed with the maintainer on
-  2026-11-11 and 2026-11-12 (see [Decided](#decided)): `provide<T>()` in the app's options, `shared<T>` in a component,
-  `run()` for what goes on as the component goes, and `provided<T>`, a context a component provides to those of its
-  view, found before the app's. Left: what a context keeps per item, as a save of a product once at a time across
-  its details, and the failure of a save whose detail went.
-- **Routing**: done (2026-11-12, see [Decided](#decided)): `routes(...)` of `route<Path, Page, fields...>`, layouts with
-  `outlet()`, `redirect<From, To>`, `not_found<Page>`, `routing<routes>(history)` as a context, `link_to`, the
-  browser's history in `quoll::emscripten`; the dashboard is pages, `/products` and `/products/{id}`. Next: pages
-  written by a server.
-- WebSocket in the browser and in the REST DSL, left from step 5, if that screen needs them; if it does not, the maintainer
-  says where they go once the step ends, and step 5 is done.
+Its issue: [#163](https://github.com/4thlabs/quoll/issues/163). Done:
+
+- Nested stateful components, placed by calling them, their hooks kept by component and key, their effects, actions
+  and handlers stopped as they go; `ui::callback<Signature>` in props, run in the task of the component that wrote it
+  (2026-11-10); a view not run again when its props compare equal and none of its states changed (2026-11-11).
+- How a page writes its names: `using namespace quoll::ui;` once in the application's namespace (2026-11-12).
+- The JavaScript libraries a page needs, a requirement said on 2026-11-07: `widget<Props>(module, tag)`, its node left
+  to a module's `mount`, `update` and `unmount`, its props as JSON, what it emits read by `on(name, function)`, and
+  `WidgetRenderer`, its module loaded on demand in the browser (2026-11-11). Plain DOM libraries and web components
+  come this way; those tied to React cannot.
+- The trial screen, `samples/dashboard` (2026-11-11): a list to filter, a detail to edit, a chart.js chart fed by the
+  REST API. Its README lists what it lacked; `ui::effect`, `ui::action` and `ui::form_state` took the place of the
+  bookkeeping its reviews kept finding bugs in (2026-11-12). It needed no handle on the widget, and no WebSocket.
+- Contexts (2026-11-12): `provide<T>()` in the app's options, `shared<T>` in a component, `run()`, and `provided<T>`,
+  a context a component provides to those of its view. Stores are planned to replace them ([#206](https://github.com/4thlabs/quoll/issues/206)).
+- Routing (2026-11-12): `routes(...)` of `route<Path, Page, fields...>`, layouts with `outlet()`, `redirect`,
+  `not_found`, `routing<routes>(history)`, `link_to`, the browser's history; the dashboard is pages.
+- A component in its header, as a struct of sections (form S) or a function of its props (form D), and `resource<T>`
+  (2026-11-13, [ADR 0002](adr/0002-ui-dsl-shape.md), #189 to #193).
+
+Left, each an issue of the project:
+
+- Calling the REST API cleanly from components: [#197](https://github.com/4thlabs/quoll/issues/197).
+- `use_resource` for form D: [#198](https://github.com/4thlabs/quoll/issues/198).
+- Effects, actions, forms and loads compiled once in the library, with a rebuild budget in CI: [#199](https://github.com/4thlabs/quoll/issues/199).
+- The samples in forms S and D, in their headers: [#200](https://github.com/4thlabs/quoll/issues/200).
+- Glaze out of the UI, under [#182](https://github.com/4thlabs/quoll/issues/182): contexts found without it, [#204](https://github.com/4thlabs/quoll/issues/204), and the widgets' JSON through
+  `json_codec`, [#205](https://github.com/4thlabs/quoll/issues/205).
+- Stores, to replace contexts, with what a context keeps per item, as a save of a product once at a time across its
+  details: [#206](https://github.com/4thlabs/quoll/issues/206).
+- What the trace of a component's life cycle found surprising: [#207](https://github.com/4thlabs/quoll/issues/207).
+- Base components, styled with Tailwind: [#208](https://github.com/4thlabs/quoll/issues/208).
+- Two siblings with the same key, an error rather than an `assert`, and a state changed on an app never started:
+  [#209](https://github.com/4thlabs/quoll/issues/209).
+- A handle on a widget, for calls that are not props, as writing to a terminal: [#210](https://github.com/4thlabs/quoll/issues/210).
+- Hydration, then pages written by a server, and a `value` on a `select` that selects nothing: [#211](https://github.com/4thlabs/quoll/issues/211).
+- Restoring the states after a rebuild, the third level of hot reload: [#212](https://github.com/4thlabs/quoll/issues/212).
+- WebSocket in the browser and in the REST DSL, left from step 5: [#213](https://github.com/4thlabs/quoll/issues/213).
+- In the notes sample, a note added during the first load can be hidden until a reload: [#163](https://github.com/4thlabs/quoll/issues/163).
 
 *Done when:* that screen runs with the base components and a JavaScript library loaded on demand, called from C++ and
 calling back, mounted and unmounted, with what it lacks listed.
 
 ### Step 7: the `quoll` command, driving Vite *(maintainer merges the first pull request)*
+
+[#214](https://github.com/4thlabs/quoll/issues/214).
 
 **To settle at its start:** a native binary, or an npm package (`npx quoll`), as Node is needed for Vite anyway and it
 avoids a binary per platform. The commands are shown to the maintainer first.
@@ -315,6 +320,8 @@ it, and has its test and its guide.
 
 ### Step 8: authentication *(maintainer merges)*
 
+[#215](https://github.com/4thlabs/quoll/issues/215).
+
 Before the ORM, as the first programs [Positioning](#positioning) aims at often have no SQL database, and need to sign in as
 soon as they listen beyond their machine. It first settles what a reverse proxy forwards, under
 [Open questions](#open-questions), for its redirects and cookies. Sessions go through a store of their own (memory, a file), which the ORM implements
@@ -344,15 +351,17 @@ expiry and revocation are tested, with its guide.
 
 ### Step 9: an ORM *(maintainer merges)*
 
+[#216](https://github.com/4thlabs/quoll/issues/216).
+
 A new module. **To settle at its start:** the shape of a query, shown to the maintainer first, the first database, and
 migrations.
 
-- A table is described by a plain aggregate, through the reflection the REST DSL already uses, so that one `struct` may go from
-  the database to the browser, and a field the program names breaks the compilation all along. The compiler does not see the
+- A table is described by a plain aggregate, through Quoll's own reflection of aggregates, which the REST DSL takes up
+  (#182), so that one `struct` may go from the database to the browser, and a field the program names breaks the compilation all along. The compiler does not see the
   database: a `struct` changed with no migration has to be caught when the program starts, not on its first query.
 - A column kept from the browser, a session's hash or a provider's token: an endpoint's `returns<user>` writes every reflected
-  field, and hiding one through `glz::meta` hides it from the ORM too. Excluding a field per output, or a type of its own for what
-  is sent: to settle, as the easy path must not leak secrets.
+  field, and a field hidden from one description of the type would be hidden from the other too. Excluding a field per
+  output, or a type of its own for what is sent: to settle, as the easy path must not leak secrets.
 - Native only, as `quoll::asio` is: the core still compiles to WASM with none of it.
 - A query never blocks the loop, and can be given up. A driver over `quoll::io` streams does both. A C client cannot go through
   `async::offload` as it is: two threads shared with `http::static_files` starve under slow queries, and a call started cannot be
@@ -364,6 +373,8 @@ migrations.
 
 ### Step 10: desktop and mobile *(maintainer merges)*
 
+[#217](https://github.com/4thlabs/quoll/issues/217).
+
 Secondary to the maintainer, as the PWA of step 7 already installs there.
 
 - A webview shell on desktop, then on mobile, loading the same WASM.
@@ -374,6 +385,8 @@ Secondary to the maintainer, as the PWA of step 7 already installs there.
 *Done when:* the sample runs on each target, with the differences between engines listed.
 
 ### Step 11: performance
+
+[#218](https://github.com/4thlabs/quoll/issues/218).
 
 Last, as what comes before it is needed first. It starts from a new baseline, as those steps change what is measured, and
 changes only what the harness shows. Candidates:
@@ -441,38 +454,17 @@ changes only what the harness shows. Candidates:
   (`saving`, which said one of its three fields), the state of a save being the action's own. It changes #167's "no
   status on the members" only in form: the action is read as a state, so the view still reads states only. An effect
   keeps its target, which is the data it loads.
-- **Components are functions, their state their `use_` hooks** (2026-11-12; superseded on 2026-11-13 by the next
-  entry but one, which keeps these hooks for form D), as React's function components: the
-  maintainer compared a prototype of function components with one of struct components whose members list themselves,
-  and chose the functions ("il y a pas photo"). A component of a state, an effect and a handler generates about 102
-  functions and 11 KB of code, against 318 and 36 KB as a struct, an effect depending on values rather than on a type of
-  props; the view reads from top to bottom; and no member is walked, so Glaze serves JSON only (#182). A hook is found
-  again by the place of its call and how many times that place was called before in the view, rather than by the order
-  of the calls, so that a branch shifts nothing; `use_state` gives a reference that cannot be copied. What a view
-  writes, an effect's dependencies and function or what follows an action's success, takes effect once that view shows,
-  and a run calls the one shown as it is asked for, with its view's props, as React's effects are the committed
-  render's: Codex then the local review found closures that outlived the props they captured, case after case, and the
-  maintainer agreed to the rule rather than a fix per closure. A struct with `operator()` is one too, for one who keeps
-  a component's props and helpers together. `use_context` and `provide_context` take Leptos's names; no `use_mounted`,
-  as an effect on nothing runs once and stops as the component goes. Done since: the samples, the router's pages and the
-  app's root as functions, the struct components removed (see the next entry).
-- **A component is an object of its props, placed by calling it** (2026-11-13; its one rule and its header and
-  source superseded the same day by the next entry, its placement by name kept), as React's JSX places a component: the
-  maintainer refused `component<product_detail>(...)` in a view ("je veux utiliser le nom du compo comme dans react").
-  `component<props>` depends only on its props, so that a header declares it `extern` and a source of its own defines
-  it, which a change to it alone compiles again; and one rule writes it, its props always written, `constexpr
-  component<props>`, `inline` in a header, `component<>` with none, as the maintainer asked for one way rather than a
-  type deduced beside one written ("il faut une seule règle"). Routes and links name the page object, `route<"{id}",
-  product_page>()`, `link_to(product_page, {.id = 7}, ...)`, and the app's root is a component with no props, placed as
-  any other: `mount(app_shell, "#app", options)`. `mounted()` and `unmounted()` went with the structs: an effect on
-  nothing runs once, and its run is stopped as the component goes; effects start children first, in the order the view
-  places them, as React's. Each component is a header, its props and `extern component<props> const name;`, and a
-  source, `constexpr component<props> name = ...`, never `inline`: the maintainer chose it so that a change of props
-  compiles again only that component and those placing it, not the whole page, and a page's folder keeps its tools' files at its root and its code in `src/` by role, `components/`,
-  `contexts/`, `client/`, `ui/`, `widgets/`, which the Vite plugin's `sources` names as folders. A rebuild of one component is to take a second at most, which the
-  maintainer set: with Quoll's header and the app's contexts precompiled, under Clang, a view alone takes 0.6 s and one
-  with a form and an action 1.4 s, the rest in instantiating `use_effect` and `use_action` in its source, about 0.6 s
-  each, which the next pull request takes into Quoll's library behind type erasure, with a budget CI checks.
+- **Components are functions, their state their `use_` hooks** (2026-11-12), as React's: superseded on 2026-11-13 by
+  [ADR 0002](adr/0002-ui-dsl-shape.md), below, which keeps these hooks for form D. Still in force from it: a hook is
+  found by the place of its call and how many times that place was called before in the view, and what a view writes
+  takes effect once that view shows, as React's committed render; `use_context` and `provide_context` take Leptos's names.
+- **A component is an object of its props, placed by calling it** (2026-11-13), as React's JSX places one, the
+  maintainer refusing `component<product_detail>(...)` in a view: `product_detail({.item = item})`, which routes, links
+  and the app's root name, `mount(app_shell, "#app", options)`; an effect on nothing runs once, as `mounted()` went.
+  Its one rule, `constexpr component<props>` always written, and a header and a source for each component, never
+  `inline`, were superseded the same day by [ADR 0002](adr/0002-ui-dsl-shape.md), below. Still in force: a page's folder
+  keeps its tools' files at its root and its code in `src/` by role, and a rebuild of one component takes a second at
+  most, the maintainer's budget, which #199 measures and checks in CI.
 - **Form S, a component written as a struct** (2026-11-13, [ADR 0002](adr/0002-ui-dsl-shape.md)): its first part done,
   `struct note_counter : component<note_counter>` with `struct props` read through `given->`, states, effects, forms
   and `shared<T>` as members that join it as the app makes it (`member_join`, no reflection), handlers as member
@@ -482,7 +474,8 @@ changes only what the harness shows. Candidates:
   or a value computed, `[](props const &given) { return given.item.id; }`, read from the props of each view (a
   reference, `given->id`, would dangle as the props are replaced). `resource<T>`, an `async_state` and its effect,
   read with `match(loading, failed, loaded)`, the first given the value before if it asks, and an optional `idle`
-  first. Next: Glaze only behind `json_codec` (#182), then `use_resource` for form D.
+  first. Left: `use_resource` for form D (#198), and Glaze out of everything but JSON (#182: #201 to
+  #205).
 - **Form D, a component's props its view's parameters** (2026-11-13, [ADR 0002](adr/0002-ui-dsl-shape.md)): done,
   `inline constexpr component note_row = [](notes::note const &item, bool const &selected) {...}` is a
   `component<parameters<notes::note, bool>>`, placed `note_row(item, true)`; one parameter is the props, as
@@ -500,11 +493,12 @@ changes only what the harness shows. Candidates:
   parameters are its props, `inline constexpr component product_view = [](products::product const &item) {...}`, with
   today's hooks. A load is one value, `resource<T>` or `use_resource`, read with `match(loading, failed, loaded)`;
   routes name the fields their parameters fill by member pointers,
-  `route<"{id}", product_page>(&product_page::props::id)`. Header-only makes a page one unit: it fits the second's budget, up to about 30 components, once Glaze leaves the UI's
-  headers and effects, actions, forms and loads are erased into the library, the next pull request; then the two forms
-  on the real library, three components first, measured. Modules later, with GCC 15. Against the 2026-11-12 count
-  (a struct form generating three times the code of a function), form S's effects follow a field or a function of
-  their props, read from the props of each view, and its tables are erased: the pull request measures it, form D staying if it costs as much.
+  `route<"{id}", product_page, &product_page::props::id>()`. The two forms came first (#189 to #193). Header-only
+  makes a page one unit: it fits the second's budget, up to about 30 components, once Glaze leaves the UI's headers
+  (#204, #205) and effects, actions, forms and loads are erased into the library (#199). Modules later,
+  with GCC 15. Against the 2026-11-12 count (a struct form generating three times the code of a function), form S's
+  effects follow a field or a function of their props, read from the props of each view, and its tables are to be
+  erased: #199 measures it, form D staying if it costs as much. The samples move to the two forms with #200.
 - **A debounce is an option of the effect** (2026-11-12), as the maintainer chose over a `debounced<T>` value to
   declare beside the state, as React's `useDebounce`, and over a pause Quoll would add to any change made by typing:
   `effect search{query, f, found, {.debounce = 300ms}}`. A run that follows a change waits that long before it calls
@@ -548,7 +542,8 @@ changes only what the harness shows. Candidates:
   the app, which goes on as the caller goes, as a callback's work does. Given to `mount` rather than made at a first
   use: what exists shows in `main`, as FTXUI's data sit beside its screen, which the maintainer liked, though FTXUI
   leaves lifetimes, stale answers and cancellation to the program. Nested contexts, as React's providers under a route,
-  come with several pages; `shared<T>` will find them first, unchanged.
+  came with routing: `provided<T>`, which `shared<T>` finds first. Stores are planned to replace contexts (2026-11-13,
+  #206).
 - **The interop tests close the protocol layer, and step 6 comes next** (2026-11-10), as the maintainer asked, tired of
   reimplementing HTTP, server-sent events and WebSocket: once Quoll's ends hold against third-party clients and servers
   (#150), the protocol code takes the fixes of its bugs, those the interop tests and reviews find included, of what touches
@@ -567,8 +562,10 @@ changes only what the harness shows. Candidates:
   used less than a second before, which reviews kept finding holes in: a server closing within the second, a response
   read slowly. One idle for longer than `client_options::max_idle_time`, 90 s as Go's `IdleConnTimeout`, is not
   used again, as no check sees a connection something on the way dropped with no word.
-- **Using the JavaScript libraries a page needs is a requirement of the UI** (2026-11-07), whatever form it takes: see step
-  6.
+- **Using the JavaScript libraries a page needs is a requirement of the UI** (2026-11-07), whatever form it takes: a node
+  the reconciler leaves alone, a lifecycle with an unmount, calls both ways, bytes passed without a copy where it
+  counts, npm packages through the Vite build, loaded on demand. Done so far: see step 6; a handle for calls that are
+  not props is [#210](https://github.com/4thlabs/quoll/issues/210).
 - **`samples/github` is step 4's real API** (2026-11-07), and a client of Docker over a Unix socket comes later, in no step
   yet.
 - **A local account with a password** (2026-11-07) joins OIDC and a shared secret in step 8, against the "no store of
@@ -651,9 +648,9 @@ changes only what the harness shows. Candidates:
   C++20 until 2026-11-03, raised for Glaze), rules in [`CODING_RULES.md`](CODING_RULES.md). Third-party C/C++
   dependencies may be compiled targets fetched by CPM.
 - The UI is a **C++ DSL compiled to WASM** (2026-11-04), which replaces the React, TypeScript client and `quoll::bridge`
-  of the earlier plan: elements with pipes and class strings (`button("Add") | tw("btn") | on_click(...)`), components
-  as aggregates holding `state<T>` members rather than functions with hooks, a view that runs again and a diff that
-  reaches a `Renderer`.
+  of the earlier plan: elements with pipes and class strings (`button("Add") | tw("btn") | on_click(...)`), a view that
+  runs again and a diff that reaches a `Renderer`. Its components as aggregates holding `state<T>` members were
+  superseded by functions, then by the two forms of [ADR 0002](adr/0002-ui-dsl-shape.md).
 - **The same WASM everywhere** (2026-11-04): web and PWA first, then a webview shell on desktop and mobile.
 - **Quoll drives the tools** (2026-11-04), through a `quoll` command: Vite becomes an internal detail. Replaces a
   development driven by Vite and a release driven by CMake.
@@ -702,10 +699,10 @@ flowchart TB
   end
 
   subgraph concepts["Concepts (type-erased)"]
-    executor(["executor"])
-    stream(["byte_stream"])
-    connector(["connector"])
-    transport(["http_transport"])
+    executor(["Executor"])
+    stream(["ByteStream"])
+    connector(["Connector"])
+    transport(["HttpTransport"])
     renderer(["Renderer"])
   end
 
@@ -741,10 +738,10 @@ flowchart TB
 
 | Concept | Meaning | Implemented by |
 |---|---|---|
-| `executor` | where / when a coroutine resumes; `post(work_item &)` links an intrusive node, no allocation | asio, browser event loop, `run_loop` |
-| `byte_stream` | `read_some` / `write_some` on raw bytes (`any_stream`, no allocation per operation) | asio sockets, memory |
-| `connector` | `connect(host, port) -> task<any_stream>`, and `connect_tls` beside it | asio (+ssl) |
-| `http_transport` | `request -> task<response>`, for platforms that do HTTP themselves | `quoll::client` over a connector, browser `fetch` |
+| `Executor` | where / when a coroutine resumes; `post(work_item &)` links an intrusive node, no allocation | asio, browser event loop, `run_loop` |
+| `ByteStream` | `read_some` / `write_some` on raw bytes (`any_stream`, no allocation per operation) | asio sockets, memory |
+| `Connector` | `connect(host, port) -> task<any_stream>`, and `connect_tls` beside it | asio (+ssl) |
+| `HttpTransport` | `request -> task<response>`, for platforms that do HTTP themselves | `quoll::client` over a connector, browser `fetch` |
 | `Renderer` | what the diff of a view changes: nodes, classes, attributes, listeners | the DOM, memory in tests |
 
 The router lives in `quoll::http` and does no I/O: it maps a method and a path template to a handler `request ->
@@ -950,7 +947,7 @@ text, IME, selection and accessibility; Tailwind gives the styles.
 ```cpp
 using namespace quoll::ui;
 
-inline constexpr component<> counter = [] {
+inline constexpr component counter = [] {
   auto &count = use_state(0);
 
   auto const add = [&count] { count = *count + 1; };
@@ -965,8 +962,12 @@ inline constexpr component<> counter = [] {
 int main() { quoll::emscripten::mount(counter); }
 ```
 
+This is form D, a function of its props, with hooks. Form S is a struct, `struct counter : component<counter>`, its
+props, states and effects as members and its view `element view()` ([ADR 0002](adr/0002-ui-dsl-shape.md)).
+
 A state changing runs the view again; the diff reaches a `Renderer`, the DOM in a page. Handlers are plain functions or
-tasks, and call a REST API through a `rest::client`.
+tasks, and call a REST API through a `rest::client`. How the app makes, views and lets go of a component is drawn in
+[The life of a component](ui-lifecycle.md).
 
 `to_html(view)` writes the same interface as HTML, natively as under WASM: a page generated ahead of time, or sent by a
 server, without WASM. Making such a page live is hydration: the WASM adopts the nodes it finds rather than creating them,
@@ -980,15 +981,15 @@ Hot reload has three levels, from the cheapest:
 1. CSS, through Vite and Tailwind's plugin, which reads the C++ for class names.
 2. A literal of `tw()`, `text()` or a tag, sent to the running program with no compilation, keeping its state.
 3. Anything else: a rebuild, then the page reloads. A compilation error shows in Vite's overlay. Restoring the states is
-   [step 6](#step-6-the-ui-dsl-complete).
+   [step 6](#step-6-the-ui-dsl-complete), [#212](https://github.com/4thlabs/quoll/issues/212).
 
 For now this is a plugin of Vite in `tools/vite-plugin`, which `samples/notes/web` uses; [step
 7](#step-7-the-quoll-command-driving-vite-maintainer-merges-the-first-pull-request) turns it around.
 
 ## WASM constraints
 
-- **No sockets in the browser.** Outgoing HTTP uses the `http_transport` concept implemented with `fetch`; there is no
-  server in the browser (WASI later).
+- **No sockets in the browser.** Outgoing HTTP goes through `fetch`: `http::client`, an `HttpTransport`, takes it from the
+  executor's `http::platform_ref`; there is no server in the browser (WASI later).
 - **Threads are optional.** The core (`async`, `http`, `rest`, `ui`) must not require `std::thread`, `std::jthread` or
   blocking waits; threads live in the adapters: the asio runtime on several threads (`runtime_options::threads`, each
   executor a strand, each connection on one of its own, through `async::strands_ref`), and its threads for blocking work.
@@ -1011,25 +1012,19 @@ Decision: **B** (2026-11-02).
 
 ## Open questions
 
-To settle before authentication:
+The maintainer's to settle, each in an issue where one holds it:
 
-- **What a reverse proxy forwards.** How a handler learns the client's address and the original scheme and host: rate limiting
-  and the redirects and cookies of authentication need them, and Quoll reads no forwarded header yet. To trust one only from a
-  configured proxy, as a client can write it too, which needs the peer address of a connection, that no stream, listener or
-  request carries today.
-
-Kept for later by the maintainer, at the end of the plan if the need comes (2026-11-05):
-
-- **A middleware for a path prefix**, `router.use("/api", ...)`: for now, it tests `next.path()`.
-
-Those not settled by a step of the roadmap:
-
-- MSVC, which Quoll does not support, and which many of the programs [Positioning](#positioning) aims at build with: a change to a
-  hard constraint, the maintainer's.
-- A default `main()` provided by Quoll, creating the runtime and running an application coroutine, once the shape of
-  that coroutine (arguments, exit code) is settled.
-- If OpenAPI comes back: the C++ → JSON Schema mapping, 64-bit integers in particular.
-- A batch endpoint, only if a real need shows up.
+- **What a reverse proxy forwards**, to settle before authentication: how a handler learns the client's address and the
+  original scheme and host, trusting a forwarded header only from a configured proxy, which needs the peer address of a
+  connection: [#147](https://github.com/4thlabs/quoll/issues/147) (its second point), the first of step 8 ([#215](https://github.com/4thlabs/quoll/issues/215)).
+- MSVC, which Quoll does not support, and which many of the programs [Positioning](#positioning) aims at build with: a
+  change to a hard constraint, [#214](https://github.com/4thlabs/quoll/issues/214) and [#217](https://github.com/4thlabs/quoll/issues/217).
+- A default `main()` provided by Quoll, once the shape of the application's coroutine (arguments, exit code) is
+  settled: [#214](https://github.com/4thlabs/quoll/issues/214).
+- With no issue, kept for later by the maintainer (2026-11-05): a middleware for a path prefix, `router.use("/api",
+  ...)`, for which a middleware tests `next.path()` for now.
+- With no issue, in no step: if OpenAPI comes back, the C++ → JSON Schema mapping, 64-bit integers in particular; a
+  batch endpoint, only if a real need shows up.
 
 ## Environment
 
@@ -1037,7 +1032,5 @@ Those not settled by a step of the roadmap:
   rather than a template in cpp-init.
 - Dev container (`.devcontainer/`): Ubuntu 24.04, GCC 13, Clang 19, CMake / Ninja / ccache, OpenSSL, Emscripten SDK
   (`EMSDK_VERSION`, default `latest`), Node.js (`NODE_MAJOR`, default 24).
-- Agent machine: no local toolchain. Docker goes through the docker-in-docker daemon `DOCKER_HOST=tcp://orca-dind:2375`
-  (the local socket is not accessible). The image builds there (`docker build -t quoll-dev .devcontainer`), but the
-  daemon does not see `/home/orca`: bind mounts are empty, so the sources are streamed in with `tar` and `devcontainer
-  up` does not work as is.
+- Agent machine: no local toolchain. Builds run in the lasting container `quoll-work` of the docker-in-docker daemon
+  (`DOCKER_HOST=tcp://orca-dind:2375`), which sees `/home/orca/code`: the sources need no copying.

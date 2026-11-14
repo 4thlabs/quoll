@@ -40,7 +40,8 @@ cmake --build build --target quoll_tests -j"$(nproc)"
 ./build/tests/quoll_tests "[client]"     # Catch2 filters
 ```
 
-`ctest` runs `quoll` (every test case), `compile_fail.<case>` and the samples' tests.
+`ctest` runs `quoll` (every test case but the hidden ones), `compile_fail.<case>`, `assert.<name>` and the samples'
+tests.
 
 - **Tests** of a module are in `quoll/<module>/tests/`, compiled together into `build/tests/quoll_tests`.
   A test must execute what it claims: a coroutine test runs its executor until the coroutine completes,
@@ -50,6 +51,9 @@ cmake --build build --target quoll_tests -j"$(nproc)"
 - **What must not compile** is tested too: one source per case under a module's
   `tests/compile_fail/`, starting with `// expect: <message>`. Its ctest passes only when the compilation
   fails with that message, taken literally (native builds only).
+- **What a debug build asserts**, an invariant out of a caller's reach, is tested by a hidden Catch2 case
+  (`[.assert]`) that breaks it, declared with `quoll_declare_assert_tests`: its ctest passes only when the
+  program ends with the assertion's text (native builds).
 - **Every header** is compiled alone in its own translation unit, so that one that is not self-contained
   breaks the build.
 
@@ -161,13 +165,15 @@ Every pull request and push to `main` goes through `.github/workflows/ci.yml`:
 Fuzzing (`fuzz.yml`), the benchmark (`bench.yml`), a mixed load under TSan and under ASan with UBSan (`load.yml`), the
 runs against third-party clients and servers (`interop.yml`) and all of `clang-tidy` (`clang-tidy.yml`) run every night,
 and on a pull request touching them.
-`codex-review.yml` sets the status `Codex`, once Codex has finished reviewing the last commit.
+`codex-review.yml` sets the status `Codex`, once Codex has finished reviewing the last commit. The jobs keep their
+compilations in ccache.
 
 ## Contributing
 
 - **Read first:** [`CODING_RULES.md`](CODING_RULES.md), the C++ rules every change follows, and
-  [`PLAN.md`](PLAN.md), the target, the roadmap and the decisions made. The roadmap says which step is
-  current. A new public API is shown to the maintainer before much is built on it.
+  [`PLAN.md`](PLAN.md), the target, the roadmap and the decisions made. What is to do, and its priority, is
+  in the GitHub project [Quoll](https://github.com/users/4thlabs/projects/2). A new public API is shown to
+  the maintainer before much is built on it.
 - **One pull request per topic.** `main` is protected: everything goes through a pull request, with
   every required CI job and the status `Codex` green, up to date with `main`, and its threads resolved.
 - **Reviews.** Codex reviews a pull request when it opens and after each push, following

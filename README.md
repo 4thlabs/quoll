@@ -19,15 +19,20 @@
     <a href="docs/client.md">Client</a> ·
     <a href="docs/streaming.md">Streaming</a> ·
     <a href="docs/rest.md">REST</a> ·
+    <a href="docs/command-line.md">Command line</a> ·
     <a href="docs/ui.md">UI</a> ·
+    <a href="docs/ui-lifecycle.md">UI life cycle</a> ·
     <a href="docs/runtimes.md">Runtimes</a> ·
-    <a href="docs/design-decisions.md">Design decisions</a>
+    <a href="docs/performance.md">Performance</a> ·
+    <a href="docs/design-decisions.md">Design decisions</a> ·
+    <a href="docs/development.md">Development</a>
   </p>
 </div>
 
 > [!WARNING]
 > **Status: exploration.** The APIs still move and nothing is released yet. What comes next, and in which order, is
-> in [`docs/PLAN.md`](docs/PLAN.md).
+> in the GitHub project [Quoll](https://github.com/users/4thlabs/projects/2); the target and the decisions are in
+> [`docs/PLAN.md`](docs/PLAN.md).
 
 ## What it holds
 
@@ -39,7 +44,7 @@
 | `quoll::server`  | `http::server`: routes, middlewares, static files, timeouts and limits, a graceful shutdown              |
 | `quoll::client`  | `http::client`: kept connections, retries, redirects, TLS, WebSocket                                     |
 | `quoll::rest`    | A typed API contract, served with `rest::mount` and called with `rest::client`                           |
-| `quoll::ui`      | Components with states and props, callbacks, JavaScript widgets, Tailwind, `to_html`                    |
+| `quoll::ui`      | Components in two forms, effects and actions, forms, contexts, routing, `resource`, widgets, `to_html` |
 | `quoll::runtime` | The loop a program runs on: asio natively, the browser's event loop under Emscripten                    |
 
 ## Quick start
@@ -169,7 +174,7 @@ Every night, and on a pull request touching their targets:
 | [Streaming](docs/streaming.md)                 | Bodies in pieces on both sides, server-sent events, WebSocket                                     |
 | [REST](docs/rest.md)                           | The contract, `mount`, `rest::client`, codecs, third-party APIs                                  |
 | [Command line](docs/command-line.md)           | A command-line program calling an API, natively and in Node                                       |
-| [UI](docs/ui.md)                               | Components, props, callbacks, views not run again, JavaScript widgets, `to_html`, the build      |
+| [UI](docs/ui.md)                               | Components in two forms, effects and actions, `resource`, forms, contexts, routing, widgets, the build |
 | [UI life cycle](docs/ui-lifecycle.md)          | How the app runs a component, in diagrams, for whoever works on quoll::ui                        |
 | [Runtimes](docs/runtimes.md)                   | `quoll::runtime`, the adapters, `http::client` in a browser, what WebAssembly asks of you         |
 | [Performance](docs/performance.md)             | What Quoll costs, and how it is measured                                                          |
@@ -187,7 +192,7 @@ Every night, and on a pull request touching their targets:
 ## Built with
 
 [llhttp](https://github.com/nodejs/llhttp) for HTTP parsing ·
-[Glaze](https://github.com/stephenberry/glaze) for JSON and reflection ·
+[Glaze](https://github.com/stephenberry/glaze) for JSON, and for reflection until #182 ·
 [asio](https://github.com/chriskohlhoff/asio) for the native runtime ·
 [OpenSSL](https://www.openssl.org) for TLS ·
 [Catch2](https://github.com/catchorg/Catch2) for the tests.

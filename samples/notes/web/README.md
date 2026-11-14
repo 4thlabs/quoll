@@ -14,7 +14,9 @@ as it shows.
 | `src/components/note_row` | one note, with its `on_remove` callback; props compared with `==`, so that a row whose note is unchanged is not viewed again |
 | `src/client/notes_client.hpp`, `.cpp` | the calls to the server, through a `rest::client` of the contract, in a source of their own |
 
-Each component is a header, its props and its `extern` declaration, and a source, its view.
+Each component is a header, its props and its `extern` declaration, and a source, its view. The components move to
+their headers alone, as [`docs/ui.md`](../../../docs/ui.md#a-component) writes them, with
+[#200](https://github.com/4thlabs/quoll/issues/200).
 
 ## Run it
 
@@ -44,9 +46,9 @@ Add a note, start typing another one, and change a component in your editor:
 
 | Change | What happens | The note you are typing |
 |---|---|---|
-| `button("Add")` to `button("Ajouter")`, in `note_form.hpp` | shows at once, without compiling | stays |
+| `button("Add")` to `button("Ajouter")`, in `note_form.cpp` | shows at once, without compiling | stays |
 | `tw("btn btn-primary")` to `tw("btn btn-secondary")` | shows at once | stays |
-| `tw("text-4xl font-bold")` to `tw("text-4xl font-bold text-rose-500")`, in `notes_page.hpp`, a class not used yet | Tailwind generates it, and it shows at once | stays |
+| `tw("text-4xl font-bold")` to `tw("text-4xl font-bold text-rose-500")`, in `notes_page.cpp`, a class not used yet | Tailwind generates it, and it shows at once | stays |
 | A comment, or spaces | nothing | stays |
 | Anything else, such as adding a `state` | a rebuild of about 1.5 s, then the page reloads | **lost** |
 | `int x = oops;` | the compiler's first error, over the page | |
@@ -58,7 +60,6 @@ rebuilds short:
 
 - **A source for each component:** a change of a view compiles again only its source, and a change of props its source
   and those placing it.
-
 - **Quoll, precompiled:** `target_precompile_headers` in `CMakeLists.txt`. This only tells the compiler to parse it once.
 - **REST and JSON in a source apart:** `src/client/notes_client.cpp`, which compiles only when a call changes. It relays the contract
   by hand for now; it could be generated from it.
@@ -66,7 +67,7 @@ rebuilds short:
   still names files and lines. `debug: 'full'` in `vite.config.js` gives the browser's debugger the variables too, for
   rebuilds half as long again; `'none'` gives the shortest.
 
-The time of a rebuild is measured in [the dashboard's README](../../dashboard/README.md), for each of its components.
+[The dashboard's README](../../dashboard/README.md#run-it) gives the rebuild of a larger page.
 
 ## Build for production
 

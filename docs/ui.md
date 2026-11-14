@@ -9,8 +9,9 @@ brings `quoll::ui`. [`samples/notes/web`](../samples/notes/web) is a whole page,
 
 ## A component
 
-A component is a function giving its view: a lambda, named once as a `component`, whose state is what the `use_`
-calls of its view give, as React's hooks.
+A component is written in one of two forms, each in its header: a function giving its view, form D, or
+[a struct](#a-component-written-as-a-struct) of sections, form S. Form D is a lambda, named once as a `component`,
+whose state is what the `use_` calls of its view give, as React's hooks.
 
 ```cpp
 #include <quoll/emscripten.hpp>
@@ -20,7 +21,7 @@ calls of its view give, as React's hooks.
 
 using namespace quoll::ui;
 
-inline constexpr component<> counter = [] {
+inline constexpr component counter = [] {
   auto &count = use_state(0);
 
   auto const add = [&count] { count = *count + 1; };
@@ -41,7 +42,7 @@ Handlers capture what a `use_` call gives by reference, as it lives as long as t
 functions or return a task:
 
 ```cpp
-inline constexpr component<> notes_page = [] {
+inline constexpr component notes_page = [] {
   auto &items = use_state<std::vector<std::string>>();
   auto &draft = use_state<std::string>();
 
@@ -113,22 +114,35 @@ inline constexpr component chart = [](chart_props const &given) { ... };
 - its props are kept with it, past its parent's view: a parameter that is a view, as a `std::string_view` or a
   `std::span`, or a pointer, also inside an optional, a pair, a tuple, a variant or an expected, does not compile. One
   takes a `std::string`, and shares an object through a `std::shared_ptr`, or gives it whole in a `std::unique_ptr`;
-- a component is `inline constexpr` in a header, or declared in a header with its props written,
-  `extern component<note_row_props> const note_row;`, or `component<parameters<notes::note, bool>>` for several, and
-  defined in a source of its own,
+- a component is written in its header, `inline constexpr`. One whose rebuild costs too much may instead be declared
+  there with its props written, `extern component<note_row_props> const note_row;`, or
+  `component<parameters<notes::note, bool>>` for several, and defined in a source of its own,
   `constexpr component<note_row_props> note_row = ...`, which includes its own header first, which gives the definition
-  its linkage: a change of a view compiles again only its source, and a change of props its source and those placing
-  it;
+  its linkage: a change of its view then compiles again only its source, and a change of props its source and those
+  placing it. The samples still give each component a header and a source; they move to headers alone with
+  [#200](https://github.com/4thlabs/quoll/issues/200);
 - made of a lambda capturing nothing, or of an empty struct whose call operator gives the view, as
-  `constexpr component<badge::props> badge_shown = badge{};`. It is made for each view, and holds nothing: what lasts
-  is its hooks. One capturing, or holding members, does not compile;
+  `inline constexpr component badge_shown = badge{};`. It is made for each view, and holds nothing: what lasts is its
+  hooks. One capturing, or holding members, does not compile;
 - its props by const reference: taken by value, or by a reference that is not const, they would be a copy that goes as
   the view returns, which a closure of the view may capture, or what its parent gave written into, and that does not
   compile either.
 
-**A component is also written as a struct**, its concepts in sections: its props inside it, what it holds and what it
-does as members, its handlers as member functions, and its view, placed by a `tag<name>` of its name declared after
-it:
+**What a `use_` call gives is the component's own**, found again at each view by where it is called, and how many times
+that place was called before in the same view:
+
+- a branch not taken shifts nothing written elsewhere, and keeps what it holds;
+- a function calling hooks may be called twice in a view, each call with its own. Calls of one place are told apart by
+  their rank in the view: such a function called in a branch, or a loop whose number of turns changes, shifts the later
+  calls of that place, as React's;
+- write `auto &`: `auto x = use_state(0)` does not compile, as a copy would be unlinked;
+- a `use_` call outside the view of a component throws `std::logic_error`.
+
+### A component written as a struct
+
+A component is also written as a struct, form S, its concepts in sections: its props inside it, what it holds and
+what it does as members, its handlers as member functions, and its view, placed by a `tag<name>` of its name declared
+after it:
 
 ```cpp
 struct note_counter : component<note_counter> {
@@ -182,16 +196,6 @@ note_counter({.label = "Notes"})
   `route<"{id}", item_page, &item_page::props::id>()`, `link_to(item_page, {.id = 3}, "Open")`,
   `mount(app_shell, "#app")`.
 
-**What a `use_` call gives is the component's own**, found again at each view by where it is called, and how many times
-that place was called before in the same view:
-
-- a branch not taken shifts nothing written elsewhere, and keeps what it holds;
-- a function calling hooks may be called twice in a view, each call with its own. Calls of one place are told apart by
-  their rank in the view: such a function called in a branch, or a loop whose number of turns changes, shifts the later
-  calls of that place, as React's;
-- write `auto &`: `auto x = use_state(0)` does not compile, as a copy would be unlinked;
-- a `use_` call outside the view of a component throws `std::logic_error`.
-
 ## Components of a view
 
 A view places another component by calling it with its props, as React's JSX does, each with its hooks of its own:
@@ -201,7 +205,7 @@ struct note_row_props {
   std::string text;
 };
 
-inline constexpr component<note_row_props> note_row = [](note_row_props const &given) {
+inline constexpr component note_row = [](note_row_props const &given) {
   auto &done = use_state(false);
 
   auto const toggle = [&done] { done = !*done; };
@@ -209,7 +213,7 @@ inline constexpr component<note_row_props> note_row = [](note_row_props const &g
   return li(given.text) | tw_if(*done, "line-through") | on_click(toggle);
 };
 
-inline constexpr component<> notes_page = [] {
+inline constexpr component notes_page = [] {
   auto &items = use_state<std::vector<std::string>>();
 
   auto const row = [](std::string const &item) {
@@ -291,7 +295,7 @@ struct note_row_props {
   callback<void(std::int64_t)> on_remove;
 };
 
-inline constexpr component<note_row_props> note_row = [](note_row_props const &given) {
+inline constexpr component note_row = [](note_row_props const &given) {
   auto const remove = [&given] { return given.on_remove(given.item.id); };
 
   return li({
@@ -300,7 +304,7 @@ inline constexpr component<note_row_props> note_row = [](note_row_props const &g
   });
 };
 
-inline constexpr component<> notes_page = [] {
+inline constexpr component notes_page = [] {
   auto &notes = use_state<std::vector<notes::note>>();
 
   auto const on_remove = [&notes](std::int64_t id) { return remove_note(notes, id); };
@@ -348,7 +352,7 @@ struct sales_panel_props {
   bool operator==(sales_panel_props const &) const = default;
 };
 
-inline constexpr component<sales_panel_props> sales_panel = [](sales_panel_props const &given) {
+inline constexpr component sales_panel = [](sales_panel_props const &given) {
   // The sales, whether they are loading, and why they did not load.
   auto &sales = use_async_state<products::monthly_sales>();
   auto &load = use_effect(given.id, products_client::sales, sales);
@@ -501,7 +505,7 @@ struct like_button_props {
   std::int64_t post = 0;
 };
 
-inline constexpr component<like_button_props> like_button = [](like_button_props const &given) {
+inline constexpr component like_button = [](like_button_props const &given) {
   // The likes the server counts once liked.
   auto &like = use_action<&posts_client::like>();
 
@@ -546,7 +550,7 @@ struct product_detail_props {
   products::product item;
 };
 
-inline constexpr component<product_detail_props> product_detail = [](product_detail_props const &given) {
+inline constexpr component product_detail = [](product_detail_props const &given) {
   auto &products = use_context<catalog>();
   // The product edited: the one given, with what is typed.
   auto &form = use_form(given.item);
@@ -602,7 +606,7 @@ struct catalog {
   }
 };
 
-inline constexpr component<> product_list = [] {
+inline constexpr component product_list = [] {
   auto &products = use_context<catalog>();
 
   if (products->items->loading) {
@@ -641,16 +645,21 @@ A component provides a context to the components of its view, and theirs, as Rea
 component, as a page under a route keeps what only it needs.
 
 ```cpp
-inline constexpr component<> checkout_page = [] {
-  // The cart being filled, for the steps of the page: gone as the page goes.
-  auto &cart = provide_context<cart_draft>();
-
-  return div({cart_lines(), payment_step()});
+// The cart being filled, for the steps of a page.
+struct cart_draft {
+  state<std::vector<std::string>> lines;
 };
 
-inline constexpr component<> cart_lines = [] {
+inline constexpr component cart_lines = [] {
   auto &cart = use_context<cart_draft>();
   // ...
+};
+
+inline constexpr component checkout_page = [] {
+  // Gone as the page goes.
+  provided<cart_draft> &cart = provide_context<cart_draft>();
+
+  return div({p(std::to_string(cart->lines->size()) + " lines"), cart_lines(), payment_step()});
 };
 ```
 
@@ -658,20 +667,28 @@ inline constexpr component<> cart_lines = [] {
   view of that component, as its tasks; it uses the contexts its component finds, which are there before it is made;
 - a component using it keeps the component providing it while it lives, and `run()` as long as its work.
 
+`provide_context<T>()` gives a `provided<T>`, in `<quoll/ui/context/provided.hpp>`: `*cart` and `cart->` give the
+context, as a `shared<T>` does, which is neither copied nor moved, as the components using it refer to it. A component
+written as a struct finds a context through a `shared<T>` member, and provides one from its view with
+`provide_context<T>()`: a `provided<T>` member of the struct joins nothing yet.
+
 ## Routing
 
 The pages of an app, and the addresses that show them, are routes, checked at compile time: a route's parameters are
 fields of its page's props, which give their types, and a link to a page takes those props.
 
 ```cpp
-// components/product_page.hpp, its view in components/product_page.cpp; home_page and app_shell alike.
+// components/product_page.hpp: its props, and the page. home_page, products_layout, product_list and missing_page
+// are in headers of their own too.
 struct product_page_props {
   std::int64_t id = 0;
 
   bool operator==(product_page_props const &) const = default;
 };
 
-extern component<product_page_props> const product_page;
+inline constexpr component product_page = [](product_page_props const &given) {
+  return h1("Product " + std::to_string(given.id));
+};
 
 // routes.hpp
 inline constexpr auto routes = ui::routes(
@@ -684,8 +701,8 @@ inline constexpr auto routes = ui::routes(
     ui::redirect<"/items/{id}", "/products/{id}">(),
     ui::not_found<missing_page>());
 
-// components/app_shell.cpp: the app's root, or a layout, shows the page of the address in its outlet().
-constexpr component<> app_shell = [] {
+// components/app_shell.hpp: the app's root, or a layout, shows the page of the address in its outlet().
+inline constexpr component app_shell = [] {
   return div({nav({link_to(home_page, "Home"), link_to("/products", "Products")}), outlet()});
 };
 
@@ -698,7 +715,7 @@ int main() {
 
 - `routes(...)` is the table, in order: the first route that matches an address wins. A route of the top level
   starts with '/', one under another adds its own segments to its parent's, none for its index route;
-- a route's page is a component, named by the object, which a header declares: the route and the links name it so;
+- a route's page is a component, named by the object its header declares: the route and the links name it so;
 - a route's path is a template, as the REST DSL's, written `{id}` and not `{id:int64}`; `{name:path}` takes the rest
   of the path. After its page, the route names the field of its page's props each `{parameter}` of its whole path
   fills, in order, as `&product_page_props::id`, of any type a number, a bool, a string or an optional of one gives.
@@ -743,7 +760,7 @@ struct point_selected {
 
 inline constexpr auto line_chart = widget<chart_props>("./src/widgets/line_chart.js", "canvas");
 
-inline constexpr component<> sales_page = [] {
+inline constexpr component sales_page = [] {
   auto &sales = use_state<std::vector<double>>();
   auto &selected = use_state(0);
 
@@ -787,7 +804,7 @@ export function mount(node, props, emit) {
 }
 ```
 
-- **Its props go as JSON**, written by Glaze: `mount` once the render has placed its node, `update` when the JSON
+- **Its props go as JSON**: `mount` once the render has placed its node, `update` when the JSON
   changes, `unmount` before the node goes, and as the app stops. Another module at its place is another node.
 - **What it emits is an event of its node:** `on(name, function)` reads its JSON into the function's parameter,
   leaving the fields it does not declare. A value that is not that JSON goes to `on_error`.
@@ -874,14 +891,16 @@ web/
     ├── routes.hpp         its routes and the app's options
     ├── client/            the calls to its server, in sources of their own
     ├── contexts/          what its components share
-    ├── components/        a header and a source for each component
+    ├── components/        a header for each component
     ├── ui/                functions giving a piece of view, with no state
     └── widgets/           the JavaScript modules of its widgets
 ```
 
-The CMake that declares the page's components, the sample's beside `web/` in the samples, reads them from their
-folder, at any depth: one made or removed there is compiled, or no longer, at the next rebuild, which configures again
-as the folder changes. A source of another folder, as one of `client/`, is named there by hand.
+`main.cpp` reaches the components through the headers it includes, its routes' or its root's, so a component made or
+removed changes nothing in the CMake. The sources, as those of `client/`, are named in the CMake that declares the page, the sample's beside `web/` in the
+samples. The samples, whose components still have a source each until
+[#200](https://github.com/4thlabs/quoll/issues/200), read those from their folder, at any depth: one made or removed
+there is compiled, or no longer, at the next rebuild, which configures again as the folder changes.
 
 ```cmake
 file(GLOB_RECURSE my_page_components CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/web/src/components/*.cpp)
@@ -891,10 +910,12 @@ file(GLOB_RECURSE my_page_components CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DI
 
 From [step 6](PLAN.md#step-6-the-ui-dsl-complete) of the roadmap:
 
-- A handle on a widget, for what is not a prop, as writing to a terminal.
-- Base components.
-- Making a page written by `to_html` live (hydration): a `value` on a `select` selects nothing yet.
-- Restoring the states after a rebuild.
+- `use_resource`, a load read with `match` in form D ([#198](https://github.com/4thlabs/quoll/issues/198)).
+- A handle on a widget, for what is not a prop, as writing to a terminal ([#210](https://github.com/4thlabs/quoll/issues/210)).
+- Base components ([#208](https://github.com/4thlabs/quoll/issues/208)).
+- Making a page written by `to_html` live (hydration): a `value` on a `select` selects nothing yet
+  ([#211](https://github.com/4thlabs/quoll/issues/211)).
+- Restoring the states after a rebuild ([#212](https://github.com/4thlabs/quoll/issues/212)).
 
 Tools that take Vite and Tailwind's setup out of an application, and a PWA, are
 [step 7](PLAN.md#step-7-the-quoll-command-driving-vite-maintainer-merges-the-first-pull-request), and
