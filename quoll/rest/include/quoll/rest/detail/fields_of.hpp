@@ -37,31 +37,27 @@
 #ifndef QUOLL_REST_DETAIL_FIELDS_OF_HPP
 #define QUOLL_REST_DETAIL_FIELDS_OF_HPP
 
-#include <glaze/core/reflect.hpp>
+#include <quoll/rest/detail/aggregate_fields.hpp>
+#include <quoll/rest/detail/field_names.hpp>
 
 #include <cstddef>
-#include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
 namespace quoll::rest::detail {
 
-// Calls `visit(name, field)` for each field of `value`, with the name Glaze gives it (its own, or its glz::meta
-// name): the fields of a query_params<> struct, to fill (the server) or to read (a client, with a const value).
+// Calls `visit(name, field)` for each field of `value`, with the name it is declared with, or its rest_names give: the
+// fields of a query_params<> struct or a form, to fill (the server) or to read (a client, with a const value).
 template <class T, class Visitor>
 void for_each_field(T &value, Visitor &&visit) {
   using type = std::remove_const_t<T>;
 
-  constexpr auto size = glz::reflect<type>::size;
+  auto fields = tie_fields(value);
 
   [&]<std::size_t... Index>(std::index_sequence<Index...>) {
-    if constexpr (glz::glaze_object_t<type>) {
-      (visit(glz::reflect<type>::keys[Index], glz::get_member(value, glz::get<Index>(glz::reflect<type>::values))),
-       ...);
-    } else {
-      (visit(glz::reflect<type>::keys[Index], glz::get_member(value, glz::get<Index>(glz::to_tie(value)))), ...);
-    }
-  }(std::make_index_sequence<size>{});
+    (visit(field_names<type>[Index], std::get<Index>(fields)), ...);
+  }(std::make_index_sequence<std::tuple_size_v<decltype(fields)>>{});
 }
 
 } // namespace quoll::rest::detail

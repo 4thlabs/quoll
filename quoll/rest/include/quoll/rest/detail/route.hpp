@@ -42,6 +42,7 @@
 #include <quoll/http/verb.hpp>
 #include <quoll/rest/body.hpp>
 #include <quoll/rest/detail/checked_path.hpp>
+#include <quoll/rest/detail/field_names.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/path_template.hpp>
 #include <quoll/rest/detail/type_list.hpp>
@@ -49,8 +50,6 @@
 #include <quoll/rest/header.hpp>
 #include <quoll/rest/query.hpp>
 #include <quoll/rest/security.hpp>
-
-#include <glaze/core/reflect.hpp>
 
 #include <array>
 #include <cstddef>
@@ -123,7 +122,7 @@ consteval void add_places(std::type_identity<Part>, std::vector<place_of_part> &
 
 template <class Struct>
 consteval void add_places(std::type_identity<query_params<Struct>>, std::vector<place_of_part> &places) {
-  for (auto const name : glz::reflect<Struct>::keys) {
+  for (auto const name : field_names<Struct>) {
     places.push_back({named_place::query, name});
   }
 }

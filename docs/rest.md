@@ -404,9 +404,9 @@ using ping = rest::endpoint<"ping", verb::get, "/ping", rest::returns<std::strin
 ```
 
 A form takes the fields of a struct by name, as `query_params<>` does: a vector repeats its name, an `std::optional`
-without a value is left out, anything else is required, once. The struct is an aggregate, or a type described by a
-`glz::meta` as below, and a form of more than 1000 fields is refused. It is what a browser's form sends, and what many APIs take, as
-an OAuth token endpoint does:
+without a value is left out, anything else is required, once. The struct is an aggregate of 64 fields at most, with
+no base class, each field with a default value and none a reference, and a form of more than 1000 fields is refused.
+It is what a browser's form sends, and what many APIs take, as an OAuth token endpoint does:
 
 ```cpp
 struct token_request {
@@ -424,8 +424,24 @@ using avatar = rest::endpoint<"avatar", verb::get, "/avatar",
                               rest::returns<std::vector<std::byte>, status::ok, rest::bytes_codec>>;
 ```
 
-A type that is not an aggregate, a renamed field or an enum is described by a `glz::meta<T>`
-specialization, placed before the contract that uses it. Empty `std::optional` fields are not written.
+The fields of a query or a form go by the names they are declared with. One whose name is not a C++ name is given
+it by the struct's `rest_names`, which lists only those, the others keeping theirs:
+
+```cpp
+struct charge {
+  std::string order_id;
+  std::int64_t amount = 0;
+  std::optional<std::string> api_version;
+
+  using rest_names = rest::names<
+      rest::name<"metadata[order_id]", &charge::order_id>,
+      rest::name<"api-version", &charge::api_version>>;
+};
+```
+
+In JSON, a type that is not an aggregate, a renamed field or an enum is described by a `glz::meta<T>`
+specialization, placed before the contract that uses it: it renames the JSON only, as `rest_names` renames the query
+and the form only. Empty `std::optional` fields are not written.
 
 ```cpp
 enum class card_status { active, frozen };
@@ -504,7 +520,7 @@ using by_day = rest::endpoint<"by_day", verb::get, "/by-day", rest::query<"day",
 A contract written for someone else's API needs no Quoll server in the program. It has to say what that
 API does, not what Quoll would choose. This works today:
 
-- **Names that are not C++ names**, with `glz::meta`.
+- **Names that are not C++ names**: in JSON with `glz::meta`, in a query or a form with `rest_names`.
 - **Unknown fields**, skipped by `rest::lenient_json_codec` on each `returns<>`.
 - **Error bodies of any shape**, one type per status.
 - **Bodies other than JSON**, with `rest::text_codec`, `rest::form_codec`, `rest::bytes_codec` or a codec of your own.

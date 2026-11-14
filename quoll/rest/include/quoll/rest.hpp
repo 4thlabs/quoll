@@ -56,6 +56,7 @@
 #include <quoll/rest/http_error.hpp>
 #include <quoll/rest/json_codec.hpp>
 #include <quoll/rest/mount.hpp>
+#include <quoll/rest/names.hpp>
 #include <quoll/rest/next.hpp>
 #include <quoll/rest/open_enum.hpp>
 #include <quoll/rest/param_traits.hpp>

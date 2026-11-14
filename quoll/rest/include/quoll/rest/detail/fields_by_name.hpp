@@ -37,14 +37,28 @@
 #ifndef QUOLL_REST_DETAIL_FIELDS_BY_NAME_HPP
 #define QUOLL_REST_DETAIL_FIELDS_BY_NAME_HPP
 
-#include <glaze/core/common.hpp>
+#include <quoll/rest/detail/aggregate_fields.hpp>
+
+#include <optional>
+#include <ranges>
+#include <string>
+#include <type_traits>
 
 namespace quoll::rest::detail {
 
-// A type whose fields for_each_field visits by name: an aggregate Glaze reflects (not an array, a range or a tuple),
-// or a type a glz::meta describes as an object.
+// A type whose fields for_each_field visits by name: an aggregate struct, not an array or a range, of
+// max_aggregate_fields fields at most, each named as it is declared.
 template <class T>
-concept FieldsByName = glz::reflectable<T> || glz::glaze_object_t<T>;
+concept FieldsByName = std::is_class_v<T> && std::is_aggregate_v<T> && !std::ranges::range<T> && fields_readable<T>();
+
+struct fields_by_name_model {
+  std::string text;
+  std::optional<int> page;
+};
+
+static_assert(FieldsByName<fields_by_name_model>);
+static_assert(!FieldsByName<std::string>);
+static_assert(!FieldsByName<int>);
 
 } // namespace quoll::rest::detail
 

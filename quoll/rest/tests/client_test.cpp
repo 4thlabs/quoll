@@ -87,6 +87,9 @@ struct user_filter {
   std::optional<int> limit;
   std::optional<std::string> name;
   std::vector<std::string> tag;
+
+  // On the wire, limit goes by a name that is not a C++ name.
+  using rest_names = rest::names<rest::name<"page-size", &user_filter::limit>>;
 };
 
 struct not_found {
@@ -272,6 +275,22 @@ TEST_CASE("client: braced arguments fill query_params, encoded and decoded", "[r
 
   REQUIRE(listed.front().name == "2|A da&=|a|b+c");
   REQUIRE(run(client.call<users::list>({})).front().name == "-|-");
+}
+
+TEST_CASE("client: a field of query_params goes by the name its rest_names give, both ways", "[rest][client]") {
+  auto router = make_router();
+  std::string target;
+
+  router.use([&target](http::request message, http::next next) -> task<http::response> {
+    target = message.target;
+    co_return co_await next(std::move(message));
+  });
+
+  auto const client = make_client(router);
+
+  REQUIRE(run(client.call<users::list>({.limit = 2})).front().name == "2|-");
+  CHECK(target.find("page-size=2") != std::string::npos);
+  CHECK(target.find("limit") == std::string::npos);
 }
 
 TEST_CASE("client: required parameters of a scalar type reach the server", "[rest][client]") {
