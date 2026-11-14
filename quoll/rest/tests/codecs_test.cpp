@@ -122,6 +122,27 @@ std::vector<std::byte> bytes_of(std::string_view text) {
 
 } // namespace
 
+// Not a change of what is refused, which the validator it replaced refused too: what Quoll's own refuses, wherever it
+// is used.
+TEST_CASE("text: what is not UTF-8 is refused by the text codec, a parameter and a problem's detail", "[rest][codec]") {
+  rest::text_codec const text;
+
+  // An overlong form, a surrogate, past U+10FFFF, cut short.
+  for (std::string_view const wrong : {"\xC0\x80", "\xED\xA0\x80", "\xF4\x90\x80\x80", "caf\xC3"}) {
+    REQUIRE_FALSE(text.decode<std::string>(wrong).has_value());
+    REQUIRE_THROWS_AS((void)text.encode(std::string{wrong}), std::invalid_argument);
+    REQUIRE_FALSE(rest::param_traits<std::string>::from_text(wrong).has_value());
+    REQUIRE(
+        rest::detail::problem_response(http::status::not_found, std::string{wrong}).body.find(wrong) ==
+        std::string::npos
+    );
+  }
+
+  // The last character, four bytes long.
+  REQUIRE(text.decode<std::string>("\xF4\x8F\xBF\xBF") == "\xF4\x8F\xBF\xBF");
+  REQUIRE(rest::param_traits<std::string>::from_text("\xF4\x8F\xBF\xBF") == "\xF4\x8F\xBF\xBF");
+}
+
 TEST_CASE("bytes_codec: bodies as they are, NUL included", "[rest][codec]") {
   rest::bytes_codec const codec;
   std::string_view const raw{"a\0b\xff", 4};
