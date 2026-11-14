@@ -39,8 +39,6 @@
 
 #include <quoll/io/pollable_stream.hpp>
 
-#include <asio/ip/tcp.hpp>
-
 #if defined(_WIN32)
 #include <winsock2.h>
 #else
@@ -54,7 +52,8 @@ namespace quoll::asio::detail {
 // What a read on `socket` would do now, as a poll that does not wait tells, as curl checks a connection: one call,
 // which leaves the socket's mode and what it holds alone. Readable is bytes, the end of the stream or an error; a
 // socket closed here, or a poll that fails, is nothing a request can count on either.
-[[nodiscard]] inline io::read_readiness poll_socket(::asio::ip::tcp::socket &socket) noexcept {
+template <class Socket>
+[[nodiscard]] io::read_readiness poll_socket(Socket &socket) noexcept {
   if (!socket.is_open()) {
     return io::read_readiness::ready;
   }

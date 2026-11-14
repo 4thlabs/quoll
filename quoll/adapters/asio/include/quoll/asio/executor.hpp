@@ -39,11 +39,13 @@
 
 #include <quoll/asio/acceptor.hpp>
 #include <quoll/asio/detail/connect.hpp>
+#include <quoll/asio/detail/connect_local.hpp>
 #include <quoll/asio/detail/loop_services.hpp>
 #include <quoll/asio/detail/offload.hpp>
 #include <quoll/asio/detail/tls_connect.hpp>
 #include <quoll/asio/detail/wait.hpp>
 #include <quoll/asio/tls_acceptor.hpp>
+#include <quoll/asio/unix_acceptor.hpp>
 #include <quoll/async/executor.hpp>
 #include <quoll/async/offers_service.hpp>
 #include <quoll/async/offloader.hpp>
@@ -55,6 +57,8 @@
 #include <quoll/async/work_item.hpp>
 #include <quoll/io/any_listener.hpp>
 #include <quoll/io/any_stream.hpp>
+#include <quoll/io/local_network.hpp>
+#include <quoll/io/local_network_ref.hpp>
 #include <quoll/io/network.hpp>
 #include <quoll/io/network_ref.hpp>
 #if defined(QUOLL_ASIO_TLS)
@@ -138,6 +142,27 @@ public:
 
   /** @brief This executor, as the network of its execution context: valid while it lives (see io::network_ref). */
   [[nodiscard]] io::network_ref query(async::service_tag<io::network_ref>) const { return io::network_ref{*this}; }
+
+#if defined(ASIO_HAS_LOCAL_SOCKETS)
+  /** @brief Opens a connection to the Unix domain socket at `path`, on the execution context. */
+  [[nodiscard]] async::task<io::any_stream> connect_local(std::string path) const {
+    return detail::connect_local(object_executor(), std::move(path));
+  }
+
+  /** @brief Listens on a Unix domain socket bound at `path`, which must not exist yet, on the execution context. */
+  [[nodiscard]] io::any_listener listen_local(std::string path) const {
+    ::asio::local::stream_protocol::endpoint const endpoint{path};
+
+    return io::any_listener{
+        unix_acceptor{::asio::local::stream_protocol::acceptor{object_executor(), endpoint}, socket_strands()}
+    };
+  }
+
+  /** @brief This executor, as the local network of its execution context: valid while it lives. */
+  [[nodiscard]] io::local_network_ref query(async::service_tag<io::local_network_ref>) const {
+    return io::local_network_ref{*this};
+  }
+#endif
 
   /** @brief Completes with true once `duration` has elapsed, with false on a stop request (see async::Timer). */
   [[nodiscard]] async::task<bool> wait_for(std::chrono::nanoseconds duration) const {
@@ -225,6 +250,10 @@ static_assert(async::Offloader<executor<>>);
 static_assert(async::OffersService<executor<>, async::offloader_ref>);
 static_assert(async::OffersService<executor<>, io::network_ref>);
 static_assert(async::OffersService<executor<>, async::timer_ref>);
+#if defined(ASIO_HAS_LOCAL_SOCKETS)
+static_assert(io::LocalNetwork<executor<>>);
+static_assert(async::OffersService<executor<>, io::local_network_ref>);
+#endif
 #if defined(QUOLL_ASIO_TLS)
 static_assert(io::TlsNetwork<executor<>>);
 static_assert(async::OffersService<executor<>, io::tls_network_ref>);

@@ -49,6 +49,7 @@
 #include <asio/ip/tcp.hpp>
 #include <asio/strand.hpp>
 
+#include <concepts>
 #include <memory>
 #include <optional>
 #include <system_error>
@@ -57,23 +58,27 @@
 namespace quoll::asio::detail {
 
 // What an acceptor keeps at a stable address: the listening socket and the cancellation of its accepts.
-struct acceptor_state {
-  explicit acceptor_state(
-      ::asio::ip::tcp::acceptor &&listening, std::optional<::asio::any_io_executor> strands = std::nullopt
+template <class Protocol>
+struct basic_acceptor_state {
+  explicit basic_acceptor_state(
+      typename Protocol::acceptor &&listening, std::optional<::asio::any_io_executor> strands = std::nullopt
   )
       : acceptor(std::move(listening)), cancel(std::make_shared<cancellation>(acceptor.get_executor())),
         socket_strands(std::move(strands)) {}
 
-  ::asio::ip::tcp::acceptor acceptor;
+  typename Protocol::acceptor acceptor;
   std::shared_ptr<cancellation> cancel;
   // What each accepted socket gets a strand of its own from, for a context run by several threads; nothing for the
   // acceptor's own executor.
   std::optional<::asio::any_io_executor> socket_strands;
 };
 
-inline async::task<::asio::ip::tcp::socket> accept_socket(acceptor_state &state) {
+using acceptor_state = basic_acceptor_state<::asio::ip::tcp>;
+
+template <class Protocol>
+async::task<typename Protocol::socket> accept_socket(basic_acceptor_state<Protocol> &state) {
   // Accepted into a socket of its own: the operation's values are default constructible, a socket is not.
-  ::asio::ip::tcp::socket socket{
+  typename Protocol::socket socket{
       state.socket_strands ? ::asio::any_io_executor{::asio::make_strand(*state.socket_strands)}
                            : ::asio::any_io_executor{state.acceptor.get_executor()}
   };
@@ -86,7 +91,10 @@ inline async::task<::asio::ip::tcp::socket> accept_socket(acceptor_state &state)
     throw std::system_error{to_io_error(error), "quoll::asio::acceptor: cannot accept"};
   }
 
-  disable_nagle(socket);
+  if constexpr (std::same_as<Protocol, ::asio::ip::tcp>) {
+    disable_nagle(socket);
+  }
+
   co_return socket;
 }
 

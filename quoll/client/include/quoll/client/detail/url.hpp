@@ -54,11 +54,14 @@ struct origin {
   bool secure = false;
   // What comes before the target of every request: `/v1`, with no slash at its end; empty without one.
   std::string prefix{};
+  // The Unix domain socket a `unix:///var/run/docker.sock` URL names, which the connection goes to rather than to host
+  // and port: `localhost`, which its requests name, as Docker's own client does. Empty for another URL.
+  std::string socket_path{};
 };
 
-// `http[s]://host[:port]`, optionally followed by a path, an IPv6 address in brackets (`http://[::1]:8080`). A path
-// that would not read as itself is refused: a character RFC 3986 does not allow there, an invalid escape, a dot
-// segment, encoded or not, a NUL, or an empty segment.
+// `http[s]://host[:port]`, or `unix:///path/of/a/socket`, optionally followed by a path for the former, an IPv6 address
+// in brackets (`http://[::1]:8080`). A path that would not read as itself is refused: a character RFC 3986 does not
+// allow there, an invalid escape, a dot segment, encoded or not, a NUL, or an empty segment.
 [[nodiscard]] origin parse_url(std::string_view url);
 
 // Where a WebSocket URL leads: its server, and the target of its handshake, path and query.

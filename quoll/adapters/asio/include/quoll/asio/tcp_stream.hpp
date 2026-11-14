@@ -41,6 +41,7 @@
 #include <quoll/asio/detail/io_error.hpp>
 #include <quoll/asio/detail/operation.hpp>
 #include <quoll/asio/detail/poll_socket.hpp>
+#include <quoll/asio/detail/shut_down.hpp>
 #include <quoll/async/context_awaitable.hpp>
 #include <quoll/async/task.hpp>
 #include <quoll/io/half_closable_stream.hpp>
@@ -74,7 +75,7 @@ public:
 
   /** @brief Stops sending: see io::HalfClosableStream. A write after it fails, with `std::errc::broken_pipe` from the
    * socket. */
-  [[nodiscard]] async::task<io::io_result> shutdown_send() { return shut_down(checked_state()); }
+  [[nodiscard]] async::task<io::io_result> shutdown_send() { return detail::shut_down(checked_state()); }
 
   /** @brief What a read started now would do, as a poll of the socket that does not wait tells: see
    * io::PollableStream. */
@@ -82,23 +83,6 @@ public:
 
   /** @brief The socket, for its options, shutdown() and close(). */
   [[nodiscard]] ::asio::ip::tcp::socket &socket() noexcept { return checked_state().stream; }
-
-private:
-  // On the state, bound at the call: the stream may move before its task runs.
-  static async::task<io::io_result> shut_down(detail::stream_state<::asio::ip::tcp::socket> &state) {
-    auto const [error] = co_await detail::make_operation<>(state.write, [&state](auto handler) {
-      std::error_code shutdown;
-
-      if (!state.sending_shut) {
-        state.stream.shutdown(::asio::ip::tcp::socket::shutdown_send, shutdown);
-        state.sending_shut = !shutdown;
-      }
-
-      std::move(handler)(shutdown);
-    });
-
-    co_return io::io_result{detail::to_io_error(error), 0};
-  }
 };
 
 static_assert(async::ContextAwaitable<tcp_stream::read_awaitable>);
