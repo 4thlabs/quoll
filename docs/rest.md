@@ -43,22 +43,34 @@ using api = rest::api<"/api", notes::routes>;
   know, say its format, JSON by default.
 - **The parameters** follow, a type for each `{name}` of the string in its order, the path's then the query's (a
   `std::optional` may be missing, a `std::vector` repeats); then the headers, `rest::header<"X-Device", T>`; then the
-  body, for a `post`, a `put` or a `patch` only, `rest::form<T>` for a form.
+  body, none on a `get` or a `head`, `rest::form<T>` for a form.
 - **The name** of its operation is `rest::operation_id<"notes.get">`, or its method and whole path,
   `GET /api/notes/{id}`.
 - **A group** holds routes, groups and what they share, `rest::security<...>` or a header, which come after a route's own
   arguments; only the api has a prefix.
 
-The server handles each route with a service, as below, or with `rest::on`, the two mixed:
+The server handles each route with a lambda whose first parameter is the route it serves, gathered in a
+`rest::service`, defined once and mounted:
 
 ```cpp
-rest::mount<api>(router, notes_service{},
-                 rest::on<notes::create>([](new_note made) { return note{.id = 7, .text = made.text}; }),
-                 rest::on<notes::remove>([](std::int64_t id) -> async::task<> { co_return; }));
+auto const service = rest::service(
+    [](notes::get, std::int64_t id) -> note {
+      return {.id = id, .text = "found"};
+    },
+    [](notes::create, new_note made) {
+      return note{.id = 7, .text = made.text};
+    },
+    [](notes::remove, std::int64_t id) -> async::task<> {
+      co_return;
+    });
+
+rest::mount<api>(router, service);
 ```
 
-Each route has one handler, of its parameters exactly: one missing, two, or one of a route of another api do not
-compile. A fixed value in a route's query comes later.
+A struct with an `operator()` for each of its routes serves as well, and `mount` takes several, mixed with lambdas.
+Each route has one handler, of its parameters exactly: one missing or two do not compile. An api whose prefix has
+parameters, `rest::api<"/repos/{owner}", ...>`, gives them first, of the types its template says, `std::string` by
+default. A fixed value in a route's query comes later.
 
 ## The contract
 

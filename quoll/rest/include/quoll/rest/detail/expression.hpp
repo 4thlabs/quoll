@@ -41,6 +41,7 @@
 #include <quoll/rest/fixed_string.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <string_view>
 
@@ -55,7 +56,50 @@ template <fixed_string S, std::size_t Begin, std::size_t Length>
   return sliced;
 }
 
-// What a route's expression says, `"/notes/{id}?fields={fields}"`: its path, before '?', and its query, read at
+// The most query parameters a route's expression has.
+inline constexpr std::size_t max_expression_query = 32;
+
+// What a route's expression says, read once: its counts, its flags, where its query's keys are.
+struct expression_summary {
+  http::detail::template_error error = http::detail::template_error::none;
+  std::size_t path_count = 0;
+  std::size_t query_count = 0;
+  bool typed_in_path = false;
+  bool has_fixed_value = false;
+  bool plain_keys = true;
+  bool rest_of_path = false;
+  std::array<std::size_t, max_expression_query> key_begin{};
+  std::array<std::size_t, max_expression_query> key_size{};
+};
+
+[[nodiscard]] consteval expression_summary summarize(std::string_view text) {
+  auto const parsed = http::detail::parse_template(text);
+  expression_summary summary;
+
+  summary.error = parsed.error;
+  summary.query_count = parsed.query.size();
+
+  for (auto const &segment : parsed.segments) {
+    summary.path_count += segment.kind == http::detail::segment_kind::literal ? 0 : 1;
+    summary.typed_in_path =
+        summary.typed_in_path || (segment.kind == http::detail::segment_kind::param && !segment.type.empty());
+  }
+
+  summary.rest_of_path = !parsed.segments.empty() && parsed.segments.back().kind == http::detail::segment_kind::rest;
+
+  for (std::size_t index = 0; index < parsed.query.size() && index < max_expression_query; ++index) {
+    auto const &entry = parsed.query[index];
+
+    summary.has_fixed_value = summary.has_fixed_value || entry.param.empty();
+    summary.plain_keys = summary.plain_keys && entry.key.find_first_of("%+") == std::string_view::npos;
+    summary.key_begin[index] = static_cast<std::size_t>(entry.key.data() - text.data());
+    summary.key_size[index] = entry.key.size();
+  }
+
+  return summary;
+}
+
+// What a route's expression says, `"/notes/{id}?fields={fields}"`: its path, before '?', and its query, read once at
 // compile time by the router's grammar (http::detail::parse_template).
 template <fixed_string Expr>
 struct expression {
@@ -67,66 +111,29 @@ struct expression {
 
   static constexpr std::size_t question = find_question();
   static constexpr auto path = slice_string<Expr, 0, question>();
+  static constexpr expression_summary info = summarize(Expr.view());
 
-  [[nodiscard]] static consteval http::detail::template_error error() {
-    return http::detail::parse_template(Expr.view()).error;
-  }
+  static_assert(
+      info.query_count <= max_expression_query, "quoll::rest: a route's expression has 32 query parameters at most"
+  );
 
-  [[nodiscard]] static consteval std::size_t path_count() {
-    auto const parsed = http::detail::parse_template(Expr.view());
+  [[nodiscard]] static consteval http::detail::template_error error() { return info.error; }
 
-    return static_cast<std::size_t>(std::ranges::count_if(parsed.segments, [](auto const &segment) {
-      return segment.kind != http::detail::segment_kind::literal;
-    }));
-  }
+  [[nodiscard]] static consteval std::size_t path_count() { return info.path_count; }
 
-  [[nodiscard]] static consteval std::size_t query_count() {
-    return http::detail::parse_template(Expr.view()).query.size();
-  }
+  [[nodiscard]] static consteval std::size_t query_count() { return info.query_count; }
 
-  // Whether a parameter of the path says its type, `{id:int64}`, which a route's C++ types say instead; `{x:path}`,
-  // the rest of the path, is the one the string says.
-  [[nodiscard]] static consteval bool typed_in_path() {
-    auto const parsed = http::detail::parse_template(Expr.view());
+  [[nodiscard]] static consteval bool typed_in_path() { return info.typed_in_path; }
 
-    return std::ranges::any_of(parsed.segments, [](auto const &segment) {
-      return segment.kind == http::detail::segment_kind::param && !segment.type.empty();
-    });
-  }
+  [[nodiscard]] static consteval bool rest_of_path() { return info.rest_of_path; }
 
-  // Whether the path ends with `{name:path}`, the rest of it.
-  [[nodiscard]] static consteval bool rest_of_path() {
-    auto const parsed = http::detail::parse_template(Expr.view());
+  [[nodiscard]] static consteval bool has_fixed_value() { return info.has_fixed_value; }
 
-    return !parsed.segments.empty() && parsed.segments.back().kind == http::detail::segment_kind::rest;
-  }
+  [[nodiscard]] static consteval bool plain_keys() { return info.plain_keys; }
 
-  // Whether the query has a fixed `key=value`.
-  [[nodiscard]] static consteval bool has_fixed_value() {
-    auto const parsed = http::detail::parse_template(Expr.view());
+  [[nodiscard]] static consteval std::size_t key_begin(std::size_t index) { return info.key_begin[index]; }
 
-    return std::ranges::any_of(parsed.query, [](auto const &entry) { return entry.param.empty(); });
-  }
-
-  // Whether every key of the query is written plain, with no escape nor '+': as the name of a query<> it is sent.
-  [[nodiscard]] static consteval bool plain_keys() {
-    auto const parsed = http::detail::parse_template(Expr.view());
-
-    return std::ranges::all_of(parsed.query, [](auto const &entry) {
-      return entry.key.find_first_of("%+") == std::string_view::npos;
-    });
-  }
-
-  // Where the key of the `Index`th pair of the query is, in the expression.
-  [[nodiscard]] static consteval std::size_t key_begin(std::size_t index) {
-    auto const parsed = http::detail::parse_template(Expr.view());
-
-    return static_cast<std::size_t>(parsed.query[index].key.data() - Expr.view().data());
-  }
-
-  [[nodiscard]] static consteval std::size_t key_size(std::size_t index) {
-    return http::detail::parse_template(Expr.view()).query[index].key.size();
-  }
+  [[nodiscard]] static consteval std::size_t key_size(std::size_t index) { return info.key_size[index]; }
 };
 
 // The key of the `Index`th pair of the query of `Expr`, as a fixed_string: the name of its query<> part.

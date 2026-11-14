@@ -43,12 +43,14 @@
 #include <quoll/rest/bytes_codec.hpp>
 #include <quoll/rest/detail/category.hpp>
 #include <quoll/rest/detail/expression.hpp>
+#include <quoll/rest/detail/operation_concept.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/events.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/form_codec.hpp>
 #include <quoll/rest/json_codec.hpp>
+#include <quoll/rest/parameter.hpp>
 #include <quoll/rest/query.hpp>
 #include <quoll/rest/returns.hpp>
 #include <quoll/rest/security.hpp>
@@ -56,7 +58,6 @@
 
 #include <concepts>
 #include <cstddef>
-#include <cstdint>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -180,12 +181,6 @@ template <class T>
 struct is_value_type : std::bool_constant<!is_route_option<T>::value> {};
 
 template <class T>
-struct is_security : std::false_type {};
-
-template <class... Schemes>
-struct is_security<security<Schemes...>> : std::true_type {};
-
-template <class T>
 struct is_operation_id : std::false_type {};
 
 template <fixed_string Name>
@@ -257,10 +252,27 @@ template <bool RestOfPath, class PathTypes>
   }
 }
 
+// Whether the body, if the tail has one, is its last type.
+template <class Tail>
+[[nodiscard]] consteval bool body_comes_last() {
+  if constexpr (Tail::size == 0) {
+    return true;
+  } else {
+    return filter_t<is_body_type, Tail>::size == 0 ||
+           is_body_type<std::tuple_element_t<Tail::size - 1, as_tuple_t<Tail>>>::value;
+  }
+}
+
+// Whether each type is a path parameter's: read from text.
+template <class... Types>
+[[nodiscard]] consteval bool all_parameters(type_list<Types...> /*types*/) {
+  return (Parameter<Types> && ...);
+}
+
 // A route of `Method` at `Expr`, answering `Result`, taking `Args`: its parameters' types, its headers, its body. What
 // the REST layer serves and calls, as endpoint<> was: each route is its own type, as it is a struct of its own.
 template <http::verb Method, fixed_string Expr, class Result, class... Args>
-struct operation {
+struct operation : operation_tag {
   using expression_type = expression<Expr>;
 
   static_assert(
@@ -298,18 +310,32 @@ struct operation {
 
   static_assert(bodies::size <= 1, "quoll::rest: a route has one body at most, its last type");
   static_assert(
+      body_comes_last<tail>(), "quoll::rest: a route's body is its last type, after its parameters and headers"
+  );
+  static_assert(
+      all_parameters(path_types{}),
+      "quoll::rest: a path parameter's type is read from text (a Parameter), never a std::optional nor a std::vector, "
+      "which only a query parameter may be"
+  );
+  static_assert(
+      Method != http::verb::head || std::is_void_v<Result>,
+      "quoll::rest: a response to HEAD has no body: its result is void"
+  );
+  static_assert(filter_t<is_operation_id, options>::size <= 1, "quoll::rest: a route has one operation_id<> at most");
+  static_assert(
       rest_of_path_is_text<expression_type::rest_of_path(), path_types>(),
       "quoll::rest: a {name:path} parameter, the rest of the path, is a std::string"
   );
   static_assert(
-      bodies::size == 0 || Method == http::verb::post || Method == http::verb::put || Method == http::verb::patch,
-      "quoll::rest: only a post, a put or a patch has a body"
+      bodies::size == 0 || (Method != http::verb::get && Method != http::verb::head),
+      "quoll::rest: a get or a head has no body, which fetch refuses"
   );
 
   using contract_category = endpoint_category;
   using parts = concat_t<
       typename expression_query_parts<Expr, query_types>::type, filter_t<is_tail_part, tail>,
-      typename body_parts_of<bodies>::type, typename result_parts<Result>::type, filter_t<is_security, options>>;
+      typename body_parts_of<bodies>::type, typename result_parts<Result>::type,
+      filter_t<is_security_part, filter_t<is_tail_part, options>>>;
 
   static constexpr http::verb method = Method;
   static constexpr auto path_value = expression_type::path;
@@ -331,7 +357,7 @@ struct operation {
  * Its result is answered 200, or 204 for `void`; `created<T>` and `accepted<T>` say 201 and 202; `text`, `bytes`,
  * `json<T>` and `lenient_json<T>` say its format, JSON by default. A query parameter is a std::optional to be missing
  * and a std::vector to repeat. `header<"X-Id", T>` adds a header, `security<...>` a scheme, `operation_id<"...">` a
- * name. Each route is its own type, which a service and `rest::on` name.
+ * name. Each route is its own type, which a service names (see service).
  */
 template <fixed_string Expr, class Result, class... Args>
 struct get : detail::operation<http::verb::get, Expr, Result, Args...> {};

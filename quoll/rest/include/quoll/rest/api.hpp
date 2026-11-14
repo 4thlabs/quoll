@@ -39,6 +39,7 @@
 
 #include <quoll/rest/detail/category.hpp>
 #include <quoll/rest/detail/checked_path.hpp>
+#include <quoll/rest/detail/operation_concept.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/route.hpp>
 #include <quoll/rest/detail/routes.hpp>
@@ -47,6 +48,7 @@
 
 #include <concepts>
 #include <string_view>
+#include <type_traits>
 
 namespace quoll::rest {
 
@@ -71,6 +73,37 @@ struct with {
   using members = detail::type_list<Members...>;
 };
 
+namespace detail {
+
+template <class Routes>
+struct holds_operation;
+
+template <class... Routes>
+struct holds_operation<type_list<Routes...>> : std::bool_constant<(Operation<typename Routes::endpoint> || ...)> {};
+
+template <class Member>
+[[nodiscard]] consteval bool no_route_under_a_prefix();
+
+template <class... Members>
+[[nodiscard]] consteval bool no_route_under_a_prefix(type_list<Members...>) {
+  return (no_route_under_a_prefix<Members>() && ...);
+}
+
+// Whether a member api<> with a prefix holds no route, in a group or not: two of its routes and another's, the same
+// declaration, would be one type.
+template <class Member>
+[[nodiscard]] consteval bool no_route_under_a_prefix() {
+  if constexpr (Api<Member>) {
+    return Member::prefix.empty() || !holds_operation<typename Member::routes>::value;
+  } else if constexpr (With<Member>) {
+    return no_route_under_a_prefix(typename Member::members{});
+  } else {
+    return true;
+  }
+}
+
+} // namespace detail
+
 /**
  * @brief Routes and the options they share, with no prefix: `rest::group<rest::security<rest::bearer_auth>, list,
  * get>`. Its members are options (security<>, header<>...), routes and groups, in any order; what it holds comes after
@@ -94,6 +127,12 @@ struct api {
   static_assert(
       ((detail::Api<Members> || detail::Endpoint<Members> || detail::With<Members>) && ...),
       "quoll::rest::api: a member is not an endpoint<>, api<> or with<>"
+  );
+
+  static_assert(
+      (detail::no_route_under_a_prefix<Members>() && ...),
+      "quoll::rest::api: routes go in a rest::group, with no prefix: only the api has one, so that a route's string "
+      "says its whole path"
   );
 
   using contract_category = detail::api_category;

@@ -46,9 +46,9 @@ using quoll::http::verb;
 
 using get_thing = endpoint<"thing", verb::get, "/", query<"page", std::int64_t>, query<"all", bool>>;
 
-struct service {
+struct handlers {
   // Each converts to the other: `page` would come as `all`.
   void operator()(get_thing, bool, std::int64_t) const {}
 };
 
-void mount_it(quoll::http::router &router) { mount<api<"", get_thing>>(router, service{}); }
+void mount_it(quoll::http::router &router) { mount<api<"", get_thing>>(router, handlers{}); }

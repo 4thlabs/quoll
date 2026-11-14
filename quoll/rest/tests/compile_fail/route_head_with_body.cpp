@@ -34,9 +34,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::on: names a route of another api
+// expect: quoll::rest: a response to HEAD has no body: its result is void
 //
-// A handler of a route the api does not have.
+// A HEAD whose result has a body, which no response to HEAD carries.
 
 #include <quoll/http/router.hpp>
 #include <quoll/rest.hpp>
@@ -51,13 +51,4 @@ struct note {
   std::int64_t id = 0;
 };
 
-using get = rest::get<"/notes/{id}", note, std::int64_t>;
-using other = rest::get<"/tags/{id}", note, std::int64_t>;
-using api = rest::api<"/api", get>;
-
-void serve(quoll::http::router &router) {
-  rest::mount<api>(
-      router, rest::on<get>([](std::int64_t id) { return note{.id = id}; }),
-      rest::on<other>([](std::int64_t id) { return note{.id = id}; })
-  );
-}
+inline constexpr rest::head<"/notes", note> route{};

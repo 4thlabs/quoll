@@ -52,12 +52,12 @@ using quoll::http::verb;
 
 using feed = endpoint<"feed", verb::get, "/", events<std::string, text_codec>>;
 
-struct service {
+struct handlers {
   quoll::async::task<> operator()(feed, event_sink<std::string, text_codec> & /*events*/) const { co_return; }
 };
 
 void mounted() {
   quoll::http::router router;
 
-  mount<api<"", with<returns<std::string, status::conflict, text_codec>, feed>>>(router, service{});
+  mount<api<"", with<returns<std::string, status::conflict, text_codec>, feed>>>(router, handlers{});
 }

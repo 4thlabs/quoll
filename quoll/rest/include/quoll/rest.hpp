@@ -66,6 +66,7 @@
 #include <quoll/rest/route.hpp>
 #include <quoll/rest/scoped_client.hpp>
 #include <quoll/rest/security.hpp>
+#include <quoll/rest/service.hpp>
 #include <quoll/rest/text_codec.hpp>
 #include <quoll/rest/unexpected_response.hpp>
 #include <quoll/rest/validators.hpp>

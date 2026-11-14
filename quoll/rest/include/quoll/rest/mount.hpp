@@ -39,15 +39,14 @@
 
 #include <quoll/http/request.hpp>
 #include <quoll/http/router.hpp>
+#include <quoll/rest/detail/handled_route.hpp>
 #include <quoll/rest/detail/routes.hpp>
 #include <quoll/rest/detail/serve.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/validators.hpp>
 
 #include <array>
-#include <concepts>
 #include <cstddef>
-#include <functional>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -117,57 +116,10 @@ template <class... Args>
   }(std::make_index_sequence<layout::service_count>{});
 }
 
-} // namespace detail
-
-/**
- * @brief The handler of one route, for mount(): `rest::on<notes::get>([](std::int64_t id) -> note { ... })`, its
- * parameters those of the route, exactly, as a service's.
- */
-template <class Route, class F>
-class on_handler {
-public:
-  using route_type = Route;
-
-  explicit on_handler(F handler) : handler_(std::move(handler)) {}
-
-  template <class... Arguments>
-    requires std::invocable<F &, Arguments...>
-  decltype(auto) operator()(Route /*route*/, Arguments &&...arguments) {
-    return std::invoke(handler_, std::forward<Arguments>(arguments)...);
-  }
-
-private:
-  F handler_;
-};
-
-/** @brief The handler of the route `Route`, for mount(): see on_handler. */
-template <class Route, class F>
-[[nodiscard]] on_handler<Route, std::decay_t<F>> on(F &&handler) {
-  return on_handler<Route, std::decay_t<F>>{std::forward<F>(handler)};
-}
-
-namespace detail {
-
-template <class T>
-struct handled_route {
-  using type = void;
-};
-
-template <class Route, class F>
-struct handled_route<on_handler<Route, F>> {
-  using type = Route;
-};
-
-// Whether a handler of mount() names a route of `Api`: any service does, which cannot be listed.
-template <class Api, class Service>
-[[nodiscard]] consteval bool names_a_route_of() {
-  using route = typename handled_route<Service>::type;
-
-  if constexpr (std::is_void_v<route>) {
-    return true;
-  } else {
-    return matching_routes<route, typename Api::routes>::type::size == 1;
-  }
+// Whether each route these handlers take is one of `Routes`: a handler of another api would be served by nothing.
+template <class Routes, class... Handled>
+[[nodiscard]] consteval bool handles_own_routes(type_list<Handled...>) {
+  return ((std::is_void_v<Handled> || matching_routes<Handled, Routes>::type::size != 0) && ...);
 }
 
 } // namespace detail
@@ -206,7 +158,10 @@ template <class Api, class Service>
 template <class Api, class... Args>
 void mount(http::router &router, Args &&...args) {
   static_assert(
-      (detail::names_a_route_of<Api, std::decay_t<Args>>() && ...), "quoll::rest::on: names a route of another api"
+      detail::handles_own_routes<typename Api::routes>(
+          detail::concat_t<detail::type_list<>, typename detail::handled_routes<std::decay_t<Args>>::type...>{}
+      ),
+      "quoll::rest::mount: a handler takes a route this api does not have"
   );
 
   auto state = detail::make_mounted(std::forward<Args>(args)...);

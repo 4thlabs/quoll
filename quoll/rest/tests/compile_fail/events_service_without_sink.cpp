@@ -49,12 +49,12 @@ using quoll::http::verb;
 
 using feed = endpoint<"feed", verb::get, "/", events<std::string, text_codec>>;
 
-struct service {
+struct handlers {
   [[nodiscard]] std::string operator()(feed) const { return "one"; }
 };
 
 void mounted() {
   quoll::http::router router;
 
-  mount<api<"", feed>>(router, service{});
+  mount<api<"", feed>>(router, handlers{});
 }

@@ -51,8 +51,8 @@ struct thing {
 
 using got = endpoint<"got", verb::get, "/", returns<thing>>;
 
-struct service {
+struct handlers {
   void operator()(got) const {}
 };
 
-void mount_it(quoll::http::router &router) { mount<api<"", got>>(router, service{}); }
+void mount_it(quoll::http::router &router) { mount<api<"", got>>(router, handlers{}); }

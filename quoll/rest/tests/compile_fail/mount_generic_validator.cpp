@@ -46,14 +46,14 @@ using quoll::http::verb;
 
 using secured = endpoint<"secured", verb::get, "/secured", security<bearer_auth>>;
 
-struct service {
+struct handlers {
   void operator()(secured) const {}
 };
 
 // The first would let in what the second refuses.
 void mount_it(quoll::http::router &router) {
   mount<api<"", secured>>(
-      router, service{},
+      router, handlers{},
       validators([](auto const &) { return true; }, [](credential<bearer_auth> const &) { return false; })
   );
 }

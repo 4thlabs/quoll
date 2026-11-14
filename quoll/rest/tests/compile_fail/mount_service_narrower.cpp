@@ -46,9 +46,9 @@ using quoll::http::verb;
 
 using get_thing = endpoint<"thing", verb::get, "/{id:int64}">;
 
-struct service {
+struct handlers {
   // An id past an int would reach it cut short.
   void operator()(get_thing, int) const {}
 };
 
-void mount_it(quoll::http::router &router) { mount<api<"", get_thing>>(router, service{}); }
+void mount_it(quoll::http::router &router) { mount<api<"", get_thing>>(router, handlers{}); }

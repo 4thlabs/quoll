@@ -52,8 +52,8 @@ struct thing {
 using get_thing = endpoint<"thing", verb::get, "/", returns<thing>>;
 using secured = endpoint<"secured", verb::get, "/secured", security<bearer_auth>>;
 
-struct service {
+struct handlers {
   void operator()(secured) const {}
 };
 
-void mount_it(quoll::http::router &router) { mount<api<"", secured>>(router, service{}, validators(), validators()); }
+void mount_it(quoll::http::router &router) { mount<api<"", secured>>(router, handlers{}, validators(), validators()); }

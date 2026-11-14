@@ -35,6 +35,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <quoll/async/task.hpp>
+#include <quoll/http/http_error.hpp>
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
@@ -82,7 +83,7 @@ using routes = rest::group<list, get, create, remove, ping>;
 
 using api = rest::api<"/api", notes::routes>;
 
-// A service for some routes, rest::on for the others.
+// A service for some routes, a lambda for each of the others, its first parameter the route it serves.
 struct service {
   std::vector<note> operator()(notes::list, std::optional<std::string> contains, std::optional<int> page) const {
     return {{.id = page.value_or(0), .text = contains.value_or("-")}};
@@ -95,9 +96,8 @@ http::router make_router() {
   http::router router;
 
   rest::mount<api>(
-      router, service{}, rest::on<notes::create>([](new_note made) { return note{.id = 7, .text = made.text}; }),
-      rest::on<notes::remove>([](std::int64_t) -> task<> { co_return; }),
-      rest::on<notes::ping>([] { return std::string{"pong"}; })
+      router, service{}, [](notes::create, new_note made) { return note{.id = 7, .text = made.text}; },
+      [](notes::remove, std::int64_t) -> task<> { co_return; }, [](notes::ping) { return std::string{"pong"}; }
   );
   return router;
 }
@@ -113,6 +113,8 @@ static_assert(std::same_as<
               api::route<notes::list>::arguments, std::tuple<std::optional<std::string>, std::optional<int>>>);
 static_assert(api::route<notes::get>::name == "GET /api/notes/{id}");
 static_assert(api::route<notes::ping>::name == "notes.ping");
+static_assert(quoll::rest::detail::Operation<notes::get>);
+static_assert(!quoll::rest::detail::Operation<rest::endpoint<"n", http::verb::get, "/n">>);
 // Two routes of two paths are two types, whatever else they share.
 static_assert(!std::same_as<notes::get, rest::get<"/tags/{id}", note, std::int64_t>>);
 
@@ -141,12 +143,84 @@ using more_api = rest::api<"", more::routes>;
 http::router make_more_router() {
   http::router router;
 
-  rest::mount<more_api>(
-      router, rest::on<more::sign_in>([](std::optional<std::string> device, login given) {
+  // A service defined once, its handlers each taking its route first.
+  auto const handlers = rest::service(
+      [](more::sign_in, std::optional<std::string> device, login given) {
         return token{.value = given.user + "/" + device.value_or("-")};
-      }),
-      rest::on<more::file>([](std::string rest) { return rest; }),
-      rest::on<more::lenient>([] { return token{.value = "kept"}; })
+      },
+      [](more::file, std::string rest) { return rest; }, [](more::lenient) { return token{.value = "kept"}; }
+  );
+
+  rest::mount<more_api>(router, handlers);
+  return router;
+}
+
+// Under a prefix with parameters, the others' methods, statuses and formats.
+namespace repos {
+
+using update = rest::put<"/notes/{id}", note, std::int64_t, new_note>;
+using touch = rest::patch<"/notes/{id}", rest::accepted<note>, std::int64_t, rest::json<new_note>>;
+using exists = rest::head<"/notes/{id}", void, std::int64_t>;
+using allowed = rest::options<"/notes", void>;
+using forget = rest::del<"/notes", void, std::vector<std::int64_t>>;
+using raw = rest::get<"/raw", rest::bytes>;
+
+} // namespace repos
+
+using repos_api = rest::api<
+    "/repos/{owner}",
+    rest::group<repos::update, repos::touch, repos::exists, repos::allowed, repos::raw, repos::forget>>;
+
+// The prefix's parameter first, as its template says it, then the route's own.
+static_assert(std::same_as<
+              repos_api::route<repos::update>::arguments, std::tuple<std::string, std::int64_t, new_note>>);
+
+http::router make_repos_router() {
+  http::router router;
+
+  rest::mount<repos_api>(
+      router, rest::service(
+                  [](repos::update, std::string owner, std::int64_t id, new_note changed) {
+                    return note{.id = id, .text = owner + ":" + changed.text};
+                  },
+                  [](repos::touch, std::string owner, std::int64_t id, new_note changed) {
+                    return note{.id = id, .text = owner + "~" + changed.text};
+                  },
+                  [](repos::exists, std::string, std::int64_t) {}, [](repos::allowed, std::string) {},
+                  [](repos::raw, std::string) { return std::vector<std::byte>{std::byte{1}, std::byte{2}}; },
+                  // A DELETE with a body, as some APIs take one.
+                  [](repos::forget, std::string, std::vector<std::int64_t> ids) {
+                    if (ids != std::vector<std::int64_t>{1, 2}) {
+                      throw http::http_error{http::status::bad_request, "wrong ids"};
+                    }
+                  }
+              )
+  );
+  return router;
+}
+
+// A group's security for its routes, and a query parameter that repeats.
+namespace locked {
+
+using tagged = rest::get<"/tagged?tag={tag}", std::vector<std::string>, std::vector<std::string>>;
+using open = rest::get<"/open", rest::text>;
+
+using routes = rest::group<rest::group<rest::security<rest::bearer_auth>, tagged>, open>;
+
+} // namespace locked
+
+using locked_api = rest::api<"", locked::routes>;
+
+http::router make_locked_router() {
+  http::router router;
+
+  rest::mount<locked_api>(
+      router,
+      rest::service(
+          [](locked::tagged, std::vector<std::string> tags) { return tags; },
+          [](locked::open) { return std::string{"open"}; }
+      ),
+      rest::validators([](rest::credential<rest::bearer_auth> const &given) { return given.value == "valid"; })
   );
   return router;
 }
@@ -154,6 +228,64 @@ http::router make_more_router() {
 } // namespace route_test
 
 using namespace route_test;
+
+TEST_CASE("route: a group's security, and a query parameter that repeats", "[rest][route]") {
+  auto const router = make_locked_router();
+  rest::client<locked_api, http::local_transport> client{http::local_transport{router}};
+
+  CHECK(run(client.call<locked::open>()) == "open");
+
+  http::request refused;
+
+  refused.method = http::verb::get;
+  refused.target = "/tagged?tag=a";
+
+  CHECK(quoll::test::run(router.dispatch(std::move(refused))).value().status == http::status::unauthorized);
+
+  client.credentials<rest::bearer_auth>("valid");
+
+  CHECK(run(client.call<locked::tagged>(std::vector<std::string>{"a", "b"})) == std::vector<std::string>{"a", "b"});
+}
+
+TEST_CASE("route: under a prefix with parameters, put, patch, head, options, accepted and bytes", "[rest][route]") {
+  auto const router = make_repos_router();
+  rest::client<repos_api, http::local_transport> client{http::local_transport{router}};
+
+  CHECK(run(client.call<repos::update>(std::string{"ada"}, 3, new_note{.text = "tea"})).text == "ada:tea");
+  CHECK(run(client.call<repos::touch>(std::string{"ada"}, 4, new_note{.text = "milk"})).text == "ada~milk");
+  CHECK(run(client.call<repos::raw>(std::string{"ada"})).size() == 2);
+
+  http::request patched;
+
+  patched.method = http::verb::patch;
+  patched.target = "/repos/ada/notes/4";
+  patched.body = R"({"text":"x"})";
+  patched.fields.add("Content-Type", "application/json");
+
+  CHECK(quoll::test::run(router.dispatch(std::move(patched))).value().status == http::status::accepted);
+
+  http::request asked;
+
+  asked.method = http::verb::head;
+  asked.target = "/repos/ada/notes/4";
+
+  CHECK(quoll::test::run(router.dispatch(std::move(asked))).value().status == http::status::no_content);
+
+  http::request options;
+
+  options.method = http::verb::options;
+  options.target = "/repos/ada/notes";
+
+  CHECK(quoll::test::run(router.dispatch(std::move(options))).value().status == http::status::no_content);
+
+  // The closure outlives its task, which runs to its end in this expression.
+  auto const forgotten = quoll::test::run([&]() -> task<bool> {
+    co_await client.call<repos::forget>(std::string{"ada"}, std::vector<std::int64_t>{1, 2});
+    co_return true;
+  }());
+
+  CHECK(forgotten == std::optional<bool>{true});
+}
 
 TEST_CASE("route: a header, a form, nested groups and the rest of a path", "[rest][route]") {
   auto const router = make_more_router();

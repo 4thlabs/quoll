@@ -175,6 +175,16 @@ template <http::verb Method>
 template <http::verb Method, fixed_string Path>
 inline constexpr auto default_operation_name = join_strings<method_string<Method>(), " ", Path>();
 
+// Its own name, or the one above, built only for an operation with none.
+template <class Endpoint, fixed_string Path>
+[[nodiscard]] consteval std::string_view operation_name_of() {
+  if constexpr (Endpoint::name.empty()) {
+    return default_operation_name<Endpoint::method, Path>.view();
+  } else {
+    return Endpoint::name;
+  }
+}
+
 // An endpoint as an api serves it: its full path (the prefixes of the apis around it, then its own path) and the
 // parts inherited from the with<> around it, which come after its own.
 template <class Endpoint, fixed_string Path, class Inherited>
@@ -230,8 +240,7 @@ struct route {
   static constexpr auto path_value = Path;
   static constexpr std::string_view path = path_value.view();
   // The name and the method of the operation, which the router, the client and the checks of an api read.
-  static constexpr std::string_view name =
-      Endpoint::name.empty() ? default_operation_name<Endpoint::method, Path>.view() : Endpoint::name;
+  static constexpr std::string_view name = operation_name_of<Endpoint, Path>();
   static constexpr http::verb method = Endpoint::method;
 };
 
