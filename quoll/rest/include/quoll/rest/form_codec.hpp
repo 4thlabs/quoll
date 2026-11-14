@@ -57,7 +57,8 @@ namespace quoll::rest {
  * a query parameter is (see param_traits). A vector repeats its name, an optional without a value is left out, and
  * anything else is required, once. What a browser's form sends, and many APIs take (an OAuth token endpoint).
  *
- * The struct is an aggregate, or a type a `glz::meta` describes as an object, which also renames its fields. A form
+ * The struct is an aggregate of 64 fields at most, with no base class, each field with a default value and none a
+ * reference, its fields named as they are declared or as its `rest_names` give (see names). A form
  * of more than max_fields `name=value` pairs is refused before it is parsed, as a body may be far larger than a query.
  *
  * @code

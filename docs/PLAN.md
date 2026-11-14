@@ -661,10 +661,11 @@ changes only what the harness shows. Candidates:
   reliable over time: see [step 1](#step-1-compiled-libraries-done).
 - OpenAPI (2026-11-04) is an optional, later output of the REST DSL, no longer the contract of the UI.
 - JSON: [Glaze](https://github.com/stephenberry/glaze) (2026-11-03), header-only, fetched by CPM with a pinned version.
-  Its aggregate reflection also serves the REST DSL (see [REST DSL](#rest-dsl-contract-server-client)).
+  It is to serve JSON only, behind `json_codec` (#182): the fields of `query_params<>` and of a form are read by a
+  reflection of Quoll's own (2026-11-14); enums, the contexts and the widgets' JSON follow.
 - REST DSL (2026-11-03, see [REST DSL](#rest-dsl-contract-server-client)): one `endpoint<"name", method, "/path", parts...>`
   alias per operation, nested `api<>`, `with<>`, overload set services, `call` / `try_call` / `scope` clients, one typed
-  response per status, `query_params<Struct>`, Glaze's aggregate reflection instead of macros, a client over
+  response per status, `query_params<Struct>`, a reflection of aggregates instead of macros, a client over
   `http::HttpTransport`, routes in the sans-IO router. A contract stands alone: clients of third-party APIs need no Quoll
   server.
 - Prior art: the `claude/project-thread-*` branches of the Puffin repo (earlier `async`, `webkit`, `rest`) were removed
@@ -922,12 +923,11 @@ would choose:
   such documents commonly hold.
 
 **Types, JSON and schemas.** Bodies are plain aggregates, read and written by
-[Glaze](https://github.com/stephenberry/glaze). Its aggregate reflection gives their fields with no macro and no
-declaration, and the DSL uses the same reflection for the fields of `query_params<Struct>` and for the JSON Schema
-of `components/schemas`.
-
-- A `glz::meta<T>` specialization renames fields (`created_at`, reserved words), maps enums to names, and describes
-  the types that are not aggregates: a class with invariants, a third-party type.
+[Glaze](https://github.com/stephenberry/glaze), which describes them as JSON: its aggregate reflection gives their
+fields with no macro and no declaration, and a `glz::meta<T>` renames a JSON field (`stargazers_count`), maps an enum
+to its JSON names, and describes a type that is not an aggregate. The fields of `query_params<Struct>` and of a form
+are read by a reflection of Quoll's own, by their declared names (2026-11-14, #182): an aggregate of 64 fields at most,
+with no base class, a name that is not a C++ name given by the struct's `rest_names`, for those fields only.
 - Decoding errors come back as values (Glaze's `expected`): the server answers 400 with them, and `try_call` reports
   them.
 - The client skips unknown keys when it decodes the responses of a third-party API (`error_on_unknown_keys`
