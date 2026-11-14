@@ -34,20 +34,15 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::endpoint: a part is not query<>
+// expect: quoll::rest::api: the route is not in this api
 //
-// An endpoint part that is not a part.
+// The route of an operation the api does not hold.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-struct thing {
-  int value = 0;
-};
+using first = rest::get<"/a", void>;
+using second = rest::get<"/b", void>;
 
-using e = endpoint<"e", verb::get, "/", thing>;
-
-e const instance{};
+inline constexpr rest::api<"", rest::group<first>>::route<second> instance{};

@@ -34,21 +34,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::with: the endpoint gets more than one body<>
+// expect: quoll::rest::operation_id: the name is empty
 //
-// A with<> adding a body to an endpoint that has one.
+// An operation named nothing.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-struct thing {
-  int value = 0;
-};
+using route = rest::get<"/", void, rest::operation_id<"">>;
 
-using e = endpoint<"e", verb::post, "/", body<thing>>;
-using route = api<"", with<body<int>, e>>::route<e>;
-
-route const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

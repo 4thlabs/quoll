@@ -43,14 +43,10 @@
 #include <quoll/http/status.hpp>
 #include <quoll/rest/detail/arguments.hpp>
 #include <quoll/rest/detail/part.hpp>
-#include <quoll/rest/detail/response_value.hpp>
+#include <quoll/rest/detail/refusal.hpp>
 #include <quoll/rest/detail/type_list.hpp>
-#include <quoll/rest/reply.hpp>
-#include <quoll/rest/unexpected_response.hpp>
 
-#include <array>
 #include <expected>
-#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -58,15 +54,10 @@
 namespace quoll::rest::detail {
 
 template <class Endpoint>
-inline constexpr bool has_responses = own_responses<Endpoint>::size > 0;
+inline constexpr bool has_result = own_responses<Endpoint>::size > 0;
 
-// What try_call produces: one of the endpoint's responses, or the 204 of an endpoint without returns<>.
-template <class Endpoint>
-using call_result = std::conditional_t<
-    has_responses<Endpoint>, std::expected<reply<Endpoint>, unexpected_response>,
-    std::expected<void, unexpected_response>>;
-
-template <class Endpoint, bool = has_responses<Endpoint>>
+// What a route answers on success: its result's value, or nothing for a void one.
+template <class Endpoint, bool = has_result<Endpoint>>
 struct call_value {
   using type = void;
 };
@@ -76,111 +67,74 @@ struct call_value<Endpoint, true> {
   using type = typename front<own_responses<Endpoint>>::type::type;
 };
 
-template <class... Responses>
-[[nodiscard]] constexpr bool has_status(type_list<Responses...>, [[maybe_unused]] http::status status) noexcept {
-  return ((Responses::status == status) || ...);
+// What try_call produces: the result's value, or the http::http_error received.
+template <class Endpoint>
+using call_result = std::expected<typename call_value<Endpoint>::type, http::http_error>;
+
+// Whether `status` is a success, 2xx: a route's own (200, 201, 202, 204 for a void one) or another a server answers for
+// it, as a third-party API's 200 to a HEAD or to a DELETE with nothing to say.
+[[nodiscard]] constexpr bool is_success(http::status status) noexcept {
+  auto const code = static_cast<int>(status);
+
+  return code >= 200 && code < 300;
 }
 
-// Why a response of a route's endpoint is not one reply<Endpoint> holds.
+// The value of `response`, or why it is none: a status that is no success, or a body that does not decode. A void
+// result reads no body.
 template <class Route>
-[[nodiscard]] std::string unexpected_reason(http::status status) {
-  auto const code = std::to_string(static_cast<int>(status));
+[[nodiscard]] std::expected<typename call_value<typename Route::endpoint>::type, refusal>
+read_response(http::response response) {
+  using value_type = typename call_value<typename Route::endpoint>::type;
 
-  if (has_status(typename Route::responses{}, status)) {
-    return "status " + code + " is declared by a with<> around the endpoint: reply<Endpoint> does not hold it";
+  if (!is_success(response.status)) {
+    auto reason = "status " + std::to_string(static_cast<int>(response.status));
+
+    return std::unexpected{refusal{std::move(response), std::move(reason)}};
   }
 
-  return "undeclared status " + code;
-}
-
-// The declared response `Response`, if the response has its status. The response is moved into an error only.
-template <class Endpoint, class Response>
-void read_declared(http::response &response, std::optional<call_result<Endpoint>> &result) {
-  if (result || response.status != Response::status) {
-    return;
-  }
-
-  if constexpr (std::is_void_v<typename Response::type>) {
-    result.emplace(reply<Endpoint>{respond<Response::status>()});
+  if constexpr (std::is_void_v<value_type>) {
+    return {};
   } else {
-    typename Response::codec const codec{};
+    using result = typename front<own_responses<typename Route::endpoint>>::type;
 
-    if (auto value = codec.template decode<typename Response::type>(response.body)) {
-      result.emplace(reply<Endpoint>{respond<Response::status>(std::move(*value))});
+    typename result::codec const codec{};
+
+    if (auto value = codec.template decode<value_type>(response.body)) {
+      return std::move(*value);
     } else {
       auto reason = "invalid body: " + value.error().message;
 
-      result.emplace(std::unexpected{unexpected_response{std::move(response), std::move(reason)}});
+      return std::unexpected{refusal{std::move(response), std::move(reason)}};
     }
   }
 }
-
-template <class Route>
-[[nodiscard]] call_result<typename Route::endpoint> read_response(http::response response) {
-  using endpoint = typename Route::endpoint;
-
-  if constexpr (has_responses<endpoint>) {
-    std::optional<call_result<endpoint>> result;
-
-    [&]<class... Response>(type_list<Response...>) {
-      (read_declared<endpoint, Response>(response, result), ...);
-    }(own_responses<endpoint>{});
-
-    if (result) {
-      return std::move(*result);
-    }
-  } else if (response.status == http::status::no_content) {
-    return {};
-  }
-
-  auto reason = unexpected_reason<Route>(response.status);
-
-  return std::unexpected{unexpected_response{std::move(response), std::move(reason)}};
-}
-
-// The detail of a failed call: the problem's when the server sent one, else why the response is unexpected.
-[[nodiscard]] std::string failure_detail(unexpected_response const &failure);
-
-[[noreturn]] void fail(unexpected_response failure);
 
 template <class Route>
 async::task<call_result<typename Route::endpoint>> receive(async::task<http::response> sending) {
-  co_return read_response<Route>(co_await std::move(sending));
+  auto read = read_response<Route>(co_await std::move(sending));
+
+  if (!read) {
+    co_return std::unexpected{received_error(std::move(read.error()))};
+  }
+
+  if constexpr (std::is_void_v<typename call_value<typename Route::endpoint>::type>) {
+    co_return call_result<typename Route::endpoint>{};
+  } else {
+    co_return std::move(*read);
+  }
 }
 
-// What call produces: the body of the first declared response, or nothing; any other outcome throws an http::http_error
-// received.
+// What call produces: the result's value, or nothing; any other outcome throws an http::http_error received.
 template <class Route>
 async::task<typename call_value<typename Route::endpoint>::type> receive_value(async::task<http::response> sending) {
-  using endpoint = typename Route::endpoint;
+  auto read = read_response<Route>(co_await std::move(sending));
 
-  auto response = co_await std::move(sending);
+  if (!read) {
+    fail(std::move(read.error()));
+  }
 
-  if constexpr (has_responses<endpoint>) {
-    using first = typename front<own_responses<endpoint>>::type;
-
-    if (response.status != first::status) {
-      auto reason =
-          has_status(own_responses<endpoint>{}, response.status)
-              ? "declared response " + std::to_string(static_cast<int>(response.status)) + ": read it with try_call"
-              : unexpected_reason<Route>(response.status);
-
-      fail(unexpected_response{std::move(response), std::move(reason)});
-    }
-
-    auto result = read_response<Route>(std::move(response));
-
-    if (!result) {
-      fail(std::move(result.error()));
-    }
-
-    if constexpr (!std::is_void_v<typename first::type>) {
-      co_return std::move(result->template get<first::status>());
-    }
-  } else {
-    if (auto result = read_response<Route>(std::move(response)); !result) {
-      fail(std::move(result.error()));
-    }
+  if constexpr (!std::is_void_v<typename call_value<typename Route::endpoint>::type>) {
+    co_return std::move(*read);
   }
 }
 

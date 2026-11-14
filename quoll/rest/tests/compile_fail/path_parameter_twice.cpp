@@ -34,22 +34,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::returns: a 204, 205 or 304 has no body
+// expect: quoll::rest: two path parameters have the same name
 //
-// A 204 with a body.
+// Two path parameters of one name: a handler could not tell them apart.
 
-#include <quoll/http/status.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::status;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-struct thing {
-  int value = 0;
-};
+using route = rest::get<"/{id}/{id}", void>;
 
-using made = endpoint<"created", verb::post, "/", returns<thing, status::no_content>>;
-
-api<"", made> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

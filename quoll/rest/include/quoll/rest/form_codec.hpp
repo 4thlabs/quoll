@@ -67,7 +67,7 @@ namespace quoll::rest {
  *   std::string password;
  * };
  *
- * using sign_in = rest::endpoint<"sign_in", verb::post, "/login", rest::body<login, rest::form_codec>>;
+ * using sign_in = rest::post<"/login", token, rest::form<login>>;
  * @endcode
  */
 class form_codec {

@@ -124,7 +124,7 @@ static_assert(std::same_as<
 static_assert(api::route<notes::get>::name == "GET /api/notes/{id}");
 static_assert(api::route<notes::ping>::name == "notes.ping");
 static_assert(quoll::rest::detail::Operation<notes::get>);
-static_assert(!quoll::rest::detail::Operation<rest::endpoint<"n", http::verb::get, "/n">>);
+static_assert(!quoll::rest::detail::Operation<note>);
 // Two routes of two paths are two types, whatever else they share.
 static_assert(!std::same_as<notes::get, rest::get<"/tags/{id}", note, std::int64_t>>);
 
@@ -265,9 +265,52 @@ http::router make_lenient_router() {
   return router;
 }
 
+// A server answering every request with the same status and body, as a third-party API may.
+struct canned_transport {
+  http::status status = http::status::ok;
+  std::string body;
+
+  [[nodiscard]] task<http::response> send(http::request) const { return answering(status, body); }
+
+  [[nodiscard]] static task<http::response> answering(http::status status, std::string body) {
+    http::response answer;
+
+    answer.status = status;
+    answer.body = std::move(body);
+    co_return answer;
+  }
+};
+
+namespace third_party {
+
+using exists = rest::head<"/notes/{id}", void, std::int64_t>;
+using forget = rest::del<"/notes/{id}", void, std::int64_t>;
+using create = rest::post<"/notes", rest::created<note>, new_note>;
+
+using api = rest::api<"", rest::group<exists, forget, create>>;
+
+} // namespace third_party
+
 } // namespace route_test
 
 using namespace route_test;
+
+TEST_CASE("route: any 2xx is a route's success, its body read for a result, none for a void one", "[rest][route]") {
+  rest::client<third_party::api, canned_transport> const ok{canned_transport{http::status::ok, R"({"id":4,"text":"x"})"}
+  };
+
+  // A HEAD answered 200, as GET would be; a DELETE answered 200 with a body it has no use for.
+  CHECK(quoll::test::run(ok.try_call<third_party::exists>(4)).value().has_value());
+  CHECK(quoll::test::run(ok.try_call<third_party::forget>(4)).value().has_value());
+  // A created note answered 200 rather than 201: still its value.
+  CHECK(run(ok.call<third_party::create>(new_note{.text = "x"})).id == 4);
+
+  rest::client<third_party::api, canned_transport> const moved{canned_transport{http::status::found, ""}};
+  auto const refused = quoll::test::run(moved.try_call<third_party::exists>(4)).value();
+
+  REQUIRE_FALSE(refused.has_value());
+  CHECK(refused.error().status() == http::status::found);
+}
 
 TEST_CASE("route: a result read leniently skips the fields its type does not know", "[rest][route]") {
   auto const router = make_lenient_router();

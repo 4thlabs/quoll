@@ -34,30 +34,24 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::endpoint: an endpoint with events<> declares no other success, only error responses
+// expect: quoll::rest: only a post, a put or a patch has a body
 //
-// A redirect the service could not answer: an http_error answers errors only.
+// An OPTIONS with a body.
 
-#include <quoll/async/task.hpp>
-#include <quoll/http/router.hpp>
-#include <quoll/http/status.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
+#include <cstdint>
+#include <optional>
 #include <string>
 
-using namespace quoll::rest;
-using quoll::http::status;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using feed = endpoint<"feed", verb::get, "/", events<std::string, text_codec>, returns<void, status::see_other>>;
-
-struct handlers {
-  quoll::async::task<> operator()(feed, event_sink<std::string, text_codec> & /*events*/) const { co_return; }
+struct note {
+  std::int64_t id = 0;
 };
 
-void mounted() {
-  quoll::http::router router;
+struct filter {
+  std::optional<int> page;
+};
 
-  mount<api<"", feed>>(router, handlers{});
-}
+inline constexpr rest::options<"/notes", void, note> route{};

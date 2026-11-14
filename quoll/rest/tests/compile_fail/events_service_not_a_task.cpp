@@ -34,27 +34,23 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::mount: the service of an endpoint with events<> returns a task<>
+// expect: quoll::rest::mount: the handler of a route with events<> returns a task<>
 //
-// A service that sends nothing it awaits.
+// A handler that sends nothing it awaits.
 
 #include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
 #include <string>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using feed = endpoint<"feed", verb::get, "/", events<std::string, text_codec>>;
-
-struct handlers {
-  void operator()(feed, event_sink<std::string, text_codec> & /*events*/) const {}
-};
+using feed = rest::get<"/", rest::events<std::string, rest::text_codec>>;
 
 void mounted() {
   quoll::http::router router;
 
-  mount<api<"", feed>>(router, handlers{});
+  rest::mount<rest::api<"", rest::group<feed>>>(
+      router, rest::service([](feed, rest::event_sink<std::string, rest::text_codec> & /*events*/) {})
+  );
 }

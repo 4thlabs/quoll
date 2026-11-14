@@ -36,21 +36,19 @@
 
 // expect: quoll::rest::names: each field goes by a name of its own, named once
 //
-// A field renamed to the name of another: the form would repeat it, and not decode what it encodes.
+// A field renamed to the name of another: the query would repeat it, and not decode what it encodes.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-struct twice {
+struct filter {
   int a = 0;
   int b = 0;
 
-  using rest_names = names<name<"b", &twice::a>>;
+  using rest_names = rest::names<rest::name<"b", &filter::a>>;
 };
 
-using listed = endpoint<"listed", verb::get, "/", query_params<twice>>;
+using route = rest::get<"/", void, rest::query_params<filter>>;
 
-api<"", listed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

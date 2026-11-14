@@ -34,26 +34,23 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::mount: a service returns the type of its endpoint's first returns<>
+// expect: quoll::rest::mount: a handler returns the type of its route's result
 //
-// A service returning another type than its endpoint.
+// A handler returning another type than its route.
 
 #include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+#include <cstdint>
 
-struct thing {
-  int value = 0;
+namespace rest = quoll::rest;
+
+struct note {
+  std::int64_t id = 0;
 };
 
-using get_thing = endpoint<"thing", verb::get, "/", returns<thing>>;
-using secured = endpoint<"secured", verb::get, "/secured", security<bearer_auth>>;
+using got = rest::get<"/", note>;
 
-struct handlers {
-  int operator()(get_thing) const { return 0; }
-};
-
-void mount_it(quoll::http::router &router) { mount<api<"", get_thing>>(router, handlers{}); }
+void mount_it(quoll::http::router &router) {
+  rest::mount<rest::api<"", rest::group<got>>>(router, rest::service([](got) { return 0; }));
+}

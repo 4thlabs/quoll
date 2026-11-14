@@ -34,22 +34,22 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::client: the api has no endpoint that requires this scheme
+// expect: quoll::rest::client: no route of the api requires this scheme
 //
-// Credentials for a scheme no endpoint of the api uses.
+// Credentials for a scheme no route of the api uses.
 
 #include <quoll/http/local_transport.hpp>
 #include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using e = endpoint<"e", verb::get, "/">;
+using open = rest::get<"/", void>;
 
 void call(quoll::http::router const &router) {
-  client<api<"", e>, quoll::http::local_transport> api_client{quoll::http::local_transport{router}};
+  rest::client<rest::api<"", rest::group<open>>, quoll::http::local_transport> api_client{
+      quoll::http::local_transport{router}
+  };
 
-  api_client.credentials<bearer_auth>("token");
+  api_client.credentials<rest::bearer_auth>("token");
 }

@@ -41,7 +41,7 @@
 
 namespace quoll::rest::detail {
 
-// The base of a route of #176, rest::get<...> and the others, which an endpoint<> does not have.
+// The base of a route, rest::get<...> and the others: what api<> and group<> take as one.
 struct operation_tag {};
 
 template <class E>

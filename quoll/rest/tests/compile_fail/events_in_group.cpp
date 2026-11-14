@@ -34,26 +34,16 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_REST_UNEXPECTED_RESPONSE_HPP
-#define QUOLL_REST_UNEXPECTED_RESPONSE_HPP
+// expect: quoll::rest::group: a member is a route, a group, a security<> or a header<>
+//
+// A stream given to every route of a group, which would serve none of them as one.
 
-#include <quoll/http/response.hpp>
+#include <quoll/rest.hpp>
 
 #include <string>
 
-namespace quoll::rest {
+namespace rest = quoll::rest;
 
-/**
- * @brief A response a client cannot hand over as one its endpoint declares: a status it does not declare (a 401 for
- * missing credentials, a 500...), or a declared one whose body does not decode.
- */
-struct unexpected_response {
-  /** @brief The whole response, as received. */
-  http::response response;
-  /** @brief Why it is unexpected: "undeclared status 401", "invalid body: ...". */
-  std::string reason;
-};
+using plain = rest::get<"/", void>;
 
-} // namespace quoll::rest
-
-#endif // QUOLL_REST_UNEXPECTED_RESPONSE_HPP
+inline constexpr rest::api<"", rest::group<rest::events<std::string, rest::text_codec>, plain>> instance{};

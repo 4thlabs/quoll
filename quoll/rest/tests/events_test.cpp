@@ -100,57 +100,56 @@ using quoll::http::status;
 using quoll::http::verb;
 
 namespace changes {
-using namespace quoll::rest;
+
+using rest::events;
 
 // Changes after a given one, as many as asked; 404 for a feed that does not exist, before any event.
-using feed = endpoint<
-    "changes.feed", verb::get, "/{name}", query<"count", int>, header<"Last-Event-ID", std::optional<std::string>>,
-    events<change>, returns<quoll::http::problem, status::not_found>>;
+using feed = rest::get<
+    "/changes/{name}?count={count}", events<change>, std::string, int,
+    rest::header<"Last-Event-ID", std::optional<std::string>>>;
 // One event the client cannot decode, then a good one.
-using broken = endpoint<"changes.broken", verb::get, "/broken", events<change>>;
+using broken = rest::get<"/changes/broken", events<change>>;
 // An error once the stream has started.
-using cut = endpoint<"changes.cut", verb::get, "/cut", events<change>>;
+using cut = rest::get<"/changes/cut", events<change>>;
 // Nothing to say.
-using none = endpoint<"changes.none", verb::get, "/none", events<change>>;
-// An event the service cannot send, then a declared 400 it answers instead.
-using checked = endpoint<
-    "changes.checked", verb::get, "/checked", events<change>, returns<quoll::http::problem, status::bad_request>>;
+using none = rest::get<"/changes/none", events<change>>;
+// An event the service cannot send, then a 400 it answers instead.
+using checked = rest::get<"/changes/checked", events<change>>;
 // A failure that is no http_error, before the first event.
-using failing = endpoint<"changes.failing", verb::get, "/failing", events<change>>;
+using failing = rest::get<"/changes/failing", events<change>>;
 
 // A first event, then a second once the test lets it go: what only comes as it is sent.
-using paced = endpoint<"changes.paced", verb::get, "/paced", events<change>>;
+using paced = rest::get<"/changes/paced", events<change>>;
 // open() asked and not awaited, then a refusal.
-using opened =
-    endpoint<"changes.opened", verb::get, "/opened", events<change>, returns<quoll::http::problem, status::not_found>>;
+using opened = rest::get<"/changes/opened", events<change>>;
 
 // A filter read from the body as a view into it: what makes the request live as long as the stream.
-using search = endpoint<"changes.search", verb::post, "/search", body<filter>, events<change>>;
+using search = rest::post<"/changes/search", events<change>, filter>;
 
 // An operation kept past its service, in the service.
-using kept = endpoint<"changes.kept", verb::get, "/kept", events<change>>;
+using kept = rest::get<"/changes/kept", events<change>>;
 // The same, the service failing after.
-using kept_then_failing = endpoint<"changes.kept_then_failing", verb::get, "/kept-then-failing", events<change>>;
+using kept_then_failing = rest::get<"/changes/kept-then-failing", events<change>>;
 // What a client decodes as views into its events.
-using viewed = endpoint<"changes.viewed", verb::get, "/viewed", events<filter>>;
+using viewed = rest::get<"/changes/viewed", events<filter>>;
 
-using api = rest::api<
-    "/changes", feed, broken, cut, none, checked, failing, paced, opened, search, kept, kept_then_failing, viewed>;
+using routes =
+    rest::group<feed, broken, cut, none, checked, failing, paced, opened, search, kept, kept_then_failing, viewed>;
 
-// The same feeds, scoped under one name.
+// A feed of one name, its name in its path.
 namespace named {
-using feed = endpoint<"named.feed", verb::get, "/", events<change>>;
-using api = rest::api<"/feeds/{name}", feed>;
+using feed = rest::get<"/feeds/{name}", events<change>, std::string>;
 } // namespace named
 
-using all = rest::api<"", api, named::api>;
+using all = rest::api<"", routes, named::feed>;
 
 // A feed behind a token, whose contract asks a media type of its own.
 namespace secured {
-using feed = endpoint<
-    "secured.feed", verb::get, "/secured", security<bearer_auth>, header<"Accept", std::string>, events<change>>;
+using feed =
+    rest::get<"/secured", events<change>, rest::header<"Accept", std::string>, rest::security<rest::bearer_auth>>;
 using api = rest::api<"", feed>;
 } // namespace secured
+
 } // namespace changes
 
 struct changes_service {
@@ -582,12 +581,11 @@ TEST_CASE("rest events: another failure before the first event answers 500", "[r
   REQUIRE(answer.find("internal") == std::string::npos);
 }
 
-TEST_CASE("rest events: a scope subscribes with its prefix fixed", "[rest][sse]") {
+TEST_CASE("rest events: a subscription takes its route's path parameters", "[rest][sse]") {
   changes_client const client{streaming_transport{make_router()}};
-  auto const scoped = client.scope<changes::named::api>(std::string{"north"});
 
-  auto const reading = [&scoped]() -> task<std::optional<change>> {
-    auto stream = co_await scoped.subscribe<changes::named::feed>();
+  auto const reading = [&client]() -> task<std::optional<change>> {
+    auto stream = co_await client.subscribe<changes::named::feed>(std::string{"north"});
 
     co_return co_await stream.next();
   };
@@ -596,7 +594,7 @@ TEST_CASE("rest events: a scope subscribes with its prefix fixed", "[rest][sse]"
   REQUIRE(client.transport().last_asked().target == "/feeds/north");
 }
 
-TEST_CASE("rest events: a refusal's body is read up to a bound, an undeclared status said so", "[rest][sse]") {
+TEST_CASE("rest events: a refusal's body is read up to a bound, an status said so", "[rest][sse]") {
   http::router router;
 
   router.get("/changes/broken", [](http::request) {
@@ -620,7 +618,7 @@ TEST_CASE("rest events: a refusal's body is read up to a bound, an undeclared st
   };
 
   // Truncated to the bound, though the transport gave it in one piece.
-  REQUIRE(quoll::test::run(reading()).value() == "undeclared status 503 (its body read up to 64 KiB)|65536");
+  REQUIRE(quoll::test::run(reading()).value() == "status 503 (its body read up to 64 KiB)|65536");
 }
 
 namespace {
@@ -656,7 +654,7 @@ task<std::string> refusal_of(changes_client const &client) {
 TEST_CASE("rest events: a refusal's body is read no further than its bound, of pieces as they come", "[rest][sse]") {
   changes_client const client{streaming_transport{unavailable_in_pieces()}};
 
-  REQUIRE(quoll::test::run(refusal_of(client)).value() == "undeclared status 503 (its body read up to 64 KiB)|65536");
+  REQUIRE(quoll::test::run(refusal_of(client)).value() == "status 503 (its body read up to 64 KiB)|65536");
   // 64 pieces of a KiB, and no read after: a body that never ends would not hold it.
   REQUIRE(client.transport().reads() == 64);
 }
@@ -672,7 +670,7 @@ TEST_CASE("rest events: a refusal's body cut short is said so", "[rest][sse]") {
   changes_client const client{streaming_transport{std::move(router), std::make_error_code(std::errc::connection_reset)}
   };
 
-  REQUIRE(quoll::test::run(refusal_of(client)).value() == "undeclared status 503 (its body cut short)|7");
+  REQUIRE(quoll::test::run(refusal_of(client)).value() == "status 503 (its body cut short)|7");
 }
 
 TEST_CASE("rest events: a stop while a refusal is read goes on as a stop, not as the answer", "[rest][sse]") {
@@ -876,7 +874,7 @@ TEST_CASE("rest events: a refusal through http::client leaves the client whole f
     response.body = std::string(std::size_t{200} * 1024, 'x');
     return response;
   });
-  rest::mount<changes::named::api>(router, service);
+  rest::mount<rest::api<"", changes::named::feed>>(router, service);
 
   async::run_loop loop;
   quoll::test::memory_server server{loop.get_executor(), quoll::test::serving(router), 0, {}, {}};
@@ -898,7 +896,7 @@ TEST_CASE("rest events: a refusal through http::client leaves the client whole f
       seen = std::to_string(static_cast<int>(failed.status())) + ";";
     }
 
-    auto stream = co_await client.scope<changes::named::api>(std::string{"after"}).subscribe<changes::named::feed>();
+    auto stream = co_await client.subscribe<changes::named::feed>(std::string{"after"});
     auto const next = co_await stream.next();
 
     co_return seen + (next ? next->what : "none");
@@ -971,7 +969,7 @@ TEST_CASE("rest events: a stream goes on once its router is gone, holding what i
 TEST_CASE("rest events: a refusal's body under the bound is read whole", "[rest][sse]") {
   changes_client const client{streaming_transport{unavailable_in_pieces(63)}};
 
-  REQUIRE(quoll::test::run(refusal_of(client)).value() == "undeclared status 503|64512");
+  REQUIRE(quoll::test::run(refusal_of(client)).value() == "status 503|64512");
 }
 
 TEST_CASE("rest events: subscribe refuses a client with interceptors, rather than go without them", "[rest][sse]") {
@@ -1142,7 +1140,7 @@ TEST_CASE("rest events: a next() asked while one decodes is refused", "[rest][ss
     co_await events.send({.data = "second"});
   });
 
-  using reentrant = rest::endpoint<"reentrant", verb::get, "/reentrant", rest::events<std::string, reentrant_codec>>;
+  using reentrant = rest::get<"/reentrant", rest::events<std::string, reentrant_codec>>;
 
   rest::client<rest::api<"", reentrant>, streaming_transport> const client{streaming_transport{std::move(router)}};
 

@@ -34,71 +34,36 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_REST_QUERY_HPP
-#define QUOLL_REST_QUERY_HPP
+#ifndef QUOLL_REST_DETAIL_QUERY_HPP
+#define QUOLL_REST_DETAIL_QUERY_HPP
 
-#include <quoll/rest/detail/aggregate_fields.hpp>
-#include <quoll/rest/detail/lists_fields.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/fixed_string.hpp>
 
-#include <concepts>
-#include <ranges>
 #include <string_view>
-#include <type_traits>
 
-namespace quoll::rest {
+namespace quoll::rest::detail {
 
 /**
- * @brief An endpoint part: the query parameter `Name`, whose argument is a `T`.
+ * @brief A part of a route: the query parameter `Name`, whose argument is a `T`.
  *
  * `T` is a Parameter (required), an `std::optional` of one (omitted from the URL when empty) or an `std::vector` of
  * one (repeated: `?tag=a&tag=b`).
  */
 template <fixed_string Name, class T>
 struct query {
-  static_assert(!Name.view().empty(), "quoll::rest::query: the name is empty");
+  static_assert(!Name.view().empty(), "quoll::rest: a query parameter's name is empty");
   static_assert(
-      detail::is_parameter_value<T>::value,
-      "quoll::rest::query: the type is not a Parameter, nor an std::optional or std::vector of one"
+      is_parameter_value<T>::value,
+      "quoll::rest: a query parameter's type is not a Parameter, nor an std::optional or std::vector of one"
   );
 
-  using part_category = detail::argument_part;
+  using part_category = argument_part;
   using argument_type = T;
 
   static constexpr std::string_view name = Name.view();
 };
 
-/**
- * @brief An endpoint part: one query parameter per field of the aggregate `Struct`, named as the field is declared,
- * or as its `rest_names` give (see names), with the rules of query<> for each field type. For operations with many
- * optional parameters: the caller fills a struct with designated initializers. A struct of 64 fields at most, with no
- * base class, each field with a default value, none a reference nor a pointer to characters; or a struct listing its
- * fields, `rest_fields`, as one with a base class (see names).
- */
-template <class Struct>
-struct query_params {
-  static_assert(
-      !std::ranges::range<Struct>, "quoll::rest::query_params: the type is a struct of fields, not an array or a range"
-  );
-  static_assert(
-      detail::ListsFields<Struct> || std::is_aggregate_v<Struct>,
-      "quoll::rest::query_params: the type is not an aggregate, nor a struct listing its fields (rest_fields)"
-  );
-  static_assert(
-      detail::ListsFields<Struct> || detail::within_fields<Struct>(),
-      "quoll::rest::query_params: the struct has more than 64 fields"
-  );
+} // namespace quoll::rest::detail
 
-  static_assert(
-      !detail::ListsFields<Struct> || std::default_initializable<Struct>,
-      "quoll::rest::query_params: a struct listing its fields is made with none of them given"
-  );
-
-  using part_category = detail::argument_part;
-  using argument_type = Struct;
-};
-
-} // namespace quoll::rest
-
-#endif // QUOLL_REST_QUERY_HPP
+#endif // QUOLL_REST_DETAIL_QUERY_HPP

@@ -2,7 +2,7 @@
 
 The design of `quoll::rest`'s contract, as decided with the maintainer on 2026-11-14 in
 [#176](https://github.com/4thlabs/quoll/issues/176), which replaces ADR 0001. How it behaves, for users, is in
-[`rest.md`](../rest.md) once the refactor is done; why, in [`design-decisions.md`](../design-decisions.md).
+[`rest.md`](../rest.md); why, in [`design-decisions.md`](../design-decisions.md).
 
 ## The principle
 
@@ -40,7 +40,7 @@ using routes = rest::group<list, get, update, create, remove, token, avatar, sea
 
 } // namespace notes
 
-using api = rest::api<"/api", rest::security<rest::bearer_auth>, notes::routes>;
+using api = rest::api<"/api", rest::group<rest::security<rest::bearer_auth>, notes::routes>>;
 ```
 
 - **The method** is the type: `rest::get`, `post`, `put`, `patch`, `del` (`delete` is a keyword), `head`, `options`.
@@ -50,10 +50,12 @@ using api = rest::api<"/api", rest::security<rest::bearer_auth>, notes::routes>;
 - **The result** comes first. Every method answers 200 by default, `void` 204; `rest::created<T>` (201) and
   `rest::accepted<T>` (202) say otherwise, so that a `POST /token` answers 200.
 - **The format** is JSON. `rest::form<T>`, `rest::text`, `rest::bytes` and `rest::json<T>` say another, on the body
-  or the result; `rest::lenient_json<T>` reads a result whose unknown fields it skips.
+  or the result; `rest::lenient_json<T>` reads a result whose unknown fields it skips; `rest::encoded<T, Codec>` takes a
+  codec of one's own. `rest::events<T>` as a result is a stream of server-sent events.
 - **The parameters** follow, in order: one type per `{parameter}` of the string, the path's then the query's (a
   `std::optional` may be missing, a `std::vector` repeats); then the headers, `rest::header<"X-Request-Id", T>`; then
-  the body, last, for a `post`, a `put` or a `patch` only.
+  the body, last, for a `post`, a `put` or a `patch` only. Nothing else: the parts the route is made of, `body<>`,
+  `returns<>`, `query<>`, are Quoll's own, in `detail`.
 - **A query** is in the string, or a `rest::query_params<S>` struct for a long list of filters held as one value (a
   component's state), its fields named by Quoll's reflection or the struct's `rest_names` / `rest_fields` (#219); not
   both in one route.
@@ -113,43 +115,48 @@ auto const page = co_await client.call<notes::list>("page"_p = 2);      // by na
 auto const found = co_await client.call<notes::search>({.contains = "milk"});
 auto const answer = co_await client.try_call<notes::get>(3);            // std::expected<note, http::http_error>
 
-auto const repo = client.scope<github::repos::routes>("4thlabs", "quoll");  // the leading parameters of a group's routes
+auto const issues = co_await client.call<github::repos::issues>("4thlabs", "quoll", {.state = "open"});
 ```
 
-By position or by name, not both in one call.
+By position or by name, not both in one call. A route's parameters are passed at each call: no scope fixes them.
 
 ## One HTTP error
 
 `http::http_error` is the one error of the server and of both clients: its status, the server's RFC 9457 problem when it
-sent one, the raw body and `rest::body_as<T>(error)` for a third-party API's own error shape, and whether it was
-`received()` from a response. The HTTP client raises it on demand (`ensure_ok()`), the REST client raises it or returns
+sent one, the raw body and `body_as<T>(codec)` for a third-party API's own error shape, `std::optional<T>`, and
+whether it was `received()` from a response. The `Codec` concept is `quoll::http`'s, so that it reads one. The HTTP client raises it on demand (`ensure_ok()`), the REST client raises it or returns
 it. A server answers its status to one its handler throws, and 502 to one received from another call, which must not
 pass the other API's status on as its own.
 
 ## What does not compile
 
 A `{parameter}` with no type, or a type in the string (`{id:int64}`); a path parameter whose type is not read from
-text; a `{name:path}` that is no `std::string`; a body on a method other than `post`, `put` and `patch`, a second body,
-or one before a header; a result on `head`; two `operation_id`; a route under a prefixed api, or an api of routes whose
-prefix has a parameter; two routes of one method and path; a route with no handler, two, or a handler of another api.
-Each says so in Quoll's words.
+text, a query parameter's neither; a query in the expression and a `query_params<>` both; a `{name:path}` that is no
+`std::string`; a body on a method other than `post`, `put`
+and `patch`, a second body, or one before a header; a part of a route that is no header, `query_params<>`, security or
+`operation_id<>`; a result on `head`; two `operation_id`; an api's prefix with a parameter, a member of an api that is
+no route or group, of a group none of these or security or a header; two routes of one method and path; a route with
+no handler, or two; a lambda of a route of another api, or two lambdas of one route in a service. Each says so in
+Quoll's words. A generic lambda, or a struct of several `operator()`, escapes the check of a route of another api: its
+call operators cannot be listed.
 
 ## Where it stands
 
 1. Done, #223 to #225: `http::http_error` and `problem` in `quoll::http`; the query in the router's expression; an
    operation's path types from C++ types, its name from its method and path.
-2. #227: the routes beside the old DSL, `rest::group`, `rest::service`, the checks above.
-3. Next: the tests, fuzz, bench, the samples moved to routes.
-4. Then: `try_call` returning `std::expected<T, http::http_error>`, `rest::body_as<T>`, `scope<Group>`; `reply`,
-   `respond`, `rest::endpoint` and `with<>` removed; the GitHub sample moved; `rest.md` rewritten around routes.
-5. Later: the HTTP client's interceptors, retry and credentials in `quoll::http`; `quoll::json` (a new module, which
+2. #227: routes, `rest::group`, `rest::service` and the checks above; `try_call` returning
+   `std::expected<T, http::http_error>`, `http_error::body_as`; the old DSL gone (`endpoint<>`, `with<>`, nested
+   prefixed apis, `reply<>`, `respond`, `unexpected_response`, `scope`), the tests, fuzz, bench and samples moved, the
+   guides rewritten.
+3. Later: the HTTP client's interceptors, retry and credentials in `quoll::http`; `quoll::json` (a new module, which
    the maintainer merges).
 
 ## Open
 
 - **A fixed value in a route's query** (`?format=json`): decided as a part of its own, not yet written.
 - **Arguments by name** (`"page"_p = 2`): decided, not yet written.
-- **A body on DELETE**: refused, as decided. Some APIs take one (GitHub's `DELETE /user/emails`), which a route of the
-  GitHub sample could not declare once `endpoint<>` goes. To decide by the maintainer.
-- **Events** (`rest::events<T>` as a result): to check on routes before `endpoint<>` goes.
-- **A query in the string and a `query_params<S>` in one route**: decided refused, not yet checked.
+- **A body on DELETE**: refused, as decided. Some APIs take one (GitHub's `DELETE /user/emails`), which no route can
+  declare now. To decide by the maintainer.
+- **An error answered with a body of an API's own shape**: a handler answers an `http_error` as a problem only, so
+  that a fake of a third-party API (the GitHub sample's) answers GitHub's errors in a middleware, by the route's name.
+  An `http_error` carrying a body of its own would let its handler do it.

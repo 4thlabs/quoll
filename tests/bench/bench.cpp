@@ -168,8 +168,8 @@ void print_line(std::format_string<Arguments...> format, Arguments &&...argument
 
 card make_card() { return {42, "Quoll", {"marsupial", "carnivore", "nocturnal"}}; }
 
-using get_card = rest::endpoint<"card.get", http::verb::get, "/card/{id:int64}", rest::returns<card>>;
-using echo_card = rest::endpoint<"card.echo", http::verb::post, "/card", rest::body<card>, rest::returns<card>>;
+using get_card = rest::get<"/card/{id}", card, std::int64_t>;
+using echo_card = rest::post<"/card", card, card>;
 using card_api = rest::api<"/api", get_card, echo_card>;
 
 struct card_service {

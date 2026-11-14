@@ -38,24 +38,21 @@
 //
 // A name given to something that is not a field of the struct.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-#include <array>
 #include <optional>
 #include <string>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
 inline int elsewhere = 0;
 
 struct filter {
   std::optional<std::string> q;
 
-  using rest_names = names<name<"q", &elsewhere>>;
+  using rest_names = rest::names<rest::name<"q", &elsewhere>>;
 };
 
-using listed = endpoint<"listed", verb::get, "/", query_params<filter>>;
+using route = rest::get<"/", void, rest::query_params<filter>>;
 
-api<"", listed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

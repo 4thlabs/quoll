@@ -46,8 +46,9 @@
 namespace quoll::rest {
 
 /**
- * @brief An endpoint part: the request header field `Name`, whose argument is a `T`, with the rules of query<>: a
- * Parameter (required), an `std::optional` of one (may be absent), or an `std::vector` of one (repeated).
+ * @brief A part of a route or a group: the request header field `Name`, whose argument is a `T`, with the rules of a
+ * query parameter: a Parameter (required), an `std::optional` of one (may be absent), or an `std::vector` of one
+ * (repeated).
  */
 template <fixed_string Name, class T>
 struct header {

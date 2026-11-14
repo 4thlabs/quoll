@@ -34,16 +34,15 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::query: the name is empty
+// expect: quoll::rest: a route's expression is a path and a query, `/notes/{id}?fields={fields}`, valid as the router
+// reads it
 //
-// A query parameter with no name.
+// A query parameter with no name, which the router refuses: the message says no more, the note under it says which.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using listed = endpoint<"listed", verb::get, "/", query<"", int>>;
+using route = rest::get<"/q?={q}", void>;
 
-api<"", listed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

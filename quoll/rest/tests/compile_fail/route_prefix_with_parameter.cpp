@@ -34,7 +34,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::api: the prefix of an api of routes has no parameter: it goes in each route's path
+// expect: quoll::rest::api: the prefix has no parameter: one its routes share goes in each one's path
 //
 // A parameter in the api's prefix, which a route's string would not say.
 
@@ -48,8 +48,6 @@ struct note {
   std::int64_t id = 0;
 };
 
-using get = rest::get<"/notes/{id}", note, std::int64_t>;
+using route = rest::get<"/notes/{id}", note, std::int64_t>;
 
-using api = rest::api<"/repos/{owner}", rest::group<get>>;
-
-inline constexpr api instance{};
+inline constexpr rest::api<"/repos/{owner}", rest::group<route>> instance{};

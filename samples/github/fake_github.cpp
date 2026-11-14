@@ -71,17 +71,8 @@ struct github_service {
   // thread.
   std::shared_ptr<int> issues_asked = std::make_shared<int>(0);
 
-  rest::reply<github::repos::get> operator()(github::repos::get, std::string owner, std::string repo) const {
-    if (owner == "4thlabs" && repo == "private") {
-      return rest::respond<http::status::forbidden>(
-          github::error{.message = "Resource not accessible", .documentation_url = {}}
-      );
-    }
-
-    if (owner != "4thlabs" || repo != "quoll") {
-      return rest::respond<http::status::not_found>(github::error{.message = "Not Found", .documentation_url = {}});
-    }
-
+  // The repositories that are not this one are answered by as_github_wants, in GitHub's shape of its errors.
+  github::repository operator()(github::repos::get, std::string, std::string) const {
     return github::repository{
         .full_name = "4thlabs/quoll",
         .description = "A C++23 web framework",
@@ -115,8 +106,8 @@ struct github_service {
   github::me operator()(github::users::me) const { return {.login = "ada", .name = "Ada Lovelace"}; }
 };
 
-// GitHub's checks, before the contract's: a User-Agent on every request, and the token of /user, refused with
-// GitHub's own body rather than the problem a validator answers.
+// GitHub's checks, before the contract's, refused with GitHub's own body rather than the problem a handler or a
+// validator answers: a User-Agent on every request, the token of /user, a repository that is not there or private.
 async::task<http::response> as_github_wants(http::request &&request, http::next const &next) {
   http::response refused;
 
@@ -136,14 +127,40 @@ async::task<http::response> as_github_wants(http::request &&request, http::next 
     co_return refused;
   }
 
-  // A private repository, for a token with access: no endpoint of the contract sees who calls.
-  if (next.path() == "/repos/4thlabs/private" && authorized) {
-    http::response granted;
+  // A handler answers an error as a problem only: GitHub's own shape of them goes through this middleware, which finds
+  // the routes by their names and their parameters by place, until an error can carry a body of an API's own (see
+  // docs/design/rest-dsl.md, Open).
+  auto const getting = next.route() == github::api::route<github::repos::get>::name;
+  auto const of_a_repository = getting || next.route() == github::api::route<github::repos::issues>::name;
 
-    granted.fields.add("Content-Type", "application/json; charset=utf-8");
-    granted.body = R"({"full_name":"4thlabs/private","stargazers_count":1,"open_issues_count":0,)"
-                   R"("html_url":"https://github.com/4thlabs/private"})";
-    co_return granted;
+  if (of_a_repository) {
+    auto const owner = next.params()[0];
+    auto const repo = next.params()[1];
+
+    auto const is_private = owner == "4thlabs" && repo == "private";
+
+    // A private repository, for a token with access: no route of the contract sees who calls. Its issues are the
+    // handler's.
+    if (is_private && authorized && getting) {
+      http::response granted;
+
+      granted.fields.add("Content-Type", "application/json; charset=utf-8");
+      granted.body = R"({"full_name":"4thlabs/private","stargazers_count":1,"open_issues_count":0,)"
+                     R"("html_url":"https://github.com/4thlabs/private"})";
+      co_return granted;
+    }
+
+    if (is_private && !authorized) {
+      refused.status = http::status::forbidden;
+      refused.body = R"({"message":"Resource not accessible"})";
+      co_return refused;
+    }
+
+    if (!is_private && (owner != "4thlabs" || repo != "quoll")) {
+      refused.status = http::status::not_found;
+      refused.body = R"({"message":"Not Found"})";
+      co_return refused;
+    }
   }
 
   co_return co_await next(std::move(request));

@@ -40,18 +40,18 @@
 #include <quoll/http/detail/ascii.hpp>
 #include <quoll/http/detail/route_template.hpp>
 #include <quoll/http/verb.hpp>
-#include <quoll/rest/body.hpp>
+#include <quoll/rest/detail/body.hpp>
 #include <quoll/rest/detail/checked_path.hpp>
 #include <quoll/rest/detail/field_names.hpp>
 #include <quoll/rest/detail/join_strings.hpp>
 #include <quoll/rest/detail/operation_concept.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/path_template.hpp>
-#include <quoll/rest/detail/path_types.hpp>
+#include <quoll/rest/detail/query.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/header.hpp>
-#include <quoll/rest/query.hpp>
+#include <quoll/rest/query_params.hpp>
 #include <quoll/rest/security.hpp>
 
 #include <algorithm>
@@ -150,17 +150,6 @@ template <class... Arguments, class... Schemes>
   return true;
 }
 
-template <class Endpoint>
-struct own_path_types_of {
-  using type = typename path_argument_types<Endpoint::path_value>::type;
-};
-
-template <class Endpoint>
-  requires requires { typename Endpoint::path_types; }
-struct own_path_types_of<Endpoint> {
-  using type = typename Endpoint::path_types;
-};
-
 [[nodiscard]] consteval std::size_t method_size(http::verb method) { return http::to_string(method).size(); }
 
 template <http::verb Method>
@@ -186,8 +175,8 @@ template <class Endpoint, fixed_string Path>
   }
 }
 
-// An endpoint as an api serves it: its full path (the prefixes of the apis around it, then its own path) and the
-// parts inherited from the with<> around it, which come after its own.
+// A route as an api serves it: its full path (the api's prefix, then its own path) and what the groups around it give
+// all their routes, security<> and header<>, which come after its own arguments.
 template <class Endpoint, fixed_string Path, class Inherited>
 struct route {
   static_assert(checked_path<Path>::valid);
@@ -195,44 +184,10 @@ struct route {
   using endpoint = Endpoint;
   using inherited = Inherited;
   using parts = concat_t<typename Endpoint::parts, Inherited>;
+  // Its own: the api's prefix has none.
+  using path_types = typename Endpoint::path_types;
 
-  // The endpoint checks its own parts; these hold with the parts inherited from with<> too, but for HEAD: what with<>
-  // adds is the server's answers, never decoded as a body.
-  static_assert(count_bodies(parts{}) <= 1, "quoll::rest::with: the endpoint gets more than one body<>");
-  static_assert(
-      count_bodies(parts{}) == 0 || (Endpoint::method != http::verb::get && Endpoint::method != http::verb::head),
-      "quoll::rest::with: a GET or HEAD endpoint gets a body<> (fetch rejects one)"
-  );
-  static_assert(
-      !Operation<Endpoint> || count_bodies(parts{}) == 0 || Endpoint::method == http::verb::post ||
-          Endpoint::method == http::verb::put || Endpoint::method == http::verb::patch,
-      "quoll::rest: only a post, a put or a patch has a body, a group's too"
-  );
-  static_assert(
-      count_bodies(parts{}) == 0 || Endpoint::method != http::verb::trace,
-      "quoll::rest::with: a TRACE endpoint gets a body<> (RFC 9110, 9.3.8)"
-  );
-  static_assert(distinct_statuses(parts{}), "quoll::rest::with: the endpoint gets two returns<> with the same status");
-  static_assert(
-      count_events(parts{}) == 0 || !any_success_response(parts{}),
-      "quoll::rest::with: an endpoint with events<> gets another success, where only errors may come"
-  );
-
-  // The types of its own path parameters: those a route's C++ types give (rest::get<...>), or those an endpoint<>'s
-  // template says.
-  using own_path_types = typename own_path_types_of<Endpoint>::type;
-
-  // How many path parameters the prefixes around it have: none for a template that is wrong, which has its own
-  // static_assert, rather than a count wrapping around, which the index sequence below would make huge.
-  static constexpr std::size_t prefix_parameters =
-      checked_path<Path>::valid && checked_path<Path>::parsed.size >= own_path_types::size
-          ? checked_path<Path>::parsed.size - own_path_types::size
-          : 0;
-
-  // The types of its path parameters: those of the prefixes around it, then its own.
-  using path_types = concat_t<typename template_path_types<Path, prefix_parameters>::type, own_path_types>;
-
-  // The arguments of a call and of the service: path parameters, then argument parts in order.
+  // The arguments of a call and of its handler: path parameters, then argument parts in order.
   using arguments =
       as_tuple_t<concat_t<path_types, typename part_argument_types<filter_t<is_argument_part, parts>>::type>>;
   using responses = filter_t<is_response_part, parts>;
@@ -240,7 +195,7 @@ struct route {
 
   static_assert(
       distinct_places(filter_t<is_argument_part, parts>{}, schemes{}),
-      "quoll::rest::endpoint: it gets the same field or query parameter twice"
+      "quoll::rest: a route gets the same header or query parameter twice, its groups' and its security's included"
   );
 
   static constexpr auto path_value = Path;

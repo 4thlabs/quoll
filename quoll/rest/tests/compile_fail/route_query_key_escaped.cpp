@@ -34,16 +34,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::endpoint: CONNECT is no operation of an API
+// expect: quoll::rest: a key of a route's query is written plain, with no escape nor '+'
 //
-// CONNECT: a 2xx makes a tunnel, and no 2xx could answer it.
+// An escape in a query's key: the name a client sends and the one the server reads could differ.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+#include <optional>
 
-using tunnel = endpoint<"tunnel", verb::connect, "/">;
+namespace rest = quoll::rest;
 
-api<"", tunnel> const instance{};
+inline constexpr rest::get<"/notes?a%20b={q}", void, std::optional<int>> route{};

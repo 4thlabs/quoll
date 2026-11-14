@@ -34,25 +34,64 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_REST_BODY_HPP
-#define QUOLL_REST_BODY_HPP
+#ifndef QUOLL_REST_DETAIL_PAYLOAD_HPP
+#define QUOLL_REST_DETAIL_PAYLOAD_HPP
 
-#include <quoll/rest/codec.hpp>
-#include <quoll/rest/detail/part.hpp>
+#include <quoll/rest/bytes_codec.hpp>
+#include <quoll/rest/form_codec.hpp>
+#include <quoll/rest/formats.hpp>
 #include <quoll/rest/json_codec.hpp>
+#include <quoll/rest/text_codec.hpp>
 
-namespace quoll::rest {
+#include <cstddef>
+#include <string>
+#include <vector>
 
-/** @brief An endpoint part: the request body, whose argument is a `T`, encoded by `BodyCodec` (JSON by default). */
-template <class T, class BodyCodec = json_codec>
-struct body {
-  static_assert(Codec<BodyCodec, T>, "quoll::rest::body: the codec cannot encode and decode the type");
+namespace quoll::rest::detail {
 
-  using part_category = detail::argument_part;
-  using argument_type = T;
-  using codec = BodyCodec;
+// What a value of a body or a result is, and its codec.
+template <class T>
+struct payload_of {
+  using type = T;
+  using codec = json_codec;
 };
 
-} // namespace quoll::rest
+template <>
+struct payload_of<text> {
+  using type = std::string;
+  using codec = text_codec;
+};
 
-#endif // QUOLL_REST_BODY_HPP
+template <>
+struct payload_of<bytes> {
+  using type = std::vector<std::byte>;
+  using codec = bytes_codec;
+};
+
+template <class T>
+struct payload_of<json<T>> {
+  using type = T;
+  using codec = json_codec;
+};
+
+template <class T>
+struct payload_of<lenient_json<T>> {
+  using type = T;
+  using codec = lenient_json_codec;
+};
+
+template <class T>
+struct payload_of<form<T>> {
+  using type = T;
+  using codec = form_codec;
+};
+
+template <class T, class C>
+struct payload_of<encoded<T, C>> {
+  using type = T;
+  using codec = C;
+};
+
+} // namespace quoll::rest::detail
+
+#endif // QUOLL_REST_DETAIL_PAYLOAD_HPP

@@ -38,12 +38,15 @@
 #define QUOLL_HTTP_HTTP_ERROR_HPP
 
 #include <quoll/async/lifetimebound.hpp>
+#include <quoll/http/codec.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
 
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace quoll::http {
 
@@ -81,6 +84,30 @@ public:
 
   /** @brief The response received, its fields and body as they came; none when it was raised. */
   [[nodiscard]] http::response const *answer() const noexcept QUOLL_LIFETIMEBOUND { return response_.get(); }
+
+  /**
+   * @brief The body received, read as a `T` by `codec`: a third-party API's own shape of its errors. Nothing when it
+   * was raised, or when its body does not decode.
+   *
+   * @code
+   * auto const reason = failure.body_as<github::error>(rest::lenient_json_codec{});
+   * @endcode
+   */
+  template <class T, class C>
+    requires Codec<C, T>
+  [[nodiscard]] std::optional<T> body_as(C const &codec) const {
+    if (!response_) {
+      return std::nullopt;
+    }
+
+    auto value = codec.template decode<T>(response_->body);
+
+    if (!value) {
+      return std::nullopt;
+    }
+
+    return std::move(*value);
+  }
 
 private:
   http::status status_;

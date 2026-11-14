@@ -34,20 +34,47 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::with: an endpoint with events<> gets another success, where only errors may come
-//
-// A success shared by a group, given to an endpoint that streams.
+#ifndef QUOLL_REST_DETAIL_RETURNS_HPP
+#define QUOLL_REST_DETAIL_RETURNS_HPP
 
 #include <quoll/http/status.hpp>
-#include <quoll/http/verb.hpp>
-#include <quoll/rest.hpp>
+#include <quoll/rest/codec.hpp>
+#include <quoll/rest/detail/part.hpp>
+#include <quoll/rest/json_codec.hpp>
 
-#include <string>
+#include <type_traits>
 
-using namespace quoll::rest;
-using quoll::http::status;
-using quoll::http::verb;
+namespace quoll::rest::detail {
 
-using feed = endpoint<"feed", verb::get, "/", events<std::string, text_codec>>;
+/**
+ * @brief A part of a route: a declared response, with status `Status` and a `T` body encoded by `ResponseCodec` (JSON
+ * by default). `T` is `void` for a response without body.
+ *
+ * What a route's result gives: what its handler returns and what a client's `call` produces; a void result gives
+ * none, and answers 204 No Content.
+ */
+template <class T, http::status Status = http::status::ok, class ResponseCodec = json_codec>
+struct returns {
+  static_assert(
+      std::is_void_v<T> || Codec<ResponseCodec, T>, "quoll::rest: the codec cannot encode and decode the type"
+  );
+  static_assert(
+      static_cast<int>(Status) >= 200 && static_cast<int>(Status) <= 599,
+      "quoll::rest: the status is no final response (200 to 599)"
+  );
+  static_assert(
+      std::is_void_v<T> || (Status != http::status::no_content && Status != http::status::reset_content &&
+                            Status != http::status::not_modified),
+      "quoll::rest: a 204, 205 or 304 has no body"
+  );
 
-api<"", with<returns<std::string, status::ok, text_codec>, feed>> const instance{};
+  using part_category = response_part;
+  using type = T;
+  using codec = ResponseCodec;
+
+  static constexpr http::status status = Status;
+};
+
+} // namespace quoll::rest::detail
+
+#endif // QUOLL_REST_DETAIL_RETURNS_HPP

@@ -33,24 +33,23 @@
 // CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-// expect: quoll::rest::client::scope: as many arguments as the prefixes above the api have parameters
-//
-// A scope of an api under two parameters, given one.
 
-#include <quoll/http/local_transport.hpp>
-#include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
-#include <quoll/rest.hpp>
+#ifndef QUOLL_HTTP_DECODE_ERROR_HPP
+#define QUOLL_HTTP_DECODE_ERROR_HPP
 
-using namespace quoll::rest;
-using quoll::http::verb;
+#include <string>
 
-using one = endpoint<"one", verb::get, "/{n:int}">;
-using inner = api<"/{repo}", one>;
-using outer = api<"/repos/{owner}", inner>;
+namespace quoll::http {
 
-void scoped(quoll::http::router const &router) {
-  client<outer, quoll::http::local_transport> const api_client{quoll::http::local_transport{router}};
+/**
+ * @brief Why a body or a parameter could not be decoded into its type: an expected outcome for input that comes from
+ * the network, reported as a value.
+ */
+struct decode_error {
+  /** @brief What is wrong and where, for a log or a 400 response. */
+  std::string message;
+};
 
-  (void)api_client.scope<inner>("4thlabs");
-}
+} // namespace quoll::http
+
+#endif // QUOLL_HTTP_DECODE_ERROR_HPP

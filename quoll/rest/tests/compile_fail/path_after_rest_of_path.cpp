@@ -34,20 +34,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest: nothing follows a
+// expect: quoll::rest: nothing follows a {name:path} parameter
 //
 // A segment after a rest-of-path parameter.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-struct thing {
-  int value = 0;
-};
+using route = rest::get<"/files/{rest:path}/meta", void>;
 
-using e = endpoint<"e", verb::get, "/files/{rest:path}/meta">;
-
-e const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

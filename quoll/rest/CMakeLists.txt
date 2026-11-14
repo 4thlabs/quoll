@@ -44,25 +44,15 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/api_key_query_name.cpp
     tests/compile_fail/bad_escape.cpp
     tests/compile_fail/body_codec_mismatch.cpp
-    tests/compile_fail/body_on_get.cpp
-    tests/compile_fail/body_on_trace.cpp
     tests/compile_fail/call_on_events.cpp
     tests/compile_fail/client_unused_scheme.cpp
-    tests/compile_fail/connect_endpoint.cpp
-    tests/compile_fail/endpoint_empty_name.cpp
-    tests/compile_fail/endpoint_not_in_api.cpp
-    tests/compile_fail/events_in_with.cpp
+    tests/compile_fail/events_in_group.cpp
     tests/compile_fail/events_on_head.cpp
-    tests/compile_fail/events_redirect.cpp
     tests/compile_fail/events_service_not_a_task.cpp
     tests/compile_fail/events_service_without_sink.cpp
     tests/compile_fail/events_service_without_sink_beside.cpp
     tests/compile_fail/events_twice.cpp
     tests/compile_fail/events_two_services.cpp
-    tests/compile_fail/events_typed_error.cpp
-    tests/compile_fail/events_typed_error_in_with.cpp
-    tests/compile_fail/events_with_success.cpp
-    tests/compile_fail/head_returns_body.cpp
     tests/compile_fail/header_beside_a_body.cpp
     tests/compile_fail/header_invalid_name.cpp
     tests/compile_fail/mount_generic_validator.cpp
@@ -74,16 +64,16 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/mount_service_other_order.cpp
     tests/compile_fail/mount_two_services.cpp
     tests/compile_fail/mount_two_validators.cpp
+    tests/compile_fail/mount_value_for_void.cpp
     tests/compile_fail/mount_wrong_return.cpp
-    tests/compile_fail/not_a_part.cpp
-    tests/compile_fail/parameter_repeated_by_prefix.cpp
+    tests/compile_fail/operation_id_empty_name.cpp
     tests/compile_fail/path_after_rest_of_path.cpp
     tests/compile_fail/path_dot_segment.cpp
     tests/compile_fail/path_empty_type.cpp
     tests/compile_fail/path_invalid_character.cpp
     tests/compile_fail/path_not_whole_segment.cpp
+    tests/compile_fail/path_parameter_twice.cpp
     tests/compile_fail/path_parameter_type.cpp
-    tests/compile_fail/path_query_in_literal.cpp
     tests/compile_fail/path_too_many_parameters.cpp
     tests/compile_fail/path_unbalanced_brace.cpp
     tests/compile_fail/path_without_slash.cpp
@@ -98,8 +88,6 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/query_params_too_many_fields.cpp
     tests/compile_fail/query_twice.cpp
     tests/compile_fail/query_type.cpp
-    tests/compile_fail/reply_holds_undeclared.cpp
-    tests/compile_fail/reply_without_returns.cpp
     tests/compile_fail/rest_fields_and_names.cpp
     tests/compile_fail/rest_fields_field_twice.cpp
     tests/compile_fail/rest_fields_of_other_struct.cpp
@@ -108,19 +96,21 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/rest_name_of_other_struct.cpp
     tests/compile_fail/rest_names_clash.cpp
     tests/compile_fail/rest_names_field_twice.cpp
-    tests/compile_fail/returns_body_on_no_content.cpp
-    tests/compile_fail/returns_informational.cpp
     tests/compile_fail/route_body_in_group.cpp
     tests/compile_fail/route_body_not_last.cpp
     tests/compile_fail/route_body_on_delete.cpp
     tests/compile_fail/route_body_on_get.cpp
+    tests/compile_fail/route_body_on_options.cpp
     tests/compile_fail/route_body_part_on_delete.cpp
     tests/compile_fail/route_fixed_value.cpp
     tests/compile_fail/route_handler_of_other_api.cpp
     tests/compile_fail/route_head_with_body.cpp
     tests/compile_fail/route_missing_type.cpp
+    tests/compile_fail/route_not_in_api.cpp
     tests/compile_fail/route_optional_path_parameter.cpp
     tests/compile_fail/route_prefix_with_parameter.cpp
+    tests/compile_fail/route_query_and_query_params.cpp
+    tests/compile_fail/route_query_key_escaped.cpp
     tests/compile_fail/route_query_not_a_value.cpp
     tests/compile_fail/route_rest_of_path_text.cpp
     tests/compile_fail/route_service_two_handlers.cpp
@@ -132,21 +122,11 @@ quoll_declare_compile_fail_tests(
     tests/compile_fail/same_name.cpp
     tests/compile_fail/same_route.cpp
     tests/compile_fail/same_route_encoded.cpp
-    tests/compile_fail/same_status.cpp
     tests/compile_fail/scheme_on_a_field_twice.cpp
     tests/compile_fail/scheme_twice.cpp
-    tests/compile_fail/scope_arguments.cpp
-    tests/compile_fail/scope_empty_api.cpp
-    tests/compile_fail/scope_not_nested.cpp
-    tests/compile_fail/scoped_scope_not_nested.cpp
     tests/compile_fail/subscribe_over_local_transport.cpp
     tests/compile_fail/subscribe_without_events.cpp
     tests/compile_fail/try_call_on_events.cpp
-    tests/compile_fail/with_body_on_get.cpp
-    tests/compile_fail/with_body_on_trace.cpp
-    tests/compile_fail/with_same_status.cpp
-    tests/compile_fail/with_success_on_events.cpp
-    tests/compile_fail/with_two_bodies.cpp
   DEPS
     quoll::rest
 )

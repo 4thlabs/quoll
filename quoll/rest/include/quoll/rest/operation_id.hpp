@@ -34,20 +34,23 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::endpoint: a response to HEAD has no body
-//
-// A HEAD endpoint whose response has a body: every call would fail.
+#ifndef QUOLL_REST_OPERATION_ID_HPP
+#define QUOLL_REST_OPERATION_ID_HPP
 
-#include <quoll/http/verb.hpp>
-#include <quoll/rest.hpp>
+#include <quoll/rest/fixed_string.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+#include <string_view>
 
-struct thing {
-  int value = 0;
+namespace quoll::rest {
+
+/** @brief The name of a route's operation, OpenAPI's operationId: `rest::operation_id<"notes.get">`. */
+template <fixed_string Name>
+struct operation_id {
+  static_assert(!Name.view().empty(), "quoll::rest::operation_id: the name is empty");
+
+  static constexpr std::string_view value = Name.view();
 };
 
-using peek = endpoint<"peek", verb::head, "/", returns<thing>>;
+} // namespace quoll::rest
 
-api<"", peek> const instance{};
+#endif // QUOLL_REST_OPERATION_ID_HPP

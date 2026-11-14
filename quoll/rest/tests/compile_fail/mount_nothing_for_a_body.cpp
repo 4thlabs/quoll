@@ -34,25 +34,23 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::mount: a service returns nothing for an endpoint whose first returns<> has a body
+// expect: quoll::rest::mount: a handler returns nothing for a route whose result has a body
 //
-// A service returning nothing where a body is declared.
+// A handler returning nothing for a route whose result has a body.
 
 #include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+#include <cstdint>
 
-struct thing {
-  int value = 0;
+namespace rest = quoll::rest;
+
+struct note {
+  std::int64_t id = 0;
 };
 
-using got = endpoint<"got", verb::get, "/", returns<thing>>;
+using got = rest::get<"/", note>;
 
-struct handlers {
-  void operator()(got) const {}
-};
-
-void mount_it(quoll::http::router &router) { mount<api<"", got>>(router, handlers{}); }
+void mount_it(quoll::http::router &router) {
+  rest::mount<rest::api<"", rest::group<got>>>(router, rest::service([](got) {}));
+}

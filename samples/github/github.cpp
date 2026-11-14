@@ -45,6 +45,7 @@
 #include "github_api.hpp"
 
 #include <quoll/async.hpp>
+#include <quoll/http/http_error.hpp>
 #include <quoll/http/request.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/status.hpp>
@@ -88,44 +89,45 @@ async::task<http::response> as_github_asks(http::request &&request, rest::next c
   return std::nullopt;
 }
 
-// An answer the contract does not declare: its status, why, and what GitHub said, if anything.
-void report(rest::unexpected_response const &unexpected) {
-  std::cerr << "unexpected answer, " << static_cast<int>(unexpected.response.status) << ": " << unexpected.reason;
-
-  if (!unexpected.response.body.empty()) {
-    std::cerr << ": " << unexpected.response.body;
+// What GitHub said of an error, in its own shape, or what the client saw of it.
+[[nodiscard]] std::string message_of(http::http_error const &error) {
+  if (auto const said = error.body_as<github::error>(rest::lenient_json_codec{})) {
+    return said->message;
   }
 
-  std::cerr << '\n';
+  return error.what();
+}
+
+// An error the program does not expect: its status, and what GitHub said, if anything.
+void report(http::http_error const &error) {
+  std::cerr << "unexpected answer, " << static_cast<int>(error.status()) << ": " << message_of(error) << '\n';
 }
 
 async::task<int> show_repository(github_client client, std::string owner, std::string name) {
-  // The endpoints under /repos/{owner}/{repo}, with both fixed.
-  auto const repository = client.scope<github::repos::api>(std::move(owner), std::move(name));
-  auto const found = co_await repository.try_call<github::repos::get>();
+  auto const found = co_await client.try_call<github::repos::get>(owner, name);
 
   if (!found) {
-    report(found.error());
+    auto const &error = found.error();
+
+    if (error.status() == http::status::not_found) {
+      std::cerr << "not found: " << message_of(error) << '\n';
+    } else if (error.status() == http::status::forbidden) {
+      std::cerr << "forbidden: " << message_of(error) << '\n';
+    } else {
+      report(error);
+    }
+
     co_return 1;
   }
 
-  if (found->holds<http::status::not_found>()) {
-    std::cerr << "not found: " << found->get<http::status::not_found>().message << '\n';
-    co_return 1;
-  }
-
-  if (found->holds<http::status::forbidden>()) {
-    std::cerr << "forbidden: " << found->get<http::status::forbidden>().message << '\n';
-    co_return 1;
-  }
-
-  auto const &shown = found->get<http::status::ok>();
-
-  std::cout << shown.full_name << ": " << shown.stars << " stars, " << shown.open_issues_count << " open issues\n";
-  std::cout << shown.description.value_or("(no description)") << '\n' << shown.html_url << '\n';
+  std::cout << found->full_name << ": " << found->stars << " stars, " << found->open_issues_count << " open issues\n";
+  std::cout << found->description.value_or("(no description)") << '\n' << found->html_url << '\n';
 
   // GitHub lists pull requests among the issues: marked as such.
-  for (auto const &open : co_await repository.call<github::repos::issues>({.state = "open", .per_page = 5})) {
+  auto const issues =
+      co_await client.call<github::repos::issues>(std::move(owner), std::move(name), {.state = "open", .per_page = 5});
+
+  for (auto const &open : issues) {
     std::cout << "  #" << open.number << ' ' << open.title << " (" << open.user.login << ")"
               << (open.pull_request ? " [pull request]" : "") << '\n';
   }
@@ -139,24 +141,21 @@ async::task<int> show_me(github_client client, bool with_token) {
     co_return 1;
   }
 
-  auto const answer = co_await client.try_call<github::users::me>();
+  auto const account = co_await client.try_call<github::users::me>();
 
-  if (!answer) {
-    report(answer.error());
+  if (!account) {
+    auto const &error = account.error();
+
+    if (error.status() == http::status::unauthorized || error.status() == http::status::forbidden) {
+      std::cerr << "the token is refused: " << message_of(error) << '\n';
+    } else {
+      report(error);
+    }
+
     co_return 1;
   }
 
-  if (!answer->holds<http::status::ok>()) {
-    auto const &refused = answer->holds<http::status::unauthorized>() ? answer->get<http::status::unauthorized>()
-                                                                      : answer->get<http::status::forbidden>();
-
-    std::cerr << "the token is refused: " << refused.message << '\n';
-    co_return 1;
-  }
-
-  auto const &account = answer->get<http::status::ok>();
-
-  std::cout << account.login << (account.name ? " (" + *account.name + ")" : "") << '\n';
+  std::cout << account->login << (account->name ? " (" + *account->name + ")" : "") << '\n';
   co_return 0;
 }
 

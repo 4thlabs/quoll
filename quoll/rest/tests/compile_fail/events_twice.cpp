@@ -34,18 +34,16 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::endpoint: more than one events<>
+// expect: quoll::rest: a route takes value types, header<> and query_params<>, then security<> and operation_id<>
 //
-// Two streams for one response.
+// A second stream, given as an argument: a route has one result.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
 #include <string>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using feed = endpoint<"feed", verb::get, "/", events<std::string, text_codec>, events<std::string, text_codec>>;
-
-api<"", feed> const instance{};
+inline constexpr rest::get<
+    "/", rest::events<std::string, rest::text_codec>, rest::events<std::string, rest::text_codec>>
+    route{};

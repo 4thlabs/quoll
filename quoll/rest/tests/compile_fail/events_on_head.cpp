@@ -34,18 +34,14 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::endpoint: a response to HEAD has no events
+// expect: quoll::rest: a response to HEAD has no body: its result is void
 //
 // A stream with no body to carry it.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
 #include <string>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using feed = endpoint<"feed", verb::head, "/", events<std::string, text_codec>>;
-
-api<"", feed> const instance{};
+inline constexpr rest::head<"/", rest::events<std::string, rest::text_codec>> route{};

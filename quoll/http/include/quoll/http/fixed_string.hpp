@@ -46,7 +46,7 @@
 namespace quoll::http {
 
 /**
- * @brief A string usable as a template argument: the names and paths of the REST DSL (`endpoint<"users.get", ...>`)
+ * @brief A string usable as a template argument: the paths of the REST DSL (`rest::get<"/users/{id}", ...>`)
  * and the routes of a page (`route<"/products/{id}", product_page, &product_page_props::id>`).
  *
  * Built from a string literal, whose size `N` counts the terminating null. A literal converts to it implicitly, so a

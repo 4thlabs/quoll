@@ -42,18 +42,19 @@
 #include <quoll/http/detail/query_string.hpp>
 #include <quoll/http/fields.hpp>
 #include <quoll/http/request.hpp>
-#include <quoll/rest/body.hpp>
 #include <quoll/rest/detail/arguments.hpp>
+#include <quoll/rest/detail/body.hpp>
 #include <quoll/rest/detail/checked_path.hpp>
 #include <quoll/rest/detail/fields_of.hpp>
 #include <quoll/rest/detail/part.hpp>
 #include <quoll/rest/detail/path_template.hpp>
+#include <quoll/rest/detail/query.hpp>
 #include <quoll/rest/detail/scheme_traits.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/fixed_string.hpp>
 #include <quoll/rest/header.hpp>
 #include <quoll/rest/param_traits.hpp>
-#include <quoll/rest/query.hpp>
+#include <quoll/rest/query_params.hpp>
 #include <quoll/rest/security.hpp>
 
 #include <algorithm>

@@ -54,49 +54,6 @@ namespace quoll::rest::detail {
 // The types a path parameter may have, spelled `{name:type}` in a path template.
 enum class param_kind { int32, int64, uint32, uint64, floating, boolean, string, rest_of_path };
 
-template <param_kind Kind>
-struct param_kind_type;
-
-template <>
-struct param_kind_type<param_kind::int32> {
-  using type = int;
-};
-
-template <>
-struct param_kind_type<param_kind::int64> {
-  using type = std::int64_t;
-};
-
-template <>
-struct param_kind_type<param_kind::uint32> {
-  using type = unsigned;
-};
-
-template <>
-struct param_kind_type<param_kind::uint64> {
-  using type = std::uint64_t;
-};
-
-template <>
-struct param_kind_type<param_kind::floating> {
-  using type = double;
-};
-
-template <>
-struct param_kind_type<param_kind::boolean> {
-  using type = bool;
-};
-
-template <>
-struct param_kind_type<param_kind::string> {
-  using type = std::string;
-};
-
-template <>
-struct param_kind_type<param_kind::rest_of_path> {
-  using type = std::string;
-};
-
 // What makes a path template invalid; each one has its own static_assert message.
 enum class path_error {
   none,

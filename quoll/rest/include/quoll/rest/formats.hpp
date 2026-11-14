@@ -34,18 +34,40 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::with: events<> is a part of one endpoint, not one to share
-//
-// A stream given to every endpoint of a group, which would serve none of them as one.
+#ifndef QUOLL_REST_FORMATS_HPP
+#define QUOLL_REST_FORMATS_HPP
 
-#include <quoll/http/verb.hpp>
-#include <quoll/rest.hpp>
+#include <quoll/rest/codec.hpp>
 
-#include <string>
+namespace quoll::rest {
 
-using namespace quoll::rest;
-using quoll::http::verb;
+/** @brief A body or a result of plain text, `text/plain`, as a std::string. */
+struct text {};
 
-using plain = endpoint<"plain", verb::get, "/">;
+/** @brief A body or a result of bytes, `application/octet-stream`, as a std::vector<std::byte>. */
+struct bytes {};
 
-api<"", with<events<std::string, text_codec>, plain>> const instance{};
+/** @brief A body or a result in JSON, what a type alone already is: to say it. */
+template <class T>
+struct json {};
+
+/** @brief A result in JSON read leniently: the fields its type does not know are skipped, as an API adds some. */
+template <class T>
+struct lenient_json {};
+
+/** @brief A body of a form, `application/x-www-form-urlencoded`: the fields of `T` by name (see form_codec). */
+template <class T>
+struct form {};
+
+/**
+ * @brief A body or a result encoded by a codec of one's own, `rest::encoded<T, protobuf_codec>`: `json<T>`, `text`,
+ * `bytes` and `form<T>` are its common cases.
+ */
+template <class T, class C>
+struct encoded {
+  static_assert(Codec<C, T>, "quoll::rest::encoded: the codec cannot encode and decode the type");
+};
+
+} // namespace quoll::rest
+
+#endif // QUOLL_REST_FORMATS_HPP

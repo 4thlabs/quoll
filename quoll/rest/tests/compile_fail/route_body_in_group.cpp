@@ -34,15 +34,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest: only a post, a put or a patch has a body, a group's too
+// expect: quoll::rest::group: a member is a route, a group, a security<> or a header<>
 //
-// A body a group gives a DELETE.
+// A body a group gives its routes, which it does not: a route's body is its own.
 
 #include <quoll/rest.hpp>
 
 #include <cstdint>
-#include <string>
-#include <vector>
 
 namespace rest = quoll::rest;
 
@@ -52,6 +50,4 @@ struct note {
 
 using forget = rest::del<"/notes", void>;
 
-using api = rest::api<"", rest::group<rest::body<note>, forget>>;
-
-inline constexpr api::route<forget> route{};
+inline constexpr rest::api<"", rest::group<note, forget>> instance{};

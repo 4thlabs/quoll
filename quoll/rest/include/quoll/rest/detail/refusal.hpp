@@ -34,32 +34,31 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_REST_DETAIL_PATH_TYPES_HPP
-#define QUOLL_REST_DETAIL_PATH_TYPES_HPP
+#ifndef QUOLL_REST_DETAIL_REFUSAL_HPP
+#define QUOLL_REST_DETAIL_REFUSAL_HPP
 
-#include <quoll/rest/detail/checked_path.hpp>
-#include <quoll/rest/detail/path_template.hpp>
-#include <quoll/rest/detail/type_list.hpp>
-#include <quoll/rest/fixed_string.hpp>
+#include <quoll/http/http_error.hpp>
+#include <quoll/http/response.hpp>
 
-#include <cstddef>
-#include <utility>
+#include <string>
 
 namespace quoll::rest::detail {
 
-// The types of the first `Count` path parameters of `Path`, as its template says them: `{id:int64}` an int64.
-template <fixed_string Path, std::size_t Count, class Indices = std::make_index_sequence<Count>>
-struct template_path_types;
-
-template <fixed_string Path, std::size_t Count, std::size_t... Index>
-struct template_path_types<Path, Count, std::index_sequence<Index...>> {
-  using type = type_list<typename param_kind_type<checked_path<Path>::parsed.params[Index].kind>::type...>;
+// A response a client does not hand over as its route's result, and why: another status (a 401 for missing
+// credentials, a 404, a 500...), or the result's status with a body that does not decode.
+struct refusal {
+  http::response response;
+  std::string reason;
 };
 
-// The types of all the path parameters of `Path`, as its template says them.
-template <fixed_string Path>
-using path_argument_types = template_path_types<Path, checked_path<Path>::parsed.size>;
+// The detail of a refusal: the problem's when the server sent one, else its reason.
+[[nodiscard]] std::string refusal_detail(refusal const &refused);
+
+// A refusal as an http::http_error received, which call throws and try_call returns.
+[[nodiscard]] http::http_error received_error(refusal refused);
+
+[[noreturn]] void fail(refusal refused);
 
 } // namespace quoll::rest::detail
 
-#endif // QUOLL_REST_DETAIL_PATH_TYPES_HPP
+#endif // QUOLL_REST_DETAIL_REFUSAL_HPP

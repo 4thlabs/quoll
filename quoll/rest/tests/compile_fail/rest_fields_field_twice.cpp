@@ -38,23 +38,21 @@
 //
 // One field listed twice, named through its class and through the struct: it would be sent twice.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
 #include <optional>
 #include <string>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
 struct base_filter {
   std::optional<std::string> q;
 };
 
 struct filter : base_filter {
-  using rest_fields = names<name<"q", &base_filter::q>, name<"query", &filter::q>>;
+  using rest_fields = rest::names<rest::name<"q", &base_filter::q>, rest::name<"query", &filter::q>>;
 };
 
-using listed = endpoint<"listed", verb::get, "/", query_params<filter>>;
+using route = rest::get<"/", void, rest::query_params<filter>>;
 
-api<"", listed> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

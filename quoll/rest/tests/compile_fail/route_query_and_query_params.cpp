@@ -34,21 +34,24 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::with: a GET or HEAD endpoint gets a body<>
+// expect: quoll::rest: a route has its query in its expression or in a query_params<>, not both
 //
-// A with<> adding a body to a GET endpoint.
+// A query in the expression and a struct of query parameters: one place for the query.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+#include <cstdint>
+#include <optional>
+#include <string>
 
-struct thing {
-  int value = 0;
+namespace rest = quoll::rest;
+
+struct note {
+  std::int64_t id = 0;
 };
 
-using e = endpoint<"e", verb::get, "/">;
-using route = api<"", with<body<thing>, e>>::route<e>;
+struct filter {
+  std::optional<int> page;
+};
 
-route const instance{};
+inline constexpr rest::get<"/notes?limit={limit}", note, int, rest::query_params<filter>> route{};

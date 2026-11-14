@@ -166,10 +166,11 @@ refusing to run.
 **Taken.** An API is a set of C++ types, a layer over the router: one route per operation, its method as its type,
 `rest::get<"/notes/{id}", note, std::int64_t>`, gathered in `rest::group` and `rest::api<>`, checked at compile time
 ([its design](design/rest-dsl.md)). A server implements a contract with `rest::mount`, and a
-client consumes one, but neither needs the other. Each declared status has its typed response.
+client consumes one, but neither needs the other. A route declares its result only: an error is one `http::http_error`,
+thrown by a handler, given back by a client, whose body a third-party API's own shape reads.
 
-**For you.** A call with the wrong arguments, or a server missing an endpoint, does not compile, and a contract for a
-third-party API needs no Quoll server.
+**For you.** A call with the wrong arguments, or a server missing a route's handler, does not compile, and a contract
+for a third-party API needs no Quoll server.
 
 ### JSON through Glaze
 

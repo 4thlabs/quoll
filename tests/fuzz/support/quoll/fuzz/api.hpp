@@ -39,10 +39,10 @@
 
 #include <quoll/async/task.hpp>
 #include <quoll/http/body_reader.hpp>
+#include <quoll/http/http_error.hpp>
 #include <quoll/http/response.hpp>
 #include <quoll/http/router.hpp>
 #include <quoll/http/status.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
 #include <glaze/glaze.hpp>
@@ -71,8 +71,6 @@ namespace quoll::fuzz {
 
 namespace rest = quoll::rest;
 
-using http::verb;
-
 struct note {
   std::int64_t id = 0;
   std::string text;
@@ -85,10 +83,6 @@ struct new_note {
   std::optional<note> parent;
 };
 
-struct missing {
-  std::string detail;
-};
-
 struct filter {
   std::optional<int> limit;
   std::optional<std::string> contains;
@@ -96,36 +90,30 @@ struct filter {
   std::optional<bool> done;
 };
 
-using list = rest::endpoint<"list", verb::get, "/", rest::query_params<filter>, rest::returns<std::vector<note>>>;
-using get = rest::endpoint<
-    "get", verb::get, "/{id:int64}", rest::returns<note>, rest::returns<missing, http::status::not_found>>;
-using create =
-    rest::endpoint<"create", verb::post, "/", rest::body<new_note>, rest::returns<note, http::status::created>>;
-using scale = rest::endpoint<
-    "scale", verb::get, "/scale/{by:double}", rest::query<"flag", bool>,
-    rest::header<"X-Tags", std::vector<std::string>>, rest::returns<std::string>>;
-using file = rest::endpoint<"file", verb::get, "/file/{name:path}", rest::returns<std::string>>;
+using list = rest::get<"/notes", std::vector<note>, rest::query_params<filter>>;
+using get = rest::get<"/notes/{id}", note, std::int64_t>;
+using create = rest::post<"/notes", rest::created<note>, new_note>;
+using scale = rest::get<
+    "/notes/scale/{by}?flag={flag}", std::string, double, bool, rest::header<"X-Tags", std::vector<std::string>>>;
+using file = rest::get<"/notes/file/{name:path}", std::string, std::string>;
 
-using kinds = rest::endpoint<
-    "kinds", verb::get, "/kinds/{a:int}/{b:uint}/{c:uint64}/{d:bool}/{e:string}", rest::returns<std::string>>;
-using tinted = rest::endpoint<
-    "tinted", verb::get, "/tinted", rest::query<"color", color>, rest::query<"other", std::optional<color>>,
-    rest::header<"X-Count", std::optional<std::int64_t>>, rest::returns<std::string>>;
-using bearer =
-    rest::endpoint<"bearer", verb::get, "/bearer", rest::security<rest::bearer_auth>, rest::returns<std::string>>;
-using keyed = rest::endpoint<
-    "keyed", verb::get, "/keyed", rest::security<rest::api_key<"X-Api-Key">>, rest::returns<std::string>>;
-using queried = rest::endpoint<
-    "queried", verb::get, "/queried", rest::security<rest::api_key_query<"key">>, rest::returns<std::string>>;
+using kinds =
+    rest::get<"/notes/kinds/{a}/{b}/{c}/{d}/{e}", std::string, int, unsigned, std::uint64_t, bool, std::string>;
+using tinted = rest::get<
+    "/notes/tinted?color={color}&other={other}", std::string, color, std::optional<color>,
+    rest::header<"X-Count", std::optional<std::int64_t>>>;
+using bearer = rest::get<"/notes/bearer", std::string, rest::security<rest::bearer_auth>>;
+using keyed = rest::get<"/notes/keyed", std::string, rest::security<rest::api_key<"X-Api-Key">>>;
+using queried = rest::get<"/notes/queried", std::string, rest::security<rest::api_key_query<"key">>>;
 
-using api = rest::api<"/notes", list, get, create, scale, file, kinds, tinted, bearer, keyed, queried>;
+using api = rest::api<"", rest::group<list, get, create, scale, file, kinds, tinted, bearer, keyed, queried>>;
 
 struct service {
   std::vector<note> operator()(list, filter const &) const { return {note{.id = 1, .text = "one"}}; }
 
-  rest::reply<get> operator()(get, std::int64_t id) const {
+  note operator()(get, std::int64_t id) const {
     if (id < 0) {
-      return missing{"no note"};
+      throw http::http_error{http::status::not_found, "no note"};
     }
 
     return note{.id = id};

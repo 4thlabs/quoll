@@ -34,16 +34,13 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::api: routes go in a rest::group, with no prefix
+// expect: quoll::rest::api: a member is a route or a group
 //
 // Routes under a nested api with a prefix: two such apis could hold one declaration, one type.
 
-#include <quoll/http/router.hpp>
 #include <quoll/rest.hpp>
 
 #include <cstdint>
-#include <optional>
-#include <string>
 
 namespace rest = quoll::rest;
 
@@ -51,8 +48,6 @@ struct note {
   std::int64_t id = 0;
 };
 
-using get = rest::get<"/{id}", note, std::int64_t>;
+using route = rest::get<"/{id}", note, std::int64_t>;
 
-using api = rest::api<"/api", rest::api<"/users", get>>;
-
-inline constexpr api instance{};
+inline constexpr rest::api<"/api", rest::api<"/users", route>> instance{};

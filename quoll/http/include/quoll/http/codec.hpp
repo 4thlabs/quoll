@@ -34,16 +34,33 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::endpoint: the name is empty
-//
-// An endpoint with no name.
+#ifndef QUOLL_HTTP_CODEC_HPP
+#define QUOLL_HTTP_CODEC_HPP
 
-#include <quoll/http/verb.hpp>
-#include <quoll/rest.hpp>
+#include <quoll/http/decode_error.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+#include <concepts>
+#include <expected>
+#include <string>
+#include <string_view>
 
-using nameless = endpoint<"", verb::get, "/">;
+namespace quoll::http {
 
-api<"", nameless> const instance{};
+/**
+ * @brief Encodes values of type `T` into bodies and decodes bodies back, for one media type.
+ *
+ * `codec.content_type` is the media type sent in `Content-Type`. `codec.encode(value)` returns the body; a value that
+ * cannot be encoded throws. `codec.template decode<T>(body)` returns the value, or a decode_error for a body that does
+ * not match the type: bodies come from the network. A codec is default constructible: one is built where it is used.
+ * The REST layer reads its bodies with them, and http_error::body_as() the body of an error received.
+ */
+template <class C, class T>
+concept Codec = std::default_initializable<C> && requires(C const &codec, T const &value, std::string_view body) {
+  { codec.content_type } -> std::convertible_to<std::string_view>;
+  { codec.encode(value) } -> std::same_as<std::string>;
+  { codec.template decode<T>(body) } -> std::same_as<std::expected<T, decode_error>>;
+};
+
+} // namespace quoll::http
+
+#endif // QUOLL_HTTP_CODEC_HPP

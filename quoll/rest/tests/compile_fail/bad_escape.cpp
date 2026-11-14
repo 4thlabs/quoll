@@ -38,16 +38,10 @@
 //
 // An invalid percent-escape in a path.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-struct thing {
-  int value = 0;
-};
+using route = rest::get<"/caf%zz", void>;
 
-using e = endpoint<"e", verb::get, "/caf%zz">;
-
-e const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

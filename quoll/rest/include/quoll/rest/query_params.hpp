@@ -34,61 +34,51 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef QUOLL_REST_DETAIL_RESPONSE_VALUE_HPP
-#define QUOLL_REST_DETAIL_RESPONSE_VALUE_HPP
+#ifndef QUOLL_REST_QUERY_PARAMS_HPP
+#define QUOLL_REST_QUERY_PARAMS_HPP
 
+#include <quoll/rest/detail/aggregate_fields.hpp>
+#include <quoll/rest/detail/lists_fields.hpp>
 #include <quoll/rest/detail/part.hpp>
-#include <quoll/rest/detail/type_list.hpp>
+#include <quoll/rest/fixed_string.hpp>
 
-#include <array>
 #include <concepts>
-#include <cstddef>
+#include <ranges>
+#include <string_view>
 #include <type_traits>
-#include <variant>
 
-namespace quoll::rest::detail {
+namespace quoll::rest {
 
-// The responses an endpoint declares itself, without those inherited from with<>.
-template <class Endpoint>
-using own_responses = filter_t<is_response_part, typename Endpoint::parts>;
+/**
+ * @brief A part of a route: one query parameter per field of the aggregate `Struct`, named as the field is declared,
+ * or as its `rest_names` give (see names), each field a Parameter, an std::optional or an std::vector of one. For
+ * operations with many optional parameters: the caller fills a struct with designated initializers. A struct of 64
+ * fields at most, with no base class, each field with a default value, none a reference nor a pointer to characters; or
+ * a struct listing its fields, `rest_fields`, as one with a base class (see names).
+ */
+template <class Struct>
+struct query_params {
+  static_assert(
+      !std::ranges::range<Struct>, "quoll::rest::query_params: the type is a struct of fields, not an array or a range"
+  );
+  static_assert(
+      detail::ListsFields<Struct> || std::is_aggregate_v<Struct>,
+      "quoll::rest::query_params: the type is not an aggregate, nor a struct listing its fields (rest_fields)"
+  );
+  static_assert(
+      detail::ListsFields<Struct> || detail::within_fields<Struct>(),
+      "quoll::rest::query_params: the struct has more than 64 fields"
+  );
 
-// The value of one declared response; a distinct type per returns<>, even when two have the same body type.
-template <class Response, class T = typename Response::type>
-struct response_value {
-  using response = Response;
+  static_assert(
+      !detail::ListsFields<Struct> || std::default_initializable<Struct>,
+      "quoll::rest::query_params: a struct listing its fields is made with none of them given"
+  );
 
-  T value;
+  using part_category = detail::argument_part;
+  using argument_type = Struct;
 };
 
-template <class Response>
-struct response_value<Response, void> {
-  using response = Response;
-};
+} // namespace quoll::rest
 
-template <class Responses>
-struct response_variant;
-
-template <class... Responses>
-struct response_variant<type_list<Responses...>> {
-  using type = std::variant<response_value<Responses>...>;
-};
-
-// Which responses have body type T, or status Status and body type T.
-template <class T, class... Responses>
-[[nodiscard]] consteval std::array<bool, sizeof...(Responses)> with_type(type_list<Responses...>) {
-  return {std::same_as<typename Responses::type, T>...};
-}
-
-template <auto Status, class T, class... Responses>
-[[nodiscard]] consteval std::array<bool, sizeof...(Responses)> with_status(type_list<Responses...>) {
-  return {(Responses::status == Status && std::same_as<typename Responses::type, T>)...};
-}
-
-template <auto Status, class... Responses>
-[[nodiscard]] consteval std::array<bool, sizeof...(Responses)> with_status_only(type_list<Responses...>) {
-  return {(Responses::status == Status)...};
-}
-
-} // namespace quoll::rest::detail
-
-#endif // QUOLL_REST_DETAIL_RESPONSE_VALUE_HPP
+#endif // QUOLL_REST_QUERY_PARAMS_HPP

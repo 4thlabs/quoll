@@ -38,12 +38,10 @@
 //
 // A brace not closed.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using open = endpoint<"open", verb::get, "/{x">;
+using route = rest::get<"/{x", void>;
 
-api<"", open> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

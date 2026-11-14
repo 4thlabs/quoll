@@ -141,29 +141,22 @@ struct new_account {
   std::string owner;
 };
 
-struct not_found {
-  std::string detail;
-};
-
 namespace accounts {
-using namespace quoll::rest;
 
-using get = endpoint<
-    "accounts.get", quoll::http::verb::get, "/{id:int64}", returns<account>,
-    returns<not_found, quoll::http::status::not_found>>;
-using open = endpoint<
-    "accounts.open", quoll::http::verb::post, "/", body<new_account>, returns<account, quoll::http::status::created>>;
+using get = quoll::rest::get<"/accounts/{id}", account, std::int64_t>;
+using open = quoll::rest::post<"/accounts", quoll::rest::created<account>, new_account>;
 
-using api = quoll::rest::api<"/api/accounts", get, open>;
+using api = quoll::rest::api<"/api", get, open>;
+
 } // namespace accounts
 
 struct accounts_service {
-  quoll::async::task<quoll::rest::reply<accounts::get>> operator()(accounts::get, std::int64_t id) const {
-    if (id == 42) {
-      co_return account{.id = 42, .owner = "Ada"};
+  quoll::async::task<account> operator()(accounts::get, std::int64_t id) const {
+    if (id != 42) {
+      throw quoll::http::http_error{quoll::http::status::not_found, "no account " + std::to_string(id)};
     }
 
-    co_return not_found{"no account " + std::to_string(id)};
+    co_return account{.id = 42, .owner = "Ada"};
   }
 
   account operator()(accounts::open, new_account opened) const { return {.id = 7, .owner = std::move(opened.owner)}; }
@@ -364,7 +357,10 @@ task<accounts_calls> make_calls(Client &client) {
   // The POST first: it opens a connection, which the GETs then reuse.
   calls.opened = co_await client.template call<accounts::open>({.owner = "Grace"});
   calls.found = co_await client.template call<accounts::get>(42);
-  calls.missing = (co_await client.template try_call<accounts::get>(7))->template get<http::status::not_found>().detail;
+
+  auto const missing = co_await client.template try_call<accounts::get>(7);
+
+  calls.missing = missing.error().what();
   co_return calls;
 }
 

@@ -34,30 +34,29 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::mount: more than one service takes an endpoint of the api
+// expect: quoll::rest::mount: more than one handler takes a route of the api
 //
-// Two services for one endpoint.
+// Two services for one route.
 
 #include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+#include <cstdint>
 
-struct thing {
-  int value = 0;
+namespace rest = quoll::rest;
+
+struct note {
+  std::int64_t id = 0;
 };
 
-using get_thing = endpoint<"thing", verb::get, "/", returns<thing>>;
-using secured = endpoint<"secured", verb::get, "/secured", security<bearer_auth>>;
+using got = rest::get<"/", note>;
 
 struct first {
-  thing operator()(get_thing) const { return {}; }
+  note operator()(got) const { return {}; }
 };
 
 struct second {
-  thing operator()(get_thing) const { return {}; }
+  note operator()(got) const { return {}; }
 };
 
-void mount_it(quoll::http::router &router) { mount<api<"", get_thing>>(router, first{}, second{}); }
+void mount_it(quoll::http::router &router) { rest::mount<rest::api<"", rest::group<got>>>(router, first{}, second{}); }

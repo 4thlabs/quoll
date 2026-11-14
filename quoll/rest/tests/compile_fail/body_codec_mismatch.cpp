@@ -34,20 +34,18 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::body: the codec cannot encode and decode the type
+// expect: quoll::rest::encoded: the codec cannot encode and decode the type
 //
-// A text body of a struct.
+// A body of a struct in a codec of text.
 
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
 struct thing {
   int value = 0;
 };
 
-using made = endpoint<"created", verb::post, "/", body<thing, text_codec>>;
+using route = rest::post<"/", void, rest::encoded<thing, rest::text_codec>>;
 
-api<"", made> const instance{};
+inline constexpr rest::api<"", rest::group<route>> instance{};

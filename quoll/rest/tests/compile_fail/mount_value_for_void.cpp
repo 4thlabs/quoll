@@ -34,31 +34,25 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::mount: an endpoint with events<> declares its errors as 4xx or 5xx, a problem or no body
+// expect: quoll::rest::mount: a handler returns a value for a route whose result is void
 //
-// A typed error the service could not send: it throws, and an http_error answers a problem.
+// A handler returning a value for a route that answers none.
 
-#include <quoll/async/task.hpp>
 #include <quoll/http/router.hpp>
-#include <quoll/http/status.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-#include <string>
+#include <cstdint>
 
-using namespace quoll::rest;
-using quoll::http::status;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-using feed = endpoint<
-    "feed", verb::get, "/", events<std::string, text_codec>, returns<std::string, status::conflict, text_codec>>;
-
-struct handlers {
-  quoll::async::task<> operator()(feed, event_sink<std::string, text_codec> & /*events*/) const { co_return; }
+struct note {
+  std::int64_t id = 0;
 };
 
-void mounted() {
-  quoll::http::router router;
+using forget = rest::del<"/notes/{id}", void, std::int64_t>;
 
-  mount<api<"", feed>>(router, handlers{});
+void mount_it(quoll::http::router &router) {
+  auto const forget_one = [](forget, std::int64_t id) { return note{.id = id}; };
+
+  rest::mount<rest::api<"", rest::group<forget>>>(router, rest::service(forget_one));
 }

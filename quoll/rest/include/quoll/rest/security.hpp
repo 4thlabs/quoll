@@ -75,8 +75,8 @@ struct bearer_auth {
 };
 
 /**
- * @brief An endpoint part: the security schemes the endpoint requires. They are not arguments: the server checks them
- * with validators, and a client sends the credentials it was given for each scheme.
+ * @brief A part of a route or a group: the security schemes its routes require. They are not arguments: the server
+ * checks them with validators, and a client sends the credentials it was given for each scheme.
  */
 template <class... Schemes>
 struct security {

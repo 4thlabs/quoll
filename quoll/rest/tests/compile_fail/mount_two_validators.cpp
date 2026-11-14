@@ -34,26 +34,19 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest::mount: more than one validators
+// expect: quoll::rest::mount: more than one validators()
 //
-// Two validators() packs.
+// Two validators() sets.
 
 #include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
 #include <quoll/rest.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace rest = quoll::rest;
 
-struct thing {
-  int value = 0;
-};
+using secured = rest::get<"/secured", void, rest::security<rest::bearer_auth>>;
 
-using get_thing = endpoint<"thing", verb::get, "/", returns<thing>>;
-using secured = endpoint<"secured", verb::get, "/secured", security<bearer_auth>>;
-
-struct handlers {
-  void operator()(secured) const {}
-};
-
-void mount_it(quoll::http::router &router) { mount<api<"", secured>>(router, handlers{}, validators(), validators()); }
+void mount_it(quoll::http::router &router) {
+  rest::mount<rest::api<"", rest::group<secured>>>(
+      router, rest::service([](secured) {}), rest::validators(), rest::validators()
+  );
+}

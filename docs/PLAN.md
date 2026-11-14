@@ -190,6 +190,7 @@ each way, a request, a response and a file, with a process that never held more 
 The DSL and a runtime, with no UI.
 
 - On the client: `scope<Api>(prefix arguments...)`, and interceptors around `send` (retry, token refresh on 401).
+  Scopes went on 2026-11-14 (#227), with nested prefixed apis: a route's parameters are passed at each call.
 - Third-party APIs, as [the REST DSL](#rest-dsl-contract-server-client) describes: renamed fields, unknown fields, error
   bodies of any shape, codecs. A contract alone, with no Quoll server in the program.
 - A sample and a guide for a command-line program: `samples/github`, GitHub's API as the real one, as decided on
@@ -359,7 +360,7 @@ migrations.
 - A table is described by a plain aggregate, through Quoll's own reflection of aggregates, which the REST DSL takes up
   (#182), so that one `struct` may go from the database to the browser, and a field the program names breaks the compilation all along. The compiler does not see the
   database: a `struct` changed with no migration has to be caught when the program starts, not on its first query.
-- A column kept from the browser, a session's hash or a provider's token: an endpoint's `returns<user>` writes every reflected
+- A column kept from the browser, a session's hash or a provider's token: a route whose result is `user` writes every reflected
   field, and a field hidden from one description of the type would be hidden from the other too. Excluding a field per
   output, or a type of its own for what is sent: to settle, as the easy path must not leak secrets.
 - Native only, as `quoll::asio` is: the core still compiles to WASM with none of it.
@@ -671,10 +672,9 @@ changes only what the harness shows. Candidates:
   path expression for both. A route is its method as its type, its whole path and query below the api's prefix, its
   result and its parameters' types: `rest::get<"/notes/{id}", note, std::int64_t>`. `rest::group` carries what its
   routes share, with no prefix; only `rest::api<>` has one, with no parameter. Handlers are lambdas taking their route
-  first, in a `rest::service`, or overload sets; one `http::http_error`; `call` / `try_call` / `scope` clients,
+  first, in a `rest::service`, or overload sets; one `http::http_error`; `call` / `try_call` / `subscribe` clients,
   `query_params<Struct>`, a reflection of aggregates instead of macros, a client over `http::HttpTransport`. A contract
-  stands alone: clients of third-party APIs need no Quoll server. `endpoint<>`, `with<>`, `reply<>` and the nested
-  prefixed `api<>` go once the refactor is done.
+  stands alone: clients of third-party APIs need no Quoll server.
 - Prior art: the `claude/project-thread-*` branches of the Puffin repo (earlier `async`, `webkit`, `rest`) were removed
   from Puffin's `master` for quality reasons. Ideas only: never port code from them, rewrite to the rules.
 - Type erasure: non-intrusive function-pointer tables, `xxx_ref` + `any_xxx` (see the rules).
@@ -781,156 +781,70 @@ peer holds nobody back and the idle timeout covers it. In a browser, `fetch` doe
 
 ### REST DSL: contract, server, client
 
-> [!NOTE]
-> Redesigned on 2026-11-14: the contract's shape is now [design/rest-dsl.md](design/rest-dsl.md). What follows describes
-> `endpoint<>`, which routes replace in the last pull request of #176, where this section is rewritten.
-
-What this section says of OpenAPI (operation ids, security schemes, JSON Schemas) describes the optional output of
+Redesigned on 2026-11-14 with the maintainer, in #176: the design and where it stands are in
+[design/rest-dsl.md](design/rest-dsl.md), how it behaves in [rest.md](rest.md). What this section says of OpenAPI
+(operation ids, security schemes, JSON Schemas) describes the optional output of
 [step 4](#step-4-rest-from-a-command-line-program-done), which does not exist yet: it binds nothing else.
 
 An API description is a **contract**: C++ types, with no I/O and no server or client code. A server implements a
 contract and a client consumes one, but neither needs the other. Describing a third-party API (a payment provider, a
 public service, another team's service) means writing only its contract, then calling it with a client: no Quoll
-server is involved. The shape comes from the `rest` module of Puffin's `claude/project-thread-*` branches (ideas
-only, see [Decided](#decided)), adjusted for OpenAPI, typed errors and third-party APIs.
-
-**Describing an API.** One type alias per operation:
+server is involved. The REST DSL is a layer over the router, one path expression for both.
 
 ```cpp
-namespace rest = quoll::rest;
+namespace bank::users {
 
-namespace bank {
+using list   = rest::get<"/users", std::vector<user>, rest::query_params<user_filter>>;
+using get    = rest::get<"/users/{id}", user, std::int64_t>;
+using create = rest::post<"/users", rest::created<user>, new_user>;
+using remove = rest::del<"/users/{id}", void, std::int64_t>;  // 204
 
-struct user {
-  std::int64_t id = 0;
-  std::string name;
-  std::optional<std::string> email;
-};
+using routes = rest::group<rest::security<rest::bearer_auth>, list, get, create, remove>;
 
-struct new_user {
-  std::string name;
-  std::string email;
-};
+} // namespace bank::users
 
-struct user_filter {
-  std::optional<int> limit;
-  std::optional<std::string> name;
-};
+using v1 = rest::api<"/api/v1", bank::auth::login, bank::users::routes>;
 
-namespace users {
-using namespace quoll::rest;
-using quoll::http::verb;
+auto const service = rest::service(
+    [&store](bank::users::get, std::int64_t id) -> task<bank::user> { co_return co_await store.find(id); },
+    ...);
 
-using list = endpoint<"users.list", verb::get, "/", query_params<user_filter>, returns<std::vector<user>>>;
-using get = endpoint<"users.get", verb::get, "/{id:int64}", returns<user>, returns<problem, status::not_found>>;
-using create = endpoint<"users.create", verb::post, "/", body<new_user>, returns<user, status::created>,
-                        returns<problem, status::conflict>>;
-using remove = endpoint<"users.remove", verb::delete_, "/{id:int64}">; // 204
+rest::mount<v1>(router, service, rest::validators([&](rest::credential<rest::bearer_auth> const &token) {
+  return sessions.valid(token.value);
+}));
 
-using api = rest::api<"/users", list, get, create, remove>;
-} // namespace users
-
-using v1 = rest::api<"/api/v1", auth::api, rest::with<rest::security<rest::bearer_auth>, users::api, cards::api>>;
-
-} // namespace bank
-```
-
-- `endpoint<"name", method, "/path", parts...>`: the name is mandatory and unique in its API, which is checked at
-  compile time. It is the OpenAPI `operationId` and the name of the route on the server. The method is an
-  `http::verb` value, not a bare `GET` / `DELETE`: those are macros on some platforms (`DELETE` in `<winnt.h>`), and
-  the rules allow no macro of our own.
-- Path parameters are typed in the template, `{name:type}` (`int`, `int64`, `uint`, `uint64`, `double`, `bool`,
-  `string` by default, `path` for the rest of the path), and parsed at compile time.
-- Parts:
-  - `query<"name", T>`: `T` is the argument type. `query<"limit", std::optional<int>>` is optional (not required in
-    the document, omitted from the URL when empty), `query<"tag", std::vector<std::string>>` repeats the parameter
-    (`?tag=a&tag=b`), anything else is required. `header<>` follows the same rule, as do the fields of
-    `query_params<Struct>`.
-  - `query_params<Struct>`: each field of the struct is a query parameter. This is for operations with many optional
-    parameters, common in third-party APIs; the call then uses designated initializers. A name of its own: a class
-    template cannot also take the `<"name", T>` form of `query`.
-  - `header<"Name", T>` and `body<T, Codec>`.
-  - `returns<T, status, Codec>`: repeatable, one per status, each with its own type (200 by default). An endpoint
-    without `returns` answers 204.
-- `api<"/prefix", ...>` nests APIs, and a prefix may have parameters. `with<parts..., apis...>` adds parts to every
-  endpoint of the APIs it wraps.
-- Security schemes: `api_key<"Header">`, `api_key_query<"param">`, `bearer_auth`, mapped to OpenAPI
-  `securitySchemes`. They are not arguments: the server checks them with validators, and the client sends the
-  credentials it was given for each scheme.
-- `param_traits<T>` converts path, query and header values to and from text; enums go by name.
-
-Arguments are the same on both sides: the path parameters (prefixes first), then the parts in order, then the parts
-inherited from `with<>`. The endpoint computes their types: `call` and the service take exactly those, not deduced
-`Args&&...`, so that a braced list (`{.limit = 20}` for a `query_params<Struct>`) converts to its parameter.
-
-**Serving it.** A service is an overload set, one `operator()(Endpoint, args...)` per endpoint, with no base class.
-A missing service, or one with the wrong arguments, is a compile error.
-
-```cpp
-namespace bank {
-
-struct users_service {
-  task<std::vector<user>> operator()(users::list, user_filter filter);
-  task<rest::reply<users::get>> operator()(users::get, std::int64_t id);
-  task<user> operator()(users::create, new_user created);
-  task<> operator()(users::remove, std::int64_t id);
-};
-
-} // namespace bank
-
-http::router router;
-
-rest::mount<bank::v1>(router, bank::auth_service{}, bank::users_service{}, bank::cards_service{},
-                      rest::validators([&](rest::credential<rest::bearer_auth> const &token) { return sessions.valid(token.value); }));
-```
-
-- A service returns the type of the first `returns`, or `rest::reply<E>`, which holds any declared response with its
-  status: built from a value whose type only one response has, or from `rest::respond<Status>(value)` when several share
-  it. An undeclared status, or the wrong type for a status, does not compile. Only the endpoint's own responses: those
-  inherited from `with<>` are the server's (credentials, errors).
-- Errors without a declared response:
-  - 400 for an invalid argument or body, 415 for a wrong `Content-Type`, 401 for missing or rejected credentials.
-  - `throw http::http_error(status, detail)` answers that status as `application/problem+json`.
-  - Any other exception goes on, as from any handler: a connection answers 500 without detail and tells `on_handler_error`.
-- `mount` registers the routes in the sans-IO `quoll::http` router, which `quoll::server` feeds. Middlewares (logs, metrics,
-  CORS, a rate limit, auth beyond the schemes) run around the chosen route with `router::use`, and read what routing found
-  from `next`.
-
-**Calling it.** A client takes the contract and an `http::HttpTransport`, by default `http::client`, over the network natively and
-`fetch` in a browser, a Worker or Node. The base URL belongs to the transport.
-
-```cpp
-rest::client<bank::v1> api{"https://bank.example.com"};
-
-api.credentials<rest::bearer_auth>(token);
-
+rest::client<v1> api{"https://bank.example.com"};
 bank::user found = co_await api.call<bank::users::get>(42);
-auto maybe = co_await api.try_call<bank::users::get>(7);
-auto page = co_await api.call<bank::users::list>({.limit = 20});
-auto alice_cards = api.scope<bank::cards::api>(1); // fixes {user_id}
+auto maybe = co_await api.try_call<bank::users::get>(7);   // std::expected<user, http::http_error>
 ```
 
-- `call` returns the first declared response. Any other outcome throws an `http::http_error` received, with the
-  response, and the detail of the server's problem, if any, as `what()`; another declared response is read with
-  `try_call`. A service letting it escape answers 502, not that API's status (2026-11-14, #176: one HTTP error for the
-  HTTP client, the REST client and the server).
-- `try_call` returns `rest::result<E>`, `std::expected<rest::reply<E>, rest::unexpected_response>`: the declared
-  response received, or the whole response with why it is unexpected (an undeclared status, a body that does not
-  decode).
-- Transport failures (network, cancellation) stay exceptions from the task in both cases (`std::system_error`).
-- The client is a template over its transport: no virtual call. Type erasure, if a use needs it, goes through
-  function-pointer tables, like `any_stream`.
-- Interceptors (retry, token refresh on 401) wrap `send`.
-- Arguments are taken by value, as the endpoint's types, and live in the task.
+- **A route** is its method as its type, its whole path and query below the api's prefix, its result, then the types
+  of its parameters, its headers and its body. Each is its own type, unique by its method and path; its name is its
+  `operation_id<>` or its method and whole path, the OpenAPI `operationId` and the name of the router's route.
+- **A group** carries what its routes share, security schemes and headers, with no prefix; only the api has one, with no
+  parameter. Security schemes, `api_key<"Header">`, `api_key_query<"param">` and `bearer_auth`, map to OpenAPI
+  `securitySchemes`: the server checks them with validators, the client sends the credentials it was given.
+- **Arguments** are the same on both sides, as the route computes them: `call` and the handler take exactly those, not
+  deduced `Args&&...`, so that a braced list (`{.limit = 20}` for a `query_params<Struct>`) converts to its parameter.
+- **Errors**: a route declares none. A handler throws `http::http_error(status, detail)`, answered as
+  `application/problem+json`; the client gives back an `http::http_error` received, thrown by `call`, returned by
+  `try_call`, and its `body_as<T>(codec)` reads a third-party API's own shape of them. Any other exception goes on, as
+  from any handler: a connection answers 500 without detail and tells `on_handler_error`.
+- `mount` registers the routes in the sans-IO `quoll::http` router, which `quoll::server` feeds. Middlewares (logs,
+  metrics, CORS, a rate limit, auth beyond the schemes) run around the chosen route with `router::use`, and read what
+  routing found from `next`.
+- The client is a template over its `http::HttpTransport`, by default `http::client`, over the network natively and
+  `fetch` in a browser, a Worker or Node: no virtual call. Interceptors (retry, token refresh on 401) wrap `send`.
+  Transport failures (network, cancellation) are exceptions from the task (`std::system_error`).
 
 **Third-party APIs.** A contract written for someone else's API must express what that API does, not what Quoll
 would choose:
 
 - JSON names that are not C++ names (`created_at`, `htmlUrl`, reserved words), through a per-type renaming trait.
-- Unknown fields are ignored. A field of type `rest::open_enum<E>` reads a value `E` does not know, kept as it came and
-  written back so, while `E` itself stays strict.
-- Error bodies of any shape, one type per status (`returns<github_error, status::not_found>`), not only `problem+json`.
-- Bodies other than JSON through codecs: text, form, bytes.
+- Unknown fields skipped, by a `lenient_json<T>` result. A field of type `rest::open_enum<E>` reads a value `E` does
+  not know, kept as it came and written back so, while `E` itself stays strict.
+- Error bodies of any shape, read from the error a call gives, not only `problem+json`.
+- Bodies other than JSON through codecs: text, form, bytes, and `encoded<T, Codec>` for one's own.
 - Later: a tool generating the contract header from an existing OpenAPI document. The DSL stays able to express what
   such documents commonly hold.
 
@@ -941,10 +855,8 @@ to its JSON names, and describes a type that is not an aggregate. The fields of 
 are read by a reflection of Quoll's own, by their declared names (2026-11-14, #182): an aggregate of 64 fields at most,
 with no base class, a name that is not a C++ name given by the struct's `rest_names`, for those fields only, and a
 struct the reflection does not read listing its fields, `rest_fields`.
-- Decoding errors come back as values (Glaze's `expected`): the server answers 400 with them, and `try_call` reports
-  them.
-- The client skips unknown keys when it decodes the responses of a third-party API (`error_on_unknown_keys`
-  off); Quoll's server may keep rejecting them in requests.
+- Decoding errors come back as values (Glaze's `expected`): the server answers 400 with them, and the client an
+  `http::http_error` received.
 - Reflected types need external linkage: Glaze reads field names through an `extern` object, which Clang rejects
   for a type in an anonymous namespace.
 - The DSL writes the JSON Schemas itself, from the same reflection. Glaze 9.1's own JSON Schema does not serve

@@ -36,18 +36,13 @@
 
 // expect: quoll::rest: only a post, a put or a patch has a body
 //
-// A body written as a body<> part, which counts as one.
+// A body written in a format, which counts as one.
 
 #include <quoll/rest.hpp>
 
 #include <cstdint>
-#include <string>
 #include <vector>
 
 namespace rest = quoll::rest;
 
-struct note {
-  std::int64_t id = 0;
-};
-
-inline constexpr rest::del<"/notes", void, rest::body<std::vector<std::int64_t>>> route{};
+inline constexpr rest::del<"/notes", void, rest::json<std::vector<std::int64_t>>> route{};

@@ -34,21 +34,25 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// expect: quoll::rest: two path parameters have the same name
-//
-// A path parameter named like one of the prefix.
+#ifndef QUOLL_REST_DETAIL_BODY_HPP
+#define QUOLL_REST_DETAIL_BODY_HPP
 
-#include <quoll/http/verb.hpp>
-#include <quoll/rest.hpp>
+#include <quoll/rest/codec.hpp>
+#include <quoll/rest/detail/part.hpp>
+#include <quoll/rest/json_codec.hpp>
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace quoll::rest::detail {
 
-struct thing {
-  int value = 0;
+/** @brief A part of a route: the request body, whose argument is a `T`, encoded by `BodyCodec` (JSON by default). */
+template <class T, class BodyCodec = json_codec>
+struct body {
+  static_assert(Codec<BodyCodec, T>, "quoll::rest: the codec cannot encode and decode the type");
+
+  using part_category = argument_part;
+  using argument_type = T;
+  using codec = BodyCodec;
 };
 
-using a = endpoint<"a", verb::get, "/{id}">;
-using route = api<"/users/{id}", a>::route<a>;
+} // namespace quoll::rest::detail
 
-route const instance{};
+#endif // QUOLL_REST_DETAIL_BODY_HPP

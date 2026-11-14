@@ -37,13 +37,10 @@
 #ifndef QUOLL_REST_DETAIL_PART_HPP
 #define QUOLL_REST_DETAIL_PART_HPP
 
-#include <quoll/http/status.hpp>
 #include <quoll/rest/detail/type_list.hpp>
 #include <quoll/rest/parameter.hpp>
 
-#include <array>
 #include <concepts>
-#include <cstddef>
 #include <optional>
 #include <type_traits>
 #include <vector>
@@ -81,55 +78,23 @@ struct is_argument_part : std::bool_constant<std::same_as<typename P::part_categ
 template <class P>
 struct is_response_part : std::bool_constant<std::same_as<typename P::part_category, response_part>> {};
 
-// Whether a part declares a response with a body.
-template <class P>
-[[nodiscard]] consteval bool declares_a_body_response() {
-  if constexpr (std::same_as<typename P::part_category, response_part>) {
-    return !std::is_void_v<typename P::type>;
-  } else {
-    return false;
-  }
-}
-
-template <class... Parts>
-[[nodiscard]] consteval bool any_body_response(type_list<Parts...>) {
-  return (declares_a_body_response<Parts>() || ...);
-}
-
 template <class P>
 struct is_events_part : std::bool_constant<std::same_as<typename P::part_category, events_part>> {};
 
-template <class... Parts>
-[[nodiscard]] consteval std::size_t count_events(type_list<Parts...>) {
-  return (std::size_t{0} + ... + (is_events_part<Parts>::value ? 1 : 0));
-}
-
-// The events<> part of an endpoint, if it has one.
+// The events<> part of a route, if it has one.
 template <class Endpoint>
 using events_of = filter_t<is_events_part, typename Endpoint::parts>;
 
 template <class Endpoint>
 inline constexpr bool has_events = events_of<Endpoint>::size > 0;
 
-// The events<> part of an endpoint that has one.
+// The events<> part of a route that has one.
 template <class Endpoint>
 using events_part_of = typename front<events_of<Endpoint>>::type;
 
-// Whether one of `Parts` declares what is no error, below 400: a success or a redirect, which events<> leaves no room
-// for.
-template <class... Parts>
-[[nodiscard]] consteval bool any_success_response(type_list<Parts...>) {
-  return (
-      []<class P>() {
-        if constexpr (std::same_as<typename P::part_category, response_part>) {
-          return static_cast<int>(P::status) < 400;
-        } else {
-          return false;
-        }
-      }.template operator()<Parts>() ||
-      ...
-  );
-}
+// The returns<> of a route's own result: one, or none for a void result or events<>; a group gives none.
+template <class Endpoint>
+using own_responses = filter_t<is_response_part, typename Endpoint::parts>;
 
 template <class P>
 struct is_security_part : std::bool_constant<std::same_as<typename P::part_category, security_part>> {};
@@ -147,30 +112,6 @@ struct is_parameter_value<std::vector<T>> : std::bool_constant<Parameter<T>> {};
 
 // Tags the security schemes, so that security<> accepts nothing else.
 struct security_scheme {};
-
-// The checks endpoint<> makes on its own parts, and route on them with the inherited ones.
-
-template <class... Parts>
-[[nodiscard]] consteval std::size_t count_bodies(type_list<Parts...>) {
-  return (std::size_t{0} + ... + (is_argument_part<Parts>::value && requires { typename Parts::codec; } ? 1 : 0));
-}
-
-template <class... Parts>
-[[nodiscard]] consteval bool distinct_statuses(type_list<Parts...>) {
-  constexpr auto statuses = []<class... Responses>(type_list<Responses...>) {
-    return std::array<http::status, sizeof...(Responses)>{Responses::status...};
-  }(filter_t<is_response_part, type_list<Parts...>>{});
-
-  for (std::size_t first = 0; first < statuses.size(); ++first) {
-    for (std::size_t second = first + 1; second < statuses.size(); ++second) {
-      if (statuses[first] == statuses[second]) {
-        return false;
-      }
-    }
-  }
-
-  return true;
-}
 
 } // namespace quoll::rest::detail
 

@@ -33,29 +33,20 @@
 // CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-// expect: quoll::rest::scoped_client::scope: the api is not nested in the scope's
-//
-// A scope of a scope on a sibling api: its prefixes differ, and the values the first scope fixes would go to them.
 
-#include <quoll/http/local_transport.hpp>
-#include <quoll/http/router.hpp>
-#include <quoll/http/verb.hpp>
-#include <quoll/rest.hpp>
+#ifndef QUOLL_REST_RESULT_STATUS_HPP
+#define QUOLL_REST_RESULT_STATUS_HPP
 
-using namespace quoll::rest;
-using quoll::http::verb;
+namespace quoll::rest {
 
-using repository = endpoint<"repository", verb::get, "/">;
-using team = endpoint<"team", verb::get, "/">;
-using repos = api<"/repos/{repo}", repository>;
-using teams = api<"/teams/{team}", team>;
-using users = api<"/users/{user}", repos>;
-using orgs = api<"/orgs/{org}", teams>;
-using v1 = api<"/v1", users, orgs>;
+/** @brief A result answered `201 Created`: `rest::post<"/notes", rest::created<note>, new_note>`. */
+template <class T>
+struct created {};
 
-void scoped(quoll::http::router const &router) {
-  client<v1, quoll::http::local_transport> const api_client{quoll::http::local_transport{router}};
-  auto const alice = api_client.scope<users>("alice");
+/** @brief A result answered `202 Accepted`. */
+template <class T>
+struct accepted {};
 
-  (void)alice.scope<teams>("x");
-}
+} // namespace quoll::rest
+
+#endif // QUOLL_REST_RESULT_STATUS_HPP
