@@ -19,7 +19,7 @@ use serde::de::DeserializeOwned;
 
 use crate::__private::Given;
 use crate::__private::content_type::{
-    self, BYTES, FORM, JSON, MULTIPART, PROBLEM, TEXT, TEXT_UTF8, media_type_value,
+    self, FORM, JSON, MULTIPART, OCTET_STREAM, PROBLEM, TEXT, TEXT_UTF8, media_type_value,
 };
 use crate::__private::known::{IsAccepted, IsBytes, IsCreated, IsForm, IsText};
 use crate::rest::error::Repr;
@@ -209,9 +209,23 @@ impl Request {
     ///
     /// # Errors
     ///
-    /// A 400 when the body is not the JSON of `T`, a 415 when the request does not say it sends JSON, and the status
-    /// axum gives when the body cannot be read, as a 413 for one too large.
+    /// A 400 when the body is not the JSON of `T`, a 415 when the request does not say it sends JSON or names more
+    /// than one content type, and the status axum gives when the body cannot be read, as a 413 for one too large.
     pub async fn json<T: DeserializeOwned>(self) -> Result<T> {
+        // axum reads the first `Content-Type` alone: a second one is refused here, as every other body refuses it.
+        if self
+            .parts
+            .headers
+            .get_all(header::CONTENT_TYPE)
+            .iter()
+            .nth(1)
+            .is_some()
+        {
+            return Err(unsupported(format!(
+                "the body is read as `{JSON}`: send it with one `Content-Type: {JSON}`"
+            )));
+        }
+
         let request = http::Request::from_parts(self.parts, self.body);
 
         match axum::Json::<T>::from_request(request, &()).await {
@@ -283,21 +297,18 @@ impl Request {
             return Ok(media_type.to_owned());
         }
 
-        Err(Error::new(
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            format!(
-                "the body is read as bytes: send it with its `Content-Type`, `{BYTES}` when it has no other, but not `{FORM}`, `{MULTIPART}` or `{TEXT}`"
-            ),
-        ))
+        Err(unsupported(format!(
+            "the body is read as bytes: send it with one `Content-Type`, `{OCTET_STREAM}` when it has no other, but not `{FORM}`, `{MULTIPART}` or `{TEXT}`"
+        )))
     }
 
-    /// A 415 unless the request's content type is `expected`, whatever its parameters, but a charset other than UTF-8
-    /// when `utf8` is set; a request without one is refused too, as axum refuses a JSON body.
+    /// A 415 unless the request's one content type is `expected`, whatever its parameters, but a charset other than
+    /// UTF-8 when `utf8` is set; a request without one, or with more than one, is refused too, as a JSON body is.
     ///
-    /// The body is read as its type says, and no other. For JSON, it also keeps out what a page of another site posts:
-    /// a browser sends that type to another site only once the site agrees (a CORS preflight). A form and text are
-    /// among the types it sends without asking, so the check does not keep those out: a route whose credential the
-    /// browser adds on its own, a cookie, needs a defense of its own. A Bearer token is never added so.
+    /// The body is read as its type says, and no other. A form and text are among the types a browser sends to another
+    /// site without asking it first (with no CORS preflight), so the check does not keep out what a page of another
+    /// site posts: a route whose credential the browser adds on its own, a cookie, needs a defense of its own. A
+    /// Bearer token is never added so.
     fn check_content_type(&self, expected: &str, utf8: bool) -> Result<()> {
         if content_type::is(&self.parts.headers, expected, utf8) {
             return Ok(());
@@ -305,12 +316,9 @@ impl Request {
 
         let charset = if utf8 { "; charset=utf-8" } else { "" };
 
-        Err(Error::new(
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            format!(
-                "the body is read as `{expected}`: send it with `Content-Type: {expected}{charset}`"
-            ),
-        ))
+        Err(unsupported(format!(
+            "the body is read as `{expected}`: send it with one `Content-Type: {expected}{charset}`"
+        )))
     }
 
     /// The whole body, within the limit axum sets.
@@ -321,6 +329,11 @@ impl Request {
             .await
             .map_err(|error| rejected(error.status(), error.body_text()))
     }
+}
+
+/// A 415, which says what to send instead.
+fn unsupported(detail: String) -> Error {
+    Error::new(StatusCode::UNSUPPORTED_MEDIA_TYPE, detail)
 }
 
 /// `form`, the query or a body, read as serde_html_form reads a form into `T`; `what` names it in the errors.
@@ -410,7 +423,8 @@ pub fn ok_text<T: IsText>(result: Result<T>) -> Result<Response> {
     ))
 }
 
-/// A 200 with the bytes the handler returned, of their content type.
+/// A 200 with the bytes the handler returned, of their content type, and `X-Content-Type-Options: nosniff`: a browser
+/// reads them only as that type says, so that bytes typed `application/octet-stream` are never run as a page.
 ///
 /// # Errors
 ///
@@ -422,8 +436,14 @@ pub fn ok_bytes<B: IsBytes>(result: Result<B>) -> Result<Response> {
             "the content type of a `Bytes`, {content_type:?}, is not a media type"
         ))
     })?;
+    let mut response = answer_body(content_type, bytes);
 
-    Ok(answer_body(content_type, bytes))
+    response.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+
+    Ok(response)
 }
 
 /// A 204, with no body.

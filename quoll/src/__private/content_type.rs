@@ -1,4 +1,16 @@
-//! The content type of a body, as the server reads a request's and the client an answer's.
+//! The content type of a body, as the server reads a request's and the client an answer's, and as a `Bytes` carries
+//! it.
+//!
+//! A message with more than one `Content-Type` has none that is read: each check here refuses it.
+
+// `Bytes` reads its default type and the essence of its own whatever the features, the rest only a side does.
+#![cfg_attr(
+    not(any(feature = "server", feature = "client")),
+    expect(
+        dead_code,
+        reason = "with neither side, only `Bytes` reads a content type"
+    )
+)]
 
 use std::borrow::Cow;
 
@@ -13,6 +25,9 @@ pub const PROBLEM: &str = "application/problem+json";
 /// A form.
 pub const FORM: &str = "application/x-www-form-urlencoded";
 
+/// A form with files.
+pub const MULTIPART: &str = "multipart/form-data";
+
 /// Text, read in UTF-8 when no charset is named.
 pub const TEXT: &str = "text/plain";
 
@@ -20,29 +35,39 @@ pub const TEXT: &str = "text/plain";
 pub const TEXT_UTF8: &str = "text/plain; charset=utf-8";
 
 /// Bytes of no known type, what a `Bytes` is unless it says otherwise.
-pub const BYTES: &str = crate::rest::body::OCTET_STREAM;
+pub const OCTET_STREAM: &str = "application/octet-stream";
 
-/// A form with files.
-pub const MULTIPART: &str = "multipart/form-data";
+/// The one `Content-Type` of `headers`, as text: none when it is missing, given more than once, or not text.
+fn single(headers: &HeaderMap) -> Option<&str> {
+    let mut values = headers.get_all(header::CONTENT_TYPE).iter();
+    let (Some(value), None) = (values.next(), values.next()) else {
+        return None;
+    };
+
+    value.to_str().ok()
+}
+
+/// The type and the subtype of `content_type`, without its parameters, as it is written: what is compared to a type,
+/// whatever the case.
+pub(crate) fn essence(content_type: &str) -> &str {
+    content_type.split(';').next().unwrap_or_default().trim()
+}
 
 /// Whether `headers` say the body is `expected`, whatever the case and the parameters, but a charset other than UTF-8
-/// when `utf8` is set. A body without a content type, or with one that is not text, is not `expected`.
+/// when `utf8` is set. A body without a content type, with more than one, or with one that is not text, is not
+/// `expected`.
 pub(crate) fn is(headers: &HeaderMap, expected: &str, utf8: bool) -> bool {
-    let Some(value) = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-    else {
+    let Some(value) = single(headers) else {
         return false;
     };
 
-    let mut parts = value.split(';');
-    let essence = parts.next().unwrap_or_default().trim();
-
-    if !essence.eq_ignore_ascii_case(expected) {
+    if !essence(value).eq_ignore_ascii_case(expected) {
         return false;
     }
 
-    let other_charset = parts
+    let other_charset = value
+        .split(';')
+        .skip(1)
         .filter_map(|param| param.split_once('='))
         .any(|(name, value)| {
             let value = value.trim().trim_matches('"');
@@ -53,15 +78,10 @@ pub(crate) fn is(headers: &HeaderMap, expected: &str, utf8: bool) -> bool {
     !(utf8 && other_charset)
 }
 
-/// The one content type of `headers`, when it is a media type: none when it is missing, given twice, or not a media
-/// type.
+/// The one content type of `headers`, when it is a media type: none when it is missing, given more than once, or not
+/// a media type.
 pub(crate) fn media_type(headers: &HeaderMap) -> Option<&str> {
-    let mut values = headers.get_all(header::CONTENT_TYPE).iter();
-    let (Some(value), None) = (values.next(), values.next()) else {
-        return None;
-    };
-
-    value.to_str().ok().filter(|value| is_media_type(value))
+    single(headers).filter(|value| is_media_type(value))
 }
 
 /// `content_type` as a header's value, when it is a media type; given back otherwise, for the error to say.
@@ -81,7 +101,7 @@ pub(crate) fn media_type_value(
     expect(dead_code, reason = "only the server reads a body")
 )]
 pub(crate) fn is_cors_safelisted(media_type: &str) -> bool {
-    let essence = media_type.split(';').next().unwrap_or_default().trim();
+    let essence = essence(media_type);
 
     [FORM, MULTIPART, TEXT]
         .iter()
@@ -107,6 +127,7 @@ pub(crate) fn is_media_type(value: &str) -> bool {
         let Some(after) = blanks(rest).strip_prefix(b";") else {
             return false;
         };
+
         rest = blanks(after);
 
         if rest.first().is_some_and(|&byte| is_tchar(byte)) {
@@ -116,6 +137,7 @@ pub(crate) fn is_media_type(value: &str) -> bool {
             let Some(after) = token(after).or_else(|| quoted_string(after)) else {
                 return false;
             };
+
             rest = after;
         }
     }
@@ -139,9 +161,11 @@ fn quoted_string(input: &[u8]) -> Option<&[u8]> {
             (b'"', after) => return Some(after),
             (b'\\', after) => {
                 let (&escaped, after) = after.split_first()?;
+
                 if !is_text(escaped) {
                     return None;
                 }
+
                 rest = after;
             }
             (&byte, after) if is_text(byte) => rest = after,
@@ -202,6 +226,22 @@ mod tests {
             "application/octet-stream",
             false
         ));
+    }
+
+    #[test]
+    fn the_essence_is_the_type_and_subtype_as_written() {
+        assert_eq!(essence("Image/PNG; name=\"a.png\""), "Image/PNG");
+        assert_eq!(essence(" text/plain ;charset=utf-8"), "text/plain");
+        assert_eq!(essence("image/png"), "image/png");
+    }
+
+    #[test]
+    fn more_than_one_content_type_is_none_of_them() {
+        let mut twice = headers("text/plain");
+        twice.append(header::CONTENT_TYPE, HeaderValue::from_static("text/plain"));
+
+        assert!(!is(&twice, "text/plain", true));
+        assert!(!is(&twice, "text/plain", false));
     }
 
     #[test]

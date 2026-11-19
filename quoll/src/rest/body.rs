@@ -8,6 +8,8 @@ use std::borrow::Cow;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
+use crate::__private::content_type::{self, OCTET_STREAM};
+
 /// A body sent as a form, `application/x-www-form-urlencoded`, read and written through serde_html_form as a query is:
 /// a field per key, an `Option` that may be missing, a `Vec` that repeats its key.
 ///
@@ -102,26 +104,38 @@ impl fmt::Display for Text {
 ///
 /// assert_eq!(png.content_type(), "image/png");
 /// assert_eq!(png.len(), 4);
-/// assert_eq!(png.0, [0x89, b'P', b'N', b'G']);
+/// assert_eq!(png.as_ref(), [0x89, b'P', b'N', b'G']);
 ///
 /// assert_eq!(Bytes::from(vec![0xCA, 0xFE]).content_type(), "application/octet-stream");
 /// ```
 ///
-/// As a result, the server answers them with their content type. The client reads an answer of any content type into
-/// them, whole, as it does a JSON result, and keeps that type: an answer without one, or with one that is not a media
-/// type, is `application/octet-stream`, bytes of no known type, as RFC 9110 lets a recipient assume.
+/// As a result, the server answers them with their content type, and `X-Content-Type-Options: nosniff`, so that a
+/// browser does not read them as another type. The client reads an answer of any content type into them, whole, as it
+/// does a JSON result, and keeps that type: an answer without one, or with one that is not a media type, is
+/// `application/octet-stream`, bytes of no known type, as RFC 9110 lets a recipient assume.
 ///
 /// As a body, the client sends them with their content type. The server reads a body of any media type into them, but
 /// the three a browser sends to another site without asking it first, `application/x-www-form-urlencoded`,
 /// `multipart/form-data` and `text/plain`, and a body without one: those answer 415, so that what a page of another
 /// site posts never reaches the route.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Bytes(pub Vec<u8>, pub(crate) Cow<'static, str>);
+///
+/// Two `Bytes` are equal when they hold the same bytes and their content types are written the same: `image/png` is
+/// not `Image/PNG` there, which [`Bytes::has_type`] compares as one.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Bytes {
+    /// The bytes.
+    pub(crate) bytes: Vec<u8>,
+    /// Their content type, as it was given or received.
+    pub(crate) content_type: Cow<'static, str>,
+}
 
 impl Bytes {
     /// `bytes`, of no known type: `application/octet-stream`.
     pub fn new(bytes: impl Into<Vec<u8>>) -> Self {
-        Self(bytes.into(), Cow::Borrowed(OCTET_STREAM))
+        Self {
+            bytes: bytes.into(),
+            content_type: Cow::Borrowed(OCTET_STREAM),
+        }
     }
 
     /// The same bytes, of `content_type`, a media type as `Content-Type` writes it: `image/png`, or
@@ -129,20 +143,65 @@ impl Bytes {
     ///
     /// It is checked when it is sent: a server answers a content type that is not a media type with a 500, logged,
     /// and a client refuses it with a misuse error, before sending.
+    ///
+    /// A server never answers a content type a client gave, an upload's, as it is: a browser runs `text/html`, SVG or
+    /// XML on the API's own site, a script of whoever uploaded it among them. The application checks it against the
+    /// types it serves, and answers the others as `application/octet-stream`.
     #[must_use]
     pub fn with_content_type(self, content_type: impl Into<String>) -> Self {
-        Self(self.0, Cow::Owned(content_type.into()))
+        Self {
+            bytes: self.bytes,
+            content_type: Cow::Owned(content_type.into()),
+        }
     }
 
-    /// What the bytes are, as `Content-Type` says it, as it was given or received: `application/octet-stream` when
+    /// What the bytes are, as `Content-Type` writes it, as it was given or received: `application/octet-stream` when
     /// nothing said it.
     pub fn content_type(&self) -> &str {
-        &self.1
+        &self.content_type
+    }
+
+    /// Whether the bytes are of `media_type`, a type and a subtype, whatever the case and the parameters of their
+    /// content type.
+    ///
+    /// ```
+    /// use quoll::rest::Bytes;
+    ///
+    /// let png = Bytes::new(*b"PNG").with_content_type("Image/PNG; name=\"a.png\"");
+    ///
+    /// assert!(png.has_type("image/png"));
+    /// assert!(!png.has_type("image/gif"));
+    /// assert!(Bytes::new(*b"").has_type("application/octet-stream"));
+    /// ```
+    pub fn has_type(&self, media_type: &str) -> bool {
+        content_type::essence(&self.content_type).eq_ignore_ascii_case(media_type.trim())
+    }
+
+    /// The bytes, leaving their content type.
+    ///
+    /// ```
+    /// use quoll::rest::Bytes;
+    ///
+    /// assert_eq!(Bytes::new(*b"PNG").into_vec(), b"PNG");
+    /// ```
+    pub fn into_vec(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    /// The bytes and their content type.
+    ///
+    /// ```
+    /// use quoll::rest::Bytes;
+    ///
+    /// let (bytes, content_type) = Bytes::new(*b"PNG").with_content_type("image/png").into_parts();
+    ///
+    /// assert_eq!(bytes, b"PNG");
+    /// assert_eq!(content_type, "image/png");
+    /// ```
+    pub fn into_parts(self) -> (Vec<u8>, String) {
+        (self.bytes, self.content_type.into_owned())
     }
 }
-
-/// What a `Bytes` is when nothing says otherwise.
-pub(crate) const OCTET_STREAM: &str = "application/octet-stream";
 
 /// No bytes, `application/octet-stream`.
 impl Default for Bytes {
@@ -155,13 +214,13 @@ impl Deref for Bytes {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
-        &self.0
+        &self.bytes
     }
 }
 
 impl AsRef<[u8]> for Bytes {
     fn as_ref(&self) -> &[u8] {
-        &self.0
+        &self.bytes
     }
 }
 

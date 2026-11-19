@@ -183,7 +183,7 @@ async fn bytes_answer_200_as_an_octet_stream_and_read_back_whole() {
         let bytes = api.files().bytes(len).await.expect("bytes");
 
         assert_eq!(bytes.len(), len);
-        assert!(bytes.0 == pattern(len), "{len}");
+        assert!(bytes.as_ref() == pattern(len), "{len}");
         assert_eq!(bytes.content_type(), "application/octet-stream");
     }
 }
@@ -197,6 +197,19 @@ async fn bytes_answer_their_content_type_and_read_back_with_it() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(content_type, "image/png");
     assert_eq!(body, PNG);
+
+    // A browser reads them as their type says, and never runs them as a page.
+    for query in ["type=text%2Fhtml", "type=image%2Fsvg%2Bxml", ""] {
+        let response = reqwest::get(format!("{url}/api/image?{query}"))
+            .await
+            .expect("the server answers");
+
+        assert_eq!(
+            response.headers()["x-content-type-options"],
+            "nosniff",
+            "{query}"
+        );
+    }
 
     for content_type in ["image/png", "text/csv; charset=utf-8", "Image/SVG+XML"] {
         let image = api

@@ -124,11 +124,14 @@ pub trait IsBytes: Sized {
 
 impl IsBytes for Bytes {
     fn from_parts(bytes: Vec<u8>, content_type: Cow<'static, str>) -> Self {
-        Self(bytes, content_type)
+        Self {
+            bytes,
+            content_type,
+        }
     }
 
     fn into_parts(self) -> (Vec<u8>, Cow<'static, str>) {
-        (self.0, self.1)
+        (self.bytes, self.content_type)
     }
 }
 

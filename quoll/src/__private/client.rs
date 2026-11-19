@@ -14,7 +14,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::__private::content_type::{self, BYTES, FORM, PROBLEM, TEXT_UTF8, media_type_value};
+use crate::__private::content_type::{
+    self, FORM, OCTET_STREAM, PROBLEM, TEXT_UTF8, media_type_value,
+};
 use crate::__private::known::{IsBytes, IsForm, IsText};
 use crate::rest::{Error, Problem, Result, Route};
 
@@ -487,7 +489,7 @@ impl Answer {
     /// An error with no status when the body cannot be read.
     pub async fn bytes<B: IsBytes>(self) -> Result<B> {
         let content_type = content_type::media_type(self.response.headers())
-            .map_or(Cow::Borrowed(BYTES), |media_type| {
+            .map_or(Cow::Borrowed(OCTET_STREAM), |media_type| {
                 Cow::Owned(media_type.to_owned())
             });
         let body = self.read().await?;

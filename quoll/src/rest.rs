@@ -38,7 +38,7 @@
 
 mod accepted;
 mod auth;
-pub(crate) mod body;
+mod body;
 #[cfg(feature = "client")]
 pub mod client;
 mod created;
