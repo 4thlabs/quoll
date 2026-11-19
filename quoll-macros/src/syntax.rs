@@ -60,6 +60,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                     "an api takes no `#[auth(...)]`: put it on a group, or on a route",
                 ));
             }
+
             let decl = ApiDecl::parse(input, docs, vis, &keyword)?;
             match &api {
                 Some(first) => errors.push(Error::new(
@@ -227,6 +228,7 @@ fn parse_route(input: ParseStream, group_auth: Option<Auth>) -> Result<Result<Ro
     let Some(mut error) = auth_error else {
         return Ok(route);
     };
+
     if let Err(other) = route {
         error.combine(other);
     }
@@ -276,8 +278,8 @@ struct Attrs {
     auth: Option<(Attribute, Result<Auth>)>,
 }
 
-/// The attributes before an item. A second `#[auth(...)]`, or any attribute other than a comment or `#[auth(...)]`,
-/// is refused.
+/// The attributes before an item. Any attribute other than a comment or `#[auth(...)]` is refused, which stops the
+/// reading; a second `#[auth(...)]` is a mistake of the item's `auth`, gathered with the others.
 fn parse_attrs(input: ParseStream) -> Result<Attrs> {
     let attrs = input.call(Attribute::parse_outer)?;
     let mut lines = Vec::with_capacity(attrs.len());
@@ -285,14 +287,28 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
 
     for attr in attrs {
         if attr.path().is_ident("auth") {
-            if auth.is_some() {
-                return Err(Error::new_spanned(
-                    &attr,
-                    "an item takes one `#[auth(...)]`: remove this one",
-                ));
-            }
-            let read = parse_auth(&attr);
-            auth = Some((attr, read));
+            auth = Some(match auth {
+                None => {
+                    let read = parse_auth(&attr);
+
+                    (attr, read)
+                }
+                Some((first, read)) => {
+                    let twice = Error::new_spanned(
+                        &attr,
+                        "an item takes one `#[auth(...)]`: remove this one",
+                    );
+                    let error = match read {
+                        Ok(_) => twice,
+                        Err(mut error) => {
+                            error.combine(twice);
+                            error
+                        }
+                    };
+
+                    (first, Err(error))
+                }
+            });
             continue;
         }
 
@@ -312,6 +328,7 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
                 "an attribute is not supported here: only `///` comments are kept, and `#[auth(...)]` on a group or a route",
             ));
         };
+
         lines.push(line);
     }
 
@@ -356,6 +373,7 @@ fn parse_auth(attr: &Attribute) -> Result<Auth> {
                 format!("alternatives of schemes are not supported yet: a route takes one scheme, {WRITE}"),
             ));
         }
+
         if input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
             let option = input.call(Ident::parse_any).map_err(|error| {
@@ -366,6 +384,7 @@ fn parse_auth(attr: &Attribute) -> Result<Auth> {
                 format!("`{option}` is not supported yet in `#[auth(...)]`: {WRITE}"),
             ));
         }
+
         if !input.is_empty() {
             return Err(input.error(format!("`#[auth]` takes a scheme alone: {WRITE}")));
         }
@@ -810,12 +829,21 @@ mod tests {
         });
         assert!(api[0].contains("an api takes no `#[auth(...)]`"), "{api:?}");
 
+        // Gathered, so that the mistakes after it are reported in the same build.
         let twice = messages(quote! {
             pub api Api = "/api";
             #[auth(Bearer)]
             #[auth(none)]
-            pub group G { }
+            pub group G {
+                #[auth(Key)]
+                #[auth(Bearer)]
+                GET "/a/{x}" => a();
+            }
         });
+        assert_eq!(twice.len(), 4, "{twice:?}");
         assert!(twice[0].contains("one `#[auth(...)]`"), "{twice:?}");
+        assert!(twice[1].contains("`Key`"), "{twice:?}");
+        assert!(twice[2].contains("one `#[auth(...)]`"), "{twice:?}");
+        assert!(twice[3].contains("no argument named `x`"), "{twice:?}");
     }
 }

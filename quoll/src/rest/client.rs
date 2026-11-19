@@ -8,14 +8,18 @@ use http::{Extensions, HeaderValue, header::AUTHORIZATION};
 use reqwest::{Request, Response};
 use reqwest_middleware::{Middleware, Next};
 
+use crate::__private::Given;
+use crate::rest::auth::is_b64token;
 use crate::rest::{Bearer, Route};
 
 /// Sends `Authorization: Bearer <token>` on the requests whose [`Route`] takes [`Bearer`], and on no other: a route
 /// with `#[auth(none)]`, or a request that did not come from the client of a contract and carries no `Route`, as one
 /// sent to another host through the same `ClientWithMiddleware`, never gets the token.
 ///
-/// The header is marked sensitive, so that a log of the request does not show it. A token that cannot be a header's
-/// value, as one with a line break, fails each call that would send it, with an error that does not show it.
+/// The header is marked sensitive, so that a log of the request does not show it. The token is an RFC 6750
+/// `b64token`, letters, digits, `-._~+/` and `=` at its end, which is all a server of a contract reads: any other, as
+/// one with a space or a line break, fails each call that would send it, with an error that does not show it, rather
+/// than a 401 that would look like an expired token.
 ///
 /// ```no_run
 /// # use quoll::rest;
@@ -35,23 +39,26 @@ use crate::rest::{Bearer, Route};
 /// # }
 /// ```
 pub fn bearer(token: impl Into<String>) -> impl Middleware {
-    let header = HeaderValue::try_from(format!("Bearer {}", token.into())).map(|mut value| {
-        value.set_sensitive(true);
-        value
-    });
+    let token = token.into();
+    let header = is_b64token(token.as_bytes())
+        .then(|| HeaderValue::try_from(format!("Bearer {token}")).ok())
+        .flatten()
+        .map(|mut value| {
+            value.set_sensitive(true);
+            value
+        });
 
     middleware(move |mut request, extensions, next| {
-        if !takes(extensions, Bearer::NAME) {
+        if !takes(extensions, <Bearer as Given>::NAME) {
             return next.run(request, extensions);
         }
 
-        match &header {
-            Ok(value) => {
-                request.headers_mut().insert(AUTHORIZATION, value.clone());
-                next.run(request, extensions)
-            }
-            Err(_) => Box::pin(async { Err(reqwest_middleware::Error::middleware(InvalidToken)) }),
-        }
+        let Some(value) = &header else {
+            return Box::pin(async { Err(reqwest_middleware::Error::middleware(InvalidToken)) });
+        };
+
+        request.headers_mut().insert(AUTHORIZATION, value.clone());
+        next.run(request, extensions)
     })
 }
 
@@ -73,13 +80,13 @@ where
     handle
 }
 
-/// A bearer token that cannot be a header's value. It does not show the token.
+/// A bearer token that is not a `b64token`. It does not show the token.
 #[derive(Debug)]
 struct InvalidToken;
 
 impl std::fmt::Display for InvalidToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the bearer token cannot be sent: it is not a header's value")
+        f.write_str("the bearer token cannot be sent: it is not a `b64token`, letters, digits, `-._~+/` and `=` at its end")
     }
 }
 

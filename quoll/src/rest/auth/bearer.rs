@@ -25,69 +25,72 @@ use crate::rest::{Error, Result, Scheme};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Bearer;
 
-impl Bearer {
-    /// The scheme's name, which `rest::Route::schemes` holds for a route that takes it.
-    #[cfg_attr(
-        not(feature = "client"),
-        expect(dead_code, reason = "only the client's middleware reads it")
-    )]
-    pub(crate) const NAME: &str = "Bearer";
-}
-
 impl Scheme for Bearer {
     type Credential = String;
 
     /// The token of the request's `Authorization: Bearer` header. `None` when the request has no `Authorization`
-    /// header, or one of another scheme.
+    /// header of the scheme `Bearer`: none at all, or only headers of another scheme, which this one leaves to the
+    /// scheme they are for.
     ///
     /// # Errors
     ///
-    /// A 401 when the request has two `Authorization` headers, or a `Bearer` one whose token is empty or not a
-    /// `b64token`. Its detail never shows the header.
+    /// A 401, whose detail never shows the header, when the request has an `Authorization: Bearer` header and:
+    ///
+    /// - another `Authorization` header beside it, which leaves it unclear what the request authenticates with;
+    /// - an empty token;
+    /// - a token that is not a `b64token`, as one with a space or a byte that is not ASCII.
     fn read(request: &Parts) -> Result<Option<String>> {
-        let mut values = request.headers.get_all(AUTHORIZATION).iter();
-        let Some(value) = values.next() else {
+        let headers = request.headers.get_all(AUTHORIZATION);
+        let Some(token) = headers.iter().find_map(|value| token(value.as_bytes())) else {
             return Ok(None);
         };
-        if values.next().is_some() {
+
+        if headers.iter().nth(1).is_some() {
             return Err(Error::unauthorized(
-                "the request has more than one `Authorization` header",
+                "the request has a bearer token and another `Authorization` header",
             ));
         }
 
-        // A header that is not text is no credential of this scheme's, which is ASCII.
-        let Ok(value) = value.to_str() else {
-            return Err(Error::unauthorized(
-                "the `Authorization` header is not ASCII",
-            ));
-        };
-        let (scheme, token) = value.split_once(' ').unwrap_or((value, ""));
-        if !scheme.eq_ignore_ascii_case("Bearer") {
-            return Ok(None);
-        }
-
-        let token = token.trim_matches([' ', '\t']);
+        let token = token.trim_ascii();
         if token.is_empty() {
             return Err(Error::unauthorized("the bearer token is empty"));
         }
+
         if !is_b64token(token) {
             return Err(Error::unauthorized(
                 "the bearer token is not well formed: it is letters, digits, `-._~+/`, and `=` at its end",
             ));
         }
 
-        Ok(Some(token.to_owned()))
+        // A `b64token` is ASCII, which the conversion keeps as it is.
+        Ok(Some(String::from_utf8_lossy(token).into_owned()))
     }
 }
 
-/// Whether `token` is an RFC 6750 `b64token`: `1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"="`.
-fn is_b64token(token: &str) -> bool {
-    let body = token.trim_end_matches('=');
+/// What follows the scheme in an `Authorization` header of the scheme `Bearer`, whatever the case of its name; `None`
+/// for a header of another scheme. Read as bytes, so that a header that is not ASCII is still known by its scheme.
+fn token(value: &[u8]) -> Option<&[u8]> {
+    let (scheme, token) = match value.iter().position(|&byte| byte == b' ') {
+        Some(space) => (&value[..space], &value[space + 1..]),
+        None => (value, &[][..]),
+    };
+
+    scheme.eq_ignore_ascii_case(b"Bearer").then_some(token)
+}
+
+/// Whether `token` is an RFC 6750 `b64token`: `1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"="`. The
+/// server reads no other token, and the client sends no other.
+pub(crate) fn is_b64token(token: &[u8]) -> bool {
+    let end = token
+        .iter()
+        .rposition(|&byte| byte != b'=')
+        .map_or(0, |last| last + 1);
+    let body = &token[..end];
 
     !body.is_empty()
         && body
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~+/".contains(&byte))
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~+/".contains(byte))
 }
 
 #[cfg(test)]
@@ -156,26 +159,63 @@ mod tests {
         }
     }
 
+    /// What `Bearer::read` makes of these `Authorization` headers, as bytes.
+    fn read_bytes(headers: &[&[u8]]) -> Result<Option<String>> {
+        let mut request = http::Request::get("/api/notes")
+            .body(())
+            .expect("a valid request");
+        for value in headers {
+            request.headers_mut().append(
+                AUTHORIZATION,
+                http::HeaderValue::from_bytes(value).expect("a header's value"),
+            );
+        }
+        let (parts, ()) = request.into_parts();
+
+        Bearer::read(&parts)
+    }
+
     #[test]
-    fn two_headers_are_a_401() {
-        let error = read(&["Bearer a", "Bearer b"]).expect_err("two headers");
+    fn two_headers_beside_a_bearer_token_are_a_401() {
+        for headers in [
+            ["Bearer a", "Bearer b"],
+            ["Bearer a", "Key b"],
+            ["Key b", "Bearer a"],
+        ] {
+            let error = read(&headers).expect_err("two headers");
+
+            assert_eq!(
+                error.status(),
+                Some(http::StatusCode::UNAUTHORIZED),
+                "{headers:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn headers_of_other_schemes_are_left_to_them() {
+        assert_eq!(read(&["Basic YW5h", "Key b"]).expect("no credential"), None);
+        assert_eq!(
+            read_bytes(&[b"Key caf\xe9"]).expect("no credential"),
+            None,
+            "a header of another scheme that is not ASCII"
+        );
+    }
+
+    #[test]
+    fn a_bearer_token_that_is_not_ascii_is_a_401() {
+        let error = read_bytes(&[b"Bearer caf\xe9"]).expect_err("not ASCII");
 
         assert_eq!(error.status(), Some(http::StatusCode::UNAUTHORIZED));
     }
 
     #[test]
-    fn a_header_that_is_not_ascii_is_a_401() {
-        let mut request = http::Request::get("/api/notes")
-            .body(())
-            .expect("a valid request");
-        request.headers_mut().insert(
-            AUTHORIZATION,
-            http::HeaderValue::from_bytes(b"Bearer caf\xe9").expect("a header's value"),
-        );
-        let (parts, ()) = request.into_parts();
-
-        let error = Bearer::read(&parts).expect_err("not ASCII");
-
-        assert_eq!(error.status(), Some(http::StatusCode::UNAUTHORIZED));
+    fn a_b64token_is_letters_digits_and_six_signs_then_equals() {
+        for token in ["a", "A-z.0_9~+/", "abc=", "abc=="] {
+            assert!(is_b64token(token.as_bytes()), "{token}");
+        }
+        for token in ["", "=", "==", "a b", "a=b", "a,b", "é", "a\n"] {
+            assert!(!is_b64token(token.as_bytes()), "{token:?}");
+        }
     }
 }

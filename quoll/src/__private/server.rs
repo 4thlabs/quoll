@@ -12,10 +12,11 @@ use axum::extract::{FromRequest, FromRequestParts, Path};
 use axum::response::{IntoResponse, Response};
 use axum::routing::on;
 use http::request::Parts;
-use http::{HeaderValue, StatusCode, header};
+use http::{HeaderMap, HeaderValue, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::__private::Given;
 use crate::rest::error::Repr;
 use crate::rest::{Authenticate, Created, Error, Result, Scheme};
 
@@ -37,21 +38,15 @@ impl<S: Send + Sync + 'static> Group<S> {
     }
 
     /// Serves `method` on `path` with `handler`, given the service and the request. An error it returns is answered as
-    /// a problem; a 401 on a route that takes `schemes`, the names of their challenges, carries a `WWW-Authenticate`
-    /// for each, as RFC 9110 asks.
+    /// a problem; a 401 carries a `WWW-Authenticate` challenge for each scheme of `C`, the schemes the route takes,
+    /// as RFC 9110 asks, and none on a route that takes no scheme, `()`.
     ///
     /// # Panics
     ///
-    /// When axum refuses the path, which the macro has checked it would not, or a scheme's name is not a header's
-    /// value, which the macro only writes for the crate's schemes.
-    pub fn route<F, Fut>(
-        self,
-        method: MethodFilter,
-        path: &str,
-        schemes: &'static [&'static str],
-        handler: F,
-    ) -> Self
+    /// When axum refuses the path, which the macro has checked it would not.
+    pub fn route<C, F, Fut>(self, method: MethodFilter, path: &str, handler: F) -> Self
     where
+        C: Challenges,
         F: Fn(Arc<S>, Request) -> Fut + Clone + Send + Sync + 'static,
         Fut: Future<Output = Result<Response>> + Send + 'static,
     {
@@ -62,7 +57,7 @@ impl<S: Send + Sync + 'static> Group<S> {
             async move {
                 answer
                     .await
-                    .unwrap_or_else(|error| challenged(error.into_response(), schemes))
+                    .unwrap_or_else(|error| challenged::<C>(error.into_response()))
             }
         });
 
@@ -78,14 +73,26 @@ impl<S: Send + Sync + 'static> Group<S> {
     }
 }
 
-/// A 401 with a `WWW-Authenticate` challenge per scheme of its route: a client knows so which credential to send.
-fn challenged(mut response: Response, schemes: &'static [&'static str]) -> Response {
+/// The schemes a route takes, whose challenges its 401 carries: `()` for none, or a scheme the crate gives.
+pub trait Challenges: 'static {
+    /// Adds a `WWW-Authenticate` per scheme to the headers of a 401.
+    fn challenge(headers: &mut HeaderMap);
+}
+
+impl Challenges for () {
+    fn challenge(_headers: &mut HeaderMap) {}
+}
+
+impl<S: Given + 'static> Challenges for S {
+    fn challenge(headers: &mut HeaderMap) {
+        headers.append(header::WWW_AUTHENTICATE, S::CHALLENGE);
+    }
+}
+
+/// A 401 with the challenges of the schemes `C`: a client knows so which credential to send.
+fn challenged<C: Challenges>(mut response: Response) -> Response {
     if response.status() == StatusCode::UNAUTHORIZED {
-        for scheme in schemes {
-            response
-                .headers_mut()
-                .append(header::WWW_AUTHENTICATE, HeaderValue::from_static(scheme));
-        }
+        C::challenge(response.headers_mut());
     }
 
     response
@@ -482,7 +489,7 @@ mod tests {
     #[tokio::test]
     async fn an_error_received_from_another_api_answers_502_without_its_body() {
         let router = Group::new(Router::new(), ())
-            .route(MethodFilter::GET, "/upstream", &[], |_, _| async {
+            .route::<(), _, _>(MethodFilter::GET, "/upstream", |_, _| async {
                 Err(Error::upstream(
                     StatusCode::NOT_FOUND,
                     None,

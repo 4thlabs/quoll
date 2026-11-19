@@ -11,7 +11,7 @@ use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
 use crate::model::{Api, Group, Param, Reply, Route, snake_case};
 use crate::path::Segment;
-use crate::{doc_attrs, route_docs};
+use crate::{doc_attrs, route_docs, scheme_type};
 
 /// The client's code of the api, behind the feature `client` of `quoll`.
 pub(crate) fn expand(api: &Api) -> TokenStream {
@@ -116,7 +116,12 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
     let group_name = group.name.unraw().to_string();
     let method = Ident::new(route.method.as_str(), Span::call_site());
     let path = route.full_path(&api.prefix);
-    let schemes = route.auth.iter().map(|scheme| scheme.name());
+    // The name comes from the crate, which writes it once for each scheme it gives.
+    let schemes = route.auth.into_iter().map(|scheme| {
+        let scheme = scheme_type(scheme);
+
+        quote! { <#scheme as ::quoll::__private::Given>::NAME }
+    });
 
     let path_calls = path_calls(api, route);
     let (query_type, query_call) = query(route).unzip();
