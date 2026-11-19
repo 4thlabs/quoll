@@ -8,7 +8,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, BodyKind, Group, Method, Param, Reply, Route, is_vec};
+use crate::model::{Api, Group, Method, Param, Reply, Route, is_vec};
 use crate::{doc_attrs, route_docs, scheme_type};
 
 /// The server's code of the api, behind the feature `server` of `quoll`.
@@ -275,12 +275,7 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
 
     if let Some((param, kind)) = route.body() {
         let (name, ty) = (&param.name, &param.ty);
-        let read = match kind {
-            BodyKind::Json => quote! { json },
-            BodyKind::Form => quote! { form },
-            BodyKind::Text => quote! { text },
-            BodyKind::Bytes => quote! { bytes },
-        };
+        let read = Ident::new(kind.method, Span::call_site());
 
         reads.push(quote_spanned! {ty.span()=>
             let #name = #request.#read::<#ty>().await?;
@@ -292,22 +287,11 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
     let call = quote! { #service.#function(#caller_arg #(#args),*).await };
     let answer = match &route.reply {
         Reply::None => quote_spanned! {route.span=> ::quoll::__private::server::no_content(#call) },
-        Reply::Json(ty) => quote_spanned! {ty.span()=> ::quoll::__private::server::ok(#call) },
-        Reply::Created { outer: ty, .. } => {
-            quote_spanned! {ty.span()=> ::quoll::__private::server::created(#call) }
-        }
-        Reply::Accepted { outer: ty, .. } => {
-            quote_spanned! {ty.span()=> ::quoll::__private::server::accepted(#call) }
-        }
-        Reply::Text(ty) => quote_spanned! {ty.span()=> ::quoll::__private::server::ok_text(#call) },
-        Reply::Bytes(ty) => {
-            quote_spanned! {ty.span()=> ::quoll::__private::server::ok_bytes(#call) }
-        }
-        Reply::Events(ty) => {
-            quote_spanned! {ty.span()=> ::quoll::__private::server::events(#call) }
-        }
-        Reply::JsonLines(ty) => {
-            quote_spanned! {ty.span()=> ::quoll::__private::server::json_lines(#call) }
+        Reply::Some(returned) => {
+            let served = &returned.served;
+            let answer = Ident::new(returned.kind.answer, Span::call_site());
+
+            quote_spanned! {served.span()=> ::quoll::__private::server::#answer(#call) }
         }
     };
 

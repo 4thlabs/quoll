@@ -8,14 +8,10 @@
 //! built with neither feature checks them too.
 
 use std::borrow::Cow;
-use std::pin::Pin;
 
-use futures_core::Stream;
+use crate::rest::{Accepted, Bytes, Created, Events, Form, JsonLines, Text};
 
-use crate::rest::{Accepted, Bytes, Created, Events, Form, JsonLines, Result, Text};
-
-/// The items of a stream, boxed: what the server sends of a stream result.
-pub type Items<T> = Pin<Box<dyn Stream<Item = Result<T>> + Send>>;
+pub use crate::rest::stream::Items;
 
 /// The crate's [`Created`]: its location and its value, which the server answers.
 #[diagnostic::on_unimplemented(
@@ -141,39 +137,52 @@ impl IsBytes for Bytes {
     }
 }
 
+/// A stream result of the crate's, [`Events`] or [`JsonLines`]: its items, which the server sends and the client
+/// reads.
+pub trait Streamed: Sized {
+    /// The `T` of `Events<T>` or `JsonLines<T>`, the value of each item.
+    type Item;
+
+    /// The stream result of `items`, as the client reads them.
+    fn from_items(items: Items<Self::Item>) -> Self;
+
+    /// The items, as the server sends them.
+    fn into_items(self) -> Items<Self::Item>;
+}
+
+impl<T> Streamed for Events<T> {
+    type Item = T;
+
+    fn from_items(items: Items<T>) -> Self {
+        Self { items }
+    }
+
+    fn into_items(self) -> Items<T> {
+        self.items
+    }
+}
+
+impl<T> Streamed for JsonLines<T> {
+    type Item = T;
+
+    fn from_items(items: Items<T>) -> Self {
+        Self { items }
+    }
+
+    fn into_items(self) -> Items<T> {
+        self.items
+    }
+}
+
 /// The crate's [`Events`].
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not quoll's `Events`, which a result named `Events` is read as",
     label = "not `quoll::rest::Events`",
     note = "bring quoll's into scope, `use quoll::rest::Events;`, or name a type of your own otherwise"
 )]
-pub trait IsEvents: Sized {
-    /// The `T` of `Events<T>`, the value of each event.
-    type Item;
+pub trait IsEvents: Streamed {}
 
-    /// The events of `results`, as the client reads them.
-    fn from_results<S>(results: S) -> Self
-    where
-        S: Stream<Item = Result<Self::Item>> + Send + 'static;
-
-    /// The events, as the server sends them.
-    fn into_items(self) -> Items<Self::Item>;
-}
-
-impl<T: 'static> IsEvents for Events<T> {
-    type Item = T;
-
-    fn from_results<S>(results: S) -> Self
-    where
-        S: Stream<Item = Result<T>> + Send + 'static,
-    {
-        Self::try_new(results)
-    }
-
-    fn into_items(self) -> Items<T> {
-        Box::pin(self)
-    }
-}
+impl<T> IsEvents for Events<T> {}
 
 /// The crate's [`JsonLines`].
 #[diagnostic::on_unimplemented(
@@ -181,33 +190,9 @@ impl<T: 'static> IsEvents for Events<T> {
     label = "not `quoll::rest::JsonLines`",
     note = "bring quoll's into scope, `use quoll::rest::JsonLines;`, or name a type of your own otherwise"
 )]
-pub trait IsJsonLines: Sized {
-    /// The `T` of `JsonLines<T>`, the value of each line.
-    type Item;
+pub trait IsJsonLines: Streamed {}
 
-    /// The lines of `results`, as the client reads them.
-    fn from_results<S>(results: S) -> Self
-    where
-        S: Stream<Item = Result<Self::Item>> + Send + 'static;
-
-    /// The lines, as the server sends them.
-    fn into_items(self) -> Items<Self::Item>;
-}
-
-impl<T: 'static> IsJsonLines for JsonLines<T> {
-    type Item = T;
-
-    fn from_results<S>(results: S) -> Self
-    where
-        S: Stream<Item = Result<T>> + Send + 'static,
-    {
-        Self::try_new(results)
-    }
-
-    fn into_items(self) -> Items<T> {
-        Box::pin(self)
-    }
-}
+impl<T> IsJsonLines for JsonLines<T> {}
 
 /// Checks that `T`, a result named `Created`, is the crate's.
 pub const fn created<T: IsCreated>() {}

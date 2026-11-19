@@ -169,6 +169,7 @@ async fn events_are_sent_as_their_json_data_and_read_back() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[CONTENT_TYPE], "text/event-stream");
     assert_eq!(headers[CACHE_CONTROL], "no-cache");
+    assert_eq!(headers["x-accel-buffering"], "no");
     assert_eq!(
         body,
         "data: {\"id\":1,\"text\":\"line\\n1 é\"}\n\ndata: {\"id\":2,\"text\":\"line\\n2 é\"}\n\n"
@@ -186,6 +187,8 @@ async fn json_lines_are_sent_one_value_a_line_and_read_back() {
     let (status, headers, body) = raw(&format!("{url}/api/lines?count=2")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[CONTENT_TYPE], "application/jsonl");
+    assert_eq!(headers[CACHE_CONTROL], "no-cache");
+    assert_eq!(headers["x-accel-buffering"], "no");
     assert_eq!(
         body,
         "{\"id\":1,\"text\":\"line\\n1 é\"}\n{\"id\":2,\"text\":\"line\\n2 é\"}\n"
@@ -254,21 +257,38 @@ fn no_status(error: &Error, operation: &str, message: &str, why: &str) {
 async fn an_item_that_fails_cuts_the_stream_short_with_an_error() {
     let (_, api, _) = served().await;
 
-    let events = all(api.feeds().failing_events().await.expect("events")).await;
-    let lines = all(api.feeds().failing_lines().await.expect("lines")).await;
+    // The call itself fails when the server had written nothing before the error.
+    let events = match api.feeds().failing_events().await {
+        Ok(events) => all(events).await,
+        Err(error) => vec![Err(error)],
+    };
+    let lines = match api.feeds().failing_lines().await {
+        Ok(lines) => all(lines).await,
+        Err(error) => vec![Err(error)],
+    };
 
     for (mut items, operation) in [
         (events, "feeds_failing_events"),
         (lines, "feeds_failing_lines"),
     ] {
-        // The values sent before it, then an error rather than an end: the change after the error is never sent.
+        // An error rather than an end. The values sent just before it may not arrive, but never the one after.
         let error = items.pop().expect("an error").expect_err("an error");
+        let before = values(items);
 
-        assert_eq!(values(items), [change(1), change(2)], "{operation}");
-        assert_eq!(error.status(), None, "{error}");
+        assert!(before.len() <= 2, "{operation}: {before:?}");
         assert_eq!(
-            error.to_string(),
-            format!("the call `{operation}` got an answer whose body cannot be read")
+            before,
+            [change(1), change(2)][..before.len()],
+            "{operation}"
+        );
+        assert_eq!(error.status(), None, "{error}");
+        assert!(
+            [
+                format!("the call `{operation}` got an answer whose body cannot be read"),
+                format!("the call `{operation}` got no response"),
+            ]
+            .contains(&error.to_string()),
+            "{error}"
         );
     }
 }
@@ -390,7 +410,13 @@ fn third_party(accepts: Arc<Mutex<Vec<String>>>) -> axum::Router {
                             "{\"id\":3,\"text\":\"c\"}\n",
                         ],
                     ),
-                    _ => answer("application/x-ndjson", &["{\"id\":1,\"text\":\"a\"}\n"]),
+                    // The names some APIs give JSON Lines.
+                    "count=4" => answer("application/x-ndjson", &["{\"id\":4,\"text\":\"d\"}\n"]),
+                    "count=5" => answer(
+                        "Application/X-JSONLines; charset=utf-8",
+                        &["{\"id\":5,\"text\":\"e\"}\n"],
+                    ),
+                    _ => answer("application/json", &["[{\"id\":1,\"text\":\"a\"}]"]),
                 }
             }),
         )
@@ -445,8 +471,19 @@ async fn json_lines_are_read_from_chunks_cut_anywhere() {
     );
     assert_eq!(
         *accepts.lock().expect("no test panics holding the lock"),
-        ["application/jsonl"]
+        ["application/jsonl, application/x-ndjson;q=0.9, application/x-jsonlines;q=0.9"]
     );
+}
+
+#[tokio::test]
+async fn json_lines_are_read_by_the_names_other_apis_give_them() {
+    let (api, _) = third_party_client().await;
+
+    let ndjson = api.feeds().lines(4).await.expect("application/x-ndjson");
+    let jsonlines = api.feeds().lines(5).await.expect("application/x-jsonlines");
+
+    assert_eq!(values(all(ndjson).await), [changed(4, "d")]);
+    assert_eq!(values(all(jsonlines).await), [changed(5, "e")]);
 }
 
 #[tokio::test]
@@ -480,7 +517,7 @@ async fn a_stream_of_another_content_type_is_an_error_with_no_status() {
     let (api, _) = third_party_client().await;
 
     let events = api.feeds().events(3).await.expect_err("JSON");
-    let lines = api.feeds().lines(3).await.expect_err("NDJSON");
+    let lines = api.feeds().lines(3).await.expect_err("JSON");
 
     no_status(
         &events,
@@ -492,6 +529,123 @@ async fn a_stream_of_another_content_type_is_an_error_with_no_status() {
         &lines,
         "feeds_lines",
         "got an answer that is not its result",
+        "its content type is not `application/jsonl`, `application/x-ndjson` or `application/x-jsonlines`",
+    );
+}
+
+/// Another API, written without the contract, whose answers never end: each sends what the query names, then waits
+/// for ever, and says on `dropped` when its body is dropped, as its connection closes.
+fn endless(dropped: mpsc::UnboundedSender<&'static str>) -> axum::Router {
+    use axum::body::Body;
+    use axum::http::Uri;
+    use axum::response::IntoResponse;
+    use axum::routing::get;
+
+    let answer = move |route: &'static str, content_type: &'static str, chunks: Vec<Vec<u8>>| {
+        let signal = DropSignal {
+            dropped: dropped.clone(),
+            route,
+        };
+        let never = stream::pending().map(move |chunk: Vec<u8>| {
+            let _ = &signal;
+            chunk
+        });
+        let body = stream::iter(chunks)
+            .chain(never)
+            .map(Ok::<_, std::convert::Infallible>);
+
+        ([(CONTENT_TYPE, content_type)], Body::from_stream(body)).into_response()
+    };
+    let lines = answer.clone();
+    // A line of more than 1 MiB, in chunks of 64 KiB, and never ended.
+    let long = |start: &str| {
+        let mut chunks = vec![start.as_bytes().to_vec()];
+
+        chunks.extend((0..17).map(|_| vec![b'a'; 64 * 1024]));
+        chunks
+    };
+
+    axum::Router::new()
+        .route(
+            "/api/events",
+            get(move |uri: Uri| async move {
+                match uri.query().unwrap_or_default() {
+                    "count=1" => answer("html", "text/html", vec![b"<p>a page".to_vec()]),
+                    _ => answer("long event", "text/event-stream", long("data: \"")),
+                }
+            }),
+        )
+        .route(
+            "/api/lines",
+            get(move |uri: Uri| async move {
+                match uri.query().unwrap_or_default() {
+                    "count=1" => lines("html lines", "text/html", vec![b"<p>a page".to_vec()]),
+                    _ => lines("long line", "application/jsonl", long("\"")),
+                }
+            }),
+        )
+}
+
+/// A client of an endless API, and what says when it drops a body.
+async fn endless_client() -> (ApiClient, mpsc::UnboundedReceiver<&'static str>) {
+    let (dropped, signals) = mpsc::unbounded_channel();
+    let url = rest::test::spawn(endless(dropped)).await;
+    let api = Api::client(&url).expect("the url is the api's");
+
+    (api, signals)
+}
+
+/// `call`, which fails the test rather than wait for ever.
+async fn soon<T>(call: impl Future<Output = T>) -> T {
+    tokio::time::timeout(Duration::from_secs(10), call)
+        .await
+        .expect("the call does not wait for the body to end")
+}
+
+#[tokio::test]
+async fn a_stream_of_another_content_type_is_dropped_at_once() {
+    let (api, mut signals) = endless_client().await;
+
+    let events = soon(api.feeds().events(1)).await.expect_err("HTML");
+    no_status(
+        &events,
+        "feeds_events",
+        "got an answer that is not its result",
+        "its content type is not `text/event-stream`",
+    );
+    assert_eq!(dropped(&mut signals).await, "html");
+
+    let lines = soon(api.feeds().lines(1)).await.expect_err("HTML");
+    no_status(
+        &lines,
+        "feeds_lines",
+        "got an answer that is not its result",
         "its content type is not `application/jsonl`",
     );
+    assert_eq!(dropped(&mut signals).await, "html lines");
+}
+
+#[tokio::test]
+async fn an_item_longer_than_1_mib_is_an_error_and_ends_the_stream() {
+    let (api, mut signals) = endless_client().await;
+
+    let events = soon(all(api.feeds().events(2).await.expect("events"))).await;
+    let lines = soon(all(api.feeds().lines(2).await.expect("lines"))).await;
+
+    for (mut items, operation) in [(events, "feeds_events"), (lines, "feeds_lines")] {
+        let error = items.pop().expect("an error").expect_err("too long");
+
+        assert!(items.is_empty(), "{operation}");
+        no_status(
+            &error,
+            operation,
+            "got an item longer than the client reads",
+            "more than 1 MiB",
+        );
+    }
+
+    let mut both = [dropped(&mut signals).await, dropped(&mut signals).await];
+
+    both.sort_unstable();
+    assert_eq!(both, ["long event", "long line"]);
 }

@@ -1,51 +1,68 @@
 //! The results a route streams, a value at a time: server-sent events and JSON Lines.
 //!
-//! Each is one type on both sides. The server builds it from a stream of values, which it sends as they come; the
-//! client gets the same type, a stream of `Result<T>`, which reads them as they arrive.
+//! Each is one type on both sides, thin over the same [`Items`]. The server builds it from a stream of values, which it
+//! sends as they come; the client gets the same type, a stream of `Result<T>`, which reads them as they arrive.
 
 use std::fmt;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use futures_core::Stream;
+use pin_project_lite::pin_project;
+use sync_wrapper::SyncWrapper;
 
 use crate::rest::Result;
 
-/// The items of a stream, as a handler gave them or as a client reads them.
-enum Items<T> {
-    /// Values, each an item.
-    Values(Pin<Box<dyn Stream<Item = T> + Send>>),
-    /// Values and errors: an error ends what the server sends.
-    Results(Pin<Box<dyn Stream<Item = Result<T>> + Send>>),
-}
+/// The items of a stream result, as a handler gave them or as a client reads them: one box, polled through `&mut`
+/// alone, so that it is `Sync` whatever the stream it holds.
+pub struct Items<T>(SyncWrapper<Pin<Box<dyn Stream<Item = Result<T>> + Send>>>);
 
 impl<T> Items<T> {
+    /// The items of `results`.
+    pub(crate) fn new<S>(results: S) -> Self
+    where
+        S: Stream<Item = Result<T>> + Send + 'static,
+    {
+        Self(SyncWrapper::new(Box::pin(results)))
+    }
+
+    /// The values of `values`, each an item that is no error.
     fn values<S>(values: S) -> Self
     where
         S: Stream<Item = T> + Send + 'static,
     {
-        Self::Values(Box::pin(values))
+        Self::new(Oks { values })
     }
+}
 
-    fn results<S>(results: S) -> Self
-    where
-        S: Stream<Item = Result<T>> + Send + 'static,
-    {
-        Self::Results(Box::pin(results))
+impl<T> Stream for Items<T> {
+    type Item = Result<T>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<T>>> {
+        self.0.get_mut().as_mut().poll_next(cx)
     }
+}
 
-    fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<T>>> {
-        match self {
-            Self::Values(values) => values.as_mut().poll_next(cx).map(|value| value.map(Ok)),
-            Self::Results(results) => results.as_mut().poll_next(cx),
-        }
+pin_project! {
+    /// The values of a stream, each as an `Ok`.
+    struct Oks<S> {
+        #[pin]
+        values: S,
+    }
+}
+
+impl<S: Stream> Stream for Oks<S> {
+    type Item = Result<S::Item>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.project()
+            .values
+            .poll_next(cx)
+            .map(|value| value.map(Ok))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        match self {
-            Self::Values(values) => values.size_hint(),
-            Self::Results(results) => results.size_hint(),
-        }
+        self.values.size_hint()
     }
 }
 
@@ -70,23 +87,24 @@ impl<T> Items<T> {
 /// # }
 /// ```
 ///
-/// The server answers 200 and sends each value as it comes, as an event whose `data` is its JSON, with no `id` and
-/// no name. It sends a comment when 15 seconds pass with no value, so that a proxy does not close a connection it sees
-/// idle. It asks the stream for a value only once the connection has taken the last one: a client that reads slowly
-/// slows it down, and one that goes away drops it, with the connection.
+/// The server answers 200, with `Cache-Control: no-cache` and `X-Accel-Buffering: no`, so that neither a cache nor
+/// a proxy such as nginx holds the events back. It sends each value as it comes, as an event whose `data` is its JSON,
+/// with no `id` and no name, and a comment when 15 seconds pass with no value, so that a proxy does not close a
+/// connection it sees idle. It asks the stream for a value only once the connection has taken the last one: a client
+/// that reads slowly slows it down, and one that goes away drops it, with the connection.
 ///
 /// The client asks for `text/event-stream` with `Accept`, and an answer of another content type is an error with no
 /// status, as an answer that is not a route's result is. Each event is an item, its `data` read as the JSON of a `T`,
 /// as an `EventSource` reads a message: an event with a name other than `message`, a comment, and the fields `id`,
 /// `retry` and any other are skipped, and lines may end with `\r\n`, `\n` or `\r`. An event whose `data` does not read
-/// as a `T` is an error with no status, and the stream goes on; a body that cannot be read is an error with no status,
-/// and the stream ends after it. An event has no limit of size, as a JSON result has none.
+/// as a `T` is an error with no status, and the stream goes on. An event, or a line, longer than 1 MiB, and a body that
+/// cannot be read, are an error with no status, and the stream ends after it.
 ///
 /// Dropping the stream closes its connection. The client does not reconnect when the stream ends, as an
 /// `EventSource` does: the caller calls the route again. A route that resumes where a stream ended reads the id it
 /// resumes from in an argument of its own, `header("Last-Event-ID") last: Option<String>`.
 pub struct Events<T> {
-    items: Items<T>,
+    pub(crate) items: Items<T>,
 }
 
 impl<T> Events<T> {
@@ -103,7 +121,8 @@ impl<T> Events<T> {
     /// Events sending the values of `results`, until the stream ends or gives an error.
     ///
     /// The status of the answer is sent by then: the server logs the error and cuts the answer short, so that the
-    /// client reads an error before the end of its stream, rather than an end it would take for the last value.
+    /// client reads an error, never an end it would take for the last value. The values sent just before the error may
+    /// not reach the client, and when none has, the call itself is the error.
     ///
     /// ```
     /// use futures_util::stream;
@@ -117,7 +136,7 @@ impl<T> Events<T> {
         S: Stream<Item = Result<T>> + Send + 'static,
     {
         Self {
-            items: Items::results(results),
+            items: Items::new(results),
         }
     }
 }
@@ -127,11 +146,7 @@ impl<T> Stream for Events<T> {
     type Item = Result<T>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<T>>> {
-        self.items.poll_next(cx)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.items.size_hint()
+        Pin::new(&mut self.items).poll_next(cx)
     }
 }
 
@@ -163,19 +178,21 @@ impl<T> fmt::Debug for Events<T> {
 /// # }
 /// ```
 ///
-/// The server answers 200 and sends each value as it comes, its JSON on one line ended by `\n`. It asks the stream for
-/// a value only once the connection has taken the last one: a client that reads slowly slows it down, and one that
-/// goes away drops it, with the connection. It sends nothing while no value comes.
+/// The server answers 200, with `Cache-Control: no-cache` and `X-Accel-Buffering: no`, so that neither a cache nor
+/// a proxy such as nginx holds the lines back. It sends each value as it comes, its JSON on one line ended by `\n`,
+/// and nothing while no value comes. It asks the stream for a value only once the connection has taken the last one: a
+/// client that reads slowly slows it down, and one that goes away drops it, with the connection.
 ///
-/// The client asks for `application/jsonl` with `Accept`, and an answer of another content type is an error with no
-/// status, as an answer that is not a route's result is. Each line is an item, read as the JSON of a `T`: a line may
-/// end with `\r\n`, an empty line is skipped, and a last line with no line break is read too. A line that does not
-/// read as a `T` is an error with no status, and the stream goes on; a body that cannot be read is an error with no
-/// status, and the stream ends after it. A line has no limit of length, as a JSON result has none.
+/// The client asks for `application/jsonl` with `Accept`, and reads `application/x-ndjson` and
+/// `application/x-jsonlines` too, which some APIs send: an answer of another content type is an error with no status,
+/// as an answer that is not a route's result is. Each line is an item, read as the JSON of a `T`: a line may end with
+/// `\r\n`, an empty line is skipped, and a last line with no line break is read too. A line that does not read as a
+/// `T` is an error with no status, and the stream goes on. A line longer than 1 MiB, and a body that cannot be read,
+/// are an error with no status, and the stream ends after it.
 ///
 /// Dropping the stream closes its connection. The client does not call the route again when the stream ends.
 pub struct JsonLines<T> {
-    items: Items<T>,
+    pub(crate) items: Items<T>,
 }
 
 impl<T> JsonLines<T> {
@@ -192,7 +209,8 @@ impl<T> JsonLines<T> {
     /// Lines sending the values of `results`, until the stream ends or gives an error.
     ///
     /// The status of the answer is sent by then: the server logs the error and cuts the answer short, so that the
-    /// client reads an error before the end of its stream, rather than an end it would take for the last line.
+    /// client reads an error, never an end it would take for the last line. The lines sent just before the error may
+    /// not reach the client, and when none has, the call itself is the error.
     ///
     /// ```
     /// use futures_util::stream;
@@ -206,7 +224,7 @@ impl<T> JsonLines<T> {
         S: Stream<Item = Result<T>> + Send + 'static,
     {
         Self {
-            items: Items::results(results),
+            items: Items::new(results),
         }
     }
 }
@@ -216,11 +234,7 @@ impl<T> Stream for JsonLines<T> {
     type Item = Result<T>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<T>>> {
-        self.items.poll_next(cx)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.items.size_hint()
+        Pin::new(&mut self.items).poll_next(cx)
     }
 }
 
@@ -228,5 +242,32 @@ impl<T> Stream for JsonLines<T> {
 impl<T> fmt::Debug for JsonLines<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("JsonLines").finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    fn is_send_and_sync<T: Send + Sync>(_: &T) {}
+
+    /// A stream that is `Send` but not `Sync`, as one holding a `Cell` is.
+    struct NotSync(Cell<u8>);
+
+    impl Stream for NotSync {
+        type Item = u8;
+
+        fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<u8>> {
+            Poll::Ready(Some(self.0.get()))
+        }
+    }
+
+    #[test]
+    fn a_stream_result_is_send_and_sync_whatever_its_stream() {
+        is_send_and_sync(&Events::new(NotSync(Cell::new(1))));
+        is_send_and_sync(&JsonLines::new(NotSync(Cell::new(1))));
+        is_send_and_sync(&Events::<u8>::try_new(futures_util::stream::empty()));
     }
 }

@@ -432,7 +432,8 @@ mod tests {
     use quote::{ToTokens, quote};
 
     use super::*;
-    use crate::model::{BodyKind, ParamKind, Reply};
+    use crate::known::{BodyKind, ResultKind};
+    use crate::model::{ParamKind, Reply};
     use crate::path::Segment;
 
     fn parse(tokens: proc_macro2::TokenStream) -> Result<Api> {
@@ -445,6 +446,11 @@ mod tests {
             .into_iter()
             .map(|error| error.to_string())
             .collect()
+    }
+
+    /// The type a route's result is written with, and how it is answered.
+    fn reply(reply: &Reply) -> Option<(String, ResultKind)> {
+        Some((text(reply.served()?), reply.kind()?))
     }
 
     fn text(ty: &impl ToTokens) -> String {
@@ -503,18 +509,22 @@ mod tests {
             ]
         );
         assert!(list.body().is_none());
-        assert!(matches!(&list.reply, Reply::Json(ty) if text(ty) == "Vec < Note >"));
+        assert_eq!(
+            reply(&list.reply),
+            Some(("Vec < Note >".into(), ResultKind::JSON))
+        );
 
         let create = &notes.routes[2];
-        assert!(
-            matches!(&create.reply, Reply::Created { outer, .. } if text(outer) == "Created < Note >")
+        assert_eq!(
+            reply(&create.reply),
+            Some(("Created < Note >".into(), ResultKind::CREATED))
         );
         assert_eq!(create.reply.value().map(text), Some("Note".into()));
         assert_eq!(
             create
                 .body()
                 .map(|(body, kind)| (body.name.to_string(), kind)),
-            Some(("note".into(), BodyKind::Json))
+            Some(("note".into(), BodyKind::JSON))
         );
 
         let token = &api.groups[0].routes[0];
@@ -544,7 +554,7 @@ mod tests {
         assert_eq!(
             kinds,
             [
-                ("patch".into(), ParamKind::Body(BodyKind::Json)),
+                ("patch".into(), ParamKind::Body(BodyKind::JSON)),
                 (
                     "force".into(),
                     ParamKind::Query {
@@ -630,10 +640,10 @@ mod tests {
         assert_eq!(
             bodies,
             [
-                Some(BodyKind::Form),
-                Some(BodyKind::Text),
-                Some(BodyKind::Bytes),
-                Some(BodyKind::Json),
+                Some(BodyKind::FORM),
+                Some(BodyKind::TEXT),
+                Some(BodyKind::BYTES),
+                Some(BodyKind::JSON),
             ]
         );
     }
@@ -926,7 +936,7 @@ mod tests {
         })
         .unwrap();
         let reply = &api.groups[0].routes[0].reply;
-        assert!(matches!(reply, Reply::Created { .. }));
+        assert_eq!(reply.kind(), Some(ResultKind::CREATED));
         assert_eq!(reply.value().map(text), Some("Note".into()));
 
         let events = group(quote! { Events<Note> });
@@ -935,7 +945,10 @@ mod tests {
             pub group G { GET "/x" => f() -> #events; }
         })
         .unwrap();
-        assert!(matches!(api.groups[0].routes[0].reply, Reply::Events(_)));
+        assert_eq!(
+            api.groups[0].routes[0].reply.kind(),
+            Some(ResultKind::EVENTS)
+        );
 
         let form = group(quote! { Form<Login> });
         let api = parse(quote! {
@@ -943,10 +956,10 @@ mod tests {
             pub group G { POST "/x" => f(login: #form); }
         })
         .unwrap();
-        assert!(matches!(
-            api.groups[0].routes[0].body(),
-            Some((_, BodyKind::Form))
-        ));
+        assert_eq!(
+            api.groups[0].routes[0].body().map(|(_, kind)| kind),
+            Some(BodyKind::FORM)
+        );
 
         let unit = group(quote! { () });
         let all = messages(quote! {
@@ -1054,39 +1067,39 @@ mod tests {
         .unwrap();
         let routes = &api.groups[0].routes;
 
-        assert!(
-            matches!(&routes[0].reply, Reply::Accepted { outer, .. } if text(outer) == "rest :: Accepted < Job >")
-        );
-        assert_eq!(routes[0].reply.value().map(text), Some("Job".into()));
-        assert_eq!(
-            routes[0].reply.served().map(text),
-            Some("rest :: Accepted < Job >".into())
-        );
+        let read = |i: usize| (reply(&routes[i].reply), routes[i].reply.value().map(text));
+        let some = |served: &str, kind, value: &str| {
+            (Some((served.to_owned(), kind)), Some(value.to_owned()))
+        };
 
-        assert!(matches!(&routes[1].reply, Reply::Text(ty) if text(ty) == "Text"));
-        assert_eq!(routes[1].reply.value().map(text), Some("Text".into()));
-
-        assert!(matches!(&routes[2].reply, Reply::Bytes(ty) if text(ty) == "rest :: Bytes"));
         assert_eq!(
-            routes[2].reply.value().map(text),
-            Some("rest :: Bytes".into())
+            read(0),
+            some("rest :: Accepted < Job >", ResultKind::ACCEPTED, "Job")
+        );
+        assert_eq!(read(1), some("Text", ResultKind::TEXT, "Text"));
+        assert_eq!(
+            read(2),
+            some("rest :: Bytes", ResultKind::BYTES, "rest :: Bytes")
         );
 
         // Only the result's own type is read so: a `Vec` of text is JSON, which does not compile later.
-        assert!(matches!(&routes[3].reply, Reply::Json(_)));
+        assert_eq!(
+            read(3),
+            some("Vec < Text >", ResultKind::JSON, "Vec < Text >")
+        );
 
         // A stream is the same type on both sides: the client returns it as the server's trait does.
-        assert!(matches!(&routes[4].reply, Reply::Events(ty) if text(ty) == "Events < Note >"));
         assert_eq!(
-            routes[4].reply.value().map(text),
-            Some("Events < Note >".into())
-        );
-        assert!(
-            matches!(&routes[5].reply, Reply::JsonLines(ty) if text(ty) == "rest :: JsonLines < Note >")
+            read(4),
+            some("Events < Note >", ResultKind::EVENTS, "Events < Note >")
         );
         assert_eq!(
-            routes[5].reply.served().map(text),
-            Some("rest :: JsonLines < Note >".into())
+            read(5),
+            some(
+                "rest :: JsonLines < Note >",
+                ResultKind::JSON_LINES,
+                "rest :: JsonLines < Note >"
+            )
         );
     }
 

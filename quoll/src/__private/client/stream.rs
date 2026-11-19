@@ -3,20 +3,29 @@
 
 use std::mem;
 
-use futures_core::Stream;
 use futures_util::{StreamExt, stream};
 use serde::de::DeserializeOwned;
 
 use super::no_answer;
+use crate::__private::known::Items;
 use crate::rest::{Result, Route};
+
+/// The most one item holds, 1 MiB: the `data` of an event, or a line of either body. A stream runs for long, and a
+/// server that never ends an item would have the client hold all it sends: past it, the stream ends with an error.
+const ITEM_LIMIT: usize = 1024 * 1024;
+
+/// An item longer than [`ITEM_LIMIT`]: what is left of the body is not read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TooLong;
 
 /// How the body of a stream is split into the JSON of its items.
 pub(crate) trait Framing: Send + 'static {
     /// Adds the next chunk of the body.
     fn push(&mut self, chunk: &[u8]);
 
-    /// The JSON of the next whole item, when the chunks so far hold one.
-    fn next_item(&mut self) -> Option<Vec<u8>>;
+    /// The JSON of the next whole item, when the chunks so far hold one; an error once an item is longer than
+    /// [`ITEM_LIMIT`], whole or not.
+    fn next_item(&mut self) -> Option<Result<Vec<u8>, TooLong>>;
 
     /// Says the body has ended: what is left makes an item, or is dropped.
     fn finish(&mut self);
@@ -25,27 +34,41 @@ pub(crate) trait Framing: Send + 'static {
 /// The items of `response`'s body, split by `framing` and read as the JSON of a `T`, as its chunks come: a chunk is
 /// read only when the stream is asked for an item that the chunks so far do not hold.
 ///
-/// An item that does not read as a `T` is an error, and the stream goes on. A body that cannot be read is an error,
-/// and the stream ends after it, leaving out what it had of an item. Dropping the stream drops the answer, which
-/// closes its connection.
+/// An item that does not read as a `T` is an error, and the stream goes on. An item longer than [`ITEM_LIMIT`], and a
+/// body that cannot be read, are an error, and the stream ends after it, dropping the answer and what it had of an
+/// item. Dropping the stream drops the answer too, which closes its connection.
 pub(crate) fn items<T, F>(
     response: reqwest::Response,
     route: &'static Route,
     framing: F,
-) -> impl Stream<Item = Result<T>> + Send + 'static
+) -> Items<T>
 where
     T: DeserializeOwned + Send + 'static,
     F: Framing,
 {
-    let state = (Some(response), framing);
+    let state = Some((Some(response), framing));
 
-    stream::unfold(state, move |(mut response, mut framing)| async move {
+    let items = stream::unfold(state, move |state| async move {
+        let (mut response, mut framing) = state?;
+
         loop {
-            if let Some(item) = framing.next_item() {
-                let item = serde_json::from_slice(&item)
-                    .map_err(|error| no_answer(route, NOT_AN_ITEM, error));
+            match framing.next_item() {
+                Some(Ok(item)) => {
+                    let item = serde_json::from_slice(&item)
+                        .map_err(|error| no_answer(route, NOT_AN_ITEM, error));
 
-                return Some((item, (response, framing)));
+                    return Some((item, Some((response, framing))));
+                }
+                Some(Err(TooLong)) => {
+                    let error = no_answer(
+                        route,
+                        "got an item longer than the client reads",
+                        "an event or a line holds more than 1 MiB",
+                    );
+
+                    return Some((Err(error), None));
+                }
+                None => {}
             }
 
             match response.as_mut()?.chunk().await {
@@ -57,12 +80,14 @@ where
                 Err(error) => {
                     let error = no_answer(route, "got an answer whose body cannot be read", error);
 
-                    return Some((Err(error), (None, framing)));
+                    return Some((Err(error), None));
                 }
             }
         }
-    })
-    .fuse()
+    });
+
+    // Asked again once it has ended, the stream says so again rather than panic.
+    Items::new(items.fuse())
 }
 
 /// What the error of an item that does not read as the route's says.
@@ -100,8 +125,9 @@ impl Lines {
         self.buffer.extend_from_slice(chunk);
     }
 
-    /// The next whole line, without its line break.
-    fn next_line(&mut self) -> Option<&[u8]> {
+    /// The next whole line, without its line break; an error once a line is longer than [`ITEM_LIMIT`], whole or
+    /// not.
+    fn next_line(&mut self) -> Option<Result<&[u8], TooLong>> {
         while let Some(&byte) = self.buffer.get(self.searched) {
             let at = self.searched;
 
@@ -117,8 +143,18 @@ impl Lines {
 
                 self.after_cr = byte == b'\r';
                 self.start = self.searched;
-                return Some(&self.buffer[line]);
+
+                if line.len() > ITEM_LIMIT {
+                    return Some(Err(TooLong));
+                }
+
+                return Some(Ok(&self.buffer[line]));
             }
+        }
+
+        // A line not ended yet, which the next chunks may end.
+        if self.buffer.len() - self.start > ITEM_LIMIT {
+            return Some(Err(TooLong));
         }
 
         None
@@ -161,8 +197,12 @@ impl Framing for EventStream {
         self.lines.push(chunk);
     }
 
-    fn next_item(&mut self) -> Option<Vec<u8>> {
-        while let Some(mut line) = self.lines.next_line() {
+    fn next_item(&mut self) -> Option<Result<Vec<u8>, TooLong>> {
+        while let Some(line) = self.lines.next_line() {
+            let Ok(mut line) = line else {
+                return Some(Err(TooLong));
+            };
+
             if mem::take(&mut self.first) {
                 line = line.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(line);
             }
@@ -173,7 +213,7 @@ impl Framing for EventStream {
                 let mut data = mem::take(&mut self.data);
 
                 if message && data.pop().is_some() {
-                    return Some(data);
+                    return Some(Ok(data));
                 }
 
                 continue;
@@ -197,6 +237,11 @@ impl Framing for EventStream {
                 b"data" => {
                     self.data.extend_from_slice(value);
                     self.data.push(b'\n');
+
+                    // The line break the last line of data adds is not the event's.
+                    if self.data.len() > ITEM_LIMIT + 1 {
+                        return Some(Err(TooLong));
+                    }
                 }
                 b"event" => self.message = value.is_empty() || value == b"message",
                 // `id`, `retry`, and any field an `EventSource` does not know.
@@ -234,15 +279,19 @@ impl Framing for JsonLineStream {
         self.lines.push(chunk);
     }
 
-    fn next_item(&mut self) -> Option<Vec<u8>> {
+    fn next_item(&mut self) -> Option<Result<Vec<u8>, TooLong>> {
         while let Some(line) = self.lines.next_line() {
+            let Ok(line) = line else {
+                return Some(Err(TooLong));
+            };
+
             // JSON allows the `\r` of a `\r\n` around a value, as any blank.
             if !line.trim_ascii().is_empty() {
-                return Some(line.to_vec());
+                return Some(Ok(line.to_vec()));
             }
         }
 
-        self.rest.take()
+        self.rest.take().map(Ok)
     }
 
     fn finish(&mut self) {
@@ -263,6 +312,8 @@ mod tests {
         let mut items = Vec::new();
         let mut next = |framing: &mut F| {
             while let Some(item) = framing.next_item() {
+                let item = item.expect("no item is too long");
+
                 items.push(String::from_utf8(item).expect("the items are text"));
             }
         };
@@ -388,5 +439,82 @@ mod tests {
         let items = read(JsonLineStream::default(), &[b"1\r2\n"]);
 
         assert_eq!(items, ["1\r2"]);
+    }
+
+    /// What `framing` gives once it holds `body`: the items before the first error, and the error.
+    fn until_too_long<F: Framing>(mut framing: F, body: &[u8]) -> (usize, Option<TooLong>) {
+        let mut items = 0;
+
+        framing.push(body);
+
+        while let Some(item) = framing.next_item() {
+            match item {
+                Ok(_) => items += 1,
+                Err(error) => return (items, Some(error)),
+            }
+        }
+
+        (items, None)
+    }
+
+    /// `len` bytes of a JSON string, quotes included.
+    fn string(len: usize) -> Vec<u8> {
+        let mut text = vec![b'a'; len];
+
+        text[0] = b'"';
+        text[len - 1] = b'"';
+        text
+    }
+
+    #[test]
+    fn a_line_of_up_to_1_mib_is_read_and_a_longer_one_is_an_error() {
+        let whole = [string(ITEM_LIMIT), b"\n".to_vec()].concat();
+        let longer = [string(ITEM_LIMIT + 1), b"\n".to_vec()].concat();
+
+        assert_eq!(until_too_long(JsonLineStream::default(), &whole), (1, None));
+        assert_eq!(
+            until_too_long(JsonLineStream::default(), &longer),
+            (0, Some(TooLong))
+        );
+
+        let event = [b"data: ".to_vec(), string(ITEM_LIMIT - 6), b"\n\n".to_vec()].concat();
+        let longer = [b"data: ".to_vec(), string(ITEM_LIMIT - 5), b"\n\n".to_vec()].concat();
+
+        assert_eq!(until_too_long(EventStream::default(), &event), (1, None));
+        assert_eq!(
+            until_too_long(EventStream::default(), &longer),
+            (0, Some(TooLong))
+        );
+    }
+
+    #[test]
+    fn a_line_that_never_ends_is_an_error_once_past_1_mib() {
+        let endless = string(ITEM_LIMIT + 1);
+
+        assert_eq!(
+            until_too_long(EventStream::default(), &endless),
+            (0, Some(TooLong))
+        );
+        assert_eq!(
+            until_too_long(JsonLineStream::default(), &endless),
+            (0, Some(TooLong))
+        );
+
+        // Up to the limit, the line may still end.
+        assert_eq!(
+            until_too_long(JsonLineStream::default(), &string(ITEM_LIMIT)),
+            (0, None)
+        );
+    }
+
+    #[test]
+    fn the_data_of_an_event_is_at_most_1_mib_whatever_its_lines() {
+        let line = [b"data: ".to_vec(), string(1024), b"\n".to_vec()].concat();
+        let many = [line.repeat(1100), b"\n".to_vec()].concat();
+
+        assert_eq!(
+            until_too_long(EventStream::default(), &many),
+            (0, Some(TooLong))
+        );
     }
 }

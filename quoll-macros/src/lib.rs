@@ -1,17 +1,21 @@
 //! The proc macros of `quoll`, which re-exports them: users depend on `quoll`, never on this crate.
 
 mod client;
+mod known;
 mod model;
 mod path;
 mod server;
 mod syntax;
 
 use proc_macro::TokenStream;
+use proc_macro2::Span;
 use quote::{quote, quote_spanned};
+use syn::Ident;
 use syn::ext::IdentExt;
 use syn::spanned::Spanned;
 
-use crate::model::{Api, BodyKind, Reply, Route, Scheme};
+use crate::known::Known;
+use crate::model::{Api, Reply, Route, Scheme};
 use crate::syntax::Contract;
 
 /// Reads a REST contract and checks it.
@@ -61,39 +65,26 @@ fn expand(api: &Api) -> proc_macro2::TokenStream {
     }
 }
 
-/// Checks that each type the contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events` or `JsonLines`,
-/// which the macro reads by its name, is the crate's. The types are the contract's tokens, so that the user's import
-/// names them; and the check is written whatever the features of `quoll`, so that the import is used, and the type
-/// checked, with neither of them.
+/// Checks that each type of quoll's the contract names, which the macro recognizes by its name, is the crate's. The
+/// types are the contract's tokens, so that the user's import names them; and the check is written whatever the
+/// features of `quoll`, so that the import is used, and the type checked, with neither of them.
 fn known_types(api: &Api) -> proc_macro2::TokenStream {
     let mut checks = Vec::new();
 
     for route in api.groups.iter().flat_map(|group| &group.routes) {
         let result = match &route.reply {
-            Reply::None | Reply::Json(_) => None,
-            Reply::Created { outer, .. } => Some((outer, quote! { created })),
-            Reply::Accepted { outer, .. } => Some((outer, quote! { accepted })),
-            Reply::Text(ty) => Some((ty, quote! { text })),
-            Reply::Bytes(ty) => Some((ty, quote! { bytes })),
-            Reply::Events(ty) => Some((ty, quote! { events })),
-            Reply::JsonLines(ty) => Some((ty, quote! { json_lines })),
+            Reply::Some(returned) => returned.known.map(|known| (&returned.served, known)),
+            Reply::None => None,
         };
-        if let Some((ty, check)) = result {
+        let body = route
+            .body()
+            .and_then(|(param, _)| Known::of(&param.ty).map(|known| (&param.ty, known)));
+
+        for (ty, known) in result.into_iter().chain(body) {
+            let check = Ident::new(known.check, Span::call_site());
+
             checks.push(quote_spanned! {ty.span()=> ::quoll::__private::known::#check::<#ty>(); });
         }
-
-        let Some((param, kind)) = route.body() else {
-            continue;
-        };
-        let ty = &param.ty;
-        let check = match kind {
-            BodyKind::Json => continue,
-            BodyKind::Form => quote! { form },
-            BodyKind::Text => quote! { text },
-            BodyKind::Bytes => quote! { bytes },
-        };
-
-        checks.push(quote_spanned! {ty.span()=> ::quoll::__private::known::#check::<#ty>(); });
     }
 
     if checks.is_empty() {

@@ -8,6 +8,7 @@
 use proc_macro2::Span;
 use syn::{Error, Ident, LitStr, Result, Type, Visibility, ext::IdentExt};
 
+use crate::known::{BodyKind, Known, ResultKind};
 use crate::path::{Segment, Template, literal_problem};
 
 /// The `///` comments of an item, one string per line, as rustc gives them (with their leading space).
@@ -240,29 +241,11 @@ pub(crate) enum ParamKind {
     Body(BodyKind),
 }
 
-/// What a body is on the wire, which its type says: `Form<T>`, `Text`, `Bytes`, or any other type for JSON.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BodyKind {
-    /// Any type but the three below: its JSON, `application/json`.
-    Json,
-    /// `Form<T>`: `application/x-www-form-urlencoded`.
-    Form,
-    /// `Text`: `text/plain`, UTF-8.
-    Text,
-    /// `Bytes`: any content type but the three a browser sends to another site without asking.
-    Bytes,
-}
-
-impl BodyKind {
-    /// What a body of type `ty` is: the last segment of its path names it.
-    fn of(ty: &Type) -> Self {
-        match reserved_name(ty, &["Form", "Text", "Bytes"]) {
-            Some("Form") => Self::Form,
-            Some("Text") => Self::Text,
-            Some("Bytes") => Self::Bytes,
-            _ => Self::Json,
-        }
-    }
+/// What a body of type `ty` is: its JSON, unless the last segment of its path names a body the macro recognizes.
+fn body_kind(ty: &Type) -> BodyKind {
+    Known::of(ty)
+        .and_then(|known| known.body)
+        .unwrap_or(BodyKind::JSON)
 }
 
 /// What a route answers, and so its status and its body.
@@ -270,30 +253,22 @@ impl BodyKind {
 pub(crate) enum Reply {
     /// No `->`: 204, no body.
     None,
-    /// `T`: 200, JSON.
-    Json(Type),
-    /// `Created<T>`: 201, JSON.
-    Created {
-        /// The whole `Created<T>`, as the contract writes it, which the server's trait returns.
-        outer: Type,
-        /// The `T`, which the client returns.
-        inner: Type,
-    },
-    /// `Accepted<T>`: 202, JSON.
-    Accepted {
-        /// The whole `Accepted<T>`, as the contract writes it, which the server's trait returns.
-        outer: Type,
-        /// The `T`, which the client returns.
-        inner: Type,
-    },
-    /// `Text`: 200, `text/plain` in UTF-8.
-    Text(Type),
-    /// `Bytes`: 200, of the content type they carry.
-    Bytes(Type),
-    /// `Events<T>`: 200, server-sent events, the JSON of a `T` in each.
-    Events(Type),
-    /// `JsonLines<T>`: 200, `application/jsonl`, the JSON of a `T` on each line.
-    JsonLines(Type),
+    /// A type: its JSON, or a type of quoll's the macro recognizes.
+    Some(Box<Returned>),
+}
+
+/// The type a route returns.
+#[derive(Debug)]
+pub(crate) struct Returned {
+    /// The type as the contract writes it, which the server's trait returns.
+    pub(crate) served: Type,
+    /// The type the client returns: the one `served` wraps for a `Created<T>` or an `Accepted<T>`, whose status is
+    /// only the server's answer, else `served`.
+    pub(crate) value: Type,
+    /// How the server answers it and the client reads it.
+    pub(crate) kind: ResultKind,
+    /// The type of quoll's it is, which the generated code checks.
+    pub(crate) known: Option<&'static Known>,
 }
 
 impl Reply {
@@ -301,28 +276,23 @@ impl Reply {
     pub(crate) fn served(&self) -> Option<&Type> {
         match self {
             Self::None => None,
-            Self::Json(ty)
-            | Self::Created { outer: ty, .. }
-            | Self::Accepted { outer: ty, .. }
-            | Self::Text(ty)
-            | Self::Bytes(ty)
-            | Self::Events(ty)
-            | Self::JsonLines(ty) => Some(ty),
+            Self::Some(returned) => Some(&returned.served),
         }
     }
 
-    /// The type of the value the route answers, which the client returns: the `T` of a `Created<T>` or an
-    /// `Accepted<T>`, whose status is only the server's answer.
+    /// The type of the value the route answers, which the client returns.
     pub(crate) fn value(&self) -> Option<&Type> {
         match self {
             Self::None => None,
-            Self::Json(ty)
-            | Self::Created { inner: ty, .. }
-            | Self::Accepted { inner: ty, .. }
-            | Self::Text(ty)
-            | Self::Bytes(ty)
-            | Self::Events(ty)
-            | Self::JsonLines(ty) => Some(ty),
+            Self::Some(returned) => Some(&returned.value),
+        }
+    }
+
+    /// How the server answers it and the client reads it; `None` for a route that returns nothing.
+    pub(crate) fn kind(&self) -> Option<ResultKind> {
+        match self {
+            Self::None => None,
+            Self::Some(returned) => Some(returned.kind),
         }
     }
 }
@@ -502,7 +472,7 @@ fn match_args(
                 None => {
                     check_body(method, &name, &ty, body.as_ref())?;
                     body = Some(name.clone());
-                    ParamKind::Body(BodyKind::of(&ty))
+                    ParamKind::Body(body_kind(&ty))
                 }
             },
         };
@@ -558,7 +528,7 @@ fn check_query_struct(
         Type::Path(path) => path.qself.is_none(),
         _ => false,
     };
-    let reserved = reserved_name(ty, NOT_TEXT).is_some() || reserved_name(ty, SCALARS).is_some();
+    let reserved = not_text(ty) || reserved_name(ty, SCALARS).is_some();
 
     if is_struct && !reserved {
         return Ok(());
@@ -695,7 +665,7 @@ fn missing_argument(path: &LitStr, name: &str, place: &Place) -> Error {
 }
 
 /// The type itself, without the parentheses or the invisible group a `$t:ty` of a `macro_rules!` arrives in.
-fn peel(mut ty: &Type) -> &Type {
+pub(crate) fn peel(mut ty: &Type) -> &Type {
     loop {
         match ty {
             Type::Paren(inner) => ty = &inner.elem,
@@ -705,9 +675,8 @@ fn peel(mut ty: &Type) -> &Type {
     }
 }
 
-/// The types a path parameter or a header is not read from: the collections of the standard library, `Option`, and
-/// the types the contract reads otherwise.
-const NOT_TEXT: &[&str] = &[
+/// The types of the standard library a path parameter or a header is not read from: the collections and `Option`.
+const STD_NOT_TEXT: &[&str] = &[
     "Vec",
     "VecDeque",
     "LinkedList",
@@ -717,14 +686,13 @@ const NOT_TEXT: &[&str] = &[
     "BTreeSet",
     "BinaryHeap",
     "Option",
-    "Created",
-    "Accepted",
-    "Form",
-    "Text",
-    "Bytes",
-    "Events",
-    "JsonLines",
 ];
+
+/// Whether `ty` is one of the types a path parameter or a header is not read from: [`STD_NOT_TEXT`], and the types
+/// of quoll's the contract reads otherwise.
+fn not_text(ty: &Type) -> bool {
+    reserved_name(ty, STD_NOT_TEXT).is_some() || Known::of(ty).is_some()
+}
 
 /// The types read from one piece of text, which a query struct is not.
 const SCALARS: &[&str] = &[
@@ -732,11 +700,11 @@ const SCALARS: &[&str] = &[
     "f64", "bool", "char", "str", "String", "Uuid",
 ];
 
-/// Checks what the macro can see of a type read from text, `what`: a path, with none of the names of [`NOT_TEXT`]. A
+/// Checks what the macro can see of a type read from text, `what`: a path, none of the types of [`not_text`]. A
 /// struct of the user's cannot be told from an enum of unit variants here: axum refuses it as the request is read.
 fn check_read_from_text(ty: &Type, what: &str) -> Result<()> {
     let readable = match peel(ty) {
-        Type::Path(path) => path.qself.is_none() && reserved_name(ty, NOT_TEXT).is_none(),
+        Type::Path(path) => path.qself.is_none() && !not_text(ty),
         _ => false,
     };
     if readable {
@@ -769,7 +737,11 @@ fn check_body(method: Method, name: &Ident, ty: &Type, earlier: Option<&Ident>) 
             ),
         ));
     }
-    if let Some(result) = reserved_name(ty, &["Created", "Accepted", "Events", "JsonLines"]) {
+    if let Some(known) = Known::of(ty)
+        && known.body.is_none()
+    {
+        let result = known.name;
+
         return Err(Error::new_spanned(
             ty,
             format!(
@@ -800,40 +772,33 @@ impl Reply {
                 "a route that returns nothing has no `->`: remove `-> ()`",
             ));
         }
-        let reserved = [
-            "Created",
-            "Accepted",
-            "Text",
-            "Bytes",
-            "Events",
-            "JsonLines",
-        ];
+        // A type of quoll's that is no result, a `Form`, is read as JSON, and does not compile on serde's traits.
+        let Some((known, kind)) =
+            Known::of(&ty).and_then(|known| known.result.map(|kind| (known, kind)))
+        else {
+            return Ok(Self::Some(Box::new(Returned {
+                value: ty.clone(),
+                served: ty,
+                kind: ResultKind::JSON,
+                known: None,
+            })));
+        };
 
-        match reserved_name(&ty, &reserved) {
-            Some("Created") => {
-                let inner = wrapped(&ty, "Created", "the body")?;
+        let inner = known
+            .wraps
+            .map(|what| wrapped(&ty, known.name, what))
+            .transpose()?;
+        let value = match inner {
+            Some(inner) if kind.unwrapped => inner,
+            _ => ty.clone(),
+        };
 
-                Ok(Self::Created { outer: ty, inner })
-            }
-            Some("Accepted") => {
-                let inner = wrapped(&ty, "Accepted", "the body")?;
-
-                Ok(Self::Accepted { outer: ty, inner })
-            }
-            Some("Text") => Ok(Self::Text(ty)),
-            Some("Bytes") => Ok(Self::Bytes(ty)),
-            Some("Events") => {
-                wrapped(&ty, "Events", "each item")?;
-
-                Ok(Self::Events(ty))
-            }
-            Some("JsonLines") => {
-                wrapped(&ty, "JsonLines", "each item")?;
-
-                Ok(Self::JsonLines(ty))
-            }
-            _ => Ok(Self::Json(ty)),
-        }
+        Ok(Self::Some(Box::new(Returned {
+            served: ty,
+            value,
+            kind,
+            known: Some(known),
+        })))
     }
 }
 
@@ -852,8 +817,8 @@ fn reserved_name<'a>(ty: &Type, names: &[&'a str]) -> Option<&'a str> {
     names.iter().copied().find(|name| last.ident == name)
 }
 
-/// The `T` of a `Created<T>`, an `Accepted<T>`, an `Events<T>` or a `JsonLines<T>`, `wrapper`, whose last segment the
-/// caller has read; an error when it has no single `T`, which is `what` the wrapper sends: the body or each item.
+/// The `T` of a type of quoll's that wraps one, `wrapper`, whose last segment the caller has read; an error when it has
+/// no single `T`, which is `what` the wrapper sends: the body or each item.
 fn wrapped(ty: &Type, wrapper: &str, what: &str) -> Result<Type> {
     let args = match peel(ty) {
         Type::Path(path) => path.path.segments.last().map(|last| &last.arguments),
