@@ -1,0 +1,22 @@
+use quoll::rest::{self, Events, JsonLines};
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+pub struct Change {
+    pub id: i64,
+}
+
+// The streams the contract names by their name are the user's imports, used whatever the features of quoll.
+rest::api! {
+    pub api Api = "/api";
+
+    pub group Feeds {
+        GET  "/events"         => events() -> Events<Change>;
+        GET  "/notes/{id}/events"
+             => note_events(id: i64, header("Last-Event-ID") last: Option<String>) -> rest::Events<Change>;
+        GET  "/export"         => export() -> JsonLines<Change>;
+        POST "/import"         => import(changes: Vec<Change>) -> rest::JsonLines<Change>;
+    }
+}
+
+fn main() {}

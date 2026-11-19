@@ -1,5 +1,0 @@
-error: `Events` is not supported as a result: a route returns nothing (no `->`), `T`, `Created<T>`, `Accepted<T>`, `Text` or `Bytes`
- --> tests/compile_fail/reply_events.rs:7:36
-  |
-7 |         GET "/notes" => watch() -> Events<NoteEvent>;
-  |                                    ^^^^^^^^^^^^^^^^^

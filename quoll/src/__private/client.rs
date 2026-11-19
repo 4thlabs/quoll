@@ -1,5 +1,6 @@
 //! The client side of what `rest::api!` writes: a request built from a route's arguments, sent through
-//! reqwest-middleware with its [`Route`] in its extensions, and its answer read as the route's result or as an error.
+//! reqwest-middleware with its [`Route`] in its extensions, and its answer read as the route's result, whole or as a
+//! stream, or as an error.
 
 use std::borrow::Cow;
 use std::error::Error as StdError;
@@ -17,12 +18,13 @@ use serde_json::Value;
 use crate::__private::content_type::{
     self, FORM, OCTET_STREAM, PROBLEM, TEXT_UTF8, media_type_value,
 };
-use crate::__private::known::{IsBytes, IsForm, IsText};
+use crate::__private::known::{IsBytes, IsEvents, IsForm, IsJsonLines, IsText};
 use crate::rest::{Error, Problem, Result, Route};
 
+mod stream;
 mod text;
 
-pub use crate::__private::content_type::{JSON, TEXT};
+pub use crate::__private::content_type::{EVENT_STREAM, JSON, JSON_LINES, TEXT};
 pub use http::{HeaderName, Method};
 
 /// Any content type, which a route returning `Bytes` asks for.
@@ -497,13 +499,65 @@ impl Answer {
         Ok(B::from_parts(body.into(), content_type))
     }
 
-    /// The whole body, when the answer's content type is `expected`, with no charset but UTF-8 when `utf8` is set: a
-    /// body of another type is not the route's result, even when it would read as one, as a page of HTML would as
-    /// text. Such a body is read and dropped up to 64 KiB, as [`Answer::none`] does, so that the connection serves
-    /// again.
+    /// The body, read as server-sent events as they come, each the JSON of an item: what a route returning
+    /// `Events<T>` gives. Each event is an item, its `data`, as an `EventSource` reads a message: an event of another
+    /// name, a comment, and the fields `id`, `retry` and any other are skipped.
+    ///
+    /// # Errors
+    ///
+    /// An error with no status when the answer is not `text/event-stream`. Then, in the stream, an error with no
+    /// status for an event that does not read as an item, and for a body that cannot be read, which ends it.
+    pub async fn events<E>(self) -> Result<E>
+    where
+        E: IsEvents,
+        E::Item: DeserializeOwned + Send + 'static,
+    {
+        let route = self.route;
+        let response = self.of_type(EVENT_STREAM, false).await?;
+
+        Ok(E::from_results(stream::items(
+            response,
+            route,
+            stream::EventStream::default(),
+        )))
+    }
+
+    /// The body, read as JSON Lines as they come, each the JSON of an item: what a route returning `JsonLines<T>`
+    /// gives. An empty line is skipped, and a last line with no line break is read too.
+    ///
+    /// # Errors
+    ///
+    /// An error with no status when the answer is not `application/jsonl`. Then, in the stream, an error with no
+    /// status for a line that does not read as an item, and for a body that cannot be read, which ends it.
+    pub async fn json_lines<L>(self) -> Result<L>
+    where
+        L: IsJsonLines,
+        L::Item: DeserializeOwned + Send + 'static,
+    {
+        let route = self.route;
+        let response = self.of_type(JSON_LINES, false).await?;
+
+        Ok(L::from_results(stream::items(
+            response,
+            route,
+            stream::JsonLineStream::default(),
+        )))
+    }
+
+    /// The whole body, when the answer's content type is `expected`, with no charset but UTF-8 when `utf8` is set.
     async fn read_as(self, expected: &str, utf8: bool) -> Result<bytes::Bytes> {
+        let route = self.route;
+        let response = self.of_type(expected, utf8).await?;
+
+        Self { response, route }.read().await
+    }
+
+    /// The answer, when its content type is `expected`, with no charset but UTF-8 when `utf8` is set: a body of
+    /// another type is not the route's result, even when it would read as one, as a page of HTML would as text. Such
+    /// a body is read and dropped up to 64 KiB, as [`Answer::none`] does, so that the connection serves again.
+    async fn of_type(self, expected: &str, utf8: bool) -> Result<reqwest::Response> {
         if content_type::is(self.response.headers(), expected, utf8) {
-            return self.read().await;
+            return Ok(self.response);
         }
 
         // The call has failed already: a body that does not read only costs the connection.

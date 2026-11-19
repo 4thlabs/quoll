@@ -1,5 +1,6 @@
 //! The server side of what `rest::api!` writes: the routes of a group on an axum router, the caller authenticated and
-//! the arguments read from a request, and the answers, an error answered as an RFC 9457 problem.
+//! the arguments read from a request, and the answers, streams among them, an error answered as an RFC 9457
+//! problem.
 
 use std::borrow::Cow;
 use std::error::Error as StdError;
@@ -25,9 +26,11 @@ use crate::__private::known::{IsAccepted, IsBytes, IsCreated, IsForm, IsText};
 use crate::rest::error::Repr;
 use crate::rest::{Authenticate, Error, Result, Scheme};
 
+mod stream;
 mod text;
 
 pub use axum::routing::MethodFilter;
+pub use stream::{events, json_lines};
 
 /// The routes of one group, each served by the group's service.
 pub struct Group<S> {
