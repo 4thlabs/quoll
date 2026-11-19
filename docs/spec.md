@@ -6,7 +6,7 @@
 
 A REST contract written once in Rust, from which a macro generates a server on axum, a client on reqwest and an OpenAPI document; the OpenAPI document feeds TypeScript generators (TanStack Query, SWR, zod...). No UI. It takes the REST spec of the C++ Quoll, now [quoll-http](https://github.com/4thlabs/quoll-http), as its model.
 
-Decided by the maintainer on 2026-11-18: the contract is one function-like macro, `rest::api! { ... }`; the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument; authentication is generic, through schemes; no generated Rust is written to disk; the client is built on reqwest-middleware and is native only, with no wasm32 for now.
+Decided by the maintainer on 2026-11-18: the contract is one function-like macro, `rest::api! { ... }`; the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument; authentication is generic, through schemes; no generated Rust is written to disk; the client is built on reqwest-middleware and is native only, with no wasm32 for now. On 2026-11-19: the crate is named `quoll`.
 
 ## Stack and crates
 
@@ -19,13 +19,13 @@ An application splits into crates by role:
 
 ```text
 notes/
-  api/      notes-api     the contract and its models: rest, serde, schemars; no tokio, axum or reqwest
+  api/      notes-api     the contract and its models: quoll, serde, schemars; no tokio, axum or reqwest
   server/   notes-server  notes-api with feature "server": tokio, axum
   cli/      notes-cli     notes-api with feature "client": tokio, reqwest
   web/      TypeScript    vite, orval, TanStack Query
 ```
 
-The crate `rest` has two features, `server` and `client`. What the macro generates for each side compiles only with its feature: the command line never links axum, nor the server reqwest. A contract crate passes them on, `notes-api = { path = "../api", features = ["server"] }`.
+The crate is `quoll`, used from git until it is published; the contract is its module `quoll::rest`, which the examples bring in with `use quoll::rest`. It has two features, `server` and `client`. What the macro generates for each side compiles only with its feature: the command line never links axum, nor the server reqwest. A contract crate passes them on, `notes-api = { path = "../api", features = ["server"] }`.
 
 ## The contract
 
@@ -273,11 +273,11 @@ name = "notes-api"
 edition = "2024"
 
 [features]
-server = ["rest/server"]
-client = ["rest/client"]
+server = ["quoll/server"]
+client = ["quoll/client"]
 
 [dependencies]
-rest = "0.1"
+quoll = { git = "https://github.com/4thlabs/quoll" }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 ```
@@ -285,7 +285,7 @@ serde = { version = "1", features = ["derive"] }
 `api/src/lib.rs`
 
 ```rust
-use rest::{Created, Events, Form};
+use quoll::rest::{self, Created, Events, Form};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -377,7 +377,7 @@ fn main() {
 
 ```rust
 use notes_api::*;
-use rest::{Authenticate, Bearer, Created, Error, Events, Form, Result};
+use quoll::rest::{self, Authenticate, Bearer, Created, Error, Events, Form, Result};
 
 mod store;
 
@@ -511,6 +511,7 @@ async fn main() -> anyhow::Result<()> {
 ```rust
 use notes_api::{Api, NewNote, Notes};
 use notes_server::User;
+use quoll::rest;
 use reqwest_middleware::ClientBuilder;
 
 #[tokio::test]
@@ -545,9 +546,9 @@ async fn a_call_without_token_is_refused() -> anyhow::Result<()> {
 ```rust
 use futures::StreamExt;
 use notes_api::{Api, Login, NewNote, NoteFilter, Notes};
+use quoll::rest::{self, Form};
 use reqwest::StatusCode;
 use reqwest_middleware::ClientBuilder;
-use rest::Form;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -708,4 +709,3 @@ rustfmt formats it and rust-analyzer reads it as any Rust; it repeats `&self`, `
 2. **Streams in TypeScript.** OpenAPI 3.1 cannot type the items of an event stream. Proposed: the item type goes into the schemas under an extension, and a small helper of ours, `subscribe(path, onItem)`, reads the stream, until the generators read OpenAPI 3.2's item schemas.
 3. **64-bit integers in TypeScript.** An `i64` becomes a `number`, exact up to 2^53 only. Either ids stay below it, or such fields travel as strings.
 4. **Pagination by header.** GitHub pages with a `Link` header (`rel="next"`, `rel="last"`), which a result cannot say yet. Proposed: a result `Paged<T>` carrying it, and on the client `.pages()`, a stream that follows the links.
-5. **The name** of the crate and of its repository.

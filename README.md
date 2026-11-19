@@ -11,7 +11,7 @@
     <img src="https://img.shields.io/badge/Rust-2024-B7410E?logo=rust&logoColor=white" alt="Rust 2024" />
     <img src="https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white" alt="OpenAPI 3.1" />
     <img src="https://img.shields.io/badge/status-design-lightgrey" alt="Status: design" />
-    <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-BSD%203--Clause-blue" alt="BSD 3-Clause" /></a>
+    <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" /></a>
   </p>
 
   <p>
@@ -110,4 +110,4 @@ Design: the contract is specified in [`docs/spec.md`](docs/spec.md), a draft. Th
 
 ## License
 
-BSD 3-Clause, see [`LICENSE.md`](LICENSE.md).
+MIT, see [`LICENSE.md`](LICENSE.md).
