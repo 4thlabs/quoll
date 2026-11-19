@@ -28,6 +28,7 @@ rest::api! {
         GET "/lines?count={count}"  => lines(count: u32) -> JsonLines<Change>;
         GET "/failing/events"       => failing_events() -> Events<Change>;
         GET "/failing/lines"        => failing_lines() -> rest::JsonLines<Change>;
+        GET "/gone/events"          => gone_events() -> Events<Change>;
         GET "/missing/events"       => missing_events() -> rest::Events<Change>;
         GET "/missing/lines"        => missing_lines() -> JsonLines<Change>;
         GET "/held/events"          => held_events() -> Events<Change>;
@@ -107,6 +108,12 @@ impl FeedsServer for App {
 
     async fn failing_lines(&self) -> Result<JsonLines<Change>> {
         Ok(JsonLines::try_new(failing()))
+    }
+
+    async fn gone_events(&self) -> Result<Events<Change>> {
+        let changes = [Ok(change(1)), Err(Error::not_found("the note is gone"))];
+
+        Ok(Events::try_new(stream::iter(changes)))
     }
 
     async fn missing_events(&self) -> Result<Events<Change>> {
@@ -254,43 +261,71 @@ fn no_status(error: &Error, operation: &str, message: &str, why: &str) {
 }
 
 #[tokio::test]
-async fn an_item_that_fails_cuts_the_stream_short_with_an_error() {
+async fn an_item_that_fails_ends_events_with_its_problem_after_every_value() {
+    let (url, api, _) = served().await;
+
+    // The problem of an internal error, with no detail, as the last event of a body that ends as any other.
+    let (status, _, body) = raw(&format!("{url}/api/failing/events")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.ends_with(
+            "\n\nevent: problem\ndata: {\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500}\n\n"
+        ),
+        "{body}"
+    );
+
+    let mut events = api.feeds().failing_events().await.expect("events");
+    let mut next = async || events.next().await;
+
+    assert_eq!(next().await.expect("a value").expect("1"), change(1));
+    assert_eq!(next().await.expect("a value").expect("2"), change(2));
+
+    let error = next().await.expect("the problem").expect_err("an error");
+
+    assert_eq!(error.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
+    assert_eq!(error.problem().and_then(rest::Problem::detail), None);
+    assert!(next().await.is_none());
+
+    // A problem with a detail gives it.
+    let items = all(api.feeds().gone_events().await.expect("events")).await;
+
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].as_ref().expect("a value"), &change(1));
+
+    let error = items[1].as_ref().expect_err("the problem");
+
+    assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
+    assert_eq!(
+        error.problem().and_then(rest::Problem::detail),
+        Some("the note is gone")
+    );
+}
+
+#[tokio::test]
+async fn an_item_that_fails_cuts_json_lines_short_with_an_error() {
     let (_, api, _) = served().await;
 
     // The call itself fails when the server had written nothing before the error.
-    let events = match api.feeds().failing_events().await {
-        Ok(events) => all(events).await,
-        Err(error) => vec![Err(error)],
-    };
-    let lines = match api.feeds().failing_lines().await {
+    let mut items = match api.feeds().failing_lines().await {
         Ok(lines) => all(lines).await,
         Err(error) => vec![Err(error)],
     };
 
-    for (mut items, operation) in [
-        (events, "feeds_failing_events"),
-        (lines, "feeds_failing_lines"),
-    ] {
-        // An error rather than an end. The values sent just before it may not arrive, but never the one after.
-        let error = items.pop().expect("an error").expect_err("an error");
-        let before = values(items);
+    // An error rather than an end. The lines sent just before it may not arrive, but never the one after.
+    let error = items.pop().expect("an error").expect_err("an error");
+    let before = values(items);
 
-        assert!(before.len() <= 2, "{operation}: {before:?}");
-        assert_eq!(
-            before,
-            [change(1), change(2)][..before.len()],
-            "{operation}"
-        );
-        assert_eq!(error.status(), None, "{error}");
-        assert!(
-            [
-                format!("the call `{operation}` got an answer whose body cannot be read"),
-                format!("the call `{operation}` got no response"),
-            ]
-            .contains(&error.to_string()),
-            "{error}"
-        );
-    }
+    assert!(before.len() <= 2, "{before:?}");
+    assert_eq!(before, [change(1), change(2)][..before.len()]);
+    assert_eq!(error.status(), None, "{error}");
+    assert!(
+        [
+            "the call `feeds_failing_lines` got an answer whose body cannot be read",
+            "the call `feeds_failing_lines` got no response",
+        ]
+        .contains(&error.to_string().as_str()),
+        "{error}"
+    );
 }
 
 /// Waits for the server to say which held stream it dropped: a stream it never drops fails the test, rather than
@@ -368,7 +403,7 @@ fn third_party(accepts: Arc<Mutex<Vec<String>>>) -> axum::Router {
                         &[
                             "\u{feff}: a comment\r\n\r\nid: 7\r\nretry: 1000\r\nda",
                             "ta: {\"id\":1,\r\ndata: \"text\":\"a\"}\r",
-                            "\n\r\nevent: ping\ndata: {\"id\":99}\n\ndata:{\"id\":2,\"text\":",
+                            "\n\r\nevent: ping\ndata: {\"id\":99,\"text\":\"ping\"}\n\nevent: ping\n\ndata:{\"id\":2,\"text\":",
                             "\"caf\u{e9}\"}\r\rdata: {\"id\":3,\"text\":\"\"}\n\n",
                             "data: {\"id\":4,\"text\":\"never ended\"}\n",
                         ],
@@ -380,6 +415,25 @@ fn third_party(accepts: Arc<Mutex<Vec<String>>>) -> axum::Router {
                             "data: {\"id\":1,\"text\":\"a\"}\n\n",
                             "data: {\"id\":\"two\"}\n\n",
                             "data: {\"id\":3,\"text\":\"c\"}\n\n",
+                        ],
+                    ),
+                    // An API that names every event, as Anthropic's does.
+                    "count=4" => answer(
+                        "text/event-stream",
+                        &[
+                            "event: message_start\ndata: {\"id\":1,\"text\":\"start\"}\n\n",
+                            "event: content_block_delta\ndata: {\"id\":2,\"text\":\"delta\"}\n\n",
+                            "event: ping\n\n",
+                            "event: message_stop\ndata: {\"id\":3,\"text\":\"stop\"}\n\n",
+                        ],
+                    ),
+                    // A problem of another API's, after which nothing is read.
+                    "count=5" => answer(
+                        "text/event-stream",
+                        &[
+                            "data: {\"id\":1,\"text\":\"a\"}\n\n",
+                            "event: problem\ndata: {\"type\":\"https://example.com/down\",\"status\":503,\"detail\":\"down\"}\n\n",
+                            "data: {\"id\":2,\"text\":\"b\"}\n\n",
                         ],
                     ),
                     _ => answer("application/json", &["[{\"id\":1,\"text\":\"a\"}]"]),
@@ -444,14 +498,53 @@ async fn events_are_read_from_chunks_cut_anywhere_as_an_event_source_reads_them(
 
     let events = api.feeds().events(1).await.expect("events");
 
-    // The event the body ends before its blank line is dropped.
+    // A named event is read, one with no data is not, and the event the body ends before its blank line is dropped.
     assert_eq!(
         values(all(events).await),
-        [changed(1, "a"), changed(2, "café"), changed(3, "")]
+        [
+            changed(1, "a"),
+            changed(99, "ping"),
+            changed(2, "café"),
+            changed(3, "")
+        ]
     );
     assert_eq!(
         *accepts.lock().expect("no test panics holding the lock"),
         ["text/event-stream"]
+    );
+}
+
+#[tokio::test]
+async fn events_are_read_whatever_their_name() {
+    let (api, _) = third_party_client().await;
+
+    let events = api.feeds().events(4).await.expect("events");
+
+    assert_eq!(
+        values(all(events).await),
+        [changed(1, "start"), changed(2, "delta"), changed(3, "stop")]
+    );
+}
+
+#[tokio::test]
+async fn a_problem_of_another_api_is_its_error_and_ends_the_stream() {
+    let (api, _) = third_party_client().await;
+
+    let mut items = all(api.feeds().events(5).await.expect("events")).await;
+
+    assert_eq!(items.len(), 2);
+
+    let error = items.pop().expect("the problem").expect_err("an error");
+
+    assert_eq!(values(items), [changed(1, "a")]);
+    assert_eq!(error.status(), Some(StatusCode::SERVICE_UNAVAILABLE));
+    assert_eq!(
+        error.problem().map(rest::Problem::kind),
+        Some("https://example.com/down")
+    );
+    assert_eq!(
+        error.problem().and_then(rest::Problem::detail),
+        Some("down")
     );
 }
 

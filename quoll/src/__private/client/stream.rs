@@ -6,9 +6,11 @@ use std::mem;
 use futures_util::{StreamExt, stream};
 use serde::de::DeserializeOwned;
 
-use super::no_answer;
+use http::StatusCode;
+
+use super::{no_answer, read_problem};
 use crate::__private::known::Items;
-use crate::rest::{Result, Route};
+use crate::rest::{Error, Result, Route};
 
 /// The most one item holds, 1 MiB: the `data` of an event, or a line of either body. A stream runs for long, and a
 /// server that never ends an item would have the client hold all it sends: past it, the stream ends with an error.
@@ -18,14 +20,23 @@ const ITEM_LIMIT: usize = 1024 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TooLong;
 
+/// What a piece of a stream's body is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Piece {
+    /// An item, the JSON of a value.
+    Item,
+    /// `event: problem`: the RFC 9457 problem the server ends the stream with, in JSON.
+    Problem,
+}
+
 /// How the body of a stream is split into the JSON of its items.
 pub(crate) trait Framing: Send + 'static {
     /// Adds the next chunk of the body.
     fn push(&mut self, chunk: &[u8]);
 
-    /// What `read` makes of the JSON of the next whole item, lent where it lies, when the chunks so far hold one; an
-    /// error once an item is longer than [`ITEM_LIMIT`], whole or not.
-    fn next_item<R>(&mut self, read: impl FnOnce(&[u8]) -> R) -> Option<Result<R, TooLong>>;
+    /// What `read` makes of the next whole piece, and of its JSON, lent where it lies, when the chunks so far hold
+    /// one; an error once a piece is longer than [`ITEM_LIMIT`], whole or not.
+    fn next_item<R>(&mut self, read: impl FnOnce(Piece, &[u8]) -> R) -> Option<Result<R, TooLong>>;
 
     /// Says the body has ended: what is left makes an item, or is dropped.
     fn finish(&mut self);
@@ -34,9 +45,9 @@ pub(crate) trait Framing: Send + 'static {
 /// The items of `response`'s body, split by `framing` and read as the JSON of a `T`, as its chunks come: a chunk is
 /// read only when the stream is asked for an item that the chunks so far do not hold.
 ///
-/// An item that does not read as a `T` is an error, and the stream goes on. An item longer than [`ITEM_LIMIT`], and a
-/// body that cannot be read, are an error, and the stream ends after it, dropping the answer and what it had of an
-/// item. Dropping the stream drops the answer too, which closes its connection.
+/// An item that does not read as a `T` is an error, and the stream goes on. A problem, an item longer than
+/// [`ITEM_LIMIT`], and a body that cannot be read, are an error, and the stream ends after it, dropping the answer and
+/// what it had of an item. Dropping the stream drops the answer too, which closes its connection.
 pub(crate) fn items<T, F>(
     response: reqwest::Response,
     route: &'static Route,
@@ -52,12 +63,15 @@ where
         let (mut response, mut framing) = state?;
 
         loop {
-            match framing.next_item(|json| serde_json::from_slice::<T>(json)) {
-                Some(Ok(item)) => {
-                    let item = item.map_err(|error| no_answer(route, NOT_AN_ITEM, error));
+            let read = |piece, json: &[u8]| match piece {
+                Piece::Item => Ok(serde_json::from_slice::<T>(json)
+                    .map_err(|error| no_answer(route, NOT_AN_ITEM, error))),
+                Piece::Problem => Err(problem(route, json)),
+            };
 
-                    return Some((item, Some((response, framing))));
-                }
+            match framing.next_item(read) {
+                Some(Ok(Ok(item))) => return Some((item, Some((response, framing)))),
+                Some(Ok(Err(problem))) => return Some((Err(problem), None)),
                 Some(Err(TooLong)) => {
                     let error = no_answer(
                         route,
@@ -91,6 +105,24 @@ where
 
 /// What the error of an item that does not read as the route's says.
 const NOT_AN_ITEM: &str = "got an item that does not read as its type";
+
+/// The error an `event: problem` stands for, whose data is `json`: the problem's status, 500 when it names none that
+/// is an error, and the problem, as an error answer gives them.
+fn problem(route: &Route, json: &[u8]) -> Error {
+    let Some(problem) = read_problem(json) else {
+        return no_answer(
+            route,
+            "got an `event: problem` that is not a problem",
+            "its data is not a JSON object",
+        );
+    };
+    let status = problem
+        .status()
+        .filter(|status| status.is_client_error() || status.is_server_error())
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+
+    Error::upstream(status, Some(problem), json.to_vec())
+}
 
 /// A body split into lines, as its chunks come.
 #[derive(Debug, Default)]
@@ -184,8 +216,8 @@ pub(crate) struct EventStream {
     first: bool,
     /// The `data` of the event being read, each of its lines followed by `\n`.
     data: Vec<u8>,
-    /// Whether the event being read is a message: it has no name, or its name is `message`.
-    message: bool,
+    /// Whether the event being read is named `problem`, which ends the stream; any other name is an item's.
+    problem: bool,
 }
 
 impl Default for EventStream {
@@ -194,7 +226,7 @@ impl Default for EventStream {
             lines: Lines::new(true),
             first: true,
             data: Vec::new(),
-            message: true,
+            problem: false,
         }
     }
 }
@@ -204,7 +236,7 @@ impl Framing for EventStream {
         self.lines.push(chunk);
     }
 
-    fn next_item<R>(&mut self, read: impl FnOnce(&[u8]) -> R) -> Option<Result<R, TooLong>> {
+    fn next_item<R>(&mut self, read: impl FnOnce(Piece, &[u8]) -> R) -> Option<Result<R, TooLong>> {
         while let Some(line) = self.lines.next_line() {
             let Ok(mut line) = line else {
                 return Some(Err(TooLong));
@@ -214,13 +246,18 @@ impl Framing for EventStream {
                 line = line.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(line);
             }
 
-            // A blank line ends the event: a message with data is an item, any other event is dropped.
+            // A blank line ends the event: one with data is an item whatever its name, but a problem; one with none is
+            // dropped.
             if line.is_empty() {
-                let message = mem::replace(&mut self.message, true);
+                let piece = if mem::take(&mut self.problem) {
+                    Piece::Problem
+                } else {
+                    Piece::Item
+                };
 
-                if message && !self.data.is_empty() {
+                if !self.data.is_empty() {
                     // Without the line break the last line of data adds.
-                    let item = read(&self.data[..self.data.len() - 1]);
+                    let item = read(piece, &self.data[..self.data.len() - 1]);
 
                     self.data.clear();
                     return Some(Ok(item));
@@ -254,7 +291,7 @@ impl Framing for EventStream {
                         return Some(Err(TooLong));
                     }
                 }
-                b"event" => self.message = value.is_empty() || value == b"message",
+                b"event" => self.problem = value == b"problem",
                 // `id`, `retry`, and any field an `EventSource` does not know.
                 _ => {}
             }
@@ -290,7 +327,7 @@ impl Framing for JsonLineStream {
         self.lines.push(chunk);
     }
 
-    fn next_item<R>(&mut self, read: impl FnOnce(&[u8]) -> R) -> Option<Result<R, TooLong>> {
+    fn next_item<R>(&mut self, read: impl FnOnce(Piece, &[u8]) -> R) -> Option<Result<R, TooLong>> {
         while let Some(line) = self.lines.next_line() {
             let Ok(line) = line else {
                 return Some(Err(TooLong));
@@ -298,7 +335,7 @@ impl Framing for JsonLineStream {
 
             // JSON allows the `\r` of a `\r\n` around a value, as any blank.
             if !line.trim_ascii().is_empty() {
-                return Some(Ok(read(line)));
+                return Some(Ok(read(Piece::Item, line)));
             }
         }
 
@@ -308,7 +345,7 @@ impl Framing for JsonLineStream {
 
         let rest = self.lines.rest();
 
-        (!rest.trim_ascii().is_empty()).then(|| Ok(read(rest)))
+        (!rest.trim_ascii().is_empty()).then(|| Ok(read(Piece::Item, rest)))
     }
 
     fn finish(&mut self) {
@@ -324,10 +361,15 @@ mod tests {
     fn read<F: Framing>(mut framing: F, chunks: &[&[u8]]) -> Vec<String> {
         let mut items = Vec::new();
         let mut next = |framing: &mut F| {
-            while let Some(item) = framing.next_item(|item| String::from_utf8(item.to_vec())) {
-                let item = item.expect("no item is too long");
+            while let Some(item) = framing.next_item(|piece, item| {
+                let text = String::from_utf8(item.to_vec()).expect("the items are text");
 
-                items.push(item.expect("the items are text"));
+                match piece {
+                    Piece::Item => text,
+                    Piece::Problem => format!("problem {text}"),
+                }
+            }) {
+                items.push(item.expect("no item is too long"));
             }
         };
 
@@ -392,11 +434,20 @@ mod tests {
     }
 
     #[test]
-    fn comments_unknown_fields_and_other_events_are_skipped() {
-        let body = b": a comment\n\nid: 1\nretry: 10\nkind: x\ncolor\ndata: 1\n\nevent: ping\ndata: 2\n\nevent: message\ndata: 3\n\nevent\ndata: 4\n\n";
+    fn comments_unknown_fields_and_events_without_data_are_skipped() {
+        let body = b": a comment\n\nid: 1\nretry: 10\nkind: x\ncolor\ndata: 1\n\nevent: ping\n\nevent: message\ndata: 3\n\nevent\ndata: 4\n\n";
         let items = read(EventStream::default(), &[body]);
 
         assert_eq!(items, ["1", "3", "4"]);
+    }
+
+    #[test]
+    fn an_event_of_any_name_is_an_item_but_a_problem() {
+        let body = b"event: message_start\ndata: 1\n\nevent: delta\ndata: 2\n\nevent: problem\ndata: {}\n\nevent: problems\ndata: 3\n\ndata: 4\n\n";
+        let items = read(EventStream::default(), &[body]);
+
+        // The name of a problem holds for its own event alone.
+        assert_eq!(items, ["1", "2", "problem {}", "3", "4"]);
     }
 
     #[test]
@@ -460,7 +511,7 @@ mod tests {
 
         framing.push(body);
 
-        while let Some(item) = framing.next_item(|_| ()) {
+        while let Some(item) = framing.next_item(|_, _| ()) {
             match item {
                 Ok(_) => items += 1,
                 Err(error) => return (items, Some(error)),

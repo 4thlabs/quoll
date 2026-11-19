@@ -90,12 +90,19 @@ impl<S: Stream> Stream for Oks<S> {
 /// connection it sees idle. It asks the stream for a value only once the connection has taken the last one: a client
 /// that reads slowly slows it down, and one that goes away drops it, with the connection.
 ///
+/// When an item fails once the 200 is sent, the server logs it and ends the stream with a last event, named
+/// `problem`, whose `data` is the RFC 9457 problem the error would have answered: every value before it is sent.
+///
 /// The client asks for `text/event-stream` with `Accept`, and an answer of another content type is an error with no
-/// status, as an answer that is not a route's result is. Each event is an item, its `data` read as the JSON of a `T`,
-/// as an `EventSource` reads a message: an event with a name other than `message`, a comment, and the fields `id`,
-/// `retry` and any other are skipped, and lines may end with `\r\n`, `\n` or `\r`. An event whose `data` does not read
-/// as a `T` is an error with no status, and the stream goes on. An event, or a line, longer than 1 MiB, and a body that
-/// cannot be read, are an error with no status, and the stream ends after it.
+/// status, as an answer that is not a route's result is. Each event that has data is an item, its `data` read as the
+/// JSON of a `T`, whatever its name, which the stream does not give: an event with no data, a comment, and the fields
+/// `id`, `retry` and any other are skipped, and lines may end with `\r\n`, `\n` or `\r`. An event whose `data` does not
+/// read as a `T` is an error with no status, and the stream goes on.
+///
+/// The one name with a meaning is `problem`, from quoll's server or another: the client reads it as the error of an
+/// answer, with the problem's status, 500 when it names none, and the problem, and the stream ends after it. An event,
+/// or a line, longer than 1 MiB, and a body that cannot be read, are an error with no status, and the stream ends
+/// after it too.
 ///
 /// Dropping the stream closes its connection. The client does not reconnect when the stream ends, as an
 /// `EventSource` does: the caller calls the route again. Events carry no `id` and the client keeps none, so a stream
@@ -117,9 +124,9 @@ impl<T> Events<T> {
 
     /// Events sending the values of `results`, until the stream ends or gives an error.
     ///
-    /// The status of the answer is sent by then: the server logs the error and cuts the answer short, so that the
-    /// client reads an error, never an end it would take for the last value. The values sent just before the error may
-    /// not reach the client, and when none has, the call itself is the error.
+    /// The status of the answer is sent by then: the server logs the error and sends, after every value before it, a
+    /// last event, `event: problem`, with the problem the error would have answered: an internal error's has no
+    /// detail. The client reads that event as the error, then the end of its stream.
     ///
     /// ```
     /// use futures_util::stream;
@@ -205,9 +212,9 @@ impl<T> JsonLines<T> {
 
     /// Lines sending the values of `results`, until the stream ends or gives an error.
     ///
-    /// The status of the answer is sent by then: the server logs the error and cuts the answer short, so that the
-    /// client reads an error, never an end it would take for the last line. The lines sent just before the error may
-    /// not reach the client, and when none has, the call itself is the error.
+    /// The status of the answer is sent by then, and JSON Lines have no way to say an error: the server logs it and
+    /// cuts the answer short, so that the client reads an error, never an end it would take for the last line. The
+    /// lines sent just before the error may not reach the client, and when none has, the call itself is the error.
     ///
     /// ```
     /// use futures_util::stream;

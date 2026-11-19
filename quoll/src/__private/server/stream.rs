@@ -11,6 +11,7 @@ use futures_util::{StreamExt, stream};
 use http::{HeaderName, HeaderValue, header};
 use serde::Serialize;
 
+use super::problem_json;
 use crate::__private::content_type::JSON_LINES;
 use crate::__private::known::{IsEvents, IsJsonLines, Items, Streamed};
 use crate::rest::{Error, Events, JsonLines, Result};
@@ -48,15 +49,27 @@ impl<T: Serialize + 'static> Written for JsonLines<T> {
 /// event, and a comment when 15 seconds pass with none. Nothing in between holds them back: axum's `Sse` sends
 /// `Cache-Control: no-cache`, and `X-Accel-Buffering: no` tells a proxy as much.
 ///
+/// An item that fails once the 200 is sent is logged, and ends the events with a last one, `event: problem`, whose
+/// `data` is the RFC 9457 problem the error would answer: the client reads it as that error. Every event before it
+/// is sent, and the body then ends as any other.
+///
 /// # Errors
 ///
-/// The handler's error. An item that fails once the answer has begun is logged, and cuts the answer short.
+/// The handler's error.
 pub fn events<E: IsEvents + Written>(result: Result<E>) -> Result<Response> {
-    let events = sent(result?.into_items(), |value| {
+    let write = |value: &E::Item| {
         let json = E::to_json(value).map_err(Error::internal)?;
 
         // Compact JSON holds no line break, so the data of the event is one line.
         Ok(Event::default().data(json))
+    };
+    let events = sent(result?.into_items(), write, |error| {
+        logged(&error, "ended with an `event: problem`");
+
+        let (_, problem) = problem_json(&error);
+        let problem = String::from_utf8(problem).expect("JSON is UTF-8");
+
+        Failed::Last(Event::default().event("problem").data(problem))
     });
     let keep_alive = KeepAlive::new().interval(KEEP_ALIVE);
 
@@ -68,15 +81,24 @@ pub fn events<E: IsEvents + Written>(result: Result<E>) -> Result<Response> {
 /// A 200 with JSON Lines, `application/jsonl`: each value of the handler's stream as its JSON on one line, ended by
 /// `\n`, with `Cache-Control: no-cache` as server-sent events have it, and `X-Accel-Buffering: no`.
 ///
+/// An item that fails once the 200 is sent is logged, and cuts the answer short: JSON Lines have no way to say an
+/// error, so the body fails, and the client reads an error rather than an end. The lines sent just before it may not
+/// reach the client.
+///
 /// # Errors
 ///
-/// The handler's error. An item that fails once the answer has begun is logged, and cuts the answer short.
+/// The handler's error.
 pub fn json_lines<L: IsJsonLines + Written>(result: Result<L>) -> Result<Response> {
-    let lines = sent(result?.into_items(), |value| {
+    let write = |value: &L::Item| {
         let mut line = L::to_json(value).map_err(Error::internal)?;
 
         line.push('\n');
         Ok(line)
+    };
+    let lines = sent(result?.into_items(), write, |error| {
+        logged(&error, "cut short");
+
+        Failed::Cut(error)
     });
     let headers = [
         (header::CONTENT_TYPE, HeaderValue::from_static(JSON_LINES)),
@@ -99,45 +121,63 @@ fn unbuffered(mut response: Response) -> Response {
     response
 }
 
-/// What the server sends of `items`: each value as `write` writes it, until the stream ends or an item fails. A
-/// failure is logged and sent as the body's error, once what came before it is written, which cuts the answer short;
-/// the stream is dropped then.
+/// What the server sends once an item has failed.
+enum Failed<W> {
+    /// A last piece, after which the body ends as any other.
+    Last(W),
+    /// The body's error, which cuts the answer short.
+    Cut(Error),
+}
+
+/// What the server sends of `items`: each value as `write` writes it, until the stream ends or an item fails, and
+/// then what `failed` makes of its error. The stream is dropped then.
 ///
 /// The stream is asked for its next value only when the body is asked for its next piece, once the connection has
 /// taken the last one; and it is dropped with the body, when the connection closes.
-fn sent<T, W, F>(items: Items<T>, write: F) -> impl Stream<Item = Result<W>> + Send + 'static
+fn sent<T, W, F, E>(
+    items: Items<T>,
+    write: F,
+    failed: E,
+) -> impl Stream<Item = Result<W>> + Send + 'static
 where
     T: 'static,
     W: Send + 'static,
     F: Fn(&T) -> Result<W> + Send + 'static,
+    E: Fn(Error) -> Failed<W> + Send + 'static,
 {
-    stream::unfold(Some((items, write)), |state| async move {
-        let (mut items, write) = state?;
+    stream::unfold(Some((items, write, failed)), |state| async move {
+        let (mut items, write, failed) = state?;
         let written = match items.next().await? {
             Ok(value) => write(&value),
             Err(error) => Err(error),
         };
 
-        let Err(error) = written else {
-            return Some((written, Some((items, write))));
+        let error = match written {
+            Ok(written) => return Some((Ok(written), Some((items, write, failed)))),
+            Err(error) => error,
         };
 
-        // hyper drops what it has not written yet when a body fails: a turn first lets it send what came before.
-        tokio::task::yield_now().await;
+        drop(items);
 
-        Some((Err(cut(error)), None))
+        match failed(error) {
+            Failed::Last(last) => Some((Ok(last), None)),
+            Failed::Cut(error) => {
+                // hyper drops what it has not written yet when a body fails: a turn first may let it send what came
+                // before. Best effort only, which no test relies on: a full send buffer keeps it.
+                tokio::task::yield_now().await;
+
+                Some((Err(error), None))
+            }
+        }
     })
 }
 
-/// Logs `error`, an item of a stream that failed once its 200 was sent, with its source: the answer is cut short, so
-/// that the client reads an error rather than an end it would take for the last value.
-fn cut(error: Error) -> Error {
+/// Logs `error`, an item of a stream that failed once its 200 was sent, with its source, and how the stream `ended`.
+fn logged(error: &Error, ended: &str) {
     tracing::error!(
-        error = &error as &dyn StdError,
-        "a stream was cut short after its 200: one of its items failed"
+        error = error as &dyn StdError,
+        "a stream {ended} after its 200: one of its items failed"
     );
-
-    error
 }
 
 #[cfg(test)]
@@ -147,7 +187,7 @@ mod tests {
 
     #[test]
     fn a_stream_cut_short_is_logged_once_with_its_source() {
-        let (log, _) = logged_by(|| cut(Error::internal("the store went away")));
+        let (log, ()) = logged_by(|| logged(&Error::internal("the store went away"), "cut short"));
 
         assert_eq!(log.lines().count(), 1, "{log}");
         assert!(log.contains("cut short after its 200"), "{log}");
