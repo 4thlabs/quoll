@@ -10,7 +10,9 @@
 //!   type a name of its own. A type is described as the server reads it in a parameter or a body, and as it writes
 //!   it in a result or the item of a stream. When the two differ, as for a field with `#[serde(default)]`, which a
 //!   client may leave out but always receives, the type has both, `NoteInput` and `NoteOutput`, as has a type that
-//!   holds one of them; a number follows when a type of the contract has that name already.
+//!   holds one of them; a number follows when a type of the contract has that name already. A character a component's
+//!   name does not take, as the space of `#[schemars(rename = "Old Note")]` or the `<` of a `schema_name` of
+//!   `Page<Note>`, is a `_`.
 //! - **Operations** are named `group_function`, `notes_get`, and tagged by their group. The first paragraph of a
 //!   route's `///` is its summary, the rest its description; a group's is the description of its tag, the api's the
 //!   document's.
@@ -22,13 +24,15 @@
 //! - **Results**: 200, 201 with an optional `Location`, 202 or 204; `Bytes` as `*/*`. A stream result,
 //!   `text/event-stream` or `application/jsonl`, carries the schema of its items in the extension `x-item`.
 //! - **Errors**: each route lists the statuses quoll answers itself, 400 when it reads an argument, 401 when it takes a
-//!   credential, 403 when it needs scopes or takes a cookie on a method that changes things, 415 when it reads a
-//!   body, and `default` for any other, each an `application/problem+json` problem.
+//!   credential, 403 when it needs scopes or takes a cookie scheme the contract declares, which refuses another
+//!   origin, on a method that changes things, 415 when it reads a body, and `default` for any other, each an
+//!   `application/problem+json` problem.
 //! - **Security**: each scheme under `components/securitySchemes`, by its [`NAME`](crate::rest::Scheme::NAME), as its
 //!   [`openapi`](crate::rest::Scheme::openapi) describes it. A route takes any of its schemes, each with its scopes,
 //!   and an empty requirement when its credential is optional.
 //! - **`info`**: the title and the version of the contract's crate, unless [`Document::with_title`] and
-//!   [`Document::with_version`] say others.
+//!   [`Document::with_version`] say others; for a crate built without Cargo, which gives neither, the api's name and
+//!   `0.0.0`.
 
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use serde_json::Value;
@@ -53,7 +57,7 @@ use serde_json::Value;
 ///     println!("{}", Api::openapi().to_json_pretty());
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Document {
     value: Value,
 }
@@ -169,11 +173,6 @@ impl SecurityScheme {
         self
     }
 
-    /// Whether the credential is a cookie, which a browser sends with a request a page of another site makes.
-    pub(crate) fn is_cookie(&self) -> bool {
-        matches!(&self.kind, Kind::ApiKey { place, .. } if *place == "cookie")
-    }
-
     /// The query key of the credential, for a key in the query.
     pub(crate) fn query_key(&self) -> Option<&str> {
         match &self.kind {
@@ -279,10 +278,10 @@ mod tests {
     }
 
     #[test]
-    fn only_a_cookie_is_a_cookie() {
-        assert!(SecurityScheme::cookie("session").is_cookie());
-        assert!(!SecurityScheme::header("cookie").is_cookie());
-        assert!(!SecurityScheme::bearer().is_cookie());
+    fn only_a_key_in_the_query_has_a_query_key() {
+        assert_eq!(SecurityScheme::query("token").query_key(), Some("token"));
+        assert_eq!(SecurityScheme::header("token").query_key(), None);
+        assert_eq!(SecurityScheme::bearer().query_key(), None);
     }
 
     #[test]

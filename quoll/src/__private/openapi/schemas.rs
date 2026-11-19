@@ -5,6 +5,10 @@
 //! a field with `#[serde(default)]` does, which a client may leave out but always receives, the document holds both:
 //! `NoteInput`, what a client sends, and `NoteOutput`, what it receives, with a number after them when a type of the
 //! contract already has that name. A type that refers to one of them differs too, and is split the same way.
+//!
+//! A name is the key of a component, which OpenAPI writes with ASCII letters, digits, `.`, `-` and `_`: any other
+//! character of a name schemars gives, as in `#[schemars(rename = "Note Input")]` or a `schema_name` of `Page<Note>`,
+//! is a `_`, with a number after it when another schema has that name.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -51,16 +55,34 @@ impl Schemas {
         let written_used = closure(written_roots, &self.written);
         let split = self.split(&read_used, &written_used);
 
-        let mut taken: BTreeSet<String> = read_used
+        // The names that can name a component keep theirs; the others, then the split ones, take a free one.
+        let kept: Vec<&String> = read_used
             .union(&written_used)
             .filter(|name| !split.contains(*name))
-            .cloned()
+            .collect();
+        let mut taken: BTreeSet<String> = kept
+            .iter()
+            .filter(|name| is_component_name(name))
+            .map(|name| (*name).clone())
             .collect();
         let mut read_names = BTreeMap::new();
         let mut written_names = BTreeMap::new();
+        for name in &kept {
+            let key = if is_component_name(name) {
+                (*name).clone()
+            } else {
+                fresh(&component_name(name), &mut taken)
+            };
+
+            read_names.insert((*name).clone(), key.clone());
+            written_names.insert((*name).clone(), key);
+        }
         for name in &split {
-            read_names.insert(name.clone(), fresh(&format!("{name}Input"), &mut taken));
-            written_names.insert(name.clone(), fresh(&format!("{name}Output"), &mut taken));
+            let read = fresh(&component_name(&format!("{name}Input")), &mut taken);
+            let written = fresh(&component_name(&format!("{name}Output")), &mut taken);
+
+            read_names.insert(name.clone(), read);
+            written_names.insert(name.clone(), written);
         }
 
         for_each_operation(paths, |operation| {
@@ -209,8 +231,9 @@ fn rename(value: &mut Value, names: &BTreeMap<String, String>) {
                         let renamed = reference
                             .strip_prefix(PREFIX)
                             .and_then(|name| names.get(&decode(name)));
+                        // A name of a component needs no escape in a reference.
                         if let Some(renamed) = renamed {
-                            *reference = format!("{PREFIX}{}", encode(renamed));
+                            *reference = format!("{PREFIX}{renamed}");
                         }
                     }
                     _ => rename(value, names),
@@ -224,6 +247,32 @@ fn rename(value: &mut Value, names: &BTreeMap<String, String>) {
         }
         _ => {}
     }
+}
+
+/// `name` as the key of a component, which OpenAPI writes with ASCII letters, digits, `.`, `-` and `_`: each other
+/// character is a `_`, as `Page<Note>` is `Page_Note_`.
+fn component_name(name: &str) -> String {
+    let name: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    if name.is_empty() {
+        "_".to_owned()
+    } else {
+        name
+    }
+}
+
+/// Whether `name` can be the key of a component as it is.
+fn is_component_name(name: &str) -> bool {
+    super::is_component_name(name)
 }
 
 /// `wanted`, or it followed by the first number from 2 that makes it a name no other schema has, which it takes.
@@ -240,14 +289,13 @@ fn fresh(wanted: &str, taken: &mut BTreeSet<String>) -> String {
     name
 }
 
-/// A name as a JSON pointer writes it, `~` and `/` escaped.
-fn encode(name: &str) -> String {
-    name.replace('~', "~0").replace('/', "~1")
-}
-
-/// A name of a JSON pointer, `~` and `/` unescaped.
+/// The name a reference holds, as schemars writes it: percent-encoded as a URI's fragment, then with `~` and `/`
+/// escaped as in a JSON pointer.
 fn decode(name: &str) -> String {
-    name.replace("~1", "/").replace("~0", "~")
+    percent_encoding::percent_decode_str(name)
+        .decode_utf8_lossy()
+        .replace("~1", "/")
+        .replace("~0", "~")
 }
 
 #[cfg(test)]
@@ -347,6 +395,49 @@ mod tests {
         assert_eq!(
             gathered,
             map(json!({ "Login": { "required": [] }, "Token": {} }))
+        );
+    }
+
+    #[test]
+    fn a_reference_is_read_as_schemars_escapes_it() {
+        assert_eq!(decode("Note"), "Note");
+        assert_eq!(decode("Old%20Note"), "Old Note");
+        assert_eq!(decode("Page%3CNote%3E"), "Page<Note>");
+        assert_eq!(decode("a~1b~0c"), "a/b~c");
+    }
+
+    #[test]
+    fn a_name_that_cannot_be_a_components_is_rewritten() {
+        let schemas = Schemas {
+            read: map(
+                json!({ "Page<Note>": { "items": reference("Note Input") }, "Note Input": {}, "Page_Note_": { "title": "taken" } }),
+            ),
+            written: map(json!({})),
+        };
+        let mut paths = json!({
+            "/notes": {
+                "get": {
+                    "parameters": [
+                        { "schema": reference("Page<Note>") },
+                        { "schema": reference("Page_Note_") },
+                    ],
+                },
+            },
+        });
+
+        let gathered = schemas.gather(&mut paths, &Map::new());
+
+        assert_eq!(
+            gathered,
+            map(json!({
+                "Page_Note_2": { "items": reference("Note_Input") },
+                "Note_Input": {},
+                "Page_Note_": { "title": "taken" },
+            }))
+        );
+        assert_eq!(
+            paths["/notes"]["get"]["parameters"],
+            json!([{ "schema": reference("Page_Note_2") }, { "schema": reference("Page_Note_") }])
         );
     }
 

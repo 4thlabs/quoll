@@ -127,11 +127,18 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
 /// Refuses an `#[openapi(...)]` on `what`, which is not the api.
 fn refuse_openapi(errors: &mut ErrorList, openapi: Option<&(Attribute, Result<bool>)>, what: &str) {
     if let Some((attr, _)) = openapi {
-        errors.push(Error::new_spanned(
-            attr,
-            format!("{what} takes no `#[openapi(...)]`: `#[openapi(none)]` goes on the api, whose whole document it leaves out"),
-        ));
+        errors.push(openapi_elsewhere(attr, what));
     }
+}
+
+/// The error of an `#[openapi(...)]` on `what`, which is not the api.
+fn openapi_elsewhere(attr: &Attribute, what: &str) -> Error {
+    Error::new_spanned(
+        attr,
+        format!(
+            "{what} takes no `#[openapi(...)]`: `#[openapi(none)]` goes on the api, whose whole document it leaves out"
+        ),
+    )
 }
 
 /// The value of `result`, or `None` once its error is gathered.
@@ -300,10 +307,7 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
         Err(error) => (None, Some(error)),
     };
     if let Some((attr, _)) = &openapi {
-        let refused = Error::new_spanned(
-            attr,
-            "a route takes no `#[openapi(...)]`: `#[openapi(none)]` goes on the api, whose whole document it leaves out",
-        );
+        let refused = openapi_elsewhere(attr, "a route");
 
         match &mut attr_error {
             Some(error) => error.combine(refused),
@@ -1410,6 +1414,37 @@ mod tests {
             });
             assert!(path[0].contains("is read from text"), "{path:?}");
         }
+    }
+
+    #[test]
+    fn a_form_wraps_one_type_which_the_model_keeps() {
+        let bare = messages(quote! {
+            pub api Api = "/api";
+            pub group G { POST "/x" => f(login: Form); }
+        });
+        assert!(
+            bare[0].contains("`Form` wraps the type of the form: write `Form<Note>`"),
+            "{bare:?}"
+        );
+
+        let api = parse(quote! {
+            pub api Api = "/api";
+            pub group G { POST "/x" => f(login: Form<Login>) -> Created<Note>; }
+        })
+        .unwrap();
+        let route = &api.groups[0].routes[0];
+        let inner = |ty: Option<&Type>| ty.map(|ty| quote! { #ty }.to_string());
+
+        assert_eq!(inner(route.params[0].inner.as_ref()), Some("Login".into()));
+        assert_eq!(
+            inner(
+                route
+                    .reply
+                    .as_deref()
+                    .and_then(|returned| returned.inner.as_ref())
+            ),
+            Some("Note".into())
+        );
     }
 
     #[test]
