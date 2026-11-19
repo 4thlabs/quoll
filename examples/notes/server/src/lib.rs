@@ -8,7 +8,7 @@ mod store;
 pub use store::{Sessions, Store};
 
 /// Who a request comes from, once its token is checked. Never sent: the server alone builds it.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct User {
     /// The user's id, which their notes are kept under.
     pub id: i64,
@@ -17,7 +17,7 @@ pub struct User {
 }
 
 /// The service of every group: the notes and the open sessions.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct App {
     /// The notes of every user.
     pub store: Store,

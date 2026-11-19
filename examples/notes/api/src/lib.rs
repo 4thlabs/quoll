@@ -18,7 +18,7 @@ pub struct Note {
 }
 
 /// A note to write: what a note holds, but its id.
-#[derive(Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct NewNote {
     /// Its title.
     pub title: String,
