@@ -511,14 +511,15 @@ impl Answer {
     }
 
     /// The body, read as server-sent events as they come, each the JSON of an item: what a route returning
-    /// `Events<T>` gives. Each event is an item, its `data`, as an `EventSource` reads a message: an event of another
-    /// name, a comment, and the fields `id`, `retry` and any other are skipped.
+    /// `Events<T>` gives. Each event that has data is an item, its `data`, whatever its name; an event with no data, a
+    /// comment, and the fields `id`, `retry` and any other are skipped.
     ///
     /// # Errors
     ///
     /// An error with no status when the answer is not `text/event-stream`. Then, in the stream, an error with no
-    /// status for an event that does not read as an item; and for an event or a line longer than 1 MiB, or a body that
-    /// cannot be read, after which the stream ends.
+    /// status for an event that does not read as an item; the error of an answer for an `event: problem`, with the
+    /// problem's status and the problem; and an error with no status for an event or a line longer than 1 MiB, or a
+    /// body that cannot be read. The stream ends after any of them but the first.
     pub async fn events<E>(self) -> Result<E>
     where
         E: IsEvents,

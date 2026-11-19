@@ -474,6 +474,35 @@ fn answer_body(content_type: HeaderValue, body: Vec<u8>) -> Response {
     (StatusCode::OK, content_type, body).into_response()
 }
 
+/// What the server answers for this error: the status and, when it is to be sent, the detail; nothing is logged.
+fn answered(error: &Error) -> (StatusCode, Option<&str>) {
+    match &*error.0 {
+        Repr::Problem { status, detail }
+            if status.is_client_error() || status.is_server_error() =>
+        {
+            (*status, Some(detail))
+        }
+        Repr::Problem { .. } | Repr::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, None),
+        Repr::Upstream { .. } => (StatusCode::BAD_GATEWAY, None),
+        Repr::Failed { answered, .. } => (*answered, None),
+    }
+}
+
+/// The JSON of the RFC 9457 problem the server answers for this error, with its status; nothing is logged.
+fn problem_json(error: &Error) -> (StatusCode, Vec<u8>) {
+    let (status, detail) = answered(error);
+    let problem = Problem {
+        kind: "about:blank",
+        title: status.canonical_reason(),
+        status: status.as_u16(),
+        detail,
+    };
+    let body = serde_json::to_vec(&problem)
+        .expect("a problem holds strings and a number, which JSON always writes");
+
+    (status, body)
+}
+
 /// What the server answers for this error: the status and, when it is to be sent, the detail. Logs what is not
 /// sent.
 fn answer(error: &Error) -> (StatusCode, Option<&str>) {
@@ -536,15 +565,10 @@ struct Problem<'a> {
 /// another API are logged through `tracing`, and their status alone is sent: 500 and 502.
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        let (status, detail) = answer(&self);
-        let problem = Problem {
-            kind: "about:blank",
-            title: status.canonical_reason(),
-            status: status.as_u16(),
-            detail,
-        };
-        let body = serde_json::to_vec(&problem)
-            .expect("a problem holds strings and a number, which JSON always writes");
+        // Logs what is not sent.
+        answer(&self);
+
+        let (status, body) = problem_json(&self);
         let content_type = [(header::CONTENT_TYPE, HeaderValue::from_static(PROBLEM))];
 
         (status, content_type, body).into_response()
