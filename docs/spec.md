@@ -6,7 +6,7 @@
 
 A REST contract written once in Rust, from which a macro generates a server on axum, a client on reqwest and an OpenAPI document; the OpenAPI document feeds TypeScript generators (TanStack Query, SWR, zod...). No UI. It takes the REST spec of the C++ Quoll, now [quoll-http](https://github.com/4thlabs/quoll-http), as its model.
 
-Decided by the maintainer on 2026-11-18: the contract is one function-like macro, `rest::api! { ... }`; the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument; authentication is generic, through schemes; no generated Rust is written to disk; the client is built on reqwest-middleware and is native only, with no wasm32 for now. On 2026-11-19: the crate is named `quoll`; errors stay one `rest::Error`, typed errors per route come later; the items of a stream are typed in TypeScript through an extension and a `subscribe` helper; an `i64` is a TypeScript `number`; pagination by header comes later; the error of `authenticate` answers its own status, not always 401.
+Decided by the maintainer on 2026-11-18: the contract is one function-like macro, `rest::api! { ... }`; the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument; authentication is generic, through schemes; no generated Rust is written to disk; the client is built on reqwest-middleware and is native only, with no wasm32 for now. On 2026-11-19: the crate is named `quoll`; errors stay one `rest::Error`, typed errors per route come later; the items of a stream are typed in TypeScript through an extension and a `subscribe` helper; an `i64` is a TypeScript `number`; pagination by header comes later; the error of `authenticate` answers its own status, not always 401; a path parameter of a struct type is refused when it is called, until a `rest::PathValue` derive refuses it at compile time; a header read twice, an argument in two places, a query struct that is not a struct and a header that quoll or HTTP writes do not compile.
 
 ## Stack and crates
 
@@ -693,8 +693,10 @@ export function NoteView({ id }: { id: number }) {
 
 - A `{name}` with no argument of that name; an argument that is neither in the string, a header, the query struct nor the one body.
 - Two bodies; a body on `GET`, `HEAD` or `OPTIONS`; a result on `HEAD`, whose answer has no body.
-- A path parameter whose type is not read from text, such as a `Vec` or a struct.
-- A query struct and a query in the string together.
+- A path parameter of a type the macro sees is not read from text: a `Vec` or another collection, a map, an `Option`, a reference, a tuple, or `Form`, `Text`, `Bytes` or `Created`; a header of such a type, but an `Option` of a type read from text. A struct of the application cannot be told from an enum of unit variants, and is refused when it is called: the server answers 500, logged, and the client a misuse error, before sending.
+- A query struct and a query in the string together; two query structs; a query struct whose type is not a struct: a scalar, a `String`, an `Option`, a `Vec`...
+- A header read by two arguments; an argument that is a header or the query struct and a `{name}` of the string too.
+- A header that quoll or HTTP writes itself, `Content-Type`, `Content-Length`, `Host`, `Transfer-Encoding` and the hop-by-hop ones, and `Authorization` on a route that takes a scheme.
 - One method and path twice in an api.
 - A group less visible than its api, whose router and client name the group's items.
 - Two items the macro writes with one name: a group named as its api, or as the `NotesServer`, `NotesClient`, `ApiServices` or `ApiClient` the contract writes for another.
@@ -726,7 +728,8 @@ rustfmt formats it and rust-analyzer reads it as any Rust; it repeats `&self`, `
 
 ## Later
 
-Decided, not in the first version. Neither changes a contract already written.
+Decided, not in the first version. The first two change no contract already written.
 
 1. **Typed errors per route**, as the Errors section says.
 2. **Pagination by header.** GitHub pages with a `Link` header (`rel="next"`, `rel="last"`), which a result cannot say yet: a result `Paged<T>` carrying it, and on the client `.pages()`, a stream that follows the links.
+3. **A `rest::PathValue` derive** on unit enums and newtypes, so that a path parameter not read from text is refused at compile time: a struct of the application in a path no longer compiles.
