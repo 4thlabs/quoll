@@ -79,7 +79,8 @@ impl Request {
         Self { parts, body }
     }
 
-    /// The path's parameters, as axum reads them: a tuple, in the order of the path.
+    /// The path's parameters, as axum reads them into `T`: the struct the macro writes for the route, a field per
+    /// parameter, which leaves out the parameters of a router the api's is nested in.
     ///
     /// # Errors
     ///

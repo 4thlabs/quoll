@@ -672,7 +672,7 @@ struct Seen<'a> {
 
 impl Seen<'_> {
     /// The error when `next`, whose string is at `span`, cannot sit beside this route in one router: the same method
-    /// and path, or a parameter named otherwise where both paths have one.
+    /// and path, or the same path with its parameters named otherwise, which a router takes for one path.
     fn clash(&self, next: &Seen<'_>, span: Span) -> Option<Error> {
         let Self { group, route, .. } = self;
 
@@ -686,17 +686,21 @@ impl Seen<'_> {
             ));
         }
 
+        if self.shape != next.shape {
+            return None;
+        }
+
         let (first, other) = renamed_param(self.path, next.path)?;
         Some(Error::new(
             span,
             format!(
-                "`{{{other}}}` stands where the route `{group}::{route}` has `{{{first}}}`: paths that agree up to a parameter give it one name, `{{{first}}}`"
+                "this path is the one of the route `{group}::{route}`, with `{{{other}}}` written for `{{{first}}}`: a router takes them for one path, so name the parameter `{{{first}}}` here too"
             ),
         ))
     }
 }
 
-/// The names of the first parameter that two paths, alike up to it, name in two ways.
+/// The names of the first parameter that two paths of one shape name in two ways.
 fn renamed_param<'a>(first: &'a [Segment], next: &'a [Segment]) -> Option<(&'a str, &'a str)> {
     for pair in first.iter().zip(next) {
         match pair {
@@ -897,7 +901,7 @@ mod tests {
     }
 
     #[test]
-    fn a_parameter_renamed_where_paths_agree_is_found() {
+    fn the_first_parameter_two_paths_name_otherwise_is_found() {
         let literal = |text: &str| Segment::Literal(text.into());
         let param = |name: &str| Segment::Param(name.into());
 

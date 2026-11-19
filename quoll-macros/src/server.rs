@@ -190,11 +190,27 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
     let mut reads = Vec::new();
 
     let path_params: Vec<&Param> = route.path_params().collect();
-    if let Some(first) = path_params.first() {
+    if !path_params.is_empty() {
+        // Read by name, not by position: a router nested under `/tenants/{tenant}` gives `tenant` too.
+        let path_type = Ident::new("__QuollPath", Span::mixed_site());
         let names = path_params.iter().map(|param| &param.name);
-        let types = path_params.iter().map(|param| &param.ty);
-        reads.push(quote_spanned! {first.ty.span()=>
-            let (#(#names,)*) = #request.path::<(#(#types,)*)>().await?;
+        let fields = path_params.iter().map(|param| {
+            let (name, ty) = (&param.name, &param.ty);
+            let key = name.unraw().to_string();
+
+            quote_spanned! {ty.span()=>
+                #[serde(rename = #key)]
+                #name: #ty,
+            }
+        });
+
+        reads.push(quote! {
+            #[derive(::quoll::__private::serde::Deserialize)]
+            #[serde(crate = "::quoll::__private::serde")]
+            struct #path_type {
+                #(#fields)*
+            }
+            let #path_type { #(#names),* } = #request.path::<#path_type>().await?;
         });
     }
 

@@ -42,6 +42,7 @@ rest::api! {
 
     group Notes {
         GET    "/notes/{id}" => get(id: i64) -> Note;
+        GET    "/notes/{note}/title" => title(note: i64) -> String;
         POST   "/notes"      => create(note: NewNote) -> Created<Note>;
         POST   "/drafts"     => draft(note: NewNote) -> Created<Note>;
         PUT    "/notes/{id}" => update(id: i64, note: NewNote) -> Note;
@@ -93,6 +94,10 @@ impl NotesServer for App {
             .find(|note| note.id == id)
             .cloned()
             .ok_or_else(|| Error::not_found("no such note"))
+    }
+
+    async fn title(&self, note: i64) -> Result<String> {
+        self.get(note).await.map(|note| note.title)
     }
 
     async fn create(&self, note: NewNote) -> Result<Created<Note>> {
@@ -173,12 +178,20 @@ impl FailuresServer for Failing {
 
 /// Serves the api on a free port, and gives its URL.
 async fn serve() -> String {
-    let router = Api::router(ApiServices {
+    serve_router(router()).await
+}
+
+fn router() -> axum::Router {
+    Api::router(ApiServices {
         notes: App::default(),
         search: Searcher,
         health: Healthy,
         failures: Failing,
-    });
+    })
+}
+
+/// Serves a router on a free port, and gives the URL of the api in it.
+async fn serve_router(router: axum::Router) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("a port is free");
@@ -306,6 +319,40 @@ async fn path_and_query_are_read_by_name() {
         body,
         json!({ "shelf": "office", "name": "box", "contains": null, "page": 1, "tags": [] })
     );
+}
+
+#[tokio::test]
+async fn a_router_nested_under_a_parameter_reads_its_own_parameters() {
+    let nested = axum::Router::new().nest("/tenants/{tenant}", router());
+    let url = serve_router(nested)
+        .await
+        .replace("/api", "/tenants/acme/api");
+    let http = reqwest::Client::new();
+
+    let create = http
+        .post(format!("{url}/notes"))
+        .json(&json!({ "title": "Milk" }));
+    let (status, _, _) = answer(create).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, _, body) = answer(http.get(format!("{url}/notes/1"))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["title"], "Milk");
+}
+
+#[tokio::test]
+async fn paths_that_part_after_a_parameter_may_name_it_otherwise() {
+    let url = serve().await;
+    let http = reqwest::Client::new();
+
+    let create = http
+        .post(format!("{url}/notes"))
+        .json(&json!({ "title": "Milk" }));
+    answer(create).await;
+    let (status, _, body) = answer(http.get(format!("{url}/notes/1/title"))).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!("Milk"));
 }
 
 #[tokio::test]
