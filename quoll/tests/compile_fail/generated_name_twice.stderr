@@ -1,0 +1,11 @@
+error: `NotesServer`, the name of the group `NotesServer`, is already the server trait of the group `Notes`: rename the group, as each item the contract writes has its own name
+ --> tests/compile_fail/generated_name_twice.rs:7:15
+  |
+7 |     pub group NotesServer {}
+  |               ^^^^^^^^^^^
+
+error: `ApiServices`, the name of the group `ApiServices`, is already the services of the api `Api`: rename the group, as each item the contract writes has its own name
+ --> tests/compile_fail/generated_name_twice.rs:8:15
+  |
+8 |     pub group ApiServices {}
+  |               ^^^^^^^^^^^

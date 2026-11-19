@@ -8,6 +8,9 @@
 pub use axum;
 
 #[cfg(feature = "server")]
+pub use serde;
+
+#[cfg(feature = "server")]
 pub mod server;
 
 /// Writes out its input: `quoll` has the feature `server`.
