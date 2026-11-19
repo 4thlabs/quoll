@@ -28,6 +28,7 @@ rest::api! {
 
     group Layers {
         GET  "/notes/{id}"  => get(id: i64) -> Note;
+        OPTIONS "/notes/{id}" => options(id: i64) -> String;
         GET  "/request-id"  => request_id() -> String;
         GET  "/slow"        => slow() -> String;
         GET  "/failing"     => failing() -> String;
@@ -91,6 +92,10 @@ fn late() -> impl futures_util::Stream<Item = Note> + Send + 'static {
 impl LayersServer for App {
     async fn get(&self, id: i64) -> Result<Note> {
         Ok(note(id))
+    }
+
+    async fn options(&self, id: i64) -> Result<String> {
+        Ok(format!("options {id}"))
     }
 
     async fn request_id(&self) -> Result<String> {
@@ -745,7 +750,7 @@ async fn a_preflight_of_a_listed_origin_is_allowed() {
     assert_eq!(headers["access-control-allow-origin"], ORIGIN);
     assert_eq!(
         headers["access-control-allow-methods"],
-        "GET,HEAD,POST,PUT,PATCH,DELETE"
+        "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS"
     );
     assert_eq!(
         headers["access-control-allow-headers"],
@@ -753,6 +758,27 @@ async fn a_preflight_of_a_listed_origin_is_allowed() {
     );
     assert_eq!(headers["access-control-max-age"], "3600");
     assert!(!headers.contains_key("access-control-allow-credentials"));
+}
+
+#[tokio::test]
+async fn an_options_call_reaches_its_route_through_cors() -> Result<()> {
+    let (url, api) = serve(with_cors(&App::default())).await;
+
+    let response = reqwest::Client::new()
+        .request(reqwest::Method::OPTIONS, format!("{url}/api/notes/3"))
+        .header("origin", ORIGIN)
+        .send()
+        .await
+        .expect("the server answers");
+    let allowed = response.headers()["access-control-allow-origin"].clone();
+    let exposed = response.headers()["access-control-expose-headers"].clone();
+    let read: String = response.json().await.expect("the route's answer");
+
+    assert_eq!(read, "options 3");
+    assert_eq!(allowed, ORIGIN);
+    assert_eq!(exposed, "location,www-authenticate,x-request-id");
+    assert_eq!(api.layers().options(4).await?, "options 4");
+    Ok(())
 }
 
 #[tokio::test]

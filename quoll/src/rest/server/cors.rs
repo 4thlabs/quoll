@@ -24,9 +24,11 @@ const MAX_AGE: Duration = Duration::from_secs(60 * 60);
 /// - An origin is written `https://app.example.com` or `http://localhost:5173`: a scheme, `http` or `https`, a host
 ///   and a port when it is not the scheme's default, with no path, no user and no query. The scheme and the host are
 ///   read case aside, and a default port is dropped, as a browser sends them.
-/// - Every method a contract serves is allowed: `GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE`. Any header a page
-///   asks for is allowed too, as the routes' headers, a scheme's and `X-Request-Id` are the application's: the origins
-///   listed are trusted.
+/// - Every method a contract serves is allowed: `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE` and `OPTIONS`. Any
+///   header a page asks for is allowed too, as the routes' headers, a scheme's and `X-Request-Id` are the
+///   application's: the origins listed are trusted.
+/// - A preflight is an `OPTIONS` request with an `Origin` and an `Access-Control-Request-Method`, which the layer
+///   answers itself. Any other `OPTIONS` request is a call of the route, which answers it, with the headers of CORS.
 /// - A page reads `Location`, `WWW-Authenticate` and `X-Request-Id` in an answer, beside the headers every page reads.
 /// - Credentials are not allowed: a page of another origin sends a token or a key in a header, which needs none, and
 ///   no cookie. A cookie scheme trusts the server's own origin alone: a call of another origin with its cookie whose
@@ -63,6 +65,7 @@ pub fn cors(
             Method::PUT,
             Method::PATCH,
             Method::DELETE,
+            Method::OPTIONS,
         ])
         .allow_headers(AllowHeaders::mirror_request())
         .expose_headers([
@@ -159,13 +162,50 @@ impl<S> Layer<S> for CorsLayer {
     type Service = CorsService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        CorsService(self.0.layer(inner))
+        CorsService(self.0.layer(RestoreOptions(inner)))
     }
 }
 
 /// The service of [`CorsLayer`].
 #[derive(Debug, Clone)]
-pub struct CorsService<S>(Cors<S>);
+pub struct CorsService<S>(Cors<RestoreOptions<S>>);
+
+/// Whether `request` is a preflight, as a browser sends one before a call: tower-http's `Cors` takes any `OPTIONS`
+/// request for one, which would answer a route's own `OPTIONS` in its place.
+fn is_preflight(request: &Request) -> bool {
+    let headers = request.headers();
+
+    request.method() == Method::OPTIONS
+        && headers.contains_key(header::ORIGIN)
+        && headers.contains_key(header::ACCESS_CONTROL_REQUEST_METHOD)
+}
+
+/// Marks an `OPTIONS` call of a route, given to tower-http's `Cors` as a `GET`, so that it gets the headers of a call
+/// and reaches the route, where [`RestoreOptions`] gives it back its method.
+#[derive(Debug, Clone, Copy)]
+struct ActualOptions;
+
+/// The route under [`CorsService`], which gives an `OPTIONS` call back its method.
+#[derive(Debug, Clone)]
+struct RestoreOptions<S>(S);
+
+impl<S: Service<Request>> Service<Request> for RestoreOptions<S> {
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), S::Error>> {
+        self.0.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut request: Request) -> S::Future {
+        if request.extensions_mut().remove::<ActualOptions>().is_some() {
+            *request.method_mut() = Method::OPTIONS;
+        }
+
+        self.0.call(request)
+    }
+}
 
 impl<S> Service<Request> for CorsService<S>
 where
@@ -180,7 +220,12 @@ where
         self.0.poll_ready(cx)
     }
 
-    fn call(&mut self, request: Request) -> ResponseFuture {
+    fn call(&mut self, mut request: Request) -> ResponseFuture {
+        if request.method() == Method::OPTIONS && !is_preflight(&request) {
+            *request.method_mut() = Method::GET;
+            request.extensions_mut().insert(ActualOptions);
+        }
+
         Box::pin(self.0.call(request))
     }
 }
