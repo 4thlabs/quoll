@@ -1,4 +1,4 @@
-error: the group `Notes` is already defined: each group has its own name
+error: the group `Notes` is already defined: each one has its own name
   --> tests/compile_fail/group_twice.rs:10:15
    |
 10 |     pub group Notes {

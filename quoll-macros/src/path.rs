@@ -2,20 +2,20 @@
 //!
 //! Both spellings of a contract write the same string, so this reading is shared by them.
 
-use syn::{Error, LitStr, Result};
+use syn::{Error, Ident, LitStr, Result};
 
 /// What a route's string says: where it goes and which names it takes.
 #[derive(Debug, PartialEq, Eq)]
-pub struct Template {
+pub(crate) struct Template {
     /// The segments below the api's prefix, in order. `"/"` has none.
-    pub segments: Vec<Segment>,
+    pub(crate) segments: Vec<Segment>,
     /// The `key={name}` pairs of the query, in order.
-    pub query: Vec<QueryItem>,
+    pub(crate) query: Vec<QueryItem>,
 }
 
 /// One segment of a path.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Segment {
+pub(crate) enum Segment {
     /// Text that must match as written.
     Literal(String),
     /// A `{name}`, the name of an argument.
@@ -24,11 +24,11 @@ pub enum Segment {
 
 /// A `key={name}` of the query.
 #[derive(Debug, PartialEq, Eq)]
-pub struct QueryItem {
+pub(crate) struct QueryItem {
     /// The key on the wire.
-    pub key: String,
+    pub(crate) key: String,
     /// The name of the argument that takes its value.
-    pub name: String,
+    pub(crate) name: String,
 }
 
 impl Template {
@@ -38,7 +38,7 @@ impl Template {
     ///
     /// An error spanned on the string, when it does not start with `/`, has an empty segment, a `{name}` that is not a
     /// whole segment or a query item that is not `key={name}`, or names an argument twice.
-    pub fn parse(lit: &LitStr) -> Result<Self> {
+    pub(crate) fn parse(lit: &LitStr) -> Result<Self> {
         let value = lit.value();
         let fail = |message: String| Error::new(lit.span(), message);
 
@@ -64,7 +64,7 @@ impl Template {
     }
 
     /// The names of the path's `{name}`s, in order.
-    pub fn path_names(&self) -> impl Iterator<Item = &str> {
+    pub(crate) fn path_names(&self) -> impl Iterator<Item = &str> {
         self.segments.iter().filter_map(|segment| match segment {
             Segment::Param(name) => Some(name.as_str()),
             Segment::Literal(_) => None,
@@ -72,6 +72,17 @@ impl Template {
     }
 
     fn check_names_once(&self) -> std::result::Result<(), String> {
+        let mut keys: Vec<&str> = Vec::new();
+        for item in &self.query {
+            if keys.contains(&item.key.as_str()) {
+                return Err(format!(
+                    "the query key `{}` appears twice: a key takes one argument",
+                    item.key
+                ));
+            }
+            keys.push(&item.key);
+        }
+
         let mut seen: Vec<&str> = Vec::new();
         let query_names = self.query.iter().map(|item| item.name.as_str());
 
@@ -114,13 +125,24 @@ fn parse_segment(text: &str) -> std::result::Result<Segment, String> {
             "`{text}` mixes text and a `{{name}}`: a `{{name}}` is a whole segment, as in \"/notes/{{id}}\""
         ));
     }
-    if text.contains(|c: char| c.is_whitespace() || c == '#') {
-        return Err(format!(
-            "`{text}` has a space or a `#`: a literal segment is plain text, as in \"/notes\""
-        ));
+    if let Some(problem) = literal_problem(text) {
+        return Err(problem);
     }
 
     Ok(Segment::Literal(text.into()))
+}
+
+/// What is wrong with a literal segment, if anything. A router reads other characters as syntax of its own (`:x`, `*x`)
+/// or as escapes, so a literal is limited to the characters every router and client agree on.
+pub(crate) fn literal_problem(text: &str) -> Option<String> {
+    let plain = |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~');
+    if text.chars().all(plain) && text != "." && text != ".." {
+        return None;
+    }
+
+    Some(format!(
+        "`{text}` is not a plain segment: a literal segment holds ASCII letters, digits, `-`, `_`, `.` and `~`, and is not `.` or `..`"
+    ))
 }
 
 fn parse_query(query: &str) -> std::result::Result<Vec<QueryItem>, String> {
@@ -152,6 +174,9 @@ fn parse_query_item(item: &str) -> std::result::Result<QueryItem, String> {
     if key.is_empty() || key.contains(['{', '}']) {
         return Err(expected());
     }
+    if let Some(problem) = literal_problem(key) {
+        return Err(problem.replace("segment", "key"));
+    }
 
     Ok(QueryItem {
         key: key.into(),
@@ -161,13 +186,17 @@ fn parse_query_item(item: &str) -> std::result::Result<QueryItem, String> {
 
 fn valid_name(name: &str) -> std::result::Result<&str, String> {
     let mut chars = name.chars();
-    let starts_well = chars.next().is_some_and(|c| c.is_alphabetic() || c == '_');
-    if starts_well && chars.all(|c| c.is_alphanumeric() || c == '_') {
+    let starts_well = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+    // Parsing as an identifier refuses what an argument cannot be named: `_` and the keywords.
+    let is_ident = syn::parse_str::<Ident>(name).is_ok();
+    if starts_well && chars.all(|c| c.is_ascii_alphanumeric() || c == '_') && is_ident {
         return Ok(name);
     }
 
     Err(format!(
-        "`{{{name}}}` is not the name of an argument: a name is letters, digits and `_`, as in `{{id}}`"
+        "`{{{name}}}` is not the name of an argument: a name is ASCII letters, digits and `_`, is not a keyword, and is written as the argument is, as in `{{id}}`"
     ))
 }
 
@@ -252,6 +281,42 @@ mod tests {
         assert!(message("/notes?={page}").contains("not a `key={name}` pair"));
         assert!(message("/notes?").contains("query is empty"));
         assert!(message("/notes?a={a}&").contains("not a `key={name}` pair"));
+    }
+
+    #[test]
+    fn a_query_key_is_taken_once() {
+        assert!(message("/notes?tag={a}&tag={b}").contains("query key `tag` appears twice"));
+    }
+
+    #[test]
+    fn literal_segments_are_plain() {
+        for text in [
+            "/a/./b",
+            "/a/..",
+            "/:id",
+            "/*rest",
+            "/50%25",
+            "/my notes",
+            "/a#b",
+            "/é",
+        ] {
+            assert!(message(text).contains("not a plain segment"), "{text}");
+        }
+        for text in ["/a.b", "/v1.2-beta_3", "/~user", "/.well-known"] {
+            assert!(parse(text).is_ok(), "{text}");
+        }
+        assert!(message("/notes?a%b={x}").contains("not a plain key"));
+    }
+
+    #[test]
+    fn names_are_what_an_argument_can_bear() {
+        for name in ["_", "self", "Self", "crate", "super", "type", "é", "a b"] {
+            assert!(
+                message(&format!("/notes/{{{name}}}")).contains("not the name"),
+                "{name}"
+            );
+        }
+        assert!(parse("/notes/{_id}").is_ok());
     }
 
     #[test]

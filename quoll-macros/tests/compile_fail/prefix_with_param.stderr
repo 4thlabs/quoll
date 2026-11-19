@@ -1,5 +1,0 @@
-error: the prefix is plain text, with no `{name}`, `?` or `#`: write it as "/api", or "" for none
- --> tests/compile_fail/prefix_with_param.rs:4:19
-  |
-4 |     pub api Api = "/api/{version}";
-  |                   ^^^^^^^^^^^^^^^^

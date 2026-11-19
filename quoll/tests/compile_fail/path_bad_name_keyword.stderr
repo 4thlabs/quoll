@@ -1,0 +1,5 @@
+error: `{self}` is not the name of an argument: a name is ASCII letters, digits and `_`, is not a keyword, and is written as the argument is, as in `{id}`
+ --> tests/compile_fail/path_bad_name_keyword.rs:7:13
+  |
+7 |         GET "/notes/{self}" => get(id: i64);
+  |             ^^^^^^^^^^^^^^^

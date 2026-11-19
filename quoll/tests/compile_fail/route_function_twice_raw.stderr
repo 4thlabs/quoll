@@ -1,0 +1,5 @@
+error: the group `Notes` has a route `r#get` already: each route has its own function name
+ --> tests/compile_fail/route_function_twice_raw.rs:8:27
+  |
+8 |         GET "/archive" => r#get();
+  |                           ^^^^^
