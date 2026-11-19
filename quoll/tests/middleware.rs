@@ -52,6 +52,14 @@ rest::api! {
         GET  "/me" => me() -> String;
         POST "/me" => post_me(text: Text) -> String;
     }
+
+    /// A key in the query, which a URL shows.
+    scheme Token = query "token";
+
+    #[auth(Token)]
+    group Keyed {
+        GET "/keyed" => keyed() -> String;
+    }
 }
 
 /// The service: `flaky` routes fail with their status until `failures` attempts have been made, `held` waits for
@@ -153,11 +161,26 @@ impl SecureServer for App {
     }
 }
 
+impl Authenticate<Token> for App {
+    type Caller = ();
+
+    async fn authenticate(&self, _: String) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl KeyedServer for App {
+    async fn keyed(&self, _: &()) -> Result<String> {
+        Ok("keyed".into())
+    }
+}
+
 /// The api served on a port, with `app` as its service: its URL.
 async fn serve(app: &App) -> String {
     rest::test::spawn(Api::router(ApiServices {
         calls: app.clone(),
         secure: app.clone(),
+        keyed: app.clone(),
     }))
     .await
 }
@@ -206,6 +229,7 @@ fn timed_out(error: &Error) -> bool {
             Some(reqwest_middleware::Error::Reqwest(error)) => Some(error),
             _ => error.downcast_ref::<reqwest::Error>(),
         };
+
         if reqwest.is_some_and(reqwest::Error::is_timeout) {
             return true;
         }
@@ -245,6 +269,7 @@ async fn on_request_changes_the_requests_of_a_contract_only() -> Result<()> {
         .calls()
         .seen(None, None, None)
         .await?;
+
     assert_eq!(seen.signature.as_deref(), Some("calls_seen /api/seen"));
 
     // The same client, sending a request that no contract made.
@@ -256,6 +281,7 @@ async fn on_request_changes_the_requests_of_a_contract_only() -> Result<()> {
         .json()
         .await
         .expect("a seen");
+
     assert_eq!(other.signature, None);
     assert_eq!(
         *routes.lock().expect("no test panics while holding it"),
@@ -273,9 +299,11 @@ async fn user_agent_is_sent_unless_the_request_has_one() -> Result<()> {
     let api = client(http, &url);
 
     let seen = api.calls().seen(None, None, None).await?;
+
     assert_eq!(seen.agent.as_deref(), Some("notes-cli/0.1"));
 
     let own = api.calls().seen(Some("mine/1".into()), None, None).await?;
+
     assert_eq!(own.agent.as_deref(), Some("mine/1"));
 
     let http = ClientBuilder::new(reqwest::Client::new())
@@ -286,6 +314,7 @@ async fn user_agent_is_sent_unless_the_request_has_one() -> Result<()> {
         .seen(None, None, None)
         .await
         .expect_err("a name with a line break");
+
     assert_eq!(error.status(), None);
     Ok(())
 }
@@ -307,6 +336,7 @@ async fn request_id_is_new_on_each_call_and_kept_on_its_attempts() -> Result<()>
 
     let first = api.calls().seen(None, None, None).await?.id.expect("an id");
     let second = api.calls().seen(None, None, None).await?.id.expect("an id");
+
     assert_ne!(first, second);
     for id in [&first, &second] {
         assert_eq!(id.len(), 36, "{id}");
@@ -314,6 +344,7 @@ async fn request_id_is_new_on_each_call_and_kept_on_its_attempts() -> Result<()>
     }
 
     let own = api.calls().seen(None, Some("call-7".into()), None).await?;
+
     assert_eq!(own.id.as_deref(), Some("call-7"));
 
     // One call, failed once then tried again: both attempts carry one id.
@@ -327,6 +358,7 @@ async fn request_id_is_new_on_each_call_and_kept_on_its_attempts() -> Result<()>
         .lock()
         .expect("no test panics while holding it")
         .clone();
+
     assert_eq!(attempts.len(), 2);
     assert!(attempts[0].is_some());
     assert_eq!(attempts[0], attempts[1]);
@@ -384,14 +416,17 @@ async fn retry_leaves_other_failures_alone() {
 #[tokio::test]
 async fn retry_tries_again_get_head_put_and_delete_but_not_post() -> Result<()> {
     let (api, app) = flaky(1, 3).await;
+
     api.calls().head(503).await?;
     assert_eq!(app.attempts.load(Ordering::SeqCst), 2, "HEAD");
 
     let (api, app) = flaky(1, 3).await;
+
     assert_eq!(api.calls().put(503, Text("a body".into())).await?, 2);
     assert_eq!(app.attempts.load(Ordering::SeqCst), 2, "PUT");
 
     let (api, app) = flaky(1, 3).await;
+
     assert_eq!(api.calls().delete(503).await?, 2);
     assert_eq!(app.attempts.load(Ordering::SeqCst), 2, "DELETE");
 
@@ -401,6 +436,7 @@ async fn retry_tries_again_get_head_put_and_delete_but_not_post() -> Result<()> 
         .post(503, Text("a body".into()))
         .await
         .expect_err("a POST is sent once");
+
     assert_eq!(error.status(), Some(StatusCode::SERVICE_UNAVAILABLE));
     assert_eq!(app.attempts.load(Ordering::SeqCst), 1, "POST");
     Ok(())
@@ -414,6 +450,7 @@ async fn retry_tries_again_a_call_that_got_no_response() {
         .expect("a free port");
     let url = format!("http://{}", listener.local_addr().expect("an address"));
     let accepted = Arc::new(AtomicUsize::new(0));
+
     {
         let accepted = Arc::clone(&accepted);
 
@@ -467,16 +504,66 @@ async fn timeout_leaves_a_stream_that_outlives_it() -> Result<()> {
     let api = client(http, &url);
 
     let mut events = api.calls().events().await?;
+
     assert_eq!(events.next().await.expect("an event")?, 1);
 
     // A call started after the stream has passed its deadline: so has the stream.
     let error = api.calls().held().await.expect_err("past its deadline");
+
     assert!(timed_out(&error), "{error:?}");
 
     app.release.notify_one();
     assert_eq!(events.next().await.expect("an event")?, 2);
     assert!(events.next().await.is_none());
     Ok(())
+}
+
+/// A server that accepts each connection and never answers on it, holding it open: its URL, and how many it
+/// accepted.
+async fn silent() -> (String, Arc<AtomicUsize>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a free port");
+    let url = format!("http://{}", listener.local_addr().expect("an address"));
+    let accepted = Arc::new(AtomicUsize::new(0));
+
+    {
+        let accepted = Arc::clone(&accepted);
+
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+
+            loop {
+                let (connection, _) = listener.accept().await.expect("a connection");
+
+                accepted.fetch_add(1, Ordering::SeqCst);
+                held.push(connection);
+            }
+        });
+    }
+
+    (url, accepted)
+}
+
+#[tokio::test]
+async fn timeout_bounds_the_wait_for_a_streams_head_which_retry_tries_again() {
+    let (url, accepted) = silent().await;
+    let http = ClientBuilder::new(reqwest::Client::new())
+        .with(rest::client::retry(2))
+        .with(rest::client::timeout(Duration::from_millis(100)))
+        .build();
+
+    // A guard that fails the test rather than hang it, were the head never bounded.
+    let called = tokio::time::timeout(Duration::from_secs(10), client(http, &url).calls().events())
+        .await
+        .expect("the deadline ends the call");
+    let Err(error) = called else {
+        panic!("a server that never answers gave events");
+    };
+
+    assert_eq!(error.status(), None);
+    assert!(format!("{error:?}").contains("deadline"), "{error:?}");
+    assert_eq!(accepted.load(Ordering::SeqCst), 3);
 }
 
 /// A log kept in memory.
@@ -534,6 +621,7 @@ async fn trace_opens_a_span_named_by_the_operation() -> Result<()> {
         .lines()
         .filter(|line| line.contains("HTTP request"))
         .collect();
+
     assert_eq!(spans.len(), 2, "{log}");
     for field in [
         "otel.name=calls_seen",
@@ -545,6 +633,58 @@ async fn trace_opens_a_span_named_by_the_operation() -> Result<()> {
     }
     assert!(spans[1].contains("otel.name=GET"), "{}", spans[1]);
     Ok(())
+}
+
+#[tokio::test]
+async fn trace_shows_no_query_of_a_call_that_got_no_answer() {
+    let log = Log::default();
+    let writer = log.clone();
+    let _logging = tracing_subscriber::util::SubscriberInitExt::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+            .finish(),
+    );
+    // A port nothing listens on: each connection is refused.
+    let url = {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+
+        format!("http://{}", listener.local_addr().expect("an address"))
+    };
+
+    for retried in [false, true] {
+        let http = ClientBuilder::new(reqwest::Client::new()).with(rest::client::trace());
+        let http = if retried {
+            http.with(rest::client::retry(1))
+        } else {
+            http
+        };
+        let http = http.with(rest::client::key::<Token>("secret-key")).build();
+
+        let error = client(http, &url)
+            .keyed()
+            .keyed()
+            .await
+            .expect_err("a refused connection");
+
+        assert_eq!(error.status(), None);
+    }
+
+    let log = log.text();
+    let spans: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains("HTTP request"))
+        .collect();
+
+    assert_eq!(spans.len(), 2, "{log}");
+    for span in spans {
+        assert!(span.contains("error.message="), "{span}");
+        assert!(span.contains("/api/keyed"), "{span}");
+        assert!(!span.contains("secret-key"), "{span}");
+    }
 }
 
 /// A source that gives `stale` until it is refreshed, then `fresh`, or `stale` again when `renews` is false; it keeps
@@ -584,6 +724,7 @@ impl TokenSource for Source {
             .push(refused.to_owned());
 
         let mut token = self.token.lock().await;
+
         if *token != refused || !self.renews {
             return Ok(token.clone());
         }

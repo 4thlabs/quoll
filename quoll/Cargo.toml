@@ -26,6 +26,7 @@ client = [
     "dep:reqwest-retry",
     "dep:reqwest-tracing",
     "dep:serde_html_form",
+    "dep:tokio",
     "dep:tracing",
     "dep:url",
     "dep:uuid",
@@ -62,7 +63,7 @@ serde_html_form = { version = "0.4", optional = true }
 serde_json = "1"
 # A stream result is `Sync` through it, whatever its stream, which it polls through `&mut` alone.
 sync_wrapper = "1"
-# `time` for the keep-alive comments of server-sent events.
+# `time` for the keep-alive comments of server-sent events, and the deadline of the head of a stream's answer.
 tokio = { version = "1", features = ["net", "rt", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
 # The origin of the api, which the client compares with each request's.

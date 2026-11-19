@@ -8,7 +8,7 @@ use http::header::AUTHORIZATION;
 use reqwest::Request;
 use reqwest_middleware::Middleware;
 
-use super::{Unsendable, bearer_header, middleware, own_route};
+use super::{Failure, bearer_header, middleware, own_route};
 use crate::rest::{Bearer, Result, Route};
 
 /// Where [`bearer_from`] takes its tokens: asked for one before each call, and for a new one after a 401.
@@ -108,9 +108,11 @@ pub fn bearer_from(source: impl TokenSource) -> impl Middleware {
                 .clone()
                 .run(with_token(request, &token)?, extensions)
                 .await?;
+
             if response.status() != StatusCode::UNAUTHORIZED {
                 return Ok(response);
             }
+
             let Some(again) = again else {
                 return Ok(response);
             };
@@ -119,6 +121,7 @@ pub fn bearer_from(source: impl TokenSource) -> impl Middleware {
                 .refresh(&token)
                 .await
                 .map_err(reqwest_middleware::Error::middleware)?;
+
             if fresh == token {
                 return Ok(response);
             }
@@ -132,9 +135,9 @@ pub fn bearer_from(source: impl TokenSource) -> impl Middleware {
 /// `request` with `Authorization: Bearer <token>`, or an error that does not show a token that is not a `b64token`.
 fn with_token(mut request: Request, token: &str) -> reqwest_middleware::Result<Request> {
     let value = bearer_header(token).ok_or_else(|| {
-        reqwest_middleware::Error::middleware(Unsendable(
+        Failure::fail(
             "the bearer token of the source cannot be sent: it is not a `b64token`, letters, digits, `-._~+/` and `=` at its end",
-        ))
+        )
     })?;
 
     request.headers_mut().insert(AUTHORIZATION, value);
