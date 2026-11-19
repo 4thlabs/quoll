@@ -130,6 +130,12 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
         .iter()
         .map(|scheme| quote! { ::core::any::TypeId::of::<#scheme>() });
 
+    let streams = route
+        .reply
+        .as_deref()
+        .and_then(|returned| returned.known)
+        .is_some_and(|known| known.stream);
+
     let path_calls = path_calls(api, route);
     let (query_type, query_call) = query(route).unzip();
     let query_struct = route.query_struct().map(|param| {
@@ -180,6 +186,7 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
                 #path,
                 &[#(#names),*],
                 &[#(#types),*],
+                #streams,
             );
 
             #query_type

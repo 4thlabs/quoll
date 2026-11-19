@@ -55,7 +55,8 @@ const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
 /// further.
 const BODY_LIMIT: usize = 64 * 1024;
 
-/// The route a request calls, which the macro writes as a `static` per route.
+/// The route a request calls, which the macro writes as a `static` per route. `streams` says that its result is a
+/// stream, `Events` or `JsonLines`, whose body lasts as long as the server sends it.
 pub const fn route(
     operation_id: &'static str,
     group: &'static str,
@@ -63,6 +64,7 @@ pub const fn route(
     path: &'static str,
     schemes: &'static [&'static str],
     scheme_types: &'static [TypeId],
+    streams: bool,
 ) -> Route {
     Route {
         operation_id,
@@ -71,8 +73,14 @@ pub const fn route(
         path,
         schemes,
         scheme_types,
+        streams,
     }
 }
+
+/// The origin of the api a request of a contract calls, which the client puts in its extensions beside its [`Route`]:
+/// the middleware that send a credential send it to that origin only, and so not on a redirect to another.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ApiOrigin(pub(crate) url::Origin);
 
 /// A client of an api: the HTTP client and the URL the api is served at. Its clones share both.
 #[derive(Clone)]
@@ -81,6 +89,7 @@ pub struct Client(Arc<Inner>);
 struct Inner {
     http: ClientWithMiddleware,
     base: Url,
+    origin: ApiOrigin,
 }
 
 impl Client {
@@ -132,7 +141,9 @@ impl Client {
             ));
         }
 
-        Ok(Self(Arc::new(Inner { http, base })))
+        let origin = ApiOrigin(base.origin());
+
+        Ok(Self(Arc::new(Inner { http, base, origin })))
     }
 }
 
@@ -404,7 +415,7 @@ impl<'a> Call<'a> {
             headers,
             body,
         } = self;
-        let Inner { http, base } = &*client.0;
+        let Inner { http, base, origin } = &*client.0;
         let mut url = base.clone();
         url.set_path(&format!("{}{path}", base.path().trim_end_matches('/')));
         url.set_query(query.as_deref());
@@ -412,7 +423,8 @@ impl<'a> Call<'a> {
         let mut request = http
             .request(route.method.clone(), url)
             .headers(headers)
-            .with_extension(route.clone());
+            .with_extension(route.clone())
+            .with_extension(origin.clone());
         if let Some(Body {
             content_type,
             bytes,
@@ -692,6 +704,7 @@ mod tests {
         "/api/notes/{id}",
         &[],
         &[],
+        false,
     );
 
     fn client(url: &str) -> Result<Client> {

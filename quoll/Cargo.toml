@@ -23,7 +23,12 @@ client = [
     "dep:futures-util",
     "dep:reqwest",
     "dep:reqwest-middleware",
+    "dep:reqwest-retry",
+    "dep:reqwest-tracing",
     "dep:serde_html_form",
+    "dep:tracing",
+    "dep:url",
+    "dep:uuid",
 ]
 
 [dependencies]
@@ -46,6 +51,9 @@ quoll-macros = { version = "0.1.0", path = "../quoll-macros" }
 # TLS through rustls with the platform's roots, and the system's proxy settings, as reqwest's defaults have them.
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "system-proxy"], optional = true }
 reqwest-middleware = { version = "0.5", optional = true }
+# What `rest::client::retry` and `rest::client::trace` are built on, out of every public signature.
+reqwest-retry = { version = "0.9", default-features = false, optional = true }
+reqwest-tracing = { version = "0.7", optional = true }
 # The schemas of the OpenAPI document, which every type of a contract has, whatever the features.
 schemars = { version = "1", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
@@ -57,6 +65,10 @@ sync_wrapper = "1"
 # `time` for the keep-alive comments of server-sent events.
 tokio = { version = "1", features = ["net", "rt", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
+# The origin of the api, which the client compares with each request's.
+url = { version = "2", optional = true }
+# The `X-Request-Id` of `rest::client::request_id`.
+uuid = { version = "1", features = ["v4"], optional = true }
 
 [dev-dependencies]
 # Validates the OpenAPI documents of the tests against the official schema of OpenAPI 3.1.

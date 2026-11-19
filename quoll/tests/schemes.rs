@@ -962,55 +962,21 @@ async fn redirecting() -> (String, Arc<Mutex<Vec<bool>>>) {
     (rest::test::spawn(api).await, seen)
 }
 
-/// What the docs of `rest::client::key` say of redirects: reqwest keeps the key of a header scheme on a redirect to
-/// another host, and the policy they show stops there.
+/// What the docs of `rest::client::key` say of redirects: reqwest's own policy keeps the key of a header scheme on a
+/// redirect to another host, which `rest::client::redirects` does not (tests/redirects.rs).
 #[tokio::test]
-async fn a_key_in_a_header_follows_a_redirect_to_another_origin_unless_the_policy_stops_it()
--> Result<()> {
+async fn a_key_in_a_header_follows_reqwests_own_redirect_to_another_origin() -> Result<()> {
     let (url, seen) = redirecting().await;
-    let with_key = |http: reqwest::Client| {
-        let http = ClientBuilder::new(http)
-            .with(rest::client::key::<Key>("k-ana"))
-            .build();
+    let http = ClientBuilder::new(reqwest::Client::new())
+        .with(rest::client::key::<Key>("k-ana"))
+        .build();
+    let api = Api::client_with(http, &url)?;
 
-        Api::client_with(http, &url)
-    };
-
-    let api = with_key(reqwest::Client::new())?;
     assert_eq!(api.admin().key().await?, "elsewhere");
     assert_eq!(
         *seen.lock().expect("no test panics while holding it"),
         [true],
         "reqwest's default policy keeps the key"
-    );
-
-    // The policy the docs show.
-    let same_origin = reqwest::redirect::Policy::custom(|attempt| {
-        let previous = attempt.previous().last();
-        let same = previous.is_some_and(|previous| previous.origin() == attempt.url().origin());
-
-        if same && attempt.previous().len() <= 10 {
-            attempt.follow()
-        } else {
-            attempt.stop()
-        }
-    });
-    let http = reqwest::Client::builder()
-        .redirect(same_origin)
-        .build()
-        .expect("a client");
-    let api = with_key(http)?;
-
-    let error = api
-        .admin()
-        .key()
-        .await
-        .expect_err("a redirect to another origin");
-    assert_eq!(error.status(), Some(StatusCode::FOUND));
-    assert_eq!(
-        *seen.lock().expect("no test panics while holding it"),
-        [true],
-        "the second server saw no other request"
     );
     Ok(())
 }
