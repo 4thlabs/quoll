@@ -1,0 +1,5 @@
+error: `#[openapi(...)]` takes `none`: write `#[openapi(none)]`, which leaves out the OpenAPI document of a contract that is only called, whose types need no schema
+ --> tests/compile_fail/openapi_not_none.rs:4:15
+  |
+4 |     #[openapi(all)]
+  |               ^^^

@@ -12,12 +12,12 @@ pub use axum;
 #[cfg(feature = "client")]
 pub use reqwest_middleware;
 
-#[cfg(any(feature = "server", feature = "client"))]
 pub use serde;
 
 pub mod auth;
 pub(crate) mod content_type;
 pub mod known;
+pub mod openapi;
 
 #[cfg(feature = "server")]
 pub mod server;

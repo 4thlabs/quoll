@@ -1,8 +1,9 @@
 use quoll::rest::{self, Events};
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 // Read by the client, but never written by the server.
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct Note {
     pub id: i64,
 }

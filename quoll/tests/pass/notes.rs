@@ -1,4 +1,5 @@
 use quoll::rest::{self, Created};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 rest::api! {
@@ -21,13 +22,13 @@ rest::api! {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct Login;
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct TokenResponse;
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct Note;
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct NewNote;
 
 fn main() {

@@ -38,6 +38,9 @@ pub(crate) struct Api {
     pub(crate) schemes: Vec<DeclaredScheme>,
     /// The groups, in the order they are written.
     pub(crate) groups: Vec<Group>,
+    /// Whether the api has an OpenAPI document, `Api::openapi`: not with `#[openapi(none)]`, for a contract of a
+    /// third-party API that is only called, whose types need no schema.
+    pub(crate) openapi: bool,
 }
 
 /// Routes that go together: one service on the server, one trait on the client, one tag in OpenAPI.
@@ -154,6 +157,11 @@ impl Route {
         }
 
         path
+    }
+
+    /// The operation id, the group's name in snake case and the function's: `notes_get`.
+    pub(crate) fn operation_id(&self, group: &Group) -> String {
+        format!("{}_{}", snake_case(&group.name), self.name.unraw())
     }
 
     /// The path's parameters, in the order of the path.
@@ -604,7 +612,7 @@ fn check_header_type(ty: &Type, header: &str) -> Result<()> {
 }
 
 /// The `T` of an `Option<T>`.
-fn option_inner(ty: &Type) -> Option<&Type> {
+pub(crate) fn option_inner(ty: &Type) -> Option<&Type> {
     let Type::Path(path) = peel(ty) else {
         return None;
     };
@@ -852,6 +860,7 @@ impl Api {
             prefix,
             schemes,
             groups,
+            openapi: true,
         };
         api.check_unique(&mut errors);
         auth::resolve(&mut api, &mut errors);

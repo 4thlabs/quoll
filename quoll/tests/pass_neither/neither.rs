@@ -1,4 +1,5 @@
 use quoll::rest;
+use schemars::JsonSchema;
 
 rest::api! {
     pub api Api = "/api";
@@ -21,6 +22,7 @@ impl Api {
     fn client_with() {}
 }
 
+#[derive(JsonSchema)]
 struct Note;
 
 fn main() {

@@ -25,3 +25,26 @@ note: required by a bound in `quoll::__private::auth::is_scheme`
   |
   | pub const fn is_scheme<S: Scheme>() {}
   |                           ^^^^^^ required by this bound in `is_scheme`
+
+error[E0277]: `Hmac` is not a scheme: `#[auth(...)]` takes `Bearer`, `Basic`, a scheme the contract declares, or a type implementing `quoll::rest::Scheme`
+ --> tests/compile_fail_neither/auth_not_a_scheme.rs:9:12
+  |
+9 |     #[auth(Hmac)]
+  |            ^^^^ not a scheme
+  |
+help: the trait `Scheme` is not implemented for `Hmac`
+ --> tests/compile_fail_neither/auth_not_a_scheme.rs:4:1
+  |
+4 | pub struct Hmac;
+  | ^^^^^^^^^^^^^^^
+  = note: declare it in the contract, as `pub scheme Key = header "X-Api-Key";`, or implement `quoll::rest::Scheme` for `Hmac`
+help: the following other types implement trait `Scheme`
+ --> src/rest/auth/basic.rs
+  |
+  | impl Scheme for Basic {
+  | ^^^^^^^^^^^^^^^^^^^^^ `Basic`
+  |
+ ::: src/rest/auth/bearer.rs
+  |
+  | impl Scheme for Bearer {
+  | ^^^^^^^^^^^^^^^^^^^^^^ `Bearer`

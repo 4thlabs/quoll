@@ -6,6 +6,7 @@ use http::HeaderValue;
 use http::request::Parts;
 
 use crate::rest::Result;
+use crate::rest::openapi::SecurityScheme;
 
 mod basic;
 mod bearer;
@@ -24,6 +25,7 @@ pub(crate) use bearer::is_b64token;
 ///
 /// ```
 /// use http::request::Parts;
+/// use quoll::rest::openapi::SecurityScheme;
 /// use quoll::rest::{Error, Result, Scheme};
 ///
 /// /// A request signed with a key the server knows: `X-Signature: <key id>:<signature>`.
@@ -52,6 +54,10 @@ pub(crate) use bearer::is_b64token;
 ///         };
 ///
 ///         Ok(Some(Signed { key_id: key_id.into(), signature: signature.into() }))
+///     }
+///
+///     fn openapi() -> SecurityScheme {
+///         SecurityScheme::header("X-Signature").with_description("`<key id>:<signature>`")
 ///     }
 /// }
 /// ```
@@ -84,6 +90,11 @@ pub trait Scheme: 'static {
     /// When the request carries a credential of this scheme that is not well formed. A 401 is answered with a
     /// `WWW-Authenticate` challenge; its detail is sent to the caller, and never holds the credential.
     fn read(request: &Parts) -> Result<Option<Self::Credential>>;
+
+    /// How the OpenAPI document describes the scheme, under `components/securitySchemes` by its
+    /// [`NAME`](Scheme::NAME): `SecurityScheme::bearer()` for [`Bearer`], a key in a header for a scheme that reads
+    /// one.
+    fn openapi() -> SecurityScheme;
 }
 
 /// A caller that holds scopes, which a route with `#[auth(Bearer, scopes("repo"))]` requires: the router answers 403

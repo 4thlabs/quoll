@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use http::Extensions;
 use http::request::Parts;
+use quoll::rest::openapi::SecurityScheme;
 use quoll::rest::{
     self, Authenticate, Basic, BasicCredential, Bearer, Error, Result, Route, Scheme, Scoped, Text,
 };
@@ -106,6 +107,10 @@ impl Scheme for Hmac {
             key_id: key_id.into(),
             signature: signature.into(),
         }))
+    }
+
+    fn openapi() -> SecurityScheme {
+        SecurityScheme::header("X-Signature")
     }
 }
 

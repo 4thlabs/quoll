@@ -1,4 +1,5 @@
 use http::request::Parts;
+use quoll::rest::openapi::SecurityScheme;
 use quoll::rest::{self, Result, Scheme};
 
 /// A scheme of the application's own.
@@ -15,6 +16,10 @@ impl Scheme for Hmac {
             .get("x-signature")
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned))
+    }
+
+    fn openapi() -> SecurityScheme {
+        SecurityScheme::header("X-Signature")
     }
 }
 

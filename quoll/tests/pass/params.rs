@@ -1,17 +1,18 @@
 use quoll::rest::{self, Bytes, Created, Form, Text};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct Note;
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize, JsonSchema)]
 pub struct NoteFilter {
     pub contains: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct Login {
     pub user: String,
 }

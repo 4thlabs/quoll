@@ -1,0 +1,15 @@
+error[E0599]: no associated function or constant named `openapi` found for struct `GitHub` in the current scope
+  --> tests/compile_fail_neither/openapi_none_has_no_document.rs:14:21
+   |
+ 3 | / rest::api! {
+ 4 | |     /// A third-party API, which the application only calls.
+ 5 | |     #[openapi(none)]
+ 6 | |     pub api GitHub = "";
+   | |__________________- associated function or constant `openapi` not found for this struct
+...
+14 |       let _ = GitHub::openapi();
+   |                       ^^^^^^^ associated function or constant not found in `GitHub`
+   |
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following trait defines an item `openapi`, perhaps you need to implement it:
+           candidate #1: `Scheme`

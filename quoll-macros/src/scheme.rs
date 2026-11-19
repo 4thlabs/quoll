@@ -21,7 +21,7 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
         docs, vis, name, ..
     } = scheme;
     let shown = name.unraw().to_string();
-    let (travels, read, place, challenge) = match &scheme.kind {
+    let (travels, read, place, challenge, openapi) = match &scheme.kind {
         DeclaredKind::Header(header) => {
             let lower = header.to_ascii_lowercase();
 
@@ -30,6 +30,7 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
                 quote! { ::quoll::__private::auth::header(request, #lower) },
                 quote! { Header(#lower) },
                 None,
+                quote! { header(#header) },
             )
         }
         DeclaredKind::Cookie(cookie) => (
@@ -45,6 +46,7 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
             quote! { ::quoll::__private::auth::cookie(request, #cookie) },
             quote! { Cookie(#cookie) },
             None,
+            quote! { cookie(#cookie) },
         ),
         DeclaredKind::Query(key) => (
             vec![
@@ -57,6 +59,7 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
             quote! { ::quoll::__private::auth::query(request, #key) },
             quote! { Query(#key) },
             None,
+            quote! { query(#key) },
         ),
         DeclaredKind::OpenId(url) => (
             vec![format!(
@@ -68,8 +71,10 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
                 const CHALLENGE: ::quoll::__private::http::HeaderValue =
                     ::quoll::__private::http::HeaderValue::from_static("Bearer");
             }),
+            quote! { openid(#url) },
         ),
     };
+    let description = description(&docs.0).map(|text| quote! { .with_description(#text) });
 
     let mut lines = docs.0.clone();
     if !lines.is_empty() {
@@ -103,12 +108,29 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
             ) -> ::quoll::rest::Result<::core::option::Option<::std::string::String>> {
                 #read
             }
+
+            fn openapi() -> ::quoll::rest::openapi::SecurityScheme {
+                ::quoll::rest::openapi::SecurityScheme::#openapi #description
+            }
         }
 
         impl ::quoll::__private::auth::Declared for #name {
             const PLACE: ::quoll::__private::auth::Place = ::quoll::__private::auth::Place::#place;
         }
     }
+}
+
+/// The description of a declared scheme in the OpenAPI document: its comments, without the space rustc gives each
+/// line.
+fn description(lines: &[String]) -> Option<String> {
+    let lines: Vec<&str> = lines
+        .iter()
+        .map(|line| line.strip_prefix(' ').unwrap_or(line))
+        .collect();
+    let text = lines.join("\n");
+    let text = text.trim();
+
+    (!text.is_empty()).then(|| text.to_owned())
 }
 
 /// The type of a scheme, by which the generated code names it: the crate's, `::quoll::rest::Bearer`, or the path the

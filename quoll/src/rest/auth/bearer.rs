@@ -3,6 +3,7 @@
 use http::header::AUTHORIZATION;
 use http::request::Parts;
 
+use crate::rest::openapi::SecurityScheme;
 use crate::rest::{Error, Result, Scheme};
 
 /// A token in the `Authorization` header: `Authorization: Bearer <token>`, as RFC 6750 sends it. Its credential is the
@@ -58,6 +59,11 @@ impl Scheme for Bearer {
 
         // A `b64token` is ASCII, which the conversion keeps as it is.
         Ok(Some(String::from_utf8_lossy(token).into_owned()))
+    }
+
+    /// `{type: http, scheme: bearer}`.
+    fn openapi() -> SecurityScheme {
+        SecurityScheme::bearer()
     }
 }
 

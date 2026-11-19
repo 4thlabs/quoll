@@ -10,14 +10,15 @@ use std::sync::{Arc, Mutex};
 use quoll::rest::{self, Accepted, Bytes, Error, Result, Text};
 use reqwest::StatusCode;
 use reqwest::header::CONTENT_TYPE;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct Export {
     name: String,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Job {
     id: u64,
     name: String,

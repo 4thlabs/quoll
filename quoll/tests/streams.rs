@@ -11,10 +11,11 @@ use futures_util::{StreamExt, stream};
 use quoll::rest::{self, Error, Events, JsonLines, Result};
 use reqwest::StatusCode;
 use reqwest::header::{ACCEPT, CACHE_CONTROL, CONTENT_TYPE};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Change {
     id: u32,
     text: String,

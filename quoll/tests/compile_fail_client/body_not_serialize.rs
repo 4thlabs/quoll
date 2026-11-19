@@ -1,8 +1,9 @@
 use quoll::rest;
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 // Read by the server, but never written by the client.
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub struct NewNote {
     pub title: String,
 }

@@ -1,4 +1,5 @@
 use quoll::rest;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 rest::api! {
@@ -19,7 +20,7 @@ impl Api {
     fn client_with() {}
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct Note;
 
 fn main() {

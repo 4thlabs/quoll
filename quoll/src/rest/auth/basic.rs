@@ -8,6 +8,7 @@ use http::HeaderValue;
 use http::request::Parts;
 
 use crate::rest::auth::bearer::authorization;
+use crate::rest::openapi::SecurityScheme;
 use crate::rest::{Error, Result, Scheme};
 
 /// A user and a password in the `Authorization` header: `Authorization: Basic <base64 of user:password>`, as RFC 7617
@@ -100,6 +101,11 @@ impl Scheme for Basic {
             user: user.to_owned(),
             password: password.to_owned(),
         }))
+    }
+
+    /// `{type: http, scheme: basic}`.
+    fn openapi() -> SecurityScheme {
+        SecurityScheme::basic()
     }
 }
 
