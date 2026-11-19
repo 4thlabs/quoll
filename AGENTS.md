@@ -4,7 +4,8 @@ Guidance for AI coding agents working in this repository.
 
 **Before writing or reviewing code, read [`docs/CODING_RULES.md`](docs/CODING_RULES.md)**: the Rust rules every change
 follows. **The design is in [`docs/spec.md`](docs/spec.md)**: read it first, it is the source of truth for what the
-crate does.
+crate does. **What is to do, and in which order, is in the GitHub project
+[Quoll](https://github.com/users/4thlabs/projects/2)**: one issue per piece of work, grouped by milestone.
 
 Quoll is a REST contract for Rust, written once in a macro: an axum server, a reqwest client and an OpenAPI 3.1
 document come from it, and TypeScript generators such as orval turn the document into TanStack Query hooks. There is no
