@@ -2,7 +2,8 @@
 
 #![cfg(all(feature = "server", feature = "client"))]
 
-use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
+use std::sync::{Arc, Mutex, Once};
 use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
@@ -321,21 +322,48 @@ async fn a_route_puts_itself_in_its_answer() {
     assert_eq!(missing.headers()["x-operation"], "none");
 }
 
-/// What the tracing of a test logs, through a subscriber of the test's thread, which its server runs on.
+/// What the tracing of a test logs: the events of its thread, which its server runs on.
+///
+/// One subscriber serves the whole binary, set once as the global default, and writes each event into the log of the
+/// thread it happens on, if that thread captures one. A subscriber per test, set as the thread's default, would race:
+/// tracing caches whether a callsite is enabled across every subscriber, and a test running beside another, with none,
+/// may have it cached as disabled.
 #[derive(Clone, Default)]
 struct Log(Arc<Mutex<Vec<u8>>>);
 
-impl Log {
-    /// Logs on this thread into a new log, until the guard is dropped.
-    fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
-        let log = Self::default();
-        let writer = log.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_ansi(false)
-            .finish();
+thread_local! {
+    /// The log of the test running on this thread, while it captures one.
+    static CAPTURED: RefCell<Option<Log>> = const { RefCell::new(None) };
+}
 
-        (log, tracing::subscriber::set_default(subscriber))
+/// Captures the log of its thread until it is dropped.
+struct Capture;
+
+impl Drop for Capture {
+    fn drop(&mut self) {
+        CAPTURED.with_borrow_mut(|captured| *captured = None);
+    }
+}
+
+impl Log {
+    /// Captures what is logged on this thread into a new log, until the guard is dropped.
+    fn capture() -> (Self, Capture) {
+        static INSTALLED: Once = Once::new();
+
+        INSTALLED.call_once(|| {
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(|| ThreadLog)
+                .with_ansi(false)
+                .finish();
+
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("no other subscriber is set in this binary");
+        });
+
+        let log = Self::default();
+
+        CAPTURED.with_borrow_mut(|captured| *captured = Some(log.clone()));
+        (log, Capture)
     }
 
     fn lines(&self) -> Vec<String> {
@@ -357,12 +385,19 @@ impl Log {
     }
 }
 
-impl std::io::Write for Log {
+/// Writes an event into the log its thread captures, or nowhere.
+struct ThreadLog;
+
+impl std::io::Write for ThreadLog {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .expect("no writer panics")
-            .extend_from_slice(bytes);
+        CAPTURED.with_borrow(|captured| {
+            if let Some(Log(log)) = captured {
+                log.lock()
+                    .expect("no writer panics")
+                    .extend_from_slice(bytes);
+            }
+        });
+
         Ok(bytes.len())
     }
 
