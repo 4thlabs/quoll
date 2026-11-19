@@ -26,7 +26,7 @@
 //!     .with(rest::client::user_agent("notes-cli/0.1"))
 //!     .with(rest::client::request_id()) // before `retry`: one id for every attempt
 //!     .with(rest::client::retry(3))
-//!     .with(rest::client::timeout(Duration::from_secs(10))) // per attempt and per hop; after `retry`, a stream's head too
+//!     .with(rest::client::timeout(Duration::from_secs(10))) // per attempt and per hop
 //!     .with(rest::client::redirects(5)) // before every credential: each hop is given it, or not
 //!     .with(rest::client::bearer("mF_9.B5f-4.1JqM"))
 //!     .build();

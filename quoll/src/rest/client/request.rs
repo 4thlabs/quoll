@@ -30,7 +30,7 @@ const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 /// # use quoll::rest;
 /// use reqwest::Request;
 ///
-/// # fn sign(method: &http::Method, path: &str, body: &[u8]) -> http::HeaderValue { http::HeaderValue::from_static("") }
+/// # fn sign(_: &http::Method, _: &str, _: &[u8]) -> http::HeaderValue { http::HeaderValue::from_static("") }
 /// # fn run() -> Result<(), reqwest::Error> {
 /// let sign = rest::client::on_request(|request: &mut Request, route: &rest::Route| {
 ///     let body = request.body().and_then(|body| body.as_bytes()).unwrap_or_default();
@@ -132,8 +132,8 @@ pub fn request_id() -> impl Middleware {
 /// A route whose result is a stream, `Events` or `JsonLines`, has a deadline for the head of its answer alone, its
 /// status and headers: its body lasts as long as the server sends it, which a deadline would cut. That deadline
 /// bounds the middleware after `timeout`, each attempt when it comes after `retry`, and starts again on each hop of
-/// `redirects`; it is an error with no status that `retry` tries again. A request that did not come from the client of a contract has a deadline, its body
-/// included.
+/// `redirects`; it is an error with no status that `retry` tries again. A request that did not come from the client
+/// of a contract has a deadline, its body included.
 ///
 /// ```no_run
 /// # use std::time::Duration;
