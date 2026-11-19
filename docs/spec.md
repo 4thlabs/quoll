@@ -6,7 +6,7 @@
 
 A REST contract written once in Rust, from which a macro generates a server on axum, a client on reqwest and an OpenAPI document; the OpenAPI document feeds TypeScript generators (TanStack Query, SWR, zod...). No UI. It takes the REST spec of the C++ Quoll, now [quoll-http](https://github.com/4thlabs/quoll-http), as its model.
 
-Decided by the maintainer on 2026-11-18: the contract is one function-like macro, `rest::api! { ... }`; the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument; authentication is generic, through schemes; no generated Rust is written to disk; the client is built on reqwest-middleware and is native only, with no wasm32 for now. On 2026-11-19: the crate is named `quoll`.
+Decided by the maintainer on 2026-11-18: the contract is one function-like macro, `rest::api! { ... }`; the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument; authentication is generic, through schemes; no generated Rust is written to disk; the client is built on reqwest-middleware and is native only, with no wasm32 for now. On 2026-11-19: the crate is named `quoll`; errors stay one `rest::Error`, typed errors per route come later; the items of a stream are typed in TypeScript through an extension and a `subscribe` helper; an `i64` is a TypeScript `number`.
 
 ## Stack and crates
 
@@ -245,12 +245,15 @@ They answer RFC 9457 problems, as handlers do, where tower-http's answer plain t
 - The server answers a handler's error with its status and a problem in JSON: `Error::not_found(detail)`, `Error::bad_request(detail)`, `Error::unauthorized(detail)`, `Error::new(status, detail)`, and `Error::internal(err)` for a 500 that logs `err` without sending it.
 - An error a client received from another API answers 502 when a handler returns it, so that the other API's status is not passed on as ours.
 - On the client, a failure with no response (connection, timeout) is an `Error` without a status.
+- Every route has this one error, and its TypeScript the problem shape. Typed errors per route, `Result<Note, NotFound>` with `#[derive(rest::Problem)] #[problem(status = 404)]`, come later: adding them breaks no contract.
 
 ## OpenAPI and TypeScript
 
 - `Api::openapi()` returns the OpenAPI 3.1 document: paths, parameters, bodies, results, schemas from schemars, security schemes, the problem shape of errors. A binary of the contract crate prints it: the schemas are known only once the types are compiled, which a macro does not see.
 - orval writes the TypeScript from it: TanStack Query here; `vue-query`, `svelte-query`, `swr`, `zod` or a plain `fetch` client from the same document.
 - The credential goes through orval's mutator, one function of the application; the browser sends cookies itself.
+- A stream's items are typed through an extension, as OpenAPI 3.1 cannot type them: the response's media type (`text/event-stream`, `application/jsonl`) carries `x-item`, a `$ref` to the item's schema, which orval writes as a type like any other. `subscribe<T>(url, onItem, init)`, from `vite-plugin-rest/client`, reads the stream with `fetch`, so that it sends headers, calls `onItem` with each item parsed, and returns the function that stops it. The extension goes once the generators read OpenAPI 3.2's item schemas.
+- An `i64` is a `number`, exact up to 2^53: ids and counts stay below it. A value that may go beyond it is declared as a `String` in its Rust type.
 - Neither the document nor the TypeScript is committed: the Vite plugin writes them in development and in a build. They are the one generated code on disk, as `tsc` and the editor need files.
 
 ### The Vite plugin
@@ -628,6 +631,8 @@ export default defineConfig({
 `web/src/api/fetch.ts`
 
 ```typescript
+import { subscribe } from "vite-plugin-rest/client";
+
 let token: string | undefined;
 
 export function signIn(accessToken: string) {
@@ -649,16 +654,28 @@ export async function apiFetch<T>(url: string, init: RequestInit): Promise<T> {
 
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
+
+export function apiSubscribe<T>(url: string, onItem: (item: T) => void): () => void {
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
+  return subscribe<T>(url, onItem, { headers });
+}
 ```
 
 `web/src/NoteView.tsx`
 
 ```typescript
-import { useNotesGet, useNotesUpdate } from "./api/generated";
+import { useEffect } from "react";
+
+import { apiSubscribe } from "./api/fetch";
+import { type NoteEvent, useNotesGet, useNotesUpdate } from "./api/generated";
 
 export function NoteView({ id }: { id: number }) {
-  const { data: note } = useNotesGet(id);
+  const { data: note, refetch } = useNotesGet(id);
   const update = useNotesUpdate();
+
+  // Another tab or the command line changed the note: read it again.
+  useEffect(() => apiSubscribe<NoteEvent>(`/api/notes/${id}/events`, () => refetch()), [id, refetch]);
 
   if (!note) {
     return <p>Loading</p>;
@@ -705,7 +722,4 @@ rustfmt formats it and rust-analyzer reads it as any Rust; it repeats `&self`, `
 
 ## Open questions
 
-1. **Typed errors per route.** `Result<Note, NotFound>`, where `#[derive(rest::Problem)] #[problem(status = 404)]` describes the error, would give the TypeScript a typed error per hook. Proposed: later, once `rest::Error` works.
-2. **Streams in TypeScript.** OpenAPI 3.1 cannot type the items of an event stream. Proposed: the item type goes into the schemas under an extension, and a small helper of ours, `subscribe(path, onItem)`, reads the stream, until the generators read OpenAPI 3.2's item schemas.
-3. **64-bit integers in TypeScript.** An `i64` becomes a `number`, exact up to 2^53 only. Either ids stay below it, or such fields travel as strings.
-4. **Pagination by header.** GitHub pages with a `Link` header (`rel="next"`, `rel="last"`), which a result cannot say yet. Proposed: a result `Paged<T>` carrying it, and on the client `.pages()`, a stream that follows the links.
+1. **Pagination by header.** GitHub pages with a `Link` header (`rel="next"`, `rel="last"`), which a result cannot say yet. Proposed: a result `Paged<T>` carrying it, and on the client `.pages()`, a stream that follows the links.
