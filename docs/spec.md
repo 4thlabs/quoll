@@ -692,11 +692,13 @@ export function NoteView({ id }: { id: number }) {
 ## What does not compile
 
 - A `{name}` with no argument of that name; an argument that is neither in the string, a header, the query struct nor the one body.
-- Two bodies; a body on `GET`, `HEAD` or `OPTIONS`.
+- Two bodies; a body on `GET`, `HEAD` or `OPTIONS`; a result on `HEAD`, whose answer has no body.
 - A path parameter whose type is not read from text, such as a `Vec` or a struct.
 - A query struct and a query in the string together.
 - One method and path twice in an api.
-- A route left out of a service, a handler of the wrong signature: Rust's own errors on the trait.
+- A group less visible than its api, whose router and client name the group's items.
+- Two items the macro writes with one name: a group named as its api, or as the `NotesServer`, `NotesClient`, `ApiServices` or `ApiClient` the contract writes for another.
+- A route left out of a service or a fake, a handler or a fake's method of the wrong signature: Rust's own errors on the trait.
 - A group without a service; a service of a group with authentication that does not implement `Authenticate` for its schemes; two schemes of one `#[auth(A | B)]` giving callers of two types; scopes on a caller that does not implement `Scoped`.
 - A scheme in `#[auth(...)]` that is neither given by the crate, declared in the contract nor a type implementing `Scheme`.
 

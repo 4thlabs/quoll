@@ -239,7 +239,7 @@ impl Route {
                     .expect("`match_args` gave each `{name}` of the path its argument")
             })
             .collect();
-        let reply = Reply::read(reply)?;
+        let reply = Reply::read(method, reply)?;
 
         Ok(Self {
             docs,
@@ -398,10 +398,17 @@ fn check_body(method: Method, name: &Ident, ty: &Type, earlier: Option<&Ident>) 
 }
 
 impl Reply {
-    fn read(ty: Option<Type>) -> Result<Self> {
+    fn read(method: Method, ty: Option<Type>) -> Result<Self> {
         let Some(ty) = ty else {
             return Ok(Self::None);
         };
+
+        if method == Method::Head {
+            return Err(Error::new_spanned(
+                &ty,
+                "a HEAD answer has no body, so a HEAD route returns nothing: remove the `->` and its type",
+            ));
+        }
 
         if matches!(peel(&ty), Type::Tuple(tuple) if tuple.elems.is_empty()) {
             return Err(Error::new_spanned(
@@ -578,7 +585,7 @@ impl Api {
 struct Names(Vec<(String, String)>);
 
 impl Names {
-    /// The api's names: its type and its services.
+    /// The api's names: its type, its services and its client.
     fn new(api: &Api) -> Self {
         let name = api.name.unraw();
 
@@ -588,10 +595,14 @@ impl Names {
                 api.services().to_string(),
                 format!("the services of the api `{name}`"),
             ),
+            (
+                api.client().to_string(),
+                format!("the client of the api `{name}`"),
+            ),
         ])
     }
 
-    /// Adds the names a group gives: its own and its server's trait.
+    /// Adds the names a group gives: its own, which its client's trait takes, its server's trait and its client.
     ///
     /// # Errors
     ///
@@ -603,6 +614,10 @@ impl Names {
             (
                 group.server_trait().to_string(),
                 format!("the server trait of the group `{name}`"),
+            ),
+            (
+                group.client().to_string(),
+                format!("the client of the group `{name}`"),
             ),
         ];
 
@@ -641,7 +656,8 @@ fn reach(vis: &Visibility) -> u8 {
     }
 }
 
-/// A group reaches as far as its api: the api's router names the group's trait.
+/// A group reaches as far as its api: the api's router names the group's server trait, and its client the group's
+/// client.
 fn check_visibility(api: &Api, group: &Group) -> Result<()> {
     if reach(&group.vis) >= reach(&api.vis) {
         return Ok(());
@@ -655,7 +671,7 @@ fn check_visibility(api: &Api, group: &Group) -> Result<()> {
     Err(Error::new(
         group.name.span(),
         format!(
-            "the group `{}` is less visible than the api `{}`, whose router names the group's trait: write `{} group {}`",
+            "the group `{}` is less visible than the api `{}`, whose router and client name the group's items: write `{} group {}`",
             group.name, api.name, vis, group.name,
         ),
     ))
@@ -746,12 +762,22 @@ impl Api {
     pub(crate) fn services(&self) -> Ident {
         quote::format_ident!("{}Services", self.name.unraw(), span = self.name.span())
     }
+
+    /// `ApiClient` for the api `Api`: the client that gives each group's.
+    pub(crate) fn client(&self) -> Ident {
+        quote::format_ident!("{}Client", self.name.unraw(), span = self.name.span())
+    }
 }
 
 impl Group {
     /// `NotesServer` for the group `Notes`: the trait its service implements.
     pub(crate) fn server_trait(&self) -> Ident {
         quote::format_ident!("{}Server", self.name.unraw(), span = self.name.span())
+    }
+
+    /// `NotesClient` for the group `Notes`: the client implementing the group's trait.
+    pub(crate) fn client(&self) -> Ident {
+        quote::format_ident!("{}Client", self.name.unraw(), span = self.name.span())
     }
 
     /// The group's name in snake case, as an identifier: raw when it is a keyword, `Type` giving `r#type`.

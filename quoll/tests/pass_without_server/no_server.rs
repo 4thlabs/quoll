@@ -1,4 +1,5 @@
 use quoll::rest;
+use serde::{Deserialize, Serialize};
 
 rest::api! {
     pub api Api = "/api";
@@ -16,7 +17,8 @@ impl Api {
     fn router() {}
 }
 
-struct Note;
+#[derive(Serialize, Deserialize)]
+pub struct Note;
 
 fn main() {
     let _ = (Api, ApiServices, Api::router(), Note);

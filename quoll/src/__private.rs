@@ -7,11 +7,17 @@
 #[cfg(feature = "server")]
 pub use axum;
 
-#[cfg(feature = "server")]
+#[cfg(feature = "client")]
+pub use reqwest_middleware;
+
+#[cfg(any(feature = "server", feature = "client"))]
 pub use serde;
 
 #[cfg(feature = "server")]
 pub mod server;
+
+#[cfg(feature = "client")]
+pub mod client;
 
 /// Writes out its input: `quoll` has the feature `server`.
 #[cfg(feature = "server")]
@@ -32,3 +38,23 @@ macro_rules! __server {
 }
 
 pub use crate::__server as server;
+
+/// Writes out its input: `quoll` has the feature `client`.
+#[cfg(feature = "client")]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __client {
+    ($($item:tt)*) => {
+        $($item)*
+    };
+}
+
+/// Drops its input: `quoll` does not have the feature `client`.
+#[cfg(not(feature = "client"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __client {
+    ($($item:tt)*) => {};
+}
+
+pub use crate::__client as client;

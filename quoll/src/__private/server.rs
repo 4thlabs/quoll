@@ -222,6 +222,22 @@ fn answer(error: &Error) -> (StatusCode, Option<&str>) {
 
             (StatusCode::BAD_GATEWAY, None)
         }
+        Repr::Failed {
+            message,
+            source,
+            answered,
+        } => {
+            match source {
+                Some(source) => tracing::error!(
+                    error = &**source as &dyn StdError,
+                    %answered,
+                    "{message}"
+                ),
+                None => tracing::error!(%answered, "{message}"),
+            }
+
+            (*answered, None)
+        }
     }
 }
 
@@ -376,9 +392,25 @@ mod tests {
 
     #[test]
     fn an_error_from_another_api_is_logged_with_its_status() {
-        let (log, status, detail) = logged(&Error::upstream(StatusCode::NOT_FOUND, Vec::new()));
+        let (log, status, detail) =
+            logged(&Error::upstream(StatusCode::NOT_FOUND, None, Vec::new()));
 
         assert!(log.contains("404"), "{log}");
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(detail, None);
+    }
+
+    #[test]
+    fn a_call_that_got_no_answer_is_logged_and_answers_its_status() {
+        let error = Error::failed(
+            "the call `notes_get` got no response",
+            Some("connection refused".into()),
+            StatusCode::BAD_GATEWAY,
+        );
+        let (log, status, detail) = logged(&error);
+
+        assert!(log.contains("`notes_get` got no response"), "{log}");
+        assert!(log.contains("connection refused"), "{log}");
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(detail, None);
     }
@@ -398,6 +430,7 @@ mod tests {
             .route(MethodFilter::GET, "/upstream", |_, _| async {
                 Err(Error::upstream(
                     StatusCode::NOT_FOUND,
+                    None,
                     br#"{"detail":"the other api's secret"}"#.to_vec(),
                 ))
             })
