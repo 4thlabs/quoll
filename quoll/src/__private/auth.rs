@@ -2,7 +2,8 @@
 //! travels, which the client's `rest::client::key` reads.
 
 use http::request::Parts;
-use http::{Method, StatusCode, header};
+use http::uri::Authority;
+use http::{Method, StatusCode, Uri, header};
 
 use crate::rest::{Bearer, Error, Result, Scheme};
 
@@ -61,8 +62,9 @@ pub fn header(request: &Parts, name: &'static str) -> Result<Option<String>> {
     Ok(Some(text.to_owned()))
 }
 
-/// The credential of a cookie scheme: the value of the cookie `name`, as it is. An empty cookie, as one cleared by
-/// the application, is none.
+/// The credential of a cookie scheme: the first value of the cookie `name` that is not empty, as it is. A browser that
+/// holds the cookie for two paths or two domains sends both, the one of the longest path first (RFC 6265, 5.4); an
+/// empty cookie, as one cleared by the application, is none.
 ///
 /// A request that carries the cookie is checked as coming from a page of the server's own origin, so that another
 /// site cannot have a browser send it, the browser adding the cookie on its own: see [`cross_origin`].
@@ -70,32 +72,22 @@ pub fn header(request: &Parts, name: &'static str) -> Result<Option<String>> {
 /// # Errors
 ///
 /// A 403 for a request with the cookie from another origin. A 401, whose detail never shows the value, when the
-/// cookie is given twice, or is not UTF-8.
+/// cookie is not UTF-8.
 pub fn cookie(request: &Parts, name: &'static str) -> Result<Option<String>> {
-    let mut found: Option<&[u8]> = None;
-
-    for value in request.headers.get_all(header::COOKIE) {
-        for pair in value.as_bytes().split(|&byte| byte == b';') {
+    let found = request
+        .headers
+        .get_all(header::COOKIE)
+        .iter()
+        .flat_map(|value| value.as_bytes().split(|&byte| byte == b';'))
+        .find_map(|pair| {
             let pair = pair.trim_ascii();
-            let Some(equals) = pair.iter().position(|&byte| byte == b'=') else {
-                continue;
-            };
+            let equals = pair.iter().position(|&byte| byte == b'=')?;
+            let value = pair[equals + 1..].trim_ascii();
 
-            if pair[..equals].trim_ascii() != name.as_bytes() {
-                continue;
-            }
+            (pair[..equals].trim_ascii() == name.as_bytes() && !value.is_empty()).then_some(value)
+        });
 
-            if found.is_some() {
-                return Err(Error::unauthorized(format!(
-                    "the cookie `{name}` is given more than once"
-                )));
-            }
-
-            found = Some(pair[equals + 1..].trim_ascii());
-        }
-    }
-
-    let Some(value) = found.filter(|value| !value.is_empty()) else {
+    let Some(value) = found else {
         return Ok(None);
     };
 
@@ -109,8 +101,11 @@ pub fn cookie(request: &Parts, name: &'static str) -> Result<Option<String>> {
 
 /// Refuses a request that a page of another origin may have had a browser send, with its cookies: a request whose
 /// method is not `GET`, `HEAD` or `OPTIONS` is from the server's own origin, as its `Sec-Fetch-Site` says, or, from a
-/// browser that does not send it, as its `Origin` says. A request with neither header comes from no browser, and
-/// passes.
+/// browser that does not send it, as its `Origin` says, compared with its `Host`: one host, and one port, the default
+/// of the origin's scheme when either leaves it out. A request with neither header comes from no browser, and passes.
+///
+/// Behind a reverse proxy, the proxy passes the `Host` the browser sent, as nginx does with `proxy_set_header Host
+/// $host`: `X-Forwarded-Host`, which anyone may send, is not read.
 ///
 /// # Errors
 ///
@@ -119,13 +114,6 @@ pub fn cross_origin(request: &Parts) -> Result<()> {
     if matches!(request.method, Method::GET | Method::HEAD | Method::OPTIONS) {
         return Ok(());
     }
-
-    let refused = || {
-        Error::new(
-            StatusCode::FORBIDDEN,
-            "the request comes from another origin, which a cookie does not authenticate",
-        )
-    };
 
     if let Some(site) = request.headers.get("sec-fetch-site") {
         return match site.as_bytes() {
@@ -137,26 +125,50 @@ pub fn cross_origin(request: &Parts) -> Result<()> {
     let Some(origin) = request.headers.get(header::ORIGIN) else {
         return Ok(());
     };
-    let host = request
-        .headers
-        .get(header::HOST)
-        .map(|host| host.as_bytes())
-        .or_else(|| {
-            request
-                .uri
-                .authority()
-                .map(|authority| authority.as_str().as_bytes())
-        });
-    let origin_host = origin
-        .as_bytes()
-        .split(|&byte| byte == b'/')
-        .nth(2)
-        .filter(|_| origin.as_bytes().starts_with(b"http"));
+    let host = match request.headers.get(header::HOST) {
+        Some(host) => host
+            .to_str()
+            .ok()
+            .and_then(|host| host.parse::<Authority>().ok()),
+        None => request.uri.authority().cloned(),
+    };
+    let origin = origin
+        .to_str()
+        .ok()
+        .and_then(|origin| origin.parse::<Uri>().ok());
 
-    match (origin_host, host) {
-        (Some(origin_host), Some(host)) if origin_host.eq_ignore_ascii_case(host) => Ok(()),
+    match (origin, host) {
+        (Some(origin), Some(host)) if same_origin(&origin, &host) => Ok(()),
         _ => Err(refused()),
     }
+}
+
+/// The answer to a request from another origin.
+fn refused() -> Error {
+    Error::new(
+        StatusCode::FORBIDDEN,
+        "the request comes from another origin, which a cookie does not authenticate",
+    )
+}
+
+/// Whether `origin`, an `Origin` header's, is the one of a request to `host`: the same host, whatever its case, and
+/// the same port, the default of the origin's scheme where either does not write it.
+fn same_origin(origin: &Uri, host: &Authority) -> bool {
+    let default = match origin.scheme_str() {
+        Some("https") => 443,
+        Some("http") => 80,
+        _ => return false,
+    };
+    let Some(origin_host) = origin.host() else {
+        return false;
+    };
+    let is_bare = origin
+        .path_and_query()
+        .is_none_or(|path| path.as_str() == "/");
+
+    is_bare
+        && origin_host.eq_ignore_ascii_case(host.host())
+        && origin.port_u16().unwrap_or(default) == host.port_u16().unwrap_or(default)
 }
 
 /// The credential of a query scheme: the value of the key `key`, decoded as a form's.
@@ -267,9 +279,16 @@ mod tests {
             assert_eq!(cookie(&request, "session").expect("none"), None, "{value}");
         }
 
-        let request = parts(http::Request::get("/").header("cookie", "session=a; session=b"));
-        let error = cookie(&request, "session").expect_err("twice");
-        assert_eq!(error.status(), Some(StatusCode::UNAUTHORIZED));
+        // A browser sends the cookie of the longest path first: it is the one read.
+        let request = parts(
+            http::Request::get("/")
+                .header("cookie", "session=; session=a")
+                .header("cookie", "session=b"),
+        );
+        assert_eq!(
+            cookie(&request, "session").expect("the first").as_deref(),
+            Some("a")
+        );
     }
 
     /// What `cross_origin` makes of a request with these headers.
@@ -321,6 +340,25 @@ mod tests {
         );
         assert_eq!(from("PATCH", &[("origin", "null")]), forbidden);
         assert_eq!(
+            from("PUT", &[("origin", "https://notes.example.com:443")]),
+            None,
+            "the default port, written"
+        );
+        assert_eq!(
+            from("PUT", &[("origin", "http://notes.example.com:80")]),
+            None
+        );
+        assert_eq!(
+            from("PUT", &[("origin", "https://notes.example.com:8443")]),
+            forbidden,
+            "another port"
+        );
+        assert_eq!(from("PUT", &[("origin", "notes.example.com")]), forbidden);
+        assert_eq!(
+            from("PUT", &[("origin", "https://notes.example.com/path")]),
+            forbidden
+        );
+        assert_eq!(
             from(
                 "POST",
                 &[
@@ -331,6 +369,39 @@ mod tests {
             forbidden,
             "the fetch metadata comes first"
         );
+    }
+
+    /// What `cross_origin` makes of a request to `host` from the page of `origin`.
+    fn to(host: &str, origin: &str) -> Option<StatusCode> {
+        let request = http::Request::post("/api/notes")
+            .header("host", host)
+            .header("origin", origin);
+
+        cross_origin(&parts(request))
+            .err()
+            .and_then(|error| error.status())
+    }
+
+    #[test]
+    fn an_origin_is_compared_with_the_host_as_an_origin() {
+        let forbidden = Some(StatusCode::FORBIDDEN);
+
+        assert_eq!(
+            to("notes.example.com:443", "https://notes.example.com"),
+            None
+        );
+        assert_eq!(
+            to("notes.example.com:8080", "http://notes.example.com:8080"),
+            None
+        );
+        assert_eq!(to("localhost:5173", "http://localhost:5173"), None);
+        assert_eq!(to("[::1]:8080", "http://[::1]:8080"), None);
+        assert_eq!(
+            to("notes.example.com:80", "https://notes.example.com"),
+            forbidden
+        );
+        // A proxy that sends its upstream's address as the `Host` is set to pass the browser's.
+        assert_eq!(to("127.0.0.1:8080", "https://notes.example.com"), forbidden);
     }
 
     #[test]

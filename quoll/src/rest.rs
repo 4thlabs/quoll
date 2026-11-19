@@ -51,9 +51,16 @@
 //!
 //! A cookie travels with a request a page of another site has a browser send: a request with the cookie of a cookie
 //! scheme whose method is not `GET`, `HEAD` or `OPTIONS` comes from the server's own origin, as its `Sec-Fetch-Site`
-//! or its `Origin` says, or is answered 403. Only the server's own origin is trusted for now: a page served from
-//! another origin, even of the same site, calls the api with another scheme. The cookie had better be set
-//! `SameSite=Lax` or `Strict`, `HttpOnly` and `Secure`, as a second defense.
+//! says, or its `Origin` compared with its `Host`, or is answered 403. Behind a reverse proxy, the proxy passes the
+//! browser's `Host`, as nginx does with `proxy_set_header Host $host`; `X-Forwarded-Host` is not read. Only the
+//! server's own origin is trusted for now: a page served from another origin, even of the same site, calls the api
+//! with another scheme. The cookie had better be set `SameSite=Lax` or `Strict`, `HttpOnly` and `Secure`, and named
+//! with the prefix `__Host-`, which a subdomain cannot set, as a second defense. The first value of the cookie that is
+//! not empty is read, which a browser that holds it for two paths sends for the longest.
+//!
+//! A route that takes a query scheme, `scheme Token = query "token";`, reads no other value of its key: the macro
+//! refuses `token={...}` in the route's string, but cannot see the fields of a query struct, none of which is to be
+//! named `token`.
 
 mod accepted;
 mod auth;

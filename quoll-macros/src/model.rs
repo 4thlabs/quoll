@@ -16,7 +16,7 @@ mod auth;
 #[cfg(test)]
 pub(crate) use auth::Location;
 pub(crate) use auth::{
-    Auth, DeclaredKind, DeclaredScheme, MAX_ALTERNATIVES, RouteAuth, Scheme, SchemeKind,
+    Auth, Bounds, DeclaredKind, DeclaredScheme, MAX_ALTERNATIVES, RouteAuth, Scheme, SchemeKind,
 };
 
 /// The `///` comments of an item, one string per line, as rustc gives them (with their leading space).
@@ -553,13 +553,19 @@ fn check_header(header: &LitStr, earlier: &[LitStr], auth: Option<&RouteAuth>) -
     Ok(())
 }
 
+/// Whether `text` is a `token` of RFC 9110, as a header's or a cookie's name: ASCII letters, digits and the signs
+/// ! # $ % & ' * + - . ^ _ ` | ~.
+pub(crate) fn is_token(text: &str) -> bool {
+    let tchar = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+
+    !text.is_empty() && text.chars().all(tchar)
+}
+
 /// A header's name is one HTTP takes, and that quoll leaves to the contract.
 pub(crate) fn check_header_name(header: &LitStr) -> Result<()> {
     let name = header.value();
-    // The `token` of RFC 9110: letters, digits and these signs.
-    let tchar = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
 
-    if name.is_empty() || !name.chars().all(tchar) {
+    if !is_token(&name) {
         return Err(Error::new(
             header.span(),
             format!(

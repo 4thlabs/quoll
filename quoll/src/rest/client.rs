@@ -6,6 +6,7 @@ use std::pin::Pin;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use http::header::GetAll;
 use http::header::{AUTHORIZATION, COOKIE};
 use http::{Extensions, HeaderName, HeaderValue};
 use reqwest::{Request, Response};
@@ -96,8 +97,11 @@ pub fn basic(user: impl Into<String>, password: impl Into<String>) -> impl Middl
 /// requests whose [`Route`] takes `K`, and on no other, as [`bearer`] sends its token:
 ///
 /// - `scheme Key = header "X-Api-Key";`: in the header, marked sensitive;
-/// - `scheme Session = cookie "session";`: as the cookie `session`, beside the request's other cookies;
-/// - `scheme Token = query "token";`: as the key `token` of the query, which a log of the URL shows;
+/// - `scheme Session = cookie "session";`: as the cookie `session`, after the cookies the request already has, all in
+///   one `Cookie` header; reqwest adds the cookies of its jar only to a request with no `Cookie` header, so none of
+///   them is sent to a route that takes the scheme;
+/// - `scheme Token = query "token";`: as the key `token` of the query, after the route's own, which a log of the URL
+///   shows;
 /// - `scheme Login = openid "...";`: in `Authorization: Bearer`.
 ///
 /// A route is told by the scheme's type, not its name: two contracts that each declare a `Key`, called through one
@@ -105,6 +109,10 @@ pub fn basic(user: impl Into<String>, password: impl Into<String>) -> impl Middl
 /// with an error that does not show it: an empty one; in a header, one with a control character, or a space or a tab
 /// at either end; in a cookie, one with a character other than an ASCII letter, digit or sign, or with `"`, `,`, `;`
 /// or `\`; for OpenID Connect, a token that is not a `b64token`.
+///
+/// The key of a header scheme is a header of its own, which reqwest, as curl and `fetch`, keeps on a redirect to
+/// another host: it strips only `Authorization`, `Cookie` and `Proxy-Authorization` there. A client that sends one
+/// follows no redirect to another origin, with a policy such as this one:
 ///
 /// ```no_run
 /// # use quoll::rest;
@@ -120,8 +128,20 @@ pub fn basic(user: impl Into<String>, password: impl Into<String>) -> impl Middl
 ///     }
 /// }
 ///
-/// # async fn run() -> rest::Result<()> {
-/// let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// // Follows a redirect to the origin, scheme, host and port, of the request that got it only.
+/// let same_origin = reqwest::redirect::Policy::custom(|attempt| {
+///     let previous = attempt.previous().last();
+///     let same = previous.is_some_and(|previous| previous.origin() == attempt.url().origin());
+///
+///     if same && attempt.previous().len() <= 10 {
+///         attempt.follow()
+///     } else {
+///         attempt.stop()
+///     }
+/// });
+/// let http = reqwest::Client::builder().redirect(same_origin).build()?;
+/// let http = reqwest_middleware::ClientBuilder::new(http)
 ///     .with(rest::client::key::<Key>("k-1"))
 ///     .build();
 /// let api = Api::client_with(http, "http://localhost:8080")?;
@@ -173,21 +193,39 @@ pub fn key<K: Declared>(value: impl Into<String>) -> impl Middleware {
     }
 }
 
-/// Adds `pair`, `name=value`, to the request's cookies, in its one `Cookie` header.
+/// Adds `pair`, `name=value`, to the request's cookies, in one `Cookie` header that holds every cookie the request had
+/// before, byte for byte, then the pair.
 fn add_cookie(request: &mut Request, pair: Option<&str>) -> Result<(), Unsendable> {
     let pair = pair.ok_or(Unsendable(
         "the key cannot be sent as a cookie: it is empty, or holds a character a cookie's value cannot",
     ))?;
-    let cookies = match request.headers().get(COOKIE).map(HeaderValue::to_str) {
-        Some(Ok(cookies)) if !cookies.is_empty() => format!("{cookies}; {pair}"),
-        _ => pair.to_owned(),
-    };
-    let cookies = sensitive(HeaderValue::try_from(cookies).ok()).ok_or(Unsendable(
-        "the key cannot be sent as a cookie beside the request's others",
-    ))?;
+
+    let cookies = merged(request.headers().get_all(COOKIE), pair);
 
     request.headers_mut().insert(COOKIE, cookies);
     Ok(())
+}
+
+/// The cookies of `headers`, each header's value as it is, then `pair`, joined with `; ` as one `Cookie` header, marked
+/// sensitive.
+fn merged(headers: GetAll<'_, HeaderValue>, pair: &str) -> HeaderValue {
+    let mut cookies: Vec<u8> = Vec::new();
+
+    for value in headers {
+        let value = value.as_bytes().trim_ascii();
+
+        if !value.is_empty() {
+            cookies.extend_from_slice(value);
+            cookies.extend_from_slice(b"; ");
+        }
+    }
+    cookies.extend_from_slice(pair.as_bytes());
+
+    let mut value = HeaderValue::from_bytes(&cookies).expect(
+        "header values and a cookie pair, which hold no control character, make a header value",
+    );
+    value.set_sensitive(true);
+    value
 }
 
 /// `Bearer <token>`, marked sensitive, or `None` for a token that is not a `b64token`, which no server of a contract
@@ -285,3 +323,37 @@ impl std::fmt::Display for Unsendable {
 }
 
 impl std::error::Error for Unsendable {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cookie_joins_every_cookie_the_request_had_in_one_header() {
+        let mut headers = http::HeaderMap::new();
+        headers.append(COOKIE, HeaderValue::from_static("theme=dark"));
+        headers.append(COOKIE, HeaderValue::from_static("lang=fr; tz=utc"));
+        headers.append(
+            COOKIE,
+            HeaderValue::from_bytes(b"name=caf\xe9").expect("a header value"),
+        );
+
+        let value = merged(headers.get_all(COOKIE), "session=s-1");
+
+        assert_eq!(
+            value.as_bytes(),
+            b"theme=dark; lang=fr; tz=utc; name=caf\xe9; session=s-1"
+        );
+        assert!(value.is_sensitive());
+    }
+
+    #[test]
+    fn a_cookie_alone_is_the_header() {
+        let headers = http::HeaderMap::new();
+
+        assert_eq!(
+            merged(headers.get_all(COOKIE), "session=s-1"),
+            "session=s-1"
+        );
+    }
+}

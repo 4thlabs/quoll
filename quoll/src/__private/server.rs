@@ -135,6 +135,7 @@ impl<A: Authenticate<S>, S: Scheme> Authenticates<S> for A {
 }
 
 /// The credential of one scheme of an alternative, or of the ones after it.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Either<L, R> {
     /// The first scheme's.
     First(L),
