@@ -1,0 +1,5 @@
+error: `Bearer` and `Login` both read the header `Authorization: Bearer`, so a request's credential would be both: take one of them
+ --> tests/compile_fail/alternative_same_place.rs:9:21
+  |
+9 |     #[auth(Bearer | Login)]
+  |                     ^^^^^

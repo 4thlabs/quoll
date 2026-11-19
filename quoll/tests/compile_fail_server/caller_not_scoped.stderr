@@ -1,0 +1,18 @@
+error[E0277]: `User` does not implement `quoll::rest::Scoped`, which a route with `scopes(...)` needs of its caller
+  --> tests/compile_fail_server/caller_not_scoped.rs:24:6
+   |
+24 | impl ReposServer for App {
+   |      ^^^^^^^^^^^ this caller holds no scopes
+   |
+help: the trait `Scoped` is not implemented for `User`
+  --> tests/compile_fail_server/caller_not_scoped.rs:13:1
+   |
+13 | struct User;
+   | ^^^^^^^^^^^
+   = note: implement `quoll::rest::Scoped` for `User`, whose `has_scope` says whether the caller holds a scope
+note: required by a bound in `ReposServer`
+  --> tests/compile_fail_server/caller_not_scoped.rs:7:16
+   |
+ 6 |     pub group Repos {
+ 7 |         #[auth(Bearer, scopes("repo"))]
+   |                ^^^^^^ required by this bound in `ReposServer`

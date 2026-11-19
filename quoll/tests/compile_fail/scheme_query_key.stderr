@@ -1,0 +1,5 @@
+error: `the token` is not a query key a scheme reads: it is ASCII letters, digits and `-._~`, as in "token"
+ --> tests/compile_fail/scheme_query_key.rs:7:30
+  |
+7 |     pub scheme Token = query "the token";
+  |                              ^^^^^^^^^^^

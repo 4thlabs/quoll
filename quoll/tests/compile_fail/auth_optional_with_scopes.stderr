@@ -1,0 +1,5 @@
+error: a route with `optional` takes no `scopes`: a request with no credential has no scope to check, so make the route require its credential
+ --> tests/compile_fail/auth_optional_with_scopes.rs:8:34
+  |
+8 |         #[auth(Bearer, optional, scopes("notes:read"))]
+  |                                  ^^^^^^

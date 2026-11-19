@@ -1,0 +1,5 @@
+error: the header `Cookie` carries the credential of `Session`, which the route takes: the handler receives its caller, and the client's middleware sends it
+  --> tests/compile_fail/header_cookie_of_scheme.rs:11:47
+   |
+11 |         GET "/notes" => list(header("Cookie") cookies: String);
+   |                                               ^^^^^^^

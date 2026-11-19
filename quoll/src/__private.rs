@@ -4,6 +4,8 @@
 //! features of the user's crate. So the code of each side goes through a macro defined here, which writes it out when
 //! `quoll` has the feature and drops it when it does not.
 
+pub use http;
+
 #[cfg(feature = "server")]
 pub use axum;
 
@@ -13,11 +15,9 @@ pub use reqwest_middleware;
 #[cfg(any(feature = "server", feature = "client"))]
 pub use serde;
 
-mod auth;
+pub mod auth;
 pub(crate) mod content_type;
 pub mod known;
-
-pub use auth::Given;
 
 #[cfg(feature = "server")]
 pub mod server;

@@ -1,0 +1,5 @@
+error: the query key `token` carries the credential of `Token`, which the route takes: name the argument's key otherwise
+  --> tests/compile_fail/query_key_of_scheme.rs:11:44
+   |
+11 |         GET "/notes?token={token}" => list(token: String);
+   |                                            ^^^^^

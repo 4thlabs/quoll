@@ -1,0 +1,5 @@
+error: the scheme `Key` is already declared: each scheme has its own name
+ --> tests/compile_fail/scheme_twice.rs:8:16
+  |
+8 |     pub scheme Key = header "X-Other-Key";
+  |                ^^^

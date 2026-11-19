@@ -4,6 +4,7 @@ mod client;
 mod known;
 mod model;
 mod path;
+mod scheme;
 mod server;
 mod syntax;
 
@@ -15,7 +16,7 @@ use syn::ext::IdentExt;
 use syn::spanned::Spanned;
 
 use crate::known::Known;
-use crate::model::{Api, Route, Scheme};
+use crate::model::{Api, Route};
 use crate::syntax::Contract;
 
 /// Reads a REST contract and checks it.
@@ -35,7 +36,9 @@ use crate::syntax::Contract;
 /// An argument is a `{name}` of the path or a `key={name}` of the query by its name, a query struct as `query filter:
 /// NoteFilter`, a header as `header("Last-Event-ID") last: Option<String>`, or else the body: JSON, or `Form<T>`,
 /// `Text` or `Bytes`. A group or a route takes a credential with `#[auth(Bearer)]`, and a route takes none with
-/// `#[auth(none)]`, which replaces its group's.
+/// `#[auth(none)]`, which replaces its group's. A scheme is `Bearer`, `Basic`, one the contract declares, `pub scheme
+/// Key = header "X-Api-Key";`, or a type implementing `rest::Scheme`; `#[auth(Bearer | Key)]` takes either,
+/// `#[auth(Bearer, optional)]` a request with none, and `#[auth(Bearer, scopes("repo"))]` a caller with the scope.
 ///
 /// A mistake in the contract is a compile error on the token at fault. The api becomes its type, with its comments;
 /// with the feature `server` of `quoll`, a server trait per group, `ApiServices` and `Api::router` come too; with the
@@ -53,23 +56,26 @@ pub fn api(input: TokenStream) -> TokenStream {
 /// the feature `server` of `quoll`, and the client's behind its feature `client`.
 fn expand(api: &Api) -> proc_macro2::TokenStream {
     let api_type = api_type(api);
+    let schemes = scheme::expand(api);
     let known = known_types(api);
     let server = server::expand(api);
     let client = client::expand(api);
 
     quote! {
         #api_type
+        #schemes
         #known
         #server
         #client
     }
 }
 
-/// Checks that each type of quoll's the contract names, which the macro recognizes by its name, is the crate's. The
-/// types are the contract's tokens, so that the user's import names them; and the check is written whatever the
-/// features of `quoll`, so that the import is used, and the type checked, with neither of them.
+/// Checks that each type of quoll's the contract names, which the macro recognizes by its name, is the crate's, and
+/// that each scheme of the application's it names is a scheme. The types are the contract's tokens, so that the
+/// user's import names them; and the check is written whatever the features of `quoll`, so that the import is used,
+/// and the type checked, with neither of them.
 fn known_types(api: &Api) -> proc_macro2::TokenStream {
-    let mut checks = Vec::new();
+    let mut checks = scheme::checks(api);
 
     for route in api.groups.iter().flat_map(|group| &group.routes) {
         let result = route
@@ -98,13 +104,6 @@ fn known_types(api: &Api) -> proc_macro2::TokenStream {
     }
 }
 
-/// The type of a scheme the crate gives, by which the generated code names it.
-pub(crate) fn scheme_type(scheme: Scheme) -> proc_macro2::TokenStream {
-    match scheme {
-        Scheme::Bearer => quote! { ::quoll::rest::Bearer },
-    }
-}
-
 /// `#[doc = ...]` attributes, one per line.
 pub(crate) fn doc_attrs(lines: &[String]) -> proc_macro2::TokenStream {
     quote! { #(#[doc = #lines])* }
@@ -114,8 +113,30 @@ pub(crate) fn doc_attrs(lines: &[String]) -> proc_macro2::TokenStream {
 /// path, `GET /api/notes/{id}`, and the scheme it takes.
 pub(crate) fn route_docs(api: &Api, route: &Route) -> proc_macro2::TokenStream {
     let mut line = format!(" `{} {}`", route.method.as_str(), shown_path(api, route));
-    if let Some(scheme) = route.auth {
-        line.push_str(&format!(", authenticated with `{}`", scheme.word()));
+    if let Some(auth) = &route.auth {
+        let words: Vec<String> = auth
+            .schemes
+            .iter()
+            .map(|scheme| format!("`{}`", scheme.word()))
+            .collect();
+
+        line.push_str(&format!(", authenticated with {}", words.join(" or ")));
+        if auth.optional {
+            line.push_str(", or by no credential");
+        }
+        if !auth.scopes.is_empty() {
+            let scopes: Vec<String> = auth
+                .scopes
+                .iter()
+                .map(|scope| format!("`{scope}`"))
+                .collect();
+            let noun = if scopes.len() == 1 { "scope" } else { "scopes" };
+
+            line.push_str(&format!(
+                ", for a caller with the {noun} {}",
+                scopes.join(" and ")
+            ));
+        }
     }
 
     let mut lines = route.docs.0.clone();
@@ -274,10 +295,13 @@ mod tests {
         });
 
         assert!(
-            tokens.contains(r#""/api/notes/{id}" , & [< :: quoll :: rest :: Bearer as :: quoll :: __private :: Given > :: NAME]"#),
+            tokens.contains(r#""/api/notes/{id}" , & [< :: quoll :: rest :: Bearer as :: quoll :: rest :: Scheme > :: NAME] , & [:: core :: any :: TypeId :: of :: < :: quoll :: rest :: Bearer > ()]"#),
             "{tokens}"
         );
-        assert!(tokens.contains(r#""/api/public" , & []"#), "{tokens}");
+        assert!(
+            tokens.contains(r#""/api/public" , & [] , & []"#),
+            "{tokens}"
+        );
         assert!(
             tokens.contains(". route :: < :: quoll :: rest :: Bearer , _ , _ >"),
             "{tokens}"

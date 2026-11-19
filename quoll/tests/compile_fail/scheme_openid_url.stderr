@@ -1,0 +1,5 @@
+error: an OpenID Connect scheme takes the URL of its discovery document, `https://.../.well-known/openid-configuration`
+ --> tests/compile_fail/scheme_openid_url.rs:7:31
+  |
+7 |     pub scheme Login = openid "accounts.example.com";
+  |                               ^^^^^^^^^^^^^^^^^^^^^^

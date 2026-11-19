@@ -12,7 +12,6 @@ repository.workspace = true
 server = [
     "dep:axum",
     "dep:futures-util",
-    "dep:percent-encoding",
     "dep:serde",
     "dep:serde_html_form",
     "dep:serde_json",
@@ -22,7 +21,6 @@ server = [
 client = [
     "dep:bytes",
     "dep:futures-util",
-    "dep:percent-encoding",
     "dep:reqwest",
     "dep:reqwest-middleware",
     "dep:serde",
@@ -31,6 +29,8 @@ client = [
 ]
 
 [dependencies]
+# The user and the password of `Basic`, which the server reads and the client writes.
+base64 = "0.23"
 # `http1` and `tokio` serve a router, as `rest::test::spawn` does.
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"], optional = true }
 # The body of an answer as reqwest reads it, which the client parses without a copy.
@@ -40,7 +40,8 @@ futures-core = { version = "0.3", default-features = false }
 # What each side builds its streams with.
 futures-util = { version = "0.3", default-features = false, optional = true }
 http = "1"
-percent-encoding = { version = "2", optional = true }
+# The key of a query scheme, which the server reads with neither feature.
+percent-encoding = "2"
 # The values of a stream result written as results, with no box of their own.
 pin-project-lite = "0.2"
 quoll-macros = { version = "0.1.0", path = "../quoll-macros" }

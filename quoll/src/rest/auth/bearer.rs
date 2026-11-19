@@ -28,6 +28,8 @@ pub struct Bearer;
 impl Scheme for Bearer {
     type Credential = String;
 
+    const NAME: &'static str = "Bearer";
+
     /// The token of the request's `Authorization: Bearer` header. `None` when the request has no `Authorization`
     /// header of the scheme `Bearer`: none at all, or only headers of another scheme, which this one leaves to the
     /// scheme they are for.
@@ -40,18 +42,10 @@ impl Scheme for Bearer {
     /// - an empty token;
     /// - a token that is not a `b64token`, as one with a space or a byte that is not ASCII.
     fn read(request: &Parts) -> Result<Option<String>> {
-        let headers = request.headers.get_all(AUTHORIZATION);
-        let Some(token) = headers.iter().find_map(|value| token(value.as_bytes())) else {
+        let Some(token) = authorization(request, "Bearer")? else {
             return Ok(None);
         };
 
-        if headers.iter().nth(1).is_some() {
-            return Err(Error::unauthorized(
-                "the request has a bearer token and another `Authorization` header",
-            ));
-        }
-
-        let token = token.trim_ascii();
         if token.is_empty() {
             return Err(Error::unauthorized("the bearer token is empty"));
         }
@@ -67,15 +61,42 @@ impl Scheme for Bearer {
     }
 }
 
-/// What follows the scheme in an `Authorization` header of the scheme `Bearer`, whatever the case of its name; `None`
-/// for a header of another scheme. Read as bytes, so that a header that is not ASCII is still known by its scheme.
-fn token(value: &[u8]) -> Option<&[u8]> {
-    let (scheme, token) = match value.iter().position(|&byte| byte == b' ') {
+/// What follows the scheme `scheme` in the request's `Authorization` header, trimmed; `None` when the request has no
+/// `Authorization` header of that scheme, whatever the case of its name: none at all, or only headers of another
+/// scheme, which are left to the scheme they are for. Read as bytes, so that a header that is not ASCII is still known
+/// by its scheme.
+///
+/// # Errors
+///
+/// A 401 when a header of the scheme has another `Authorization` header beside it, which leaves it unclear what the
+/// request authenticates with.
+pub(crate) fn authorization<'a>(request: &'a Parts, scheme: &str) -> Result<Option<&'a [u8]>> {
+    let headers = request.headers.get_all(AUTHORIZATION);
+    let Some(credentials) = headers
+        .iter()
+        .find_map(|value| credentials(value.as_bytes(), scheme))
+    else {
+        return Ok(None);
+    };
+
+    if headers.iter().nth(1).is_some() {
+        return Err(Error::unauthorized(format!(
+            "the request has an `Authorization: {scheme}` header and another `Authorization` header"
+        )));
+    }
+
+    Ok(Some(credentials.trim_ascii()))
+}
+
+/// What follows the scheme in an `Authorization` header of the scheme `scheme`, whatever the case of its name; `None`
+/// for a header of another scheme.
+fn credentials<'a>(value: &'a [u8], scheme: &str) -> Option<&'a [u8]> {
+    let (name, rest) = match value.iter().position(|&byte| byte == b' ') {
         Some(space) => (&value[..space], &value[space + 1..]),
         None => (value, &[][..]),
     };
 
-    scheme.eq_ignore_ascii_case(b"Bearer").then_some(token)
+    name.eq_ignore_ascii_case(scheme.as_bytes()).then_some(rest)
 }
 
 /// Whether `token` is an RFC 6750 `b64token`: `1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"="`. The

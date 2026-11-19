@@ -18,13 +18,12 @@ use http::{HeaderMap, HeaderValue, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::__private::Given;
 use crate::__private::content_type::{
     self, FORM, JSON, MULTIPART, OCTET_STREAM, PROBLEM, TEXT, TEXT_UTF8, media_type_value,
 };
 use crate::__private::known::{IsAccepted, IsBytes, IsCreated, IsForm, IsText};
 use crate::rest::error::Repr;
-use crate::rest::{Authenticate, Error, Result, Scheme};
+use crate::rest::{Authenticate, Error, Result, Scheme, Scoped};
 
 mod stream;
 mod text;
@@ -83,7 +82,8 @@ impl<S: Send + Sync + 'static> Group<S> {
     }
 }
 
-/// The schemes a route takes, whose challenges its 401 carries: `()` for none, or a scheme the crate gives.
+/// The schemes a route takes, whose challenges its 401 carries: `()` for none, a scheme, or a tuple of two to four
+/// schemes for `#[auth(A | B)]`, whose challenges come in their order.
 pub trait Challenges: 'static {
     /// Adds a `WWW-Authenticate` per scheme to the headers of a 401.
     fn challenge(headers: &mut HeaderMap);
@@ -93,9 +93,107 @@ impl Challenges for () {
     fn challenge(_headers: &mut HeaderMap) {}
 }
 
-impl<S: Given + 'static> Challenges for S {
+impl<S: Scheme> Challenges for S {
     fn challenge(headers: &mut HeaderMap) {
         headers.append(header::WWW_AUTHENTICATE, S::CHALLENGE);
+    }
+}
+
+/// A service that authenticates the credentials of the schemes `C`: a scheme, or a tuple of two to four schemes for
+/// `#[auth(A | B)]`, which give one caller. The first scheme whose credential a request carries decides: a wrong one is
+/// refused, and the next schemes are not tried.
+pub trait Authenticates<C>: Send + Sync + 'static {
+    /// The caller every scheme of `C` gives.
+    type Caller: Send + Sync + 'static;
+
+    /// The credential the request carries, of the first scheme that finds one.
+    type Found: Send + 'static;
+
+    /// The credential of the first scheme of `C` the request carries; `None` when it carries none.
+    ///
+    /// # Errors
+    ///
+    /// The error of the first scheme whose credential is not well formed.
+    fn find(request: &Parts) -> Result<Option<Self::Found>>;
+
+    /// The caller `found` stands for, from the service's `authenticate` for its scheme.
+    fn authenticate(&self, found: Self::Found)
+    -> impl Future<Output = Result<Self::Caller>> + Send;
+}
+
+impl<A: Authenticate<S>, S: Scheme> Authenticates<S> for A {
+    type Caller = A::Caller;
+    type Found = S::Credential;
+
+    fn find(request: &Parts) -> Result<Option<S::Credential>> {
+        S::read(request)
+    }
+
+    fn authenticate(&self, found: S::Credential) -> impl Future<Output = Result<A::Caller>> + Send {
+        Authenticate::<S>::authenticate(self, found)
+    }
+}
+
+/// The credential of one scheme of an alternative, or of the ones after it.
+pub enum Either<L, R> {
+    /// The first scheme's.
+    First(L),
+    /// One of the next schemes'.
+    Next(R),
+}
+
+/// Implements `Challenges` and `Authenticates` for a tuple of schemes: its first one, then the tuple of the others.
+macro_rules! alternatives {
+    ($first:ident, $rest:ty; $($scheme:ident),+) => {
+        impl<$($scheme: Scheme),+> Challenges for ($($scheme,)+) {
+            fn challenge(headers: &mut HeaderMap) {
+                $(<$scheme as Challenges>::challenge(headers);)+
+            }
+        }
+
+        impl<A, $($scheme: Scheme),+> Authenticates<($($scheme,)+)> for A
+        where
+            A: Authenticates<$first> + Authenticates<$rest, Caller = <A as Authenticates<$first>>::Caller>,
+        {
+            type Caller = <A as Authenticates<$first>>::Caller;
+            type Found = Either<<A as Authenticates<$first>>::Found, <A as Authenticates<$rest>>::Found>;
+
+            fn find(request: &Parts) -> Result<Option<Self::Found>> {
+                if let Some(found) = <A as Authenticates<$first>>::find(request)? {
+                    return Ok(Some(Either::First(found)));
+                }
+
+                Ok(<A as Authenticates<$rest>>::find(request)?.map(Either::Next))
+            }
+
+            fn authenticate(&self, found: Self::Found) -> impl Future<Output = Result<Self::Caller>> + Send {
+                async move {
+                    match found {
+                        Either::First(found) => <A as Authenticates<$first>>::authenticate(self, found).await,
+                        Either::Next(found) => <A as Authenticates<$rest>>::authenticate(self, found).await,
+                    }
+                }
+            }
+        }
+    };
+}
+
+alternatives!(S1, S2; S1, S2);
+alternatives!(S1, (S2, S3); S1, S2, S3);
+alternatives!(S1, (S2, S3, S4); S1, S2, S3, S4);
+
+/// Refuses a caller that lacks one of `scopes`, the scopes of a route's `#[auth(...)]`, every one of which it needs.
+///
+/// # Errors
+///
+/// A 403 that names the first scope the caller lacks.
+pub fn authorize<C: Scoped + ?Sized>(caller: &C, scopes: &[&str]) -> Result<()> {
+    match scopes.iter().find(|scope| !caller.has_scope(scope)) {
+        Some(scope) => Err(Error::new(
+            StatusCode::FORBIDDEN,
+            format!("the caller lacks the scope `{scope}`, which this route takes"),
+        )),
+        None => Ok(()),
     }
 }
 
@@ -121,33 +219,53 @@ impl Request {
         Self { parts, body }
     }
 
-    /// The caller `service` makes of the credential of the scheme `S` the request carries. Only the headers are read:
-    /// a request refused never has its body read.
+    /// The caller `service` makes of the credential of the schemes `C` the request carries: a scheme, or a tuple of
+    /// schemes of which the first one whose credential the request carries decides. Only the headers and the query
+    /// are read: a request refused never has its body read.
     ///
     /// # Errors
     ///
-    /// A 401 when the request carries no credential of `S`, or one that is not well formed; the error of `service`'s
+    /// A 401 when the request carries no credential of `C`, or one that is not well formed; the error of `service`'s
     /// `authenticate` as it is, a 401 for a credential it does not know or a 500 for its own failure.
-    pub fn authenticate<'a, S, A>(
+    pub fn authenticate<'a, C, A>(
         &self,
         service: &'a A,
-    ) -> impl Future<Output = Result<A::Caller>> + Send + use<'a, S, A>
+    ) -> impl Future<Output = Result<A::Caller>> + Send + use<'a, C, A>
     where
-        S: Scheme,
-        S::Credential: Send,
-        A: Authenticate<S>,
+        A: Authenticates<C>,
     {
-        // Read now, so that the future does not borrow the request, whose body is not `Sync`.
-        let credential = S::read(&self.parts);
+        let caller = self.authenticate_optional::<C, A>(service);
 
         async move {
-            let Some(credential) = credential? else {
-                return Err(Error::unauthorized(
-                    "the request carries no credential, which this route takes",
-                ));
-            };
+            caller.await?.ok_or_else(|| {
+                Error::unauthorized("the request carries no credential, which this route takes")
+            })
+        }
+    }
 
-            service.authenticate(credential).await
+    /// The caller `service` makes of the credential of the schemes `C`, as [`authenticate`](Request::authenticate),
+    /// or `None` when the request carries no credential: a route with `#[auth(..., optional)]`.
+    ///
+    /// # Errors
+    ///
+    /// A 401 for a credential that is not well formed; the error of `service`'s `authenticate` as it is.
+    pub fn authenticate_optional<'a, C, A>(
+        &self,
+        service: &'a A,
+    ) -> impl Future<Output = Result<Option<A::Caller>>> + Send + use<'a, C, A>
+    where
+        A: Authenticates<C>,
+    {
+        // Read now, so that the future does not borrow the request, whose body is not `Sync`.
+        let found = <A as Authenticates<C>>::find(&self.parts);
+
+        async move {
+            match found? {
+                Some(found) => <A as Authenticates<C>>::authenticate(service, found)
+                    .await
+                    .map(Some),
+                None => Ok(None),
+            }
         }
     }
 

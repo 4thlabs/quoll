@@ -1,0 +1,5 @@
+error: `Bearer` is already a scheme of this alternative: remove it
+ --> tests/compile_fail/auth_scheme_twice.rs:7:21
+  |
+7 |     #[auth(Bearer | Bearer)]
+  |                     ^^^^^^

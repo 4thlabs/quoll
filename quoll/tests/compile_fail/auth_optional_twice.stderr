@@ -1,0 +1,5 @@
+error: `optional` is written twice: remove one
+ --> tests/compile_fail/auth_optional_twice.rs:7:30
+  |
+7 |     #[auth(Bearer, optional, optional)]
+  |                              ^^^^^^^^
