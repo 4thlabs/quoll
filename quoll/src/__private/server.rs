@@ -357,7 +357,6 @@ impl Request {
             )));
         }
 
-        let limit = body_limit::of(&self.parts.extensions);
         let request = http::Request::from_parts(self.parts, self.body);
 
         match axum::Json::<T>::from_request(request, &()).await {
@@ -366,7 +365,7 @@ impl Request {
             Err(JsonRejection::JsonSyntaxError(error)) => {
                 Err(Error::bad_request(error.body_text()))
             }
-            Err(error) => Err(body_rejected(error.status(), error.body_text(), limit)),
+            Err(error) => Err(body_rejected(error.status(), error.body_text())),
         }
     }
 
@@ -455,12 +454,11 @@ impl Request {
 
     /// The whole body, within the limit axum sets.
     async fn read(self) -> Result<axum::body::Bytes> {
-        let limit = body_limit::of(&self.parts.extensions);
         let request = http::Request::from_parts(self.parts, self.body);
 
         axum::body::Bytes::from_request(request, &())
             .await
-            .map_err(|error| body_rejected(error.status(), error.body_text(), limit))
+            .map_err(|error| body_rejected(error.status(), error.body_text()))
     }
 }
 
@@ -486,11 +484,11 @@ fn from_form<T: DeserializeOwned>(form: &[u8], what: &str) -> Result<T> {
         .map_err(|error| Error::bad_request(format!("{what} is not valid: {error}")))
 }
 
-/// What axum refused in a body: a 413 for one larger than `limit`, which `rest::server::body_limit` sets, said as that
-/// layer says it, or else as [`rejected`] says it.
-fn body_rejected(status: StatusCode, text: String, limit: Option<usize>) -> Error {
+/// What axum refused in a body: a 413 for one larger than its limit, said as `rest::server::body_limit` says it but
+/// with no number, as the limit axum enforced may be a route's own, or else as [`rejected`] says it.
+fn body_rejected(status: StatusCode, text: String) -> Error {
     if status == StatusCode::PAYLOAD_TOO_LARGE {
-        return body_limit::too_large(limit);
+        return body_limit::too_large(None);
     }
 
     rejected(status, text)

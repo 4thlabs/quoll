@@ -91,6 +91,7 @@ fn origin_value(origin: &str) -> Result<HeaderValue, InvalidOrigin> {
     if origin.len() != scheme.len() + "://".len() + authority.as_str().len() {
         return Err(invalid());
     }
+
     let scheme = scheme.to_ascii_lowercase();
     let default_port = match scheme.as_str() {
         "http" => 80,
@@ -102,8 +103,22 @@ fn origin_value(origin: &str) -> Result<HeaderValue, InvalidOrigin> {
         return Err(invalid());
     }
 
+    // `http` does not check the port: `:`, `:99999` or `:+80` would read as no port, the scheme's default.
+    let port = match &authority.as_str()[authority.host().len()..] {
+        "" => None,
+        after_host => {
+            let digits = after_host
+                .strip_prefix(':')
+                .filter(|digits| {
+                    !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+                })
+                .ok_or_else(invalid)?;
+
+            Some(digits.parse::<u16>().map_err(|_| invalid())?)
+        }
+    };
     let host = authority.host().to_ascii_lowercase();
-    let text = match authority.port_u16() {
+    let text = match port {
         Some(port) if port != default_port => format!("{scheme}://{host}:{port}"),
         _ => format!("{scheme}://{host}"),
     };
@@ -215,6 +230,9 @@ mod tests {
             "https://example.com?x=1",
             "https://ana@example.com",
             "https://",
+            "https://app.example.com:",
+            "https://app.example.com:99999",
+            "https://app.example.com:+80",
         ] {
             let error = written(origin).expect_err(origin);
 

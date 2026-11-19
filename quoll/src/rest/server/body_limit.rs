@@ -5,23 +5,15 @@ use std::task::{Context, Poll};
 
 use axum::extract::{DefaultBodyLimit, Request};
 use axum::response::{IntoResponse, Response};
-use http::{Extensions, HeaderMap, StatusCode, header};
+use http::{HeaderMap, StatusCode, header};
 use tower_layer::Layer;
 use tower_service::Service;
 
 use super::layer::ResponseFuture;
 use crate::rest::Error;
 
-/// The limit [`BodyLimitService`] set on a request, which the router says in its 413.
-#[derive(Debug, Clone, Copy)]
-struct Limit(usize);
-
-/// The limit `body_limit` set on the request whose `extensions` these are.
-pub(crate) fn of(extensions: &Extensions) -> Option<usize> {
-    extensions.get::<Limit>().map(|Limit(limit)| *limit)
-}
-
-/// The 413 of a body larger than `limit`, or than axum's own limit when no layer set one.
+/// The 413 of a body larger than `limit`, the one enforced, or than a limit the router cannot name: axum's, which
+/// `body_limit` sets or a route may set lower.
 pub(crate) fn too_large(limit: Option<usize>) -> Error {
     let detail = match limit {
         Some(limit) => format!("the body is larger than the {limit} bytes this server reads"),
@@ -31,11 +23,14 @@ pub(crate) fn too_large(limit: Option<usize>) -> Error {
     Error::new(StatusCode::PAYLOAD_TOO_LARGE, detail)
 }
 
-/// The largest body a route reads, in bytes: a larger one answers 413, with a problem that says the limit.
+/// The largest body a route reads, in bytes: a larger one answers 413, with a problem.
 ///
-/// A request whose `Content-Length` is larger is answered at once, before its body is read. One with no length, a
-/// chunked body, is read up to the limit, then answered so, whatever the route reads: JSON, a `Form`, `Text` or
-/// `Bytes`. It replaces axum's own limit, 2 MiB, which a router without this layer keeps, answered 413 too.
+/// A request whose `Content-Length` is larger is answered at once, before its body is read, with the limit in the
+/// problem's detail; the connection is closed after the answer, so that a client still sending the body has its write
+/// refused, the 413 waiting to be read. One with no length, a chunked body, is read up to the limit, then answered so,
+/// whatever the route reads: JSON, a `Form`, `Text` or `Bytes`. That limit is axum's own, `DefaultBodyLimit`,
+/// which this layer sets, replacing its default of 2 MiB, and which a route may set lower: the detail of its 413 says
+/// no number then.
 ///
 /// ```
 /// use quoll::rest;
@@ -94,7 +89,6 @@ where
 
         // axum's extractors, through which the router reads every body, stop at this limit.
         DefaultBodyLimit::max(self.limit).apply(&mut request);
-        request.extensions_mut().insert(Limit(self.limit));
 
         let answer = self.inner.call(request);
 

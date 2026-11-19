@@ -234,6 +234,7 @@ async fn a_request_with_no_id_gets_one_which_its_handler_reads() -> Result<()> {
     assert_eq!(read, id);
 
     let other = api.layers().request_id().await?;
+
     assert!(is_uuid_v4(&other), "{other}");
     assert_ne!(other, id);
     Ok(())
@@ -513,6 +514,7 @@ async fn a_route_past_its_deadline_answers_503_logged_once() {
     assert!(answered.contains("answered status=503"), "{answered}");
 
     let error = api.layers().slow().await.expect_err("past the deadline");
+
     assert_eq!(error.status(), Some(StatusCode::SERVICE_UNAVAILABLE));
     assert_eq!(
         error.problem().and_then(rest::Problem::detail),
@@ -588,6 +590,27 @@ async fn a_body_with_a_length_past_the_limit_answers_413() {
     }
 }
 
+#[tokio::test]
+async fn a_large_upload_past_the_limit_reads_its_413() {
+    let (_, api) = serve(layered(&App::default())).await;
+
+    // The server answers before reading the body, then closes: the client reads the answer, each time, rather than a
+    // connection reset.
+    for attempt in 0..10 {
+        let error = api
+            .layers()
+            .bytes(Bytes::new(vec![b'x'; 16 << 20]))
+            .await
+            .expect_err("past the limit");
+
+        assert_eq!(
+            error.status(),
+            Some(StatusCode::PAYLOAD_TOO_LARGE),
+            "attempt {attempt}: {error:?}"
+        );
+    }
+}
+
 /// `POST path` with a chunked body of `size` bytes of `content_type`, written by hand, as no client here sends one:
 /// the status, the content type and the body of the answer. The request is small enough for the server to read it
 /// whole from its socket, so that closing the connection with the body unread does not reset it.
@@ -605,14 +628,15 @@ async fn post_chunked(
         "POST {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: {content_type}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
     );
     let mut request = head.into_bytes();
-
     // In chunks of 256 bytes, so that no one chunk is past the limit alone.
     let body = vec![b'x'; size];
+
     for chunk in body.chunks(256) {
         request.extend_from_slice(format!("{:x}\r\n", chunk.len()).as_bytes());
         request.extend_from_slice(chunk);
         request.extend_from_slice(b"\r\n");
     }
+
     request.extend_from_slice(b"0\r\n\r\n");
 
     stream
@@ -621,6 +645,7 @@ async fn post_chunked(
         .expect("the request is sent");
 
     let mut answer = Vec::new();
+
     stream
         .read_to_end(&mut answer)
         .await
@@ -659,10 +684,41 @@ async fn a_chunked_body_past_the_limit_answers_413() {
         assert_eq!(status, 413, "{path}");
         assert_eq!(answered_type, "application/problem+json", "{path}");
         assert_eq!(
-            problem["detail"], "the body is larger than the 1024 bytes this server reads",
+            problem["detail"], "the body is larger than this server reads",
             "{path}"
         );
     }
+}
+
+#[tokio::test]
+async fn a_lower_limit_of_a_route_is_not_said_as_the_layer_s() {
+    let router = router(&App::default())
+        .layer(axum::extract::DefaultBodyLimit::max(100))
+        .layer(rest::server::body_limit(LIMIT));
+    let (url, api) = serve(router).await;
+
+    for (case, answered) in post_each(&api, LIMIT / 2).await {
+        let error = answered.expect_err(case);
+
+        assert_eq!(
+            error.status(),
+            Some(StatusCode::PAYLOAD_TOO_LARGE),
+            "{case}"
+        );
+        assert_eq!(
+            error.problem().and_then(rest::Problem::detail),
+            Some("the body is larger than this server reads"),
+            "{case}"
+        );
+    }
+
+    let (status, _, problem) = post_chunked(&url, "/api/text", "text/plain", LIMIT / 2).await;
+
+    assert_eq!(status, 413);
+    assert_eq!(
+        problem["detail"],
+        "the body is larger than this server reads"
+    );
 }
 
 const ORIGIN: &str = "https://app.example.com";
@@ -777,6 +833,7 @@ async fn an_answer_is_compressed_as_the_caller_accepts() -> Result<()> {
         .send()
         .await
         .expect("the server answers");
+
     assert!(!plain.headers().contains_key(CONTENT_ENCODING));
 
     // The client asks for gzip, and reads it back.
@@ -809,6 +866,7 @@ async fn a_stream_is_not_compressed_and_its_first_value_comes_at_once() -> Resul
     let first = tokio::time::timeout(guard, events.next())
         .await
         .expect("the first event comes");
+
     assert_eq!(first.expect("an event")?, note(1));
     app.release.notify_one();
     assert_eq!(events.next().await.expect("an event")?, note(2));
@@ -817,6 +875,7 @@ async fn a_stream_is_not_compressed_and_its_first_value_comes_at_once() -> Resul
     let first = tokio::time::timeout(guard, lines.next())
         .await
         .expect("the first line comes");
+
     assert_eq!(first.expect("a line")?, note(1));
     app.release.notify_one();
     assert_eq!(lines.next().await.expect("a line")?, note(2));
