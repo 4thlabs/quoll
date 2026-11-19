@@ -30,7 +30,7 @@ mod stream;
 mod text;
 
 pub use axum::routing::MethodFilter;
-pub use stream::{events, json_lines};
+pub use stream::{Written, events, json_lines};
 
 /// The routes of one group, each served by the group's service.
 pub struct Group<S> {

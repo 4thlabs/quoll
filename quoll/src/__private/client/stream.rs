@@ -23,9 +23,9 @@ pub(crate) trait Framing: Send + 'static {
     /// Adds the next chunk of the body.
     fn push(&mut self, chunk: &[u8]);
 
-    /// The JSON of the next whole item, when the chunks so far hold one; an error once an item is longer than
-    /// [`ITEM_LIMIT`], whole or not.
-    fn next_item(&mut self) -> Option<Result<Vec<u8>, TooLong>>;
+    /// What `read` makes of the JSON of the next whole item, lent where it lies, when the chunks so far hold one; an
+    /// error once an item is longer than [`ITEM_LIMIT`], whole or not.
+    fn next_item<R>(&mut self, read: impl FnOnce(&[u8]) -> R) -> Option<Result<R, TooLong>>;
 
     /// Says the body has ended: what is left makes an item, or is dropped.
     fn finish(&mut self);
@@ -52,10 +52,9 @@ where
         let (mut response, mut framing) = state?;
 
         loop {
-            match framing.next_item() {
+            match framing.next_item(|json| serde_json::from_slice::<T>(json)) {
                 Some(Ok(item)) => {
-                    let item = serde_json::from_slice(&item)
-                        .map_err(|error| no_answer(route, NOT_AN_ITEM, error));
+                    let item = item.map_err(|error| no_answer(route, NOT_AN_ITEM, error));
 
                     return Some((item, Some((response, framing))));
                 }
@@ -126,46 +125,54 @@ impl Lines {
     }
 
     /// The next whole line, without its line break; an error once a line is longer than [`ITEM_LIMIT`], whole or
-    /// not.
+    /// not. The buffer is searched from where the last search stopped.
     fn next_line(&mut self) -> Option<Result<&[u8], TooLong>> {
-        while let Some(&byte) = self.buffer.get(self.searched) {
-            let at = self.searched;
-
-            self.searched += 1;
-
-            if mem::take(&mut self.after_cr) && byte == b'\n' {
-                self.start = self.searched;
-                continue;
-            }
-
-            if byte == b'\n' || (self.cr_breaks && byte == b'\r') {
-                let line = self.start..at;
-
-                self.after_cr = byte == b'\r';
-                self.start = self.searched;
-
-                if line.len() > ITEM_LIMIT {
-                    return Some(Err(TooLong));
+        if self.after_cr {
+            match self.buffer.get(self.searched) {
+                None => return None,
+                Some(b'\n') => {
+                    self.searched += 1;
+                    self.start = self.searched;
                 }
-
-                return Some(Ok(&self.buffer[line]));
+                Some(_) => {}
             }
+
+            self.after_cr = false;
         }
 
-        // A line not ended yet, which the next chunks may end.
-        if self.buffer.len() - self.start > ITEM_LIMIT {
+        let cr_breaks = self.cr_breaks;
+        let found = self.buffer[self.searched..]
+            .iter()
+            .position(|&byte| byte == b'\n' || (cr_breaks && byte == b'\r'));
+        let Some(offset) = found else {
+            self.searched = self.buffer.len();
+
+            // A line not ended yet, which the next chunks may end.
+            return (self.buffer.len() - self.start > ITEM_LIMIT).then_some(Err(TooLong));
+        };
+
+        let at = self.searched + offset;
+        let line = self.start..at;
+
+        self.after_cr = self.buffer[at] == b'\r';
+        self.searched = at + 1;
+        self.start = self.searched;
+
+        if line.len() > ITEM_LIMIT {
             return Some(Err(TooLong));
         }
 
-        None
+        Some(Ok(&self.buffer[line]))
     }
 
-    /// What is left of the body once it has ended: a last line with no line break, or nothing.
-    fn take_rest(&mut self) -> Vec<u8> {
-        let rest = self.buffer.split_off(self.start);
+    /// What is left of the body once it has ended, a last line with no line break, which is read then: what is left
+    /// after it is nothing.
+    fn rest(&mut self) -> &[u8] {
+        let rest = self.start..self.buffer.len();
 
-        *self = Self::new(self.cr_breaks);
-        rest
+        self.start = self.buffer.len();
+        self.searched = self.buffer.len();
+        &self.buffer[rest]
     }
 }
 
@@ -197,7 +204,7 @@ impl Framing for EventStream {
         self.lines.push(chunk);
     }
 
-    fn next_item(&mut self) -> Option<Result<Vec<u8>, TooLong>> {
+    fn next_item<R>(&mut self, read: impl FnOnce(&[u8]) -> R) -> Option<Result<R, TooLong>> {
         while let Some(line) = self.lines.next_line() {
             let Ok(mut line) = line else {
                 return Some(Err(TooLong));
@@ -210,12 +217,16 @@ impl Framing for EventStream {
             // A blank line ends the event: a message with data is an item, any other event is dropped.
             if line.is_empty() {
                 let message = mem::replace(&mut self.message, true);
-                let mut data = mem::take(&mut self.data);
 
-                if message && data.pop().is_some() {
-                    return Some(Ok(data));
+                if message && !self.data.is_empty() {
+                    // Without the line break the last line of data adds.
+                    let item = read(&self.data[..self.data.len() - 1]);
+
+                    self.data.clear();
+                    return Some(Ok(item));
                 }
 
+                self.data.clear();
                 continue;
             }
 
@@ -261,15 +272,15 @@ impl Framing for EventStream {
 #[derive(Debug)]
 pub(crate) struct JsonLineStream {
     lines: Lines,
-    /// The last line, once the body has ended without a line break after it.
-    rest: Option<Vec<u8>>,
+    /// Whether the body has ended: what is left of it is a last line with no line break.
+    ended: bool,
 }
 
 impl Default for JsonLineStream {
     fn default() -> Self {
         Self {
             lines: Lines::new(false),
-            rest: None,
+            ended: false,
         }
     }
 }
@@ -279,7 +290,7 @@ impl Framing for JsonLineStream {
         self.lines.push(chunk);
     }
 
-    fn next_item(&mut self) -> Option<Result<Vec<u8>, TooLong>> {
+    fn next_item<R>(&mut self, read: impl FnOnce(&[u8]) -> R) -> Option<Result<R, TooLong>> {
         while let Some(line) = self.lines.next_line() {
             let Ok(line) = line else {
                 return Some(Err(TooLong));
@@ -287,19 +298,21 @@ impl Framing for JsonLineStream {
 
             // JSON allows the `\r` of a `\r\n` around a value, as any blank.
             if !line.trim_ascii().is_empty() {
-                return Some(Ok(line.to_vec()));
+                return Some(Ok(read(line)));
             }
         }
 
-        self.rest.take().map(Ok)
+        if !self.ended {
+            return None;
+        }
+
+        let rest = self.lines.rest();
+
+        (!rest.trim_ascii().is_empty()).then(|| Ok(read(rest)))
     }
 
     fn finish(&mut self) {
-        let rest = self.lines.take_rest();
-
-        if !rest.trim_ascii().is_empty() {
-            self.rest = Some(rest);
-        }
+        self.ended = true;
     }
 }
 
@@ -311,10 +324,10 @@ mod tests {
     fn read<F: Framing>(mut framing: F, chunks: &[&[u8]]) -> Vec<String> {
         let mut items = Vec::new();
         let mut next = |framing: &mut F| {
-            while let Some(item) = framing.next_item() {
+            while let Some(item) = framing.next_item(|item| String::from_utf8(item.to_vec())) {
                 let item = item.expect("no item is too long");
 
-                items.push(String::from_utf8(item).expect("the items are text"));
+                items.push(item.expect("the items are text"));
             }
         };
 
@@ -447,7 +460,7 @@ mod tests {
 
         framing.push(body);
 
-        while let Some(item) = framing.next_item() {
+        while let Some(item) = framing.next_item(|_| ()) {
             match item {
                 Ok(_) => items += 1,
                 Err(error) => return (items, Some(error)),

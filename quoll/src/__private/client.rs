@@ -300,16 +300,13 @@ impl<'a> Call<'a> {
     }
 
     /// Sets the body to `body`, `text/plain` in UTF-8.
-    ///
-    /// # Errors
-    ///
-    /// None: text is always a body. It returns a `Result` as the other bodies do, which the macro calls alike.
-    pub fn text<T: IsText>(mut self, body: T) -> Result<Self> {
+    #[must_use]
+    pub fn text<T: IsText>(mut self, body: T) -> Self {
         self.body = Some(Body {
             content_type: HeaderValue::from_static(TEXT_UTF8),
             bytes: body.into_string().into_bytes(),
         });
-        Ok(self)
+        self
     }
 
     /// Sets the body to `body`, of its content type.

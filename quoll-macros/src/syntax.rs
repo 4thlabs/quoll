@@ -433,7 +433,7 @@ mod tests {
 
     use super::*;
     use crate::known::{BodyKind, ResultKind};
-    use crate::model::{ParamKind, Reply};
+    use crate::model::{ParamKind, Returned};
     use crate::path::Segment;
 
     fn parse(tokens: proc_macro2::TokenStream) -> Result<Api> {
@@ -449,8 +449,20 @@ mod tests {
     }
 
     /// The type a route's result is written with, and how it is answered.
-    fn reply(reply: &Reply) -> Option<(String, ResultKind)> {
-        Some((text(reply.served()?), reply.kind()?))
+    fn reply(reply: &Option<Box<Returned>>) -> Option<(String, ResultKind)> {
+        reply
+            .as_deref()
+            .map(|returned| (text(&returned.served), returned.kind()))
+    }
+
+    /// How a route's result is answered.
+    fn kind(reply: &Option<Box<Returned>>) -> Option<ResultKind> {
+        reply.as_deref().map(Returned::kind)
+    }
+
+    /// The type the client returns.
+    fn value(reply: &Option<Box<Returned>>) -> Option<String> {
+        reply.as_deref().map(|returned| text(&returned.value))
     }
 
     fn text(ty: &impl ToTokens) -> String {
@@ -519,7 +531,7 @@ mod tests {
             reply(&create.reply),
             Some(("Created < Note >".into(), ResultKind::CREATED))
         );
-        assert_eq!(create.reply.value().map(text), Some("Note".into()));
+        assert_eq!(value(&create.reply), Some("Note".into()));
         assert_eq!(
             create
                 .body()
@@ -531,7 +543,7 @@ mod tests {
         assert_eq!(token.docs.0, [" Trades a login for a token."]);
 
         let remove = &notes.routes[3];
-        assert!(matches!(remove.reply, Reply::None));
+        assert!(remove.reply.is_none());
         assert_eq!(remove.params[0].kind, ParamKind::Path);
     }
 
@@ -936,8 +948,8 @@ mod tests {
         })
         .unwrap();
         let reply = &api.groups[0].routes[0].reply;
-        assert_eq!(reply.kind(), Some(ResultKind::CREATED));
-        assert_eq!(reply.value().map(text), Some("Note".into()));
+        assert_eq!(kind(reply), Some(ResultKind::CREATED));
+        assert_eq!(value(reply), Some("Note".into()));
 
         let events = group(quote! { Events<Note> });
         let api = parse(quote! {
@@ -946,7 +958,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(
-            api.groups[0].routes[0].reply.kind(),
+            kind(&api.groups[0].routes[0].reply),
             Some(ResultKind::EVENTS)
         );
 
@@ -1067,7 +1079,7 @@ mod tests {
         .unwrap();
         let routes = &api.groups[0].routes;
 
-        let read = |i: usize| (reply(&routes[i].reply), routes[i].reply.value().map(text));
+        let read = |i: usize| (reply(&routes[i].reply), value(&routes[i].reply));
         let some = |served: &str, kind, value: &str| {
             (Some((served.to_owned(), kind)), Some(value.to_owned()))
         };
@@ -1133,7 +1145,7 @@ mod tests {
             });
             assert!(
                 body[0].contains(&format!(
-                    "`{wrapper}` is what a route answers, not a body it reads"
+                    "`{wrapper}` is a stream a route answers, and a route does not read a stream as its body"
                 )),
                 "{body:?}"
             );

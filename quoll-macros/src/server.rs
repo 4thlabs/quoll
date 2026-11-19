@@ -8,7 +8,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, Group, Method, Param, Reply, Route, is_vec};
+use crate::model::{Api, Group, Method, Param, Route, is_vec};
 use crate::{doc_attrs, route_docs, scheme_type};
 
 /// The server's code of the api, behind the feature `server` of `quoll`.
@@ -77,9 +77,13 @@ fn method(api: &Api, route: &Route) -> TokenStream {
         .params
         .iter()
         .map(|Param { name, ty, .. }| quote! { #name: #ty });
-    let output = match route.reply.served() {
+    let output = match route.reply.as_deref() {
         None => quote! { () },
-        Some(ty) => quote! { #ty },
+        Some(returned) => {
+            let ty = &returned.served;
+
+            quote! { #ty }
+        }
     };
     let caller = route.auth.map(|scheme| {
         let scheme = scheme_type(scheme);
@@ -275,7 +279,8 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
 
     if let Some((param, kind)) = route.body() {
         let (name, ty) = (&param.name, &param.ty);
-        let read = Ident::new(kind.method, Span::call_site());
+        // Spanned on the type, as a type that is not `Deserialize` is the mistake an error names then.
+        let read = Ident::new(kind.method, ty.span());
 
         reads.push(quote_spanned! {ty.span()=>
             let #name = #request.#read::<#ty>().await?;
@@ -285,13 +290,21 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
     let function = &route.name;
     let args = route.params.iter().map(|param| &param.name);
     let call = quote! { #service.#function(#caller_arg #(#args),*).await };
-    let answer = match &route.reply {
-        Reply::None => quote_spanned! {route.span=> ::quoll::__private::server::no_content(#call) },
-        Reply::Some(returned) => {
+    let answer = match route.reply.as_deref() {
+        None => quote_spanned! {route.span=> ::quoll::__private::server::no_content(#call) },
+        Some(returned) => {
             let served = &returned.served;
-            let answer = Ident::new(returned.kind.answer, Span::call_site());
+            // Spanned on the type, as a type that is not `Serialize` is the mistake an error names then.
+            let answer = Ident::new(returned.kind().answer, served.span());
+            // Its own hygiene, located at the type, as the whole call of the helper is.
+            let result = Ident::new("result", Span::mixed_site().located_at(served.span()));
 
-            quote_spanned! {served.span()=> ::quoll::__private::server::#answer(#call) }
+            // The type named, and the call made of the type's tokens alone, so that a bound the type does not meet,
+            // on it or on its items, points at it rather than at the whole contract.
+            quote_spanned! {served.span()=>
+                let #result = #call;
+                ::quoll::__private::server::#answer::<#served>(#result)
+            }
         }
     };
 

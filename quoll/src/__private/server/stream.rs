@@ -12,12 +12,37 @@ use http::{HeaderName, HeaderValue, header};
 use serde::Serialize;
 
 use crate::__private::content_type::JSON_LINES;
-use crate::__private::known::{IsEvents, IsJsonLines, Items};
-use crate::rest::{Error, Result};
+use crate::__private::known::{IsEvents, IsJsonLines, Items, Streamed};
+use crate::rest::{Error, Events, JsonLines, Result};
 
 /// How long an event stream goes with nothing sent before it sends a comment, so that a proxy that closes a
 /// connection it sees idle keeps it: nginx waits 60 seconds by default.
 const KEEP_ALIVE: Duration = Duration::from_secs(15);
+
+/// A stream result whose items the server writes as JSON: one of quoll's, of a `T` that is `Serialize`.
+///
+/// The bound is on the result rather than on its items, so that a `T` that is not `Serialize` is an error on the
+/// result's type, as the contract writes it, rather than on the whole contract.
+pub trait Written: Streamed<Item: 'static> {
+    /// The JSON of `item`.
+    ///
+    /// # Errors
+    ///
+    /// When `item` cannot be written as JSON.
+    fn to_json(item: &Self::Item) -> serde_json::Result<String>;
+}
+
+impl<T: Serialize + 'static> Written for Events<T> {
+    fn to_json(item: &T) -> serde_json::Result<String> {
+        serde_json::to_string(item)
+    }
+}
+
+impl<T: Serialize + 'static> Written for JsonLines<T> {
+    fn to_json(item: &T) -> serde_json::Result<String> {
+        serde_json::to_string(item)
+    }
+}
 
 /// A 200 with server-sent events, `text/event-stream`: each value of the handler's stream as the JSON `data` of an
 /// event, and a comment when 15 seconds pass with none. Nothing in between holds them back: axum's `Sse` sends
@@ -26,13 +51,12 @@ const KEEP_ALIVE: Duration = Duration::from_secs(15);
 /// # Errors
 ///
 /// The handler's error. An item that fails once the answer has begun is logged, and cuts the answer short.
-pub fn events<E>(result: Result<E>) -> Result<Response>
-where
-    E: IsEvents,
-    E::Item: Serialize + 'static,
-{
+pub fn events<E: IsEvents + Written>(result: Result<E>) -> Result<Response> {
     let events = sent(result?.into_items(), |value| {
-        Event::default().json_data(value).map_err(Error::internal)
+        let json = E::to_json(value).map_err(Error::internal)?;
+
+        // Compact JSON holds no line break, so the data of the event is one line.
+        Ok(Event::default().data(json))
     });
     let keep_alive = KeepAlive::new().interval(KEEP_ALIVE);
 
@@ -47,15 +71,11 @@ where
 /// # Errors
 ///
 /// The handler's error. An item that fails once the answer has begun is logged, and cuts the answer short.
-pub fn json_lines<L>(result: Result<L>) -> Result<Response>
-where
-    L: IsJsonLines,
-    L::Item: Serialize + 'static,
-{
+pub fn json_lines<L: IsJsonLines + Written>(result: Result<L>) -> Result<Response> {
     let lines = sent(result?.into_items(), |value| {
-        let mut line = serde_json::to_vec(value).map_err(Error::internal)?;
+        let mut line = L::to_json(value).map_err(Error::internal)?;
 
-        line.push(b'\n');
+        line.push('\n');
         Ok(line)
     });
     let headers = [

@@ -15,7 +15,7 @@ use syn::ext::IdentExt;
 use syn::spanned::Spanned;
 
 use crate::known::Known;
-use crate::model::{Api, Reply, Route, Scheme};
+use crate::model::{Api, Route, Scheme};
 use crate::syntax::Contract;
 
 /// Reads a REST contract and checks it.
@@ -72,10 +72,10 @@ fn known_types(api: &Api) -> proc_macro2::TokenStream {
     let mut checks = Vec::new();
 
     for route in api.groups.iter().flat_map(|group| &group.routes) {
-        let result = match &route.reply {
-            Reply::Some(returned) => returned.known.map(|known| (&returned.served, known)),
-            Reply::None => None,
-        };
+        let result = route
+            .reply
+            .as_deref()
+            .and_then(|returned| returned.known.map(|known| (&returned.served, known)));
         let body = route
             .body()
             .and_then(|(param, _)| Known::of(&param.ty).map(|known| (&param.ty, known)));

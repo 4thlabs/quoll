@@ -20,6 +20,8 @@ pub(crate) struct Known {
     pub(crate) result: Option<ResultKind>,
     /// What it is as a body, when it is one.
     pub(crate) body: Option<BodyKind>,
+    /// Whether it is a stream, which a route answers but never reads as its body.
+    pub(crate) stream: bool,
 }
 
 /// How a result is answered by the server and read by the client: the helpers the generated code calls.
@@ -75,17 +77,29 @@ impl ResultKind {
 pub(crate) struct BodyKind {
     /// The method of the server's `Request` that reads it, and of the client's `Call` that writes it.
     pub(crate) method: &'static str,
+    /// Whether the client's `Call` may fail to write it, and so returns a `Result`.
+    pub(crate) fallible: bool,
 }
 
 impl BodyKind {
     /// Any type the macro does not recognize: its JSON, `application/json`.
-    pub(crate) const JSON: Self = Self { method: "json" };
+    pub(crate) const JSON: Self = Self::fallible("json");
     /// `Form<T>`: `application/x-www-form-urlencoded`.
-    pub(crate) const FORM: Self = Self { method: "form" };
-    /// `Text`: `text/plain`, UTF-8.
-    pub(crate) const TEXT: Self = Self { method: "text" };
+    pub(crate) const FORM: Self = Self::fallible("form");
+    /// `Text`: `text/plain`, UTF-8, which is always written.
+    pub(crate) const TEXT: Self = Self {
+        method: "text",
+        fallible: false,
+    };
     /// `Bytes`: any content type but the three a browser sends to another site without asking.
-    pub(crate) const BYTES: Self = Self { method: "bytes" };
+    pub(crate) const BYTES: Self = Self::fallible("bytes");
+
+    const fn fallible(method: &'static str) -> Self {
+        Self {
+            method,
+            fallible: true,
+        }
+    }
 }
 
 /// The types the macro recognizes.
@@ -96,6 +110,7 @@ pub(crate) const KNOWN: &[Known] = &[
         wraps: Some("the body"),
         result: Some(ResultKind::CREATED),
         body: None,
+        stream: false,
     },
     Known {
         name: "Accepted",
@@ -103,6 +118,7 @@ pub(crate) const KNOWN: &[Known] = &[
         wraps: Some("the body"),
         result: Some(ResultKind::ACCEPTED),
         body: None,
+        stream: false,
     },
     Known {
         name: "Form",
@@ -110,6 +126,7 @@ pub(crate) const KNOWN: &[Known] = &[
         wraps: None,
         result: None,
         body: Some(BodyKind::FORM),
+        stream: false,
     },
     Known {
         name: "Text",
@@ -117,6 +134,7 @@ pub(crate) const KNOWN: &[Known] = &[
         wraps: None,
         result: Some(ResultKind::TEXT),
         body: Some(BodyKind::TEXT),
+        stream: false,
     },
     Known {
         name: "Bytes",
@@ -124,6 +142,7 @@ pub(crate) const KNOWN: &[Known] = &[
         wraps: None,
         result: Some(ResultKind::BYTES),
         body: Some(BodyKind::BYTES),
+        stream: false,
     },
     Known {
         name: "Events",
@@ -131,6 +150,7 @@ pub(crate) const KNOWN: &[Known] = &[
         wraps: Some("each item"),
         result: Some(ResultKind::EVENTS),
         body: None,
+        stream: true,
     },
     Known {
         name: "JsonLines",
@@ -138,6 +158,7 @@ pub(crate) const KNOWN: &[Known] = &[
         wraps: Some("each item"),
         result: Some(ResultKind::JSON_LINES),
         body: None,
+        stream: true,
     },
 ];
 

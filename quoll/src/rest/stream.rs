@@ -14,7 +14,8 @@ use sync_wrapper::SyncWrapper;
 use crate::rest::Result;
 
 /// The items of a stream result, as a handler gave them or as a client reads them: one box, polled through `&mut`
-/// alone, so that it is `Sync` whatever the stream it holds.
+/// alone, so that it is `Sync` whatever the stream it holds. It gives no size hint, which `&self` asks for: the box
+/// is reached through `&mut` only.
 pub struct Items<T>(SyncWrapper<Pin<Box<dyn Stream<Item = Result<T>> + Send>>>);
 
 impl<T> Items<T> {
@@ -60,10 +61,6 @@ impl<S: Stream> Stream for Oks<S> {
             .poll_next(cx)
             .map(|value| value.map(Ok))
     }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.values.size_hint()
-    }
 }
 
 /// Server-sent events, `text/event-stream`, the JSON of a `T` in each: what a route returns to send values as they
@@ -101,8 +98,8 @@ impl<S: Stream> Stream for Oks<S> {
 /// cannot be read, are an error with no status, and the stream ends after it.
 ///
 /// Dropping the stream closes its connection. The client does not reconnect when the stream ends, as an
-/// `EventSource` does: the caller calls the route again. A route that resumes where a stream ended reads the id it
-/// resumes from in an argument of its own, `header("Last-Event-ID") last: Option<String>`.
+/// `EventSource` does: the caller calls the route again. Events carry no `id` and the client keeps none, so a stream
+/// does not resume where the last one ended: that is not supported yet.
 pub struct Events<T> {
     pub(crate) items: Items<T>,
 }

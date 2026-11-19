@@ -9,7 +9,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, Group, Param, Reply, Route, snake_case};
+use crate::model::{Api, Group, Param, Route, snake_case};
 use crate::path::Segment;
 use crate::{doc_attrs, route_docs, scheme_type};
 
@@ -71,9 +71,13 @@ fn signature(route: &Route) -> TokenStream {
         .params
         .iter()
         .map(|Param { name, ty, .. }| quote! { #name: #ty });
-    let output = match route.reply.value() {
+    let output = match route.reply.as_deref() {
         None => quote! { () },
-        Some(ty) => quote! { #ty },
+        Some(returned) => {
+            let ty = &returned.value;
+
+            quote! { #ty }
+        }
     };
 
     quote_spanned! {route.name.span()=>
@@ -142,20 +146,23 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
     });
     let body = route.body().map(|(param, kind)| {
         let (name, ty) = (&param.name, &param.ty);
-        let write = Ident::new(kind.method, Span::call_site());
+        // Spanned on the type, as a type that is not `Serialize` is the mistake an error names then.
+        let write = Ident::new(kind.method, ty.span());
+        let fallible = kind.fallible.then(|| quote! { ? });
 
-        quote_spanned! {ty.span()=> .#write(#name)? }
+        quote_spanned! {ty.span()=> .#write(#name) #fallible }
     });
-    let accept = route.reply.kind().map(|kind| {
-        let media_type = Ident::new(kind.accept, Span::call_site());
+    let accept = route.reply.as_deref().map(|returned| {
+        let media_type = Ident::new(returned.kind().accept, returned.served.span());
 
         quote! { .accept(::quoll::__private::client::#media_type) }
     });
-    let answer = match &route.reply {
-        Reply::None => quote_spanned! {route.span=> .none().await },
-        Reply::Some(returned) => {
+    let answer = match route.reply.as_deref() {
+        None => quote_spanned! {route.span=> .none().await },
+        Some(returned) => {
             let value = &returned.value;
-            let read = Ident::new(returned.kind.read, Span::call_site());
+            // Spanned on the type, as a type that is not `Deserialize` is the mistake an error names then.
+            let read = Ident::new(returned.kind().read, value.span());
 
             quote_spanned! {value.span()=> .#read::<#value>().await }
         }
