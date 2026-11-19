@@ -1,0 +1,13 @@
+[package]
+name = "quoll-macros"
+description = "The proc macro behind quoll, which re-exports it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[lints]
+workspace = true
