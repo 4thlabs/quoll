@@ -7,7 +7,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, Group, Method, Param, ParamKind, Reply, Route, is_vec};
+use crate::model::{Api, Group, Method, Param, Reply, Route, is_vec};
 use crate::{doc_attrs, route_docs};
 
 /// The server's code of the api, behind the feature `server` of `quoll`.
@@ -192,14 +192,7 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
         });
     }
 
-    let query_params: Vec<_> = route
-        .params
-        .iter()
-        .filter_map(|param| match &param.kind {
-            ParamKind::Query { key } => Some((param, key)),
-            ParamKind::Path | ParamKind::Body => None,
-        })
-        .collect();
+    let query_params: Vec<_> = route.query_params().collect();
     if !query_params.is_empty() {
         // An item, not a local: its name is spelled so that it hides none of the crate's types.
         let query_type = Ident::new("__QuollQuery", Span::mixed_site());

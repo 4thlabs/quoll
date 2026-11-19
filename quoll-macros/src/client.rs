@@ -9,7 +9,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, Group, Param, ParamKind, Reply, Route, snake_case};
+use crate::model::{Api, Group, Param, Reply, Route, snake_case};
 use crate::path::Segment;
 use crate::{doc_attrs, route_docs};
 
@@ -125,7 +125,7 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
         quote_spanned! {ty.span()=> .json(&#name)? }
     });
     let answer = match &route.reply {
-        Reply::None => quote_spanned! {route.span=> .none() },
+        Reply::None => quote_spanned! {route.span=> .none().await },
         Reply::Json(ty) | Reply::Created(ty) => quote_spanned! {ty.span()=> .json::<#ty>().await },
     };
 
@@ -194,14 +194,7 @@ fn path_calls(api: &Api, route: &Route) -> Vec<TokenStream> {
 
 /// The struct the query is written from, a field per key, and the call that writes it, when the route has a query.
 fn query(route: &Route) -> Option<(TokenStream, TokenStream)> {
-    let params: Vec<(&Param, &String)> = route
-        .params
-        .iter()
-        .filter_map(|param| match &param.kind {
-            ParamKind::Query { key } => Some((param, key)),
-            ParamKind::Path | ParamKind::Body => None,
-        })
-        .collect();
+    let params: Vec<(&Param, &str)> = route.query_params().collect();
     if params.is_empty() {
         return None;
     }

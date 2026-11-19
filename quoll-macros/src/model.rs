@@ -147,6 +147,14 @@ impl Route {
         self.path_order.iter().map(|&index| &self.params[index])
     }
 
+    /// The query's parameters, each with its key on the wire, in the order they are written.
+    pub(crate) fn query_params(&self) -> impl Iterator<Item = (&Param, &str)> {
+        self.params.iter().filter_map(|param| match &param.kind {
+            ParamKind::Query { key } => Some((param, key.as_str())),
+            ParamKind::Path | ParamKind::Body => None,
+        })
+    }
+
     /// The argument read from the body, if the route has one.
     pub(crate) fn body(&self) -> Option<&Param> {
         self.params

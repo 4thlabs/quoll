@@ -25,6 +25,11 @@ const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~');
 
+/// How much of a body the client reads when the body is not the route's result: an error's, which the error keeps,
+/// and a success's on a route with no result, read so that the connection serves again. Past it, the client reads no
+/// further.
+const BODY_LIMIT: usize = 64 * 1024;
+
 /// The route a request calls, which the macro writes as a `static` per route.
 pub const fn route(
     operation_id: &'static str,
@@ -59,11 +64,7 @@ impl Client {
     /// When `url` is not an `http` or `https` URL with no query, or reqwest cannot build its client.
     pub fn new(url: &str) -> Result<Self> {
         let http = reqwest::Client::builder().build().map_err(|error| {
-            Error::failed(
-                "the http client cannot be built",
-                Some(Box::new(error)),
-                StatusCode::INTERNAL_SERVER_ERROR,
-            )
+            Error::misuse("the http client cannot be built", Some(Box::new(error)))
         })?;
 
         Self::with(http.into(), url)
@@ -71,30 +72,34 @@ impl Client {
 
     /// A client of the api at `url`, sending its requests through `http`.
     ///
+    /// The messages of its errors, which a handler logs, never show the credentials of `url`: a URL that does not
+    /// parse is not shown at all.
+    ///
     /// # Errors
     ///
     /// When `url` is not an `http` or `https` URL with no query.
     pub fn with(http: ClientWithMiddleware, url: &str) -> Result<Self> {
-        let misused = |message: String, source: Option<Box<dyn StdError + Send + Sync>>| {
-            Error::failed(message, source, StatusCode::INTERNAL_SERVER_ERROR)
-        };
         let base = Url::parse(url).map_err(|error| {
-            misused(
-                format!("`{url}` is not the url of an api"),
+            Error::misuse(
+                "the url given is not the url of an api",
                 Some(Box::new(error)),
             )
         })?;
 
         if !matches!(base.scheme(), "http" | "https") {
-            return Err(misused(
-                format!("`{url}` is not the url of an api: write it as `http://host:port`"),
+            return Err(Error::misuse(
+                format!(
+                    "the url of an api is `http` or `https`, not `{}`: write it as `http://host:port`",
+                    base.scheme(),
+                ),
                 None,
             ));
         }
         if base.query().is_some() || base.fragment().is_some() {
-            return Err(misused(
+            return Err(Error::misuse(
                 format!(
-                    "`{url}` is not the url of an api: it has a query or a fragment, which each route replaces"
+                    "`{}` is not the url of an api: it has a query or a fragment, which each route replaces",
+                    redacted(&base),
                 ),
                 None,
             ));
@@ -107,11 +112,15 @@ impl Client {
 /// Shows where the api is, without the credentials a URL may hold.
 impl fmt::Debug for Client {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let base = &self.0.base;
-        let url = format!("{}{}", base.origin().ascii_serialization(), base.path());
-
-        f.debug_struct("Client").field("url", &url).finish()
+        f.debug_struct("Client")
+            .field("url", &redacted(&self.0.base))
+            .finish()
     }
+}
+
+/// An `http` or `https` URL without its credentials, its query and its fragment: `http://localhost:8080/v1`.
+fn redacted(url: &Url) -> String {
+    format!("{}{}", url.origin().ascii_serialization(), url.path())
 }
 
 /// One call of a route: its path, its query and its body, written from the route's arguments, then sent.
@@ -150,28 +159,32 @@ impl<'a> Call<'a> {
     /// When `value` is not written as text, a number or a `bool`, or is a segment a URL cannot hold: empty, `.` or
     /// `..`, which would call another route.
     pub fn segment<T: Serialize + ?Sized>(mut self, name: &str, value: &T) -> Result<Self> {
+        let operation_id = self.route.operation_id;
         let text = match serde_json::to_value(value) {
             Ok(Value::String(text)) => text,
             Ok(Value::Number(number)) => number.to_string(),
             Ok(Value::Bool(value)) => value.to_string(),
             Ok(_) | Err(_) => {
-                return Err(self.mistake(format!(
-                    "the path parameter `{name}` of `{}` is not written as text",
-                    self.route.operation_id,
-                )));
+                return Err(Error::misuse(
+                    format!(
+                        "the path parameter `{name}` of `{operation_id}` is not written as text"
+                    ),
+                    None,
+                ));
             }
         };
 
         if matches!(text.as_str(), "" | "." | "..") {
-            return Err(self.mistake(format!(
-                "the path parameter `{name}` of `{}` is `{text}`, which is not a segment of a path: it would call another route",
-                self.route.operation_id,
-            )));
+            return Err(Error::misuse(
+                format!(
+                    "the path parameter `{name}` of `{operation_id}` is `{text}`, which is not a segment of a path: it would call another route"
+                ),
+                None,
+            ));
         }
 
         self.path.push('/');
-        self.path
-            .extend(utf8_percent_encode(&text, SEGMENT).map(str::to_owned));
+        self.path.extend(utf8_percent_encode(&text, SEGMENT));
         Ok(self)
     }
 
@@ -183,13 +196,12 @@ impl<'a> Call<'a> {
     /// When serde_html_form cannot write `query`.
     pub fn query<T: Serialize>(mut self, query: &T) -> Result<Self> {
         let query = serde_html_form::to_string(query).map_err(|error| {
-            Error::failed(
+            Error::misuse(
                 format!(
                     "the query of `{}` cannot be written",
                     self.route.operation_id
                 ),
                 Some(Box::new(error)),
-                StatusCode::INTERNAL_SERVER_ERROR,
             )
         })?;
 
@@ -204,13 +216,12 @@ impl<'a> Call<'a> {
     /// When `body` cannot be written as JSON.
     pub fn json<T: Serialize + ?Sized>(mut self, body: &T) -> Result<Self> {
         let body = serde_json::to_vec(body).map_err(|error| {
-            Error::failed(
+            Error::misuse(
                 format!(
                     "the body of `{}` cannot be written as JSON",
                     self.route.operation_id
                 ),
                 Some(Box::new(error)),
-                StatusCode::INTERNAL_SERVER_ERROR,
             )
         })?;
 
@@ -218,16 +229,12 @@ impl<'a> Call<'a> {
         Ok(self)
     }
 
-    fn mistake(&self, message: String) -> Error {
-        Error::failed(message, None, StatusCode::INTERNAL_SERVER_ERROR)
-    }
-
     /// Sends the request, with the route in its extensions, and keeps an answer with a success status.
     ///
     /// # Errors
     ///
-    /// The answer with its status, its problem and its body, when its status is not a success; an error with no
-    /// status when the request got no response or the body of an error could not be read.
+    /// The answer with its status, its problem and the first 64 KiB of its body, when its status is not a success;
+    /// an error with no status when the request got no response or the body of an error could not be read.
     pub async fn send(self) -> Result<Answer> {
         let Self {
             client,
@@ -263,8 +270,7 @@ impl<'a> Call<'a> {
         }
 
         let is_problem = is_problem(response.headers());
-        let body = response
-            .bytes()
+        let body = read_up_to_limit(response)
             .await
             .map_err(|error| no_answer(route, "got an error whose body cannot be read", error))?;
         let problem = if is_problem {
@@ -273,7 +279,7 @@ impl<'a> Call<'a> {
             None
         };
 
-        Err(Error::upstream(status, problem, body.into()))
+        Err(Error::upstream(status, problem, body))
     }
 }
 
@@ -294,7 +300,8 @@ pub struct Answer {
 }
 
 impl Answer {
-    /// The body, read as the JSON of `T`: what a route returning `T` or `Created<T>` gives.
+    /// The body, read as the JSON of `T`: what a route returning `T` or `Created<T>` gives. It is read whole: it is
+    /// the route's data.
     ///
     /// # Errors
     ///
@@ -310,14 +317,33 @@ impl Answer {
             .map_err(|error| no_answer(route, "got an answer that is not its result", error))
     }
 
-    /// Nothing: what a route with no result gives, whatever the body.
+    /// Nothing: what a route with no result gives, whatever the body. A body is read and dropped, up to 64 KiB, so
+    /// that the connection serves the next call.
     ///
     /// # Errors
     ///
     /// None: a success status is all such a route answers.
-    pub fn none(self) -> Result<()> {
+    pub async fn none(self) -> Result<()> {
+        // A body past the limit, or one that fails, only costs the connection: the call itself has succeeded.
+        let _ = read_up_to_limit(self.response).await;
+
         Ok(())
     }
+}
+
+/// The body of `response`, read up to [`BODY_LIMIT`] bytes: past them, the rest is not read.
+async fn read_up_to_limit(mut response: reqwest::Response) -> reqwest::Result<Vec<u8>> {
+    let mut body = Vec::new();
+
+    while body.len() < BODY_LIMIT {
+        let Some(chunk) = response.chunk().await? else {
+            break;
+        };
+        let room = BODY_LIMIT - body.len();
+        body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+    }
+
+    Ok(body)
 }
 
 /// Whether the content type of an answer is `application/problem+json`, whatever its parameters.
@@ -458,22 +484,38 @@ mod tests {
 
     #[test]
     fn a_url_that_is_not_an_apis_is_an_error_with_no_status() {
-        for url in [
-            "",
-            "localhost:8080",
-            "ftp://localhost",
-            "http://localhost/?page=1",
-            "http://localhost/#top",
-        ] {
+        let cases = [
+            ("", "not the url of an api"),
+            ("localhost:8080", "`http` or `https`, not `localhost`"),
+            ("ftp://localhost", "`http` or `https`, not `ftp`"),
+            ("http://localhost/?page=1", "has a query or a fragment"),
+            ("http://localhost/#top", "has a query or a fragment"),
+        ];
+
+        for (url, message) in cases {
             let error = client(url).expect_err("not the url of an api");
 
             assert_eq!(error.status(), None, "{url}");
-            assert!(
-                error.to_string().contains("is not the url of an api"),
-                "{error}"
-            );
+            assert!(error.to_string().contains(message), "{url}: {error}");
         }
         assert!(client("https://example.com/v1/").is_ok());
+    }
+
+    #[test]
+    fn an_error_about_a_url_does_not_show_its_credentials() {
+        for url in [
+            "http://ana:secret@local host/",
+            "ftp://ana:secret@localhost/",
+            "http://ana:secret@localhost/?page=1",
+        ] {
+            let error = client(url).expect_err("not the url of an api");
+            let shown = format!("{error} {error:?}");
+
+            assert!(
+                !shown.contains("secret") && !shown.contains("ana"),
+                "{shown}"
+            );
+        }
     }
 
     #[test]
