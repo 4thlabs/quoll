@@ -1,0 +1,5 @@
+error: the prefix starts with `/` and has a segment: write it as "/api", or "" for none
+ --> tests/compile_fail/prefix_without_slash.rs:4:19
+  |
+4 |     pub api Api = "api";
+  |                   ^^^^^

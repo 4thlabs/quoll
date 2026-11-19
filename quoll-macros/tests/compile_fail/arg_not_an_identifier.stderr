@@ -1,0 +1,5 @@
+error: an argument is written `name: Type`
+ --> tests/compile_fail/arg_not_an_identifier.rs:7:30
+  |
+7 |         GET "/notes" => list("page": u32);
+  |                              ^^^^^^

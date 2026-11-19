@@ -1,0 +1,5 @@
+error: an attribute is not supported here: only `///` comments are kept, on an api, a group or a route
+ --> tests/compile_fail/attribute_on_api.rs:4:5
+  |
+4 |     #[derive(Clone)]
+  |     ^^^^^^^^^^^^^^^^

@@ -9,5 +9,14 @@ repository.workspace = true
 [lib]
 proc-macro = true
 
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["extra-traits"] }
+
+[dev-dependencies]
+quoll = { path = "../quoll" }
+trybuild = "1"
+
 [lints]
 workspace = true

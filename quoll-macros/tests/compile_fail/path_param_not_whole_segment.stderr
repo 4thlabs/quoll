@@ -1,0 +1,5 @@
+error: `n-{id}` mixes text and a `{name}`: a `{name}` is a whole segment, as in "/notes/{id}"
+ --> tests/compile_fail/path_param_not_whole_segment.rs:7:13
+  |
+7 |         GET "/notes/n-{id}" => get(id: i64);
+  |             ^^^^^^^^^^^^^^^

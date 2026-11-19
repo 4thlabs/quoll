@@ -1,0 +1,5 @@
+error: `Created` wraps the type of the body: write `Created<Note>`
+ --> tests/compile_fail/reply_created_bare.rs:7:51
+  |
+7 |         POST "/notes" => create(note: NewNote) -> Created;
+  |                                                   ^^^^^^^

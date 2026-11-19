@@ -12,5 +12,8 @@ repository.workspace = true
 server = []
 client = []
 
+[dependencies]
+quoll-macros = { version = "0.1.0", path = "../quoll-macros" }
+
 [lints]
 workspace = true

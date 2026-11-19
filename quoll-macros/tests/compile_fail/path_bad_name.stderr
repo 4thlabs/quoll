@@ -1,0 +1,5 @@
+error: `{note-id}` is not the name of an argument: a name is letters, digits and `_`, as in `{id}`
+ --> tests/compile_fail/path_bad_name.rs:7:13
+  |
+7 |         GET "/notes/{note-id}" => get(note_id: i64);
+  |             ^^^^^^^^^^^^^^^^^^

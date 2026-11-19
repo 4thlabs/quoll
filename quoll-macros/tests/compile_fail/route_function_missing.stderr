@@ -1,0 +1,5 @@
+error: `=>` is followed by the name of the route's function: write `=> get(id: i64)`
+ --> tests/compile_fail/route_function_missing.rs:7:25
+  |
+7 |         GET "/notes" => ;
+  |                         ^
