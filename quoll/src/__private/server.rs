@@ -13,8 +13,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::on;
 use http::request::Parts;
 use http::{HeaderValue, StatusCode, header};
-use serde::de::{self, DeserializeOwned, Visitor, value::SeqDeserializer};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::rest::error::Repr;
 use crate::rest::{Created, Error, Result};
@@ -91,14 +91,27 @@ impl Request {
             .map_err(|error| rejected(error.status(), error.body_text()))
     }
 
-    /// The pairs of the query, from which each argument is read by its key.
-    pub fn query(&self) -> Query {
+    /// The query, read as serde_html_form reads a form into `T`: the struct the macro writes for the route, a field
+    /// per key. An `Option` may be missing; an empty value, `?limit=`, is `None` for a number or a `bool` and `Some("")`
+    /// for a string. A `Vec` takes every value of its key, and is empty when the key is missing.
+    ///
+    /// # Errors
+    ///
+    /// A 400 when the query does not read as `T`, or a value is not UTF-8 once decoded.
+    pub fn query<T: DeserializeOwned>(&self) -> Result<T> {
         let query = self.parts.uri.query().unwrap_or_default();
-        let pairs = form_urlencoded::parse(query.as_bytes())
-            .map(|(key, value)| (key.into_owned(), value.into_owned()))
-            .collect();
 
-        Query(pairs)
+        // serde_html_form decodes a value that is not UTF-8 with U+FFFD in it, which would reach the handler as text
+        // the caller never sent. `&` and `=` are ASCII, so the whole query decodes as UTF-8 when each value does.
+        if percent_encoding::percent_decode_str(query)
+            .decode_utf8()
+            .is_err()
+        {
+            return Err(Error::bad_request("the query is not UTF-8 once decoded"));
+        }
+
+        serde_html_form::from_str(query)
+            .map_err(|error| Error::bad_request(format!("the query is not valid: {error}")))
     }
 
     /// The body, read as the JSON of `T`.
@@ -128,72 +141,6 @@ fn rejected(status: StatusCode, text: String) -> Error {
     }
 
     Error::internal(text)
-}
-
-/// The pairs of a query.
-pub struct Query(Vec<(String, String)>);
-
-impl Query {
-    /// The argument under `key`, read as serde_html_form reads a field: an `Option` may be missing, a `Vec` takes every
-    /// value of the key, and any other type takes one.
-    ///
-    /// # Errors
-    ///
-    /// A 400 when the key is missing and `T` needs it, or its value does not read as `T`.
-    pub fn get<T: DeserializeOwned>(&self, key: &str) -> Result<T> {
-        let mut values = self
-            .0
-            .iter()
-            .filter(|(name, _)| name == key)
-            .map(|(_, value)| value.as_str())
-            .peekable();
-
-        if values.peek().is_none() {
-            return T::deserialize(Absent).map_err(|_| {
-                Error::bad_request(format!("the query has no `{key}`, which this route needs"))
-            });
-        }
-
-        let form = form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(values.map(|value| ("value", value)))
-            .finish();
-
-        serde_html_form::from_str::<One<T>>(&form)
-            .map(|one| one.value)
-            .map_err(|error| {
-                Error::bad_request(format!("the query's `{key}` is not valid: {error}"))
-            })
-    }
-}
-
-/// The values of one key, read as the one field of a form.
-#[derive(Deserialize)]
-struct One<T> {
-    value: T,
-}
-
-/// A key the query does not have: `None` for an `Option`, empty for a `Vec`, and an error for any other type.
-struct Absent;
-
-impl<'de> de::Deserializer<'de> for Absent {
-    type Error = de::value::Error;
-
-    fn deserialize_any<V: Visitor<'de>>(self, _visitor: V) -> Result<V::Value, Self::Error> {
-        Err(de::Error::custom("missing"))
-    }
-
-    fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_none()
-    }
-
-    fn deserialize_seq<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        visitor.visit_seq(SeqDeserializer::new(std::iter::empty::<()>()))
-    }
-
-    serde::forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes byte_buf unit unit_struct
-        newtype_struct tuple tuple_struct map struct enum identifier ignored_any
-    }
 }
 
 /// A 200 with the JSON of what the handler returned.
@@ -315,7 +262,16 @@ impl IntoResponse for Error {
 mod tests {
     use super::*;
 
-    fn query(text: &str) -> Query {
+    #[derive(Debug, PartialEq, serde::Deserialize)]
+    struct Search {
+        page: u32,
+        contains: Option<String>,
+        limit: Option<u32>,
+        #[serde(rename = "tag", default)]
+        tags: Vec<String>,
+    }
+
+    fn query(text: &str) -> Result<Search> {
         let request = http::Request::builder()
             .uri(format!("/notes?{text}"))
             .body(Body::empty())
@@ -324,45 +280,55 @@ mod tests {
         Request::new(request).query()
     }
 
-    fn status_of<T: std::fmt::Debug>(result: Result<T>) -> Option<StatusCode> {
-        result.expect_err("the value is refused").status()
-    }
-
     #[test]
-    fn a_query_key_reads_as_its_type() {
-        let query = query("page=2&contains=milk%20jar&tag=a&tag=b");
+    fn a_query_reads_by_key() {
+        let search = query("page=2&contains=milk%20jar&tag=a&tag=b").expect("a valid query");
 
-        assert_eq!(query.get::<u32>("page").ok(), Some(2));
         assert_eq!(
-            query.get::<Option<String>>("contains").ok(),
-            Some(Some("milk jar".into()))
-        );
-        assert_eq!(
-            query.get::<Vec<String>>("tag").ok(),
-            Some(vec!["a".into(), "b".into()])
+            search,
+            Search {
+                page: 2,
+                contains: Some("milk jar".into()),
+                limit: None,
+                tags: vec!["a".into(), "b".into()],
+            }
         );
     }
 
     #[test]
     fn a_missing_key_is_none_for_an_option_and_empty_for_a_vec() {
-        let query = query("other=1");
+        let search = query("page=1").expect("a valid query");
 
-        assert_eq!(query.get::<Option<u32>>("page").ok(), Some(None));
-        assert_eq!(query.get::<Vec<u32>>("tag").ok(), Some(Vec::new()));
+        assert_eq!(search.contains, None);
+        assert_eq!(search.tags, Vec::<String>::new());
         assert_eq!(
-            status_of(query.get::<u32>("page")),
+            query("contains=milk")
+                .expect_err("`page` is needed")
+                .status(),
             Some(StatusCode::BAD_REQUEST)
         );
     }
 
     #[test]
-    fn a_value_that_is_not_its_type_is_a_bad_request() {
-        let query = query("page=two");
+    fn an_empty_value_is_none_for_a_number_and_empty_for_a_string() {
+        let search = query("page=1&contains=&limit=").expect("a valid query");
 
-        let error = query.get::<u32>("page").expect_err("`two` is not a number");
+        assert_eq!(search.contains.as_deref(), Some(""));
+        assert_eq!(search.limit, None);
+    }
+
+    #[test]
+    fn a_value_that_is_not_its_type_is_a_bad_request() {
+        let error = query("page=two").expect_err("`two` is not a number");
 
         assert_eq!(error.status(), Some(StatusCode::BAD_REQUEST));
-        assert!(error.to_string().contains("`page`"), "{error}");
+    }
+
+    #[test]
+    fn a_value_that_is_not_utf8_is_a_bad_request() {
+        let error = query("page=1&contains=%FF").expect_err("`%FF` is not UTF-8");
+
+        assert_eq!(error.status(), Some(StatusCode::BAD_REQUEST));
     }
 
     /// What `answer` logs for `error`, and what it answers.

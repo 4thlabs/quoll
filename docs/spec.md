@@ -84,6 +84,8 @@ An argument is matched to the string by its name, not its position. Each one is:
 | `Events<T>` | 200 | server-sent events, one JSON value each |
 | `JsonLines<T>` | 200 | one JSON value per line |
 
+On the client, a `Created<T>` or `Accepted<T>` route returns the `T`.
+
 `Events<T>` and `JsonLines<T>` are one type on both sides: the server builds one from a `Stream` of values, the client gets a `Stream` of `Result<T>`.
 
 ## Authentication

@@ -53,6 +53,10 @@ rest::api! {
             => find(name: String, contains: Option<String>, shelf: Shelf, page: u32, tags: Vec<String>) -> Found;
     }
 
+    group Health {
+        GET "/" => root() -> String;
+    }
+
     group Failures {
         GET "/fail/{kind}" => fail(kind: String);
     }
@@ -145,6 +149,14 @@ impl SearchServer for Searcher {
     }
 }
 
+struct Healthy;
+
+impl HealthServer for Healthy {
+    async fn root(&self) -> Result<String> {
+        Ok("up".into())
+    }
+}
+
 struct Failing;
 
 impl FailuresServer for Failing {
@@ -164,6 +176,7 @@ async fn serve() -> String {
     let router = Api::router(ApiServices {
         notes: App::default(),
         search: Searcher,
+        health: Healthy,
         failures: Failing,
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -296,6 +309,27 @@ async fn path_and_query_are_read_by_name() {
 }
 
 #[tokio::test]
+async fn the_root_route_is_the_prefix_itself() {
+    let url = serve().await;
+
+    let (status, _, body) = answer(reqwest::Client::new().get(&url)).await;
+
+    assert_eq!(status, StatusCode::OK, "{url}");
+    assert_eq!(body, json!("up"));
+}
+
+#[tokio::test]
+async fn an_empty_query_value_is_an_empty_string() {
+    let url = serve().await;
+
+    let request = reqwest::Client::new().get(format!("{url}/shelves/office/box?page=1&contains="));
+    let (status, _, body) = answer(request).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["contains"], "");
+}
+
+#[tokio::test]
 async fn malformed_input_answers_a_400_problem() {
     let url = serve().await;
     let http = reqwest::Client::new();
@@ -313,6 +347,14 @@ async fn malformed_input_answers_a_400_problem() {
         (
             http.get(format!("{url}/shelves/office/box")),
             "missing query key",
+        ),
+        (
+            http.get(format!("{url}/shelves/office/box?page=1&contains=%FF")),
+            "query not UTF-8",
+        ),
+        (
+            http.get(format!("{url}/shelves/office/%FF?page=1")),
+            "path not UTF-8",
         ),
         (
             http.post(format!("{url}/notes"))

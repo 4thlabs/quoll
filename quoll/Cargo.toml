@@ -11,7 +11,7 @@ repository.workspace = true
 # never links axum, nor a server reqwest.
 server = [
     "dep:axum",
-    "dep:form_urlencoded",
+    "dep:percent-encoding",
     "dep:serde",
     "dep:serde_html_form",
     "dep:serde_json",
@@ -21,8 +21,8 @@ client = []
 
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["json"], optional = true }
-form_urlencoded = { version = "1", optional = true }
 http = "1"
+percent-encoding = { version = "2", optional = true }
 quoll-macros = { version = "0.1.0", path = "../quoll-macros" }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_html_form = { version = "0.4", optional = true }

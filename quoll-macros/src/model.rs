@@ -110,6 +110,8 @@ pub(crate) struct Route {
     pub(crate) path: Vec<Segment>,
     /// The arguments, in the order they are written, each with the place it is read from.
     pub(crate) params: Vec<Param>,
+    /// The indices in `params` of the path's parameters, in the order of the path.
+    pub(crate) path_order: Vec<usize>,
     /// What the route answers.
     pub(crate) reply: Reply,
     /// The span of the route's string, where a mistake about the route as a whole is pointed.
@@ -117,11 +119,12 @@ pub(crate) struct Route {
 }
 
 impl Route {
-    /// The route's path under the api's `prefix`, its parameters written `{name}`: `/api/notes/{id}`.
+    /// The route's path under the api's `prefix`, its parameters written `{name}`: `/api/notes/{id}`. The route `"/"`
+    /// is the prefix itself, `/api`, or `/` when there is none.
     pub(crate) fn full_path(&self, prefix: &str) -> String {
         let mut path = prefix.to_owned();
 
-        if self.path.is_empty() {
+        if self.path.is_empty() && prefix.is_empty() {
             path.push('/');
         }
         for segment in &self.path {
@@ -137,6 +140,11 @@ impl Route {
         }
 
         path
+    }
+
+    /// The path's parameters, in the order of the path.
+    pub(crate) fn path_params(&self) -> impl Iterator<Item = &Param> {
+        self.path_order.iter().map(|&index| &self.params[index])
     }
 
     /// The argument read from the body, if the route has one.
@@ -222,6 +230,15 @@ impl Route {
 
         check_names_unique(&args)?;
         let params = match_args(method, &path, &template, args)?;
+        let path_order = template
+            .path_names()
+            .map(|path_name| {
+                params
+                    .iter()
+                    .position(|param| param.name.unraw() == path_name)
+                    .expect("`match_args` gave each `{name}` of the path its argument")
+            })
+            .collect();
         let reply = Reply::read(reply)?;
 
         Ok(Self {
@@ -230,6 +247,7 @@ impl Route {
             name,
             path: template.segments,
             params,
+            path_order,
             reply,
             span: path.span(),
         })
@@ -409,6 +427,11 @@ impl Reply {
     }
 }
 
+/// Whether a type is a `Vec`, which takes every value of a query key and is empty when the key is missing.
+pub(crate) fn is_vec(ty: &Type) -> bool {
+    reserved_name(ty, &["Vec"]).is_some()
+}
+
 /// The last segment of a type's path, if it is one of `names`.
 fn reserved_name<'a>(ty: &Type, names: &[&'a str]) -> Option<&'a str> {
     let Type::Path(path) = peel(ty) else {
@@ -487,6 +510,7 @@ impl Api {
         let mut groups: Vec<&Ident> = vec![&self.name];
         let mut fields: Vec<(String, &Ident)> = Vec::new();
         let mut seen: Vec<Seen> = Vec::new();
+        let mut names = Names::new(self);
 
         for group in &self.groups {
             if let Some(first) = groups
@@ -505,8 +529,15 @@ impl Api {
                         group.name
                     ),
                 ));
-            } else if let Err(error) = check_field(group, &fields) {
-                errors.push(error);
+            } else {
+                let checks = [
+                    check_field(group, &fields),
+                    check_visibility(self, group),
+                    names.add_group(group),
+                ];
+                for error in checks.into_iter().filter_map(Result::err) {
+                    errors.push(error);
+                }
             }
             groups.push(&group.name);
             fields.push((snake_case(&group.name), &group.name));
@@ -541,6 +572,93 @@ impl Api {
             }
         }
     }
+}
+
+/// The names of the items the macro writes, each defined once in the module of the contract.
+struct Names(Vec<(String, String)>);
+
+impl Names {
+    /// The api's names: its type and its services.
+    fn new(api: &Api) -> Self {
+        let name = api.name.unraw();
+
+        Self(vec![
+            (name.to_string(), format!("the type of the api `{name}`")),
+            (
+                api.services().to_string(),
+                format!("the services of the api `{name}`"),
+            ),
+        ])
+    }
+
+    /// Adds the names a group gives: its own and its server's trait.
+    ///
+    /// # Errors
+    ///
+    /// Spanned on the group's name, when one of them is already another item's.
+    fn add_group(&mut self, group: &Group) -> Result<()> {
+        let name = group.name.unraw();
+        let given = [
+            (name.to_string(), format!("the name of the group `{name}`")),
+            (
+                group.server_trait().to_string(),
+                format!("the server trait of the group `{name}`"),
+            ),
+        ];
+
+        for (item, what) in given {
+            if let Some((_, first)) = self.0.iter().find(|(taken, _)| *taken == item) {
+                return Err(Error::new(
+                    group.name.span(),
+                    format!(
+                        "`{item}`, {what}, is already {first}: rename the group, as each item the contract writes has its own name"
+                    ),
+                ));
+            }
+            self.0.push((item, what));
+        }
+
+        Ok(())
+    }
+}
+
+/// How far a visibility reaches: private, a module's, the crate's, everyone's. `pub(super)` and `pub(in path)` are
+/// counted as a module's, without comparing their paths.
+fn reach(vis: &Visibility) -> u8 {
+    match vis {
+        Visibility::Inherited => 0,
+        Visibility::Public(_) => 3,
+        Visibility::Restricted(restricted) => {
+            let path = &restricted.path;
+            if path.is_ident("crate") {
+                2
+            } else if path.is_ident("self") {
+                0
+            } else {
+                1
+            }
+        }
+    }
+}
+
+/// A group reaches as far as its api: the api's router names the group's trait.
+fn check_visibility(api: &Api, group: &Group) -> Result<()> {
+    if reach(&group.vis) >= reach(&api.vis) {
+        return Ok(());
+    }
+
+    let vis = &api.vis;
+    let vis = quote::quote!(#vis)
+        .to_string()
+        .replace("pub (", "pub(")
+        .replace(" :: ", "::");
+    Err(Error::new(
+        group.name.span(),
+        format!(
+            "the group `{}` is less visible than the api `{}`, whose router names the group's trait: write `{} group {}`",
+            group.name, api.name, vis, group.name,
+        ),
+    ))
 }
 
 /// A route already read, against which the next ones are checked.
@@ -619,7 +737,19 @@ pub(crate) fn snake_case(name: &Ident) -> String {
     snake
 }
 
+impl Api {
+    /// `ApiServices` for the api `Api`: the services of its groups.
+    pub(crate) fn services(&self) -> Ident {
+        quote::format_ident!("{}Services", self.name.unraw(), span = self.name.span())
+    }
+}
+
 impl Group {
+    /// `NotesServer` for the group `Notes`: the trait its service implements.
+    pub(crate) fn server_trait(&self) -> Ident {
+        quote::format_ident!("{}Server", self.name.unraw(), span = self.name.span())
+    }
+
     /// The group's name in snake case, as an identifier: raw when it is a keyword, `Type` giving `r#type`.
     pub(crate) fn field(&self) -> Ident {
         let snake = snake_case(&self.name);

@@ -4,12 +4,11 @@
 //! `server`. The router's code reads each argument through a helper of `quoll`, and calls the group's service.
 
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote, quote_spanned};
+use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
 use crate::doc_attrs;
-use crate::model::{Api, Group, Method, Param, ParamKind, Reply, Route};
-use crate::path::Segment;
+use crate::model::{Api, Group, Method, Param, ParamKind, Reply, Route, is_vec};
 
 /// The server's code of the api, behind the feature `server` of `quoll`.
 pub(crate) fn expand(api: &Api) -> TokenStream {
@@ -26,23 +25,13 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
     }
 }
 
-/// `NotesServer` for the group `Notes`.
-fn trait_name(group: &Group) -> Ident {
-    format_ident!("{}Server", group.name.unraw(), span = group.name.span())
-}
-
-/// `ApiServices` for the api `Api`.
-fn services_name(api: &Api) -> Ident {
-    format_ident!("{}Services", api.name.unraw(), span = api.name.span())
-}
-
 fn group_trait(api: &Api, group: &Group) -> TokenStream {
     let vis = &group.vis;
-    let name = trait_name(group);
+    let name = group.server_trait();
     let fallback = format!(" The server of the group `{}`.", group.name.unraw());
     let usage = format!(
         " Implemented by the group's service, which `{}` holds for `{}::router`.",
-        services_name(api),
+        api.services(),
         api.name.unraw(),
     );
     let mut lines = if group.docs.0.is_empty() {
@@ -106,7 +95,7 @@ fn shown_path(api: &Api, route: &Route) -> String {
 
 fn services_struct(api: &Api) -> TokenStream {
     let vis = &api.vis;
-    let name = services_name(api);
+    let name = api.services();
     let docs = format!(
         " The services of the api `{}`, a field per group, which `{}::router` serves.",
         api.name.unraw(),
@@ -119,7 +108,7 @@ fn services_struct(api: &Api) -> TokenStream {
         let docs = format!(
             " The service of the group `{}`, implementing `{}`.",
             group.name.unraw(),
-            trait_name(group),
+            group.server_trait(),
         );
 
         quote! {
@@ -141,7 +130,7 @@ fn router_fn(api: &Api) -> TokenStream {
     let Api {
         vis, name, prefix, ..
     } = api;
-    let services_type = services_name(api);
+    let services_type = api.services();
     let docs = if prefix.is_empty() {
         " An axum router serving every route of the api, each by the service of its group."
             .to_owned()
@@ -153,7 +142,7 @@ fn router_fn(api: &Api) -> TokenStream {
     let services = Ident::new("services", Span::mixed_site());
     let router = Ident::new("router", Span::mixed_site());
     let bounds = api.groups.iter().map(|group| {
-        let name = trait_name(group);
+        let name = group.server_trait();
         quote! { impl #name }
     });
     let locals: Vec<Ident> = api
@@ -195,20 +184,12 @@ fn router_fn(api: &Api) -> TokenStream {
 fn route_call(api: &Api, route: &Route) -> TokenStream {
     let service = Ident::new("service", Span::mixed_site());
     let request = Ident::new("request", Span::mixed_site());
-    let query = Ident::new("query", Span::mixed_site());
 
     let method = method_filter(route.method);
     let path = route.full_path(&api.prefix);
     let mut reads = Vec::new();
 
-    let path_params: Vec<&Param> = route
-        .path
-        .iter()
-        .filter_map(|segment| match segment {
-            Segment::Param(name) => route.params.iter().find(|param| param.name.unraw() == name),
-            Segment::Literal(_) => None,
-        })
-        .collect();
+    let path_params: Vec<&Param> = route.path_params().collect();
     if let Some(first) = path_params.first() {
         let names = path_params.iter().map(|param| &param.name);
         let types = path_params.iter().map(|param| &param.ty);
@@ -226,12 +207,26 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
         })
         .collect();
     if !query_params.is_empty() {
-        reads.push(quote! { let #query = #request.query(); });
-    }
-    for (param, key) in query_params {
-        let (name, ty) = (&param.name, &param.ty);
-        reads.push(quote_spanned! {ty.span()=>
-            let #name = #query.get::<#ty>(#key)?;
+        // An item, not a local: its name is spelled so that it hides none of the crate's types.
+        let query_type = Ident::new("__QuollQuery", Span::mixed_site());
+        let names = query_params.iter().map(|(param, _)| &param.name);
+        let fields = query_params.iter().map(|(param, key)| {
+            let (name, ty) = (&param.name, &param.ty);
+            let default = is_vec(ty).then(|| quote! { , default });
+
+            quote_spanned! {ty.span()=>
+                #[serde(rename = #key #default)]
+                #name: #ty,
+            }
+        });
+
+        reads.push(quote! {
+            #[derive(::quoll::__private::serde::Deserialize)]
+            #[serde(crate = "::quoll::__private::serde")]
+            struct #query_type {
+                #(#fields)*
+            }
+            let #query_type { #(#names),* } = #request.query::<#query_type>()?;
         });
     }
 
