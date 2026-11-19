@@ -1,4 +1,4 @@
-use quoll::rest;
+use quoll::rest::{self, Created};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]

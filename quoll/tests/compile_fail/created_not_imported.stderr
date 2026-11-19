@@ -1,0 +1,5 @@
+error[E0425]: cannot find type `Created` in this scope
+  --> tests/compile_fail/created_not_imported.rs:14:48
+   |
+14 |         POST "/notes" => create(note: Note) -> Created<Note>;
+   |                                                ^^^^^^^ not found in this scope

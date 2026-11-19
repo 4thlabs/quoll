@@ -1,0 +1,5 @@
+error: the header `X-Page` is already read by another argument: a route reads a header once
+ --> tests/compile_fail/header_twice.rs:7:65
+  |
+7 |         GET "/notes" => list(header("X-Page") page: u32, header("x-page") again: u32);
+  |                                                                 ^^^^^^^^

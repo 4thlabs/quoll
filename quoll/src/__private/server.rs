@@ -17,8 +17,11 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::__private::Given;
+use crate::__private::known::{IsBytes, IsCreated, IsForm, IsText};
 use crate::rest::error::Repr;
-use crate::rest::{Authenticate, Created, Error, Result, Scheme};
+use crate::rest::{Authenticate, Error, Result, Scheme};
+
+mod text;
 
 pub use axum::routing::MethodFilter;
 
@@ -164,17 +167,38 @@ impl Request {
     pub fn query<T: DeserializeOwned>(&self) -> Result<T> {
         let query = self.parts.uri.query().unwrap_or_default();
 
-        // serde_html_form decodes a value that is not UTF-8 with U+FFFD in it, which would reach the handler as text
-        // the caller never sent. `&` and `=` are ASCII, so the whole query decodes as UTF-8 when each value does.
-        if percent_encoding::percent_decode_str(query)
-            .decode_utf8()
-            .is_err()
-        {
-            return Err(Error::bad_request("the query is not UTF-8 once decoded"));
+        from_form(query.as_bytes(), "the query")
+    }
+
+    /// The header `name`, read from its text as a path parameter is, into `T`: an integer, a string, a unit variant,
+    /// or an `Option` of one, which is `None` when the header is missing.
+    ///
+    /// # Errors
+    ///
+    /// A 400 when the header is missing and `T` is not an `Option`, given more than once, not UTF-8, or not a `T`.
+    pub fn header<T: DeserializeOwned>(&self, name: &'static str) -> Result<T> {
+        let mut values = self.parts.headers.get_all(name).iter();
+        let value = values.next();
+
+        if values.next().is_some() {
+            return Err(Error::bad_request(format!(
+                "the header `{name}` is given more than once, and this route reads one value"
+            )));
         }
 
-        serde_html_form::from_str(query)
-            .map_err(|error| Error::bad_request(format!("the query is not valid: {error}")))
+        let text = value
+            .map(|value| std::str::from_utf8(value.as_bytes()))
+            .transpose()
+            .map_err(|_| Error::bad_request(format!("the header `{name}` is not UTF-8")))?;
+
+        text::from_text(text).map_err(|error| match error {
+            text::TextError::Missing => Error::bad_request(format!(
+                "the request has no header `{name}`, which this route takes"
+            )),
+            text::TextError::Invalid(message) => {
+                Error::bad_request(format!("the header `{name}` is not valid: {message}"))
+            }
+        })
     }
 
     /// The body, read as the JSON of `T`.
@@ -195,6 +219,133 @@ impl Request {
             Err(error) => Err(rejected(error.status(), error.body_text())),
         }
     }
+
+    /// The body, read as a form into the `T` of `Form<T>`, as the query is.
+    ///
+    /// # Errors
+    ///
+    /// A 415 when the request does not say it sends `application/x-www-form-urlencoded`, a 400 when the form does not
+    /// read as `T` or a value is not UTF-8 once decoded, and the status axum gives when the body cannot be read.
+    pub async fn form<F>(self) -> Result<F>
+    where
+        F: IsForm,
+        F::Value: DeserializeOwned,
+    {
+        self.check_content_type(FORM, false)?;
+
+        let body = self.read().await?;
+
+        from_form(&body, "the form").map(F::from_value)
+    }
+
+    /// The body, read as UTF-8 text.
+    ///
+    /// # Errors
+    ///
+    /// A 415 when the request does not say it sends `text/plain`, or names a charset other than UTF-8; a 400 when the
+    /// body is not UTF-8, and the status axum gives when the body cannot be read.
+    pub async fn text<T: IsText>(self) -> Result<T> {
+        self.check_content_type(TEXT, true)?;
+
+        let body = self.read().await?;
+        let text = String::from_utf8(body.into())
+            .map_err(|_| Error::bad_request("the body is not UTF-8 text"))?;
+
+        Ok(T::from_string(text))
+    }
+
+    /// The body, as its bytes.
+    ///
+    /// # Errors
+    ///
+    /// A 415 when the request does not say it sends `application/octet-stream`, and the status axum gives when the
+    /// body cannot be read.
+    pub async fn bytes<B: IsBytes>(self) -> Result<B> {
+        self.check_content_type(BYTES, false)?;
+
+        let body = self.read().await?;
+
+        Ok(B::from_vec(body.into()))
+    }
+
+    /// A 415 unless the request's content type is `expected`, whatever its parameters, but a charset other than UTF-8
+    /// when `utf8` is set. A request without the content type it is read as is refused, as axum refuses one sent as
+    /// JSON: a browser posts a form to another site with one of the three types it sends without asking, and only
+    /// the route that reads that type takes it.
+    fn check_content_type(&self, expected: &str, utf8: bool) -> Result<()> {
+        let refused = || {
+            let charset = if utf8 { "; charset=utf-8" } else { "" };
+
+            Error::new(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                format!(
+                    "the body is read as `{expected}`: send it with `Content-Type: {expected}{charset}`"
+                ),
+            )
+        };
+        let Some(value) = self
+            .parts
+            .headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+        else {
+            return Err(refused());
+        };
+        let mut parts = value.split(';');
+        let essence = parts.next().unwrap_or_default().trim();
+
+        if !essence.eq_ignore_ascii_case(expected) {
+            return Err(refused());
+        }
+
+        let other_charset = parts
+            .filter_map(|param| param.split_once('='))
+            .any(|(name, value)| {
+                let value = value.trim().trim_matches('"');
+
+                name.trim().eq_ignore_ascii_case("charset") && !value.eq_ignore_ascii_case("utf-8")
+            });
+        if utf8 && other_charset {
+            return Err(refused());
+        }
+
+        Ok(())
+    }
+
+    /// The whole body, within the limit axum sets.
+    async fn read(self) -> Result<axum::body::Bytes> {
+        let request = http::Request::from_parts(self.parts, self.body);
+
+        axum::body::Bytes::from_request(request, &())
+            .await
+            .map_err(|error| rejected(error.status(), error.body_text()))
+    }
+}
+
+/// The content type of a form.
+const FORM: &str = "application/x-www-form-urlencoded";
+
+/// The content type of text.
+const TEXT: &str = "text/plain";
+
+/// The content type of bytes.
+const BYTES: &str = "application/octet-stream";
+
+/// `form`, the query or a body, read as serde_html_form reads a form into `T`; `what` names it in the errors.
+fn from_form<T: DeserializeOwned>(form: &[u8], what: &str) -> Result<T> {
+    // serde_html_form decodes a value that is not UTF-8 with U+FFFD in it, which would reach the handler as text the
+    // caller never sent. `&` and `=` are ASCII, so the whole form decodes as UTF-8 when each value does.
+    if percent_encoding::percent_decode(form)
+        .decode_utf8()
+        .is_err()
+    {
+        return Err(Error::bad_request(format!(
+            "{what} is not UTF-8 once decoded"
+        )));
+    }
+
+    serde_html_form::from_bytes(form)
+        .map_err(|error| Error::bad_request(format!("{what} is not valid: {error}")))
 }
 
 /// What axum refused in a request: sent when the request is at fault, logged when it is not.
@@ -220,8 +371,12 @@ pub fn ok<T: Serialize>(result: Result<T>) -> Result<Response> {
 /// # Errors
 ///
 /// The handler's error, or a 500 when its value cannot be written as JSON or its location is not a header's value.
-pub fn created<T: Serialize>(result: Result<Created<T>>) -> Result<Response> {
-    let Created { location, value } = result?;
+pub fn created<C>(result: Result<C>) -> Result<Response>
+where
+    C: IsCreated,
+    C::Value: Serialize,
+{
+    let (location, value) = result?.into_parts();
     let mut response = json(StatusCode::CREATED, &value)?;
 
     if let Some(location) = location {

@@ -2,7 +2,7 @@
 //!
 //! The crate passes quoll's features on: the server depends on it with `server`, a client with `client`.
 
-use quoll::rest;
+use quoll::rest::{self, Created};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

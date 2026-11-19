@@ -4,7 +4,7 @@ rest::api! {
     pub api Api = "/api";
 
     pub group Notes {
-        POST "/token" => token(login: Form<Login>);
+        GET "/notes" => search(query filter: Option<NoteFilter>);
     }
 }
 

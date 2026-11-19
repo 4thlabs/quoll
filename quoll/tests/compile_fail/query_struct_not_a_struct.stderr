@@ -1,0 +1,5 @@
+error: the query struct `filter` is read with a field per key, which this type is not: write a struct of your own, as `query filter: NoteFilter`
+ --> tests/compile_fail/query_struct_not_a_struct.rs:7:46
+  |
+7 |         GET "/notes" => search(query filter: Option<NoteFilter>);
+  |                                              ^^^^^^^^^^^^^^^^^^

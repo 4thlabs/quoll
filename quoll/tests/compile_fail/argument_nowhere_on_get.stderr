@@ -1,4 +1,4 @@
-error: `page` is neither a `{page}` of the path nor a `key={page}` of the query, and GET takes no body: write it in the path or the query
+error: `page` is neither a `{page}` of the path nor a `key={page}` of the query, and GET takes no body: write it in the path or the query, or as `header("Name") page: Type`
  --> tests/compile_fail/argument_nowhere_on_get.rs:7:30
   |
 7 |         GET "/notes" => list(page: u32);

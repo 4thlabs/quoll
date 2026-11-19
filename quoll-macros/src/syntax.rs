@@ -20,7 +20,9 @@ use syn::{
     punctuated::Punctuated,
 };
 
-use crate::model::{Api, Auth, Docs, ErrorList, Group, Method, Route, RouteDecl, Scheme};
+use crate::model::{
+    Api, ArgDecl, Auth, Docs, ErrorList, Group, Method, Route, RouteDecl, Scheme, Source,
+};
 
 /// What the macro is given: one api, with its groups.
 #[derive(Debug)]
@@ -218,7 +220,7 @@ fn parse_route(input: ParseStream, group_auth: Option<Auth>) -> Result<Result<Ro
             method,
             path,
             name,
-            args: args.into_iter().map(|arg| (arg.name, arg.ty)).collect(),
+            args: args.into_iter().map(|Arg(arg)| arg).collect(),
             reply,
             auth,
         },
@@ -248,27 +250,56 @@ fn parse_method(input: ParseStream) -> Result<Method> {
     Method::from_name(&ident.to_string()).ok_or_else(|| Error::new(ident.span(), expected()))
 }
 
-struct Arg {
-    name: Ident,
-    ty: Type,
-}
+/// An argument: `name: Type`, `query name: Type` for a query struct, or `header("Name") name: Type`.
+struct Arg(ArgDecl);
 
 impl Parse for Arg {
     fn parse(input: ParseStream) -> Result<Self> {
-        let name: Ident = input
+        let expected = "an argument is written `name: Type`, `query name: Type` or `header(\"Name\") name: Type`";
+        let first: Ident = input
             .parse()
-            .map_err(|error| Error::new(error.span(), "an argument is written `name: Type`"))?;
+            .map_err(|error| Error::new(error.span(), expected))?;
+
+        let (source, name) = if first == "query" && input.peek(Ident) {
+            (Source::Query(first.span()), input.parse::<Ident>()?)
+        } else if first == "header" && input.peek(syn::token::Paren) {
+            let content;
+            parenthesized!(content in input);
+            let header: LitStr = content.parse().map_err(|error| {
+                Error::new(
+                    error.span(),
+                    "a header is named by a string: write `header(\"Last-Event-ID\") last: Option<String>`",
+                )
+            })?;
+            if !content.is_empty() {
+                return Err(content.error(
+                    "a header takes its name alone: write `header(\"Last-Event-ID\") last: Option<String>`",
+                ));
+            }
+            let name: Ident = input.parse().map_err(|error| {
+                Error::new(
+                    error.span(),
+                    "`header(\"...\")` is followed by the argument's name: write `header(\"Last-Event-ID\") last: Option<String>`",
+                )
+            })?;
+
+            (Source::Header(header), name)
+        } else {
+            (Source::Named, first)
+        };
+
         input.parse::<Token![:]>().map_err(|error| {
             Error::new(
                 error.span(),
-                format!("expected `:` after `{name}`: an argument is written `name: Type`"),
+                format!("expected `:` after `{name}`: {expected}"),
             )
         })?;
 
-        Ok(Self {
+        Ok(Self(ArgDecl {
+            source,
             name,
             ty: input.parse()?,
-        })
+        }))
     }
 }
 
@@ -398,7 +429,7 @@ mod tests {
     use quote::{ToTokens, quote};
 
     use super::*;
-    use crate::model::{ParamKind, Reply};
+    use crate::model::{BodyKind, ParamKind, Reply};
     use crate::path::Segment;
 
     fn parse(tokens: proc_macro2::TokenStream) -> Result<Api> {
@@ -472,10 +503,13 @@ mod tests {
         assert!(matches!(&list.reply, Reply::Json(ty) if text(ty) == "Vec < Note >"));
 
         let create = &notes.routes[2];
-        assert!(matches!(&create.reply, Reply::Created(ty) if text(ty) == "Note"));
+        assert!(matches!(&create.reply, Reply::Created(ty) if text(ty) == "Created < Note >"));
+        assert_eq!(create.reply.value().map(text), Some("Note".into()));
         assert_eq!(
-            create.body().map(|body| body.name.to_string()),
-            Some("note".into())
+            create
+                .body()
+                .map(|(body, kind)| (body.name.to_string(), kind)),
+            Some(("note".into(), BodyKind::Json))
         );
 
         let token = &api.groups[0].routes[0];
@@ -505,7 +539,7 @@ mod tests {
         assert_eq!(
             kinds,
             [
-                ("patch".into(), ParamKind::Body),
+                ("patch".into(), ParamKind::Body(BodyKind::Json)),
                 (
                     "force".into(),
                     ParamKind::Query {
@@ -542,6 +576,229 @@ mod tests {
             pub group G { GET "/x" => f(a: A); }
         });
         assert!(get[0].contains("GET takes no body"), "{get:?}");
+    }
+
+    #[test]
+    fn a_query_struct_a_header_and_each_body_are_read() {
+        let api = parse(quote! {
+            pub api Api = "/api";
+            pub group Notes {
+                GET "/notes/{id}"
+                    => search(header("Last-Event-ID") last: Option<String>, query filter: NoteFilter, id: i64);
+                POST "/token" => token(login: Form<Login>);
+                PUT "/notes/{id}/text" => write(id: i64, text: Text);
+                PUT "/notes/{id}/file" => upload(id: i64, file: rest::Bytes);
+                POST "/notes" => create(note: NewNote);
+            }
+        })
+        .unwrap();
+        let routes = &api.groups[0].routes;
+
+        let kinds: Vec<_> = routes[0]
+            .params
+            .iter()
+            .map(|param| (param.name.to_string(), param.kind.clone()))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                (
+                    "last".into(),
+                    ParamKind::Header {
+                        name: "Last-Event-ID".into()
+                    }
+                ),
+                ("filter".into(), ParamKind::QueryStruct),
+                ("id".into(), ParamKind::Path),
+            ]
+        );
+        assert_eq!(
+            routes[0].query_struct().map(|param| param.name.to_string()),
+            Some("filter".into())
+        );
+        assert!(routes[0].body().is_none());
+
+        let bodies: Vec<_> = routes[1..]
+            .iter()
+            .map(|route| route.body().map(|(_, kind)| kind))
+            .collect();
+        assert_eq!(
+            bodies,
+            [
+                Some(BodyKind::Form),
+                Some(BodyKind::Text),
+                Some(BodyKind::Bytes),
+                Some(BodyKind::Json),
+            ]
+        );
+    }
+
+    #[test]
+    fn query_and_header_are_names_too() {
+        let api = parse(quote! {
+            pub api Api = "/api";
+            pub group G {
+                GET "/a?q={query}&h={header}" => a(query: String, header: String);
+            }
+        })
+        .unwrap();
+
+        let kinds: Vec<_> = api.groups[0].routes[0]
+            .params
+            .iter()
+            .map(|param| param.kind.clone())
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ParamKind::Query { key: "q".into() },
+                ParamKind::Query { key: "h".into() },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_query_struct_is_the_whole_query() {
+        let with_string = messages(quote! {
+            pub api Api = "/api";
+            pub group G { GET "/a?page={page}" => a(page: u32, query filter: Filter); }
+        });
+        assert!(
+            with_string[0].contains("the route's string has a query too"),
+            "{with_string:?}"
+        );
+
+        let two = messages(quote! {
+            pub api Api = "/api";
+            pub group G { GET "/a" => a(query filter: Filter, query more: More); }
+        });
+        assert!(
+            two[0].contains("one query struct, and `filter` is already it"),
+            "{two:?}"
+        );
+
+        for ty in [
+            quote! { Option<Filter> },
+            quote! { &Filter },
+            quote! { (A, B) },
+            quote! { Vec<Filter> },
+        ] {
+            let all = messages(quote! {
+                pub api Api = "/api";
+                pub group G { GET "/a" => a(query filter: #ty); }
+            });
+            assert!(all[0].contains("a field per key"), "{ty}: {all:?}");
+        }
+    }
+
+    #[test]
+    fn a_header_has_a_name_http_takes_and_is_read_once() {
+        for name in ["", "X Page", "X-Pagé", "X:Page", "X-Page\n"] {
+            let all = messages(quote! {
+                pub api Api = "/api";
+                pub group G { GET "/a" => a(header(#name) page: u32); }
+            });
+            assert!(
+                all[0].contains("is not the name of a header"),
+                "{name:?}: {all:?}"
+            );
+        }
+
+        let twice = messages(quote! {
+            pub api Api = "/api";
+            pub group G { GET "/a" => a(header("X-Page") page: u32, header("x-page") other: u32); }
+        });
+        assert!(
+            twice[0].contains("the header `X-Page` is already read"),
+            "{twice:?}"
+        );
+
+        let token = parse(quote! {
+            pub api Api = "/api";
+            pub group G { GET "/a" => a(header("X-Weird_Name.v2!") page: u32); }
+        });
+        assert!(token.is_ok());
+    }
+
+    #[test]
+    fn a_header_is_read_from_text_or_is_an_option_of_it() {
+        for ty in [
+            quote! { Vec<String> },
+            quote! { Option<Vec<String>> },
+            quote! { &str },
+            quote! { Text },
+        ] {
+            let all = messages(quote! {
+                pub api Api = "/api";
+                pub group G { GET "/a" => a(header("X-Tags") tags: #ty); }
+            });
+            assert!(
+                all[0].contains("the header `X-Tags` is read from text"),
+                "{ty}: {all:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_argument_comes_from_one_place() {
+        let header = messages(quote! {
+            pub api Api = "/api";
+            pub group G { GET "/a/{id}" => a(header("X-Id") id: i64); }
+        });
+        assert!(
+            header[0].contains("`id` is a header, and the path's `{id}` names it too"),
+            "{header:?}"
+        );
+
+        let query = messages(quote! {
+            pub api Api = "/api";
+            pub group G { GET "/a?page={page}" => a(query page: Filter); }
+        });
+        assert!(
+            query[0]
+                .contains("`page` is the query struct, and the query's `page={page}` names it too"),
+            "{query:?}"
+        );
+    }
+
+    #[test]
+    fn a_path_parameter_is_none_of_the_types_read_otherwise() {
+        for ty in [
+            quote! { HashMap<String, String> },
+            quote! { std::collections::BTreeSet<i64> },
+            quote! { Text },
+            quote! { Form<Login> },
+        ] {
+            let all = messages(quote! {
+                pub api Api = "/api";
+                pub group G { GET "/a/{id}" => a(id: #ty); }
+            });
+            assert!(all[0].contains("read from text"), "{ty}: {all:?}");
+        }
+    }
+
+    #[test]
+    fn a_header_is_named_by_a_string_alone() {
+        let ident = messages(quote! {
+            pub api Api = "/api";
+            pub group G { GET "/a" => a(header(X) page: u32); }
+        });
+        assert!(ident[0].contains("named by a string"), "{ident:?}");
+
+        let more = messages(quote! {
+            pub api Api = "/api";
+            pub group G { GET "/a" => a(header("X", "Y") page: u32); }
+        });
+        assert!(more[0].contains("takes its name alone"), "{more:?}");
+
+        let nameless = messages(quote! {
+            pub api Api = "/api";
+            pub group G { GET "/a" => a(header("X"): u32); }
+        });
+        assert!(
+            nameless[0].contains("followed by the argument's name"),
+            "{nameless:?}"
+        );
     }
 
     #[test]
@@ -599,7 +856,9 @@ mod tests {
             pub group G { POST "/x" => f(note: NewNote) -> #created; }
         })
         .unwrap();
-        assert!(matches!(&api.groups[0].routes[0].reply, Reply::Created(ty) if text(ty) == "Note"));
+        let reply = &api.groups[0].routes[0].reply;
+        assert!(matches!(reply, Reply::Created(_)));
+        assert_eq!(reply.value().map(text), Some("Note".into()));
 
         let events = group(quote! { Events<Note> });
         let all = messages(quote! {
@@ -609,11 +868,15 @@ mod tests {
         assert!(all[0].contains("`Events` is not supported"), "{all:?}");
 
         let form = group(quote! { Form<Login> });
-        let all = messages(quote! {
+        let api = parse(quote! {
             pub api Api = "/api";
             pub group G { POST "/x" => f(login: #form); }
-        });
-        assert!(all[0].contains("`Form` is not supported"), "{all:?}");
+        })
+        .unwrap();
+        assert!(matches!(
+            api.groups[0].routes[0].body(),
+            Some((_, BodyKind::Form))
+        ));
 
         let unit = group(quote! { () });
         let all = messages(quote! {

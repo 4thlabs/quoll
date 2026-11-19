@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use quoll::rest::{self, Error, Result};
+use quoll::rest::{self, Created, Error, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
