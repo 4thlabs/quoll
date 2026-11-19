@@ -15,6 +15,8 @@ use serde_json::Value;
 
 use crate::rest::{Error, Problem, Result, Route};
 
+mod text;
+
 pub use http::Method;
 
 /// What a path parameter keeps as it is: the unreserved characters of RFC 3986. Every other byte is escaped, `/`, `?`
@@ -156,22 +158,15 @@ impl<'a> Call<'a> {
     ///
     /// # Errors
     ///
-    /// When `value` is not written as text, a number or a `bool`, or is a segment a URL cannot hold: empty, `.` or
+    /// When `value` is not written as one piece of text, as a number, a string or a unit variant are, or is a segment a URL cannot hold: empty, `.` or
     /// `..`, which would call another route.
     pub fn segment<T: Serialize + ?Sized>(mut self, name: &str, value: &T) -> Result<Self> {
         let operation_id = self.route.operation_id;
-        let text = match serde_json::to_value(value) {
-            Ok(Value::String(text)) => text,
-            Ok(Value::Number(number)) => number.to_string(),
-            Ok(Value::Bool(value)) => value.to_string(),
-            Ok(_) | Err(_) => {
-                return Err(Error::misuse(
-                    format!(
-                        "the path parameter `{name}` of `{operation_id}` is not written as text"
-                    ),
-                    None,
-                ));
-            }
+        let Some(text) = text::to_text(value) else {
+            return Err(Error::misuse(
+                format!("the path parameter `{name}` of `{operation_id}` is not written as text"),
+                None,
+            ));
         };
 
         if matches!(text.as_str(), "" | "." | "..") {
@@ -425,6 +420,16 @@ mod tests {
         }
 
         assert_eq!(segment(&-3_i64).expect("a number"), "/-3");
+        assert_eq!(
+            segment(&u128::MAX).expect("a u128"),
+            format!("/{}", u128::MAX)
+        );
+        assert_eq!(
+            segment(&i128::MIN).expect("an i128"),
+            format!("/{}", i128::MIN)
+        );
+        assert_eq!(segment(&1.5_f64).expect("a float"), "/1.5");
+        assert_eq!(segment(&'é').expect("a char"), "/%C3%A9");
         assert_eq!(segment(&true).expect("a bool"), "/true");
         assert_eq!(
             segment(&Shelf::KitchenTop).expect("a unit variant"),
