@@ -1,0 +1,11 @@
+error: `{note}` stands where the route `Notes::get` has `{id}`: paths that agree up to a parameter give it one name, `{id}`
+ --> tests/compile_fail/path_param_renamed.rs:8:16
+  |
+8 |         DELETE "/notes/{note}"      => remove(note: i64);
+  |                ^^^^^^^^^^^^^^^
+
+error: `{key}` stands where the route `Notes::get` has `{id}`: paths that agree up to a parameter give it one name, `{id}`
+ --> tests/compile_fail/path_param_renamed.rs:9:16
+  |
+9 |         GET    "/notes/{key}/files" => files(key: i64);
+  |                ^^^^^^^^^^^^^^^^^^^^

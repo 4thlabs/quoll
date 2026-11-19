@@ -117,6 +117,28 @@ pub(crate) struct Route {
 }
 
 impl Route {
+    /// The route's path under the api's `prefix`, its parameters written `{name}`: `/api/notes/{id}`.
+    pub(crate) fn full_path(&self, prefix: &str) -> String {
+        let mut path = prefix.to_owned();
+
+        if self.path.is_empty() {
+            path.push('/');
+        }
+        for segment in &self.path {
+            path.push('/');
+            match segment {
+                Segment::Literal(text) => path.push_str(text),
+                Segment::Param(name) => {
+                    path.push('{');
+                    path.push_str(name);
+                    path.push('}');
+                }
+            }
+        }
+
+        path
+    }
+
     /// The argument read from the body, if the route has one.
     pub(crate) fn body(&self) -> Option<&Param> {
         self.params
@@ -463,7 +485,8 @@ impl Api {
 
     fn check_unique(&self, errors: &mut ErrorList) {
         let mut groups: Vec<&Ident> = vec![&self.name];
-        let mut seen: Vec<(Method, Vec<Segment>, &Ident, &Ident)> = Vec::new();
+        let mut fields: Vec<(String, &Ident)> = Vec::new();
+        let mut seen: Vec<Seen> = Vec::new();
 
         for group in &self.groups {
             if let Some(first) = groups
@@ -482,8 +505,11 @@ impl Api {
                         group.name
                     ),
                 ));
+            } else if let Err(error) = check_field(group, &fields) {
+                errors.push(error);
             }
             groups.push(&group.name);
+            fields.push((snake_case(&group.name), &group.name));
 
             let mut functions: Vec<&Ident> = Vec::new();
             for route in &group.routes {
@@ -498,23 +524,138 @@ impl Api {
                 }
                 functions.push(&route.name);
 
-                let shape = shape_of(&route.path);
-                let same = |(method, path, ..): &&(Method, Vec<Segment>, &Ident, &Ident)| {
-                    *method == route.method && *path == shape
+                let current = Seen {
+                    method: route.method,
+                    shape: shape_of(&route.path),
+                    path: &route.path,
+                    group: &group.name,
+                    route: &route.name,
                 };
-                if let Some((.., first_group, first)) = seen.iter().find(same) {
-                    errors.push(Error::new(
-                        route.span,
-                        format!(
-                            "{} on this path is already the route `{first_group}::{first}`: a method and a path belong to one route",
-                            route.method.as_str()
-                        ),
-                    ));
+                if let Some(error) = seen
+                    .iter()
+                    .find_map(|first| first.clash(&current, route.span))
+                {
+                    errors.push(error);
                 }
-                seen.push((route.method, shape, &group.name, &route.name));
+                seen.push(current);
             }
         }
     }
+}
+
+/// A route already read, against which the next ones are checked.
+struct Seen<'a> {
+    method: Method,
+    shape: Vec<Segment>,
+    path: &'a [Segment],
+    group: &'a Ident,
+    route: &'a Ident,
+}
+
+impl Seen<'_> {
+    /// The error when `next`, whose string is at `span`, cannot sit beside this route in one router: the same method
+    /// and path, or a parameter named otherwise where both paths have one.
+    fn clash(&self, next: &Seen<'_>, span: Span) -> Option<Error> {
+        let Self { group, route, .. } = self;
+
+        if self.method == next.method && self.shape == next.shape {
+            return Some(Error::new(
+                span,
+                format!(
+                    "{} on this path is already the route `{group}::{route}`: a method and a path belong to one route",
+                    next.method.as_str()
+                ),
+            ));
+        }
+
+        let (first, other) = renamed_param(self.path, next.path)?;
+        Some(Error::new(
+            span,
+            format!(
+                "`{{{other}}}` stands where the route `{group}::{route}` has `{{{first}}}`: paths that agree up to a parameter give it one name, `{{{first}}}`"
+            ),
+        ))
+    }
+}
+
+/// The names of the first parameter that two paths, alike up to it, name in two ways.
+fn renamed_param<'a>(first: &'a [Segment], next: &'a [Segment]) -> Option<(&'a str, &'a str)> {
+    for pair in first.iter().zip(next) {
+        match pair {
+            (Segment::Literal(a), Segment::Literal(b)) if a == b => {}
+            (Segment::Param(a), Segment::Param(b)) if a == b => {}
+            (Segment::Param(a), Segment::Param(b)) => return Some((a, b)),
+            _ => return None,
+        }
+    }
+
+    None
+}
+
+/// The field of `ApiServices` and the client's method a group becomes: its name in snake case, `AdminTools` giving
+/// `admin_tools`.
+pub(crate) fn snake_case(name: &Ident) -> String {
+    let name = name.unraw().to_string();
+    let chars: Vec<char> = name.chars().collect();
+    let mut snake = String::with_capacity(name.len() + 4);
+
+    for (index, &c) in chars.iter().enumerate() {
+        if !c.is_uppercase() {
+            snake.push(c);
+            continue;
+        }
+
+        let previous = index.checked_sub(1).map(|before| chars[before]);
+        let next = chars.get(index + 1);
+        let after_word = previous.is_some_and(|p| p.is_lowercase() || p.is_ascii_digit());
+        let ends_capitals =
+            previous.is_some_and(char::is_uppercase) && next.is_some_and(|n| n.is_lowercase());
+        if after_word || ends_capitals {
+            snake.push('_');
+        }
+        snake.extend(c.to_lowercase());
+    }
+
+    snake
+}
+
+impl Group {
+    /// The group's name in snake case, as an identifier: raw when it is a keyword, `Type` giving `r#type`.
+    pub(crate) fn field(&self) -> Ident {
+        let snake = snake_case(&self.name);
+        let span = self.name.span();
+
+        match syn::parse_str::<Ident>(&snake) {
+            Ok(_) => Ident::new(&snake, span),
+            Err(_) => Ident::new_raw(&snake, span),
+        }
+    }
+}
+
+/// Checks that the group's snake-case name is a field that no group before it takes.
+fn check_field(group: &Group, fields: &[(String, &Ident)]) -> Result<()> {
+    let snake = snake_case(&group.name);
+
+    if matches!(snake.as_str(), "self" | "super" | "crate") {
+        return Err(Error::new(
+            group.name.span(),
+            format!(
+                "the group `{}` becomes the field `{snake}`, which Rust does not allow even as a raw name: rename the group",
+                group.name
+            ),
+        ));
+    }
+    if let Some((_, first)) = fields.iter().find(|(field, _)| *field == snake) {
+        return Err(Error::new(
+            group.name.span(),
+            format!(
+                "the groups `{first}` and `{}` both become the field `{snake}`: rename one of them",
+                group.name
+            ),
+        ));
+    }
+
+    Ok(())
 }
 
 /// Whether two names are one, `r#get` and `get` being the same function.
@@ -583,5 +724,64 @@ impl ErrorList {
     /// Ends with the errors gathered: `Ok` when there are none.
     pub(crate) fn finish(self) -> Result<()> {
         self.0.map_or(Ok(()), Err)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proc_macro2::Span;
+
+    use super::*;
+
+    fn ident(name: &str) -> Ident {
+        syn::parse_str(name).expect("a valid identifier")
+    }
+
+    #[test]
+    fn a_group_name_becomes_its_snake_case_field() {
+        let cases = [
+            ("Notes", "notes"),
+            ("AdminTools", "admin_tools"),
+            ("HTTPServer", "http_server"),
+            ("AdminV2", "admin_v2"),
+            ("V2Admin", "v2_admin"),
+            ("Admin_Tools", "admin_tools"),
+            ("r#Notes", "notes"),
+        ];
+
+        for (name, field) in cases {
+            assert_eq!(snake_case(&ident(name)), field, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_field_that_is_a_keyword_is_raw() {
+        let group = Group {
+            docs: Docs::default(),
+            vis: Visibility::Inherited,
+            name: Ident::new("Type", Span::call_site()),
+            routes: Vec::new(),
+        };
+
+        assert_eq!(group.field().to_string(), "r#type");
+    }
+
+    #[test]
+    fn a_parameter_renamed_where_paths_agree_is_found() {
+        let literal = |text: &str| Segment::Literal(text.into());
+        let param = |name: &str| Segment::Param(name.into());
+
+        let notes_id = [literal("notes"), param("id")];
+        let notes_key_files = [literal("notes"), param("key"), literal("files")];
+        let tags_key = [literal("tags"), param("key")];
+        let notes_new = [literal("notes"), literal("new")];
+
+        assert_eq!(
+            renamed_param(&notes_id, &notes_key_files),
+            Some(("id", "key"))
+        );
+        assert_eq!(renamed_param(&notes_id, &tags_key), None);
+        assert_eq!(renamed_param(&notes_id, &notes_new), None);
+        assert_eq!(renamed_param(&notes_id, &notes_id), None);
     }
 }

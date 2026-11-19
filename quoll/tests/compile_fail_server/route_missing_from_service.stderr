@@ -1,0 +1,8 @@
+error[E0046]: not all trait items implemented, missing: `remove`
+  --> tests/compile_fail_server/route_missing_from_service.rs:14:1
+   |
+ 8 |         DELETE "/notes/{id}" => remove(id: i64);
+   |                                 ------ `remove` from trait
+...
+14 | impl NotesServer for App {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^ missing `remove` in implementation

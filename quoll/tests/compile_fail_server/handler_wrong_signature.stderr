@@ -1,0 +1,18 @@
+error[E0053]: method `get` has an incompatible type for trait
+  --> tests/compile_fail_server/handler_wrong_signature.rs:14:29
+   |
+14 |     async fn get(&self, id: String) -> Result<String> {
+   |                             ^^^^^^ expected `i64`, found `String`
+   |
+note: type in trait
+  --> tests/compile_fail_server/handler_wrong_signature.rs:7:38
+   |
+ 7 |         GET "/notes/{id}" => get(id: i64) -> String;
+   |                                      ^^^
+   = note: expected signature `fn(&App, i64) -> impl Future<Output = Result<String, quoll::rest::Error>>`
+              found signature `fn(&App, String) -> impl Future<Output = Result<String, quoll::rest::Error>>`
+help: change the parameter type to match the trait
+   |
+14 -     async fn get(&self, id: String) -> Result<String> {
+14 +     async fn get(&self, id: i64) -> Result<String> {
+   |
