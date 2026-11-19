@@ -55,6 +55,26 @@ struct Problem {
     code: u32,
 }
 
+/// Labels, which a client may leave out and always receives: two schemas.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct Labels {
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+/// A shelf of labels, which differs as they do.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct Shelf {
+    labels: Labels,
+}
+
+/// A search, whose `token` the query scheme reads.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct Find {
+    q: String,
+    token: Option<String>,
+}
+
 mod archive {
     /// A note of the archive, named as the other `Note`.
     #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -130,6 +150,15 @@ rest::api! {
         POST "/notes/text"   => text(body: Text) -> Problem;
         GET  "/lines"        => lines() -> JsonLines<String>;
         HEAD "/files/{name}" => exists(name: String);
+        PUT  "/shelves"      => shelve(shelf: Shelf) -> Shelf;
+        /**
+         * Labels, one block.
+         *
+         * Read back as written.
+         */
+        PUT  "/labels"       => label(labels: Labels) -> Labels;
+        #[auth(Token)]
+        GET  "/find"         => find(query find: Find) -> Vec<String>;
     }
 
     #[auth(Key | crate::auth::Hmac, scopes("admin", "audit"))]
@@ -526,4 +555,66 @@ fn each_route_takes_any_of_its_schemes() {
     );
     assert!(operation("/api/public", "get").get("security").is_none());
     assert!(operation("/api/token", "post").get("security").is_none());
+}
+
+#[test]
+fn a_type_read_and_written_alike_has_one_schema() {
+    let schemas = &DOCUMENT["components"]["schemas"];
+
+    assert!(schemas.get("Note").is_some());
+    assert!(schemas.get("NoteInput").is_none() && schemas.get("NoteOutput").is_none());
+    assert_eq!(
+        operation("/api/notes", "post")["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/Note"
+    );
+}
+
+#[test]
+fn a_type_read_and_written_otherwise_has_both_schemas() {
+    let schemas = &DOCUMENT["components"]["schemas"];
+
+    // A client may leave out what it always receives.
+    assert_eq!(schemas["LabelsInput"].get("required"), None);
+    assert_eq!(schemas["LabelsOutput"]["required"], json!(["tags"]));
+    assert!(schemas.get("Labels").is_none());
+
+    // A type that holds one of them is split too, each side referring to its own.
+    assert_eq!(
+        schemas["ShelfInput"]["properties"]["labels"]["$ref"],
+        "#/components/schemas/LabelsInput"
+    );
+    assert_eq!(
+        schemas["ShelfOutput"]["properties"]["labels"]["$ref"],
+        "#/components/schemas/LabelsOutput"
+    );
+
+    let shelve = operation("/api/shelves", "put");
+    assert_eq!(
+        shelve["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ShelfInput"
+    );
+    assert_eq!(
+        shelve["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ShelfOutput"
+    );
+}
+
+#[test]
+fn a_block_comment_is_split_into_paragraphs() {
+    let label = operation("/api/labels", "put");
+
+    assert_eq!(label["summary"], "Labels, one block.");
+    assert_eq!(label["description"], "Read back as written.");
+}
+
+#[test]
+fn the_key_of_a_query_scheme_is_no_parameter() {
+    assert_eq!(
+        operation("/api/find", "get")["parameters"],
+        json!([{ "name": "q", "in": "query", "required": true, "schema": { "type": "string" } }])
+    );
+    assert_eq!(
+        operation("/api/find", "get")["security"],
+        json!([{ "Token": [] }])
+    );
 }

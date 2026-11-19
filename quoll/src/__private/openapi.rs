@@ -4,11 +4,13 @@
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 
-use schemars::generate::SchemaSettings;
+use schemars::generate::{Contract, SchemaSettings};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde_json::{Map, Value, json};
 
 use crate::rest::openapi::{Document, SecurityScheme};
+
+mod schemas;
 
 /// The version of OpenAPI the document follows.
 const OPENAPI: &str = "3.1.1";
@@ -16,26 +18,37 @@ const OPENAPI: &str = "3.1.1";
 /// Writes the schema of a type the contract names, adding the schemas it refers to to the generator's.
 pub type SchemaFn = fn(&mut SchemaGenerator) -> Schema;
 
+/// A type the OpenAPI document describes, which has a schema.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` has no schema, which the OpenAPI document of the contract describes it with",
+    label = "no `schemars::JsonSchema`",
+    note = "derive `schemars::JsonSchema` for `{Self}`, or write `#[openapi(none)]` on the api of a contract that is only called, which has no document"
+)]
+pub trait Documented: JsonSchema {}
+
+impl<T: JsonSchema + ?Sized> Documented for T {}
+
 /// The schema of `T`: a reference to its schema under `components/schemas` for a struct or an enum.
-pub fn schema<T: ?Sized + JsonSchema>(generator: &mut SchemaGenerator) -> Schema {
+pub fn schema<T: ?Sized + Documented>(generator: &mut SchemaGenerator) -> Schema {
     generator.subschema_for::<T>()
 }
 
 /// The schema of `T` itself, never a reference: a query struct's, whose fields are unfolded.
-pub fn inline<T: ?Sized + JsonSchema>(generator: &mut SchemaGenerator) -> Schema {
+pub fn inline<T: ?Sized + Documented>(generator: &mut SchemaGenerator) -> Schema {
     T::json_schema(generator)
 }
 
 /// An api, as `rest::api!` describes it.
 #[derive(Debug)]
 pub struct Api {
-    /// The `///` lines of the api, as rustc gives them.
+    /// The `///` comments of the api, as rustc gives them.
     pub docs: &'static [&'static str],
     /// The name of the contract's crate.
     pub title: &'static str,
     /// The version of the contract's crate.
     pub version: &'static str,
-    /// The schemes the contract declares, in the order it writes them.
+    /// Each scheme of the api once: the ones the contract declares, in the order it writes them, then the others its
+    /// routes take.
     pub schemes: &'static [SchemeRef],
     /// The groups, in the order the contract writes them.
     pub groups: &'static [Group],
@@ -46,7 +59,7 @@ pub struct Api {
 pub struct Group {
     /// Its name.
     pub name: &'static str,
-    /// Its `///` lines.
+    /// Its `///` comments.
     pub docs: &'static [&'static str],
     /// Its routes, in the order the contract writes them.
     pub routes: &'static [Route],
@@ -61,7 +74,7 @@ pub struct Route {
     pub method: &'static str,
     /// The path under the api's prefix, without the query: `/api/notes/{id}`.
     pub path: &'static str,
-    /// Its `///` lines.
+    /// Its `///` comments.
     pub docs: &'static [&'static str],
     /// Its parameters, in the order the contract writes them; the body is not one.
     pub params: &'static [Param],
@@ -137,8 +150,8 @@ pub enum Reply {
 /// The authentication of a route.
 #[derive(Debug)]
 pub struct Auth {
-    /// The schemes it takes, any of them.
-    pub schemes: &'static [SchemeRef],
+    /// The schemes it takes, any of them, as indices in the api's.
+    pub schemes: &'static [usize],
     /// Whether a request with no credential passes.
     pub optional: bool,
     /// The scopes it needs, all of them.
@@ -173,6 +186,33 @@ pub const fn same_name(first: &str, second: &str) -> bool {
     true
 }
 
+/// Whether `name` is the key of a component, as OpenAPI requires a scheme's name to be: ASCII letters, digits, `.`,
+/// `-` and `_`, at least one of them. A compile-time check of the api refuses another.
+pub const fn is_component_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+
+    let mut i = 0;
+    while i < bytes.len() {
+        if !(bytes[i].is_ascii_alphanumeric() || matches!(bytes[i], b'.' | b'-' | b'_')) {
+            return false;
+        }
+        i += 1;
+    }
+
+    true
+}
+
+/// `scheme` with the `///` comments of a declared scheme as its description, when it has any.
+pub fn described(scheme: SecurityScheme, docs: &[&str]) -> SecurityScheme {
+    match text(docs) {
+        Some(description) => scheme.with_description(description),
+        None => scheme,
+    }
+}
+
 /// The responses of errors a route may list, under `components/responses`: their name, status and description.
 const ERRORS: &[(&str, &str, &str)] = &[
     (
@@ -197,23 +237,27 @@ const ERRORS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// Where a schema is used: what a client sends, which the server reads, or what it receives, which the server writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    /// A parameter or a body, described as serde reads it.
+    Read,
+    /// A result or the item of a stream, described as serde writes it.
+    Written,
+}
+
 /// The document of `api`.
 pub fn document(api: &Api) -> Document {
-    let mut settings = SchemaSettings::draft2020_12();
-    settings.definitions_path = "/components/schemas".into();
-    settings.meta_schema = None;
-
     let mut builder = Builder {
-        generator: settings.into_generator(),
-        schemes: Map::new(),
+        read: generator(Contract::Deserialize),
+        written: generator(Contract::Serialize),
+        schemes: api
+            .schemes
+            .iter()
+            .map(|scheme| (scheme.openapi)())
+            .collect(),
         errors: BTreeSet::new(),
     };
-    // Registered first, so that the problem keeps its name and a type of the contract's named `Problem` takes another.
-    builder.generator.subschema_for::<ProblemSchema>();
-
-    for scheme in api.schemes {
-        builder.scheme(scheme);
-    }
 
     let mut paths = Map::new();
     let mut tags = Vec::new();
@@ -227,7 +271,7 @@ pub fn document(api: &Api) -> Document {
         tags.push(Value::Object(tag));
 
         for route in group.routes {
-            let operation = builder.operation(group, route);
+            let operation = builder.operation(api, group, route);
             let item = paths
                 .entry(route.path)
                 .or_insert_with(|| Value::Object(Map::new()));
@@ -245,41 +289,67 @@ pub fn document(api: &Api) -> Document {
         info.insert("description".into(), description.into());
     }
 
+    let mut components = builder.responses_and_schemes(api);
+    let mut paths = Value::Object(paths);
+    let schemas = schemas::Schemas {
+        read: builder.read.take_definitions(true),
+        written: builder.written.take_definitions(true),
+    }
+    .gather(&mut paths, &components);
+    components.insert("schemas".into(), Value::Object(schemas));
+
     let mut document = Map::new();
     document.insert("openapi".into(), OPENAPI.into());
     document.insert("info".into(), Value::Object(info));
     if !tags.is_empty() {
         document.insert("tags".into(), Value::Array(tags));
     }
-    document.insert("paths".into(), Value::Object(paths));
-    document.insert("components".into(), builder.components());
+    document.insert("paths".into(), paths);
+    document.insert("components".into(), Value::Object(components));
 
     Document::new(Value::Object(document))
 }
 
+/// A generator of schemas under `components/schemas`, for `contract`, with the problem of errors registered first, so
+/// that it keeps its name and a type of the contract's named `Problem` takes another.
+fn generator(contract: Contract) -> SchemaGenerator {
+    let mut settings = SchemaSettings::draft2020_12();
+    settings.definitions_path = "/components/schemas".into();
+    settings.meta_schema = None;
+    settings.contract = contract;
+
+    let mut generator = settings.into_generator();
+    generator.subschema_for::<ProblemSchema>();
+
+    generator
+}
+
 /// What the document gathers as it describes the routes.
 struct Builder {
-    /// The schemas of the contract's types.
-    generator: SchemaGenerator,
-    /// The schemes, by name.
-    schemes: Map<String, Value>,
+    /// The schemas of what clients send.
+    read: SchemaGenerator,
+    /// The schemas of what clients receive.
+    written: SchemaGenerator,
+    /// The api's schemes, as they describe themselves, in the order of the api's.
+    schemes: Vec<SecurityScheme>,
     /// The names of the responses of errors some route lists.
     errors: BTreeSet<&'static str>,
 }
 
 impl Builder {
-    fn scheme(&mut self, scheme: &SchemeRef) {
-        if self.schemes.contains_key(scheme.name) {
-            return;
+    /// The schema of a type used on `side`. Both generators see every type, in one order, so that they give each type
+    /// one name.
+    fn schema(&mut self, schema: SchemaFn, side: Side) -> Value {
+        let read = schema(&mut self.read).to_value();
+        let written = schema(&mut self.written).to_value();
+
+        match side {
+            Side::Read => read,
+            Side::Written => written,
         }
-
-        let described = serde_json::to_value((scheme.openapi)())
-            .expect("a security scheme serializes as a map of strings");
-
-        self.schemes.insert(scheme.name.into(), described);
     }
 
-    fn operation(&mut self, group: &Group, route: &Route) -> Value {
+    fn operation(&mut self, api: &Api, group: &Group, route: &Route) -> Value {
         let mut operation = Map::new();
         operation.insert("operationId".into(), route.id.into());
         operation.insert("tags".into(), json!([group.name]));
@@ -292,11 +362,7 @@ impl Builder {
             operation.insert("description".into(), description.into());
         }
 
-        let parameters: Vec<Value> = route
-            .params
-            .iter()
-            .flat_map(|param| self.parameters(param))
-            .collect();
+        let parameters = self.parameters(route);
         if !parameters.is_empty() {
             operation.insert("parameters".into(), Value::Array(parameters));
         }
@@ -308,14 +374,40 @@ impl Builder {
         operation.insert("responses".into(), self.responses(route));
 
         if let Some(auth) = &route.auth {
-            operation.insert("security".into(), self.security(auth));
+            operation.insert("security".into(), security(api, auth));
         }
 
         Value::Object(operation)
     }
 
-    fn parameters(&mut self, param: &Param) -> Vec<Value> {
-        let schema = (param.schema)(&mut self.generator).to_value();
+    /// The route's parameters, each name of each place once: a query struct may name a key the route's string names
+    /// too, which reads the same key. The key of a query scheme is the credential, which `security` describes.
+    fn parameters(&mut self, route: &Route) -> Vec<Value> {
+        let credentials: BTreeSet<String> = self
+            .route_schemes(route)
+            .filter_map(SecurityScheme::query_key)
+            .map(str::to_owned)
+            .collect();
+        let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+        let mut parameters = Vec::new();
+
+        for param in route.params {
+            for parameter in self.parameter(param) {
+                let name = parameter["name"].as_str().unwrap_or_default().to_owned();
+                let place = parameter["in"].as_str().unwrap_or_default().to_owned();
+                let credential = place == "query" && credentials.contains(&name);
+
+                if !credential && seen.insert((name, place)) {
+                    parameters.push(parameter);
+                }
+            }
+        }
+
+        parameters
+    }
+
+    fn parameter(&mut self, param: &Param) -> Vec<Value> {
+        let schema = self.schema(param.schema, Side::Read);
         let place = match param.place {
             Place::Path => "path",
             Place::Query => "query",
@@ -335,12 +427,12 @@ impl Builder {
         match body {
             Body::Json(schema) => json!({
                 "required": true,
-                "content": { "application/json": { "schema": schema(&mut self.generator) } },
+                "content": { "application/json": { "schema": self.schema(*schema, Side::Read) } },
             }),
             Body::Form(schema) => json!({
                 "required": true,
                 "content": {
-                    "application/x-www-form-urlencoded": { "schema": schema(&mut self.generator) },
+                    "application/x-www-form-urlencoded": { "schema": self.schema(*schema, Side::Read) },
                 },
             }),
             Body::Text => json!({
@@ -361,16 +453,12 @@ impl Builder {
         responses.insert(status.into(), success);
 
         let reads = !route.params.is_empty() || route.body.is_some();
-        let forbidden = route.auth.as_ref().is_some_and(|auth| {
-            let changes = !matches!(route.method, "get" | "head" | "options");
-
-            !auth.scopes.is_empty()
-                || (changes
-                    && auth
-                        .schemes
-                        .iter()
-                        .any(|scheme| (scheme.openapi)().is_cookie()))
-        });
+        let changes = !matches!(route.method, "get" | "head" | "options");
+        let cookie = self.route_schemes(route).any(SecurityScheme::is_cookie);
+        let forbidden = route
+            .auth
+            .as_ref()
+            .is_some_and(|auth| !auth.scopes.is_empty() || (changes && cookie));
         let listed = [reads, route.auth.is_some(), forbidden, route.body.is_some()];
 
         for ((name, status, _), listed) in ERRORS.iter().zip(listed) {
@@ -380,38 +468,36 @@ impl Builder {
             }
         }
 
-        self.errors.insert("Problem");
         responses.insert("default".into(), reference("Problem"));
 
         Value::Object(responses)
     }
 
-    fn success(&mut self, reply: &Reply) -> (&'static str, Value) {
-        let json = |schema: Schema| json!({ "application/json": { "schema": schema } });
+    /// The schemes the route takes, as they describe themselves.
+    fn route_schemes(&self, route: &Route) -> impl Iterator<Item = &SecurityScheme> {
+        route
+            .auth
+            .iter()
+            .flat_map(|auth| auth.schemes)
+            .filter_map(|&index| self.schemes.get(index))
+    }
 
+    fn success(&mut self, reply: &Reply) -> (&'static str, Value) {
         match reply {
             Reply::Empty => ("204", json!({ "description": "No Content" })),
-            Reply::Json(schema) => (
-                "200",
-                json!({ "description": "OK", "content": json(schema(&mut self.generator)) }),
-            ),
-            Reply::Created(schema) => (
-                "201",
-                json!({
-                    "description": "Created",
-                    "headers": {
-                        "Location": {
-                            "description": "Where the created resource is read, when the server says.",
-                            "schema": { "type": "string", "format": "uri-reference" },
-                        },
+            Reply::Json(schema) => ("200", self.json("OK", *schema)),
+            Reply::Created(schema) => {
+                let mut created = self.json("Created", *schema);
+                created["headers"] = json!({
+                    "Location": {
+                        "description": "Where the created resource is read, when the server says.",
+                        "schema": { "type": "string", "format": "uri-reference" },
                     },
-                    "content": json(schema(&mut self.generator)),
-                }),
-            ),
-            Reply::Accepted(schema) => (
-                "202",
-                json!({ "description": "Accepted", "content": json(schema(&mut self.generator)) }),
-            ),
+                });
+
+                ("201", created)
+            }
+            Reply::Accepted(schema) => ("202", self.json("Accepted", *schema)),
             Reply::Text => (
                 "200",
                 json!({
@@ -433,7 +519,7 @@ impl Builder {
                     "content": {
                         "text/event-stream": {
                             "schema": { "type": "string" },
-                            "x-item": item(&mut self.generator),
+                            "x-item": self.schema(*item, Side::Written),
                         },
                     },
                 }),
@@ -445,7 +531,7 @@ impl Builder {
                     "content": {
                         "application/jsonl": {
                             "schema": { "type": "string" },
-                            "x-item": item(&mut self.generator),
+                            "x-item": self.schema(*item, Side::Written),
                         },
                     },
                 }),
@@ -453,31 +539,21 @@ impl Builder {
         }
     }
 
-    fn security(&mut self, auth: &Auth) -> Value {
-        let mut requirements = Vec::new();
-
-        for scheme in auth.schemes {
-            self.scheme(scheme);
-            requirements.push(json!({ scheme.name: auth.scopes }));
-        }
-        if auth.optional {
-            requirements.push(json!({}));
-        }
-
-        Value::Array(requirements)
+    /// A JSON result, `description`, of the type `schema` describes.
+    fn json(&mut self, description: &str, schema: SchemaFn) -> Value {
+        json!({
+            "description": description,
+            "content": { "application/json": { "schema": self.schema(schema, Side::Written) } },
+        })
     }
 
-    fn components(mut self) -> Value {
-        let mut components = Map::new();
-        components.insert(
-            "schemas".into(),
-            Value::Object(self.generator.take_definitions(true)),
-        );
-
+    /// The components but the schemas: the responses of errors the routes list, and the api's schemes.
+    fn responses_and_schemes(&self, api: &Api) -> Map<String, Value> {
         let problem = json!({
             "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } },
         });
         let mut responses = Map::new();
+
         for (name, _, description) in ERRORS {
             if !self.errors.contains(name) {
                 continue;
@@ -494,22 +570,45 @@ impl Builder {
             }
             responses.insert((*name).into(), response);
         }
-        if self.errors.contains("Problem") {
-            responses.insert(
-                "Problem".into(),
-                json!({ "description": "An error, as an RFC 9457 problem.", "content": problem }),
-            );
+        // Every route lists it as its `default`.
+        responses.insert(
+            "Problem".into(),
+            json!({ "description": "An error, as an RFC 9457 problem.", "content": problem }),
+        );
+
+        let mut components = Map::new();
+        components.insert("responses".into(), Value::Object(responses));
+
+        let mut schemes = Map::new();
+        for (scheme, described) in api.schemes.iter().zip(&self.schemes) {
+            let described = serde_json::to_value(described)
+                .expect("a security scheme serializes as a map of strings");
+
+            schemes.entry(scheme.name).or_insert(described);
         }
-        if !responses.is_empty() {
-            components.insert("responses".into(), Value::Object(responses));
+        if !schemes.is_empty() {
+            components.insert("securitySchemes".into(), Value::Object(schemes));
         }
 
-        if !self.schemes.is_empty() {
-            components.insert("securitySchemes".into(), Value::Object(self.schemes));
-        }
-
-        Value::Object(components)
+        components
     }
+}
+
+/// The requirements of a route: any of its schemes, each with all its scopes, or none at all when its credential is
+/// optional.
+fn security(api: &Api, auth: &Auth) -> Value {
+    let mut requirements: Vec<Value> = auth
+        .schemes
+        .iter()
+        .filter_map(|&index| api.schemes.get(index))
+        .map(|scheme| json!({ scheme.name: auth.scopes }))
+        .collect();
+
+    if auth.optional {
+        requirements.push(json!({}));
+    }
+
+    Value::Array(requirements)
 }
 
 /// A reference to a response under `components/responses`.
@@ -526,10 +625,12 @@ fn unfold(name: &str, schema: Value) -> Vec<Value> {
             .all(|key| schema.get(key).is_none());
     let properties = schema.get("properties").and_then(Value::as_object);
     let (true, Some(properties)) = (plain, properties) else {
+        // Not required: an empty query is what the server reads when every field may be missing, and what it refuses
+        // otherwise, which the schema says.
         return vec![json!({
             "name": name,
             "in": "query",
-            "required": true,
+            "required": false,
             "style": "form",
             "explode": true,
             "schema": schema,
@@ -607,37 +708,74 @@ fn not_null(mut schema: Value) -> Value {
     schema
 }
 
-/// The `///` lines, as rustc gives them, without the space each starts with.
-fn lines(docs: &[&'static str]) -> Vec<&'static str> {
-    docs.iter()
-        .map(|line| line.strip_prefix(' ').unwrap_or(line))
+/// The lines of `///` comments, as rustc gives them: an attribute per `///` line, or one holding the lines of a
+/// `/** */` block, with the `*` its lines may start with, all without the indentation they share, as rustdoc reads
+/// them.
+fn lines(docs: &[&str]) -> Vec<String> {
+    let lines: Vec<&str> = docs.iter().flat_map(|doc| block_lines(doc)).collect();
+    let indent = lines
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start().len())
+        .min()
+        .unwrap_or(0);
+
+    lines
+        .iter()
+        .map(|line| line.get(indent..).unwrap_or_default().trim_end().to_owned())
         .collect()
 }
 
-/// The text of the `///` lines, if there is any.
-fn text(docs: &[&'static str]) -> Option<String> {
+/// The lines of one attribute: itself for a `///` line; for a `/** */` block, its lines, without the `*` that starts
+/// each of them, when each does.
+fn block_lines(doc: &str) -> Vec<&str> {
+    let lines: Vec<&str> = doc.split('\n').collect();
+    let starred = lines.len() > 1
+        && lines
+            .iter()
+            .filter(|line| !line.trim().is_empty())
+            .all(|line| line.trim_start().starts_with('*'));
+
+    if !starred {
+        return lines;
+    }
+
+    lines
+        .into_iter()
+        .map(|line| match line.trim_start().strip_prefix('*') {
+            Some(rest) => rest,
+            None => line,
+        })
+        .collect()
+}
+
+/// The text of the `///` comments, if there is any.
+fn text(docs: &[&str]) -> Option<String> {
     let text = lines(docs).join("\n");
     let text = text.trim();
 
     (!text.is_empty()).then(|| text.to_owned())
 }
 
-/// The summary of the `///` lines, their first paragraph on one line, and their description, the paragraphs after it.
-fn summary(docs: &[&'static str]) -> (Option<String>, Option<String>) {
+/// The summary of the `///` comments, their first paragraph on one line, and their description, the paragraphs after
+/// it.
+fn summary(docs: &[&str]) -> (Option<String>, Option<String>) {
     let lines = lines(docs);
     let start = lines
         .iter()
-        .position(|line| !line.trim().is_empty())
+        .position(|line| !line.is_empty())
         .unwrap_or(lines.len());
     let lines = &lines[start..];
     let end = lines
         .iter()
-        .position(|line| line.trim().is_empty())
+        .position(String::is_empty)
         .unwrap_or(lines.len());
 
     let summary: Vec<&str> = lines[..end].iter().map(|line| line.trim()).collect();
     let summary = (!summary.is_empty()).then(|| summary.join(" "));
-    let description = text(&lines[end..]);
+    let rest = lines[end..].join("\n");
+    let rest = rest.trim();
+    let description = (!rest.is_empty()).then(|| rest.to_owned());
 
     (summary, description)
 }
@@ -710,6 +848,46 @@ mod tests {
     }
 
     #[test]
+    fn a_block_comment_is_split_into_its_lines() {
+        let block = "\n     Notes.\n\n     A page at a time:\n\n         sorted.\n     ";
+
+        assert_eq!(
+            summary(&[block]),
+            (
+                Some("Notes.".into()),
+                Some("A page at a time:\n\n    sorted.".into())
+            )
+        );
+        assert_eq!(
+            summary(&["\n     * Notes.\n     *\n     * More.\n     "]),
+            (Some("Notes.".into()), Some("More.".into()))
+        );
+        assert_eq!(
+            summary(&[" * One.", " * Two."]),
+            (Some("* One. * Two.".into()), None),
+            "a list of `///` lines keeps its stars"
+        );
+        assert_eq!(text(&[" One.", " Two."]), Some("One.\nTwo.".into()));
+    }
+
+    #[test]
+    fn a_declared_scheme_is_described_by_its_comments() {
+        let scheme = described(
+            SecurityScheme::header("X-Api-Key"),
+            &[" The key.", " Of scripts."],
+        );
+
+        assert_eq!(
+            scheme,
+            SecurityScheme::header("X-Api-Key").with_description("The key.\nOf scripts.")
+        );
+        assert_eq!(
+            described(SecurityScheme::bearer(), &[]),
+            SecurityScheme::bearer()
+        );
+    }
+
+    #[test]
     fn a_parameter_is_never_null() {
         assert_eq!(
             not_null(json!({ "type": ["string", "null"] })),
@@ -754,14 +932,14 @@ mod tests {
     }
 
     #[test]
-    fn a_query_struct_that_is_not_plain_is_one_form() {
+    fn a_query_struct_that_is_not_plain_is_one_form_that_may_be_missing() {
         let schema =
             json!({ "type": "object", "allOf": [{ "$ref": "#/components/schemas/Page" }] });
 
         assert_eq!(
             unfold("filter", schema.clone()),
             vec![
-                json!({ "name": "filter", "in": "query", "required": true, "style": "form", "explode": true, "schema": schema })
+                json!({ "name": "filter", "in": "query", "required": false, "style": "form", "explode": true, "schema": schema })
             ]
         );
     }
@@ -771,5 +949,15 @@ mod tests {
         assert!(same_name("Key", "Key"));
         assert!(!same_name("Key", "Keys"));
         assert!(!same_name("Key", "key"));
+    }
+
+    #[test]
+    fn a_component_name_is_letters_digits_and_three_signs() {
+        for name in ["Bearer", "api_key", "Key-2", "v1.Key"] {
+            assert!(is_component_name(name), "{name}");
+        }
+        for name in ["", "Api Key", "Key/2", "clé", "Key#"] {
+            assert!(!is_component_name(name), "{name}");
+        }
     }
 }

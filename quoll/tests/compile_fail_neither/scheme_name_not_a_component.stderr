@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: the scheme `Signature` has a `NAME` that cannot name it in the OpenAPI document: write it with ASCII letters, digits, `.`, `-` and `_`
+  --> tests/compile_fail_neither/scheme_name_not_a_component.rs:25:12
+   |
+25 |     #[auth(Signature)]
+   |            ^^^^^^^^^ evaluation of `Api::openapi::_` failed here

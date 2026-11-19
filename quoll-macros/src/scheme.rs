@@ -74,7 +74,7 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
             quote! { openid(#url) },
         ),
     };
-    let description = description(&docs.0).map(|text| quote! { .with_description(#text) });
+    let comments = &docs.0;
 
     let mut lines = docs.0.clone();
     if !lines.is_empty() {
@@ -110,7 +110,10 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
             }
 
             fn openapi() -> ::quoll::rest::openapi::SecurityScheme {
-                ::quoll::rest::openapi::SecurityScheme::#openapi #description
+                ::quoll::__private::openapi::described(
+                    ::quoll::rest::openapi::SecurityScheme::#openapi,
+                    &[#(#comments),*],
+                )
             }
         }
 
@@ -118,19 +121,6 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
             const PLACE: ::quoll::__private::auth::Place = ::quoll::__private::auth::Place::#place;
         }
     }
-}
-
-/// The description of a declared scheme in the OpenAPI document: its comments, without the space rustc gives each
-/// line.
-fn description(lines: &[String]) -> Option<String> {
-    let lines: Vec<&str> = lines
-        .iter()
-        .map(|line| line.strip_prefix(' ').unwrap_or(line))
-        .collect();
-    let text = lines.join("\n");
-    let text = text.trim();
-
-    (!text.is_empty()).then(|| text.to_owned())
 }
 
 /// The type of a scheme, by which the generated code names it: the crate's, `::quoll::rest::Bearer`, or the path the

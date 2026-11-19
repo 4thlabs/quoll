@@ -1,0 +1,5 @@
+error: the operation id `note_tags_list` of the route `list` of `NoteTags` is already the one of the route `tags_list` of `Note`: rename one of them, as an operation id, the group in snake case and the function, names one route of the api
+  --> tests/compile_fail/operation_id_twice.rs:11:24
+   |
+11 |         GET "/tags" => list() -> Vec<String>;
+   |                        ^^^^

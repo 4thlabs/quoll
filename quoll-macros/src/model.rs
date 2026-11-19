@@ -873,6 +873,7 @@ impl Api {
         let mut fields: Vec<(String, &Ident)> = Vec::new();
         let mut seen: Vec<Seen> = Vec::new();
         let mut names = Names::new(self);
+        let mut ids: Vec<(String, &Ident, &Ident)> = Vec::new();
 
         for scheme in &self.schemes {
             if let Err(error) = names.add_scheme(scheme) {
@@ -881,6 +882,10 @@ impl Api {
         }
 
         for group in &self.groups {
+            // A group given twice is one mistake, which its routes' operation ids do not repeat.
+            let repeated = groups[1..]
+                .iter()
+                .any(|first| same_name(first, &group.name));
             if let Some(first) = groups
                 .iter()
                 .position(|first| same_name(first, &group.name))
@@ -920,6 +925,21 @@ impl Api {
                             group.name, route.name
                         ),
                     ));
+                } else if !repeated {
+                    let id = route.operation_id(group);
+
+                    if let Some((_, first_group, first_route)) =
+                        ids.iter().find(|(first, ..)| *first == id)
+                    {
+                        errors.push(Error::new(
+                            route.name.span(),
+                            format!(
+                                "the operation id `{id}` of the route `{}` of `{}` is already the one of the route `{first_route}` of `{first_group}`: rename one of them, as an operation id, the group in snake case and the function, names one route of the api",
+                                route.name, group.name
+                            ),
+                        ));
+                    }
+                    ids.push((id, &group.name, &route.name));
                 }
                 functions.push(&route.name);
 

@@ -178,12 +178,19 @@ impl ProxyServer for Proxying {
     }
 }
 
-/// A URL where nothing answers: a port bound, then freed.
+/// A URL where nothing answers: a port kept bound, whose every connection is closed at once, with no response. A port
+/// freed instead could be taken by another test, which would answer.
 async fn dead_url() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("a port is free");
     let address = listener.local_addr().expect("the listener has an address");
+
+    tokio::spawn(async move {
+        while let Ok((connection, _)) = listener.accept().await {
+            drop(connection);
+        }
+    });
 
     format!("http://{address}")
 }

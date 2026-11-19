@@ -2,4 +2,4 @@ error[E0080]: evaluation panicked: the schemes `Bearer` and `Token` of the api `
   --> tests/compile_fail_neither/scheme_name_twice.rs:25:21
    |
 25 |     #[auth(Bearer | Token)]
-   |                     ^^^^^ evaluation of `_` failed here
+   |                     ^^^^^ evaluation of `Api::openapi::_` failed here
