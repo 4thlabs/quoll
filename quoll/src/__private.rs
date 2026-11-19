@@ -32,7 +32,8 @@ pub mod server;
 pub mod client;
 
 /// The route a request calls, which the macro writes as a `static` per route: the client puts it in the extensions of
-/// each request, the server in those of each answer.
+/// each request, the server in those of each answer. `streams` says that its result is a stream, `Events` or
+/// `JsonLines`, whose body lasts as long as the server sends it.
 pub const fn route(
     operation_id: &'static str,
     group: &'static str,
@@ -40,6 +41,7 @@ pub const fn route(
     path: &'static str,
     schemes: &'static [&'static str],
     scheme_types: &'static [TypeId],
+    streams: bool,
 ) -> Route {
     Route {
         operation_id,
@@ -48,6 +50,7 @@ pub const fn route(
         path,
         schemes,
         scheme_types,
+        streams,
     }
 }
 

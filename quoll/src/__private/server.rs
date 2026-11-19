@@ -893,6 +893,7 @@ mod tests {
             "/upstream",
             &[],
             &[],
+            false,
         );
 
         let router = Group::new(Router::new(), ())

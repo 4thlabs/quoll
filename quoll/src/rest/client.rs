@@ -1,6 +1,41 @@
 //! Middleware for the client a contract becomes: reqwest-middleware's, which a `ClientWithMiddleware` given to
-//! `Api::client_with` runs on each request.
+//! `Api::client_with` runs on each request, in the order they are added: the first sees the request first, and the
+//! answer last.
+//!
+//! The helpers of authentication, [`bearer`], [`bearer_from`], [`basic`] and [`key`], and the closure of
+//! [`on_request`], act on the requests of a contract to its api's own origin only: a request that carries no
+//! [`Route`], as one sent to another host through the same `ClientWithMiddleware`, and a hop of [`redirects`] to
+//! another origin, go as they are. [`redirects`] comes before all of them, so that they run on each hop.
+//!
+//! An order that works, from the first to the last:
+//!
+//! ```no_run
+//! # use std::time::Duration;
+//! # use quoll::rest;
+//! # rest::api! {
+//! #     pub api Api = "/api";
+//! #     #[auth(Bearer)]
+//! #     pub group Notes { GET "/notes/{id}" => get(id: i64) -> String; }
+//! # }
+//! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+//! let http = reqwest::Client::builder()
+//!     .redirect(reqwest::redirect::Policy::none())
+//!     .build()?;
+//! let http = reqwest_middleware::ClientBuilder::new(http)
+//!     .with(rest::client::trace()) // one span around the whole call
+//!     .with(rest::client::user_agent("notes-cli/0.1"))
+//!     .with(rest::client::request_id()) // before `retry`: one id for every attempt
+//!     .with(rest::client::retry(3))
+//!     .with(rest::client::timeout(Duration::from_secs(10))) // per attempt and per hop
+//!     .with(rest::client::redirects(5)) // before every credential: each hop is given it, or not
+//!     .with(rest::client::bearer("mF_9.B5f-4.1JqM"))
+//!     .build();
+//! let api = Api::client_with(http, "http://localhost:8080")?;
+//! # Ok(())
+//! # }
+//! ```
 
+use std::borrow::Cow;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -13,12 +48,26 @@ use reqwest::{Request, Response};
 use reqwest_middleware::{Middleware, Next};
 
 use crate::__private::auth::{Declared, Place};
+use crate::__private::client::ApiOrigin;
 use crate::rest::auth::is_b64token;
 use crate::rest::{Basic, Bearer, Route, Scheme};
 
-/// Sends `Authorization: Bearer <token>` on the requests whose [`Route`] takes [`Bearer`], and on no other: a route
-/// with `#[auth(none)]`, or a request that did not come from the client of a contract and carries no `Route`, as one
-/// sent to another host through the same `ClientWithMiddleware`, never gets the token.
+mod redirects;
+mod request;
+mod retry;
+mod token;
+mod trace;
+
+pub use redirects::redirects;
+pub use request::{on_request, request_id, timeout, user_agent};
+pub use retry::retry;
+pub use token::{TokenSource, bearer_from};
+pub use trace::trace;
+
+/// Sends `Authorization: Bearer <token>` on the requests whose [`Route`] takes [`Bearer`], to the api's own origin,
+/// and on no other: a route with `#[auth(none)]`, a request that did not come from the client of a contract and
+/// carries no `Route`, as one sent to another host through the same `ClientWithMiddleware`, or a hop of [`redirects`]
+/// to another origin, never gets the token. A token that expires comes from a source, with [`bearer_from`].
 ///
 /// The header is marked sensitive, so that a log of the request does not show it. The token is an RFC 6750
 /// `b64token`, letters, digits, `-._~+/` and `=` at its end, which is all a server of a contract reads: any other, as
@@ -110,9 +159,10 @@ pub fn basic(user: impl Into<String>, password: impl Into<String>) -> impl Middl
 /// at either end; in a cookie, one with a character other than an ASCII letter, digit or sign, or with `"`, `,`, `;`
 /// or `\`; for OpenID Connect, a token that is not a `b64token`.
 ///
-/// The key of a header scheme is a header of its own, which reqwest, as curl and `fetch`, keeps on a redirect to
-/// another host: it strips only `Authorization`, `Cookie` and `Proxy-Authorization` there. A client that sends one
-/// follows no redirect to another origin, with a policy such as this one:
+/// The key of a header scheme is a header of its own, which reqwest, as curl and `fetch`, keeps on a redirect it
+/// follows to another host: it strips only `Authorization`, `Cookie` and `Proxy-Authorization` there. [`redirects`]
+/// is the way to follow redirects without the key: on a reqwest client that follows none, it follows each hop itself,
+/// through the middleware after it, and `key` sends the key to the api's own origin only.
 ///
 /// ```no_run
 /// # use quoll::rest;
@@ -129,19 +179,11 @@ pub fn basic(user: impl Into<String>, password: impl Into<String>) -> impl Middl
 /// }
 ///
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// // Follows a redirect to the origin, scheme, host and port, of the request that got it only.
-/// let same_origin = reqwest::redirect::Policy::custom(|attempt| {
-///     let previous = attempt.previous().last();
-///     let same = previous.is_some_and(|previous| previous.origin() == attempt.url().origin());
-///
-///     if same && attempt.previous().len() <= 10 {
-///         attempt.follow()
-///     } else {
-///         attempt.stop()
-///     }
-/// });
-/// let http = reqwest::Client::builder().redirect(same_origin).build()?;
+/// let http = reqwest::Client::builder()
+///     .redirect(reqwest::redirect::Policy::none())
+///     .build()?;
 /// let http = reqwest_middleware::ClientBuilder::new(http)
+///     .with(rest::client::redirects(5))
 ///     .with(rest::client::key::<Key>("k-1"))
 ///     .build();
 /// let api = Api::client_with(http, "http://localhost:8080")?;
@@ -159,7 +201,7 @@ pub fn key<K: Declared>(value: impl Into<String>) -> impl Middleware {
             let header = header_value(&value);
 
             send::<K>(Box::new(move |request| {
-                let value = header.clone().ok_or(Unsendable(
+                let value = header.clone().ok_or(Failure::new(
                     "the key cannot be sent in its header: it is empty, or holds a control character or a space at either end",
                 ))?;
 
@@ -178,11 +220,11 @@ pub fn key<K: Declared>(value: impl Into<String>) -> impl Middleware {
             let value = (!value.is_empty()).then_some(value);
 
             send::<K>(Box::new(move |request| {
-                let value = value.as_deref().ok_or(Unsendable(
+                let value = value.as_deref().ok_or(Failure::new(
                     "the key cannot be sent in the query: it is empty",
                 ))?;
 
-                request.url_mut().query_pairs_mut().append_pair(name, value);
+                set_query_pair(request, name, value);
                 Ok(())
             }))
         }
@@ -193,10 +235,28 @@ pub fn key<K: Declared>(value: impl Into<String>) -> impl Middleware {
     }
 }
 
+/// Puts `name=value` at the end of the request's query, in the place of any value of `name` it has: a call of a
+/// route has none, as its query never holds the key, but the URL of a redirect may.
+fn set_query_pair(request: &mut Request, name: &str, value: &str) {
+    let url = request.url_mut();
+
+    if url.query_pairs().any(|(key, _)| key == name) {
+        let kept: Vec<(String, String)> = url
+            .query_pairs()
+            .filter(|(key, _)| key != name)
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect();
+
+        url.query_pairs_mut().clear().extend_pairs(kept);
+    }
+
+    url.query_pairs_mut().append_pair(name, value);
+}
+
 /// Adds `pair`, `name=value`, to the request's cookies, in one `Cookie` header that holds every cookie the request had
 /// before, byte for byte, then the pair.
-fn add_cookie(request: &mut Request, pair: Option<&str>) -> Result<(), Unsendable> {
-    let pair = pair.ok_or(Unsendable(
+fn add_cookie(request: &mut Request, pair: Option<&str>) -> Result<(), Failure> {
+    let pair = pair.ok_or(Failure::new(
         "the key cannot be sent as a cookie: it is empty, or holds a character a cookie's value cannot",
     ))?;
 
@@ -274,32 +334,44 @@ fn sensitive(value: Option<HeaderValue>) -> Option<HeaderValue> {
 /// Puts `header` in `Authorization`, or fails the request with `unsendable` when there is no header to send.
 fn authorization(header: Option<HeaderValue>, unsendable: &'static str) -> Box<Add> {
     Box::new(move |request| {
-        let value = header.clone().ok_or(Unsendable(unsendable))?;
+        let value = header.clone().ok_or(Failure::new(unsendable))?;
 
         request.headers_mut().insert(AUTHORIZATION, value);
         Ok(())
     })
 }
 
-/// A middleware that calls `add` on the requests whose route takes `S`, and leaves the others as they are: a route
-/// with `#[auth(none)]`, or a request that did not come from the client of a contract and carries no `Route`, as one
-/// sent to another host through the same `ClientWithMiddleware`, never gets the credential.
+/// A middleware that calls `add` on the requests whose route takes `S`, to the api's own origin, and leaves the others
+/// as they are: a route with `#[auth(none)]`, a request that did not come from the client of a contract and carries
+/// no `Route`, or a hop of [`redirects`] to another origin, never gets the credential.
 fn send<S: Scheme>(add: Box<Add>) -> impl Middleware {
     middleware(move |mut request, extensions, next| {
-        if !extensions.get::<Route>().is_some_and(Route::takes::<S>) {
+        if !own_route(&request, extensions).is_some_and(Route::takes::<S>) {
             return next.run(request, extensions);
         }
 
-        if let Err(unsendable) = add(&mut request) {
-            return Box::pin(async move { Err(reqwest_middleware::Error::middleware(unsendable)) });
+        if let Err(failure) = add(&mut request) {
+            return Box::pin(async move { Err(reqwest_middleware::Error::middleware(failure)) });
         }
 
         next.run(request, extensions)
     })
 }
 
+/// The [`Route`] of a request of a contract to its api's own origin, or `None` for any other request: one that did not
+/// come from the client of a contract, or a hop of [`redirects`] to another origin.
+fn own_route<'a>(request: &Request, extensions: &'a Extensions) -> Option<&'a Route> {
+    let origin = extensions.get::<ApiOrigin>()?;
+
+    if origin.0 != request.url().origin() {
+        return None;
+    }
+
+    extensions.get::<Route>()
+}
+
 /// What a middleware does to a request whose route takes its scheme: one type for every place a credential travels.
-type Add = dyn Fn(&mut Request) -> Result<(), Unsendable> + Send + Sync;
+type Add = dyn Fn(&mut Request) -> Result<(), Failure> + Send + Sync;
 
 /// What a middleware's call returns: the answer of the rest of the chain.
 type Handled<'a> = Pin<Box<dyn Future<Output = reqwest_middleware::Result<Response>> + Send + 'a>>;
@@ -312,17 +384,29 @@ where
     handle
 }
 
-/// A credential that cannot be sent as it is. Its message does not show the credential.
+/// Why a middleware fails a call: a credential that cannot be sent as it is, whose message does not show it, or a
+/// redirect not followed.
 #[derive(Debug)]
-struct Unsendable(&'static str);
+struct Failure(Cow<'static, str>);
 
-impl std::fmt::Display for Unsendable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
+impl Failure {
+    fn new(message: impl Into<Cow<'static, str>>) -> Self {
+        Self(message.into())
+    }
+
+    /// The error of reqwest-middleware that fails the call with `message`.
+    fn fail(message: impl Into<Cow<'static, str>>) -> reqwest_middleware::Error {
+        reqwest_middleware::Error::middleware(Self::new(message))
     }
 }
 
-impl std::error::Error for Unsendable {}
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Failure {}
 
 #[cfg(test)]
 mod tests {
@@ -345,6 +429,22 @@ mod tests {
             b"theme=dark; lang=fr; tz=utc; name=caf\xe9; session=s-1"
         );
         assert!(value.is_sensitive());
+    }
+
+    #[test]
+    fn a_query_key_takes_the_place_of_one_a_redirect_kept() {
+        let url = reqwest::Url::parse("http://localhost/api/token?page=2&token=old&q=a+b")
+            .expect("a url");
+        let mut request = Request::new(http::Method::GET, url);
+
+        set_query_pair(&mut request, "token", "new");
+        assert_eq!(request.url().query(), Some("page=2&q=a+b&token=new"));
+
+        let url = reqwest::Url::parse("http://localhost/api/token?q=a%20b").expect("a url");
+        let mut request = Request::new(http::Method::GET, url);
+
+        set_query_pair(&mut request, "token", "new");
+        assert_eq!(request.url().query(), Some("q=a%20b&token=new"));
     }
 
     #[test]

@@ -29,6 +29,8 @@ pub struct Route {
     pub(crate) path: &'static str,
     pub(crate) schemes: &'static [&'static str],
     pub(crate) scheme_types: &'static [TypeId],
+    /// Whether the result is a stream, whose body `rest::client::timeout` leaves without a deadline.
+    pub(crate) streams: bool,
 }
 
 impl Route {

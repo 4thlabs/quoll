@@ -54,6 +54,11 @@ const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
 /// further.
 const BODY_LIMIT: usize = 64 * 1024;
 
+/// The origin of the api a request of a contract calls, which the client puts in its extensions beside its [`Route`]:
+/// the middleware that send a credential send it to that origin only, and so not on a redirect to another.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ApiOrigin(pub(crate) url::Origin);
+
 /// A client of an api: the HTTP client and the URL the api is served at. Its clones share both.
 #[derive(Clone)]
 pub struct Client(Arc<Inner>);
@@ -61,6 +66,7 @@ pub struct Client(Arc<Inner>);
 struct Inner {
     http: ClientWithMiddleware,
     base: Url,
+    origin: ApiOrigin,
 }
 
 impl Client {
@@ -112,7 +118,9 @@ impl Client {
             ));
         }
 
-        Ok(Self(Arc::new(Inner { http, base })))
+        let origin = ApiOrigin(base.origin());
+
+        Ok(Self(Arc::new(Inner { http, base, origin })))
     }
 }
 
@@ -384,7 +392,7 @@ impl<'a> Call<'a> {
             headers,
             body,
         } = self;
-        let Inner { http, base } = &*client.0;
+        let Inner { http, base, origin } = &*client.0;
         let mut url = base.clone();
         url.set_path(&format!("{}{path}", base.path().trim_end_matches('/')));
         url.set_query(query.as_deref());
@@ -392,7 +400,8 @@ impl<'a> Call<'a> {
         let mut request = http
             .request(route.method.clone(), url)
             .headers(headers)
-            .with_extension(route.clone());
+            .with_extension(route.clone())
+            .with_extension(origin.clone());
         if let Some(Body {
             content_type,
             bytes,
@@ -674,6 +683,7 @@ mod tests {
         "/api/notes/{id}",
         &[],
         &[],
+        false,
     );
 
     fn client(url: &str) -> Result<Client> {

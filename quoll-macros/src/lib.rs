@@ -178,6 +178,11 @@ pub(crate) fn route_static_item(
     let types = schemes
         .iter()
         .map(|scheme| quote! { ::core::any::TypeId::of::<#scheme>() });
+    let streams = route
+        .reply
+        .as_deref()
+        .and_then(|returned| returned.known)
+        .is_some_and(|known| known.stream);
 
     quote! {
         static #name: ::quoll::rest::Route = ::quoll::__private::route(
@@ -187,6 +192,7 @@ pub(crate) fn route_static_item(
             #path,
             &[#(#names),*],
             &[#(#types),*],
+            #streams,
         );
     }
 }
