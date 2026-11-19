@@ -249,7 +249,7 @@ pub(crate) enum BodyKind {
     Form,
     /// `Text`: `text/plain`, UTF-8.
     Text,
-    /// `Bytes`: `application/octet-stream`.
+    /// `Bytes`: any content type but the three a browser sends to another site without asking.
     Bytes,
 }
 
@@ -288,7 +288,7 @@ pub(crate) enum Reply {
     },
     /// `Text`: 200, `text/plain` in UTF-8.
     Text(Type),
-    /// `Bytes`: 200, `application/octet-stream`.
+    /// `Bytes`: 200, of the content type they carry.
     Bytes(Type),
 }
 

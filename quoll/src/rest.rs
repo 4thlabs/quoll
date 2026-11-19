@@ -16,14 +16,17 @@
 //! `None`, and refuses a value with a control character, or a space or a tab at either end, which HTTP would drop.
 //!
 //! The body is the JSON of its type, `application/json`, or one of [`Form`], [`Text`] and [`Bytes`], each sent with
-//! its content type. The server answers 415 to a body without the content type it reads.
+//! its content type. The server answers 415 to a body without the content type it reads. [`Bytes`] carry theirs, which
+//! may be any media type but the three a browser sends to another site without asking: a form, a form with files and
+//! text.
 //!
 //! The result is the JSON of its type, answered 200, or 204 with no body for a route that returns nothing. A
 //! [`Created`] answers 201 and an [`Accepted`] 202, each with the JSON of its `T`, which is what the client returns. A
-//! [`Text`] answers `text/plain; charset=utf-8` and a [`Bytes`] `application/octet-stream`, both 200. The client reads
-//! each from an answer of its own content type only, and text only in UTF-8: any other answer is an error with no
-//! status, as JSON that is not the result's is. It asks for that content type with `Accept`, unless the route sends an
-//! `Accept` header of its own.
+//! [`Text`] answers `text/plain; charset=utf-8` and a [`Bytes`] its own content type, `application/octet-stream`
+//! unless it says another, both 200. The client reads JSON and text from an answer of their own content type only, and
+//! text only in UTF-8: any other answer is an error with no status, as JSON that is not the result's is. It reads
+//! bytes of any content type, which they keep. It asks for that content type with `Accept`, `*/*` for bytes, unless
+//! the route sends an `Accept` header of its own.
 //!
 //! The contract names `Created`, `Accepted`, `Form`, `Text` and `Bytes` as it names any type, so that the module that
 //! writes it imports them: `use quoll::rest::{self, Created, Form};`. A type of another crate with one of these names
@@ -35,7 +38,7 @@
 
 mod accepted;
 mod auth;
-mod body;
+pub(crate) mod body;
 #[cfg(feature = "client")]
 pub mod client;
 mod created;

@@ -1,6 +1,7 @@
 //! The client side of what `rest::api!` writes: a request built from a route's arguments, sent through
 //! reqwest-middleware with its [`Route`] in its extensions, and its answer read as the route's result or as an error.
 
+use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::fmt;
 use std::sync::Arc;
@@ -13,14 +14,17 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::__private::content_type::{self, FORM, PROBLEM, TEXT_UTF8};
+use crate::__private::content_type::{self, BYTES, FORM, PROBLEM, TEXT_UTF8, media_type_value};
 use crate::__private::known::{IsBytes, IsForm, IsText};
 use crate::rest::{Error, Problem, Result, Route};
 
 mod text;
 
-pub use crate::__private::content_type::{BYTES, JSON, TEXT};
+pub use crate::__private::content_type::{JSON, TEXT};
 pub use http::{HeaderName, Method};
+
+/// Any content type, which a route returning `Bytes` asks for.
+pub const ANY: &str = "*/*";
 
 /// What a path parameter keeps as it is: the unreserved characters of RFC 3986. Every other byte is escaped, `/`, `?`
 /// and `%` included, so that a value is one segment and reads back as it was written.
@@ -142,7 +146,7 @@ pub struct Call<'a> {
 /// A body, with its content type.
 #[derive(Debug)]
 struct Body {
-    content_type: &'static str,
+    content_type: HeaderValue,
     bytes: Vec<u8>,
 }
 
@@ -246,7 +250,7 @@ impl<'a> Call<'a> {
         })?;
 
         self.body = Some(Body {
-            content_type: JSON,
+            content_type: HeaderValue::from_static(JSON),
             bytes: body,
         });
         Ok(self)
@@ -274,7 +278,7 @@ impl<'a> Call<'a> {
         })?;
 
         self.body = Some(Body {
-            content_type: FORM,
+            content_type: HeaderValue::from_static(FORM),
             bytes: body.into_bytes(),
         });
         Ok(self)
@@ -284,20 +288,34 @@ impl<'a> Call<'a> {
     #[must_use]
     pub fn text<T: IsText>(mut self, body: T) -> Self {
         self.body = Some(Body {
-            content_type: TEXT_UTF8,
+            content_type: HeaderValue::from_static(TEXT_UTF8),
             bytes: body.into_string().into_bytes(),
         });
         self
     }
 
-    /// Sets the body to `body`, `application/octet-stream`.
-    #[must_use]
-    pub fn bytes<B: IsBytes>(mut self, body: B) -> Self {
+    /// Sets the body to `body`, of its content type.
+    ///
+    /// # Errors
+    ///
+    /// When its content type is not a media type.
+    pub fn bytes<B: IsBytes>(mut self, body: B) -> Result<Self> {
+        let (bytes, content_type) = body.into_parts();
+        let content_type = media_type_value(content_type).map_err(|content_type| {
+            Error::misuse(
+                format!(
+                    "the body of `{}` has a content type that is not a media type: {content_type:?}",
+                    self.route.operation_id
+                ),
+                None,
+            )
+        })?;
+
         self.body = Some(Body {
-            content_type: BYTES,
-            bytes: body.into_vec(),
+            content_type,
+            bytes,
         });
-        self
+        Ok(self)
     }
 
     /// Adds the header `name` with the text serde writes for `value`, as a path parameter's; a `None` leaves it out.
@@ -383,7 +401,7 @@ impl<'a> Call<'a> {
         }) = body
         {
             request = request
-                .header(header::CONTENT_TYPE, HeaderValue::from_static(content_type))
+                .header(header::CONTENT_TYPE, content_type)
                 .body(bytes);
         }
 
@@ -460,15 +478,21 @@ impl Answer {
         Ok(T::from_string(text))
     }
 
-    /// The body, read whole as its bytes: what a route returning `Bytes` gives.
+    /// The body, read whole as its bytes, of any content type: what a route returning `Bytes` gives. They keep the
+    /// answer's content type, or `application/octet-stream`, bytes of no known type, when it has none, or one that is
+    /// not a media type.
     ///
     /// # Errors
     ///
-    /// An error with no status when the answer is not `application/octet-stream`, or its body cannot be read.
+    /// An error with no status when the body cannot be read.
     pub async fn bytes<B: IsBytes>(self) -> Result<B> {
-        let body = self.read_as(BYTES, false).await?;
+        let content_type = content_type::media_type(self.response.headers())
+            .map_or(Cow::Borrowed(BYTES), |media_type| {
+                Cow::Owned(media_type.to_owned())
+            });
+        let body = self.read().await?;
 
-        Ok(B::from_vec(body.into()))
+        Ok(B::from_parts(body.into(), content_type))
     }
 
     /// The whole body, when the answer's content type is `expected`, with no charset but UTF-8 when `utf8` is set: a

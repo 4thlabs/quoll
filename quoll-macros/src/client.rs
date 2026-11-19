@@ -147,14 +147,14 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
             BodyKind::Json => quote_spanned! {ty.span()=> .json(&#name)? },
             BodyKind::Form => quote_spanned! {ty.span()=> .form(&#name)? },
             BodyKind::Text => quote_spanned! {ty.span()=> .text(#name) },
-            BodyKind::Bytes => quote_spanned! {ty.span()=> .bytes(#name) },
+            BodyKind::Bytes => quote_spanned! {ty.span()=> .bytes(#name)? },
         }
     });
     let accept = match &route.reply {
         Reply::None => None,
         Reply::Json(_) | Reply::Created { .. } | Reply::Accepted { .. } => Some(quote! { JSON }),
         Reply::Text(_) => Some(quote! { TEXT }),
-        Reply::Bytes(_) => Some(quote! { BYTES }),
+        Reply::Bytes(_) => Some(quote! { ANY }),
     }
     .map(|media_type| quote! { .accept(::quoll::__private::client::#media_type) });
     let answer = match &route.reply {

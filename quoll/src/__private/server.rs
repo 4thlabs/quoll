@@ -1,6 +1,7 @@
 //! The server side of what `rest::api!` writes: the routes of a group on an axum router, the caller authenticated and
 //! the arguments read from a request, and the answers, an error answered as an RFC 9457 problem.
 
+use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::future::Future;
 use std::sync::Arc;
@@ -17,7 +18,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::__private::Given;
-use crate::__private::content_type::{self, BYTES, FORM, JSON, PROBLEM, TEXT, TEXT_UTF8};
+use crate::__private::content_type::{
+    self, BYTES, FORM, JSON, MULTIPART, PROBLEM, TEXT, TEXT_UTF8, media_type_value,
+};
 use crate::__private::known::{IsAccepted, IsBytes, IsCreated, IsForm, IsText};
 use crate::rest::error::Repr;
 use crate::rest::{Authenticate, Error, Result, Scheme};
@@ -256,28 +259,45 @@ impl Request {
         Ok(T::from_string(text))
     }
 
-    /// The body, as its bytes.
+    /// The body, as its bytes, with the content type the request names.
     ///
     /// # Errors
     ///
-    /// A 415 when the request does not say it sends `application/octet-stream`, and the status axum gives when the
-    /// body cannot be read.
+    /// A 415 when the request names no content type, more than one, one that is not a media type, or one of the
+    /// three a browser sends to another site without asking, and the status axum gives when the body cannot be read.
     pub async fn bytes<B: IsBytes>(self) -> Result<B> {
-        self.check_content_type(BYTES, false)?;
-
+        let content_type = self.bytes_content_type()?;
         let body = self.read().await?;
 
-        Ok(B::from_vec(body.into()))
+        Ok(B::from_parts(body.into(), Cow::Owned(content_type)))
+    }
+
+    /// The content type of a body read as bytes, which may be any media type but those a page of another site posts
+    /// without asking: a form, a form with files and text. A body without one is refused too, as a page sends bytes
+    /// with none, a `fetch` of an `ArrayBuffer` or a `Blob` of no type, without asking either. So a route that reads
+    /// bytes, as one that reads JSON, sees only what a page of its own site or a client other than a browser sends.
+    fn bytes_content_type(&self) -> Result<String> {
+        if let Some(media_type) = content_type::media_type(&self.parts.headers)
+            && !content_type::is_cors_safelisted(media_type)
+        {
+            return Ok(media_type.to_owned());
+        }
+
+        Err(Error::new(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            format!(
+                "the body is read as bytes: send it with its `Content-Type`, `{BYTES}` when it has no other, but not `{FORM}`, `{MULTIPART}` or `{TEXT}`"
+            ),
+        ))
     }
 
     /// A 415 unless the request's content type is `expected`, whatever its parameters, but a charset other than UTF-8
     /// when `utf8` is set; a request without one is refused too, as axum refuses a JSON body.
     ///
-    /// The body is read as its type says, and no other. For bytes, as for JSON, it also keeps out what a page of
-    /// another site posts: a browser sends those types to another site only once the site agrees (a CORS preflight).
-    /// A form and text are among the types it sends without asking, so the check does not keep those out: a route
-    /// whose credential the browser adds on its own, a cookie, needs a defense of its own. A Bearer token is never
-    /// added so.
+    /// The body is read as its type says, and no other. For JSON, it also keeps out what a page of another site posts:
+    /// a browser sends that type to another site only once the site agrees (a CORS preflight). A form and text are
+    /// among the types it sends without asking, so the check does not keep those out: a route whose credential the
+    /// browser adds on its own, a cookie, needs a defense of its own. A Bearer token is never added so.
     fn check_content_type(&self, expected: &str, utf8: bool) -> Result<()> {
         if content_type::is(&self.parts.headers, expected, utf8) {
             return Ok(());
@@ -382,16 +402,28 @@ where
 ///
 /// The handler's error.
 pub fn ok_text<T: IsText>(result: Result<T>) -> Result<Response> {
-    Ok(answer_body(TEXT_UTF8, result?.into_string().into_bytes()))
+    let content_type = HeaderValue::from_static(TEXT_UTF8);
+
+    Ok(answer_body(
+        content_type,
+        result?.into_string().into_bytes(),
+    ))
 }
 
-/// A 200 with the bytes the handler returned, `application/octet-stream`.
+/// A 200 with the bytes the handler returned, of their content type.
 ///
 /// # Errors
 ///
-/// The handler's error.
+/// The handler's error, or a 500 when their content type is not a media type.
 pub fn ok_bytes<B: IsBytes>(result: Result<B>) -> Result<Response> {
-    Ok(answer_body(BYTES, result?.into_vec()))
+    let (bytes, content_type) = result?.into_parts();
+    let content_type = media_type_value(content_type).map_err(|content_type| {
+        Error::internal(format!(
+            "the content type of a `Bytes`, {content_type:?}, is not a media type"
+        ))
+    })?;
+
+    Ok(answer_body(content_type, bytes))
 }
 
 /// A 204, with no body.
@@ -413,8 +445,8 @@ fn json<T: Serialize>(status: StatusCode, value: &T) -> Result<Response> {
 }
 
 /// A 200 with `body`, of `content_type`.
-fn answer_body(content_type: &'static str, body: Vec<u8>) -> Response {
-    let content_type = [(header::CONTENT_TYPE, HeaderValue::from_static(content_type))];
+fn answer_body(content_type: HeaderValue, body: Vec<u8>) -> Response {
+    let content_type = [(header::CONTENT_TYPE, content_type)];
 
     (StatusCode::OK, content_type, body).into_response()
 }

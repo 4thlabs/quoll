@@ -7,6 +7,8 @@
 //! and [`bytes`] are written whatever the features of `quoll`, so that a contract crate built with neither feature
 //! checks them too.
 
+use std::borrow::Cow;
+
 use crate::rest::{Accepted, Bytes, Created, Form, Text};
 
 /// The crate's [`Created`]: its location and its value, which the server answers.
@@ -113,20 +115,20 @@ impl IsText for Text {
     note = "bring quoll's into scope, `use quoll::rest::Bytes;`, or name a type of your own otherwise"
 )]
 pub trait IsBytes: Sized {
-    /// The bytes holding `bytes`.
-    fn from_vec(bytes: Vec<u8>) -> Self;
+    /// The bytes holding `bytes`, of `content_type`.
+    fn from_parts(bytes: Vec<u8>, content_type: Cow<'static, str>) -> Self;
 
-    /// The bytes it holds.
-    fn into_vec(self) -> Vec<u8>;
+    /// The bytes it holds, and their content type.
+    fn into_parts(self) -> (Vec<u8>, Cow<'static, str>);
 }
 
 impl IsBytes for Bytes {
-    fn from_vec(bytes: Vec<u8>) -> Self {
-        Self(bytes)
+    fn from_parts(bytes: Vec<u8>, content_type: Cow<'static, str>) -> Self {
+        Self(bytes, content_type)
     }
 
-    fn into_vec(self) -> Vec<u8> {
-        self.0
+    fn into_parts(self) -> (Vec<u8>, Cow<'static, str>) {
+        (self.0, self.1)
     }
 }
 

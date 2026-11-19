@@ -1,6 +1,8 @@
 //! The content type of a body, as the server reads a request's and the client an answer's.
 
-use http::{HeaderMap, header};
+use std::borrow::Cow;
+
+use http::{HeaderMap, HeaderValue, header};
 
 /// A JSON body.
 pub const JSON: &str = "application/json";
@@ -17,8 +19,11 @@ pub const TEXT: &str = "text/plain";
 /// Text as quoll sends it, which names its charset.
 pub const TEXT_UTF8: &str = "text/plain; charset=utf-8";
 
-/// Bytes.
-pub const BYTES: &str = "application/octet-stream";
+/// Bytes of no known type, what a `Bytes` is unless it says otherwise.
+pub const BYTES: &str = crate::rest::body::OCTET_STREAM;
+
+/// A form with files.
+pub const MULTIPART: &str = "multipart/form-data";
 
 /// Whether `headers` say the body is `expected`, whatever the case and the parameters, but a charset other than UTF-8
 /// when `utf8` is set. A body without a content type, or with one that is not text, is not `expected`.
@@ -48,10 +53,120 @@ pub(crate) fn is(headers: &HeaderMap, expected: &str, utf8: bool) -> bool {
     !(utf8 && other_charset)
 }
 
+/// The one content type of `headers`, when it is a media type: none when it is missing, given twice, or not a media
+/// type.
+pub(crate) fn media_type(headers: &HeaderMap) -> Option<&str> {
+    let mut values = headers.get_all(header::CONTENT_TYPE).iter();
+    let (Some(value), None) = (values.next(), values.next()) else {
+        return None;
+    };
+
+    value.to_str().ok().filter(|value| is_media_type(value))
+}
+
+/// `content_type` as a header's value, when it is a media type; given back otherwise, for the error to say.
+pub(crate) fn media_type_value(
+    content_type: Cow<'static, str>,
+) -> Result<HeaderValue, Cow<'static, str>> {
+    match HeaderValue::from_str(&content_type) {
+        Ok(value) if is_media_type(&content_type) => Ok(value),
+        _ => Err(content_type),
+    }
+}
+
+/// Whether a browser sends `media_type` to another site without asking it first, with no CORS preflight: a form, a
+/// form with files and text, whatever their case and parameters.
+#[cfg_attr(
+    not(any(test, feature = "server")),
+    expect(dead_code, reason = "only the server reads a body")
+)]
+pub(crate) fn is_cors_safelisted(media_type: &str) -> bool {
+    let essence = media_type.split(';').next().unwrap_or_default().trim();
+
+    [FORM, MULTIPART, TEXT]
+        .iter()
+        .any(|safelisted| essence.eq_ignore_ascii_case(safelisted))
+}
+
+/// Whether `value` is a media type as RFC 9110 writes one: `type/subtype`, each a token, then parameters, each `;`
+/// and `name=value`, the name a token and the value a token or a quoted string, with spaces or tabs around the `;`
+/// only. It is ASCII: what a header's value holds as text.
+pub(crate) fn is_media_type(value: &str) -> bool {
+    let Some(mut rest) = token(value.as_bytes())
+        .and_then(|rest| rest.strip_prefix(b"/"))
+        .and_then(token)
+    else {
+        return false;
+    };
+
+    loop {
+        if rest.is_empty() {
+            return true;
+        }
+
+        let Some(after) = blanks(rest).strip_prefix(b";") else {
+            return false;
+        };
+        rest = blanks(after);
+
+        if rest.first().is_some_and(|&byte| is_tchar(byte)) {
+            let Some(after) = token(rest).and_then(|rest| rest.strip_prefix(b"=")) else {
+                return false;
+            };
+            let Some(after) = token(after).or_else(|| quoted_string(after)) else {
+                return false;
+            };
+            rest = after;
+        }
+    }
+}
+
+/// What follows the token `input` starts with, when it starts with one.
+fn token(input: &[u8]) -> Option<&[u8]> {
+    let len = input.iter().take_while(|&&byte| is_tchar(byte)).count();
+
+    (len > 0).then(|| &input[len..])
+}
+
+/// What follows the quoted string `input` starts with, when it starts with one: printable ASCII, spaces and tabs,
+/// with `"` and `\` escaped by a `\`.
+fn quoted_string(input: &[u8]) -> Option<&[u8]> {
+    let is_text = |byte: u8| byte == b'\t' || (b' '..=b'~').contains(&byte);
+    let mut rest = input.strip_prefix(b"\"")?;
+
+    loop {
+        match rest.split_first()? {
+            (b'"', after) => return Some(after),
+            (b'\\', after) => {
+                let (&escaped, after) = after.split_first()?;
+                if !is_text(escaped) {
+                    return None;
+                }
+                rest = after;
+            }
+            (&byte, after) if is_text(byte) => rest = after,
+            _ => return None,
+        }
+    }
+}
+
+/// `input` without the spaces and tabs it starts with.
+fn blanks(input: &[u8]) -> &[u8] {
+    let len = input
+        .iter()
+        .take_while(|&&byte| byte == b' ' || byte == b'\t')
+        .count();
+
+    &input[len..]
+}
+
+/// Whether `byte` may be in a token, RFC 9110.
+fn is_tchar(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte)
+}
+
 #[cfg(test)]
 mod tests {
-    use http::HeaderValue;
-
     use super::*;
 
     fn headers(content_type: &str) -> HeaderMap {
@@ -113,5 +228,94 @@ mod tests {
             "text/plain",
             false
         ));
+    }
+
+    #[test]
+    fn a_media_type_is_a_type_a_subtype_and_parameters() {
+        for value in [
+            "image/png",
+            "application/octet-stream",
+            "Image/PNG",
+            "application/vnd.api+json",
+            "text/csv; charset=utf-8",
+            "text/csv;charset=utf-8",
+            "text/csv ;\tcharset=utf-8 ; header=present",
+            "multipart/mixed; boundary=\"a b; c\"",
+            "text/plain; title=\"say \\\"hi\\\"\"",
+            "image/png;",
+            "image/png; ;",
+        ] {
+            assert!(is_media_type(value), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn what_is_not_a_media_type_is_refused() {
+        for value in [
+            "",
+            "png",
+            "image/",
+            "/png",
+            "image/png/x",
+            " image/png",
+            "image/png ",
+            "image /png",
+            "image/ png",
+            "image/png, text/plain",
+            "image/png; charset",
+            "image/png; charset=",
+            "image/png; =utf-8",
+            "image/png; a=b c",
+            "image/png; a=\"unclosed",
+            "image/png; a=\"bad\\\u{7f}\"",
+            "image/pngé",
+            "image/png; name=\"é\"",
+            "image/png\r\nx-y: z",
+            "image/png\0",
+        ] {
+            assert!(!is_media_type(value), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn the_types_a_browser_sends_to_another_site_without_asking_are_known() {
+        for value in [
+            "text/plain",
+            "application/x-www-form-urlencoded",
+            "multipart/form-data",
+            "Text/Plain; charset=utf-8",
+            "MULTIPART/FORM-DATA; boundary=x",
+            "application/X-WWW-Form-Urlencoded ;charset=utf-8",
+        ] {
+            assert!(is_cors_safelisted(value), "{value:?}");
+        }
+
+        for value in [
+            "application/octet-stream",
+            "text/plainx",
+            "text/html",
+            "multipart/mixed",
+            "image/png",
+        ] {
+            assert!(!is_cors_safelisted(value), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn the_media_type_of_headers_is_their_one_content_type() {
+        assert_eq!(media_type(&headers("image/png")), Some("image/png"));
+        assert_eq!(media_type(&headers("png")), None);
+        assert_eq!(media_type(&HeaderMap::new()), None);
+
+        let mut twice = headers("image/png");
+        twice.append(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
+        assert_eq!(media_type(&twice), None);
+
+        let mut not_text = HeaderMap::new();
+        not_text.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_bytes(b"image/png; name=\"\xe9\"").expect("a header's value"),
+        );
+        assert_eq!(media_type(&not_text), None);
     }
 }
