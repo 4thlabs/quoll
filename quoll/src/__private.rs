@@ -14,8 +14,7 @@ pub use reqwest_middleware;
 pub use serde;
 
 mod auth;
-#[cfg(any(feature = "server", feature = "client"))]
-mod content_type;
+pub(crate) mod content_type;
 pub mod known;
 
 pub use auth::Given;

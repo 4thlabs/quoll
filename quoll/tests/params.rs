@@ -90,6 +90,7 @@ rest::api! {
 
     group Bodies {
         POST "/token" => token(login: Form<Login>) -> Login;
+        POST "/login" => login(login: Login) -> Login;
         PUT  "/text"  => text(text: Text) -> String;
         PUT  "/bytes" => bytes(file: Bytes) -> Upload;
         POST "/mixed/{id}"
@@ -129,6 +130,10 @@ impl BodiesServer for App {
         Ok(login.0)
     }
 
+    async fn login(&self, login: Login) -> Result<Login> {
+        Ok(login)
+    }
+
     async fn text(&self, text: Text) -> Result<String> {
         Ok(text.0)
     }
@@ -136,7 +141,7 @@ impl BodiesServer for App {
     async fn bytes(&self, file: Bytes) -> Result<Upload> {
         Ok(Upload {
             content_type: file.content_type().to_owned(),
-            bytes: file.0,
+            bytes: file.into_vec(),
         })
     }
 
@@ -645,6 +650,52 @@ async fn bytes_of_a_content_type_that_is_not_a_media_type_are_refused_by_the_cli
                 .contains("the body of `bodies_bytes` has a content type that is not a media type"),
             "{error}"
         );
+    }
+}
+
+#[tokio::test]
+async fn a_body_with_two_content_types_is_refused_whatever_it_is_read_as() {
+    let (url, _) = served().await;
+    let http = reqwest::Client::new();
+
+    for (path, content_type, body) in [
+        (
+            "login",
+            "application/json",
+            &br#"{"user":"ana","password":"x"}"#[..],
+        ),
+        (
+            "token",
+            "application/x-www-form-urlencoded",
+            b"user=ana&password=x",
+        ),
+        ("text", "text/plain", b"milk"),
+        ("bytes", "image/png", b"x"),
+    ] {
+        let method = if path == "login" || path == "token" {
+            reqwest::Method::POST
+        } else {
+            reqwest::Method::PUT
+        };
+        let request = || http.request(method.clone(), format!("{url}/api/{path}"));
+
+        let once = request()
+            .header(CONTENT_TYPE, content_type)
+            .body(body)
+            .send()
+            .await
+            .expect("the server answers");
+        assert_eq!(once.status(), StatusCode::OK, "{path}");
+
+        let twice = problem(
+            request()
+                .header(CONTENT_TYPE, content_type)
+                .header(CONTENT_TYPE, content_type)
+                .body(body),
+        )
+        .await;
+        assert_eq!(twice.0, StatusCode::UNSUPPORTED_MEDIA_TYPE, "{path}");
+        assert!(twice.1.contains("one `Content-Type"), "{path}: {}", twice.1);
     }
 }
 
