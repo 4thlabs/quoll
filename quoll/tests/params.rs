@@ -352,7 +352,7 @@ async fn a_header_that_would_not_read_back_is_refused_by_the_client() {
 
         assert_eq!(error.status(), None, "{tag:?}");
         assert!(
-            error.to_string().contains("`X-Tag` of `bodies_mixed`"),
+            error.to_string().contains("`x-tag` of `bodies_mixed`"),
             "{error}"
         );
         assert!(!error.to_string().contains(tag.trim()), "{error}");
@@ -414,6 +414,13 @@ async fn a_form_is_read_only_as_a_form() {
     )
     .await;
     assert_eq!(none.0, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    let latin1 = problem(post(
+        "application/x-www-form-urlencoded; charset=iso-8859-1",
+        b"user=ana&password=x",
+    ))
+    .await;
+    assert_eq!(latin1.0, StatusCode::UNSUPPORTED_MEDIA_TYPE);
 
     let missing = problem(post("application/x-www-form-urlencoded", b"user=ana")).await;
     assert_eq!(missing.0, StatusCode::BAD_REQUEST);

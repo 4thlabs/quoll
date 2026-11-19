@@ -68,7 +68,7 @@ fn known_types(api: &Api) -> proc_macro2::TokenStream {
     let mut checks = Vec::new();
 
     for route in api.groups.iter().flat_map(|group| &group.routes) {
-        if let Reply::Created(ty) = &route.reply {
+        if let Reply::Created { outer: ty, .. } = &route.reply {
             checks.push(quote_spanned! {ty.span()=> ::quoll::__private::known::created::<#ty>(); });
         }
 
@@ -82,6 +82,7 @@ fn known_types(api: &Api) -> proc_macro2::TokenStream {
             BodyKind::Text => quote! { text },
             BodyKind::Bytes => quote! { bytes },
         };
+
         checks.push(quote_spanned! {ty.span()=> ::quoll::__private::known::#check::<#ty>(); });
     }
 

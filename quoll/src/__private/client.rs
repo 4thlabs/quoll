@@ -5,7 +5,7 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::sync::Arc;
 
-use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
+use http::{HeaderMap, HeaderValue, StatusCode, header};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use reqwest::Url;
 use reqwest_middleware::ClientWithMiddleware;
@@ -18,7 +18,7 @@ use crate::rest::{Error, Problem, Result, Route};
 
 mod text;
 
-pub use http::Method;
+pub use http::{HeaderName, Method};
 
 /// What a path parameter keeps as it is: the unreserved characters of RFC 3986. Every other byte is escaped, `/`, `?`
 /// and `%` included, so that a value is one segment and reads back as it was written.
@@ -168,15 +168,28 @@ impl<'a> Call<'a> {
     ///
     /// # Errors
     ///
-    /// When `value` is not written as one piece of text, as a number, a string or a unit variant are, or is a segment a URL cannot hold: empty, `.` or
-    /// `..`, which would call another route.
+    /// When `value` is not written as one piece of text, as a number, a string or a unit variant are; when it is a
+    /// `None`; or when it is a segment a URL cannot hold: empty, `.` or `..`, which would call another route.
     pub fn segment<T: Serialize + ?Sized>(mut self, name: &str, value: &T) -> Result<Self> {
         let operation_id = self.route.operation_id;
-        let Some(text) = text::to_text(value) else {
-            return Err(Error::misuse(
-                format!("the path parameter `{name}` of `{operation_id}` is not written as text"),
-                None,
-            ));
+        let text = match text::to_text(value) {
+            Some(Some(text)) => text,
+            Some(None) => {
+                return Err(Error::misuse(
+                    format!(
+                        "the path parameter `{name}` of `{operation_id}` is `None`, which no segment of a path stands for"
+                    ),
+                    None,
+                ));
+            }
+            None => {
+                return Err(Error::misuse(
+                    format!(
+                        "the path parameter `{name}` of `{operation_id}` is not written as text"
+                    ),
+                    None,
+                ));
+            }
         };
 
         if matches!(text.as_str(), "" | "." | "..") {
@@ -292,9 +305,9 @@ impl<'a> Call<'a> {
     /// When `value` is not written as one piece of text, or its text cannot be a header's value as it is: a control
     /// character, a line break, or a space or a tab at either end, which HTTP drops. The message does not show the
     /// value.
-    pub fn header<T: Serialize + ?Sized>(mut self, name: &'static str, value: &T) -> Result<Self> {
+    pub fn header<T: Serialize + ?Sized>(mut self, name: HeaderName, value: &T) -> Result<Self> {
         let operation_id = self.route.operation_id;
-        let Some(text) = text::to_header_text(value) else {
+        let Some(text) = text::to_text(value) else {
             return Err(Error::misuse(
                 format!("the header `{name}` of `{operation_id}` is not written as text"),
                 None,
@@ -314,12 +327,6 @@ impl<'a> Call<'a> {
             ));
         }
 
-        let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
-            Error::misuse(
-                format!("`{name}`, a header of `{operation_id}`, is not a header's name"),
-                Some(Box::new(error)),
-            )
-        })?;
         let value = HeaderValue::try_from(text).map_err(|_| {
             Error::misuse(
                 format!(
@@ -329,7 +336,7 @@ impl<'a> Call<'a> {
             )
         })?;
 
-        self.headers.append(header_name, value);
+        self.headers.append(name, value);
         Ok(self)
     }
 
@@ -562,6 +569,12 @@ mod tests {
                 .expect_err("not text")
                 .to_string()
                 .contains("not written as text")
+        );
+        assert!(
+            segment(&None::<i64>)
+                .expect_err("no segment")
+                .to_string()
+                .contains("`id` of `notes_get` is `None`")
         );
     }
 

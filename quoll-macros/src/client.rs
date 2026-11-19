@@ -133,7 +133,12 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
     let headers = route.headers().map(|(param, header)| {
         let (name, ty) = (&param.name, &param.ty);
 
-        quote_spanned! {ty.span()=> .header(#header, &#name)? }
+        // Lowercase, as `from_static` takes it; built at compile time from the name the macro has checked.
+        let header = header.to_ascii_lowercase();
+
+        quote_spanned! {ty.span()=>
+            .header(const { ::quoll::__private::client::HeaderName::from_static(#header) }, &#name)?
+        }
     });
     let body = route.body().map(|(param, kind)| {
         let (name, ty) = (&param.name, &param.ty);
