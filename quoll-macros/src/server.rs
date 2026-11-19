@@ -7,8 +7,8 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::doc_attrs;
 use crate::model::{Api, Group, Method, Param, ParamKind, Reply, Route, is_vec};
+use crate::{doc_attrs, route_docs};
 
 /// The server's code of the api, behind the feature `server` of `quoll`.
 pub(crate) fn expand(api: &Api) -> TokenStream {
@@ -52,13 +52,7 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
 }
 
 fn method(api: &Api, route: &Route) -> TokenStream {
-    let line = format!(" `{} {}`", route.method.as_str(), shown_path(api, route));
-    let mut lines = route.docs.0.clone();
-    if !lines.is_empty() {
-        lines.push(String::new());
-    }
-    lines.push(line);
-    let docs = doc_attrs(&lines);
+    let docs = route_docs(api, route);
     let name = &route.name;
     let args = route
         .params
@@ -75,22 +69,6 @@ fn method(api: &Api, route: &Route) -> TokenStream {
         fn #name(&self, #(#args),*)
             -> impl ::core::future::Future<Output = ::quoll::rest::Result<#output>> + ::core::marker::Send;
     }
-}
-
-/// The path with its query, as the docs show it: `/api/notes?page={page}`.
-fn shown_path(api: &Api, route: &Route) -> String {
-    let mut path = route.full_path(&api.prefix);
-    let query = route.params.iter().filter_map(|param| match &param.kind {
-        ParamKind::Query { key } => Some(format!("{key}={{{}}}", param.name.unraw())),
-        ParamKind::Path | ParamKind::Body => None,
-    });
-
-    for (index, pair) in query.enumerate() {
-        path.push(if index == 0 { '?' } else { '&' });
-        path.push_str(&pair);
-    }
-
-    path
 }
 
 fn services_struct(api: &Api) -> TokenStream {

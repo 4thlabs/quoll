@@ -1,0 +1,295 @@
+//! What the client side of a contract becomes: a trait per group, its client, `ApiClient`, `Api::client` and
+//! `Api::client_with`.
+//!
+//! All of it goes through `::quoll::__private::client!`, which writes it out only when `quoll` has the feature
+//! `client`. Each method writes the route's path, query and body through a helper of `quoll`, which sends the request
+//! and reads its answer.
+
+use proc_macro2::{Span, TokenStream};
+use quote::{quote, quote_spanned};
+use syn::{Ident, ext::IdentExt, spanned::Spanned};
+
+use crate::model::{Api, Group, Param, ParamKind, Reply, Route, snake_case};
+use crate::path::Segment;
+use crate::{doc_attrs, route_docs};
+
+/// The client's code of the api, behind the feature `client` of `quoll`.
+pub(crate) fn expand(api: &Api) -> TokenStream {
+    let traits = api.groups.iter().map(|group| group_trait(api, group));
+    let clients = api.groups.iter().map(|group| group_client(api, group));
+    let api_client = api_client(api);
+
+    quote! {
+        ::quoll::__private::client! {
+            #(#traits)*
+            #(#clients)*
+            #api_client
+        }
+    }
+}
+
+fn group_trait(api: &Api, group: &Group) -> TokenStream {
+    let vis = &group.vis;
+    let name = &group.name;
+    let fallback = format!(" The client of the group `{}`.", group.name.unraw());
+    let usage = format!(
+        " Implemented by `{}`, which `{}::{}` gives, and by a fake in a test.",
+        group.client(),
+        api.client(),
+        group.field().unraw(),
+    );
+    let mut lines = if group.docs.0.is_empty() {
+        vec![fallback]
+    } else {
+        group.docs.0.clone()
+    };
+    lines.extend([String::new(), usage]);
+    let docs = doc_attrs(&lines);
+    let methods = group.routes.iter().map(|route| {
+        let docs = route_docs(api, route);
+        let signature = signature(route);
+
+        quote! {
+            #docs
+            #signature;
+        }
+    });
+
+    quote! {
+        #docs
+        #vis trait #name: ::core::marker::Send + ::core::marker::Sync {
+            #(#methods)*
+        }
+    }
+}
+
+/// `fn get(&self, id: i64) -> impl Future<Output = Result<Note>> + Send`: a `Created<T>` gives its `T`, as the 201
+/// is only the server's answer.
+fn signature(route: &Route) -> TokenStream {
+    let name = &route.name;
+    let args = route
+        .params
+        .iter()
+        .map(|Param { name, ty, .. }| quote! { #name: #ty });
+    let output = match &route.reply {
+        Reply::None => quote! { () },
+        Reply::Json(ty) | Reply::Created(ty) => quote! { #ty },
+    };
+
+    quote_spanned! {route.name.span()=>
+        fn #name(&self, #(#args),*)
+            -> impl ::core::future::Future<Output = ::quoll::rest::Result<#output>> + ::core::marker::Send
+    }
+}
+
+fn group_client(api: &Api, group: &Group) -> TokenStream {
+    let vis = &group.vis;
+    let name = &group.name;
+    let client = group.client();
+    let docs = format!(
+        " The client of the group `{}`, which `{}::{}` gives: it implements `{}`.",
+        group.name.unraw(),
+        api.client(),
+        group.field().unraw(),
+        group.name.unraw(),
+    );
+    let methods = group.routes.iter().map(|route| method(api, group, route));
+
+    quote! {
+        #[doc = #docs]
+        #[derive(::core::fmt::Debug, ::core::clone::Clone)]
+        #vis struct #client {
+            client: ::quoll::__private::client::Client,
+        }
+
+        impl #name for #client {
+            #(#methods)*
+        }
+    }
+}
+
+/// A route's method on the group's client: the route, then its path, query and body written from the arguments.
+fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
+    let signature = signature(route);
+    let route_static = Ident::new("__QUOLL_ROUTE", Span::mixed_site());
+    let operation_id = format!("{}_{}", snake_case(&group.name), route.name.unraw());
+    let group_name = group.name.unraw().to_string();
+    let method = Ident::new(route.method.as_str(), Span::call_site());
+    let path = route.full_path(&api.prefix);
+
+    let path_calls = path_calls(api, route);
+    let (query_type, query_call) = query(route).unzip();
+    let body = route.body().map(|body| {
+        let (name, ty) = (&body.name, &body.ty);
+
+        quote_spanned! {ty.span()=> .json(&#name)? }
+    });
+    let answer = match &route.reply {
+        Reply::None => quote_spanned! {route.span=> .none() },
+        Reply::Json(ty) | Reply::Created(ty) => quote_spanned! {ty.span()=> .json::<#ty>().await },
+    };
+
+    quote! {
+        #signature {
+            static #route_static: ::quoll::rest::Route = ::quoll::__private::client::route(
+                #operation_id,
+                #group_name,
+                ::quoll::__private::client::Method::#method,
+                #path,
+                &[],
+            );
+
+            #query_type
+
+            async move {
+                ::quoll::__private::client::Call::new(&self.client, &#route_static)
+                    #(#path_calls)*
+                    #query_call
+                    #body
+                    .send()
+                    .await?
+                    #answer
+            }
+        }
+    }
+}
+
+/// The calls that write the path: `.path("/api/notes")` for the text between parameters, `.segment("id", &id)?` for
+/// each parameter.
+fn path_calls(api: &Api, route: &Route) -> Vec<TokenStream> {
+    let mut calls = Vec::new();
+    let mut text = api.prefix.clone();
+    let mut params = route.path_params();
+
+    for segment in &route.path {
+        match segment {
+            Segment::Literal(literal) => {
+                text.push('/');
+                text.push_str(literal);
+            }
+            Segment::Param(key) => {
+                if !text.is_empty() {
+                    calls.push(quote! { .path(#text) });
+                    text.clear();
+                }
+
+                let param = params
+                    .next()
+                    .expect("the route has an argument for each `{name}` of its path");
+                let (name, ty) = (&param.name, &param.ty);
+                calls.push(quote_spanned! {ty.span()=> .segment(#key, &#name)? });
+            }
+        }
+    }
+
+    if route.path.is_empty() && text.is_empty() {
+        text.push('/');
+    }
+    if !text.is_empty() {
+        calls.push(quote! { .path(#text) });
+    }
+
+    calls
+}
+
+/// The struct the query is written from, a field per key, and the call that writes it, when the route has a query.
+fn query(route: &Route) -> Option<(TokenStream, TokenStream)> {
+    let params: Vec<(&Param, &String)> = route
+        .params
+        .iter()
+        .filter_map(|param| match &param.kind {
+            ParamKind::Query { key } => Some((param, key)),
+            ParamKind::Path | ParamKind::Body => None,
+        })
+        .collect();
+    if params.is_empty() {
+        return None;
+    }
+
+    // An item, not a local: its name is spelled so that it hides none of the crate's types.
+    let query_type = Ident::new("__QuollQuery", Span::mixed_site());
+    let names = params.iter().map(|(param, _)| &param.name);
+    let fields = params.iter().map(|(param, key)| {
+        let (name, ty) = (&param.name, &param.ty);
+
+        quote_spanned! {ty.span()=>
+            #[serde(rename = #key)]
+            #name: #ty,
+        }
+    });
+    let item = quote! {
+        #[derive(::quoll::__private::serde::Serialize)]
+        #[serde(crate = "::quoll::__private::serde")]
+        struct #query_type {
+            #(#fields)*
+        }
+    };
+    let call = quote! { .query(&#query_type { #(#names),* })? };
+
+    Some((item, call))
+}
+
+/// `ApiClient`, its method per group, and `Api::client` and `Api::client_with`, which build it.
+fn api_client(api: &Api) -> TokenStream {
+    let Api { vis, name, .. } = api;
+    let client = api.client();
+    let docs = format!(
+        " A client of the api `{}`, which `{}::client` and `{}::client_with` build: a method per group gives the group's client. Its clones share its connections, and cost what cloning an `Arc` does.",
+        name.unraw(),
+        name.unraw(),
+        name.unraw(),
+    );
+    let groups = api.groups.iter().map(|group| {
+        let method = group.field();
+        let group_client = group.client();
+        let docs = format!(" The client of the group `{}`.", group.name.unraw());
+
+        quote! {
+            #[doc = #docs]
+            #vis fn #method(&self) -> #group_client {
+                #group_client {
+                    client: ::core::clone::Clone::clone(&self.client),
+                }
+            }
+        }
+    });
+    let url = Ident::new("url", Span::mixed_site());
+    let http = Ident::new("http", Span::mixed_site());
+
+    quote! {
+        #[doc = #docs]
+        #[derive(::core::fmt::Debug, ::core::clone::Clone)]
+        #vis struct #client {
+            client: ::quoll::__private::client::Client,
+        }
+
+        impl #client {
+            #(#groups)*
+        }
+
+        impl #name {
+            /// A client of the api served at `url`, as `http://localhost:8080`, with no middleware. Each route's
+            /// path is written after the path of `url`.
+            ///
+            /// # Errors
+            ///
+            /// When `url` is not an `http` or `https` URL with no query, or reqwest cannot build its client.
+            #vis fn client(#url: &str) -> ::quoll::rest::Result<#client> {
+                ::quoll::__private::client::Client::new(#url).map(|client| #client { client })
+            }
+
+            /// A client of the api served at `url`, as `http://localhost:8080`, sending its requests through
+            /// `http` and its middleware. Each route's path is written after the path of `url`.
+            ///
+            /// # Errors
+            ///
+            /// When `url` is not an `http` or `https` URL with no query.
+            #vis fn client_with(
+                #http: ::quoll::__private::reqwest_middleware::ClientWithMiddleware,
+                #url: &str,
+            ) -> ::quoll::rest::Result<#client> {
+                ::quoll::__private::client::Client::with(#http, #url).map(|client| #client { client })
+            }
+        }
+    }
+}

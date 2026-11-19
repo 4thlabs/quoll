@@ -9,3 +9,15 @@ error: `ApiServices`, the name of the group `ApiServices`, is already the servic
   |
 8 |     pub group ApiServices {}
   |               ^^^^^^^^^^^
+
+error: `NotesClient`, the name of the group `NotesClient`, is already the client of the group `Notes`: rename the group, as each item the contract writes has its own name
+ --> tests/compile_fail/generated_name_twice.rs:9:15
+  |
+9 |     pub group NotesClient {}
+  |               ^^^^^^^^^^^
+
+error: `ApiClient`, the name of the group `ApiClient`, is already the client of the api `Api`: rename the group, as each item the contract writes has its own name
+  --> tests/compile_fail/generated_name_twice.rs:10:15
+   |
+10 |     pub group ApiClient {}
+   |               ^^^^^^^^^

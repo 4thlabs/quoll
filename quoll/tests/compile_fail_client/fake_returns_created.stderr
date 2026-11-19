@@ -1,0 +1,15 @@
+error[E0271]: expected `impl Future<Output = Result<Created<String>, Error>>` to be a future that resolves to `Result<String, Error>`, but it resolves to `Result<Created<String>, Error>`
+  --> tests/compile_fail_client/fake_returns_created.rs:15:46
+   |
+15 |     async fn create(&self, title: String) -> Result<Created<String>> {
+   |                                              ^^^^^^^^^^^^^^^^^^^^^^^ expected `Result<String, Error>`, found `Result<Created<String>, Error>`
+   |
+   = note: expected enum `Result<String, Error>`
+              found enum `Result<Created<String>, Error>`
+note: required by a bound in `Notes::create::{anon_assoc#0}`
+  --> tests/compile_fail_client/fake_returns_created.rs:7:26
+   |
+ 3 | rest::api! {
+...
+ 7 |         POST "/notes" => create(title: String) -> Created<String>;
+   |                          ^^^^^^ required by this bound in `Notes::create::{anon_assoc#0}`
