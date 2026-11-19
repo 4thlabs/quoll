@@ -1,0 +1,5 @@
+error[E0063]: missing field `auth` in initializer of `ApiServices<_, _>`
+  --> tests/compile_fail_server/group_without_service.rs:24:25
+   |
+24 |     let _ = Api::router(ApiServices { notes: App });
+   |                         ^^^^^^^^^^^ missing `auth`

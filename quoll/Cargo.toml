@@ -9,13 +9,33 @@ repository.workspace = true
 [features]
 # Each side of a contract compiles only with its feature, so that a command line
 # never links axum, nor a server reqwest.
-server = []
+server = [
+    "dep:axum",
+    "dep:form_urlencoded",
+    "dep:serde",
+    "dep:serde_html_form",
+    "dep:serde_json",
+    "dep:tracing",
+]
 client = []
 
 [dependencies]
+axum = { version = "0.8", default-features = false, features = ["json"], optional = true }
+form_urlencoded = { version = "1", optional = true }
+http = "1"
 quoll-macros = { version = "0.1.0", path = "../quoll-macros" }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_html_form = { version = "0.4", optional = true }
+serde_json = { version = "1", optional = true }
+tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 trybuild = "1"
 
 [lints]

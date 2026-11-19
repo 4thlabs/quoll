@@ -1,4 +1,5 @@
 use quoll::rest;
+use serde::{Deserialize, Serialize};
 
 rest::api! {
     /// Notes, kept per user.
@@ -20,12 +21,15 @@ rest::api! {
     }
 }
 
-struct Login;
-struct TokenResponse;
-struct Note;
-struct NewNote;
+#[derive(Serialize, Deserialize)]
+pub struct Login;
+#[derive(Serialize, Deserialize)]
+pub struct TokenResponse;
+#[derive(Serialize, Deserialize)]
+pub struct Note;
+#[derive(Serialize, Deserialize)]
+pub struct NewNote;
 
 fn main() {
-    // The api is a type with the comments of the contract; what else it holds comes with the generators.
     let _api = Api;
 }

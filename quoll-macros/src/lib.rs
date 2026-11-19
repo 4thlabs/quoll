@@ -1,13 +1,8 @@
 //! The proc macros of `quoll`, which re-exports them: users depend on `quoll`, never on this crate.
 
-// The model is read in full by the generators of the server, the client and OpenAPI, which come in later changes; today
-// the tests read it.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "its generators are not written yet")
-)]
 mod model;
 mod path;
+mod server;
 mod syntax;
 
 use proc_macro::TokenStream;
@@ -29,8 +24,9 @@ use crate::syntax::Contract;
 /// }
 /// ```
 ///
-/// A mistake in the contract is a compile error on the token at fault. The code of the server, the client and the
-/// OpenAPI document comes with the features that need it; for now the api becomes its type, with its comments.
+/// A mistake in the contract is a compile error on the token at fault. The api becomes its type, with its comments;
+/// with the feature `server` of `quoll`, a trait per group, `ApiServices` and `Api::router` come too. The client and
+/// the OpenAPI document come in later changes.
 #[proc_macro]
 pub fn api(input: TokenStream) -> TokenStream {
     match syn::parse::<Contract>(input) {
@@ -39,8 +35,24 @@ pub fn api(input: TokenStream) -> TokenStream {
     }
 }
 
-/// The api's type, with its comments.
+/// What a contract becomes: the api's type, and the server's code behind the feature `server` of `quoll`.
 fn expand(api: &Api) -> proc_macro2::TokenStream {
+    let api_type = api_type(api);
+    let server = server::expand(api);
+
+    quote! {
+        #api_type
+        #server
+    }
+}
+
+/// `#[doc = ...]` attributes, one per line.
+pub(crate) fn doc_attrs(lines: &[String]) -> proc_macro2::TokenStream {
+    quote! { #(#[doc = #lines])* }
+}
+
+/// The api's type, with its comments.
+fn api_type(api: &Api) -> proc_macro2::TokenStream {
     let Api {
         docs, vis, name, ..
     } = api;
@@ -51,10 +63,10 @@ fn expand(api: &Api) -> proc_macro2::TokenStream {
     } else {
         &docs.0
     };
-    let docs = lines.iter().map(|line| quote! { #[doc = #line] });
+    let docs = doc_attrs(lines);
 
     quote! {
-        #(#docs)*
+        #docs
         #[derive(
             ::core::fmt::Debug,
             ::core::clone::Clone,
@@ -94,5 +106,24 @@ mod tests {
             tokens.contains("The REST contract `Api`, from `rest::api!`."),
             "{tokens}"
         );
+    }
+
+    #[test]
+    fn the_server_goes_through_the_gate_of_its_feature() {
+        let tokens = expansion(quote! {
+            pub api Api = "/api";
+
+            pub group Notes {
+                GET "/notes/{id}" => get(id: i64) -> String;
+            }
+        });
+        let gate = tokens
+            .find(":: quoll :: __private :: server !")
+            .expect("the server's code is gated");
+
+        for item in ["trait NotesServer", "struct ApiServices", "fn router"] {
+            let at = tokens.find(item).expect("the item is written");
+            assert!(at > gate, "{item} is written outside the gate: {tokens}");
+        }
     }
 }
