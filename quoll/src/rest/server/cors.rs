@@ -3,6 +3,7 @@
 use std::convert::Infallible;
 use std::error::Error as StdError;
 use std::fmt;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -23,7 +24,8 @@ const MAX_AGE: Duration = Duration::from_secs(60 * 60);
 ///
 /// - An origin is written `https://app.example.com` or `http://localhost:5173`: a scheme, `http` or `https`, a host
 ///   and a port when it is not the scheme's default, with no path, no user and no query. The scheme and the host are
-///   read case aside, and a default port is dropped, as a browser sends them.
+///   read case aside, an IPv6 address is compressed, `[::1]`, and a default port is dropped, as a browser sends them.
+///   A host a browser reads as an IPv4 address is written as one, `127.0.0.1`.
 /// - Every method a contract serves is allowed: `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE` and `OPTIONS`. Any
 ///   header a page asks for is allowed too, as the routes' headers, a scheme's and `X-Request-Id` are the
 ///   application's: the origins listed are trusted.
@@ -120,13 +122,84 @@ fn origin_value(origin: &str) -> Result<HeaderValue, InvalidOrigin> {
             Some(digits.parse::<u16>().map_err(|_| invalid())?)
         }
     };
-    let host = authority.host().to_ascii_lowercase();
+    let host = host_value(authority.host()).ok_or_else(invalid)?;
     let text = match port {
         Some(port) if port != default_port => format!("{scheme}://{host}:{port}"),
         _ => format!("{scheme}://{host}"),
     };
 
     HeaderValue::try_from(text).map_err(|_| invalid())
+}
+
+/// `host` as a browser writes it in `Origin`, which the URL standard serializes: a name in lowercase, an IPv6 address
+/// compressed, `[::1]`. `None` for a host a browser would read as an IPv4 address written otherwise than as one,
+/// `127.1` or `0x7f.0.0.1`, and for an IPv6 address that is not one.
+fn host_value(host: &str) -> Option<String> {
+    if let Some(address) = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+    {
+        let address: Ipv6Addr = address.parse().ok()?;
+
+        return Some(format!("[{}]", ipv6_text(address)));
+    }
+
+    let host = host.to_ascii_lowercase();
+    // The URL standard reads a host whose last label is a number as an IPv4 address.
+    let last = host
+        .trim_end_matches('.')
+        .rsplit('.')
+        .next()
+        .unwrap_or_default();
+    let numeric = !last.is_empty()
+        && (last.bytes().all(|byte| byte.is_ascii_digit()) || last.starts_with("0x"));
+
+    if numeric && host.parse::<Ipv4Addr>().is_err() {
+        return None;
+    }
+
+    Some(host)
+}
+
+/// An IPv6 address as the URL standard writes it: its eight pieces in lowercase hex, the first of its longest runs of
+/// two zero pieces or more as `::`, and never an IPv4 address inside, as Rust's `Display` writes `::ffff:1.2.3.4`.
+fn ipv6_text(address: Ipv6Addr) -> String {
+    let pieces = address.segments();
+    let mut longest = (0, 0);
+    let mut index = 0;
+
+    while index < pieces.len() {
+        let start = index;
+
+        while index < pieces.len() && pieces[index] == 0 {
+            index += 1;
+        }
+
+        if index - start > longest.1 {
+            longest = (start, index - start);
+        }
+
+        index += 1;
+    }
+
+    let hex = |pieces: &[u16]| {
+        pieces
+            .iter()
+            .map(|piece| format!("{piece:x}"))
+            .collect::<Vec<_>>()
+            .join(":")
+    };
+    let (start, length) = longest;
+
+    if length < 2 {
+        return hex(&pieces);
+    }
+
+    format!(
+        "{}::{}",
+        hex(&pieces[..start]),
+        hex(&pieces[start + length..])
+    )
 }
 
 /// An origin given to [`cors`] that is not one.
@@ -260,6 +333,28 @@ mod tests {
             written("https://[::1]:8443").as_deref(),
             Ok("https://[::1]:8443")
         );
+        assert_eq!(
+            written("http://127.0.0.1:5173").as_deref(),
+            Ok("http://127.0.0.1:5173")
+        );
+    }
+
+    #[test]
+    fn an_ipv6_address_is_written_compressed_as_a_browser_sends_it() {
+        for (given, sent) in [
+            ("http://[0:0:0:0:0:0:0:1]:5173", "http://[::1]:5173"),
+            ("http://[::1]", "http://[::1]"),
+            (
+                "http://[2001:0DB8:0:0:1:0:0:1]",
+                "http://[2001:db8::1:0:0:1]",
+            ),
+            ("http://[2001:db8:0:0:0:0:0:0]", "http://[2001:db8::]"),
+            ("http://[0:0:0:0:0:0:0:0]", "http://[::]"),
+            ("http://[1:0:1:0:1:0:1:0]", "http://[1:0:1:0:1:0:1:0]"),
+            ("http://[::ffff:1.2.3.4]", "http://[::ffff:102:304]"),
+        ] {
+            assert_eq!(written(given).as_deref(), Ok(sent), "{given}");
+        }
     }
 
     #[test]
@@ -278,6 +373,10 @@ mod tests {
             "https://app.example.com:",
             "https://app.example.com:99999",
             "https://app.example.com:+80",
+            "http://127.1",
+            "http://0x7f.0.0.1",
+            "http://127.000.0.1",
+            "http://[::1::2]",
         ] {
             let error = written(origin).expect_err(origin);
 
