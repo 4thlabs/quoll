@@ -210,6 +210,8 @@ pub(crate) struct Param {
     pub(crate) ty: Type,
     /// Where its value is read from.
     pub(crate) kind: ParamKind,
+    /// The type a body of quoll's wraps: the `T` of a `Form<T>`.
+    pub(crate) inner: Option<Type>,
 }
 
 /// Where an argument comes from on the wire.
@@ -250,6 +252,8 @@ pub(crate) struct Returned {
     pub(crate) value: Type,
     /// The type of quoll's it is, a result, which the generated code checks; `None` for JSON.
     pub(crate) known: Option<&'static Known>,
+    /// The type it wraps, when it is a type of quoll's that wraps one: the `T` of `Created<T>` or `Events<T>`.
+    pub(crate) inner: Option<Type>,
 }
 
 impl Returned {
@@ -440,7 +444,19 @@ fn match_args(
                 }
             },
         };
-        params.push(Param { name, ty, kind });
+        let inner = match (&kind, Known::of(&ty)) {
+            (ParamKind::Body(_), Some(known)) => known
+                .wraps
+                .map(|what| wrapped(&ty, known.name, what))
+                .transpose()?,
+            _ => None,
+        };
+        params.push(Param {
+            name,
+            ty,
+            kind,
+            inner,
+        });
     }
 
     Ok(params)
@@ -771,6 +787,7 @@ impl Returned {
                 value: ty.clone(),
                 served: ty,
                 known: None,
+                inner: None,
             })));
         };
 
@@ -778,8 +795,8 @@ impl Returned {
             .wraps
             .map(|what| wrapped(&ty, known.name, what))
             .transpose()?;
-        let value = match inner {
-            Some(inner) if kind.unwrapped => inner,
+        let value = match &inner {
+            Some(inner) if kind.unwrapped => inner.clone(),
             _ => ty.clone(),
         };
 
@@ -787,6 +804,7 @@ impl Returned {
             served: ty,
             value,
             known: Some(known),
+            inner,
         })))
     }
 }

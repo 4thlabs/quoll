@@ -94,23 +94,27 @@ pub struct Param {
     pub name: &'static str,
     /// Where it is read from.
     pub place: Place,
-    /// Whether it must be there: it is not an `Option` nor a `Vec`.
-    pub required: bool,
     /// Its schema, the `T` of an `Option<T>`; the whole struct of a query struct.
     pub schema: SchemaFn,
 }
 
-/// Where a parameter is read from.
+/// Where a parameter is read from, and whether it must be there: it is not an `Option` nor a `Vec`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Place {
-    /// A `{name}` of the path.
+    /// A `{name}` of the path, always there.
     Path,
     /// A key of the query.
-    Query,
-    /// The whole query, a key per field.
+    Query {
+        /// Whether it must be there.
+        required: bool,
+    },
+    /// The whole query, a key per field, each required as its schema says.
     QueryStruct,
     /// A header.
-    Header,
+    Header {
+        /// Whether it must be there.
+        required: bool,
+    },
 }
 
 /// The body of a route.
@@ -165,6 +169,9 @@ pub struct SchemeRef {
     pub name: &'static str,
     /// `Scheme::openapi`.
     pub openapi: fn() -> SecurityScheme,
+    /// Whether the scheme answers 403 to a request from another origin that changes things: a cookie scheme the
+    /// contract declares, which checks it as it reads its cookie.
+    pub checks_origin: bool,
 }
 
 /// Whether two names of schemes are one, which a compile-time check of the api refuses: the document names each
@@ -247,8 +254,9 @@ enum Side {
 }
 
 /// The document of `api`.
-pub fn document(api: &Api) -> Document {
+pub fn document(api: &'static Api) -> Document {
     let mut builder = Builder {
+        refs: api.schemes,
         read: generator(Contract::Deserialize),
         written: generator(Contract::Serialize),
         schemes: api
@@ -330,6 +338,8 @@ struct Builder {
     read: SchemaGenerator,
     /// The schemas of what clients receive.
     written: SchemaGenerator,
+    /// The api's schemes.
+    refs: &'static [SchemeRef],
     /// The api's schemes, as they describe themselves, in the order of the api's.
     schemes: Vec<SecurityScheme>,
     /// The names of the responses of errors some route lists.
@@ -388,13 +398,11 @@ impl Builder {
             .filter_map(SecurityScheme::query_key)
             .map(str::to_owned)
             .collect();
-        let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+        let mut seen: BTreeSet<(String, &str)> = BTreeSet::new();
         let mut parameters = Vec::new();
 
         for param in route.params {
-            for parameter in self.parameter(param) {
-                let name = parameter["name"].as_str().unwrap_or_default().to_owned();
-                let place = parameter["in"].as_str().unwrap_or_default().to_owned();
+            for (name, place, parameter) in self.parameter(param) {
                 let credential = place == "query" && credentials.contains(&name);
 
                 if !credential && seen.insert((name, place)) {
@@ -406,21 +414,23 @@ impl Builder {
         parameters
     }
 
-    fn parameter(&mut self, param: &Param) -> Vec<Value> {
+    /// The parameters of `param`, each with its name and its place: one, or one per field of a query struct.
+    fn parameter(&mut self, param: &Param) -> Vec<(String, &'static str, Value)> {
         let schema = self.schema(param.schema, Side::Read);
-        let place = match param.place {
-            Place::Path => "path",
-            Place::Query => "query",
-            Place::Header => "header",
+        let (place, required) = match param.place {
+            Place::Path => ("path", true),
+            Place::Query { required } => ("query", required),
+            Place::Header { required } => ("header", required),
             Place::QueryStruct => return unfold(param.name, schema),
         };
-
-        vec![json!({
+        let parameter = json!({
             "name": param.name,
             "in": place,
-            "required": param.required || param.place == Place::Path,
+            "required": required,
             "schema": not_null(schema),
-        })]
+        });
+
+        vec![(param.name.to_owned(), place, parameter)]
     }
 
     fn body(&mut self, body: &Body) -> Value {
@@ -454,11 +464,15 @@ impl Builder {
 
         let reads = !route.params.is_empty() || route.body.is_some();
         let changes = !matches!(route.method, "get" | "head" | "options");
-        let cookie = self.route_schemes(route).any(SecurityScheme::is_cookie);
-        let forbidden = route
-            .auth
-            .as_ref()
-            .is_some_and(|auth| !auth.scopes.is_empty() || (changes && cookie));
+        let forbidden = route.auth.as_ref().is_some_and(|auth| {
+            let checks_origin = auth
+                .schemes
+                .iter()
+                .filter_map(|&index| self.refs.get(index))
+                .any(|scheme| scheme.checks_origin);
+
+            !auth.scopes.is_empty() || (changes && checks_origin)
+        });
         let listed = [reads, route.auth.is_some(), forbidden, route.body.is_some()];
 
         for ((name, status, _), listed) in ERRORS.iter().zip(listed) {
@@ -618,7 +632,7 @@ fn reference(name: &str) -> Value {
 
 /// The parameters of a query struct, named `name`, whose schema is `schema`: one per field, sorted by name, when it is
 /// a plain object; else one parameter holding it, written as a form.
-fn unfold(name: &str, schema: Value) -> Vec<Value> {
+fn unfold(name: &str, schema: Value) -> Vec<(String, &'static str, Value)> {
     let plain = schema.get("type") == Some(&Value::from("object"))
         && ["allOf", "anyOf", "oneOf", "$ref"]
             .iter()
@@ -627,14 +641,16 @@ fn unfold(name: &str, schema: Value) -> Vec<Value> {
     let (true, Some(properties)) = (plain, properties) else {
         // Not required: an empty query is what the server reads when every field may be missing, and what it refuses
         // otherwise, which the schema says.
-        return vec![json!({
+        let parameter = json!({
             "name": name,
             "in": "query",
             "required": false,
             "style": "form",
             "explode": true,
             "schema": schema,
-        })];
+        });
+
+        return vec![(name.to_owned(), "query", parameter)];
     };
 
     let required: BTreeSet<&str> = schema
@@ -664,7 +680,7 @@ fn unfold(name: &str, schema: Value) -> Vec<Value> {
                 parameter["description"] = description;
             }
 
-            parameter
+            (key.clone(), "query", parameter)
         })
         .collect()
 }
@@ -678,14 +694,30 @@ fn not_null(mut schema: Value) -> Value {
 
     if let Some(Value::Array(types)) = object.get_mut("type") {
         types.retain(|ty| ty != "null");
-        if types.len() == 1 {
-            let only = types.remove(0);
-            object.insert("type".into(), only);
+        match types.len() {
+            // A schema of `null` alone says nothing a parameter can be: any value.
+            0 => {
+                object.remove("type");
+            }
+            1 => {
+                let only = types.remove(0);
+                object.insert("type".into(), only);
+            }
+            _ => {}
         }
+    }
+    if object.get("type") == Some(&Value::from("null")) {
+        object.remove("type");
     }
 
     if let Some(Value::Array(values)) = object.get_mut("enum") {
         values.retain(|value| !value.is_null());
+        if values.is_empty() {
+            object.remove("enum");
+        }
+    }
+    if object.get("const") == Some(&Value::Null) {
+        object.remove("const");
     }
 
     if let Some(Value::Array(alternatives)) = object.get_mut("anyOf") {
@@ -907,6 +939,13 @@ mod tests {
             not_null(json!({ "type": ["string", "null"], "enum": ["a", "b", null] })),
             json!({ "type": "string", "enum": ["a", "b"] })
         );
+        assert_eq!(
+            not_null(json!({ "type": ["null"], "description": "Always null." })),
+            json!({ "description": "Always null." })
+        );
+        assert_eq!(not_null(json!({ "type": "null" })), json!({}));
+        assert_eq!(not_null(json!({ "enum": [null] })), json!({}));
+        assert_eq!(not_null(json!({ "const": null })), json!({}));
     }
 
     #[test]
@@ -921,8 +960,13 @@ mod tests {
             "required": ["tag"],
         });
 
+        let parameters: Vec<Value> = unfold("filter", schema)
+            .into_iter()
+            .map(|(_, _, parameter)| parameter)
+            .collect();
+
         assert_eq!(
-            unfold("filter", schema),
+            parameters,
             vec![
                 json!({ "name": "contains", "in": "query", "required": false, "description": "A word.", "schema": { "type": "string" } }),
                 json!({ "name": "page", "in": "query", "required": false, "schema": { "type": "integer", "format": "uint32" } }),
@@ -938,9 +982,11 @@ mod tests {
 
         assert_eq!(
             unfold("filter", schema.clone()),
-            vec![
+            vec![(
+                "filter".to_owned(),
+                "query",
                 json!({ "name": "filter", "in": "query", "required": false, "style": "form", "explode": true, "schema": schema })
-            ]
+            )]
         );
     }
 

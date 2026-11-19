@@ -153,7 +153,7 @@ pub(crate) const KNOWN: &[Known] = &[
     Known {
         name: "Form",
         check: "form",
-        wraps: None,
+        wraps: Some("the form"),
         result: None,
         body: Some(BodyKind::FORM),
         stream: false,

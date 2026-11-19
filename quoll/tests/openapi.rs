@@ -104,6 +104,48 @@ impl Scheme for Hmac {
     }
 }
 
+/// A session cookie of the application's own, which checks no origin.
+struct Crumb;
+
+impl Scheme for Crumb {
+    type Credential = String;
+
+    const NAME: &'static str = "Crumb";
+
+    fn read(_request: &Parts) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    fn openapi() -> SecurityScheme {
+        SecurityScheme::cookie("crumb")
+    }
+}
+
+/// A note under a name that cannot be a component's.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "Old Note")]
+struct Renamed {
+    text: String,
+}
+
+/// A page of notes, whose schema is named as Rust writes it.
+#[derive(Debug, Serialize, Deserialize)]
+struct Page {
+    notes: Vec<Note>,
+}
+
+impl JsonSchema for Page {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Page<Note>".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let notes = generator.subschema_for::<Vec<Note>>();
+
+        schemars::json_schema!({ "type": "object", "properties": { "notes": notes } })
+    }
+}
+
 mod auth {
     pub(crate) use super::Hmac;
 }
@@ -159,6 +201,10 @@ rest::api! {
         PUT  "/labels"       => label(labels: Labels) -> Labels;
         #[auth(Token)]
         GET  "/find"         => find(query find: Find) -> Vec<String>;
+        GET  "/old"          => old() -> Renamed;
+        GET  "/page"         => page() -> Page;
+        #[auth(Crumb)]
+        POST "/crumbs"       => crumb();
     }
 
     #[auth(Key | crate::auth::Hmac, scopes("admin", "audit"))]
@@ -531,6 +577,7 @@ fn each_scheme_is_described_by_its_name() {
             "Token": { "type": "apiKey", "in": "query", "name": "token" },
             "Oidc": { "type": "openIdConnect", "openIdConnectUrl": "https://id.example.com/.well-known/openid-configuration" },
             "Hmac": { "type": "apiKey", "in": "header", "name": "X-Signature", "description": "`<key id>:<signature>`" },
+            "Crumb": { "type": "apiKey", "in": "cookie", "name": "crumb" },
         })
     );
 }
@@ -616,5 +663,40 @@ fn the_key_of_a_query_scheme_is_no_parameter() {
     assert_eq!(
         operation("/api/find", "get")["security"],
         json!([{ "Token": [] }])
+    );
+}
+
+#[test]
+fn a_name_that_cannot_be_a_components_is_written_with_underscores() {
+    let schemas = &DOCUMENT["components"]["schemas"];
+
+    assert!(schemas.get("Old_Note").is_some(), "{schemas}");
+    assert!(schemas.get("Page_Note_").is_some(), "{schemas}");
+    assert_eq!(
+        operation("/api/old", "get")["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/Old_Note"
+    );
+    assert_eq!(
+        operation("/api/page", "get")["responses"]["200"]["content"]["application/json"]["schema"]
+            ["$ref"],
+        "#/components/schemas/Page_Note_"
+    );
+    for name in schemas.as_object().unwrap().keys() {
+        assert!(
+            name.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn only_a_declared_cookie_scheme_answers_403_for_another_origin() {
+    // The application's own cookie scheme checks no origin, and lists no 403.
+    assert_eq!(responses("/api/crumbs", "post"), ["204", "401", "default"]);
+    // The declared one does.
+    assert_eq!(
+        responses("/api/notes/{id}", "delete"),
+        ["204", "400", "401", "403", "default"]
     );
 }
