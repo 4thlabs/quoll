@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::__private::content_type::{
-    self, FORM, OCTET_STREAM, PROBLEM, TEXT_UTF8, media_type_value,
+    self, FORM, JSON_LINES, OCTET_STREAM, PROBLEM, TEXT_UTF8, media_type_value,
 };
 use crate::__private::known::{IsBytes, IsEvents, IsForm, IsJsonLines, IsText};
 use crate::rest::{Error, Problem, Result, Route};
@@ -24,11 +24,22 @@ use crate::rest::{Error, Problem, Result, Route};
 mod stream;
 mod text;
 
-pub use crate::__private::content_type::{EVENT_STREAM, JSON, JSON_LINES, TEXT};
+pub use crate::__private::content_type::{EVENT_STREAM, JSON, TEXT};
 pub use http::{HeaderName, Method};
 
 /// Any content type, which a route returning `Bytes` asks for.
 pub const ANY: &str = "*/*";
+
+/// The content types of JSON Lines the client reads: its own, and the two names some APIs send it with.
+const JSON_LINES_READ: &[&str] = &[
+    JSON_LINES,
+    "application/x-ndjson",
+    "application/x-jsonlines",
+];
+
+/// What a route returning `JsonLines` asks for: JSON Lines by its own name first.
+pub const ANY_JSON_LINES: &str =
+    "application/jsonl, application/x-ndjson;q=0.9, application/x-jsonlines;q=0.9";
 
 /// What a path parameter keeps as it is: the unreserved characters of RFC 3986. Every other byte is escaped, `/`, `?`
 /// and `%` included, so that a value is one segment and reads back as it was written.
@@ -242,8 +253,8 @@ impl<'a> Call<'a> {
     /// # Errors
     ///
     /// When `body` cannot be written as JSON.
-    pub fn json<T: Serialize + ?Sized>(mut self, body: &T) -> Result<Self> {
-        let body = serde_json::to_vec(body).map_err(|error| {
+    pub fn json<T: Serialize>(mut self, body: T) -> Result<Self> {
+        let body = serde_json::to_vec(&body).map_err(|error| {
             Error::misuse(
                 format!(
                     "the body of `{}` cannot be written as JSON",
@@ -266,7 +277,7 @@ impl<'a> Call<'a> {
     /// # Errors
     ///
     /// When serde_html_form cannot write the form.
-    pub fn form<F>(mut self, body: &F) -> Result<Self>
+    pub fn form<F>(mut self, body: F) -> Result<Self>
     where
         F: IsForm,
         F::Value: Serialize,
@@ -289,13 +300,16 @@ impl<'a> Call<'a> {
     }
 
     /// Sets the body to `body`, `text/plain` in UTF-8.
-    #[must_use]
-    pub fn text<T: IsText>(mut self, body: T) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// None: text is always a body. It returns a `Result` as the other bodies do, which the macro calls alike.
+    pub fn text<T: IsText>(mut self, body: T) -> Result<Self> {
         self.body = Some(Body {
             content_type: HeaderValue::from_static(TEXT_UTF8),
             bytes: body.into_string().into_bytes(),
         });
-        self
+        Ok(self)
     }
 
     /// Sets the body to `body`, of its content type.
@@ -506,16 +520,17 @@ impl Answer {
     /// # Errors
     ///
     /// An error with no status when the answer is not `text/event-stream`. Then, in the stream, an error with no
-    /// status for an event that does not read as an item, and for a body that cannot be read, which ends it.
+    /// status for an event that does not read as an item; and for an event or a line longer than 1 MiB, or a body that
+    /// cannot be read, after which the stream ends.
     pub async fn events<E>(self) -> Result<E>
     where
         E: IsEvents,
         E::Item: DeserializeOwned + Send + 'static,
     {
         let route = self.route;
-        let response = self.of_type(EVENT_STREAM, false).await?;
+        let response = self.stream_of(&[EVENT_STREAM])?;
 
-        Ok(E::from_results(stream::items(
+        Ok(E::from_items(stream::items(
             response,
             route,
             stream::EventStream::default(),
@@ -527,48 +542,54 @@ impl Answer {
     ///
     /// # Errors
     ///
-    /// An error with no status when the answer is not `application/jsonl`. Then, in the stream, an error with no
-    /// status for a line that does not read as an item, and for a body that cannot be read, which ends it.
+    /// An error with no status when the answer is not `application/jsonl`, `application/x-ndjson` or
+    /// `application/x-jsonlines`. Then, in the stream, an error with no status for a line that does not read as an
+    /// item; and for a line longer than 1 MiB, or a body that cannot be read, after which the stream ends.
     pub async fn json_lines<L>(self) -> Result<L>
     where
         L: IsJsonLines,
         L::Item: DeserializeOwned + Send + 'static,
     {
         let route = self.route;
-        let response = self.of_type(JSON_LINES, false).await?;
+        let response = self.stream_of(JSON_LINES_READ)?;
 
-        Ok(L::from_results(stream::items(
+        Ok(L::from_items(stream::items(
             response,
             route,
             stream::JsonLineStream::default(),
         )))
     }
 
-    /// The whole body, when the answer's content type is `expected`, with no charset but UTF-8 when `utf8` is set.
+    /// The whole body, when the answer's content type is `expected`, with no charset but UTF-8 when `utf8` is set: a
+    /// body of another type is not the route's result, even when it would read as one, as a page of HTML would as
+    /// text. Such a body is read and dropped up to 64 KiB, as [`Answer::none`] does, so that the connection serves
+    /// again.
     async fn read_as(self, expected: &str, utf8: bool) -> Result<bytes::Bytes> {
-        let route = self.route;
-        let response = self.of_type(expected, utf8).await?;
-
-        Self { response, route }.read().await
-    }
-
-    /// The answer, when its content type is `expected`, with no charset but UTF-8 when `utf8` is set: a body of
-    /// another type is not the route's result, even when it would read as one, as a page of HTML would as text. Such
-    /// a body is read and dropped up to 64 KiB, as [`Answer::none`] does, so that the connection serves again.
-    async fn of_type(self, expected: &str, utf8: bool) -> Result<reqwest::Response> {
         if content_type::is(self.response.headers(), expected, utf8) {
-            return Ok(self.response);
+            return self.read().await;
         }
 
         // The call has failed already: a body that does not read only costs the connection.
         let _ = read_up_to_limit(self.response).await;
-        let charset = if utf8 { " in UTF-8" } else { "" };
 
-        Err(no_answer(
-            self.route,
-            NOT_ITS_RESULT,
-            format!("its content type is not `{expected}`{charset}"),
-        ))
+        Err(not_of_type(self.route, &[expected], utf8))
+    }
+
+    /// The answer of a stream, when its content type is one of `expected`. An answer of another type is dropped at
+    /// once, which closes its connection, rather than drained as [`Answer::read_as`] drains it: it may be an endless
+    /// stream of its own, whose 64 KiB never come.
+    fn stream_of(self, expected: &[&str]) -> Result<reqwest::Response> {
+        let Self { response, route } = self;
+
+        if expected
+            .iter()
+            .any(|expected| content_type::is(response.headers(), expected, false))
+        {
+            return Ok(response);
+        }
+
+        drop(response);
+        Err(not_of_type(route, expected, false))
     }
 
     /// The whole body.
@@ -597,6 +618,26 @@ impl Answer {
 
 /// What the error of an answer that is not the route's result says.
 const NOT_ITS_RESULT: &str = "got an answer that is not its result";
+
+/// The error of an answer whose content type is none of `expected`, with no charset but UTF-8 when `utf8` is set.
+fn not_of_type(route: &Route, expected: &[&str], utf8: bool) -> Error {
+    let names: Vec<String> = expected
+        .iter()
+        .map(|expected| format!("`{expected}`"))
+        .collect();
+    let names = match names.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        None => String::new(),
+    };
+    let charset = if utf8 { " in UTF-8" } else { "" };
+
+    no_answer(
+        route,
+        NOT_ITS_RESULT,
+        format!("its content type is not {names}{charset}"),
+    )
+}
 
 /// The body of `response`, read up to [`BODY_LIMIT`] bytes: past them, the rest is not read.
 async fn read_up_to_limit(mut response: reqwest::Response) -> reqwest::Result<Vec<u8>> {

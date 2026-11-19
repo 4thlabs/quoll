@@ -49,7 +49,7 @@ mod created;
 pub(crate) mod error;
 mod problem;
 mod route;
-mod stream;
+pub(crate) mod stream;
 #[cfg(feature = "server")]
 pub mod test;
 

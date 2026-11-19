@@ -13,8 +13,8 @@ help: the trait `quoll::__private::known::IsJsonLines` is not implemented for `l
 help: the trait `quoll::__private::known::IsJsonLines` is implemented for `quoll::rest::JsonLines<T>`
   --> src/__private/known.rs
    |
-   | impl<T: 'static> IsJsonLines for JsonLines<T> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | impl<T> IsJsonLines for JsonLines<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `quoll::__private::known::json_lines`
   --> src/__private/known.rs
    |

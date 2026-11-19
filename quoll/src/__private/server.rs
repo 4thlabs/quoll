@@ -551,6 +551,40 @@ impl IntoResponse for Error {
     }
 }
 
+/// What `f` logs, and what it gives.
+#[cfg(test)]
+fn logged_by<R>(f: impl FnOnce() -> R) -> (String, R) {
+    #[derive(Clone, Default)]
+    struct Log(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Log {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("no writer panics")
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let log = Log::default();
+    let writer = log.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+
+    let given = tracing::subscriber::with_default(subscriber, f);
+    let text = String::from_utf8(log.0.lock().expect("no writer panics").clone())
+        .expect("the log is text");
+
+    (text, given)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -626,35 +660,13 @@ mod tests {
 
     /// What `answer` logs for `error`, and what it answers.
     fn logged(error: &Error) -> (String, StatusCode, Option<String>) {
-        #[derive(Clone, Default)]
-        struct Log(Arc<std::sync::Mutex<Vec<u8>>>);
+        let (log, (status, detail)) = logged_by(|| {
+            let (status, detail) = answer(error);
 
-        impl std::io::Write for Log {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.0
-                    .lock()
-                    .expect("no writer panics")
-                    .extend_from_slice(bytes);
-                Ok(bytes.len())
-            }
+            (status, detail.map(str::to_owned))
+        });
 
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-
-        let log = Log::default();
-        let writer = log.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_ansi(false)
-            .finish();
-
-        let (status, detail) = tracing::subscriber::with_default(subscriber, || answer(error));
-        let text = String::from_utf8(log.0.lock().expect("no writer panics").clone())
-            .expect("the log is text");
-
-        (text, status, detail.map(str::to_owned))
+        (log, status, detail)
     }
 
     #[test]

@@ -13,8 +13,8 @@ help: the trait `quoll::__private::known::IsEvents` is not implemented for `Even
 help: the trait `quoll::__private::known::IsEvents` is implemented for `quoll::rest::Events<T>`
   --> src/__private/known.rs
    |
-   | impl<T: 'static> IsEvents for Events<T> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | impl<T> IsEvents for Events<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `quoll::__private::known::events`
   --> src/__private/known.rs
    |

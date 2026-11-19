@@ -9,7 +9,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, BodyKind, Group, Param, Reply, Route, snake_case};
+use crate::model::{Api, Group, Param, Reply, Route, snake_case};
 use crate::path::Segment;
 use crate::{doc_attrs, route_docs, scheme_type};
 
@@ -142,32 +142,23 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
     });
     let body = route.body().map(|(param, kind)| {
         let (name, ty) = (&param.name, &param.ty);
+        let write = Ident::new(kind.method, Span::call_site());
 
-        match kind {
-            BodyKind::Json => quote_spanned! {ty.span()=> .json(&#name)? },
-            BodyKind::Form => quote_spanned! {ty.span()=> .form(&#name)? },
-            BodyKind::Text => quote_spanned! {ty.span()=> .text(#name) },
-            BodyKind::Bytes => quote_spanned! {ty.span()=> .bytes(#name)? },
-        }
+        quote_spanned! {ty.span()=> .#write(#name)? }
     });
-    let accept = match &route.reply {
-        Reply::None => None,
-        Reply::Json(_) | Reply::Created { .. } | Reply::Accepted { .. } => Some(quote! { JSON }),
-        Reply::Text(_) => Some(quote! { TEXT }),
-        Reply::Bytes(_) => Some(quote! { ANY }),
-        Reply::Events(_) => Some(quote! { EVENT_STREAM }),
-        Reply::JsonLines(_) => Some(quote! { JSON_LINES }),
-    }
-    .map(|media_type| quote! { .accept(::quoll::__private::client::#media_type) });
+    let accept = route.reply.kind().map(|kind| {
+        let media_type = Ident::new(kind.accept, Span::call_site());
+
+        quote! { .accept(::quoll::__private::client::#media_type) }
+    });
     let answer = match &route.reply {
         Reply::None => quote_spanned! {route.span=> .none().await },
-        Reply::Json(ty) | Reply::Created { inner: ty, .. } | Reply::Accepted { inner: ty, .. } => {
-            quote_spanned! {ty.span()=> .json::<#ty>().await }
+        Reply::Some(returned) => {
+            let value = &returned.value;
+            let read = Ident::new(returned.kind.read, Span::call_site());
+
+            quote_spanned! {value.span()=> .#read::<#value>().await }
         }
-        Reply::Text(ty) => quote_spanned! {ty.span()=> .text::<#ty>().await },
-        Reply::Bytes(ty) => quote_spanned! {ty.span()=> .bytes::<#ty>().await },
-        Reply::Events(ty) => quote_spanned! {ty.span()=> .events::<#ty>().await },
-        Reply::JsonLines(ty) => quote_spanned! {ty.span()=> .json_lines::<#ty>().await },
     };
 
     quote! {
