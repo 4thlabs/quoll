@@ -14,9 +14,8 @@ The maintainer writes in French. Code, comments, docs and commit messages are in
 
 ## Status
 
-Design only: there is no code yet. The spec is a **Draft**. Once the maintainer validates it, its first block says
-`**Validated** by the maintainer on <date>`, and it changes only by a decision of theirs, made in the pull request
-that updates it.
+Design only: there is no code yet. The spec is **Validated** by the maintainer: it changes only by a decision of theirs,
+made in the pull request that updates it, with its new date.
 
 ## Build and test
 

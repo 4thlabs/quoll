@@ -17,7 +17,7 @@
   <p>
     <a href="docs/spec.md"><strong>The spec</strong></a> ·
     <a href="docs/spec.md#a-complete-example">A complete example</a> ·
-    <a href="docs/spec.md#open-questions">Open questions</a>
+    <a href="docs/spec.md#later">Later</a>
   </p>
 </div>
 
@@ -106,7 +106,7 @@ No Rust is generated on disk: the macro expands at compile time, and `cargo expa
 
 ## Status
 
-Design: the contract is specified in [`docs/spec.md`](docs/spec.md), a draft. There is no code yet.
+Design: the contract is specified in [`docs/spec.md`](docs/spec.md), validated. There is no code yet.
 
 ## License
 
