@@ -1,0 +1,16 @@
+[package]
+name = "quoll"
+description = "A REST contract for Rust, written once: an axum server, a reqwest client and an OpenAPI document"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+# Each side of a contract compiles only with its feature, so that a command line
+# never links axum, nor a server reqwest.
+server = []
+client = []
+
+[lints]
+workspace = true

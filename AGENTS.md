@@ -15,8 +15,9 @@ The maintainer writes in French. Code, comments, docs and commit messages are in
 
 ## Status
 
-Design only: there is no code yet. The spec is **Validated** by the maintainer: it changes only by a decision of theirs,
-made in the pull request that updates it, with its new date.
+Design first: the workspace and its CI stand, and the features of the spec come issue by issue. The spec is
+**Validated** by the maintainer: it changes only by a decision of theirs, made in the pull request that updates it,
+with its new date.
 
 ## Build and test
 
@@ -45,8 +46,18 @@ generated in the example, and gitignored.
 
 ## Repository
 
-Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll), MIT. CI and the protection of `main` come with
-the first code, and their rules will be written here then.
+Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll), MIT.
+
+- Every change goes through a pull request: `main` is protected, with no direct push.
+- CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`: `cargo fmt --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` and
+  `cargo doc --workspace --no-deps`, the last three once per feature combination of `quoll`: none, `server`, `client`
+  and both. Warnings are errors, in rustc and in rustdoc.
+- The `ci` job gathers all of them and is the one check `main` requires: a new job goes in its `needs`. The branch must
+  be up to date with `main`, and every review thread resolved, before the merge.
+- A pull request is merged with a rebase, and its branch deleted. Closing its issue is done in its description with
+  `Closes #N`.
+- There is no Codex review workflow in this repository.
 
 ## Related projects
 
